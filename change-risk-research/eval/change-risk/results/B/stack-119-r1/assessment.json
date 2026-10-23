@@ -1,0 +1,499 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "33ac5e5a074b288eb0435cf9b2bf41d062e1767d",
+  "head_sha": "35c482112c8f4016cc86fd885e309a1778d64f9b",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "CASE.md has an empty title and no description; only commit subjects were read"
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Repository README/docs at head and the cipherstash skill profile only"
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Workspace consumers found by git grep only"
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md inputs; collector reported none"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, pre-run)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Major-version change to @cipherstash/protect: removes bulkEncrypt/bulkDecrypt and the EncryptedData type export, and adds model operations (encryptModel, decryptModel, bulkEncryptModels, bulkDecryptModels, each with a lock-context variant) that choose which object fields to encrypt by matching model keys against the csTable definition. The main risk is silent plaintext persistence: any field that should be encrypted but is not selected (key not matching the table definition, or a hyphenated key in the bulk paths, where the reconstruction truncates the key at the first '-') is passed through unchanged and the caller gets success. The only tests are round-trips, which cannot detect a pass-through because decryptModel also passes plaintext through. Lock-context tests stay commented out, and the workspace example apps still import the removed EncryptedData type, which CI does not build. Tests need live ZeroKMS credentials and were not run.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "ProtectClient.bulkEncrypt and bulkDecrypt are removed, along with the BulkEncryptPayload/BulkEncryptedData/BulkDecryptedData types and the EncryptedData export. They are replaced by EncryptedPayload/EncryptPayload/Decrypted<T> etc. exported from src/types.ts. The changeset declares a major bump.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "security_boundary",
+      "description": "New encryptModel/bulkEncryptModels decide which fields to encrypt by filtering model entries whose key is one of Object.keys(table.build().columns). The FFI column name is the model key. Every other field is copied to the output unchanged, and the operation reports success.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "invariant",
+      "description": "Bulk model operations key each FFI item as `${modelIndex}-${fieldKey}`, then rebuild models by splitting the key on '-' and keeping only the second segment as the field name.",
+      "certainty": "observed",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "invariant",
+      "description": "decryptModel/bulkDecryptModels pick fields to decrypt by shape: an object with v, k and i keys. They pass `.c` to decryptBulk without the k === 'ct' check that single decrypt performs. Anything not recognised is returned unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "external_side_effect",
+      "description": "Model operations issue a single encryptBulk/decryptBulk FFI call per operation (per commit 'ensure only one call is made to ZeroKMS per crypto operation'). Lock-context variants pass lockContext.context per item and ctsToken per call, following the base bulk pattern.",
+      "certainty": "observed",
+      "evidence": ["E-10"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "README and docs were rewritten for model operations, and the bulk-encryption reference doc was deleted.",
+      "certainty": "observed",
+      "evidence": ["E-11"]
+    }
+  ],
+  "impact": "critical",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/protect ProtectClient public API",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Bulk methods and EncryptedData export removed; model methods added.",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "packages/protect/src/ffi/model-helpers.ts",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "New field selection, FFI batching and model reconstruction logic.",
+      "evidence": ["E-5", "E-7", "E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "apps/drizzle and apps/nextjs-clerk example apps",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Both depend on @cipherstash/protect workspace:* and import the removed EncryptedData type.",
+      "evidence": ["E-12", "E-13"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Customer databases storing values written via encryptModel",
+      "kind": "database",
+      "relationship": "hypothetical",
+      "how": "Rows written from model-operation output. A field passed through unchanged is persisted as plaintext.",
+      "evidence": ["E-6"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Published npm package @cipherstash/protect (next major)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "The changeset triggers a major release of the package.",
+      "evidence": ["E-4"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Model field not matched to the table definition is written as plaintext with a success result",
+      "trigger": "An application calls encryptModel/bulkEncryptModels with a model whose property name differs from the csTable key for that column. Examples: an ORM row with camelCase `emailAddress` against csTable key `email_address`, or a model built for a different table object.",
+      "affected_components": ["AC-1", "AC-2", "AC-4"],
+      "mechanism": "prepareFieldsForOperation and prepareBulkModelsForOperation select only entries whose key is in Object.keys(table.build().columns) (model-helpers.ts:148-152, 341-345). All non-payload fields, including the unmatched sensitive one, go into otherFields (extractOtherFields, :26-38) and are spread into the result (:232, :407-421). Nothing warns about or rejects a field that matches no column.",
+      "consequence": "The caller receives { data } and inserts the row. The sensitive value lands in the database in plaintext. decryptModel later passes it through unchanged, so the application appears to work.",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "evidence": ["E-5", "E-6", "E-14"],
+      "existing_verification": [
+        {
+          "description": "protect.test.ts round-trips encryptModel -> decryptModel and asserts the decrypted model equals the input. It never asserts that encryptedModel.data fields are EQL payloads, so a pass-through would also pass.",
+          "status": "exists_not_run",
+          "evidence": ["E-14"]
+        }
+      ],
+      "missing_verification": [
+        "Assert that each schema column in encryptModel output is an EQL payload (has c) and does not equal the plaintext",
+        "Test the behaviour when the model's keys do not match the table definition"
+      ],
+      "mitigation": "Assert on ciphertext shape in tests. Document clearly that matching is by csTable key. Consider a strict mode, or a warning when a model key looks like a schema column but is not matched.",
+      "domain_tags": ["plaintext_exposure", "encryption", "public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Bulk model reconstruction truncates hyphenated field names, leaving plaintext under the original key",
+      "trigger": "bulkEncryptModels (with or without lock context) is called with a table whose column key contains '-' (e.g. csTable('users', { 'first-name': csColumn('first-name') })).",
+      "affected_components": ["AC-2", "AC-4"],
+      "mechanism": "Items are keyed `${modelIndex}-${fieldKey}`. On reconstruction, `const [_, fieldKey] = key.split('-')` keeps only the second segment (model-helpers.ts:416-418, also :467 and :521). The ciphertext lands under `first`, while `first-name` still holds the plaintext copied in from otherFields.",
+      "consequence": "Plaintext is persisted in the original column and a stray `first` property carries the ciphertext. The single-model path does not do this, so behaviour differs between single and bulk.",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "evidence": ["E-7", "E-6"],
+      "existing_verification": [
+        {
+          "description": "Bulk tests use only the non-hyphenated keys email and address.",
+          "status": "exists_not_run",
+          "evidence": ["E-14"]
+        }
+      ],
+      "missing_verification": [
+        "A bulk test with a column key containing '-' (and ideally a test asserting that output fields are ciphertext)"
+      ],
+      "mitigation": "Map results back through keyMap ({modelIndex, fieldKey}) instead of re-parsing the string id, or split only on the first '-'.",
+      "domain_tags": ["plaintext_exposure", "encryption"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Lock-context model operations ship with no executed test of identity binding",
+      "trigger": "A customer uses encryptModel/decryptModel/bulk*Models with .withLockContext(...).",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "Four new lock-context code paths each build per-item lockContext and pass ctsToken to encryptBulk/decryptBulk (model-helpers.ts:276-315, 478-585). The lock-context tests are commented out at head, as they were at base.",
+      "consequence": "A defect in context propagation, such as encrypting without the identity binding, would not be caught before release. The code read follows the base bulk pattern and no such defect was found.",
+      "impact": "high",
+      "basis": "speculative",
+      "evidence": ["E-10", "E-15"],
+      "existing_verification": [
+        {
+          "description": "Lock-context model tests exist but are commented out.",
+          "status": "unknown",
+          "evidence": ["E-15"]
+        }
+      ],
+      "missing_verification": [
+        "Run the lock-context model tests (encrypt with context, check decrypt without context fails) before release"
+      ],
+      "mitigation": "Run the commented lock-context tests manually with a valid JWT before publishing the major version.",
+      "domain_tags": ["authorization", "encryption"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Workspace example apps no longer type-check; CI does not build them",
+      "trigger": "Building or type-checking apps/drizzle or apps/nextjs-clerk at head.",
+      "affected_components": ["AC-3", "AC-1"],
+      "mechanism": "Both apps import `type EncryptedData` from '@cipherstash/protect' (workspace:*), but head no longer exports it (src/index.ts:41). The root build/test scripts filter './packages/*', so the apps are not compiled in CI.",
+      "consequence": "Example apps that customers copy from break at compile time. Customers upgrading also lose bulkEncrypt/bulkDecrypt with no deprecation path. This is signalled by a major bump.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-12", "E-13", "E-3", "E-16"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Type-check workspace apps in CI or before release"
+      ],
+      "mitigation": "Update the apps to EncryptedPayload. Optionally keep a deprecated EncryptedData alias. Add migration notes to the changeset.",
+      "domain_tags": ["public_api", "build_release"]
+    },
+    {
+      "id": "FS-5",
+      "title": "decryptModel silently returns undecrypted values it does not recognise",
+      "trigger": "A model is passed to decryptModel whose encrypted column arrives as a JSON string (e.g. a driver returning jsonb as text) or as a k:'sv' payload.",
+      "affected_components": ["AC-2"],
+      "mechanism": "Field detection is shape-based (isEncryptedPayload: object with v, k, i; model-helpers.ts:43-52). Strings pass through as 'other' fields. The 'sv' payloads are sent with `.c` (undefined) and no k === 'ct' check (:186, :446), unlike single decrypt (decrypt.ts:49-53).",
+      "consequence": "The application receives a raw ciphertext string typed as plaintext string and reports success; or gets an FFI error that is opaque.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-8", "E-9"],
+      "existing_verification": [
+        {
+          "description": "An 'invalid encrypted payloads' error-handling test exists; its inputs were not examined in detail.",
+          "status": "exists_not_run",
+          "evidence": ["E-14"]
+        }
+      ],
+      "missing_verification": [
+        "Test decryptModel with a stringified payload and an 'sv' payload"
+      ],
+      "mitigation": "Validate k === 'ct' in model decrypt. Document that encrypted columns must be parsed objects.",
+      "domain_tags": ["serialization_compatibility"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "Model-encrypt tests are round-trip only and cannot detect a plaintext pass-through, because decryptModel also passes plaintext through.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-14"]
+    },
+    {
+      "id": "VG-2",
+      "description": "Lock-context tests remain commented out; none of the four new lock-context paths is exercised.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-15"]
+    },
+    {
+      "id": "VG-3",
+      "description": "CI builds and tests only ./packages/*. Workspace apps that consume the changed API are not compiled.",
+      "scenarios": ["FS-4"],
+      "evidence": ["E-16"]
+    },
+    {
+      "id": "VG-4",
+      "description": "No CI results were supplied, and the tests need live ZeroKMS credentials, so no test was seen to run.",
+      "scenarios": ["FS-1", "FS-2", "FS-3", "FS-5"],
+      "evidence": ["E-17"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Add assertions that encryptModel/bulkEncryptModels output for each schema column is an EQL payload not equal to the plaintext; add a hyphenated-key bulk case.",
+      "addresses": ["FS-1", "FS-2", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "review_focus",
+      "description": "Review model-helpers.ts reconstruction (key.split('-') at :413-418, :464-468, :517-522) and field selection (:148-152, :341-345); prefer mapping through keyMap.",
+      "addresses": ["FS-1", "FS-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "test",
+      "description": "Run the lock-context model tests with a real JWT before publishing the major version.",
+      "addresses": ["FS-3", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "compatibility_check",
+      "description": "Type-check apps/* against the new API and update the EncryptedData imports; add migration notes from bulkEncrypt/bulkDecrypt to the changeset.",
+      "addresses": ["FS-4", "VG-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "documentation",
+      "description": "State in model-operations docs that fields are matched by csTable key and that unmatched fields are stored unchanged.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Tests were not run (they need ZeroKMS credentials and network) and no CI results were provided.",
+      "effect": "No verification status beyond exists_not_run; verification confidence is low."
+    },
+    {
+      "id": "CL-2",
+      "description": "The protect-ffi native module's encryptBulk/decryptBulk semantics (result ordering, handling of the per-item lockContext) were not inspected.",
+      "effect": "Assumes results come back in input order, as the base code also did."
+    },
+    {
+      "id": "CL-3",
+      "description": "Docs and README rewrites (~900 lines) were skimmed only; the per-file operation classes were read for the encrypt-model, decrypt and lock-context paths and grepped for the rest.",
+      "effect": "Doc inaccuracies or minor differences between operation classes may be missed."
+    },
+    {
+      "id": "CL-4",
+      "description": "Pre-existing: single encrypt passes column.getName() to the FFI, while the encrypt config and model ops use the csTable object key. This was not introduced here.",
+      "effect": "Not raised as a scenario; may interact with FS-1 when the key and column name differ."
+    },
+    {
+      "id": "CL-5",
+      "description": "No PR description, deployment context, or external consumer list was available.",
+      "effect": "The blast radius to external customers is unknown beyond the major-version signal."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/index.ts",
+      "rev": "base",
+      "line_start": 776,
+      "line_end": 791,
+      "claim": "Base ProtectClient exposes bulkEncrypt and bulkDecrypt.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/index.ts",
+      "rev": "head",
+      "line_start": 86,
+      "line_end": 148,
+      "claim": "Head ProtectClient exposes encrypt, decrypt and the four model methods only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/protect/src/index.ts",
+      "rev": "head",
+      "line_start": 40,
+      "line_end": 44,
+      "claim": "The head index exports ProtectClient and types.ts but no longer exports EncryptedData.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": ".changeset/every-dryers-wink.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 5,
+      "claim": "Changeset declares a major bump: 'Replaced bulk operations with model operations.'",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/model-helpers.ts",
+      "rev": "head",
+      "line_start": 133,
+      "line_end": 167,
+      "claim": "Fields to encrypt are selected by matching model keys against Object.keys(table.build().columns). Everything else, including a non-payload value, is put in otherFields.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/model-helpers.ts",
+      "rev": "head",
+      "line_start": 202,
+      "line_end": 233,
+      "claim": "encryptModelFields returns {...otherFields, ...nullFields, ...encryptedData}. Unselected fields are emitted unchanged, with no warning or error.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/model-helpers.ts",
+      "rev": "head",
+      "line_start": 406,
+      "line_end": 421,
+      "claim": "Bulk reconstruction uses key.split('-') and keeps only segment [1] as the field key, truncating keys that contain '-'. The same pattern appears at 464-468 and 517-522.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/model-helpers.ts",
+      "rev": "head",
+      "line_start": 43,
+      "line_end": 52,
+      "claim": "isEncryptedPayload detects encrypted fields only by object shape (v, k, i) and does not check k === 'ct'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/operations/decrypt.ts",
+      "rev": "head",
+      "line_start": 49,
+      "line_end": 53,
+      "claim": "Single decrypt rejects payloads whose k is not 'ct'. The model decrypt path has no equivalent check.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/protect/src/ffi/model-helpers.ts",
+      "rev": "head",
+      "line_start": 276,
+      "line_end": 315,
+      "claim": "The lock-context encrypt passes lockContext.context per item and ctsToken to encryptBulk, mirroring the base bulk pattern.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "diff",
+      "path": "docs/reference/model-operations.md",
+      "rev": "head",
+      "claim": "Diff stat: docs/reference/bulk-encryption-decryption.md deleted; model-operations.md added; README rewritten.",
+      "command": "git -C repo diff --stat 33ac5e5a 35c48211",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "apps/drizzle/src/select.ts",
+      "rev": "head",
+      "line_start": 8,
+      "line_end": 8,
+      "claim": "apps/drizzle imports type EncryptedData from '@cipherstash/protect'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "apps/nextjs-clerk/src/app/page.tsx",
+      "rev": "head",
+      "line_start": 8,
+      "line_end": 8,
+      "claim": "apps/nextjs-clerk imports type EncryptedData from '@cipherstash/protect'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "packages/protect/__tests__/protect.test.ts",
+      "rev": "head",
+      "line_start": 61,
+      "line_end": 101,
+      "claim": "The model test round-trips encrypt then decrypt and asserts on the decrypted data only. There is no assertion on encryptedModel.data shape.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "test",
+      "path": "packages/protect/__tests__/protect.test.ts",
+      "rev": "head",
+      "line_start": 468,
+      "line_end": 480,
+      "claim": "Lock-context tests, including model operations, are commented out.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 25,
+      "line_end": 36,
+      "claim": "The root build and test scripts filter './packages/*', so apps are not built or tested by `pnpm run test` in tests.yml.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 34,
+      "line_end": 44,
+      "claim": "Tests require CS_* secrets written to .env, so they need live ZeroKMS access.",
+      "status": "verified"
+    }
+  ]
+}

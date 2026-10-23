@@ -1,0 +1,420 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+  "head_sha": "3e040fad4db2c9a8ab3262eba80da51ce49beba1",
+  "merge_base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+    "cutoff_date": "2026-07-16T00:00:11+10:00",
+    "commits_read": 1479,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 10,
+    "additions": 151,
+    "deletions": 10,
+    "binary_files": 0,
+    "by_status": {
+      "added": 2,
+      "modified": 8
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/stack-supabase": 6,
+      "packages/stack": 3,
+      ".": 1
+    },
+    "component_count": 3,
+    "top_level_dirs": {
+      "packages": 9,
+      ".changeset": 1
+    },
+    "languages": {
+      "TypeScript": 8,
+      "Markdown": 1,
+      "JSON": 1
+    }
+  },
+  "path_classes": {
+    "test": 4,
+    "docs": 1,
+    "security_sensitive": 1,
+    "build_config": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/v3-supabase-needle-lockcontext-errors.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 21,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/__tests__/supabase-v3-matrix.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 14,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/__tests__/supabase-v3.test-d.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 14,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/src/query-builder-v3.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 17,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/src/query-builder.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 3,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/src/types.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 8,
+      "deletions": 3,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/__tests__/error-discriminated-union.test-d.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 52,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/errors/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/tsconfig.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/stack",
+      "language": "JSON"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/stack-supabase/src/query-builder-v3.ts",
+        "commits": 9,
+        "commits_last_90d": 9,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-supabase/src/types.ts",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-supabase/__tests__/supabase-v3.test-d.ts",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/tsconfig.json",
+        "commits": 6,
+        "commits_last_90d": 5,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack-supabase/src/query-builder.ts",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-supabase/__tests__/supabase-v3-matrix.test.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/src/errors/index.ts",
+        "commits": 2,
+        "commits_last_90d": 0,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/stack/tsconfig.json",
+        "usually_changes_with": "pnpm-lock.yaml",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack/tsconfig.json",
+        "usually_changes_with": "vitest.shared.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+        "usually_changes_with": "packages/stack-drizzle/src/v3/operators.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+        "usually_changes_with": "skills/stash-supabase/SKILL.md",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3.test-d.ts",
+        "usually_changes_with": "packages/stack-drizzle/src/v3/operators.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3.test-d.ts",
+        "usually_changes_with": "packages/stack-supabase/__tests__/supabase-v3-json.test.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3.test-d.ts",
+        "usually_changes_with": "packages/stack-supabase/integration/json.integration.test.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3.test-d.ts",
+        "usually_changes_with": "skills/stash-supabase/SKILL.md",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/src/types.ts",
+        "usually_changes_with": "packages/stack-drizzle/src/v3/operators.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/src/types.ts",
+        "usually_changes_with": "packages/stack-supabase/__tests__/supabase-v3-json.test.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/src/types.ts",
+        "usually_changes_with": "packages/stack-supabase/integration/json.integration.test.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/src/types.ts",
+        "usually_changes_with": "packages/stack-supabase/src/helpers.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/src/types.ts",
+        "usually_changes_with": "skills/stash-supabase/SKILL.md",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 21
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/v3-supabase-needle-lockcontext-errors.md": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/__tests__/supabase-v3-matrix.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/__tests__/supabase-v3.test-d.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/src/query-builder-v3.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/src/query-builder.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/src/types.ts": ["@cipherstash/developers"],
+      "packages/stack/__tests__/error-discriminated-union.test-d.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/src/errors/index.ts": ["@cipherstash/developers"],
+      "packages/stack/tsconfig.json": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 14
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 4,
+    "source_files_changed": 4,
+    "source_without_related_test": [
+      "packages/stack-supabase/src/types.ts",
+      "packages/stack/src/errors/index.ts"
+    ],
+    "source_with_related_test_unchanged": [],
+    "mapping": [
+      {
+        "source": "packages/stack-supabase/src/query-builder-v3.ts",
+        "related_tests_at_head": [
+          "packages/stack-supabase/__tests__/supabase-encryption-error.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-factory.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-json.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-matrix.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-select-star.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-wire.test.ts",
+          "packages/stack-supabase/integration/wire.integration.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/stack-supabase/src/query-builder.ts",
+        "related_tests_at_head": [
+          "packages/stack-supabase/__tests__/supabase-encryption-error.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-factory.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-json.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-matrix.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-select-star.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-wire.test.ts",
+          "packages/stack-supabase/integration/wire.integration.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/stack-supabase/src/types.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/errors/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

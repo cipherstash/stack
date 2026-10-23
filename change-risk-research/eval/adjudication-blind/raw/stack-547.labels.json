@@ -1,0 +1,276 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "wasm-inline Encryption() calls wasmNewClient without eqlVersion or the mixed-schema guard while the change widens getColumnName to accept v3 columns, so v3 use on edge runtimes would get the FFI's v2 default wire format."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Encrypted like/ilike become cs on a full envelope and defaultMatchOpts sets include_original:true, which the code itself says makes substring patterns match only exact values."
+    },
+    {
+      "id": "F-03",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Markdown lint issue: a blank line between blockquotes in an internal design doc."
+    },
+    {
+      "id": "F-04",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculation that protect-ffi 0.27 changes v2 output; no cited code shows a v2 wire change and eqlVersion stays undefined for v2."
+    },
+    {
+      "id": "F-05",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Code-duplication refactor suggestion with no behavioural impact."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The default include_original:true plus the cs remap with a full-envelope operand means default TextSearch like/ilike silently miss substring matches, as the code comment and docs acknowledge."
+    },
+    {
+      "id": "F-07",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "v2 freeTextSearch storing caller opts by reference is a minor aliasing nit (largely pre-existing) with no realistic release impact."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "encryptCollectedTerms uses encrypt() and stringifies the full envelope (ciphertext plus all index terms) as PostgREST GET filter values, as the code comments admit."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new v3 upgrade/install path re-runs a bundle starting with DROP SCHEMA eql_v3 CASCADE, where the column domains live, so dependent customer columns would be dropped; v2 avoids this via a public type created only if absent."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Raw filters are always collected with queryType 'equality' and applied with the raw operator via q.filter, so on v3 a raw like/ilike skips the cs remap and capability check."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same verified full-envelope-in-URL mechanism in query-builder-v3 encryptCollectedTerms; the change introduces it."
+    },
+    {
+      "id": "F-12",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Test-hygiene nit: an env var set in beforeEach with no cleanup."
+    },
+    {
+      "id": "F-13",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Verified: upgrade.ts calls installer.install for v3 with no check for dependent columns, and the v3 bundle drops the eql_v3 schema (which holds the column domains) with CASCADE."
+    },
+    {
+      "id": "F-14",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Test-helper design nit about env gates computed at import time, which the file already documents."
+    },
+    {
+      "id": "F-15",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Markdown lint issue in an internal plan doc."
+    },
+    {
+      "id": "F-16",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Hypothetical v2 output change from the FFI bump with nothing in the code showing it; CI is green and v2 passes eqlVersion undefined."
+    },
+    {
+      "id": "F-17",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "validateInstallFlags at head already rejects --migrations-dir with --eql-version 3 (install.ts:562-569)."
+    },
+    {
+      "id": "F-18",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Changeset wording mentions bigint reconstruction that v3.ts omits; a release-note accuracy nit."
+    },
+    {
+      "id": "F-19",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Structured or() takes PendingOrCondition[] with column:string, which bypasses the FK narrowing that the other filter methods enforce for v3 (runtime still throws on unsupported capability)."
+    },
+    {
+      "id": "F-20",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Test performance suggestion."
+    },
+    {
+      "id": "F-21",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculative FFI v2-compat concern; the finding itself admits it cannot be checked, and no cited code shows a change in v2 behaviour."
+    },
+    {
+      "id": "F-22",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "'in' on null throws a TypeError only for plain-JS misuse of a typed API; an error results either way."
+    },
+    {
+      "id": "F-23",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The v3 TextSearch default include_original:true with the cs remap silently fails substring matches; the live test has to opt out explicitly."
+    },
+    {
+      "id": "F-24",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "install still calls the v2-oriented checkPermissions (CREATE on public for eql_v2_encrypted) for v3 installs, which can block or misroute v3 installs; the cited line is near the call at line 190 rather than on it."
+    },
+    {
+      "id": "F-25",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same verified full-envelope operand in GET URLs from encryptCollectedTerms, acknowledged in the class doc."
+    },
+    {
+      "id": "F-26",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Duplicated validation refactor suggestion."
+    },
+    {
+      "id": "F-27",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "CI hardening nit on a read-only analysis job."
+    },
+    {
+      "id": "F-28",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "Code-organisation nit about a script importing from the test tree."
+    },
+    {
+      "id": "F-29",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Order transforms call query.order(t.column) without filterColumnName, so v3 property names that differ from DB names reach PostgREST unmapped."
+    },
+    {
+      "id": "F-30",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "Test style nit about importing an internal helper."
+    },
+    {
+      "id": "F-31",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Changeset mentions int8/bigint support that columns.ts omits; a release-note wording nit."
+    },
+    {
+      "id": "F-32",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Verified: the v3 supabase bundle drops eql_v3 CASCADE, domains are defined there at line 545, and upgrade re-runs it with no dependent-column guard."
+    },
+    {
+      "id": "F-33",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "Doc-comment wording out of date."
+    },
+    {
+      "id": "F-34",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Markdown lint issue in an internal plan doc."
+    }
+  ]
+}

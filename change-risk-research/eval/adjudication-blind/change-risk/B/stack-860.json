@@ -1,0 +1,59 @@
+{
+  "case": "stack-860",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Native entry passes the auth strategy under the pre-0.31 `strategy` key",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same native `strategy` vs authStrategy inconsistency, supported by index.ts and the WASM test comment; the fix is concrete."
+    },
+    {
+      "id": "FS-2",
+      "title": "Deployments with a base64 clientKey fail at client construction after upgrade",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The 0.31 pin with hex-only clientKey breaks base64-key deployments, as the changeset and skill doc record; leading the release notes with it is actionable."
+    },
+    {
+      "id": "FS-3",
+      "title": "DynamoDB/operation callers branching on error.code see different codes",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same real error-code remapping in dynamodb/helpers.ts and error-code.ts, caused by this change and supported by the cited lines."
+    },
+    {
+      "id": "FS-4",
+      "title": "A remaining FFI call path still carries a key 0.31 rejects",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The cited code shows id stripped in every model helper and in bulk encrypt/decrypt, and the finding names no remaining path that still sends an undeclared key."
+    }
+  ],
+  "cost_usd": 1.2954598999999998,
+  "wall_seconds": 166.231577,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

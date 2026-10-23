@@ -1,0 +1,49 @@
+{
+  "pr": 330,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/330#discussion_r2998078857",
+      "path": "packages/stack/src/bin/commands/auth/index.ts",
+      "line": 30,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid logging raw subcommand input. `subcommand` is user-provided; echoing it directly can leak plaintext if sensitive data is pasted by mistake.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/330#discussion_r2998078888",
+      "path": "packages/stack/src/bin/commands/auth/login.ts",
+      "line": 25,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Add error handling and fix variable shadowing in `login()`. Lines 8 and 20 can reject without a catch block. If line 20 rejects, the spinner started at line 19 is never stopped.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/330#discussion_r2998078899",
+      "path": "packages/stack/src/bin/commands/auth/login.ts",
+      "line": 63,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid `process.exit()` in helper and avoid raw error-message logging. Line 38 hard-exits from a reusable helper, which makes orchestration brittle. Line 37 logs uncontrolled `error.message`; prefer a sanitized message and throw a typed error for the caller to handle.",
+      "is_nitpick": false,
+      "id": "CR-3"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/330#pullrequestreview-4017816902",
+      "path": "packages/stack/README.md",
+      "line": 497,
+      "severity_label": "nitpick",
+      "claim": "Use one CLI invocation style consistently. Line 497 switches to `npx `@cipherstash/stack` auth login` while the rest of the doc uses `npx stash ...`.",
+      "is_nitpick": true,
+      "id": "CR-4"
+    }
+  ],
+  "notes": "Transcribed by hand from inline MCP output. PR body consisted only of the CodeRabbit release-notes block, so the description is '(no description)'. Review 4017816902: 3 actionable (inline), 1 nitpick. CR-2 thread is outdated (line is original_line 25; current line unavailable). Summary/walkthrough issue comment present; pre-merge checks list Docstring Coverage warning (0.00%), not counted as a finding."
+}

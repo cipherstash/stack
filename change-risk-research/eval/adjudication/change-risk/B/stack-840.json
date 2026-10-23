@@ -1,0 +1,14 @@
+{
+  "case": "stack-840",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [],
+  "cost_usd": 0.8548773,
+  "wall_seconds": 97.411292,
+  "case_note": "No scenarios; rated low."
+}

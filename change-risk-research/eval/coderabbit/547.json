@@ -1,0 +1,219 @@
+{
+  "pr": 547,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3522555910",
+      "path": ".changeset/eql-v3-typed-client.md",
+      "line": 29,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Drop bigint/int8 from the v3 release note. The typed client reconstructs `Date` only; `int8`/`bigint` is explicitly deferred in `packages/stack/src/encryption/v3.ts`, so this changeset promises support the branch does not ship.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3522555911",
+      "path": ".changeset/eql-v3-typed-schema.md",
+      "line": 7,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Drop `bigint` from the release note. `.changeset/eql-v3-typed-schema.md:5-7` should describe Date-only support; v3 still omits int8/bigint domains until lossless FFI support exists.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3522555914",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "line": 124,
+      "severity_label": "🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Thread `eqlVersion` into the permission check. The v3 path still calls the v2-oriented `checkPermissions()`, which requires CREATE on `public` for `public.eql_v2_encrypted`. That can incorrectly block native `eql_v3.*` installs for roles that do not need public-schema type creation.",
+      "is_nitpick": false,
+      "id": "CR-3"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3522555915",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "line": 570,
+      "severity_label": "🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Reject `--migrations-dir` for EQL v3 too. `--migrations-dir` is migration-path-only, but v3 routing skips migration selection and proceeds with direct install. With `--supabase --eql-version 3 --migrations-dir ...`, the flag is silently ignored and the DB is modified directly.",
+      "is_nitpick": false,
+      "id": "CR-4"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3522555921",
+      "path": "packages/stack/src/identity/index.ts",
+      "line": 47,
+      "severity_label": "🩺 Stability & Availability | 🟡 Minor | ⚡ Quick win",
+      "claim": "Guard the structural lock-context check before using `in`. Line 45 can throw a `TypeError` for plain JS callers that pass `null`, `undefined`, or a primitive. Add an object guard so malformed inputs fail downstream consistently instead of crashing in the resolver.",
+      "is_nitpick": false,
+      "id": "CR-5"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3522555926",
+      "path": "packages/stack/src/supabase/types.ts",
+      "line": 364,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Narrow structured `.or()` conditions to `FK`. `PendingOrCondition[]` keeps `column: string`, so v3 callers can still compile filters against storage-only encrypted columns via structured `.or(...)`. Make `PendingOrCondition` generic, then bind this overload to `FK`.",
+      "is_nitpick": false,
+      "id": "CR-6"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3523481762",
+      "path": "docs/superpowers/plans/2026-06-30-eql-v3-text-search-schema-plan.md",
+      "line": 8,
+      "severity_label": "📐 Maintainability & Code Quality | 🟡 Minor | ⚡ Quick win",
+      "claim": "Blank line inside blockquote (MD028). Static analysis flags a blank line inside/adjacent to the new blockquote, which can cause inconsistent rendering (split into two quote blocks) in some Markdown renderers.",
+      "is_nitpick": false,
+      "id": "CR-7"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3523481766",
+      "path": "docs/superpowers/plans/2026-07-01-eql-v3-typed-schema.md",
+      "line": 8,
+      "severity_label": "📐 Maintainability & Code Quality | 🟡 Minor | ⚡ Quick win",
+      "claim": "Blank line inside blockquote (MD028). Same issue as the sibling plan doc — the blank line inside/adjacent to the new blockquote can split rendering into two quote blocks.",
+      "is_nitpick": false,
+      "id": "CR-8"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/547#discussion_r3523481767",
+      "path": "docs/superpowers/specs/2026-06-30-eql-v3-text-search-schema-design.md",
+      "line": 8,
+      "severity_label": "📐 Maintainability & Code Quality | 🟡 Minor | ⚡ Quick win",
+      "claim": "Blank line inside blockquote (MD028). Same issue as the sibling docs — the blank line inside/adjacent to the new blockquote can split rendering into two quote blocks.",
+      "is_nitpick": false,
+      "id": "CR-9"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/src/supabase/query-builder.ts",
+      "line": 608,
+      "severity_label": "outside diff range | 🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Route raw encrypted filters through query-type and operator seams. For v3, `.filter('email', 'like', value)` is collected as an equality term and later sent as `like`, bypassing the v3 `like`/`ilike` → `cs` remap.",
+      "is_nitpick": false,
+      "id": "CR-10"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/src/supabase/query-builder.ts",
+      "line": 704,
+      "severity_label": "outside diff range | 🎯 Functional Correctness | 🟠 Major | ⚡ Quick win",
+      "claim": "Map ordered columns through the dialect seam. Filters/selects/mutations resolve v3 property names to DB names, but `order('createdAt')` still reaches PostgREST as `createdAt` instead of `created_at`.",
+      "is_nitpick": false,
+      "id": "CR-11"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/src/types.ts",
+      "line": 253,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Update the public `EncryptOptions.column` doc to match the widened contract. Line 253 still documents only `EncryptedColumn` / `EncryptedField`, but Line 254 now accepts any `BuildableColumn`, including v3 builders.",
+      "is_nitpick": true,
+      "id": "CR-12"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/__tests__/encrypt-lock-context-guards.test.ts",
+      "line": 51,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Env var set without cleanup across test runs. `process.env.CS_WORKSPACE_CRN` is set in `beforeEach` but never restored/deleted in an `afterEach`.",
+      "is_nitpick": true,
+      "id": "CR-13"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/src/schema/index.ts",
+      "line": 354,
+      "severity_label": "nitpick | 🎯 Functional Correctness | 🔵 Trivial | ⚡ Quick win",
+      "claim": "User-supplied match opts aliased by reference, unlike the v3 counterpart. `defaults` are fresh objects, but when a caller passes `opts.tokenizer`/`opts.token_filters`, they're stored by reference (not cloned).",
+      "is_nitpick": true,
+      "id": "CR-14"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/__tests__/model-column-mapping.test.ts",
+      "line": 1,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Reaching into private helper for tests. This test imports `resolveEncryptColumnMap` directly from `@/encryption/helpers/model-helpers`, which is not re-exported from the public `eql/v3` barrel.",
+      "is_nitpick": true,
+      "id": "CR-15"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/src/eql/v3/columns.ts",
+      "line": 297,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "`EncryptedTextSearchColumn.build()` duplicates `indexesForCapabilities` output instead of reusing it. The override hand-rolls `{ unique: { token_filters: [] }, ore: {} }`, which is exactly what `indexesForCapabilities(this.getQueryCapabilities(), 'string')` would already produce for `TEXT_SEARCH` capabilities.",
+      "is_nitpick": true,
+      "id": "CR-16"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/__tests__/helpers/live-gate.ts",
+      "line": 14,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | 💤 Low value",
+      "claim": "Module-load-time env gates are import-order fragile. `LIVE_CIPHERSTASH_ENABLED`/`LIVE_EQL_V3_PG_ENABLED` are computed once at import time.",
+      "is_nitpick": true,
+      "id": "CR-17"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/__tests__/v3-matrix/matrix-live-pg.test.ts",
+      "line": 175,
+      "severity_label": "nitpick | 🚀 Performance & Scalability | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Parallelize per-domain query-term encryption in `beforeAll`. The `eqDomains`/`ordDomains`/`matchDomains` loops `await client.encryptQuery(...)` sequentially, one network round-trip per domain (up to ~35).",
+      "is_nitpick": true,
+      "id": "CR-18"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/stack/scripts/install-eql-v3.ts",
+      "line": 14,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Move the shared installer helper out of `__tests__`. This script performs live installation work but imports from the test tree.",
+      "is_nitpick": true,
+      "id": "CR-19"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": ".github/workflows/fta-v3.yml",
+      "line": 34,
+      "severity_label": "nitpick | 🔒 Security & Privacy | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Add `persist-credentials: false` to the read-only checkout. This job only reads source for static analysis (`permissions: contents: read`, no push).",
+      "is_nitpick": true,
+      "id": "CR-20"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/547#pullrequestreview-4628868396",
+      "path": "packages/cli/src/commands/db/upgrade.ts",
+      "line": 18,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Extract shared EQL version validation. `upgrade.ts` duplicates the same unknown `--eql-version` check and the v3/`--latest` incompatibility already centralized in `install.ts`.",
+      "is_nitpick": true,
+      "id": "CR-21"
+    }
+  ],
+  "notes": "Review 4628868396: 6 actionable inline comments, 2 outside-diff and 10 nitpicks in body. Review 4629905794: 3 actionable inline comments. Summary/walkthrough comment present (reviews auto-paused; latest run 'No actionable comments'). Thread resolution: r3522555910, r3522555911, r3522555915 resolved; others unresolved. Inline findings transcribed from inline API output (title + first sentence(s)). A human comment by tobyhede consolidated CodeRabbit + Claude reviews (not counted). Release-notes block removed from description."
+}

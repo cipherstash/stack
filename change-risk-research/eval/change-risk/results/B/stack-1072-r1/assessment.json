@@ -1,0 +1,342 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c4df82de3f3ed2c9ff6a292151e42b29f417962f",
+  "head_sha": "792ddd03474c6617a46f3a4e54cf70b9a990d16a",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "partial",
+      "note": "Only the title in CASE.md; no PR body."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied. Tests could not be run locally: node_modules is absent and there is no network to install dependencies."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md and workflow comments at head only."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (all files owned by @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "Branch protection / ruleset configuration (which checks are required) is not visible."
+    }
+  },
+  "summary": "CI-only change. The `Test JS` workflow (tests.yml: lint, unit/type tests, release gate, E2E, WASM E2E, Bun) gains a pull_request `paths: ['**', '!docs/plans/**']` filter, so a PR that touches only docs/plans/ no longer runs it; push to main stays unfiltered. To keep that safe, the frozen-publisher-docs test stops reading the EQL plan, a new test asserts no test file names a docs/plans/*.md path, and the workflow-filter guard tests are switched to a shared, order-aware `filterCovers` helper so they understand negations. No shipped package code changes. Mixed PRs still run the full workflow, and main still runs everything after merge, so the residual risks are a plan-only PR merging something a non-test CI step would have rejected (none found reading plans today), required checks left Pending if repository rules require Test JS jobs (the repo's own test-eql.yml comment warns about exactly this but also records that no checks are currently required), and the loss of the plan-vs-FROZEN_PUBLISHERS consistency guard. All are low impact and recoverable. Tests were not run.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "Test JS no longer triggers on pull requests whose changed files are all under docs/plans/. Any PR with at least one other file still triggers it; push to main is unchanged and unfiltered.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "test_only",
+      "description": "frozen-publisher-docs.test.mjs no longer holds docs/plans/2026-08-13-eql-monorepo-absorption.md to FROZEN_PUBLISHERS: the plan's Phase-5 `@cipherstash/eql` instruction is no longer checked against the map (AGENTS.md updated to match).",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "test_only",
+      "description": "New invariant test: no file matching **/__tests__/**, **/*.test.* or e2e/** may name a literal docs/plans/<name>.md path. It is a text scan and does not cover non-test CI scripts or paths built at runtime.",
+      "certainty": "observed",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "test_only",
+      "description": "Workflow-filter guard tests (auth-binding-step-order, wasm-build-inputs-paths-filter, workflow-trigger-comments) now evaluate `paths:` lists with last-match-wins semantics via scripts/__tests__/lib/paths-filter.mjs instead of `some(entry covers)`; tests.yml's pull_request list is now read as filtered rather than skipped as unfiltered, and the parity test records its push/pull_request asymmetry as expected.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/tests.yml (Test JS: lint, run-tests, e2e-tests, wasm-e2e-tests, run-tests-bun)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "pull_request trigger now path-filtered to exclude docs/plans/**.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "scripts/__tests__ workflow-guard suites and lib/paths-filter.mjs",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Guard tests that read workflow `paths:` lists now use the shared filterCovers helper; new paths-filter and plan-docs-unread-by-tests suites.",
+      "evidence": ["E-6", "E-5"]
+    },
+    {
+      "id": "AC-3",
+      "name": "docs/plans/2026-08-13-eql-monorepo-absorption.md (EQL Phase-5 cutover plan)",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "No longer checked by frozen-publisher-docs.test.mjs; release-gate.mjs's failure message still points operators at its Phase-5 cutover.",
+      "evidence": ["E-3", "E-8"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Repository branch rules / required status checks",
+      "kind": "ci_or_release",
+      "relationship": "hypothetical",
+      "how": "If any Test JS job were a required check, a plan-only PR would leave it Pending. The repo records no required_status_checks rule at the time test-eql.yml was written; current config not visible.",
+      "evidence": ["E-9"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "A plan-only PR merges something a Test JS step would have rejected, turning main red",
+      "trigger": "A PR touching only docs/plans/ when some step run by Test JS (release:gate, a lint:* script, code:check, or a test that builds a plan path at runtime) reads plan content.",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "tests.yml no longer runs for that PR (E-1). The new guard (E-5) only scans test files for a literal docs/plans/<name>.md string, so a non-test CI script or a dynamically built path is not covered. I found no current reader: release-gate.mjs only names the plan in a message string (E-8) and lint-no-dead-package-paths excludes plans (E-10).",
+      "consequence": "The break is first seen on the unfiltered push-to-main run (E-2), after merge; fixed by a follow-up or revert. No shipped artefact is affected.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-5", "E-8", "E-10"],
+      "existing_verification": [
+        {
+          "description": "plan-docs-unread-by-tests.test.mjs asserts no test file names a plan, with a positive control on release-gate.mjs.",
+          "status": "exists_not_run",
+          "evidence": ["E-5"]
+        },
+        {
+          "description": "paths-filter.test.mjs pins tests.yml's filter to exactly one negation, '!docs/plans/**'.",
+          "status": "exists_not_run",
+          "evidence": ["E-6"]
+        }
+      ],
+      "missing_verification": [
+        "The plan-reader scan does not include non-test scripts invoked by tests.yml (scripts/*.mjs run via pnpm run lint:* / release:gate)."
+      ],
+      "mitigation": "Accept (main still runs everything), or widen the scan's pathspecs to scripts/*.mjs excluding message-only references.",
+      "domain_tags": ["build_release"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Required Test JS checks stay Pending on plan-only PRs",
+      "trigger": "A repository ruleset or branch protection requires any Test JS job (e.g. 'Lint (Biome)' or 'Run Tests (Node …)') and a PR changes only docs/plans/.",
+      "affected_components": ["AC-1", "AC-4"],
+      "mechanism": "A workflow skipped by a path filter reports no check run, so a required check never resolves. The repo itself documents this as the reason test-eql.yml has no pull_request path filter (E-9).",
+      "consequence": "Plan-only PRs cannot merge without an admin override or an unrelated file change. Loud, no data or release impact.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-9"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Current required-status-check configuration for main is not available to this assessment."
+      ],
+      "mitigation": "Confirm no Test JS job is a required check; if one becomes required, switch to a changes-job + per-job `if:` pattern as test-eql.yml does.",
+      "domain_tags": ["build_release", "configuration"]
+    },
+    {
+      "id": "FS-3",
+      "title": "EQL cutover plan can drift from FROZEN_PUBLISHERS unchecked",
+      "trigger": "@cipherstash/eql leaves FROZEN_PUBLISHERS (Phase-5 cutover) or the plan text is edited.",
+      "affected_components": ["AC-3"],
+      "mechanism": "The DOCS entry that asserted the plan carries its `@cipherstash/eql` instruction iff the map does was removed (E-3), while release-gate.mjs still directs an operator to that plan's Phase-5 cutover when the gate fails (E-8).",
+      "consequence": "An operator or agent could follow a stale plan instruction during the cutover; detected only by human review.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-4", "E-8"],
+      "existing_verification": [
+        {
+          "description": "AGENTS.md and SECURITY.md remain held to the map by frozen-publisher-docs.test.mjs.",
+          "status": "exists_not_run",
+          "evidence": ["E-3", "E-4"]
+        }
+      ],
+      "missing_verification": [
+        "Nothing checks the plan's Phase-5 wording against the map any more."
+      ],
+      "mitigation": "Intentional trade-off; consider moving the operational Phase-5 instruction out of the plan into a held doc, or pointing release-gate's message at SECURITY.md/AGENTS.md.",
+      "domain_tags": ["build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "None of the new or changed script tests were run: no CI results provided and dependencies are not installed locally.",
+      "scenarios": ["FS-1", "FS-3"],
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "VG-2",
+      "description": "Required-check configuration for main is not visible, so FS-2 cannot be ruled in or out.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-9"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "other",
+      "description": "Before merge, confirm in repository settings/rulesets that no Test JS job is a required status check.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Confirm `pnpm run test:scripts` passes on this PR's CI run (the guard suites and the new paths-filter / plan-docs-unread-by-tests suites).",
+      "addresses": ["VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "review_focus",
+      "description": "Review the plan-reader scan's pathspecs (tests only) and whether non-test CI scripts should be included.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "GitHub's path filter evaluates a bounded number of changed files (documented limit of ~300 in the diff). A very large PR whose evaluated files are all under docs/plans/ could skip Test JS while also changing code. Not verified from the inputs.",
+      "effect": "Low-likelihood path for code to merge without PR tests; push-to-main would still run them."
+    },
+    {
+      "id": "CL-2",
+      "description": "Search for plan readers was text-based (git grep for docs/plans and 'plans'); runtime-constructed paths in tooling outside scripts/ were not exhaustively traced.",
+      "effect": "FS-1 likelihood is an estimate."
+    },
+    {
+      "id": "CL-3",
+      "description": "Only the PR title was available; no PR description, CI results, or deployment/ruleset context.",
+      "effect": "Intent and required-check status are inferred."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 7,
+      "line_end": 14,
+      "claim": "pull_request now has paths: ['**', '!docs/plans/**'].",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 6,
+      "claim": "push to main has no paths filter, so main runs every job after merge.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "scripts/__tests__/frozen-publisher-docs.test.mjs",
+      "rev": "base",
+      "line_start": 72,
+      "line_end": 79,
+      "claim": "At base, DOCS held the EQL absorption plan to FROZEN_PUBLISHERS; this entry is removed at head.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "scripts/__tests__/frozen-publisher-docs.test.mjs",
+      "rev": "head",
+      "line_start": 129,
+      "line_end": 136,
+      "claim": "Head comment: docs/plans/* is outside OPERATIONAL and DOCS because tests.yml skips plan-only PRs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "test",
+      "path": "scripts/__tests__/plan-docs-unread-by-tests.test.mjs",
+      "rev": "head",
+      "line_start": 14,
+      "line_end": 51,
+      "claim": "New test greps only test pathspecs for a literal docs/plans/<name>.md and has a positive control on release-gate.mjs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "scripts/__tests__/paths-filter.test.mjs",
+      "rev": "head",
+      "line_start": 95,
+      "line_end": 112,
+      "claim": "Asserts tests.yml's pull_request filter excludes docs/plans/ only and still covers other paths.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "scripts/__tests__/lib/paths-filter.mjs",
+      "rev": "head",
+      "line_start": 31,
+      "line_end": 49,
+      "claim": "filterCovers implements ordered, last-match-wins evaluation of paths lists.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 922,
+      "line_end": 925,
+      "claim": "release-gate's failure text points operators to the Phase 5 cutover in the EQL plan; it names the path only in a string.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "documentation",
+      "path": ".github/workflows/test-eql.yml",
+      "rev": "head",
+      "line_start": 33,
+      "line_end": 47,
+      "claim": "Repo comment: a path-filtered pull_request workflow leaves required checks Pending and blocks merge; also records that main has no required_status_checks rule (as of writing).",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "scripts/lint-no-dead-package-paths.mjs",
+      "rev": "head",
+      "line_start": 11,
+      "line_end": 37,
+      "claim": "lint:package-paths excludes docs/plans/ from its scan.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "command_output",
+      "command": "node --version; ls node_modules",
+      "claim": "Node 22 is present but node_modules is absent, so vitest suites could not be run offline.",
+      "status": "verified"
+    }
+  ]
+}

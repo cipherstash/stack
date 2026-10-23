@@ -1,0 +1,149 @@
+{
+  "pr": 496,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673240",
+      "path": ".github/workflows/tests.yml",
+      "line": 181,
+      "severity_label": "⚠️ Potential issue | 🟠 Major | ⚡ Quick win",
+      "claim": "Harden GitHub token exposure in the new `wasm-e2e-tests` job. Line 164 adds a job without explicit `permissions`, and Line 175 uses checkout with default credential persistence. Please set least-privilege permissions and disable persisted credentials.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-2",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673250",
+      "path": "examples/supabase-worker/.env.example",
+      "line": 7,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Keep `.env.example` aligned with what the function actually reads. `CS_WORKSPACE_CRN` is documented as required here, but this function does not consume it. Either use it in the function or remove it from this example to keep setup minimal and accurate.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-3",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673252",
+      "path": "examples/supabase-worker/package.json",
+      "line": 15,
+      "severity_label": "⚠️ Potential issue | 🟠 Major | ⚡ Quick win",
+      "claim": "Declare required Node and pnpm versions in the example manifest. This manifest should explicitly enforce Node.js >= 22 and pnpm 9.x per repo policy.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-4",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673255",
+      "path": "examples/supabase-worker/README.md",
+      "line": 63,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "README is missing required install and test instructions. Please add explicit install steps (e.g., pnpm install) and a “how to run tests” section to satisfy the example README contract.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-5",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673257",
+      "path": "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts",
+      "line": 77,
+      "severity_label": "⚠️ Potential issue | 🟠 Major | ⚡ Quick win",
+      "claim": "Use the required `{ data }` success contract shape. The success payload currently returns ad-hoc top-level fields (`ok`, `plaintext`, `decrypted`, etc.) instead of `{ data: ... }`, which breaks the example-app contract.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-6",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673261",
+      "path": "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts",
+      "line": 87,
+      "severity_label": "⚠️ Potential issue | 🟠 Major | ⚡ Quick win",
+      "claim": "Return a stable `{ failure }` object and avoid exposing stack traces. The error response returns raw `stack` and does not follow the required `{ failure }` contract with stable error type strings.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-7",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673264",
+      "path": "packages/cli/package.json",
+      "line": 61,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "optionalDependencies version drift: pnpm catalogs support exists, but this repo’s catalog can’t replace the 6 platform pins yet. - `catalog:` is supported in `optionalDependencies`, but the workspace `repo` catalog only defines `@cipherstash/auth`—it does not include entries for `@cipherstash/auth-{darwin-arm64,darwin-x64,linux-arm64-gnu,linux-x64-gnu,linux-x64-musl,win32-x64-msvc}`—so swapping these 6 specs to `catalog:repo` would require first adding those 6 package names to `pnpm-workspace.yaml` (or creating a dedicated catalog). - Until then, the hardcoded `0.38.0` versions in `packages/cli/package.json` remain a m...",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-8",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673270",
+      "path": "packages/stack/package.json",
+      "line": 187,
+      "severity_label": "⚠️ Potential issue | 🟠 Major | 🏗️ Heavy lift",
+      "claim": "Restore CJS subpath export for `./wasm-inline`. `packages/stack/package.json` exports `./wasm-inline` with only an `\"import\"` branch; there is no `\"require\"` entry, so `require(\"`@cipherstash/stack/wasm-inline`\")` isn’t supported. Keep a CJS (`\"require\"`) export for this subpath (and ensure the corresponding artifact is present in `dist`/publish output) or move this to an explicit breaking-change release boundary.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-9",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673278",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 203,
+      "severity_label": "🛠️ Refactor suggestion | 🟠 Major | ⚡ Quick win",
+      "claim": "Hide the raw-client constructor before this API ships. A public `constructor(client: unknown)` lets consumers create invalid `WasmEncryptionClient` instances with arbitrary objects. Since this is a new public API, I'd keep construction behind `Encryption()` or an internal factory now, before the surface hardens.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-10",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673284",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 224,
+      "severity_label": "⚠️ Potential issue | 🟠 Major | ⚡ Quick win",
+      "claim": "Broaden the JSON value types on the public wrapper. The schema layer already supports `cast_as: 'json'`, but this wrapper only types JSON payloads as objects. That blocks valid `null` and array payloads for TS callers on the new `wasm-inline` API, and the same restriction leaks into `decrypt()`.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-11",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/496#discussion_r3307673289",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 251,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Reject conflicting auth inputs explicitly. `WasmClientConfig` documents `accessKey` and `strategy` as mutually exclusive, but `resolveStrategy()` silently prefers `strategy` when both are set. That makes config mistakes easy to miss.",
+      "is_nitpick": false
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/496#pullrequestreview-4368772166",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 314,
+      "severity_label": "duplicate comment | ⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Add a runtime guard for conflicting strategy + accessKey inputs.",
+      "is_nitpick": false,
+      "id": "CR-12"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/496#pullrequestreview-4368772166",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 198,
+      "severity_label": "duplicate comment | 🟠 Major | ⚡ Quick win",
+      "claim": "WasmEncryptionClient.__construct is publicly callable and re-opens arbitrary client wrapping.",
+      "is_nitpick": false,
+      "id": "CR-13"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/496#pullrequestreview-4368772166",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line": 108,
+      "severity_label": "duplicate comment | 🟠 Major | ⚡ Quick win",
+      "claim": "WasmPlaintext still omits null, which narrows JSON payload support.",
+      "is_nitpick": false,
+      "id": "CR-14"
+    }
+  ],
+  "notes": "Review 4368486141 posted 11 actionable comments (inline). Review 4368772166 body listed 3 duplicate comments (recorded as review_body findings). Summary comment present; reviews were auto-paused due to active development. Release-notes block removed from description.; CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442699112 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442698386 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442699707 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442699542 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442699478 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442700152 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442702684 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442699841 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442700060 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442700458 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/496#discussion_r3442700547 (not a finding)"
+}

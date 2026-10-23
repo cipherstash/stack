@@ -1,0 +1,110 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+  "head_sha": "7744caf8fef3234fca7dd28cb59c9a2516a5fdd3",
+  "merge_base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+    "cutoff_date": "2026-07-16T00:00:11+10:00",
+    "commits_read": 1479,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 1,
+    "additions": 1,
+    "deletions": 1,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 1
+    }
+  },
+  "dispersion": {
+    "components": {
+      ".": 1
+    },
+    "component_count": 1,
+    "top_level_dirs": {
+      ".": 1
+    },
+    "languages": {
+      "Markdown": 1
+    }
+  },
+  "path_classes": {
+    "agent_instructions": 1,
+    "docs": 1
+  },
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "AGENTS.md",
+        "commits": 19,
+        "commits_last_90d": 14,
+        "distinct_authors": 4
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [],
+    "bulk_commits_ignored": 21
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      "AGENTS.md": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 11
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 0,
+    "source_files_changed": 0,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [],
+    "mapping": [],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

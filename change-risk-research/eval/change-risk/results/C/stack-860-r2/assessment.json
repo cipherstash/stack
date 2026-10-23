@@ -1,0 +1,527 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "970e759801fd9f655c8b13db97dfe04fb5d06e96",
+  "head_sha": "49325032a84f9e438f09d771c29ccd8dd9ab9e66",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "available",
+      "source": "pr-description.md"
+    },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "16 check runs on the head commit, all success, plus CodeRabbit status success. Only job-level conclusions are given; no per-test logs, so skipped suites cannot be distinguished from executed ones."
+    },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md as an input. Repository AGENTS.md exists at head but was not used as an input."
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md. protect-ffi 0.31.0 source and its type declarations were not available (no node_modules, no network)."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "evidence.json reports no CODEOWNERS ownership data; not listed in CASE.md."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, history before base only)"
+    },
+    "deployment_context": {
+      "status": "unavailable"
+    }
+  },
+  "summary": "Bumps the exact pin on @cipherstash/protect-ffi from 0.30.0 to 0.31.0 in @cipherstash/stack (runtime dependency, so it reaches every consumer) and adapts to its breaking changes: the ProtectError class is replaced by a value-based isProtectErrorCode guard, the WASM newClient takes credentials under clientOpts and the strategy under authStrategy, WASM encryptConfig is no longer pre-normalised, and the undeclared correlation `id` is stripped from every bulk payload because 0.31 rejects unknown keys. The most material release risk is intended and loud: an explicitly supplied base64 clientKey now fails at client construction, which the change handles with a major changeset, skill documentation and a CI pre-flight. The item a reviewer should resolve is that the native entry still passes the strategy under the deprecated `strategy` name while the WASM entry was moved to `authStrategy`; if that alias is not honoured by the native binding, a caller's authStrategy would be dropped. All 16 CI checks passed, including credentialed integration and WASM Deno E2E jobs, which supports the bulk-payload and cast_as changes against the real 0.31 binary. I searched every native and WASM FFI call site at head and found no remaining undeclared payload keys.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "dependency",
+      "description": "@cipherstash/stack's runtime dependency on @cipherstash/protect-ffi moves from 0.30.0 to 0.31.0 (exact pin), so every consumer of stack gets the new native and WASM bindings on upgrade; the drizzle and supabase adapters change only their devDependency.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "An explicitly supplied clientKey (config.clientKey or CS_CLIENT_KEY) must now be hex. Under 0.30 base64 was also accepted; under 0.31 it is rejected at client construction. This is a protect-ffi behaviour reported in the changeset and PR, not code in this diff; the change documents it and marks stack major.",
+      "certainty": "inferred",
+      "evidence": ["E-3", "E-4", "E-5"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "configuration",
+      "description": "WASM entry newClient now receives authStrategy (was strategy), credentials nested under clientOpts (were top level), the encryptConfig without normalizeCastAs, and no `as never` cast. The native entry's newClient call is unchanged and still passes `strategy:`.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "public_contract",
+      "description": "Bulk encrypt/decrypt payloads (bulk-encrypt, bulk-decrypt and all eight model-helper call sites) no longer forward the correlation `id` to the FFI. Result correlation stays positional via the original array / keyMap.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9", "E-10"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "error_handling",
+      "description": "getErrorCode and the DynamoDB handleError now classify an error by whether its `code` value is a known protect-ffi code, instead of `instanceof ProtectError`. DynamoDB errors whose code is any other string (e.g. ECONNRESET) now report DYNAMODB_ENCRYPTION_ERROR rather than passing the foreign code through.",
+      "certainty": "observed",
+      "evidence": ["E-11", "E-12", "E-4"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "build_or_release",
+      "description": "The require-cs-secrets composite action gains a step that fails a credentialed CI job when CS_CLIENT_KEY is not even-length hex. It never echoes the key.",
+      "certainty": "observed",
+      "evidence": ["E-13"]
+    },
+    {
+      "id": "BC-7",
+      "kind": "documentation",
+      "description": "The bundled stash-auth agent skill (shipped to customer repositories) gains guidance that CS_CLIENT_KEY must be hex, with a recovery path that differs between the native and wasm-inline entries.",
+      "certainty": "observed",
+      "evidence": ["E-5"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack native entry (Encryption / newClient)",
+      "kind": "public_api",
+      "relationship": "confirmed",
+      "how": "Constructs the native protect-ffi client with clientOpts and the deprecated `strategy` field; runs on 0.31.0 after this change.",
+      "evidence": ["E-7", "E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack/wasm-inline entry",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "newClient option shape, encryptConfig normalisation and typing changed.",
+      "evidence": ["E-6"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Bulk and model encryption operations (bulk-encrypt, bulk-decrypt, model-helpers)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "Payloads sent across the FFI boundary no longer carry `id`.",
+      "evidence": ["E-8", "E-9", "E-10"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Error code surface (getErrorCode, DynamoDB handleError, EncryptedDynamoDBError.code)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Code classification changed; callers that branch on error.code see different values for non-FFI errors.",
+      "evidence": ["E-11", "E-12"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Customer deployments supplying an explicit clientKey",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Any deployment whose CS_CLIENT_KEY / config.clientKey is base64 fails at construction after upgrading; existence of such deployments is not shown.",
+      "evidence": ["E-3", "E-5"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Credentialed CI workflows (tests, integration-drizzle/supabase/prisma-next, prisma e2e)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "All call the require-cs-secrets action, which now also asserts hex encoding.",
+      "evidence": ["E-13", "E-14"]
+    },
+    {
+      "id": "AC-7",
+      "name": "Bundled stash-auth skill",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Shipped guidance about CS_CLIENT_KEY encoding.",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "AC-8",
+      "name": "Fixed release group (stash, wizard, adapters) via major changeset",
+      "kind": "published_artifact",
+      "relationship": "likely",
+      "how": "Changeset text states the fixed group takes stash, wizard and the three adapters to 2.0.0 with stack; the changeset config was not read.",
+      "evidence": ["E-4"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Deployments with a base64 clientKey fail at client construction after upgrading",
+      "trigger": "A customer upgrades @cipherstash/stack with CS_CLIENT_KEY or config.clientKey holding the base64 form (e.g. copied from ~/.cipherstash/secretkey.json).",
+      "affected_components": ["AC-1", "AC-2", "AC-5"],
+      "mechanism": "stack pins protect-ffi exactly, so the upgrade forces 0.31.0, whose clientKey decoder is reported to be hex-only. The error message deliberately omits detail. On wasm-inline there is no profile-store fallback; clientId/clientKey are required config.",
+      "consequence": "Every encryption and decryption operation in the affected service fails from startup until the key is re-encoded. The failure is loud and recoverable without data loss, but it is a full outage of the encryption path for that service.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-4", "E-5"],
+      "existing_verification": [
+        {
+          "description": "Credentialed CI jobs passed on head, behind the new hex pre-flight, showing a hex key constructs and operates on 0.31.0.",
+          "status": "ran_passed",
+          "evidence": ["E-15", "E-13"]
+        }
+      ],
+      "missing_verification": [
+        "No test asserts the base64 rejection or its error message (the behaviour lives in protect-ffi, whose source was unavailable).",
+        "Number of customers supplying base64 keys is unknown."
+      ],
+      "mitigation": "Already mitigated by a major version bump, changeset upgrade notes and the stash-auth skill. Make sure the release notes put the hex requirement first. Consider a stack-side pre-construction check that names encoding as the likely cause without echoing the key.",
+      "domain_tags": [
+        "key_management",
+        "public_api",
+        "dependency",
+        "configuration"
+      ]
+    },
+    {
+      "id": "FS-2",
+      "title": "Native entry still passes `strategy`; a supplied authStrategy could be dropped by 0.31",
+      "trigger": "A caller passes config.authStrategy (e.g. OidcFederationStrategy) to the native Encryption client, and the 0.31 native binding does not honour the deprecated `strategy` name.",
+      "affected_components": ["AC-1"],
+      "mechanism": "The same change renames strategy to authStrategy on the WASM entry because 0.31 renamed the field. Its own test comments say `strategy` 'still works there as a deprecated alias' and is 'slated for removal'. The native call at encryption/index.ts:143 still sends `strategy: config.authStrategy`. The PR states that both entries now deserialize the same NewClientOptions. If the alias is not honoured now, or is removed in a later protect-ffi bump, the client falls back to the default auto strategy using env credentials.",
+      "consequence": "Without lock context, operations could run under the service's ambient credentials instead of the caller's federated identity. With lock context, operations would fail. This is an identity-binding change on the auth path.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-7", "E-6", "E-16", "E-17"],
+      "existing_verification": [
+        {
+          "description": "init-strategy.test.ts asserts that the strategy reaches a MOCKED newClient as opts.strategy. It cannot show that the real 0.31 binding honours the name.",
+          "status": "exists_not_run",
+          "evidence": ["E-17"]
+        },
+        {
+          "description": "matrix-identity.integration.test.ts passes authStrategy to the native client live. The Drizzle integration job that globs it passed, but the suite skips without CLERK_MACHINE_TOKEN, and job-level results cannot show whether it ran.",
+          "status": "unknown",
+          "evidence": ["E-18", "E-15"]
+        }
+      ],
+      "missing_verification": [
+        "Confirmation, from 0.31.0's native NewClientOptions declaration or a live run, that `strategy` is honoured on the native binding.",
+        "A non-mocked test that a native client built with authStrategy actually calls the strategy's getToken()."
+      ],
+      "mitigation": "Pass `authStrategy: config.authStrategy` on the native entry as well, matching the WASM change, and update init-strategy.test.ts. Alternatively, confirm the alias against the 0.31.0 typings and Rust deserializer before release.",
+      "domain_tags": [
+        "authorization",
+        "key_management",
+        "dependency",
+        "public_api"
+      ]
+    },
+    {
+      "id": "FS-3",
+      "title": "WASM encryptConfig no longer pre-normalised; a cast mapped differently by 0.31 would change column semantics",
+      "trigger": "A WASM-entry schema uses an SDK cast_as variant that 0.31's Rust-side normalisation maps differently from stack's toEqlCastAs, or does not accept.",
+      "affected_components": ["AC-2"],
+      "mechanism": "normalizeCastAs was removed from the newClient path (it is kept only as deprecated). The SDK spelling now reaches protect-ffi, which is reported to normalise on both bindings. The native entry already relied on FFI normalisation before this change, so the WASM entry now converges on native behaviour.",
+      "consequence": "The likely failure is loud: client construction fails for that column type. If the mapping differed silently, values could be encrypted with a different plaintext cast than native clients use for the same column. Query terms could then fail to match or values could decode as the wrong type across entries.",
+      "impact": "medium",
+      "basis": "speculative",
+      "evidence": ["E-6", "E-19"],
+      "existing_verification": [
+        {
+          "description": "Run WASM E2E Tests (Deno) passed on head against the real 0.31 WASM build.",
+          "status": "ran_passed",
+          "evidence": ["E-15"]
+        },
+        {
+          "description": "wasm-inline-new-client / wasm-inline-v3 tests assert the 'string' spelling is forwarded (mocked FFI).",
+          "status": "exists_not_run",
+          "evidence": ["E-19"]
+        }
+      ],
+      "missing_verification": [
+        "No test runs every CastAs variant through the real 0.31 WASM newClient and compares the result with native output."
+      ],
+      "mitigation": "Add a cross-entry round-trip test over all cast_as variants: encrypt on WASM, decrypt on native and the reverse.",
+      "domain_tags": ["serialization_compatibility", "encryption", "dependency"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Callers branching on DynamoDB error.code stop matching transport errors",
+      "trigger": "A consumer's retry or alerting logic keys off EncryptedDynamoDBError.code values such as ECONNRESET.",
+      "affected_components": ["AC-4"],
+      "mechanism": "handleError now returns the code only if isProtectErrorCode accepts it; otherwise DYNAMODB_ENCRYPTION_ERROR.",
+      "consequence": "Retries on transient network faults stop firing, or errors are categorised differently in monitoring. The change is intentional, documented in the changeset and reversible by the caller.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-12", "E-4"],
+      "existing_verification": [
+        {
+          "description": "New handleError tests in resolve-decrypt.test.ts and getErrorCode tests in error-helpers.test.ts cover the foreign-code, valid-code and no-code paths (credential-free). Node 22/24/Bun test jobs passed.",
+          "status": "ran_passed",
+          "evidence": ["E-20", "E-15"]
+        }
+      ],
+      "missing_verification": [],
+      "mitigation": "Already documented in the major changeset. Optionally preserve the original error as `cause` so callers can still inspect transport codes.",
+      "domain_tags": ["public_api", "retry_idempotency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "Nothing non-mocked shows that the native binding honours the `strategy` field under 0.31; the only live identity suite may skip silently.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-17", "E-18"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The base64 rejection and its operator-facing message are not tested in this repo. They depend on protect-ffi internals, which were unavailable for this assessment.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No cross-entry check that every cast_as variant normalises identically on WASM and native under 0.31.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-19"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Change the native newClient call in packages/stack/src/encryption/index.ts to pass `authStrategy`, matching the WASM entry, and update init-strategy.test.ts. Alternatively, confirm from the 0.31.0 declarations that `strategy` is honoured on native.",
+      "addresses": ["FS-2", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Make sure the identity integration suite runs rather than skips in CI, for example by failing when CLERK_MACHINE_TOKEN is absent on trusted runs. That gives live coverage of authStrategy on the native entry.",
+      "addresses": ["FS-2", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "Lead the 2.0.0 release notes with the hex-only clientKey requirement and the wasm-inline recovery path. Consider a stack-side construction check that points at encoding.",
+      "addresses": ["FS-1", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "compatibility_check",
+      "description": "Add a WASM-to-native round-trip test across all cast_as variants under 0.31.0.",
+      "addresses": ["FS-3", "VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "protect-ffi 0.31.0's source, typings and release notes were not available (no node_modules, no network). All claims about its behaviour (hex-only clientKey, strict unknown-key rejection, the `strategy` alias, Rust-side cast normalisation) come from the PR description, changeset and code comments in the diff.",
+      "effect": "BC-2 and the triggers of FS-1 to FS-3 rest on the author's account of the dependency; they could not be independently confirmed."
+    },
+    {
+      "id": "CL-2",
+      "description": "CI results give only job-level conclusions. Suites that gate themselves on secrets, such as the Clerk identity suite and the live error-codes suite, may have skipped inside a passing job.",
+      "effect": "ran_passed is claimed only at job level; per-suite execution is unknown."
+    },
+    {
+      "id": "CL-3",
+      "description": "The unknown-key concern was checked by reading every native FFI call site in packages/stack/src at head (encrypt, decrypt, encrypt-query batch, bulk-encrypt, bulk-decrypt, model-helpers) and the WASM bulk/model call sites. Only `id` was undeclared, and it is now stripped. Other packages (stack-prisma, cli, wizard) were not searched for direct protect-ffi calls.",
+      "effect": "A direct protect-ffi caller outside packages/stack with extra keys would be missed; none were found among the drizzle/supabase src imports, which are type-only."
+    },
+    {
+      "id": "CL-4",
+      "description": "The changeset config (fixed groups) and pnpm-lock.yaml were not read in detail.",
+      "effect": "The claim that the fixed group bumps sibling packages to 2.0.0 is taken from the changeset text."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "line_start": 219,
+      "line_end": 219,
+      "claim": "@cipherstash/protect-ffi pinned exactly to 0.31.0 as a runtime dependency of @cipherstash/stack.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "history_signal",
+      "signal": "dependencies",
+      "claim": "Collector reports protect-ffi 0.30.0 -> 0.31.0 in stack dependencies and in the drizzle/supabase devDependencies.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "pr_description",
+      "claim": "The PR describes the new hex-only clientKey and a CI pre-flight added because a base64 secret makes all credentialed workflows fail with a message that never mentions encoding.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "documentation",
+      "path": ".changeset/olive-pugs-invite.md",
+      "line_start": 1,
+      "line_end": 44,
+      "claim": "Major changeset: clientKey must be hex and base64 is rejected at construction; DynamoDB error codes are now checked against the known set; bulk ops no longer forward the id.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "documentation",
+      "path": "skills/stash-auth/SKILL.md",
+      "line_start": 209,
+      "line_end": 228,
+      "claim": "The bundled skill says CS_CLIENT_KEY must be hex and that wasm-inline has no profile-store fallback.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line_start": 1523,
+      "line_end": 1563,
+      "claim": "WASM newClient now passes authStrategy, clientOpts {clientId, clientKey}, an unnormalised encryptConfig and eqlVersion 3. Comments say keyset at top level would be silently ignored, and that 0.31 renamed strategy to authStrategy.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "line_start": 134,
+      "line_end": 145,
+      "claim": "The native newClient call (unchanged by this diff) passes `strategy: config.authStrategy`, with credentials and keyset under clientOpts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/model-helpers.ts",
+      "line_start": 91,
+      "line_end": 96,
+      "claim": "withoutId strips `id` from bulk payloads and is applied at all eight encryptBulk/decryptBulk call sites; results are correlated by index via keyMap.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/bulk-encrypt.ts",
+      "line_start": 46,
+      "line_end": 55,
+      "claim": "createEncryptPayloads no longer includes id.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/bulk-decrypt.ts",
+      "line_start": 30,
+      "line_end": 37,
+      "claim": "createDecryptPayloads no longer includes id.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/error-code.ts",
+      "line_start": 19,
+      "line_end": 22,
+      "claim": "getErrorCode returns a code only when isProtectErrorCode accepts its value.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "packages/stack/src/dynamodb/helpers.ts",
+      "line_start": 55,
+      "line_end": 58,
+      "claim": "handleError uses isProtectErrorCode, otherwise DYNAMODB_ENCRYPTION_ERROR; previously any string code was passed through.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": ".github/actions/require-cs-secrets/action.yml",
+      "line_start": 59,
+      "line_end": 76,
+      "claim": "The new step fails the job unless CS_CLIENT_KEY matches ^[0-9a-fA-F]+$ with even length; it prints only the length.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "line_start": 102,
+      "line_end": 106,
+      "claim": "tests.yml (and the integration workflows) call require-cs-secrets with secrets.CS_CLIENT_KEY.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "ci_result",
+      "claim": "All 16 check runs on the head commit succeeded, including Run Tests (Node 22/24, Bun), Run E2E Tests, Run WASM E2E Tests (Deno), Drizzle/Supabase/prisma-next v3 integration and Lint.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "test",
+      "path": "packages/stack/__tests__/wasm-inline-new-client.test.ts",
+      "line_start": 119,
+      "line_end": 138,
+      "claim": "The test comment says `strategy` still works as a deprecated alias slated for removal, and asserts the WASM call uses authStrategy with no strategy field.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "test",
+      "path": "packages/stack/__tests__/init-strategy.test.ts",
+      "line_start": 22,
+      "line_end": 107,
+      "claim": "With protect-ffi mocked, the test asserts the native client forwards the strategy as opts.strategy.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "test",
+      "path": "packages/stack/integration/identity/matrix-identity.integration.test.ts",
+      "line_start": 15,
+      "line_end": 55,
+      "claim": "The live native-client identity suite uses config.authStrategy with OidcFederationStrategy and skips when CLERK_MACHINE_TOKEN is unset.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "test",
+      "path": "packages/stack/__tests__/wasm-inline-new-client.test.ts",
+      "line_start": 98,
+      "line_end": 117,
+      "claim": "The mocked-FFI test now expects cast_as 'string' to reach newClient unnormalised.",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "test",
+      "path": "packages/stack/__tests__/dynamodb/resolve-decrypt.test.ts",
+      "line_start": 378,
+      "line_end": 406,
+      "claim": "The new handleError tests cover ECONNRESET mapping to DYNAMODB_ENCRYPTION_ERROR, UNKNOWN_COLUMN being preserved, and missing or non-string codes.",
+      "status": "verified"
+    }
+  ]
+}

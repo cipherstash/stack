@@ -1,0 +1,401 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+  "head_sha": "67dcd0b562016d830331b73328fedcec4e3baa25",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff / git diff base..head"
+    },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "9 check runs on head, all success; per-test output not included"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md, CLAUDE.md and packages/cli/AGENTS.md at head only"
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Only workspace package.json files read; no registry or dist-tag state"
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md inputs"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, pre-base history)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No npm registry state, publish logs or release history after head"
+    }
+  },
+  "summary": "The stash CLI now embeds, at build time, the versions of six release-train packages read from sibling workspace manifests, and uses them to pin every install `stash init` performs, every install hint, the context.json installCommand and the one-shot wizard spawn. It also warns on any exact-version mismatch between node_modules and the embed and, interactively, offers (default yes) to 'align' skewed packages. The fix is well tested for the stale-dist-tag case it targets, and CI (unit, E2E incl. a built-artifact embed check) passed. The main release risk is structural: Changesets versions these packages independently (no fixed group) and stash only dev/optional-peer depends on @cipherstash/stack, so a stack or adapter release does not rebuild stash. The embedded pins then go stale: init installs an older @cipherstash/stack/adapter than is current, and for projects already on the newer version it reports 'skew' and offers to downgrade them, which the shipped stash-cli skill tells agents to accept. That reverses the guarantee the PR claims ('can never disagree with what Changesets publishes') once releases stop moving together, e.g. after GA. A secondary, loud risk is a pin naming a version that was never published. Impact is medium; the downgrade path is untested.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "external_side_effect",
+      "description": "`stash init` installs @cipherstash/stack, the integration adapter and stash pinned to exact versions embedded at build time instead of bare names resolved via dist-tags.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-7"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "external_side_effect",
+      "description": "New version-skew check: any installed release-train package whose node_modules version differs (exact string inequality, newer or older) from the embed is warned about; interactively the same confirm (initialValue true) that installs missing packages also reinstalls skewed packages at the embedded version; non-interactively it only prints align commands.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "tsup build reads ../stack, ../stack-drizzle, ../stack-supabase, ../prisma-next, ../wizard and ./package.json and defines __STASH_RUNTIME_VERSIONS__ in both bundles; a missing manifest fails the build and a malformed embed throws at CLI module load.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "public_contract",
+      "description": "Generated/printed guidance is pinned: missing-package hints, native-binary recovery hint (was stash@latest), install-eql manual note, .cipherstash/context.json installCommand, and `stash wizard` now spawns @cipherstash/wizard@<embedded>.",
+      "certainty": "observed",
+      "evidence": ["E-13", "E-14"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "documentation",
+      "description": "Shipped skills: stash-cli says installs are pinned and agents must treat a skew warning as a real problem and align; four other skills add a verify-what-resolved note.",
+      "certainty": "observed",
+      "evidence": ["E-8"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/cli init install-deps step",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "Pins installs, computes skew, offers alignment.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "CLI build-time version embed (tsup.config.ts, release-train.ts, runtime-versions.ts)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Versions frozen into the published stash bundle at build time.",
+      "evidence": ["E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Release pipeline (Changesets pre-mode, `pnpm run build && changeset publish`)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Decides which packages are rebuilt and republished together; stash is rebuilt only when it has its own bump.",
+      "evidence": ["E-3", "E-4", "E-12", "E-16"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Customer projects running `stash init` / `stash wizard`",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Receive the pinned installs, skew warnings and align prompts.",
+      "evidence": ["E-1", "E-13"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Shipped agent skills (skills/stash-*)",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Copied into customer repos; instruct agents to align on skew.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-6",
+      "name": ".cipherstash/context.json installCommand",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Agents copy the pinned install command.",
+      "evidence": ["E-14"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Pins go stale after a sibling release; init installs older packages and offers to downgrade newer ones",
+      "trigger": "@cipherstash/stack (or an adapter, prisma-next, wizard) publishes a new version in a release that does not also bump stash, e.g. a stack patch after GA.",
+      "affected_components": ["AC-1", "AC-2", "AC-3", "AC-4", "AC-5"],
+      "mechanism": "Versions are captured only when stash is built (tsup.config.ts:33-58). Changesets has no fixed/linked group (.changeset/config.json:5-6) and stash depends on @cipherstash/stack only as a devDependency and an optional peer `>=1.0.0-rc.0` with onlyUpdatePeerDependentsWhenOutOfRange (packages/cli/package.json:68-78, config.json:12), so a stack release does not bump or rebuild stash; the adapters and wizard have no dependency edge to stash at all. The latest stash therefore keeps pinning the previous versions. versionSkew flags any inequality, including installed > expected (install-deps.ts:74), and interactively folds the 'align' reinstall into the install confirm with initialValue true (install-deps.ts:175-226). The stash-cli skill tells agents to 'treat that warning as a real problem and align versions' (skills/stash-cli/SKILL.md:39).",
+      "consequence": "Fresh `stash init` silently installs an older encryption client/adapter than is current (missing fixes, potentially security fixes) and records it in context.json; projects already on the newer version get a skew warning, and accepting the default prompt or following the skill downgrades @cipherstash/stack/adapters. `stash wizard` runs an older wizard. Recoverable by reinstalling, but it happens through the official setup path and looks intentional.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-5", "E-8", "E-9", "E-15"],
+      "existing_verification": [
+        {
+          "description": "Unit tests cover skew where the installed version is OLDER than the embed (0.19.0 vs fixture) and the align path; CI unit runs passed.",
+          "status": "ran_passed",
+          "evidence": ["E-9", "E-10"]
+        }
+      ],
+      "missing_verification": [
+        "A test where the installed version is newer than the embedded version (should not offer a downgrade, or should default to no).",
+        "A release-process check that stash is republished whenever any RELEASE_TRAIN package is published (or that the pins are allowed to lag)."
+      ],
+      "mitigation": "Only treat installed < expected (semver compare) as skew to align, and default the align confirm to false or separate it from the missing-install confirm; soften the skill wording. Release side: put the release-train packages in a Changesets `fixed` group, or pin with a range (e.g. ^embedded) after GA so newer compatible releases are accepted.",
+      "domain_tags": ["dependency", "build_release"]
+    },
+    {
+      "id": "FS-2",
+      "title": "An embedded pin names a version that is not installable from npm",
+      "trigger": "Within `pnpm run build && changeset publish`, stash publishes but a sibling's publish fails or is delayed, or a manifest carries a version that was never published.",
+      "affected_components": ["AC-1", "AC-2", "AC-3", "AC-4"],
+      "mechanism": "The build reads all six manifests before publish (package.json:34; tsup.config.ts:33-58), so the embed is whatever the manifests say, not what reached the registry. Previously a bare name always resolved to something; now an exact spec for a missing version fails the install (install-deps.ts pinned commands) and `stash wizard` fails to spawn.",
+      "consequence": "`stash init` cannot install dependencies for every new user of that stash release until another stash release is published (npm publishes are irreversible). Loud, not silent; users can install manually.",
+      "impact": "medium",
+      "basis": "speculative",
+      "evidence": ["E-5", "E-12", "E-13"],
+      "existing_verification": [
+        {
+          "description": "release-train.test.ts checks each train manifest exists with a version; it cannot check registry availability.",
+          "status": "ran_passed",
+          "evidence": ["E-11", "E-10"]
+        }
+      ],
+      "missing_verification": [
+        "Post-publish smoke check that each embedded name@version resolves on npm before announcing the stash release."
+      ],
+      "mitigation": "Add a post-publish step that runs `npm view <pkg>@<version>` for every embedded pin, or publish stash last in the release.",
+      "domain_tags": ["build_release", "dependency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test for an installed version newer than the embedded pin; all skew tests use an older installed version.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-9"]
+    },
+    {
+      "id": "VG-2",
+      "description": "Nothing checks that the release process rebuilds stash whenever a release-train package publishes, or that embedded pins exist on npm.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-3", "E-12"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Decide the intended policy for installed > embedded: do not offer a downgrade (semver-compare), and default the align confirm to false or split it from the missing-install confirm. Adjust skills/stash-cli/SKILL.md:39 accordingly.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add install-deps tests for installed-newer-than-embedded in interactive and non-interactive modes.",
+      "addresses": ["VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "compatibility_check",
+      "description": "Put the RELEASE_TRAIN_MANIFESTS packages in a Changesets `fixed` group (or otherwise force a stash release when any of them publishes), or switch to range pins after GA.",
+      "addresses": ["FS-1", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "monitoring",
+      "description": "After `changeset publish`, verify every embedded name@version resolves on the registry before the release is announced.",
+      "addresses": ["FS-2", "VG-2"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No npm registry access: could not confirm that the currently embedded versions (e.g. @cipherstash/wizard 0.5.0-rc.1, @cipherstash/prisma-next 0.4.0-rc.1) are published.",
+      "effect": "FS-2 trigger likelihood unknown."
+    },
+    {
+      "id": "CL-2",
+      "description": "Could not observe how Changesets pre-mode / future GA releases are actually cut (which packages ship together); reasoning is from .changeset/config.json and package.json only.",
+      "effect": "FS-1 trigger depends on release practice; it may be rare during the rc window when most packages move together."
+    },
+    {
+      "id": "CL-3",
+      "description": "CI results give check-level conclusions only; individual test outcomes are inferred from those, and the PR's 471/57 counts are unverified claims.",
+      "effect": "ran_passed statuses rest on the check-run conclusions."
+    },
+    {
+      "id": "CL-4",
+      "description": "Tests and the four skill version notes were skimmed; install-deps.ts, runtime-versions.ts, tsup.config.ts, release-train.ts and wizard spawn were read closely. Package-manager-specific behaviour of exact prerelease specs (e.g. pnpm minimumReleaseAge cooldowns in customer projects) was not examined.",
+      "effect": "Other install-time failure modes may exist."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/src/commands/init/steps/install-deps.ts",
+      "rev": "head",
+      "line_start": 64,
+      "line_end": 77,
+      "claim": "versionSkew flags any installed release-train package whose version !== the embedded version, with no ordering comparison.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/cli/src/commands/init/steps/install-deps.ts",
+      "rev": "head",
+      "line_start": 175,
+      "line_end": 227,
+      "claim": "Interactive runs add skewed packages to the install commands under one confirm whose initialValue is true.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": ".changeset/config.json",
+      "rev": "head",
+      "line_start": 5,
+      "line_end": 13,
+      "claim": "No fixed or linked groups; updateInternalDependencies patch; onlyUpdatePeerDependentsWhenOutOfRange true.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/cli/package.json",
+      "rev": "head",
+      "line_start": 48,
+      "line_end": 86,
+      "claim": "stash has no runtime dependency on @cipherstash/stack, the adapters or wizard; only an optional peer >=1.0.0-rc.0 and a workspace devDependency on stack.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 33,
+      "line_end": 58,
+      "claim": "Embedded versions are read from sibling workspace manifests at stash build time.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/cli/src/release-train.ts",
+      "rev": "head",
+      "line_start": 21,
+      "line_end": 27,
+      "claim": "Release train: stash, stack, stack-drizzle, stack-supabase, prisma-next, wizard.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/cli/src/runtime-versions.ts",
+      "rev": "head",
+      "line_start": 36,
+      "line_end": 94,
+      "claim": "Malformed embed throws at module load; pinnedSpec returns pkg@embeddedVersion or the bare name in source mode.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "documentation",
+      "path": "skills/stash-cli/SKILL.md",
+      "rev": "head",
+      "line_start": 39,
+      "line_end": 39,
+      "claim": "Shipped skill tells agents to treat a skew warning as a real problem and align versions before continuing.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "test",
+      "path": "packages/cli/src/commands/init/steps/__tests__/install-deps.test.ts",
+      "rev": "head",
+      "line_start": 153,
+      "line_end": 236,
+      "claim": "Skew tests only use installed versions older than the fixture (0.19.0) or unreadable manifests; no installed-newer case.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "ci_result",
+      "claim": "All 9 check runs on head succeeded, including Run Tests (Node 22, Node 24, Bun), Run E2E Tests and Lint (Biome).",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "test",
+      "path": "packages/cli/src/__tests__/release-train.test.ts",
+      "rev": "head",
+      "line_start": 37,
+      "line_end": 48,
+      "claim": "Test checks each train manifest exists with a name and version; nothing checks registry availability.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 34,
+      "line_end": 34,
+      "claim": "Release script is `pnpm run build && changeset publish`: all packages built (embed captured) before any publish.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/cli/src/commands/wizard/index.ts",
+      "rev": "head",
+      "line_start": 48,
+      "line_end": 48,
+      "claim": "`stash wizard` spawns the runner with @cipherstash/wizard pinned to the embedded version.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "packages/cli/src/commands/init/lib/write-context.ts",
+      "rev": "head",
+      "line_start": 106,
+      "line_end": 106,
+      "claim": "context.json installCommand uses the pinned @cipherstash/stack spec.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "pr_description",
+      "claim": "PR states the embed 'can never disagree with what Changesets publishes together', which only holds for packages published in the same release as stash.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": ".changeset/pre.json",
+      "rev": "head",
+      "line_start": 2,
+      "line_end": 3,
+      "claim": "Repository is in Changesets pre-release mode with tag rc.",
+      "status": "verified"
+    }
+  ]
+}

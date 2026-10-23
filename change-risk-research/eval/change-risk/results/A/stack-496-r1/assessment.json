@@ -1,0 +1,573 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+  "head_sha": "c39e895ca967c5b1f8241539da0b543334d973bd",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor. No node_modules installed, so dependency contents (protect-ffi 0.24.0, auth 0.38.0) could not be inspected."
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title is given in CASE.md."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": { "status": "unavailable" },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": { "status": "unavailable" },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (base ancestry only)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Adds a new ESM-only `@cipherstash/stack/wasm-inline` subpath (minimal encrypt/decrypt client over protect-ffi's WASM build) plus a Deno CI smoke test and a Supabase example. The release risk is mostly not in the new subpath but in what moves with it for every existing consumer: protect-ffi is bumped 0.23.0 -> 0.24.0 under the main Node entry (with a new node/default conditional-exports split, per the author's tsconfig comment), the main build now bundles zod and @byteslice/result, @cipherstash/auth moves 0.36 -> 0.38 for the shipped CLI and wizard, and the stack version is bumped by hand to 0.18.0 even though the repo releases via changesets and a pending minor changeset exists, with no changeset for this change. The WASM client also drops the Node entry's null short-circuit, so a null plaintext is encrypted rather than passed through. No CI results were available and protect-ffi/auth changelogs could not be read, so compatibility of 0.24 payloads with the EQL 2.3.1 bundle is unknown.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "New published subpath `./wasm-inline` (import condition only, no require) exporting Encryption, WasmEncryptionClient, schema builders and isEncrypted. The client exposes only encrypt/decrypt that return raw values and throw on error, unlike the Node entry's Result objects; it has no lock context, bulk or query operations.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "dependency",
+      "description": "@cipherstash/protect-ffi bumped 0.23.0 -> 0.24.0 for the main Node entry used by all stack consumers. Per the author's tsconfig comment, 0.24 uses conditional exports where `node` selects NAPI and `default` selects the WASM bundle with a different newClient signature.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4", "E-5"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "tsup main config switches clean:true -> clean:false (dist cleared by a new prebuild script) and adds zod and @byteslice/result to noExternal, so these are bundled into every main-entry ESM/CJS output, not only wasm-inline.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "packages/stack version set manually 0.17.0 -> 0.18.0 with no changeset added; the repo releases via changesets and an unreleased minor changeset for stack is already pending.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9", "E-10", "E-11"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "dependency",
+      "description": "@cipherstash/auth catalog bumped 0.36.0 -> 0.38.0 (used at runtime by the shipped CLI login/init and wizard prerequisites); cli and wizard now declare six per-platform auth binaries as optionalDependencies because auth 0.38 makes them optional peers. stack gains @cipherstash/auth as a runtime dependency.",
+      "certainty": "observed",
+      "evidence": ["E-12", "E-13", "E-14"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "invariant",
+      "description": "WASM client encrypt passes plaintext straight to protect-ffi, and WasmPlaintext explicitly admits null; the Node entry short-circuits null to null.",
+      "certainty": "observed",
+      "evidence": ["E-15", "E-16"]
+    },
+    {
+      "id": "BC-7",
+      "kind": "configuration",
+      "description": "New CI job wasm-e2e-tests builds stack and runs a Deno round-trip without FFI permission; it fails if the CS_* secrets are absent (e.g. fork PRs). The integration-test Postgres image stays on EQL 2.3.1, which the workflow comment says is tied to protect-ffi 0.23.x.",
+      "certainty": "observed",
+      "evidence": ["E-17", "E-5"]
+    },
+    {
+      "id": "BC-8",
+      "kind": "build_or_release",
+      "description": "pnpm-lock.yaml regenerated; besides the auth/protect-ffi updates it drops `libc:` constraints from many platform packages, suggesting a different pnpm version produced it. Affects repo installs only, not published packages.",
+      "certainty": "inferred",
+      "evidence": ["E-18"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack main (Node) entry",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Runs on protect-ffi 0.24.0 and is rebuilt with zod/@byteslice/result bundled.",
+      "evidence": ["E-3", "E-6"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack/wasm-inline",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "New subpath and client.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-3",
+      "name": "packages/cli (stash CLI)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "auth 0.38 and new optionalDependencies; login.ts uses beginDeviceCodeFlow/bindClientDevice from @cipherstash/auth; also a peer of stack and installs EQL 2.3.1.",
+      "evidence": ["E-12", "E-13", "E-19"]
+    },
+    {
+      "id": "AC-4",
+      "name": "packages/wizard",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "auth 0.38 and new optionalDependencies; uses AutoStrategy.detect().",
+      "evidence": ["E-12", "E-14"]
+    },
+    {
+      "id": "AC-5",
+      "name": "In-repo stack consumers (migrate, prisma-next, bench)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Depend on @cipherstash/stack via workspace:* and receive protect-ffi 0.24 and the rebuilt main entry.",
+      "evidence": ["E-20"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Changesets release workflow",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Computes published versions from package.json + pending changesets.",
+      "evidence": ["E-10", "E-11"]
+    },
+    {
+      "id": "AC-7",
+      "name": "examples/supabase-worker",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Imports npm:@cipherstash/stack@^0.18.0/wasm-inline.",
+      "evidence": ["E-21"]
+    },
+    {
+      "id": "AC-8",
+      "name": "Test JS workflow",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New wasm-e2e-tests job; EQL image unchanged.",
+      "evidence": ["E-17", "E-5"]
+    },
+    {
+      "id": "AC-9",
+      "name": "Customer data encrypted by stack / EQL 2.3.1 SQL bundle",
+      "kind": "database",
+      "relationship": "likely",
+      "how": "Payloads written by protect-ffi 0.24 must remain readable by EQL 2.3.1 functions and older clients; whether 0.24 changed payloads is unknown.",
+      "evidence": ["E-5", "E-19"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "protect-ffi 0.24 changes main-entry behaviour or payloads without the EQL/CLI lockstep bump",
+      "trigger": "A stack consumer upgrades to the release carrying this change, or bundles the main entry with a bundler whose conditions omit `node`.",
+      "affected_components": ["AC-1", "AC-5", "AC-9", "AC-3"],
+      "mechanism": "packages/stack/package.json:217 moves protect-ffi to 0.24.0. The workflow comment (tests.yml:21-25) says the EQL image is pinned to match the payload format of protect-ffi 0.23.x and must be bumped in lockstep; it is not, and the CLI still installs eql-2.3.1. The author's tsconfig comment says 0.24 resolves `default` to the WASM bundle with a different newClient signature, so a consumer bundle resolving without the `node` condition would call the NAPI-style newClient({...}) (encryption/index.ts:81) against the WASM API. The dependency's own changelog was not available.",
+      "consequence": "If 0.24 changed payload or search-term shape, newly written ciphertexts or query terms may not match what EQL 2.3.1 in customer databases or older clients expect (wrong query results). With a non-node bundle, client initialisation fails for that deployment.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-4", "E-5", "E-19", "E-22"],
+      "existing_verification": [
+        {
+          "description": "Stack/drizzle integration tests run in the run-tests job against postgres-eql 2.3.1 with real credentials.",
+          "status": "exists_not_run",
+          "evidence": ["E-5"]
+        }
+      ],
+      "missing_verification": [
+        "Review of protect-ffi 0.24.0 release notes for payload, search-term and API changes.",
+        "Round-trip and query test of data written by 0.23.0 read by 0.24.0 (and vice versa).",
+        "A check that the built main entry resolves to NAPI under common bundlers (Next.js server, Vite SSR, esbuild)."
+      ],
+      "mitigation": "Confirm 0.24 is payload-compatible with EQL 2.3.1 or bump EQL/CLI bundle together; add a changeset describing the protect-ffi bump; document the node-condition requirement for the main entry.",
+      "domain_tags": ["serialization_compatibility", "dependency", "encryption"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Manual 0.18.0 bump collides with changesets; example's ^0.18.0 never resolves",
+      "trigger": "The changesets release action runs after merge.",
+      "affected_components": ["AC-6", "AC-7", "AC-1"],
+      "mechanism": "package.json:3 is set to 0.18.0 by hand while CHANGELOG still tops out at 0.17.0 and .changeset/restore-null-guards-in-encryption-ops.md requests a stack minor bump. changeset version bumps from the current 0.18.0 to 0.19.0, so 0.18.0 is never published, and for a 0.x range `^0.18.0` excludes 0.19.0. No changeset describes the new subpath or the protect-ffi/auth bumps.",
+      "consequence": "Published version skips 0.18.0; the Supabase example import `npm:@cipherstash/stack@^0.18.0/wasm-inline` fails to resolve; the release notes omit a dependency bump that affects every consumer.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-8", "E-9", "E-10", "E-11", "E-21"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A dry run of `changeset version` / `changeset status` on this head."
+      ],
+      "mitigation": "Revert the manual version to 0.17.0 and add a changeset for stack (and cli/wizard for the auth bump); update the example range to the version actually released.",
+      "domain_tags": ["build_release"]
+    },
+    {
+      "id": "FS-3",
+      "title": "WASM client encrypts null instead of passing it through",
+      "trigger": "An edge/Deno caller encrypts a nullable column value that is null.",
+      "affected_components": ["AC-2", "AC-9"],
+      "mechanism": "WasmPlaintext includes null (wasm-inline.ts:108-114) and encrypt (wasm-inline.ts:205-218) forwards it to protect-ffi unguarded, whereas the Node EncryptOperation returns null (encrypt.ts:63). The pending changeset states protect-ffi turns null into a real SteVec ciphertext.",
+      "consequence": "A null value is stored as a non-NULL ciphertext; IS NULL queries and code expecting null diverge between data written by edge and Node clients.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-15", "E-16", "E-9"],
+      "existing_verification": [
+        {
+          "description": "Deno round-trip test encrypts only a non-null string.",
+          "status": "exists_not_run",
+          "evidence": ["E-17"]
+        }
+      ],
+      "missing_verification": [
+        "Test of encrypt(null)/decrypt(null) on the WASM entry matching Node entry semantics."
+      ],
+      "mitigation": "Add the same null short-circuit to WasmEncryptionClient.encrypt/decrypt, or remove null from WasmPlaintext.",
+      "domain_tags": ["encryption", "public_api"]
+    },
+    {
+      "id": "FS-4",
+      "title": "auth 0.38 bump breaks CLI login or wizard credential detection",
+      "trigger": "A customer runs `stash auth login`/init or the wizard on a release built with auth 0.38.",
+      "affected_components": ["AC-3", "AC-4"],
+      "mechanism": "The CLI destructures beginDeviceCodeFlow/bindClientDevice from the auth default export (login.ts:1-4) and the wizard calls AutoStrategy.detect(); auth moves two minor versions and changes how native bindings are packaged (optional peers, compensated by new optionalDependencies). Wizard unit tests mock @cipherstash/auth, so API or binding-load changes are not exercised there. History shows the branch first kept cli/wizard on 0.36.0 and later reversed that.",
+      "consequence": "CLI authentication or wizard prerequisites fail on some or all platforms; loud but customer-facing.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-12", "E-13", "E-14", "E-23"],
+      "existing_verification": [
+        {
+          "description": "CLI and @cipherstash/e2e E2E jobs in tests.yml (coverage of real login unknown).",
+          "status": "exists_not_run",
+          "evidence": ["E-17"]
+        }
+      ],
+      "missing_verification": [
+        "Smoke test of CLI login/bind and wizard detect against auth 0.38 on each supported platform, installed via npm (not the workspace)."
+      ],
+      "mitigation": "Review auth 0.37/0.38 changelog; pack and install the CLI tarball on macOS/Linux/Windows before release.",
+      "domain_tags": ["dependency", "build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No evidence about what changed inside protect-ffi 0.24.0 or auth 0.38.0; no CI results for this head.",
+      "scenarios": ["FS-1", "FS-4"],
+      "evidence": ["E-3", "E-12"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No test of release versioning output with the manual bump plus pending changeset.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "VG-3",
+      "description": "WASM entry tested only by a single non-null round trip; unit tests cover normalizeCastAs only.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-17", "E-24"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "compatibility_check",
+      "description": "Read protect-ffi 0.24.0 notes; run cross-version (0.23 write / 0.24 read and query) tests against EQL 2.3.1, or bump EQL image and CLI bundle in lockstep.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "other",
+      "description": "Revert manual version bump, add changesets for stack/cli/wizard, run `changeset status` before merge.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "test",
+      "description": "Add null-handling parity to the WASM client and a test for it.",
+      "addresses": ["FS-3", "VG-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "test",
+      "description": "Packed-tarball smoke test of CLI login and wizard on supported platforms with auth 0.38.",
+      "addresses": ["FS-4", "VG-1"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "review_focus",
+      "description": "Check that bundling zod/@byteslice/result into all main entries does not change error identity (e.g. instanceof ZodError) or Result handling for downstream packages such as migrate and prisma-next.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Dependency sources were not installed; protect-ffi 0.24 conditional exports and payload behaviour are known only from the author's comments.",
+      "effect": "FS-1 cannot be confirmed or ruled out; impact kept at high because of the mechanism, not lowered for lack of evidence."
+    },
+    {
+      "id": "CL-2",
+      "description": "No CI results, PR description, CODEOWNERS or deployment information.",
+      "effect": "All verification is exists_not_run; verification confidence is low."
+    },
+    {
+      "id": "CL-3",
+      "description": "pnpm-lock.yaml diff was skimmed for auth/protect-ffi entries only; the removal of `libc:` fields was noted but not analysed.",
+      "effect": "Repo-install effects of the lockfile regeneration (e.g. both musl and glibc binaries selected) are not assessed."
+    },
+    {
+      "id": "CL-4",
+      "description": "Effect of bundling zod into each CJS/ESM entry (duplicate instances, size) was reasoned about, not tested.",
+      "effect": "Kept as a review focus (RC-5), not a scenario."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 182,
+      "line_end": 187,
+      "claim": "./wasm-inline export has only an import condition.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 186,
+      "line_end": 265,
+      "claim": "WasmEncryptionClient exposes encrypt/decrypt/isEncrypted only; Encryption factory builds it via wasmNewClient.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 216,
+      "line_end": 217,
+      "claim": "protect-ffi 0.24.0 and @cipherstash/auth added as stack runtime dependencies.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "diff",
+      "path": "packages/stack/tsconfig.json",
+      "rev": "head",
+      "line_start": 18,
+      "line_end": 24,
+      "claim": "Author comment: protect-ffi 0.24 uses conditional exports; node -> NAPI, default -> WASM with different newClient signature.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 18,
+      "line_end": 25,
+      "claim": "EQL image pinned to 2.3.1 'to match the payload format (protect-ffi 0.23.x); bump in lockstep with the protect-ffi upgrade' and unchanged here.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "diff",
+      "path": "packages/stack/tsup.config.ts",
+      "rev": "head",
+      "line_start": 24,
+      "line_end": 35,
+      "claim": "Main config now clean:false and bundles zod and @byteslice/result.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 191,
+      "line_end": 191,
+      "claim": "prebuild script removes dist before tsup.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 3,
+      "line_end": 3,
+      "claim": "Version set to 0.18.0 in this change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".changeset/restore-null-guards-in-encryption-ops.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 7,
+      "claim": "Pending minor changeset for @cipherstash/stack; states protect-ffi encrypts null into a real SteVec ciphertext.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/stack/CHANGELOG.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 7,
+      "claim": "Latest released stack version recorded is 0.17.0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 53,
+      "line_end": 54,
+      "claim": "Releases are driven by changesets/action.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "diff",
+      "path": "pnpm-workspace.yaml",
+      "rev": "head",
+      "line_start": 14,
+      "line_end": 20,
+      "claim": "Catalog moves @cipherstash/auth and its six platform packages to 0.38.0 (from 0.36.0).",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 4,
+      "claim": "CLI login destructures beginDeviceCodeFlow and bindClientDevice from @cipherstash/auth default export.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "packages/wizard/src/__tests__/prerequisites.test.ts",
+      "rev": "head",
+      "line_start": 8,
+      "line_end": 8,
+      "claim": "Wizard prerequisites tests mock @cipherstash/auth.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 108,
+      "line_end": 218,
+      "claim": "WasmPlaintext admits null; encrypt forwards plaintext to wasmEncrypt with no null check.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/encrypt.ts",
+      "rev": "head",
+      "line_start": 63,
+      "line_end": 63,
+      "claim": "Node EncryptOperation short-circuits null plaintext.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "test",
+      "path": "e2e/wasm/roundtrip.test.ts",
+      "rev": "head",
+      "line_start": 46,
+      "line_end": 92,
+      "claim": "Deno test round-trips one non-null string without FFI permission; skipped if env missing (CI asserts secrets present).",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "diff",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "claim": "Lockfile diff removes libc: fields from many platform package entries.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "code",
+      "path": "packages/cli/src/installer/index.ts",
+      "rev": "head",
+      "line_start": 7,
+      "line_end": 7,
+      "claim": "CLI installs EQL_VERSION eql-2.3.1, unchanged.",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "code",
+      "path": "packages/migrate/package.json",
+      "rev": "head",
+      "line_start": 48,
+      "line_end": 52,
+      "claim": "migrate depends on @cipherstash/stack (peer >=0.6.0, workspace dev); prisma-next and bench also depend on it.",
+      "status": "verified"
+    },
+    {
+      "id": "E-21",
+      "kind": "code",
+      "path": "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts",
+      "rev": "head",
+      "line_start": 21,
+      "line_end": 21,
+      "claim": "Example imports npm:@cipherstash/stack@^0.18.0/wasm-inline.",
+      "status": "verified"
+    },
+    {
+      "id": "E-22",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 81,
+      "claim": "Main entry imports newClient from @cipherstash/protect-ffi (bare, condition-resolved) and calls it with an options object.",
+      "status": "verified"
+    },
+    {
+      "id": "E-23",
+      "kind": "history_signal",
+      "signal": "commits base..head",
+      "command": "git -C repo log --oneline b9c4fe5..c39e895",
+      "claim": "Branch commit 1dd6020 'keep wizard/cli on auth 0.36.0' later followed by 81687f2 'bump @cipherstash/auth to 0.38.0' and 75e6f6a declaring native binaries as optionalDeps.",
+      "status": "verified"
+    },
+    {
+      "id": "E-24",
+      "kind": "test",
+      "path": "packages/stack/__tests__/wasm-inline-normalize.test.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 96,
+      "claim": "Unit tests cover normalizeCastAs mapping and drift guard only.",
+      "status": "verified"
+    }
+  ]
+}

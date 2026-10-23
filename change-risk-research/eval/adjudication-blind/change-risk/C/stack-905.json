@@ -1,0 +1,37 @@
+{
+  "case": "stack-905",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "jsonwebtoken 10 handles service-token claims differently, so auth fails or token refresh breaks",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The finding admits the upstream stack-auth diff was not read and cites only dependency wiring, so the claim that claim handling or refresh breaks is speculative, and its own evidence reports green integration and WASM checks."
+    },
+    {
+      "id": "FS-2",
+      "title": "Release-time platform build of the new graph fails or misbehaves on a target PR CI does not build",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "aws-lc-rs was already built on all release platforms at base via rustls/vitaminc, as the finding itself notes, and no target-specific failure mechanism is shown."
+    }
+  ],
+  "cost_usd": 1.3775586999999998,
+  "wall_seconds": 203.034025,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

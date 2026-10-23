@@ -1,0 +1,633 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+  "head_sha": "67dcd0b562016d830331b73328fedcec4e3baa25",
+  "merge_base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+    "cutoff_date": "2026-07-16T05:06:58+10:00",
+    "commits_read": 1489,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 23,
+    "additions": 970,
+    "deletions": 66,
+    "binary_files": 0,
+    "by_status": {
+      "added": 6,
+      "modified": 17
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/cli": 17,
+      ".": 6
+    },
+    "component_count": 2,
+    "top_level_dirs": {
+      "packages": 17,
+      "skills": 5,
+      ".changeset": 1
+    },
+    "languages": {
+      "TypeScript": 17,
+      "Markdown": 6
+    }
+  },
+  "path_classes": {
+    "docs": 6,
+    "test": 6,
+    "agent_instructions": 5,
+    "release_tooling": 2,
+    "build_config": 1,
+    "security_sensitive": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/init-pins-runtime-versions.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 29,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/src/__tests__/release-train.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 49,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling", "test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/__tests__/runtime-versions.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 96,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/bin/main.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/__tests__/utils.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 51,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/lib/write-context.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/__tests__/install-deps.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 225,
+      "deletions": 13,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/install-deps.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 170,
+      "deletions": 40,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/install-eql.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/utils.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 28,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 6,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/config/__tests__/missing-package.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 41,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/config/missing-package.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 6,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/native.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 6,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/release-train.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 27,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/runtime-versions.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 94,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/tests/e2e/runtime-versions-embed.e2e.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 57,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/tsup.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 47,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "skills/stash-cli/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-drizzle/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-dynamodb/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-encryption/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["agent_instructions", "docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-supabase/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "skills/stash-encryption/SKILL.md",
+        "commits": 34,
+        "commits_last_90d": 24,
+        "distinct_authors": 4
+      },
+      {
+        "path": "skills/stash-supabase/SKILL.md",
+        "commits": 23,
+        "commits_last_90d": 20,
+        "distinct_authors": 6
+      },
+      {
+        "path": "skills/stash-cli/SKILL.md",
+        "commits": 22,
+        "commits_last_90d": 20,
+        "distinct_authors": 5
+      },
+      {
+        "path": "skills/stash-drizzle/SKILL.md",
+        "commits": 19,
+        "commits_last_90d": 15,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/cli/src/bin/main.ts",
+        "commits": 18,
+        "commits_last_90d": 18,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/cli/src/commands/init/utils.ts",
+        "commits": 16,
+        "commits_last_90d": 15,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/cli/src/commands/init/lib/write-context.ts",
+        "commits": 13,
+        "commits_last_90d": 13,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/cli/src/commands/init/steps/install-eql.ts",
+        "commits": 9,
+        "commits_last_90d": 9,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/cli/src/commands/init/__tests__/utils.test.ts",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/cli/src/commands/init/steps/install-deps.ts",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/cli/tsup.config.ts",
+        "commits": 6,
+        "commits_last_90d": 5,
+        "distinct_authors": 2
+      },
+      {
+        "path": "skills/stash-dynamodb/SKILL.md",
+        "commits": 6,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/native.ts",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/wizard/index.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/config/missing-package.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/cli/src/commands/init/steps/install-deps.ts",
+        "usually_changes_with": "packages/cli/src/commands/init/steps/build-schema.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/src/native.ts",
+        "usually_changes_with": "packages/cli/src/commands/doctor/index.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-dynamodb/SKILL.md",
+        "usually_changes_with": "skills/stash-secrets/SKILL.md",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/cli/src/commands/init/lib/write-context.ts",
+        "usually_changes_with": "packages/cli/src/commands/init/lib/setup-prompt.ts",
+        "co_commits": 7,
+        "confidence": 0.58,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/src/commands/init/lib/write-context.ts",
+        "usually_changes_with": "packages/cli/src/commands/init/lib/__tests__/setup-prompt.test.ts",
+        "co_commits": 6,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/src/commands/init/lib/write-context.ts",
+        "usually_changes_with": "packages/cli/src/commands/init/steps/handoff-claude.ts",
+        "co_commits": 6,
+        "confidence": 0.5,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/cli/src/commands/init/lib/write-context.ts",
+        "usually_changes_with": "packages/cli/src/commands/init/steps/handoff-codex.ts",
+        "co_commits": 6,
+        "confidence": 0.5,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/cli/src/commands/init/lib/write-context.ts",
+        "usually_changes_with": "packages/cli/src/commands/init/types.ts",
+        "co_commits": 6,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 21
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/init-pins-runtime-versions.md": ["@cipherstash/developers"],
+      "packages/cli/src/__tests__/release-train.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/__tests__/runtime-versions.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/bin/main.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/init/__tests__/utils.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/init/lib/write-context.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/init/steps/__tests__/install-deps.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/init/steps/install-deps.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/init/steps/install-eql.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/init/utils.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/wizard/index.ts": ["@cipherstash/developers"],
+      "packages/cli/src/config/__tests__/missing-package.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/config/missing-package.ts": ["@cipherstash/developers"],
+      "packages/cli/src/native.ts": ["@cipherstash/developers"],
+      "packages/cli/src/release-train.ts": ["@cipherstash/developers"],
+      "packages/cli/src/runtime-versions.ts": ["@cipherstash/developers"],
+      "packages/cli/tests/e2e/runtime-versions-embed.e2e.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/tsup.config.ts": ["@cipherstash/developers"],
+      "skills/stash-cli/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-drizzle/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-dynamodb/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-encryption/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-supabase/SKILL.md": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 66
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 6,
+    "source_files_changed": 11,
+    "source_without_related_test": [
+      "packages/cli/src/bin/main.ts",
+      "packages/cli/src/commands/init/utils.ts",
+      "packages/cli/src/commands/wizard/index.ts",
+      "packages/cli/tsup.config.ts"
+    ],
+    "source_with_related_test_unchanged": [
+      "packages/cli/src/commands/init/lib/write-context.ts",
+      "packages/cli/src/commands/init/steps/install-eql.ts",
+      "packages/cli/src/native.ts"
+    ],
+    "mapping": [
+      {
+        "source": "packages/cli/src/bin/main.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/lib/write-context.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/impl/__tests__/impl.test.ts",
+          "packages/cli/src/commands/init/lib/__tests__/read-context.test.ts",
+          "packages/cli/src/commands/init/steps/__tests__/build-schema.test.ts",
+          "packages/cli/src/commands/status/__tests__/status.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/install-deps.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/init/steps/__tests__/install-deps.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/install-eql.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/init/steps/__tests__/install-eql.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/utils.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/config/missing-package.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/config/__tests__/missing-package.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/native.ts",
+        "related_tests_at_head": ["packages/cli/src/__tests__/native.test.ts"],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/release-train.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/release-train.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/runtime-versions.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/runtime-versions.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/tsup.config.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

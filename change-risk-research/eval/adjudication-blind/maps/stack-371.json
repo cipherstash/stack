@@ -1,0 +1,14 @@
+{
+  "F-01": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-1"
+  },
+  "F-02": {
+    "evaluator": "change-risk/A",
+    "finding": "FS-1"
+  },
+  "F-03": {
+    "evaluator": "change-risk/B",
+    "finding": "FS-1"
+  }
+}

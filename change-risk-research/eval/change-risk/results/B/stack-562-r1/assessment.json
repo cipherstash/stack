@@ -1,0 +1,350 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "7f67e116fab4a18382ecbc50af56d72d80316deb",
+  "head_sha": "9e082520fbaa3a9c8878ddcff89b4207ec625e5e",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md and the changeset file in the diff."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md at head read for the stale reference only."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "note": "As reported by collect-evidence; not otherwise used."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Renames the public auth-strategy config field of @cipherstash/stack from `config.strategy` to `config.authStrategy` on both the Node `Encryption()` entry and the `wasm-inline` entry, keeping `strategy` as a deprecated alias that still forwards (authStrategy wins when both are set) and logs a once-per-process console warning. The rest is TypeDoc. The public `Encryption()` path is backward compatible and the alias, precedence and warning behaviour are covered by new unit tests (not run here; no CI given). The one hard rename is the parameter of `EncryptionClient.init()` (marked @internal but reachable through the `@cipherstash/stack/encryption` subpath): a direct JS caller still passing `strategy` would have it silently dropped and fall back to the default `auto` credentials. No in-repo caller does this. Minor: test-only latch-reset functions are exported from two public entry points, and AGENTS.md still documents `config.strategy`. No payload, key, or SQL contract changes.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "Node `ClientConfig` gains `authStrategy?: AuthStrategy`; `strategy` stays as a @deprecated alias. `Encryption()` resolves `authStrategy ?? strategy` and forwards it to protect-ffi `newClient({ strategy })` unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-2", "E-11"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "`EncryptionClient.init()` parameter renamed from `strategy` to `authStrategy` with no alias; only `config.authStrategy` is forwarded to newClient.",
+      "certainty": "observed",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "wasm-inline `WasmClientConfig` union gains an `authStrategy` arm and a deprecated `strategy` arm; `resolveStrategy` uses `authStrategy ?? strategy`, keeps the accessKey mutual-exclusion guard and names the field the caller set in its error message.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "external_side_effect",
+      "description": "Passing the deprecated `strategy` (alone or together with `authStrategy`) emits one `console.warn` per process per entry point.",
+      "certainty": "observed",
+      "evidence": ["E-2", "E-9"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "public_contract",
+      "description": "New exported functions `__resetStrategyDeprecationWarningForTests` in `encryption/index.ts` and `wasm-inline.ts`, both modules that are published package entry points.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-9"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "Expanded TypeDoc for `Encryption()` and `ClientConfig` covering auto strategy, CS_* env vars, custom strategies, lock context and keysets.",
+      "certainty": "observed",
+      "evidence": ["E-11"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack Node entry (Encryption / ClientConfig)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Config field rename with deprecated alias.",
+      "evidence": ["E-2", "E-11"]
+    },
+    {
+      "id": "AC-2",
+      "name": "EncryptionClient.init via @cipherstash/stack/encryption subpath",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "init() parameter renamed without alias; module is exported as ./encryption.",
+      "evidence": ["E-1", "E-3", "E-13"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/stack/wasm-inline entry",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "WasmClientConfig union and resolveStrategy updated.",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Downstream applications passing config.strategy (e.g. OidcFederationStrategy users)",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Keep working via alias but receive a deprecation warning; any that call EncryptionClient.init directly lose the strategy.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-5",
+      "name": "AGENTS.md repository guidance",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "Still tells agents to use `config.strategy`.",
+      "evidence": ["E-10"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Direct EncryptionClient.init({ strategy }) callers silently fall back to the default auto credentials",
+      "trigger": "A consumer (plain JS, or TS passing a non-literal/spread config) constructs `new EncryptionClient()` from `@cipherstash/stack/encryption` and calls `init({ ..., strategy })` as worked at base.",
+      "affected_components": ["AC-2", "AC-4"],
+      "mechanism": "`init()` now reads only `config.authStrategy` (encryption/index.ts:130,166); a `strategy` key is ignored with no warning or error, so protect-ffi receives `strategy: undefined` and builds its default auto strategy from CS_* env vars or the dev profile. The deprecated-alias handling lives only in `Encryption()` (encryption/index.ts:864-867).",
+      "consequence": "ZeroKMS requests authenticate as the service/env credentials instead of the intended strategy (e.g. an end user's OidcFederationStrategy). Without lock context, encryption may succeed under the wrong identity; with lock context it would likely fail at operation time. If no env credentials exist, init fails loudly.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-3", "E-4", "E-13"],
+      "existing_verification": [
+        {
+          "description": "init-strategy.test.ts covers the alias only through `Encryption()`, not direct `init()` calls.",
+          "status": "exists_not_run",
+          "evidence": ["E-5"]
+        }
+      ],
+      "missing_verification": [
+        "No test or guard for `EncryptionClient.init` receiving the legacy `strategy` key.",
+        "Unknown whether external consumers call init() directly; no dependency graph available."
+      ],
+      "mitigation": "Have `init()` also accept `strategy` as a deprecated alias (`config.authStrategy ?? config.strategy`), or keep init's parameter named `strategy`, so the @internal method is not a silent break.",
+      "domain_tags": ["authorization", "public_api", "configuration"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Test-only deprecation-latch reset exported from public entry points",
+      "trigger": "Consumers import `__resetStrategyDeprecationWarningForTests` from `@cipherstash/stack/encryption` or `@cipherstash/stack/wasm-inline`.",
+      "affected_components": ["AC-2", "AC-3"],
+      "mechanism": "Both functions are `export`ed from modules that are published entry points; the comment claims it stays off the public API surface, but it does not, unless the build strips @internal declarations (not verified).",
+      "consequence": "An accidental public API that later removal would break; only affects log noise. Low.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-9"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Check whether the build (tsup / d.ts generation) strips @internal exports."
+      ],
+      "mitigation": "Move the reset hook to a non-exported test helper (e.g. vi.resetModules) or confirm @internal stripping.",
+      "domain_tags": ["public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test exercises `EncryptionClient.init` with the legacy `strategy` key, and no type-level test (types.test-d.ts, a usual co-change partner of src/index.ts) covers the new `authStrategy` / deprecated `strategy` types.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-5", "E-12"]
+    },
+    {
+      "id": "VG-2",
+      "description": "Tests were not run and no CI results were provided; all test evidence is exists_not_run.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-5", "E-6"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Decide whether `EncryptionClient.init` is truly internal; if not, add the `strategy` alias there too and a unit test for it.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Run the stack unit suite (init-strategy, wasm-inline-strategy, lock-context) and type tests in CI before release; add a types.test-d.ts assertion that `strategy` is accepted but deprecated and `authStrategy` is accepted.",
+      "addresses": ["VG-1", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "Update AGENTS.md:118 to `config.authStrategy`; keep the test-only reset hook off the public entry points.",
+      "addresses": ["FS-2"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No node_modules in the checkout and no network, so tests and type checks were not run.",
+      "effect": "Test coverage is known to exist but not shown to pass."
+    },
+    {
+      "id": "CL-2",
+      "description": "No dependency graph or consumer inventory; external use of `EncryptionClient.init` is unknown.",
+      "effect": "FS-1 likelihood cannot be estimated."
+    },
+    {
+      "id": "CL-3",
+      "description": "Build config was not inspected to see whether @internal declarations are stripped from published .d.ts.",
+      "effect": "Whether FS-2 and the init() rename are visible to typed consumers is unconfirmed."
+    },
+    {
+      "id": "CL-4",
+      "description": "TypeDoc prose (auto strategy fallback to dev profile, keyset semantics) was not checked against protect-ffi / @cipherstash/auth behaviour.",
+      "effect": "Possible documentation inaccuracies are not assessed."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 123,
+      "line_end": 168,
+      "claim": "init() accepts `authStrategy` (no `strategy`) and forwards only `config.authStrategy` to newClient as `strategy`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 860,
+      "line_end": 883,
+      "claim": "Encryption() warns when `strategy` is set, resolves `authStrategy ?? strategy`, and passes it to init after spreading clientConfig.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 188,
+      "line_end": 192,
+      "claim": "`./encryption` is a published subpath export pointing at dist/encryption/index.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "command_output",
+      "command": "git -C repo grep -n -E '\\.init\\(' 9e08252 -- packages | grep -v __tests__",
+      "claim": "Only two non-test init() callers in the repo: stack Encryption() (encryption/index.ts:878) and protect (ProtectClient, unrelated).",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "test",
+      "path": "packages/stack/__tests__/init-strategy.test.ts",
+      "rev": "head",
+      "line_start": 48,
+      "line_end": 168,
+      "claim": "Tests forward of authStrategy, alias forwarding with warning, precedence when both set, and no warning for authStrategy alone — all via Encryption().",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "packages/stack/__tests__/wasm-inline-strategy.test.ts",
+      "rev": "head",
+      "line_start": 54,
+      "line_end": 150,
+      "claim": "Tests resolveStrategy for authStrategy, deprecated alias, precedence, and the accessKey mutual-exclusion error naming the set field.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 435,
+      "line_end": 469,
+      "claim": "resolveStrategy uses `authStrategy ?? strategy`, warns on strategy, and keeps runtime guards.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 166,
+      "line_end": 209,
+      "claim": "WasmClientConfig union now has accessKey, authStrategy (+optional deprecated strategy) and deprecated-strategy-only arms.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 676,
+      "line_end": 696,
+      "claim": "Once-per-process warn latch and exported `__resetStrategyDeprecationWarningForTests` (mirrored at wasm-inline.ts:401-422).",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 118,
+      "line_end": 118,
+      "claim": "AGENTS.md still instructs using `config.strategy`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 144,
+      "line_end": 173,
+      "claim": "ClientConfig declares `authStrategy?` and keeps `strategy?` with @deprecated.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[0]",
+      "claim": "src/index.ts usually co-changes with __tests__/types.test-d.ts (4 commits, conf 0.5), which is not changed; it contains no strategy assertions.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 118,
+      "line_end": 122,
+      "claim": "init() is documented @internal.",
+      "status": "verified"
+    }
+  ]
+}

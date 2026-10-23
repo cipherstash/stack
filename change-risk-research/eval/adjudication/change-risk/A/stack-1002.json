@@ -1,0 +1,48 @@
+{
+  "case": "stack-1002",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "linux-x64-musl auth binary built statically (no -crt-static) and published without any check that would notice",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "musl binary may be built wrongly and the release path does not check its libc; fails to load on musl hosts."
+    },
+    {
+      "id": "FS-2",
+      "title": "Once armed, any auth build failure holds every JS and EQL npm release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Widened release-plz.yml triggers start the armed EQL crate job on unrelated root-workspace pushes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 2.2537785,
+  "wall_seconds": 247.22026,
+  "case_note": "KD-1 found."
+}

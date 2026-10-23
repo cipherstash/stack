@@ -1,0 +1,19 @@
+{
+  "pr": 728,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/728#pullrequestreview-4741884465",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "line": 616,
+      "severity_label": "nitpick | 🩺 Stability & Availability | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Skipped near-misses aren't re-surfaced at the closing note (inconsistent with `migration.ts`). When `skipped.length > 0`, the warning is logged inline at Line 617, but execution then falls through to `p.log.success('Migration created')` and the \"run `drizzle-kit migrate`\" note.",
+      "is_nitpick": true,
+      "id": "CR-1"
+    }
+  ],
+  "notes": "Transcribed by hand from inline MCP output. CodeRabbit posted no inline review comments; review 4741884465 contains 1 nitpick and no actionable comments. CodeRabbit issue-comment reply acknowledging the author's fix (https://github.com/cipherstash/stack/pull/728#issuecomment-5031457906) is not a finding. Summary/walkthrough issue comment present; pre-merge checks list a Docstring Coverage warning (50.00%), not counted. Human review findings by coderdan are excluded."
+}

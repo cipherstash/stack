@@ -1,0 +1,21 @@
+{
+  "case": "stack-996",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Publish the widened operation type as a major release. `EncryptOperation.getOperation().plaintext` changed from `Plaintext | null` to `PlaintextInput | null`. `",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "public operation type widened in a non-major release"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

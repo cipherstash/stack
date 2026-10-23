@@ -1,0 +1,48 @@
+{
+  "case": "stack-503",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Missing Trusted Publisher registration for some packages produces a partial, dependency-skewed release",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Dropping NPM_TOKEN makes every package depend on its own Trusted Publisher registration (which SKILL.md lists as deferred), so a partial publish with dependents pinned to missing siblings is plausible; the cited code is accurate."
+    },
+    {
+      "id": "FS-2",
+      "title": "Floating npm@^11.5.1 install runs unvetted code inside the id-token: write publish job",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The floating npm install bypasses the repo's pnpm minimumReleaseAge (pnpm-workspace.yaml:21 confirmed) and runs in the id-token job; this PR introduces it."
+    },
+    {
+      "id": "FS-3",
+      "title": "OIDC path not taken by the actual publisher, so every publish fails closed",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative claim that pnpm/changesets won't use the upgraded npm's OIDC path; the cited lines don't establish the mechanism, and the finding concedes it was not verified."
+    }
+  ],
+  "cost_usd": 1.0035501999999998,
+  "wall_seconds": 145.42891,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

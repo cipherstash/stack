@@ -1,0 +1,61 @@
+{
+  "case": "stack-666",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Add E2E coverage for the missing-package guidance. This install hint is user-facing, so keep it covered by a CLI regression in the E2E suite.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "add E2E coverage"
+    },
+    {
+      "id": "CR-2",
+      "title": "`warnOnVersionSkew` loses the prod/dev split, so its alignment command misclassifies `stash`. `skewed.map(({ pkg }) => pinnedSpec(pkg))` is passed as the *prod*",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "alignment command misclassifies dev/prod packages"
+    },
+    {
+      "id": "CR-3",
+      "title": "Print alignment commands when missing packages and skew coexist non-interactively. This path installs only missing packages, but never displays `alignCommands`.",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "alignment commands not printed in one path"
+    },
+    {
+      "id": "CR-4",
+      "title": "Verify all first-party packages in the manual-install guidance. Checking only `@cipherstash/stack` does not detect skew in the integration adapter (affects skil",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "skill guidance checks only one package for skew; not the direction-less comparison of KD-1"
+    },
+    {
+      "id": "CR-5",
+      "title": "Do not report success while alignment failed or skew remains. An alignment command can fail while every package remains present at its old version.",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "success reported while skew remains"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

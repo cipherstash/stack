@@ -1,0 +1,25 @@
+{
+  "case": "stack-998",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Non-EQL releases now reach the lock refresh and skew-gated asset steps that they previously never ran",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 0.8315880999999999,
+  "wall_seconds": 109.24003
+}

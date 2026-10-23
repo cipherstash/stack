@@ -1,0 +1,132 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, bugs.url in packages/stack/package.json:14 already points to cipherstash/stack/issues; the PR updated it."
+    },
+    {
+      "id": "F-02",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculative: the finding concedes neither changesets/action .npmrc behavior nor pnpm-to-npm delegation was checked, the cited code shows no failing mechanism, and the consequence equals the base state."
+    },
+    {
+      "id": "F-03",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, bugs.url in packages/nextjs/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "With NPM_TOKEN removed, each package publishes only through its own Trusted Publisher, so a missing registration can partially publish packages that pin workspace:* siblings (protect->schema, prisma-next->stack), as the cited lines confirm."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The PR adds a floating `npm install -g npm@^11.5.1` in a job with id-token: write, and that npm performs the publish: a newly introduced supply-chain exposure with a clear pinning mitigation."
+    },
+    {
+      "id": "F-06",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculation that the OIDC path is not used; the finding admits the changesets/action and pnpm behavior was not verified, and nothing in the cited code shows the failure."
+    },
+    {
+      "id": "F-07",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, bugs.url in packages/protect-dynamodb/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "F-08",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, bugs.url in packages/drizzle/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new unpinned npm range runs in the OIDC-capable release job, and the cited permissions and install step are accurate."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The floating npm install bypasses the repo's pnpm minimumReleaseAge (pnpm-workspace.yaml:21 confirmed) and runs in the id-token job; this PR introduces it."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Dropping NPM_TOKEN makes every package depend on its own Trusted Publisher registration (which SKILL.md lists as deferred), so a partial publish with dependents pinned to missing siblings is plausible; the cited code is accurate."
+    },
+    {
+      "id": "F-12",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The step already installs npm@^11.5.1 and does not use `latest`, so the suggestion describes code that is not there."
+    },
+    {
+      "id": "F-13",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, bugs.url in packages/schema/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "F-14",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculative claim that pnpm/changesets won't use the upgraded npm's OIDC path; the cited lines don't establish the mechanism, and the finding concedes it was not verified."
+    },
+    {
+      "id": "F-15",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "A partial release with dependents (drizzle->schema/protect, cli->stack/migrate) pinned to unpublished siblings is plausible once NPM_TOKEN is removed; the cited lines are accurate."
+    },
+    {
+      "id": "F-16",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, bugs.url in packages/protect/package.json already points to cipherstash/stack/issues."
+    }
+  ]
+}

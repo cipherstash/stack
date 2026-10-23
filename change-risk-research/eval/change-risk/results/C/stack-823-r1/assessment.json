@@ -1,0 +1,520 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "bf7be0999816b517437a827df90b7cf97ce0c2f3",
+  "head_sha": "143a99d1781314974c16bb3b662939c4111c5448",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "9 check runs on the head commit, all success; per-test results are not included, so individual tests are mapped to the 'Run Tests' job only by reading .github/workflows/tests.yml"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Shipped skills (skills/stash-cli, skills/stash-drizzle) and code comments at head only; no architecture docs were supplied as an input"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": "collect-evidence ownership signal (all files @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No release or customer-usage information; the remote wizard integration prompt (fetchIntegrationPrompt) is fetched over the network and was not visible"
+    }
+  },
+  "summary": "The change replaces the Drizzle migration rewriter's destructive ADD+DROP+RENAME (which destroyed column data on populated tables) with a single `ADD COLUMN \"<col>_encrypted\"` that keeps the source column, adds a 'target-exists' skip, tightens dollar-quote detection, and makes both callers fail closed: `stash eql migration --drizzle` now exits 1 and the wizard throws (process.exit 1) whenever any statement is skipped or a directory could not be swept. Both rewriter copies stay byte-identical outside the wizard-only region. Against the base this removes a critical data-loss path. The new risk is semantic: the rewriter only fires when the Drizzle schema changed a column's type in place, and it now produces a database whose shape (plaintext `email` + undeclared `email_encrypted`) no longer matches the schema.ts or the drizzle-kit snapshot, while the wizard defaults to 'Yes, migrate'. Nothing tests or explains that divergence, and the application/ORM side was not visible. Secondary: the new hard exit is mis-reported by `stash init` as a drizzle-kit problem, and the wizard now aborts before finalising on any skip. CI reports all 9 checks passing on the head commit.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "state_or_persistence",
+      "description": "A matched `ALTER TABLE … ALTER COLUMN \"c\" SET DATA TYPE <eql domain>` is now rewritten to only `ALTER TABLE … ADD COLUMN \"c_encrypted\" \"public\".\"<domain>\"`; the source column keeps its original (plaintext) type and data. Previously it became ADD tmp / DROP c / RENAME tmp TO c, so column `c` ended up with the encrypted type and its data was destroyed.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "invariant",
+      "description": "New skip reason 'target-exists': a statement is left untouched when `<col>_encrypted` is already declared in the corpus or was staged earlier in the same sweep. The previous `encryptedColumns.add` after a conversion is removed (no longer needed because the source stays plaintext).",
+      "certainty": "observed",
+      "evidence": ["E-2"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "error_handling",
+      "description": "`stash eql migration --drizzle` now throws CliExit(1) (\"Migration aborted.\") when the sweep skipped any statement or threw, instead of logging a warning and reporting success. Partial results (files already rewritten, statements skipped) are attached to the thrown error and printed.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "error_handling",
+      "description": "The wizard's post-agent step now throws (ending the wizard with process.exit(1)) when any statement was skipped or any directory failed to sweep, instead of prompting with a default of No. When files were rewritten and nothing was skipped, the migrate prompt now defaults to Yes.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "other",
+      "description": "Dollar-quote openers immediately preceded by an identifier character (`price$$cents`, `price$usd$cents`) are no longer treated as opening a dollar-quoted body, so live SQL after them is no longer hidden from the sweep.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-14"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "Shipped stash-cli skill now says the rewrite never emits DROP/RENAME and the command exits non-zero on anything it cannot prove; a patch changeset releases `stash` and `@cipherstash/wizard`.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/cli/src/commands/db/rewrite-migrations.ts and packages/wizard/src/lib/rewrite-migrations.ts",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "The two published copies of the rewriter; output SQL and skip rules change.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "stash eql migration --drizzle",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Exit code and messages change; now exits 1 on any skipped/unswept statement.",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/wizard post-agent step and run loop",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "post-agent.ts throws on skips; run.ts catches it and exits 1 before finalize (skills install, completion).",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "AC-4",
+      "name": "stash init install-eql step (Drizzle path)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Calls eqlMigrationCommand({embedded: true}) and catches every throw as a drizzle-kit failure.",
+      "evidence": ["E-10", "E-11"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Customer Drizzle schema.ts, drizzle-kit snapshots and databases",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Rewritten migrations are applied to customer databases by drizzle-kit migrate; the rewriter does not touch schema.ts or meta snapshots.",
+      "evidence": ["E-1", "E-12", "E-13"]
+    },
+    {
+      "id": "AC-6",
+      "name": "stash encrypt backfill / status (<col>_encrypted convention)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Defaults the destination column to `${column}_encrypted` and reads the source column as plaintext; the rewriter now creates that twin.",
+      "evidence": ["E-15"]
+    },
+    {
+      "id": "AC-7",
+      "name": "skills/stash-cli/SKILL.md (shipped skill)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Guidance copied into customer repos changes.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-8",
+      "name": "npm releases of stash and @cipherstash/wizard",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Patch changeset publishes both.",
+      "evidence": ["E-9"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Rewritten migration leaves the database out of step with the Drizzle schema that declared the column encrypted",
+      "trigger": "A user (or the wizard's agent) changes an existing column's type in schema.ts in place to an encrypted type — the only way drizzle-kit emits the `SET DATA TYPE <eql domain>` this rewriter matches — then applies the rewritten migration (the wizard now defaults that prompt to Yes).",
+      "affected_components": ["AC-1", "AC-3", "AC-5", "AC-6"],
+      "mechanism": "renderSafeAlter now emits only `ADD COLUMN \"email_encrypted\"` and keeps `email` with its plaintext type (rewrite-migrations.ts:845-873). The rewriter edits only the .sql file: schema.ts still declares `email` as the encrypted domain, `email_encrypted` is declared nowhere in the application schema, and the drizzle-kit snapshot still records `email` as encrypted. The staged lifecycle in stash-drizzle SKILL.md:450-462 requires the opposite schema shape (`email: text`, `email_encrypted: types.*`). Neither the SQL header, the CLI log line nor the wizard prompt tells the user to reshape schema.ts. At base the ADD+DROP+RENAME made the database match the schema (at the cost of data).",
+      "consequence": "The application's ORM model writes encrypted values to `email`, which is still a plaintext column, and reads try to decrypt existing plaintext rows (inferred: the Drizzle custom-type driver mapping was not in the inputs). The column ends up holding a mix of plaintext and ciphertext envelopes, encrypted query operators fail against a text column, and `email_encrypted` stays empty. A later `stash encrypt backfill` reads `email` as plaintext and can encrypt the envelope strings a second time. Data is recoverable but integrity is damaged, and the wizard's closing message says the data is protected.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-12", "E-13", "E-5", "E-15", "E-16"],
+      "existing_verification": [
+        {
+          "description": "Rewriter unit tests assert the emitted SQL is one ADD with no cutover statements (rewrite-migrations.test.ts:377) and post-agent tests assert the Yes default after a rewrite; run as part of 'Run Tests' (pnpm run test), which passed.",
+          "status": "ran_passed",
+          "evidence": ["E-17", "E-18", "E-19"]
+        }
+      ],
+      "missing_verification": [
+        "An end-to-end check (drizzle-kit generate → rewrite → migrate → ORM insert/select) showing that the schema.ts, snapshot and database agree after the rewrite, or that the user is stopped until they do",
+        "A test that the user-facing output tells them to revert the source column's type in schema.ts and declare `<col>_encrypted`"
+      ],
+      "mitigation": "Either fail closed on in-place type changes too (flag them with guidance to reshape schema.ts into the `<col>` + `<col>_encrypted` twin and regenerate), or print explicit schema.ts instructions in the SQL header and CLI/wizard output and keep the wizard migrate prompt defaulting to No after a rewrite. Add an integration test across the generate/rewrite/migrate flow.",
+      "domain_tags": ["persistence_migration", "encryption", "public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "drizzle-kit snapshot drift makes the next generated migration fail on a duplicate `<col>_encrypted`",
+      "trigger": "After applying a rewritten migration, the user follows the staged lifecycle and changes schema.ts to `email: text` plus `email_encrypted: types.*`, then runs `drizzle-kit generate` and `migrate`.",
+      "affected_components": ["AC-1", "AC-5"],
+      "mechanism": "The drizzle-kit snapshot from the original generate records `email` as the encrypted type and has no `email_encrypted`, because the rewriter changes only .sql files (no snapshot handling in either copy). drizzle-kit diffs snapshots, not the database, so the next generate emits `ADD COLUMN \"email_encrypted\"` again (plus a type change of `email` back to text), and the database already has that column.",
+      "consequence": "The next migration fails with 'column already exists' and has to be hand-edited. It fails loudly, but the user is stuck partway through the rollout. Whether the earlier statements in that migration are rolled back depends on drizzle-kit's transaction handling, which was not visible.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-16", "E-12"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A test or documented procedure for reconciling the drizzle-kit snapshot after a staged rewrite"
+      ],
+      "mitigation": "Document (in the SQL header and stash-drizzle skill) how to reconcile the snapshot, e.g. regenerate after reshaping schema.ts and delete the redundant ADD, or have the rewriter also update the snapshot JSON for the added twin.",
+      "domain_tags": ["persistence_migration"]
+    },
+    {
+      "id": "FS-3",
+      "title": "`stash init` reports the new fail-closed sweep as a drizzle-kit problem and records no pending migration",
+      "trigger": "`stash init` on a Drizzle project whose migration directory holds an in-place ALTER the sweep skips (source-unknown after a squashed history, target-exists, unrecognised form).",
+      "affected_components": ["AC-2", "AC-4"],
+      "mechanism": "generateDrizzleEqlMigration now throws CliExit(1) on any skip (migration.ts:336-344). install-eql.ts:125-143 catches every throw from eqlMigrationCommand, logs 'Could not generate the EQL migration — check that drizzle-kit is installed and configured', and returns eqlMigrationPending false even though the EQL install migration file was written. init/index.ts:149-160 then prints 'EQL extension NOT installed … Run `stash eql install`' and exits 1.",
+      "consequence": "The user gets two contradictory diagnoses and a recovery path (`stash eql install` straight to the database) that bypasses the migration that was written and leaves the skipped sibling SQL untouched. No data effect, but the setup command fails for this configuration with misleading guidance.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-3", "E-10", "E-11"],
+      "existing_verification": [
+        {
+          "description": "install-eql.test.ts covers a generic thrown Error mapping to not-installed, but not a sweep-originated CliExit",
+          "status": "exists_not_run",
+          "evidence": ["E-20"]
+        }
+      ],
+      "missing_verification": [
+        "A test of init's Drizzle path when the sweep fails closed"
+      ],
+      "mitigation": "Let init distinguish the sweep failure (for example a typed error or a returned status), keep eqlMigrationPending true and point the user at the flagged sibling migrations instead of at drizzle-kit/`eql install`.",
+      "domain_tags": ["public_api", "persistence_migration"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Wizard aborts after the agent has edited code whenever any statement is skipped",
+      "trigger": "Wizard run on a project whose drizzle output holds any skipped statement — including source-unknown, which the code comments call likely the most common skip on a real (squashed) corpus — or a directory that failed to sweep.",
+      "affected_components": ["AC-3"],
+      "mechanism": "post-agent.ts:81-85 throws; run.ts:276-290 catches it, logs the message and calls process.exit(1), skipping finalize (skills install offer, completion log/outro) and the call-site report. The agent's code and schema edits are already on disk.",
+      "consequence": "The wizard ends with a failure after making code changes, never offers the skills install, and leaves the user to finish the migration by hand. It fails loudly and unsafe SQL is not applied, so the release risk is limited to the user experience and this configuration.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-5", "E-6"],
+      "existing_verification": [
+        {
+          "description": "post-agent tests assert the throw before prompting for flagged and unswept cases (post-agent.test.ts:243, 264); ran in 'Run Tests', which passed",
+          "status": "ran_passed",
+          "evidence": ["E-18", "E-19"]
+        }
+      ],
+      "missing_verification": [
+        "A test of run.ts behaviour (finalize/skills install and messaging) after the post-agent step fails closed"
+      ],
+      "mitigation": "Return a 'needs review' status from runPostAgentSteps and still run finalize with an outro that names the files to review, instead of exiting through the generic error handler.",
+      "domain_tags": ["public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test covers the combined effect of the rewrite on schema.ts, the drizzle-kit snapshot and the ORM's runtime reads/writes; tests check only the SQL text.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-17"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No test covers the callers of the new hard exit: init's embedded path and the wizard's run loop.",
+      "scenarios": ["FS-3", "FS-4"],
+      "evidence": ["E-20", "E-6"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Decide and document what schema.ts and the snapshot should look like after a staged rewrite. Make the SQL header, the CLI log and the wizard prompt say so, or fail closed on in-place type changes.",
+      "addresses": ["FS-1", "FS-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add an integration test (Postgres + EQL is already available in the 'Run Tests' job): generate an in-place type change, run the rewriter, migrate, then perform an ORM insert/select and a second generate.",
+      "addresses": ["VG-1", "FS-1", "FS-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "other",
+      "description": "Keep the wizard's migrate prompt defaulting to No after a rewrite until RC-1 is resolved.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "test",
+      "description": "Make init and the wizard distinguish the sweep's fail-closed exit from other failures, and add tests for both callers.",
+      "addresses": ["FS-3", "FS-4", "VG-2"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "documentation",
+      "description": "Release note: the rewrite no longer replaces the column, existing scripts that relied on exit 0 from `stash eql migration --drizzle` may now fail, and the schema must be reshaped to the twin form.",
+      "addresses": ["FS-1", "FS-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "The Drizzle custom-type driver mapping (@cipherstash/stack-drizzle toDriver/fromDriver) was not found in the checked paths, so what the ORM does when writing an encrypted type to a text column is inferred.",
+      "effect": "FS-1's runtime consequence (mixed plaintext/ciphertext rather than an immediate error) is inferred; the schema divergence itself is verified."
+    },
+    {
+      "id": "CL-2",
+      "description": "The wizard's agent prompt is fetched over the network (fetchIntegrationPrompt) and was unavailable, so whether the agent changes column types in place or writes the twin shape is unknown.",
+      "effect": "How often FS-1 is triggered through the wizard cannot be judged."
+    },
+    {
+      "id": "CL-3",
+      "description": "Tests were not run locally (no node_modules, no network). ci.json reports job-level success only; individual tests were mapped to jobs by reading tests.yml (pnpm run test → turbo test over packages/*).",
+      "effect": "ran_passed is attributed at job granularity."
+    },
+    {
+      "id": "CL-4",
+      "description": "The test diffs (~1,000 changed lines) were skimmed by test name and assertion; the dollar-quote and the target-exists logic were read in the source, not traced through every fixture.",
+      "effect": "Edge cases in the regex changes may be missed."
+    },
+    {
+      "id": "CL-5",
+      "description": "The history signal says migration.ts usually changes together with db/install.ts and skills/stash-drizzle/SKILL.md, and neither changed here. db/install.ts was not read. stash-drizzle SKILL.md was read only at lines 420-580.",
+      "effect": "Any drift between those files and the new behaviour is unassessed, beyond what FS-1 and FS-2 cover."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 845,
+      "line_end": 873,
+      "claim": "renderSafeAlter emits comments plus a single `ADD COLUMN \"<column>_encrypted\" \"public\".\"<domain>\"`; no DROP/RENAME; the source column is left as is.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 770,
+      "line_end": 798,
+      "claim": "Skip order: already-encrypted, source-unknown, then target-exists (declared or stagedTargets); otherwise stage the target and render the ADD.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/cli/src/commands/eql/migration.ts",
+      "rev": "head",
+      "line_start": 336,
+      "line_end": 345,
+      "claim": "If sweepIncomplete, log an error, print 'Migration aborted.' when not embedded, and throw CliExit(1); success is logged only otherwise.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 824,
+      "line_end": 834,
+      "claim": "On a throw mid-sweep, rewritten/skipped are attached to the Error and rethrown.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/wizard/src/lib/post-agent.ts",
+      "rev": "head",
+      "line_start": 71,
+      "line_end": 101,
+      "claim": "Throws on any skip or unswept dir; otherwise prompts to migrate with initialValue true, including after a rewrite.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/wizard/src/run.ts",
+      "rev": "head",
+      "line_start": 235,
+      "line_end": 290,
+      "claim": "runPostAgentSteps runs before finalize; a throw is caught by the generic handler, which logs it and calls process.exit(1).",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 260,
+      "line_end": 268,
+      "claim": "dollarQuoteDelimiter returns undefined when the preceding character is an identifier character or `$`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "documentation",
+      "path": "skills/stash-cli/SKILL.md",
+      "rev": "head",
+      "line_start": 379,
+      "line_end": 381,
+      "claim": "Shipped skill describes the add-only rewrite and the non-zero exit; it says nothing about reshaping schema.ts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "diff",
+      "path": ".changeset/staged-add-only-rewriter.md",
+      "rev": "head",
+      "claim": "Patch changeset for stash and @cipherstash/wizard.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/cli/src/commands/init/steps/install-eql.ts",
+      "rev": "head",
+      "line_start": 125,
+      "line_end": 147,
+      "claim": "Every throw from eqlMigrationCommand is reported as a drizzle-kit problem and returns eqlMigrationPending false; it is set true only on success.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/cli/src/commands/init/index.ts",
+      "rev": "head",
+      "line_start": 149,
+      "line_end": 160,
+      "claim": "Without eqlInstalled or eqlMigrationPending, init prints 'EQL extension NOT installed', advises `eql install`, and throws CliExit(1).",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "documentation",
+      "path": "skills/stash-drizzle/SKILL.md",
+      "rev": "head",
+      "line_start": 450,
+      "line_end": 462,
+      "claim": "The staged lifecycle needs schema.ts to keep `email: text` and declare `email_encrypted: types.TextSearch(...)`, the opposite of the in-place change that produces the ALTER.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/wizard/src/lib/post-agent.ts",
+      "rev": "head",
+      "line_start": 59,
+      "line_end": 71,
+      "claim": "The wizard runs drizzle-kit generate after the agent edits the schema, then sweeps the generated SQL.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "packages/cli/src/__tests__/rewrite-migrations.test.ts",
+      "rev": "head",
+      "line_start": 924,
+      "line_end": 925,
+      "claim": "Test cases for `price$usd$cents` and `price$$cents` identifiers.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "packages/cli/src/commands/encrypt/backfill.ts",
+      "rev": "head",
+      "line_start": 139,
+      "line_end": 139,
+      "claim": "Backfill defaults the destination to `${column}_encrypted` and treats the named source column as plaintext.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "command_output",
+      "command": "git -C repo grep -n -i snapshot <head> -- packages/cli/src/commands/db/rewrite-migrations.ts packages/wizard/src/lib/rewrite-migrations.ts",
+      "claim": "Neither rewriter copy refers to drizzle-kit snapshots; it edits only .sql files.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "test",
+      "path": "packages/cli/src/__tests__/rewrite-migrations.test.ts",
+      "rev": "head",
+      "line_start": 377,
+      "claim": "'emits one executable ADD and no cutover statements' asserts the SQL text only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "test",
+      "path": "packages/wizard/src/__tests__/post-agent.test.ts",
+      "rev": "head",
+      "line_start": 209,
+      "line_end": 264,
+      "claim": "Tests for the Yes default after a rewrite and for the throw before prompting on flagged or unswept cases.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "ci_result",
+      "claim": "ci.json: 'Run Tests (Node 22)', 'Run Tests (Node 24)', 'Run Tests (Bun)' and the others all succeeded on the head commit. tests.yml's Run Tests job runs `pnpm run test` (turbo test over packages/*) and `pnpm run test:scripts`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "test",
+      "path": "packages/cli/src/commands/init/steps/__tests__/install-eql.test.ts",
+      "rev": "head",
+      "line_start": 193,
+      "line_end": 204,
+      "claim": "Only a generic `new Error('boom')` from eqlMigrationCommand is tested; no sweep-originated CliExit case.",
+      "status": "verified"
+    },
+    {
+      "id": "E-21",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[0]",
+      "claim": "migration.ts usually changes with db/install.ts (6 commits, conf 0.75); it did not here.",
+      "status": "verified"
+    }
+  ]
+}

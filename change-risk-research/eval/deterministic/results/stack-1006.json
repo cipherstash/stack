@@ -1,0 +1,602 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "9d221fb838de867656f987386410cd13a3338b6b",
+  "head_sha": "c20df92a20cf0cab84a0f76543dcb615cc713332",
+  "merge_base_sha": "9d221fb838de867656f987386410cd13a3338b6b",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "9d221fb838de867656f987386410cd13a3338b6b",
+    "cutoff_date": "2026-10-01T22:15:41-07:00",
+    "commits_read": 4037,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 27,
+    "additions": 808,
+    "deletions": 161,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 20,
+      "added": 7
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/stack-prisma": 15,
+      ".": 6,
+      "examples/prisma": 5,
+      "packages/eql": 1
+    },
+    "component_count": 4,
+    "top_level_dirs": {
+      "packages": 16,
+      "examples": 5,
+      ".changeset": 4,
+      "docs": 1,
+      "skills": 1
+    },
+    "languages": {
+      "JSON": 10,
+      "Markdown": 9,
+      "TypeScript": 8
+    }
+  },
+  "path_classes": {
+    "database_schema": 12,
+    "docs": 9,
+    "security_sensitive": 5,
+    "test": 4,
+    "agent_instructions": 2,
+    "public_api_surface": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/eql-3-0-5-migration.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 20,
+      "deletions": 14,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": ".changeset/eql-3-0-6-migration.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 56,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": ".changeset/prisma-skill-eql-306.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": ".changeset/stack-prisma-upgrade-from-1-0-0.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "docs/plans/2026-08-13-eql-monorepo-absorption.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "examples/prisma/migrations/cipherstash/20260601T0100_install_eql_v3_bundle/migration.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "examples/prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "examples/prisma/migrations/cipherstash/20260601T0100_install_eql_v3_bundle/ops.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 24,
+      "deletions": 7,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "examples/prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "examples/prisma/migrations/cipherstash/20261002T0000_upgrade_eql_v3_3_0_6/migration.json",
+      "status": "added",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "examples/prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "examples/prisma/migrations/cipherstash/20261002T0000_upgrade_eql_v3_3_0_6/ops.json",
+      "status": "added",
+      "previous_path": null,
+      "additions": 32,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "examples/prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "examples/prisma/migrations/cipherstash/refs/head.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "examples/prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/eql/AGENTS.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": "packages/eql",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack-prisma/DEVELOPING.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 21,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/stack-prisma",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack-prisma/README.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 10,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/stack-prisma",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack-prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 54,
+      "deletions": 19,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/ops.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 24,
+      "deletions": 7,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack-prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.json",
+      "status": "added",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack-prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 98,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/ops.json",
+      "status": "added",
+      "previous_path": null,
+      "additions": 32,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack-prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack-prisma/migrations/refs/head.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack-prisma",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack-prisma/src/exports/control.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 14,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["public_api_surface"],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-prisma/src/extension-metadata/constants-v3.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 4,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-prisma/test/descriptor.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-prisma/test/live/migration-apply-live-pg.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 136,
+      "deletions": 22,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-prisma/test/v3/migration-v3.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 124,
+      "deletions": 26,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-prisma/test/v3/stale-vendored-space.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 103,
+      "deletions": 41,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-prisma",
+      "language": "TypeScript"
+    },
+    {
+      "path": "skills/stash-prisma/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 6,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "docs/plans/2026-08-13-eql-monorepo-absorption.md",
+        "commits": 20,
+        "commits_last_90d": 20,
+        "distinct_authors": 2
+      },
+      {
+        "path": "examples/prisma/migrations/cipherstash/refs/head.json",
+        "commits": 9,
+        "commits_last_90d": 7,
+        "distinct_authors": 5
+      },
+      {
+        "path": "examples/prisma/migrations/cipherstash/20260601T0100_install_eql_v3_bundle/migration.json",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 4
+      },
+      {
+        "path": "skills/stash-prisma/SKILL.md",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 4
+      },
+      {
+        "path": "examples/prisma/migrations/cipherstash/20260601T0100_install_eql_v3_bundle/ops.json",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-prisma/test/v3/migration-v3.test.ts",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.json",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.ts",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 3
+      },
+      {
+        "path": ".changeset/eql-3-0-5-migration.md",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-prisma/README.md",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/ops.json",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack-prisma/migrations/refs/head.json",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-prisma/src/exports/control.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-prisma/test/descriptor.test.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-prisma/test/v3/stale-vendored-space.test.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [],
+    "bulk_commits_ignored": 93
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/eql-3-0-5-migration.md": ["@cipherstash/developers"],
+      ".changeset/eql-3-0-6-migration.md": ["@cipherstash/developers"],
+      ".changeset/prisma-skill-eql-306.md": ["@cipherstash/developers"],
+      ".changeset/stack-prisma-upgrade-from-1-0-0.md": [
+        "@cipherstash/developers"
+      ],
+      "docs/plans/2026-08-13-eql-monorepo-absorption.md": [
+        "@cipherstash/developers"
+      ],
+      "examples/prisma/migrations/cipherstash/20260601T0100_install_eql_v3_bundle/migration.json": [
+        "@cipherstash/developers"
+      ],
+      "examples/prisma/migrations/cipherstash/20260601T0100_install_eql_v3_bundle/ops.json": [
+        "@cipherstash/developers"
+      ],
+      "examples/prisma/migrations/cipherstash/20261002T0000_upgrade_eql_v3_3_0_6/migration.json": [
+        "@cipherstash/developers"
+      ],
+      "examples/prisma/migrations/cipherstash/20261002T0000_upgrade_eql_v3_3_0_6/ops.json": [
+        "@cipherstash/developers"
+      ],
+      "examples/prisma/migrations/cipherstash/refs/head.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/eql/AGENTS.md": ["@cipherstash/developers"],
+      "packages/stack-prisma/DEVELOPING.md": ["@cipherstash/developers"],
+      "packages/stack-prisma/README.md": ["@cipherstash/developers"],
+      "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/ops.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/ops.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/migrations/refs/head.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/src/exports/control.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/src/extension-metadata/constants-v3.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/test/descriptor.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/test/live/migration-apply-live-pg.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/test/v3/migration-v3.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-prisma/test/v3/stale-vendored-space.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "skills/stash-prisma/SKILL.md": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 1
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 4,
+    "source_files_changed": 4,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [
+      "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.ts",
+      "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.ts",
+      "packages/stack-prisma/src/extension-metadata/constants-v3.ts"
+    ],
+    "mapping": [
+      {
+        "source": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/eql/__tests__/migration.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/eql/__tests__/migration.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack-prisma/src/exports/control.ts",
+        "related_tests_at_head": [
+          "packages/stack-prisma/test/bundling-isolation.test.ts",
+          "packages/stack-prisma/test/descriptor.test.ts",
+          "packages/stack-prisma/test/live/migration-apply-live-pg.test.ts",
+          "packages/stack-prisma/test/psl-interpretation.test.ts",
+          "packages/stack-prisma/test/v3/migration-v3.test.ts",
+          "packages/stack-prisma/test/v3/stale-vendored-space.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/stack-prisma/src/extension-metadata/constants-v3.ts",
+        "related_tests_at_head": [
+          "packages/stack-prisma/test/v3/constants-v3.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

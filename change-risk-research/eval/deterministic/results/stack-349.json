@@ -1,0 +1,622 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "530625f59cc8e1a177f4ac31ae112f0d7b350557",
+  "head_sha": "a47a63e40bb78e05505fca577d2c8a48d50c6a70",
+  "merge_base_sha": "530625f59cc8e1a177f4ac31ae112f0d7b350557",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "530625f59cc8e1a177f4ac31ae112f0d7b350557",
+    "cutoff_date": "2026-04-15T16:38:52-06:00",
+    "commits_read": 831,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 25,
+    "additions": 1323,
+    "deletions": 361,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 15,
+      "added": 9,
+      "deleted": 1
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/cli": 24,
+      "packages/stack": 1
+    },
+    "component_count": 2,
+    "top_level_dirs": {
+      "packages": 25
+    },
+    "languages": {
+      "TypeScript": 24,
+      "Markdown": 1
+    }
+  },
+  "path_classes": {
+    "test": 2,
+    "docs": 1,
+    "security_sensitive": 1,
+    "serialization_or_protocol": 1,
+    "build_config": 1,
+    "database_schema": 1
+  },
+  "files": [
+    {
+      "path": "packages/cli/README.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 38,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/cli",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/src/__tests__/detect.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 88,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/__tests__/rewrite-migrations.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 105,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/bin/stash.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 34,
+      "deletions": 28,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/config-scaffold.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 106,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/detect.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 67,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/install.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 154,
+      "deletions": 32,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 79,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/setup.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 224,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/env/index.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 91,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/providers/base.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/providers/drizzle.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/providers/supabase.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/install-forge.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 22,
+      "deletions": 8,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/changelog.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 97,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/install-skills.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 100,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 46,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/wire-call-sites.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 175,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/run.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 81,
+      "deletions": 9,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 29,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/tsup.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/drizzle/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 20,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["database_schema"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/cli/src/bin/stash.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/init/providers/base.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/init/providers/drizzle.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/init/providers/supabase.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/README.md",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/auth/login.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/db/install.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/db/setup.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/index.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/src/drizzle/index.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/init/steps/install-forge.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/commands/wizard/run.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/cli/src/installer/index.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [],
+    "bulk_commits_ignored": 12
+  },
+  "ownership": {
+    "codeowners_found": false,
+    "owners_by_file": {},
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 9
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 2,
+    "source_files_changed": 21,
+    "source_without_related_test": [
+      "packages/cli/src/bin/stash.ts",
+      "packages/cli/src/commands/auth/login.ts",
+      "packages/cli/src/commands/db/config-scaffold.ts",
+      "packages/cli/src/commands/env/index.ts",
+      "packages/cli/src/commands/index.ts",
+      "packages/cli/src/commands/init/providers/base.ts",
+      "packages/cli/src/commands/init/steps/install-forge.ts",
+      "packages/cli/src/commands/wizard/lib/changelog.ts",
+      "packages/cli/src/commands/wizard/lib/install-skills.ts",
+      "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+      "packages/cli/src/commands/wizard/lib/wire-call-sites.ts",
+      "packages/cli/src/commands/wizard/run.ts",
+      "packages/cli/src/installer/index.ts",
+      "packages/cli/tsup.config.ts",
+      "packages/stack/src/drizzle/index.ts"
+    ],
+    "source_with_related_test_unchanged": [
+      "packages/cli/src/commands/db/install.ts",
+      "packages/cli/src/commands/init/providers/drizzle.ts",
+      "packages/cli/src/commands/init/providers/supabase.ts"
+    ],
+    "mapping": [
+      {
+        "source": "packages/cli/src/bin/stash.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/auth/login.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/config-scaffold.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/detect.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/detect.test.ts",
+          "packages/cli/src/commands/wizard/__tests__/detect.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/db/install.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/installer.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/rewrite-migrations.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/rewrite-migrations.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/env/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/providers/base.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/providers/drizzle.ts",
+        "related_tests_at_head": ["packages/drizzle/__tests__/drizzle.test.ts"],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/providers/supabase.ts",
+        "related_tests_at_head": [
+          "packages/protect/__tests__/supabase.test.ts",
+          "packages/stack/__tests__/supabase.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/install-forge.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/changelog.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/install-skills.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/wire-call-sites.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/run.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/installer/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/tsup.config.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/drizzle/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

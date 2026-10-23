@@ -1,0 +1,152 @@
+{
+  "case": "stack-503",
+  "pr": 503,
+  "condition": "C",
+  "run": 1,
+  "model_requested": "claude-opus-5-5",
+  "exit_code": 0,
+  "started": "2026-10-12T03:52:03.076362+00:00",
+  "wall_seconds": 177.867274,
+  "isolation": {
+    "hidden_paths": [
+      "/home/claude/stack",
+      "/tmp/claude-0",
+      "/root/.claude/projects"
+    ],
+    "git_protocols": "file",
+    "mcp": "none"
+  },
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "skills_loaded": [
+    "session-start-hook",
+    "change-risk",
+    "deep-research",
+    "design",
+    "slides",
+    "design-sync",
+    "dataviz",
+    "artifact-diagramming",
+    "artifact-capabilities",
+    "update-config",
+    "verify",
+    "debug",
+    "code-review",
+    "simplify",
+    "batch",
+    "fewer-permission-prompts",
+    "doctor",
+    "loop",
+    "claude-api",
+    "workflow-authoring",
+    "run",
+    "run-skill-generator",
+    "plugin-authoring",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "anthropic-skills:deep-research",
+    "anthropic-skills:docs",
+    "anthropic-skills:docx",
+    "anthropic-skills:google-workspace",
+    "anthropic-skills:import-memory",
+    "anthropic-skills:morning",
+    "anthropic-skills:pdf",
+    "anthropic-skills:pptx",
+    "anthropic-skills:skill-creator",
+    "anthropic-skills:xlsx"
+  ],
+  "total_cost_usd": 1.1051046999999998,
+  "duration_ms": 176448,
+  "duration_api_ms": 173710,
+  "num_turns": 27,
+  "is_error": false,
+  "subtype": "success",
+  "usage": {
+    "input_tokens": 34,
+    "cache_creation_input_tokens": 59517,
+    "cache_read_input_tokens": 1026169,
+    "output_tokens": 21172,
+    "output_tokens_details": {
+      "thinking_tokens": 3324
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 59517,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 828,
+        "cache_read_input_tokens": 84910,
+        "cache_creation_input_tokens": 2054,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2054
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1469,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0001589,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 34,
+      "outputTokens": 21172,
+      "cacheReadInputTokens": 1026169,
+      "cacheCreationInputTokens": 59517,
+      "webSearchRequests": 0,
+      "costUSD": 1.1049457999999999,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 3324,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "tool_calls": 25,
+  "tool_counts": {
+    "Skill": 1,
+    "Read": 1,
+    "Bash": 22,
+    "Write": 1
+  },
+  "skill_invoked": true,
+  "audit": {
+    "flags": [
+      {
+        "tool": "Bash",
+        "why": "network-looking",
+        "input": "{\"command\": \"mkdir -p /srv/cr/stack-503-C-r1/out; cat > /srv/cr/stack-503-C-r1/out/assessment.json <<'EOF'\\n{\\n  \\\"schema_version\\\": \\\"1\\\",\\n  \\\"repository\\\": \\\"cipherstash/stack\\\",\\n  \\\"base_sha\\\": \\\"fcb7e336ded91cbf00318785996c3ea833cc9944\\\",\\n  \\\"head_sha\\\": \\\"c28b5e46fd29889667a14eab94e9b6213e55"
+      }
+    ],
+    "clean": false
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

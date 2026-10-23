@@ -1,0 +1,21 @@
+{
+  "case": "stack-728",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Skipped near-misses aren't re-surfaced at the closing note (inconsistent with `migration.ts`). When `skipped.length > 0`, the warning is logged inline at Line 6",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

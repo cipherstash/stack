@@ -1,0 +1,14 @@
+{
+  "pr": 860,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "no_known_defect",
+  "expert_impact": "high",
+  "attention_warranted": true,
+  "impact_confidence": "low",
+  "rationale": "Upgrade of the native encryption core (protect-ffi 0.31.0) consumed by the main package; payload and API surface may move.",
+  "known_defects": [],
+  "notes": "No known defect does not mean risk-free; reported scenarios on this case are adjudicated individually (valid / unsupported / incorrect)."
+}

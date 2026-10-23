@@ -1,0 +1,38 @@
+{
+  "pr": 314,
+  "head_sha": "bcfeeb8ed14f4412b599d802514ff55d8cdc364b",
+  "check_runs": [
+    {
+      "name": "CodeQL",
+      "conclusion": "success",
+      "status": "completed"
+    },
+    {
+      "name": "osv-scanner",
+      "conclusion": "success",
+      "status": "completed"
+    },
+    {
+      "name": "OSV Vulnerability Scan / osv-scan",
+      "conclusion": "success",
+      "status": "completed"
+    },
+    {
+      "name": "Analyze (javascript-typescript)",
+      "conclusion": "success",
+      "status": "completed"
+    },
+    {
+      "name": "Run Tests",
+      "conclusion": "success",
+      "status": "completed"
+    }
+  ],
+  "statuses": [
+    {
+      "context": "CodeRabbit",
+      "state": "success"
+    }
+  ],
+  "notes": "5 check runs (success: 5). Combined status: success."
+}

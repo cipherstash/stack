@@ -1,0 +1,26 @@
+{
+  "case": "stack-982",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "low",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Patch-level change in next 15.5.24 breaks @cipherstash/nextjs typecheck or tests",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Cited imports, test file, tsup config and CI step exist, but the finding identifies no concrete change in next 15.5.24 affecting NextRequest/NextResponse/cookies; it is a speculative 'run CI' concern about a patch-level lockfile bump."
+    }
+  ],
+  "cost_usd": 0.733583,
+  "wall_seconds": 100.054672,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

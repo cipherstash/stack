@@ -1,0 +1,59 @@
+{
+  "case": "stack-823",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Add-only rewrite leaves the TS schema pointing an encrypted type at a still-plaintext column, and the wizard migrates and reports success",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Schema/snapshot divergence after the add-only rewrite."
+    },
+    {
+      "id": "FS-2",
+      "title": "stash init swallows the new fail-closed CliExit and misreports it as a drizzle-kit problem",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Command and wizard fail permanently on corpora with flagged statements, with no override",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Shipped stash-drizzle skill still describes the destructive, warn-only rewrite",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.9622161000000005,
+  "wall_seconds": 234.661758,
+  "case_note": "KD-2 found; KD-1 and KD-3 missed."
+}

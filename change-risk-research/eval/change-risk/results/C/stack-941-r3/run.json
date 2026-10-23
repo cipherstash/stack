@@ -1,0 +1,153 @@
+{
+  "case": "stack-941",
+  "pr": 941,
+  "condition": "C",
+  "run": 3,
+  "model_requested": "claude-opus-5-5",
+  "exit_code": 0,
+  "started": "2026-10-12T06:33:36.540459+00:00",
+  "wall_seconds": 338.009382,
+  "isolation": {
+    "hidden_paths": [
+      "/home/claude/stack",
+      "/tmp/claude-0",
+      "/root/.claude/projects"
+    ],
+    "git_protocols": "file",
+    "mcp": "none"
+  },
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "skills_loaded": [
+    "session-start-hook",
+    "change-risk",
+    "deep-research",
+    "design",
+    "slides",
+    "design-sync",
+    "dataviz",
+    "artifact-diagramming",
+    "artifact-capabilities",
+    "update-config",
+    "verify",
+    "debug",
+    "code-review",
+    "simplify",
+    "batch",
+    "fewer-permission-prompts",
+    "doctor",
+    "loop",
+    "claude-api",
+    "workflow-authoring",
+    "run",
+    "run-skill-generator",
+    "plugin-authoring",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "anthropic-skills:deep-research",
+    "anthropic-skills:docs",
+    "anthropic-skills:docx",
+    "anthropic-skills:google-workspace",
+    "anthropic-skills:import-memory",
+    "anthropic-skills:morning",
+    "anthropic-skills:pdf",
+    "anthropic-skills:pptx",
+    "anthropic-skills:skill-creator",
+    "anthropic-skills:xlsx"
+  ],
+  "total_cost_usd": 2.3438927000000005,
+  "duration_ms": 336414,
+  "duration_api_ms": 333010,
+  "num_turns": 35,
+  "is_error": false,
+  "subtype": "success",
+  "usage": {
+    "input_tokens": 60,
+    "cache_creation_input_tokens": 130088,
+    "cache_read_input_tokens": 2768049,
+    "output_tokens": 37459,
+    "output_tokens_details": {
+      "thinking_tokens": 10108
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 130088,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 857,
+        "cache_read_input_tokens": 154472,
+        "cache_creation_input_tokens": 3063,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3063
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1469,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0001589,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 60,
+      "outputTokens": 37459,
+      "cacheReadInputTokens": 2768049,
+      "cacheCreationInputTokens": 130088,
+      "webSearchRequests": 0,
+      "costUSD": 2.3437338000000003,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 10108,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "tool_calls": 33,
+  "tool_counts": {
+    "Skill": 1,
+    "Read": 1,
+    "Bash": 29,
+    "Write": 1,
+    "Edit": 1
+  },
+  "skill_invoked": true,
+  "audit": {
+    "flags": [
+      {
+        "tool": "Bash",
+        "why": "network-looking",
+        "input": "{\"command\": \"mkdir -p /srv/cr/stack-941-C-r3/out; cat > /tmp/claude-0/-srv-cr-stack-941-C-r3/8b221732-734d-5292-976f-471e1931226b/scratchpad/build.py <<'EOF'\\nimport json\\nE=[]\\ndef ev(kind,claim,status=\\\"verified\\\",**kw):\\n    i=f\\\"E-{len(E)+1}\\\"; d={\\\"id\\\":i,\\\"kind\\\":kind,\\\"claim\\\":claim,\\\"status\\"
+      }
+    ],
+    "clean": false
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

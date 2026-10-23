@@ -1,0 +1,31 @@
+{
+  "case": "stack-562",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Deprecation warning is silently skipped when both fields are set. The warning only fires `if (clientConfig?.strategy && !clientConfig.authStrategy)`.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "deprecation warning skipped when both fields set"
+    },
+    {
+      "id": "CR-2",
+      "title": "Mutual-exclusion error mentions `authStrategy` even when the deprecated `strategy` field caused it. `authStrategy` here is resolved as `cfg.authStrategy ?? cfg.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "error message names the wrong field"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

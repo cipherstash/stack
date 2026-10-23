@@ -1,0 +1,47 @@
+{
+  "case": "stack-823",
+  "evaluator": "change-risk/C-r2",
+  "run": 2,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Rewritten migration leaves the database out of step with the Drizzle schema; ciphertext is written into the plaintext column",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Shipped stash-drizzle skill still describes the old destructive rewrite and the non-fatal flagging",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "New fail-closed exits break `stash init` and the wizard mid-flow with misleading or incomplete handling",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.9257891,
+  "wall_seconds": 239.51762
+}

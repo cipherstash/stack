@@ -1,0 +1,316 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Hardcoded '0.1.0' version string differs from the manifest's 0.0.0, but this is a cosmetic mismatch that changesets will bump anyway."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The zod schema at config/index.ts:44-49 only declares databaseUrl and client, so the declared workspaceId/clientAccessKey are stripped from ResolvedStashConfig."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "installer/index.ts:3-6 and install.ts:243-244 fetch releases/latest SQL with no pin or checksum, which can mismatch the client version."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same unpinned releases/latest download confirmed in installer and drizzle path; executed without integrity or version check."
+    },
+    {
+      "id": "F-05",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Error text says \"encryptClient\" instead of \"client\"; message wording only."
+    },
+    {
+      "id": "F-06",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Missing engines field in an example package.json is a style or tooling nit."
+    },
+    {
+      "id": "F-07",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "A test import-path preference, with no release risk."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "stack emits cast_as 'number'/'bigint'/'json' (schema/index.ts:26,172,341) and EQL's config_check_cast rejects them (sql:3604-3608), so the newly added push would fail for those schemas."
+    },
+    {
+      "id": "F-09",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head the code uses Object.values(...).find() with a getEncryptConfig type guard and a null check, not [0] with an unguarded call."
+    },
+    {
+      "id": "F-10",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Returning the internal reference from the getter is a defensive-copy style concern, not a material risk."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "grantSupabasePermissions (installer/index.ts:229-238) grants ALL on eql_v2 objects and default privileges to anon, as claimed."
+    },
+    {
+      "id": "F-12",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "fetch has no timeout, but in an interactive CLI that is a minor UX robustness nit."
+    },
+    {
+      "id": "F-13",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "tsup with format ['cjs','esm'] and dts:true emits index.d.cts for the cjs build, so the require.types path is correct."
+    },
+    {
+      "id": "F-14",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "An undefined databaseUrl is caught by the zod schema with a clear 'databaseUrl is required' message, so it does not fail later with an unclear error."
+    },
+    {
+      "id": "F-15",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same confirmed broad ALL grants to anon/authenticated in grantSupabasePermissions."
+    },
+    {
+      "id": "F-16",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "install.ts:125 interpolates --name into an execSync shell string, and outDir (line 107) is never passed to drizzle-kit, so --out can disagree with where the migration is generated."
+    },
+    {
+      "id": "F-17",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "process.exit in an exported loader is a documented API design preference, not a release defect."
+    },
+    {
+      "id": "F-18",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "push.ts:33-42 runs an unscoped UPDATE and a separate INSERT with no transaction, so an INSERT failure (e.g. the cast_as CHECK) leaves no active config."
+    },
+    {
+      "id": "F-19",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "A test import-path style preference."
+    },
+    {
+      "id": "F-20",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Documentation consistency between SKILL.md sections."
+    },
+    {
+      "id": "F-21",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "No shown path by which plaintext reaches error.message in the CLI's top-level handler."
+    },
+    {
+      "id": "F-22",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Changeset wording only."
+    },
+    {
+      "id": "F-23",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Config-load errors come from evaluating the config file; no mechanism is shown by which plaintext would leak."
+    },
+    {
+      "id": "F-24",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Confirmed non-transactional UPDATE without WHERE followed by INSERT in push.ts, which also deactivates pending/encrypting rows."
+    },
+    {
+      "id": "F-25",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "A refactoring or duplication suggestion."
+    },
+    {
+      "id": "F-26",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "push.ts:33-42 is non-atomic and unscoped; a failed INSERT leaves no active config."
+    },
+    {
+      "id": "F-27",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Vitest/Vite bundle config files and inject __dirname, so using __dirname in vitest.config.ts works in type:module packages."
+    },
+    {
+      "id": "F-28",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "If client.connect() throws at installer/index.ts:191, the error is rethrown before the try/finally that calls client.end(), so the client is not cleaned up (low impact)."
+    },
+    {
+      "id": "F-29",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The documented drizzle flow writes SQL downloaded from GitHub into migrations with no integrity check, matching the code in install.ts."
+    },
+    {
+      "id": "F-30",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "findConfigFile walks up parent dirs, but loadEncryptConfig resolves client against process.cwd() (line 145), so running from a subdirectory resolves the wrong path."
+    },
+    {
+      "id": "F-31",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The PR adds the experimental onlyUpdatePeerDependentsWhenOutOfRange option to .changeset/config.json, which can skip peer-dependent releases."
+    },
+    {
+      "id": "F-32",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "reason": "Markdown lint spacing."
+    },
+    {
+      "id": "F-33",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same confirmed experimental changesets option that changes peer-dependent bump behavior repo-wide."
+    },
+    {
+      "id": "F-34",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "parseArgs (stash-forge.ts:43-53) consumes the next non-flag token as a value, so '--dry-run foo' leaves flags['dry-run'] unset and the command runs for real."
+    },
+    {
+      "id": "F-35",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "--force re-executes the EQL script, which begins with DROP SCHEMA eql_v2 CASCADE, dropping dependent constraints and indexes, while the code calls it 'safe to re-run'."
+    },
+    {
+      "id": "F-36",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Confirmed non-transactional deactivate-then-insert in push.ts combined with cast_as values the EQL CHECK constraint rejects."
+    },
+    {
+      "id": "F-37",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "An API design preference about documented process.exit."
+    },
+    {
+      "id": "F-38",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The unscoped UPDATE at push.ts:33-35 deactivates pending/encrypting rows, bypassing EQL's config lifecycle."
+    },
+    {
+      "id": "F-39",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Unpinned releases/latest SQL is executed without integrity or version check, while the repo vendors EQL 2.1.8."
+    }
+  ]
+}

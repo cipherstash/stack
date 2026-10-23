@@ -1,0 +1,8 @@
+{
+  "pr": 656,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [],
+  "notes": "CodeRabbit summary issue comment says 'No actionable comments were generated in the recent review.' No CodeRabbit review objects or review threads. Pre-merge checks 5 passed. CodeRabbit commit status 'Review completed'. Release-notes block removed from description."
+}

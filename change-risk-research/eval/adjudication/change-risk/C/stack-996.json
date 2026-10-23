@@ -1,0 +1,36 @@
+{
+  "case": "stack-996",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "high",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Minor release breaks downstream TypeScript builds that dereference Json encrypt results",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Supabase per-term fallback now fails queries it previously sent",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Low, fail-closed."
+    }
+  ],
+  "cost_usd": 1.6935542999999997,
+  "wall_seconds": 168.586693
+}

@@ -1,0 +1,47 @@
+{
+  "case": "stack-503",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Partial publish leaves released packages depending on unpublished siblings",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Floating npm@^11.5.1 install runs unpinned code in the OIDC-capable release job",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "OIDC auth path not actually taken by changeset publish, so every publish still fails",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative; says it could not check."
+    }
+  ],
+  "cost_usd": 1.1051046999999998,
+  "wall_seconds": 177.867274
+}

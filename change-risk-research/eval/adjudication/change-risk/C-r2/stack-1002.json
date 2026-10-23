@@ -1,0 +1,58 @@
+{
+  "case": "stack-1002",
+  "evaluator": "change-risk/C-r2",
+  "run": 2,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "First armed run publishes an auth platform package whose binary is wrong or unloadable",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Publish path ships binaries without libc/arch checks."
+    },
+    {
+      "id": "FS-2",
+      "title": "One switch arms npm auth publishing and crates.io publishing together",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "A failing auth build holds every JS release on main",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Wider release-plz path filter starts the armed EQL publish job on root Cargo changes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 2.1554897,
+  "wall_seconds": 309.771719
+}

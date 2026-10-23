@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-21",
+  "codex_cli": "0.162.1",
+  "claude_cli": "2.1.305",
+  "canonical_skill": ".agents/skills/change-risk",
+  "codex_small": {
+    "base": "2ab2b9447ee592d7a498fd7c0f63293a4b48466e",
+    "head": "eb8194bf37e0b6f9b50d99e7ae2941930ec684d0",
+    "discovery": "explicit $change-risk resolved repository skill; agent read its references and schema",
+    "assessment": "codex-assessment.json",
+    "report": "codex-report.md",
+    "validation": "passed schema, semantics, repository source paths/lines; no warnings",
+    "repository_tests_executed_by_assessor": false
+  },
+  "codex_initial": {
+    "assessment": "codex-wide-invalid.json",
+    "validation": "rejected: E-12 and E-13 diff evidence lacked paths",
+    "note": "HEAD~1..HEAD was a large merge, replaced with a pinned small-change smoke; original response preserved"
+  },
+  "artifacts": {
+    "codex-wide-invalid.json": "7fe308bae1c7db4309ce7a998f19420791798e58f1d05ae30677a4000315db36",
+    "codex-report.md": "5233b7083770166c03933da5e0ba6e3cec5afc6920890c952e266900f9506715",
+    "claude-assessment.json": "5e55caa20e5f65fd4ecffbddf26c6cbb682f854f86c38b80e655f79ab5cef351",
+    "codex-assessment.json": "ff80be738467ee2601eb95caee512404f7dd6e969f4d983f985b686085ff7e08",
+    "README.md": "76b6e459b54537f1fad7d72d88670961a7ef197783000a065983e108a9383564",
+    "claude-report.md": "07383dd9f9a03cbc73d0a1e624c099e89b67030cd7210891339eb1c16d32a9a7"
+  },
+  "claude_small": {
+    "assessment": "claude-assessment.json",
+    "report": "claude-report.md",
+    "discovery": "/change-risk invoked via repository Claude skill symlink",
+    "validation": "passed schema, semantics, repository source paths/lines; no warnings",
+    "initial_limitation": "sandbox attempt reported not logged in; host-access retry completed"
+  }
+}

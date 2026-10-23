@@ -1,0 +1,445 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "9d221fb838de867656f987386410cd13a3338b6b",
+  "head_sha": "c20df92a20cf0cab84a0f76543dcb615cc713332",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff (ops.json lines carry ~2.7 MB of baked SQL each; compared programmatically, not read by eye)"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md; commit messages and changesets were read as untrusted content"
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied; evidence.json ci.available=false"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "packages/stack-prisma/DEVELOPING.md, packages/eql/AGENTS.md and the absorption plan at head"
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Consumers found by git grep only"
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "collect-evidence ownership (all files @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (no omitted co-changes)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No npm release state, adoption data or customer database inventory beyond claims in changesets"
+    }
+  },
+  "summary": "Adds a 3.0.6 EQL v3 upgrade self-edge to @cipherstash/stack-prisma and re-emits the genesis baseline (20260601T0100_install_eql_v3_bundle) to bake eql-3.0.6 with a fifth no-SQL carrier op, so the shipped baseline migrationHash moves again (bad30c9b… → 2fdc7caf…). I verified that the baked 3.0.6 SQL differs from the 3.0.5 bundle only in the version stamp (version(), schema comment, one comment line), and that the baseline and the 3.0.6 edge bake identical bytes. Because the migrations land before @cipherstash/eql is bumped from 3.0.5 (bumped by a pending patch changeset), the main risk is release ordering: the lockstep test now accepts either EQL version, so stack-prisma could ship baking 3.0.6 next to a 3.0.5 runtime package. Existing 1.x databases now re-install the bundle twice in one migrate, each install starting with DROP SCHEMA eql_v3 CASCADE. The stale-vendored-directory hazard (db init refusal, silent no-op without migration plan) was already present at the base from the unpublished 3.0.5 re-emit, and this change carries it forward. Offline tests targeting each of these paths exist but I did not see them run. The new live-Postgres tests self-skip without DATABASE_URL, and I found no CI job that sets it for this suite.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "state_or_persistence",
+      "description": "New migration 20261002T0000_upgrade_eql_v3_3_0_6: a data-class self-edge that executes the full eql-3.0.6 install SQL (which opens with DROP SCHEMA IF EXISTS eql_v3 CASCADE) and records invariant cipherstash:upgrade-eql-v3-bundle-3.0.6-v1. Postchecks: version()='3.0.6', schema comment '3.0.6', eql_v3.query_json exists.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "The genesis baseline is re-emitted: its install op now bakes eql-3.0.6 (sha 9b6dab78…), all carrier postchecks compare against '3.0.6', and a fifth additive carrier op for the 3.0.6 invariant is added; migrationHash changes to 2fdc7caf…. These bytes are content-addressed and copied into consumer repos.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "The control descriptor exposes five migrations and the head ref requires five invariants, so `migration plan` seeds a new directory and every database whose markers lack the 3.0.6 invariant must walk an extra edge (databases on 1.0.0/1.1.x walk 3.0.5 then 3.0.6, installing the bundle twice).",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6", "E-9"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "Release ordering inverted: migrations baking eql-3.0.6 land while the workspace @cipherstash/eql is still 3.0.5; the lockstep test's version marker is widened to accept 3.0.5 or 3.0.6 for one cycle, and the live byte-identity check is documented as red by construction until the eql bump merges.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8", "E-10", "E-11"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "documentation",
+      "description": "README, shipped skill skills/stash-prisma/SKILL.md, changesets and DEVELOPING.md updated to describe the 3.0.6 baseline and the 1.1.x upgrade path.",
+      "certainty": "observed",
+      "evidence": ["E-12"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack-prisma migrations and control descriptor",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "New upgrade edge, re-emitted baseline, head ref and descriptor wiring.",
+      "evidence": ["E-1", "E-3", "E-5"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Customer PostgreSQL databases with EQL v3 installed via prisma-next",
+      "kind": "database",
+      "relationship": "confirmed",
+      "how": "`prisma-next migrate` executes the new edge's SQL (DROP SCHEMA eql_v3 CASCADE + reinstall) against them; path pinned in stale-vendored-space tests.",
+      "evidence": ["E-2", "E-6", "E-9"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Consumer-vendored migrations/cipherstash/ directories",
+      "kind": "external_consumer",
+      "relationship": "confirmed",
+      "how": "Seed phase copies new directories but never rewrites the existing baseline, so the re-emitted baseline does not reach vendored copies.",
+      "evidence": ["E-6", "E-12"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/eql (workspace dependency, 3.0.5 at head)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "stack-prisma depends on it via workspace:* and the lockstep test compares its releaseManifest against baked digests; a pending patch changeset bumps it.",
+      "evidence": ["E-8", "E-10", "E-11"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Changesets / Version Packages release flow",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "stack-prisma is in a fixed version group with stash and @cipherstash/stack; @cipherstash/eql is not in that group, so the two can version independently.",
+      "evidence": ["E-11", "E-13"]
+    },
+    {
+      "id": "AC-6",
+      "name": "examples/prisma vendored migration space",
+      "kind": "other",
+      "relationship": "changed",
+      "how": "Copies of the new and re-emitted artefacts and head ref.",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "AC-7",
+      "name": "Shipped agent skill skills/stash-prisma",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Guidance copied into customer repos describes the stale-directory remedy.",
+      "evidence": ["E-12"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "stack-prisma ships baking eql-3.0.6 while its pinned @cipherstash/eql runtime stays 3.0.5",
+      "trigger": "A Version Packages release publishes @cipherstash/stack-prisma (minor, from .changeset/eql-3-0-6-migration.md) without @cipherstash/eql moving to a 3.0.6 whose install SQL digest is exactly 9b6dab78…, e.g. the eql changeset is deferred, the eql publish fails, or another EQL SQL change lands before the bump.",
+      "affected_components": ["AC-1", "AC-4", "AC-5", "AC-2"],
+      "mechanism": "The lockstep test only requires that the installed release's digest is baked by some migration (migration-v3.test.ts:312), which 3.0.5 still satisfies through the 3.0.5 edge, and the version marker now accepts '3.0.5' or '3.0.6' (line 330). So CI stays green with stack-prisma baking 3.0.6 against a 3.0.5 @cipherstash/eql. The `*` in workspace:* is rewritten to the exact eql version at pack time, and eql is not in stack-prisma's fixed changeset group (.changeset/config.json).",
+      "consequence": "Databases migrated by prisma-next report eql-3.0.6, while `stash eql install` and other tools pinned through @cipherstash/eql install or expect 3.0.5. Version-based diagnostics disagree, and the shipped migrations reference an EQL release that may not exist on npm. Function behaviour is identical (verified stamp-only diff), so there is no data or ciphertext effect.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-8", "E-10", "E-11", "E-13", "E-4"],
+      "existing_verification": [
+        {
+          "description": "Lockstep test: installed eql digest must be baked by a published migration (fails loudly if eql moves to a digest no migration bakes)",
+          "status": "exists_not_run",
+          "evidence": ["E-8"]
+        },
+        {
+          "description": "Offline test asserting both 3.0.6-baking edges contain SELECT '3.0.6' and every version postcheck reads '3.0.6'",
+          "status": "exists_not_run",
+          "evidence": ["E-14"]
+        }
+      ],
+      "missing_verification": [
+        "No check that a stack-prisma release whose baseline bakes eql-X is published together with @cipherstash/eql X (the baseline's digest is not required to equal the installed release's)",
+        "No CI result showing the Version Packages PR (bumping eql to 3.0.6) passes the lockstep test with digest 9b6dab78…"
+      ],
+      "mitigation": "Release the stack-prisma changeset only in the same Version Packages PR that bumps @cipherstash/eql to 3.0.6. Before publishing, confirm that the built eql package's installSqlSha256 equals 9b6dab78…. Narrow the version marker to '3.0.6' right after that merge, and consider adding a release gate that the baseline's baked digest equals the installed releaseManifest.",
+      "domain_tags": ["build_release", "dependency", "persistence_migration"]
+    },
+    {
+      "id": "FS-2",
+      "title": "A version-stamp-only release re-runs DROP SCHEMA eql_v3 CASCADE on existing databases",
+      "trigger": "`prisma-next plan` + `migrate` against an existing database whose markers lack the 3.0.6 invariant: every 1.0.0/1.1.x database (walks 3.0.5 then 3.0.6), and any database already at 3.0.5 built from main.",
+      "affected_components": ["AC-2", "AC-1"],
+      "mechanism": "The 3.0.6 edge executes the full install bundle (migration.ts:75), which drops and recreates the eql_v3 schema with CASCADE. For 1.x databases this runs a second full ~2.6 MB install in the same transaction as the 3.0.5 edge. For a database already at 3.0.5 it is a new destructive reinstall for a stamp-only change. Dependent functional indexes, views, RLS policies and grants on eql_v3 objects are dropped and not recreated by the migration.",
+      "consequence": "After the upgrade, encrypted-column queries lose their functional indexes (slow queries) and RLS policies or grants that referenced eql_v3 are gone until the operator recreates them. A longer single transaction holds locks for longer. No ciphertext is altered, because the public.eql_v3_* storage domains are preserved.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-9", "E-12"],
+      "existing_verification": [
+        {
+          "description": "Offline path tests: 1.x database walks [3.0.5, 3.0.6]; a 3.0.5 database walks only 3.0.6; stale fresh space installs the bundle three times",
+          "status": "exists_not_run",
+          "evidence": ["E-6", "E-9"]
+        },
+        {
+          "description": "Live-PG test applying the 3.0.5 then 3.0.6 edges' baked SQL in one transaction and checking postchecks (self-skips without DATABASE_URL and CS credentials)",
+          "status": "exists_not_run",
+          "evidence": ["E-15"]
+        }
+      ],
+      "missing_verification": [
+        "No test that dependent objects (functional indexes, RLS policies) are reported or restored after the second reinstall",
+        "No evidence the live-PG suite runs in any CI job"
+      ],
+      "mitigation": "Already documented in the changeset (re-run grants, recreate indexes). Make the release notes call out that this happens even for a stamp-only bump, and consider a precheck that skips the reinstall when eql_v3.version() is already ≥ 3.0.6, or emits a list of the dependent objects it will drop.",
+      "domain_tags": ["persistence_migration"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Temporarily widened lockstep marker and known-red live check outlive the release cycle",
+      "trigger": "The follow-up to narrow the marker to '3.0.6' after the eql bump is forgotten, or the red live byte-identity check is ignored as expected noise.",
+      "affected_components": ["AC-1", "AC-4"],
+      "mechanism": "migration-v3.test.ts:330 accepts two versions, and migration-apply-live-pg.test.ts:168-171 is documented as failing by construction until the bump merges. Both rely on a manual follow-up.",
+      "consequence": "Weaker guard against a future eql/stack-prisma pairing drift, or a live check that people learn to ignore. Detection is degraded, but nothing is directly broken.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-8", "E-10", "E-7"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No automated reminder or test that fails once @cipherstash/eql is 3.0.6 and the marker still lists 3.0.5"
+      ],
+      "mitigation": "Track the narrowing as a required follow-up in the Version Packages PR checklist.",
+      "domain_tags": ["build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No CI results were supplied and dependencies are not installed offline, so none of the changed offline tests (migration-v3, stale-vendored-space, descriptor, vendored-space-parity) were seen to run.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-16"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The live-PG tests that apply the shipped edges' own SQL self-skip without DATABASE_URL and CipherStash credentials. tests.yml writes DATABASE_URL only into packages/stack/.env, and integration-prisma-next.yml runs test:integration, not test/live. I found no job that runs them.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-15", "E-17"]
+    },
+    {
+      "id": "VG-3",
+      "description": "Nothing ties the baseline's baked digest to the @cipherstash/eql version actually published alongside stack-prisma.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-8"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "rollback_plan",
+      "description": "Publish stack-prisma 1.2.0 only in the same release as @cipherstash/eql 3.0.6. Before publishing, confirm that the packed eql tarball's installSqlSha256 is 9b6dab789248f911707f7c1c468c5d455987b47aac4a30fc421bc813073fffb1.",
+      "addresses": ["FS-1", "VG-3"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Run the stack-prisma unit suite and test/live against a real Postgres (DATABASE_URL + CS creds) on the Version Packages branch before publishing.",
+      "addresses": ["FS-2", "VG-1", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "review_focus",
+      "description": "Reviewer: check migration-v3.test.ts:306-331 (lockstep and widened marker) and the 3.0.6 migration.ts op. Confirm the plan to narrow the marker after the bump.",
+      "addresses": ["FS-1", "FS-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "documentation",
+      "description": "In the 1.2.0 release notes, state clearly that existing databases have eql_v3 dropped and reinstalled (twice for 1.x), and list what operators must recreate.",
+      "addresses": ["FS-2"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "The ~2.6 MB baked SQL in each ops.json was compared programmatically (sha256 and line diff of the 3.0.5 vs 3.0.6 edges) rather than read.",
+      "effect": "The stamp-only claim rests on that diff; the 3.0.5 bundle itself was not re-reviewed (pre-existing)."
+    },
+    {
+      "id": "CL-2",
+      "description": "The stale-vendored-directory hazards (fresh `db init` refusal; `migrate` without `plan` silently stays on 3.0.4) already exist at the base, from the unpublished 3.0.5 re-emit. They were not counted as scenarios of this change. This change also makes directories vendored from main at bad30c9b… stale.",
+      "effect": "The npm-visible baseline break is real for 1.x consumers but is attributed to the base."
+    },
+    {
+      "id": "CL-3",
+      "description": "Adoption figures and npm publish history in the changesets (144 downloads, 1.1.x shipped 3.0.4) could not be checked offline.",
+      "effect": "Blast-radius reasoning for the baseline re-emit is unverified."
+    },
+    {
+      "id": "CL-4",
+      "description": "The prisma-next migrator's planning and runner skip rules were not read; behaviour relies on the repository's own offline tests that pin the paths.",
+      "effect": "Path claims (which edges are walked) are taken from tests, not the planner source."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack-prisma/migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.ts",
+      "line_start": 60,
+      "line_end": 93,
+      "claim": "The 3.0.6 edge is a data-class self-edge op whose execute is readVerifiedInstallSql() and whose postchecks check version, schema comment and query_json.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "documentation",
+      "path": ".changeset/eql-3-0-6-migration.md",
+      "line_start": 22,
+      "line_end": 33,
+      "claim": "Upgrading 1.0.0/1.1.x installs the bundle twice, and each reinstall opens with DROP SCHEMA IF EXISTS eql_v3 CASCADE, which requires grant scripts and dependent indexes to be redone.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "diff",
+      "path": "packages/stack-prisma/migrations/20260601T0100_install_eql_v3_bundle/migration.ts",
+      "line_start": 229,
+      "line_end": 248,
+      "claim": "Baseline gains the 3.0.6 carrier op. The diff also changes the baseline migrationHash to 2fdc7caf…, and examples/prisma copies are updated identically.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "command_output",
+      "command": "python3 -I: sha256 + difflib of execute[0].sql in 20260814T0000_upgrade_eql_v3_3_0_5/ops.json vs 20261002T0000_upgrade_eql_v3_3_0_6/ops.json and baseline ops.json",
+      "claim": "3.0.5 SQL sha accde003…, 3.0.6 edge and baseline sha 9b6dab78… (identical to each other). The only differences are the version() literal, the schema COMMENT, and one comment line.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack-prisma/src/exports/control.ts",
+      "line_start": 117,
+      "line_end": 133,
+      "claim": "The descriptor registers the 3.0.6 edge as a fifth migration.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "packages/stack-prisma/test/v3/stale-vendored-space.test.ts",
+      "line_start": 506,
+      "line_end": 526,
+      "claim": "A database at 3.0.5 walks only the 3.0.6 edge. Nearby tests pin the 1.x path [3.0.5, 3.0.6] and the seed phase writing both new directories.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack-prisma/test/live/migration-apply-live-pg.test.ts",
+      "line_start": 166,
+      "line_end": 171,
+      "claim": "The live byte-identity check is documented as red by construction while the migration precedes the eql bump.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "packages/stack-prisma/test/v3/migration-v3.test.ts",
+      "line_start": 306,
+      "line_end": 331,
+      "claim": "Lockstep requires only that the installed digest is in PUBLISHED_MIGRATIONS. The version marker accepts '3.0.5' or '3.0.6'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "test",
+      "path": "packages/stack-prisma/test/v3/stale-vendored-space.test.ts",
+      "line_start": 578,
+      "line_end": 607,
+      "claim": "A stale fresh space under migrate installs the bundle three times (3.0.4, 3.0.5, 3.0.6).",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "documentation",
+      "path": "packages/stack-prisma/DEVELOPING.md",
+      "line_start": 368,
+      "line_end": 387,
+      "claim": "Documented process: the EQL bump's migration lands before the Version Packages PR, the live check fails between merges, and the marker must be narrowed afterwards.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".changeset/eql-repoint-manifests-to-stack.md",
+      "line_start": 1,
+      "line_end": 3,
+      "claim": "A pending '@cipherstash/eql': patch changeset exists at head, so the next Version Packages PR moves eql 3.0.5 → 3.0.6. packages/eql/packages/eql/package.json is at 3.0.5 at head.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "documentation",
+      "path": "packages/stack-prisma/README.md",
+      "line_start": 32,
+      "line_end": 67,
+      "claim": "README (and skills/stash-prisma/SKILL.md) describe the 1.x upgrade: delete vendored dir, both edges run, and db init refuses with a stale directory.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": ".changeset/config.json",
+      "line_start": 5,
+      "line_end": 14,
+      "claim": "@cipherstash/stack-prisma is in a fixed group with stash/stack/drizzle/supabase/wizard; @cipherstash/eql is not.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "packages/stack-prisma/test/v3/migration-v3.test.ts",
+      "line_start": 562,
+      "line_end": 595,
+      "claim": "Test asserts both 3.0.6-baking edges contain the 3.0.6 stamp and every version postcheck reads '3.0.6'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "test",
+      "path": "packages/stack-prisma/test/live/migration-apply-live-pg.test.ts",
+      "line_start": 216,
+      "line_end": 254,
+      "claim": "Live tests apply the genesis edge alone and the 3.0.4→3.0.5→3.0.6 walk using the shipped SQL. They run under describeLivePg, which needs DATABASE_URL and CS credentials (live-gate.ts:44).",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "history_signal",
+      "signal": "ci",
+      "claim": "collect-evidence: no CI results supplied; do not infer checks passed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "line_start": 326,
+      "line_end": 359,
+      "claim": "Unit CI writes DATABASE_URL only to packages/stack/.env and sets STASH_TEST_DATABASE_URL, which I believe does not satisfy the stack-prisma live gate. integration-prisma-next.yml runs test:integration (integration/vitest.config.ts), not test/live.",
+      "status": "inferred"
+    }
+  ]
+}

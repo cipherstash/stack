@@ -1,0 +1,250 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "2ab2b9447ee592d7a498fd7c0f63293a4b48466e",
+  "head_sha": "eb8194bf37e0b6f9b50d99e7ae2941930ec684d0",
+  "assessor": {
+    "agent": "Codex",
+    "model": "GPT-6",
+    "skill_version": "1.1.0",
+    "condition": "Read-only inspection of the exact diff and targeted source; no history, network access, or repository code execution."
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "note": "Resolved both supplied commits and read the complete five-file diff."
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "Read changed source and relevant surrounding source at the specified revisions."
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Not supplied."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "Not supplied; no tests executed."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Inspected relevant root documentation excerpts and the changed stash-cli lifecycle guidance at head."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "note": "Inspected CLI package metadata and direct manifest consumers; no complete dependency graph collected."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": ".github/CODEOWNERS at eb8194bf37e0b6f9b50d99e7ae2941930ec684d0"
+    },
+    "history_signals": {
+      "status": "unavailable",
+      "note": "Excluded by request."
+    },
+    "deployment_context": {
+      "status": "partial",
+      "note": "CLI package metadata inspected; no release execution or deployed-version information supplied."
+    }
+  },
+  "summary": "Low-impact CLI guidance change. decrypt drop stops asking users to remove the forward manifest entry, encrypt status shortens its reversed flag, and the agent-facing skill now instructs users to retain the entry. The removed manifest lookup was used only to construct the cleanup instruction. Migration generation, recorded events, coverage checks, apply-time SQL, and dual-write guidance are unchanged. Targeted tests assert the new output but were not run. No material release-failure scenario was established; normal review is appropriate.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "decrypt drop no longer performs the final manifest lookup or prints an instruction to delete the forward manifest entry after applying the migration. It still preserves that entry, records encrypted-dropped, and tells users to keep dual-writing until application.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-6"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "encrypt status displays 'reversed' instead of 'reversed (remove from migrations.json)'. The existing condition still requires the encrypted column to be absent and its reverse state to be encrypted-dropped.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4", "E-5"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "documentation",
+      "description": "The stash-cli skill describes retaining the manifest entry as the final reversed state and explicitly prohibits manual editing, replacing its previous cleanup instruction.",
+      "certainty": "observed",
+      "evidence": ["E-7"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "stash decrypt drop",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Changes completion guidance and removes a manifest read used to produce that guidance.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "stash encrypt status",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Changes the human-readable reversed flag without changing its detection logic.",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "AC-3",
+      "name": "stash-cli agent instructions",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Directs users and agents to retain completed reverse-lifecycle manifest entries.",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "AC-4",
+      "name": "stash encrypt plan",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Reads retained manifest entries and compares their forward state with targetPhase. Its existing rendering remains unchanged.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Reverse-lifecycle pair resolution",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Still uses manifestPlaintextFor as a fallback when no explicit or active recorded plaintext pairing exists; the helper itself is not removed.",
+      "evidence": ["E-9"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The targeted output tests exist but were not executed, and no CI results were supplied.",
+      "scenarios": [],
+      "evidence": ["E-5", "E-6"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "During normal verification, run the CLI tests status-reversed.test.ts and decrypt-drop-plan.test.ts to confirm the revised output and preserved dual-write instruction.",
+      "addresses": ["VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No tests, builds, repository scripts, assessment validator, or report renderer were executed, as requested. No files were edited.",
+      "effect": "Verification is based on source inspection; neither test success nor automated assessment validation is claimed."
+    },
+    {
+      "id": "CL-2",
+      "description": "No PR description, CI results, optional history, external consumers, or deployed-version information was available or collected.",
+      "effect": "The assessment bounds the inspected repository change, not external automation that might parse the previous human-readable status text."
+    },
+    {
+      "id": "CL-3",
+      "description": "encrypt plan continues to interpret retained entries through forward state and targetPhase rather than explicitly rendering reverse completion. This behavior already exists at base; the change makes retention the documented steady state.",
+      "effect": "There may be lingering presentation inconsistency across lifecycle commands, but the inspected planner only prints actions and does not execute migrations. No new material failure was established."
+    },
+    {
+      "id": "CL-4",
+      "description": "Git emitted sandbox-related temporary-cache warnings, but the revision resolutions, diff, and requested source reads returned their content successfully.",
+      "effect": "No missing diff or source content was identified from those warnings."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/drop.ts",
+      "rev": "base",
+      "line_start": 180,
+      "line_end": 224,
+      "claim": "After writing the migration and recording its event, the base calls manifestPlaintextFor solely to conditionally print the manual manifest-removal instruction.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/drop.ts",
+      "rev": "head",
+      "line_start": 179,
+      "line_end": 215,
+      "claim": "Head retains event recording and the migration application, dual-write, and schema-cleanup guidance, while omitting the final manifest lookup and manual manifest-removal instruction.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/encrypt/status.ts",
+      "rev": "base",
+      "line_start": 198,
+      "line_end": 206,
+      "claim": "Base renders 'reversed (remove from migrations.json)' for the reversed missing-column case.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/encrypt/status.ts",
+      "rev": "head",
+      "claim": "Head still derives reversed from the encrypted counterpart's encrypted-dropped state and checks physical absence before rendering the shortened 'reversed' flag.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "test",
+      "path": "languages/typescript/packages/cli/src/commands/encrypt/__tests__/status-reversed.test.ts",
+      "rev": "head",
+      "claim": "Tests exist for ordinary missing-column drift and reversed output without a migrations.json instruction. Status: exists_not_run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/__tests__/decrypt-drop-plan.test.ts",
+      "rev": "head",
+      "line_start": 345,
+      "line_end": 367,
+      "claim": "The changed test asserts that manifest removal is not called, completion guidance omits migrations.json, and the dual-write-until-applied instruction remains. Status: exists_not_run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "documentation",
+      "path": "skills/stash-cli/SKILL.md",
+      "rev": "head",
+      "line_start": 714,
+      "line_end": 719,
+      "claim": "The reverse-drop guidance says the manifest entry remains, reversed is its final state, manual editing is prohibited, and dual-writing must continue until migration application.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/encrypt/plan.ts",
+      "rev": "head",
+      "claim": "The planner reads the manifest and forward state for each declared column, prints a comparison with targetPhase, and performs no migration or manifest mutation.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/lib/resolve-pair.ts",
+      "rev": "head",
+      "claim": "Pair resolution prefers explicit or active recorded plaintext targets, then uses manifestPlaintextFor as a fallback. The helper maps encryptedColumn or its naming convention to the manifest's plaintext column.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/drop.ts",
+      "rev": "head",
+      "claim": "The exact base-to-head diff changes only the helper import, post-event manifest lookup, comments, and completion text in this file; drop guards and generated SQL are unchanged.",
+      "status": "verified"
+    }
+  ]
+}

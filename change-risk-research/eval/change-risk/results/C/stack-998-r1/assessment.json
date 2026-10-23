@@ -1,0 +1,287 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "e239a73c1f78cc1c790a17173b3dec7bf6158605",
+  "head_sha": "09ec296f066c9d3527f7d96ce617e8c7577eec85",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "Check-run conclusions on the head commit only; no logs, so per-step results inside a job are not visible. 15 success, 10 skipped (Rust/SQL jobs skipped by change detection)."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md at head and in-file comments in scripts/sync-lockstep-versions.mjs and .github/workflows/release.yml; the cross-repo import plan the PR links is not available."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "note": "collect-evidence reported no CODEOWNERS owners for the changed paths."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (evidence.json / evidence.md), base ancestry only"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No release logs or knowledge of when the next non-EQL release will run."
+    }
+  },
+  "summary": "A two-line fix to release tooling. At the base, bumpCargoPackageVersion detected a missing [package] version line by checking whether the replace changed the text, so it also threw when the crate version already equalled the target. The crate and @cipherstash/eql are both at 3.0.5 at head, so every `pnpm run version` that does not bump EQL would have stopped the whole release after `changeset version` had already rewritten the tree. The head checks for the version line directly and returns the manifest unchanged on a no-op, while still throwing when the line is missing. The fix is narrow and correct as read, and the new unit test runs in the `Run Tests (Node 22/24)` CI jobs, which passed. The residual risk is that a no-EQL-bump release now gets past step 2 for the first time and reaches the Cargo.lock refresh and the skew-gated SQL asset step. Those steps are unit-tested with injected runners but have not been run for real on an unchanged version. Any failure there fails closed: the release job stops and needs a fix and a re-run. It cannot publish wrong artefacts. Nothing touches encryption, payloads or published library code.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "error_handling",
+      "description": "bumpCargoPackageVersion no longer throws when the [package] version already equals the target; it returns the Cargo.toml text unchanged. A [package] section with no `version = \"...\"` line still throws the same error, now from an explicit regex test before the replace.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "build_or_release",
+      "description": "The root `version` script (`changeset version && node scripts/sync-lockstep-versions.mjs`), run by changesets/action in release.yml, now completes step 2 on releases that do not bump @cipherstash/eql. It then goes on to step 3 (`mise exec -- cargo update --package eql-bindings` for every Cargo.lock that records the crate by path) and step 4 (prepareBindingAssets, which skips the rebuild when eqlLockstepSkew finds no skew). At the base these releases stopped at step 2.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "test_only",
+      "description": "Adds a unit test asserting that bumpCargoPackageVersion(CARGO, '0.4.2') returns CARGO unchanged. The existing test that a missing version line throws is kept.",
+      "certainty": "observed",
+      "evidence": ["E-8"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "scripts/sync-lockstep-versions.mjs (bumpCargoPackageVersion)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "Function changed in the diff.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Root `version` script and the release.yml changesets/action `version:` step",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "package.json `version` chains the script after `changeset version`; release.yml runs `pnpm run version` through changesets/action. Every release goes through it.",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "AC-3",
+      "name": "eql-bindings crate manifest and the Cargo.lock files that record it by path (packages/eql, packages/protect-ffi)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "main() writes the function's output back to packages/eql/crates/eql-bindings/Cargo.toml and then refreshes each discovered Cargo.lock. On a no-EQL-bump release these refreshes now run where they previously never ran.",
+      "evidence": ["E-4", "E-7"]
+    },
+    {
+      "id": "AC-4",
+      "name": "EQL SQL bundle and release manifests (prepareBindingAssets / eqlLockstepSkew)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "Step 4 is now reached on no-EQL-bump releases. It skips when eqlLockstepSkew finds nothing; otherwise it rebuilds, which the gate rejects as frozen-bytes-skew if the bytes differ.",
+      "evidence": ["E-7"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "First no-EQL-bump release runs the lock-refresh and asset steps for real and stops the release",
+      "trigger": "The first stack release after this merges that does not bump @cipherstash/eql (the PR says this is every release after EQL 3.0.6).",
+      "affected_components": ["AC-2", "AC-3", "AC-4"],
+      "mechanism": "At the base, the throw at step 2 meant steps 3 and 4 had only ever run on releases where the EQL version moved. Now main() continues to cargoLockWorkspaces, `mise exec -- cargo update --package eql-bindings` per workspace (not offline, in a job with a cold registry), and prepareBindingAssets. If any of these misbehaves on an unchanged version, the hook throws or the gate fails closed: a cargo resolution error, a non-empty eqlLockstepSkew from tree skew that triggers a rebuild, or a rebuild whose digest differs and fires frozen-bytes-skew.",
+      "consequence": "The release job fails after `changeset version` has rewritten manifests and changelogs in the CI checkout. No package is published wrongly, but the release is blocked until a fix lands and the job re-runs. This is the same class of outcome the PR removes, now possible one step later.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-4", "E-7", "E-9"],
+      "existing_verification": [
+        {
+          "description": "Unit tests in scripts/__tests__/sync-lockstep-versions.test.mjs cover refreshCargoLock argv and prepareBindingAssets skip/rebuild with injected runners. They run under `pnpm run test:scripts` in the Run Tests (Node 22/24) jobs, which passed on head. Per-test results are not visible.",
+          "status": "ran_passed",
+          "evidence": ["E-10", "E-11"]
+        },
+        {
+          "description": "scripts/__tests__/eql-sql-asset-freshness.test.mjs and cargo-lock-freshness.test.mjs keep the tree free of skew and lock drift at PR time, which is the precondition for step 4 skipping and step 3 being a no-op.",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "No end-to-end run of `pnpm run version` on a tree where the EQL version is unchanged, with real mise/cargo, has been shown.",
+        "No assertion that step 3 leaves Cargo.lock files byte-identical when the eql-bindings version did not move."
+      ],
+      "mitigation": "Before the first post-3.0.6 release, run `pnpm run version` locally or in a dry-run job on a branch with a non-EQL changeset, and confirm that it exits 0, that the Cargo.lock files are unchanged and that the log says assets were skipped. Watch the first real release's Version Packages run.",
+      "domain_tags": ["build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The integrated no-bump path through steps 3 and 4 has only been exercised by unit tests with injected command runners, never against real cargo and mise in the release job.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-4", "E-10"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Dry-run `pnpm run version` on a branch carrying only a non-EQL changeset, and check the exit status, `git diff` on the Cargo.lock files and the 'skipping' log line from prepareBindingAssets.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "monitoring",
+      "description": "Watch the first release after EQL 3.0.6 (the Version Packages run and the release-gate job). The failure mode is loud and fail-closed, so a re-run after a fix is the rollback.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "I could not run node or the vitest suite in this environment (the command needed approval that was not available, and there was no node_modules). The function's behaviour on unchanged, bumped and missing-line inputs was established by reading the code at both revisions.",
+      "effect": "The claim that the fix works rests on code reading plus a passing CI job whose per-step logs I could not see."
+    },
+    {
+      "id": "CL-2",
+      "description": "ci.json gives job conclusions only. The claim that `test:scripts` ran comes from the tests.yml step inside the `Run Tests` job, not from a log.",
+      "effect": "ran_passed is inferred at the job level. A skipped or filtered test file would not be visible."
+    },
+    {
+      "id": "CL-3",
+      "description": "The cross-repo plan the PR cites (step 7/8 ordering against the EQL 3.0.6 release) and any release history after head are unavailable.",
+      "effect": "I cannot confirm the merge-ordering constraint or whether a non-EQL release is imminent."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "scripts/sync-lockstep-versions.mjs",
+      "rev": "head",
+      "line_start": 40,
+      "line_end": 56,
+      "claim": "Head tests for the version line explicitly (throws if absent), then replaces and returns; no throw when the replacement is identical.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "scripts/sync-lockstep-versions.mjs",
+      "rev": "base",
+      "line_start": 45,
+      "line_end": 52,
+      "claim": "Base throws 'did not find a version line' whenever `updated === packageSection[0]`, which includes an unchanged version.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/eql/crates/eql-bindings/Cargo.toml",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 3,
+      "claim": "The crate [package] version is 3.0.5, equal to packages/eql/packages/eql/package.json version 3.0.5, so a run without an EQL bump hits the no-op case.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "scripts/sync-lockstep-versions.mjs",
+      "rev": "head",
+      "line_start": 509,
+      "line_end": 534,
+      "claim": "main() writes the bump result, then refreshes every discovered Cargo.lock via cargo update, then calls prepareBindingAssets.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 38,
+      "line_end": 38,
+      "claim": "Root `version` script is `changeset version && node scripts/sync-lockstep-versions.mjs`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 480,
+      "line_end": 490,
+      "claim": "changesets/action runs `version: pnpm run version`, so the hook runs on every release.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "scripts/sync-lockstep-versions.mjs",
+      "rev": "head",
+      "line_start": 458,
+      "line_end": 498,
+      "claim": "prepareBindingAssets skips when eqlLockstepSkew is empty, otherwise runs the mise rebuild and throws if skew remains; the comment explains that a rebuilt digest under an unchanged version trips frozen-bytes-skew in the gate.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "scripts/__tests__/sync-lockstep-versions.test.mjs",
+      "rev": "head",
+      "line_start": 63,
+      "line_end": 68,
+      "claim": "The existing missing-version-line throw test remains; the new test asserts unchanged output for a matching version.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "pr_description",
+      "claim": "pr-description.md: PR states every stack release after EQL 3.0.6 leaves EQL's version alone and would hit this path.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 324,
+      "line_end": 325,
+      "claim": "The Run Tests (Node matrix) job runs `pnpm run test:scripts`, which covers scripts/__tests__.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "ci_result",
+      "claim": "ci.json: Run Tests (Node 22), Run Tests (Node 24), Lint (Biome) and ci-required concluded success on the head commit.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "scripts/__tests__/eql-sql-asset-freshness.test.mjs",
+      "rev": "head",
+      "line_start": 16,
+      "line_end": 16,
+      "claim": "The asset-freshness test imports the skew predicate from sync-lockstep-versions.mjs, so PR-time checks share the release-time skip decision.",
+      "status": "verified"
+    }
+  ]
+}

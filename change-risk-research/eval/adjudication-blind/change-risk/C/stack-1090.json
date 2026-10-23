@@ -1,0 +1,59 @@
+{
+  "case": "stack-1090",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Shared @cipherstash/stack native client with an AsyncLocalStorage getJwt still binds users to the wrong identity",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The skill's headline says a module-level strategy is fine while the stack native path calls getJwt from a Neon channel outside the caller's ALS context, so a shared client can bind users to the wrong identity, and no test covers it."
+    },
+    {
+      "id": "FS-2",
+      "title": "Go strategy shared across users serialises every user's provider call and CTS exchange behind one mutex",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Strategy.Token holds the mutex for the whole guest call, and the provider and per-user exchanges now run inside it, so one slow user's IdP call or CTS round trip blocks every user on a shared Go strategy."
+    },
+    {
+      "id": "FS-3",
+      "title": "More CTS exchanges from JWT rotation and legacy stored tokens; an account refusal then blocks every new user",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "BoundStore treats unstamped tokens as a miss and the cache is keyed per JWT, so exchange volume rises; a strategy-wide account-refusal denial then blocks every uncached JWT for the TTL, as the cited code shows."
+    },
+    {
+      "id": "FS-4",
+      "title": "Guidance to share clients outlives the fix: version skew or rollback reintroduces #1045",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The skill already tells users of releases before the #1045 fix to build one client per user; a missing version number is a minor docs gap, and the rollback scenario is speculative."
+    }
+  ],
+  "cost_usd": 2.4232621,
+  "wall_seconds": 293.0842,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

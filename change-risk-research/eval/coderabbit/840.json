@@ -1,0 +1,19 @@
+{
+  "pr": 840,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/840#discussion_r3679263244",
+      "path": "packages/stack/README.md",
+      "line": 234,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Do not describe `bulkEncrypt` as untyped. Line 234 groups `bulkEncrypt` with `bulkDecrypt` as untyped, but `bulkEncrypt` remains column-typed through `BulkEncryptPayloadFor<Col>` and `{ table, column }`. Describe these as “raw passthrough operations,” or distinguish typed `bulkEncrypt` from untyped raw decryption.",
+      "is_nitpick": false
+    }
+  ],
+  "notes": "One CodeRabbit review (COMMENTED, 'Actionable comments posted: 1') on commit 011b245; thread resolved and outdated, marked '✅ Addressed in commit c379d44'. line is original_line. Summary comment's latest review says no actionable comments. Pre-merge checks 5 passed. Human review freshtonic APPROVED, repeating the same point. Release-notes block removed from description."
+}

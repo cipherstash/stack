@@ -1,0 +1,54 @@
+name: Test change-risk skill
+
+# Unit tests for the internal change-risk skill: the assessment schema and
+# validator, the report renderer, the evidence collector, and the publish
+# decision of the inactive example workflow under
+# change-risk-research/docs/examples/. This runs the skill's own tests only;
+# it does not assess any pull request and needs no credentials.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.agents/skills/change-risk/**'
+      - 'change-risk-research/docs/examples/change-risk-advisory.yml'
+      - '.github/workflows/test-change-risk-skill.yml'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - '.agents/skills/change-risk/**'
+      - 'change-risk-research/docs/examples/change-risk-advisory.yml'
+      - '.github/workflows/test-change-risk-skill.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-change-risk-skill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Change-risk skill tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      # test_inactive_ci.py skips without jq; here a skip would hide the
+      # publish-decision tests, so require it.
+      - name: Require jq
+        shell: bash
+        run: jq --version
+
+      - name: Run unit tests
+        shell: bash
+        run: python -m unittest discover -v -s .agents/skills/change-risk/scripts/tests

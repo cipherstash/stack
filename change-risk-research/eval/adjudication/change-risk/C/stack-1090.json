@@ -1,0 +1,58 @@
+{
+  "case": "stack-1090",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Shared @cipherstash/stack native client with an AsyncLocalStorage getJwt still binds users to the wrong identity",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Known limitation; borderline pre-existing."
+    },
+    {
+      "id": "FS-2",
+      "title": "Go strategy shared across users serialises every user's provider call and CTS exchange behind one mutex",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "More CTS exchanges from JWT rotation and legacy stored tokens; an account refusal then blocks every new user",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Guidance to share clients outlives the fix: version skew or rollback reintroduces #1045",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Version-skew path to the old defect via shipped guidance."
+    }
+  ],
+  "cost_usd": 2.4232621,
+  "wall_seconds": 293.0842
+}

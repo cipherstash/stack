@@ -1,0 +1,393 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "48889952ecb25dcf3c31481e7c7197099b85adb8",
+  "head_sha": "8dcbf05390020d7fe8ffca6aa7d2bbee3d41fc73",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md. Only the title is given; commit messages were read as untrusted author claims."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; in-repo files were consulted only as cited code evidence."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": { "status": "unavailable", "note": "Not listed in CASE.md." },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (base ancestry only)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "The stash CLI's Drizzle migration rewriter now matches the whole eql_v3_* domain family (plus schema-qualified tables) as well as eql_v2_encrypted, and `stash eql migration --drizzle` (the v3 path) now runs the sweep that `eql install --drizzle` already ran. Any sibling migration with an in-place `ALTER COLUMN ... SET DATA TYPE <eql domain>` is rewritten on disk, without prompting, into ADD + DROP COLUMN + RENAME. That sequence runs successfully and destroys the column's data on a populated table. Before this change the same v3 statement failed loudly in Postgres. The only safeguards are SQL comments and a CLI log line. The strict matcher also ignores the source type, so an encrypted-to-encrypted change (v2 to v3, or one v3 domain to another) is rewritten to drop the ciphertext column. No test covers that case. Unit tests for the regex and sweep were extended but not run here, because there are no node_modules and no CI results. Impact is high. A material data-loss scenario has no in-SQL guard, so changes or verification are required.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "state_or_persistence",
+      "description": "`stash eql migration --drizzle` now rewrites every sibling .sql file in the Drizzle out directory that holds an in-place ALTER COLUMN to an EQL type, replacing it with ADD COLUMN tmp / DROP COLUMN original / RENAME. Before, this command did not touch sibling migrations.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "The rewriter's match set is widened from the single eql_v2_encrypted type to `eql_v3_[a-z0-9_]+` in seven mangled forms, plus schema-qualified table names. The emitted ADD COLUMN now uses the matched domain instead of a hardcoded v2 type. This applies to both `eql install --drizzle` and `eql migration --drizzle`.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "rewriteEncryptedAlterColumns now returns { rewritten, skipped } instead of string[]. A broad NEAR_MISS_RE scan reports SET DATA TYPE statements that mention eql_v2/eql_v3 and were not rewritten. Both call sites warn again at the closing note when the sweep is incomplete.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "documentation",
+      "description": "The guidance comment in rewritten SQL, the CLI log text and two shipped agent skills (stash-cli, stash-drizzle) now say that the rewrite destroys data on populated tables and point to the staged `stash encrypt` flow. Breakpoints are inserted between the emitted statements.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-9"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/cli rewrite-migrations (rewriteEncryptedAlterColumns)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "Regex widened, return type changed, near-miss scan added.",
+      "evidence": ["E-4", "E-7"]
+    },
+    {
+      "id": "AC-2",
+      "name": "`stash eql migration --drizzle` (packages/cli/src/commands/eql/migration.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Now runs the sweep over the user's migration directory.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-3",
+      "name": "`stash eql install --drizzle` (packages/cli/src/commands/db/install.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Consumes the new return shape. Now also rewrites v3 statements through the shared regex.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Customer Drizzle migration files and the databases they are applied to",
+      "kind": "external_consumer",
+      "relationship": "confirmed",
+      "how": "The sweep writes the files in place (writeFile in rewriteEncryptedAlterColumns). They are then applied with drizzle-kit migrate, as the CLI's Next Steps note tells the user to do.",
+      "evidence": ["E-3", "E-10"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Shipped agent skills stash-cli and stash-drizzle",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Guidance copied into customer repos now describes the sweep and its empty-table-only safety.",
+      "evidence": ["E-9"]
+    },
+    {
+      "id": "AC-6",
+      "name": "packages/wizard rewrite-migrations copy",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "Comment only. The copy stays v2-only and is now documented as diverged.",
+      "evidence": ["E-11"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "v3 plaintext→encrypted migration that used to fail loudly now runs and drops populated column data",
+      "trigger": "A v3 user changes an existing plaintext column on a table that has rows to an eql_v3_* type, runs drizzle-kit generate and then `stash eql migration --drizzle`, then runs drizzle-kit migrate against staging or production.",
+      "affected_components": ["AC-2", "AC-1", "AC-4"],
+      "mechanism": "At base, migration.ts has no sweep (E-2), and the base regex does not match eql_v3_* (E-5), so Postgres rejects the generated ALTER at migrate time and no data is lost. At head, the sweep runs automatically without confirmation (E-1). It rewrites the file into ADD tmp; DROP COLUMN original; RENAME (E-6), which runs successfully. The only safeguards are SQL comments and an info log line, which flows straight into the 'Run drizzle-kit migrate' note (E-10). The emitted SQL has no guard that would abort on a non-empty table.",
+      "consequence": "The plaintext column is dropped and replaced with an all-NULL encrypted column, along with any NOT NULL, DEFAULT or index definitions. The data is recoverable only from a backup. A loud migration failure becomes silent, irreversible data loss.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-5", "E-6", "E-10"],
+      "existing_verification": [
+        {
+          "description": "migration.test.ts asserts that the sweep rewrites a v3 sibling into ADD COLUMN and removes SET DATA TYPE. This tests that the rewrite happens, not that a populated table is protected.",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "No test or integration check that the rewritten SQL refuses to run on a non-empty table.",
+        "No user confirmation or opt-in before the CLI edits sibling migration files on disk."
+      ],
+      "mitigation": "Emit a guard before the DROP in the rewritten SQL so a populated table fails loudly, for example `DO $$ BEGIN IF EXISTS (SELECT 1 FROM <table>) THEN RAISE EXCEPTION '...use stash encrypt...'; END IF; END $$;`. Alternatively, make the v3 sweep opt-in or ask for confirmation before writing files.",
+      "domain_tags": ["persistence_migration", "encryption"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Encrypted→encrypted type change (v2→v3 or v3 domain swap) rewritten into a DROP of the ciphertext column",
+      "trigger": "A user migrates a column from eql_v2_encrypted to an eql_v3_* domain, or switches between v3 domains (for example eql_v3_text_search to eql_v3_text_search_ore), and drizzle-kit emits an in-place SET DATA TYPE for the new type.",
+      "affected_components": ["AC-1", "AC-2", "AC-3", "AC-4"],
+      "mechanism": "ALTER_COLUMN_TO_ENCRYPTED_RE only inspects the target type and assumes the source is plaintext (E-4). Every target that matches eql_v3_[a-z0-9_]+ is rewritten to ADD/DROP/RENAME (E-6). At base, a v3 target did not match (E-5), so the statement went to Postgres unchanged. A v3→v3 change, where both domains are over jsonb (E-13), could then convert in place or fail its CHECK loudly. A v2→v3 change failed loudly. At head, either case silently drops the existing ciphertext column.",
+      "consequence": "Encrypted data in the column is destroyed by a migration that reports success. Re-encrypting needs the original plaintext, which may no longer exist anywhere.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-4", "E-5", "E-6", "E-13"],
+      "existing_verification": [
+        {
+          "description": "rewrite-migrations.test.ts covers plaintext targets left untouched and v3 targets rewritten. No case has an encrypted source type.",
+          "status": "exists_not_run",
+          "evidence": ["E-14"]
+        }
+      ],
+      "missing_verification": [
+        "A test and a decision for a domain-to-domain ALTER (v2→v3 and v3→v3), to establish what drizzle-kit emits and what the rewriter should do.",
+        "Whether drizzle-kit produces SET DATA TYPE for an existing eql_v3 column whose domain changes (not verifiable offline)."
+      ],
+      "mitigation": "Rewrite only when the source can be shown to be plaintext, for example by consulting the drizzle snapshot JSON for the previous column type. Otherwise report the statement as skipped. Add the same non-empty-table guard as in FS-1.",
+      "domain_tags": [
+        "persistence_migration",
+        "encryption",
+        "serialization_compatibility"
+      ]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No check, in tests or in the emitted SQL, prevents the rewritten migration from running against a populated table.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-6", "E-12"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No test has an encrypted source type in the ALTER.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-14"]
+    },
+    {
+      "id": "VG-3",
+      "description": "The changed unit tests were not run (no node_modules, no CI results).",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-15"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "other",
+      "description": "Add a non-empty-table guard (DO block that raises an exception) ahead of the DROP COLUMN in renderSafeAlter, so the failure stays loud on populated data.",
+      "addresses": ["FS-1", "FS-2", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add rewriter tests for v2→v3 and v3→v3 domain changes, and decide whether those statements should be skipped or rewritten.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "review_focus",
+      "description": "Review whether `eql migration --drizzle` should edit sibling migration files without confirmation, and whether a --no-sweep or dry-run listing is needed.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "test",
+      "description": "Run the packages/cli vitest suite (rewrite-migrations.test.ts, eql/__tests__/migration.test.ts) in CI before release, plus one integration run of a rewritten migration against Postgres with the v3 bundle.",
+      "addresses": ["VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Tests could not be run: the checkout has no node_modules and network access was not allowed.",
+      "effect": "Test results are exists_not_run; regex behaviour was assessed by reading only."
+    },
+    {
+      "id": "CL-2",
+      "description": "The drizzle-kit behaviour (which forms it emits, whether it emits SET DATA TYPE for domain-to-domain changes, how migrate treats edited files) could not be checked offline. The author's version table is an unverified claim.",
+      "effect": "FS-2 stays plausible_failure rather than observed."
+    },
+    {
+      "id": "CL-3",
+      "description": "No PR description, CODEOWNERS, CI or deployment context was available. The commit messages were read only as untrusted claims.",
+      "effect": "Rollout controls and reviewer expectations are unknown."
+    },
+    {
+      "id": "CL-4",
+      "description": "The v2 install path already rewrote v2 ALTERs into a data-dropping sequence before this change. That behaviour is pre-existing and was not scored. Only its extension to v3 and to the v3 command is assessed. The co-change signal (stash-encryption and stash-supabase skills not updated) was checked by grep, which found no SET DATA TYPE guidance there.",
+      "effect": "The impact attributed to this change is limited to newly exposed paths."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/src/commands/eql/migration.ts",
+      "rev": "head",
+      "line_start": 227,
+      "line_end": 232,
+      "claim": "The v3 migration command now calls rewriteEncryptedAlterColumns on outDir unconditionally, skipping only the generated file.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/cli/src/commands/eql/migration.ts",
+      "rev": "base",
+      "line_start": 214,
+      "line_end": 214,
+      "claim": "At base, generateDrizzleEqlMigration went straight to 'Migration created' with no sweep.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 157,
+      "line_end": 196,
+      "claim": "Matching files are rewritten in place with writeFile, and near-misses are collected.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 11,
+      "line_end": 79,
+      "claim": "ENCRYPTED_DOMAIN matches eql_v2_encrypted|eql_v3_[a-z0-9_]+. The strict regex keys only on target type and table/column names, never on the source type.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "base",
+      "line_start": 21,
+      "line_end": 22,
+      "claim": "At base the regex matched only eql_v2_encrypted forms.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 217,
+      "line_end": 244,
+      "claim": "renderSafeAlter emits ADD tmp, a commented-out UPDATE, DROP COLUMN original and RENAME. Safety warnings are SQL comments only, with no guard against non-empty tables.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 95,
+      "line_end": 96,
+      "claim": "NEAR_MISS_RE flags leftover SET DATA TYPE statements that mention eql_v2/eql_v3.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "rev": "head",
+      "line_start": 606,
+      "line_end": 638,
+      "claim": "The install path destructures { rewritten, skipped } and warns at the closing note when the sweep is incomplete.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "diff",
+      "path": "skills/stash-cli/SKILL.md",
+      "rev": "head",
+      "line_start": 391,
+      "line_end": 391,
+      "claim": "The shipped skill documents the sweep as safe only on empty tables.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/cli/src/commands/eql/migration.ts",
+      "rev": "head",
+      "line_start": 257,
+      "line_end": 264,
+      "claim": "After the sweep the CLI prints success and a 'Run drizzle-kit migrate' next step. The extra warning appears only when the sweep is incomplete, not when files were rewritten.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "diff",
+      "path": "packages/wizard/src/lib/rewrite-migrations.ts",
+      "rev": "head",
+      "line_start": 25,
+      "line_end": 29,
+      "claim": "The wizard copy is intentionally left v2-only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "test",
+      "path": "packages/cli/src/commands/eql/__tests__/migration.test.ts",
+      "rev": "head",
+      "line_start": 211,
+      "line_end": 296,
+      "claim": "Tests check that the sweep runs, the skip works and the closing-note warning appears. None checks protection of a populated table.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "examples/prisma/migrations/cipherstash/20260601T0100_install_eql_v3_bundle/ops.json",
+      "rev": "head",
+      "line_start": 14,
+      "line_end": 14,
+      "claim": "v3 domains are defined as CREATE DOMAIN public.eql_v3_* AS jsonb with CHECK constraints, so a domain-to-domain in-place change goes through jsonb rather than failing as 'no cast'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "packages/cli/src/__tests__/rewrite-migrations.test.ts",
+      "rev": "head",
+      "line_start": 376,
+      "line_end": 390,
+      "claim": "The negative cases cover text, jsonb and lookalike targets only. Every test ALTER has an unspecified (implicitly plaintext) source.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "command_output",
+      "command": "ls node_modules packages/cli/node_modules (in repo/)",
+      "claim": "No node_modules are installed, so the vitest suites cannot be run offline.",
+      "status": "verified"
+    }
+  ]
+}

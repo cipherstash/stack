@@ -1,0 +1,48 @@
+{
+  "case": "stack-1072",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A check that reads plan documents goes red on main after a plan-only PR merges unchecked",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The cited filter, unfiltered push trigger and literal-path-only guard are as described, so a plan-only change read by an unguarded check would first fail on main after merge."
+    },
+    {
+      "id": "FS-2",
+      "title": "EQL absorption plan drifts unguarded while release tooling still points operators to it",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The plan was removed from DOCS (so it escapes the iff and LIVE_VERDICT checks), yet release-gate.mjs:922-926 and release.yml:1026 still direct readers to it; the cited lines and the empty FROZEN_PUBLISHERS are accurate."
+    },
+    {
+      "id": "FS-3",
+      "title": "Plan-only PRs stall if Test JS checks are or become required",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same conditional required-check mechanism as F-04; the cited filter and the test-eql.yml comment saying there is no required_status_checks rule are accurate."
+    }
+  ],
+  "cost_usd": 1.6157147,
+  "wall_seconds": 232.593654,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

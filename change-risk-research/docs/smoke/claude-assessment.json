@@ -1,0 +1,325 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "2ab2b9447ee592d7a498fd7c0f63293a4b48466e",
+  "head_sha": "eb8194bf37e0b6f9b50d99e7ae2941930ec684d0",
+  "assessor": {
+    "agent": "Claude Code (change-risk skill)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1",
+    "condition": "source inspection only; optional history disabled; no repository code, helper scripts or network tools executed",
+    "generated_at": "2026-10-21"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "git diff 2ab2b9447..eb8194bf3",
+      "note": "One commit, 5 files, +12/-26."
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "local worktree; both revisions read with git show"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the commit subject was read."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI output supplied; no tests run, as instructed."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "source": "AGENTS.md, skills/stash-cli/SKILL.md, migrate manifest.ts doc comments"
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "source": "git grep for readManifest, manifestPlaintextFor, removeManifestColumn and encrypted-dropped at head"
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Collector not run; CODEOWNERS not inspected."
+    },
+    "history_signals": {
+      "status": "unavailable",
+      "note": "Optional history disabled by request."
+    },
+    "deployment_context": {
+      "status": "partial",
+      "source": ".changeset/stash-decrypt-reverse-migration.md at head",
+      "note": "The decrypt lifecycle seems to be covered by a pending minor changeset. Nothing in the stash CHANGELOG mentions decrypt drop, so it is likely unreleased (inferred)."
+    }
+  },
+  "summary": "This change only affects CLI guidance text. `stash decrypt drop` no longer tells the user to delete the column's entry from `.cipherstash/migrations.json`. `stash encrypt status` now shows the flag `reversed` instead of `reversed (remove from migrations.json)`. The stash-cli skill now says the entry stays permanently and the file must not be hand-edited. No data path, SQL, migration file, recorded state or encryption behaviour changes: the manifest was never edited by the command before, and it still is not. Two risks remain, both low. First, two doc comments still describe the old remove-it-yourself workflow and now contradict the code and the skill. Second, a reversed column's entry now stays in the manifest for good, so `stash encrypt plan` keeps reporting it as `already at dropped` and `stash plan` keeps counting it as tracked. That state already existed before, but only until the user removed the entry. The tests that were updated pin the new text but were not run here. Overall impact is low. A focused review is recommended because of the stale comments.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "The 'Next' note printed by `stash decrypt drop` no longer has the step 'Remove the <table>.<column> entry from .cipherstash/migrations.json'. The command no longer looks up the manifest's plaintext column name (`manifestPlaintextFor`) on this path.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "The `stash encrypt status` row flag for a reversed column changes from 'reversed (remove from migrations.json)' to 'reversed'. Anything parsing the old flag text would no longer match it.",
+      "certainty": "observed",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "documentation",
+      "description": "The shipped stash-cli skill now says the manifest entry stays, that `reversed` is its final state, and that the file must not be edited by hand. Before, it said to remove the entry after applying the migration.",
+      "certainty": "observed",
+      "evidence": ["E-4"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "invariant",
+      "description": "In practice, a reversed column's forward manifest entry is now permanent. Before, the documented workflow ended with the user deleting it. No code writes the manifest differently: `decrypt drop` did not edit it before and does not now.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-5"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "test_only",
+      "description": "Two unit tests are updated so that 'migrations.json' must NOT appear in the drop 'Next' note or in the status row, and the status row must contain 'reversed'.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "stash CLI `decrypt drop` command",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "The manifest-removal step is removed from its 'Next' guidance.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "stash CLI `encrypt status` command",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "The reversed-column flag text changes.",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "AC-3",
+      "name": "skills/stash-cli/SKILL.md (ships in the stash tarball and is copied into customer repos)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "The reverse-migration guidance now tells agents and users to leave the manifest entry and not hand-edit the file.",
+      "evidence": ["E-4"]
+    },
+    {
+      "id": "AC-4",
+      "name": "`stash encrypt plan` and `stash plan` manifest readers",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Both go through every manifest entry. A reversed column's entry, now permanent, still appears: as '\u2713 already at dropped' in encrypt plan, and as a tracked column in stash plan's step detection.",
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Doc comments in decrypt/drop.ts and @cipherstash/migrate manifest.ts (removeManifestColumn)",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "They still say the user removes the entry after applying the migration, which contradicts the new guidance.",
+      "evidence": ["E-10", "E-5"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Stale doc comments still prescribe the old manual manifest removal",
+      "trigger": "A maintainer or agent reads the `decryptDropCommand` doc comment or the `removeManifestColumn` doc comment (the latter is part of @cipherstash/migrate's exported API docs).",
+      "affected_components": ["AC-5", "AC-3"],
+      "mechanism": "The commit updated the inline comment and the user-facing text, but drop.ts lines 75-79 still say 'The user removes the entry once it is applied'. manifest.ts lines 194-197 still say decrypt drop 'leaves the entry for the user to remove after applying'.",
+      "consequence": "The sources disagree about who owns the manifest entry. That could lead someone to put the removal advice back, or to call removeManifestColumn on the wrong basis. No runtime effect.",
+      "impact": "low",
+      "basis": "observed_defect",
+      "evidence": ["E-10", "E-5", "E-4"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Nothing checks doc comments against the skill text."
+      ],
+      "mitigation": "Update both doc comments to match the new rule: the entry stays, `reversed` is its final state, and the CLI owns `.cipherstash/`.",
+      "domain_tags": ["public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "A permanent manifest entry for a reversed column keeps showing as a completed encryption target",
+      "trigger": "A user finishes a reverse migration (decrypt drop, then applies the migration) and follows the new guidance to leave migrations.json alone. They then run `stash encrypt plan`, `stash plan` or `stash status`.",
+      "affected_components": ["AC-4", "AC-3"],
+      "mechanism": "encrypt plan compares each manifest entry's targetPhase with the forward state keyed by the plaintext column. That state is still the forward 'dropped', so it prints '\u2713 <table>.<col>: already at dropped' for a column that is plaintext again. detectPlanStep counts the entry as tracked. Before, this state lasted only until the user removed the entry. Now it is permanent, and only `encrypt status` was taught to say `reversed`.",
+      "consequence": "Plan and status views (and agents reading them) may claim a column is encrypted when it is now plaintext. This could hide that a once-encrypted column holds plaintext again. It is a reporting mismatch only; no data is changed.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-8", "E-9", "E-4"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No test was found that runs `encrypt plan` or `stash plan` against a manifest entry whose encrypted column has the phase `encrypted-dropped`."
+      ],
+      "mitigation": "Either teach encrypt plan and stash plan to recognise the reverse lifecycle (as encrypt status does), or have the CLI remove the entry itself once the drop is observed as applied (removeManifestColumn exists for this). Without that, record the limitation in the skill.",
+      "domain_tags": ["plaintext_exposure", "public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The updated unit tests (decrypt-drop-plan.test.ts, status-reversed.test.ts) target the changed text, but no CI or command result was seen.",
+      "scenarios": [],
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No test covers how other manifest readers (encrypt plan, stash plan, stash status) present a reversed column whose entry now stays permanently.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-8", "E-9"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "documentation",
+      "description": "Update the doc comments at drop.ts:75-79 and manifest.ts:194-197 to match the new guidance.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "review_focus",
+      "description": "Decide whether a permanent reversed entry is acceptable in `encrypt plan` and `stash plan`. If not, make them report it as reversed, or make the CLI remove the entry, and add a test.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "test",
+      "description": "Run `pnpm --filter stash test`, which covers the two updated unit tests, and confirm it passes before merge.",
+      "addresses": ["VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No tests, helper scripts or repository code were run. The skill's validator and renderer were also not run, as instructed.",
+      "effect": "Verification confidence cannot exceed medium. Schema validity of this JSON was checked by hand only."
+    },
+    {
+      "id": "CL-2",
+      "description": "Whether `stash decrypt drop` has already shipped was inferred from a pending changeset and a CHANGELOG grep, not from the npm registry.",
+      "effect": "If it shipped, existing users may have followed the old advice and deleted the entry. Both outcomes (entry present or absent) look like they would be handled, but this was not verified."
+    },
+    {
+      "id": "CL-3",
+      "description": "The stash status/quest renderer and status/index.ts were only skimmed for reverse-phase handling.",
+      "effect": "Other places that may show a reversed column as encrypted could exist beyond those named in FS-2."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/drop.ts",
+      "rev": "head",
+      "line_start": 194,
+      "line_end": 208,
+      "claim": "The manifestPlaintextFor lookup and the 'Remove the ... entry from .cipherstash/migrations.json' step are removed. A comment now says the entry stays and the CLI owns .cipherstash/.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/drop.ts",
+      "rev": "base",
+      "line_start": 198,
+      "line_end": 216,
+      "claim": "At base, decrypt drop looked up the manifest column and told the user to remove its entry.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "diff",
+      "path": "languages/typescript/packages/cli/src/commands/encrypt/status.ts",
+      "rev": "head",
+      "line_start": 200,
+      "line_end": 200,
+      "claim": "The status flag for a reversed column is now just 'reversed'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "documentation",
+      "path": "skills/stash-cli/SKILL.md",
+      "rev": "head",
+      "line_start": 717,
+      "line_end": 717,
+      "claim": "The skill says the entry stays in migrations.json, that reversed is its final state, and not to edit the file by hand.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "languages/typescript/packages/migrate/src/manifest.ts",
+      "rev": "head",
+      "line_start": 194,
+      "line_end": 197,
+      "claim": "The removeManifestColumn doc comment still says decrypt drop leaves the entry for the user to remove after applying.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/__tests__/decrypt-drop-plan.test.ts",
+      "rev": "head",
+      "line_start": 362,
+      "line_end": 362,
+      "claim": "The test asserts that the 'Next' note does not contain 'migrations.json'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "test",
+      "path": "languages/typescript/packages/cli/src/commands/encrypt/__tests__/status-reversed.test.ts",
+      "rev": "head",
+      "line_start": 112,
+      "line_end": 113,
+      "claim": "The test asserts that the status row contains 'reversed' and does not contain 'migrations.json'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/encrypt/plan.ts",
+      "rev": "head",
+      "line_start": 33,
+      "line_end": 47,
+      "claim": "encrypt plan goes through every manifest entry, compares the forward state keyed by the plaintext column against targetPhase, and has no reverse-lifecycle handling.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/plan/index.ts",
+      "rev": "head",
+      "line_start": 141,
+      "line_end": 151,
+      "claim": "stash plan's detectPlanStep collects every manifest entry as a tracked column.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "languages/typescript/packages/cli/src/commands/decrypt/drop.ts",
+      "rev": "head",
+      "line_start": 75,
+      "line_end": 79,
+      "claim": "The decryptDropCommand doc comment still says 'The user removes the entry once it is applied'.",
+      "status": "verified"
+    }
+  ]
+}

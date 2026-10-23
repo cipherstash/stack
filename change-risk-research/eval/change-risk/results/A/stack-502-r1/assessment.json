@@ -1,0 +1,308 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+  "head_sha": "6e7ae4e117c4847b62491d63da8df5e74b4a5bc9",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": {
+      "status": "partial",
+      "note": "Only the PR title in CASE.md and the changeset file in the diff; no PR body."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed as an input in CASE.md."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed as an input in CASE.md."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (base ancestry only)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Additive public-API change to @cipherstash/stack (changeset: minor). It re-exports ten operation classes from the ./encryption entry and four from the ./dynamodb entry, removes @internal tags from EncryptQueryOperation/BatchEncryptQueryOperation and their WithLockContext variants, adds EncryptedQuery and EncryptedFromSchema to ./types, and fixes TSDoc (type-only imports used only for {@link}). No encryption, decryption, lock-context or payload logic changes; the re-exports are bindings already imported by those modules, so no new module-graph edges are introduced. The material consequence is contractual: class constructors (which take internal types such as the FFI Client) become part of the semver-covered public surface, and different classes named EncryptModelOperation, BulkEncryptModelsOperation etc. are now exported from two subpaths. Impact is low; normal review is sufficient. Nothing was built or run.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack/encryption now exports (as runtime values) EncryptOperation, EncryptQueryOperation, BatchEncryptQueryOperation, DecryptOperation, EncryptModelOperation, DecryptModelOperation, BulkEncryptOperation, BulkDecryptOperation, BulkEncryptModelsOperation, BulkDecryptModelsOperation, including their public constructors.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack/dynamodb now exports its own EncryptModelOperation, DecryptModelOperation, BulkEncryptModelsOperation and BulkDecryptModelsOperation classes (distinct classes from the same-named encryption ones; constructors take an EncryptionClient).",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack/types adds type exports EncryptedQuery and EncryptedFromSchema (type-only; erased at runtime).",
+      "certainty": "observed",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "documentation",
+      "description": "@internal TSDoc tags removed from EncryptQueryOperation, BatchEncryptQueryOperation and their WithLockContext variants (the WithLockContext classes are still not re-exported from an entry point); TSDoc fixes and type-only imports added for {@link} resolution; a @param name corrected in buildEncryptConfig docs.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7", "E-8"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "build_or_release",
+      "description": "A changeset bumps @cipherstash/stack by a minor version and asserts no runtime behaviour change.",
+      "certainty": "observed",
+      "evidence": ["E-9"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack ./encryption entry (src/encryption/index.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Export list widened with ten operation classes.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack ./dynamodb entry (src/dynamodb/index.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Export list widened with four DynamoDB operation classes.",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/stack ./types entry (src/types-public.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Two additional type exports.",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Published npm package build (tsup ESM/CJS + d.ts for each entry)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "tsup.config.ts builds src/encryption/index.ts and src/dynamodb/index.ts as entries in cjs and esm with dts, so the new exports appear in shipped JS and declarations.",
+      "evidence": ["E-10"]
+    },
+    {
+      "id": "AC-5",
+      "name": "External consumers of @cipherstash/stack",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Downstream code may begin importing or constructing these classes; none can be observed from this checkout.",
+      "evidence": []
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Operation class constructors become a semver-locked public contract",
+      "trigger": "A later release refactors an operation constructor (e.g. EncryptOperation(client, plaintext, opts) or the DynamoDB EncryptModelOperation(encryptionClient, item, table, options)) in a minor/patch version after consumers start instantiating or subclassing the now-exported classes.",
+      "affected_components": ["AC-1", "AC-2", "AC-5"],
+      "mechanism": "The classes are exported as values, not `export type`, so their constructors (which take internal shapes such as the FFI `Client` type) are now reachable public API. Previously only the instances returned by EncryptionClient/encryptedDynamoDB methods were public. The changeset frames the change as type-naming only.",
+      "consequence": "Consumer code that constructs or extends these classes breaks at compile time or runtime after an otherwise routine internal refactor; maintainers lose freedom to change constructor signatures without a major bump. No data or security consequence: constructing an operation directly still needs a client, and the wrapped FFI calls are unchanged.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-4", "E-9"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No test or API-surface snapshot asserts which names each entry point exports or whether constructors are intended to be public."
+      ],
+      "mitigation": "Either export the classes with `export type { ... }` (sufficient for naming return types and TSDoc links), or mark constructors @internal / document that only the returned instances are supported.",
+      "domain_tags": ["public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Same class names exported from two subpaths refer to different classes",
+      "trigger": "A consumer names the return type of encryptedDynamoDB(...).encryptModel() using EncryptModelOperation imported from @cipherstash/stack/encryption (or vice versa), e.g. via IDE auto-import.",
+      "affected_components": ["AC-1", "AC-2", "AC-5"],
+      "mechanism": "encryption/index.ts and dynamodb/index.ts both export EncryptModelOperation, DecryptModelOperation, BulkEncryptModelsOperation and BulkDecryptModelsOperation, but they are different classes with different constructors and result/error types.",
+      "consequence": "TypeScript type errors or confusing type mismatches in consumer code; loud at compile time, no runtime data effect.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-3", "E-4"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No type test covers naming the DynamoDB operation types."
+      ],
+      "mitigation": "Document the distinction in TSDoc, or alias the DynamoDB exports (e.g. DynamoDBEncryptModelOperation).",
+      "domain_tags": ["public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test file changed; no export-surface or type test references the newly exported operation classes. Build/typecheck and lint results for head were not available and not run (no node_modules, no network).",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-11"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Decide deliberately whether the operation classes should be value exports (constructors public) or `export type` only, before publishing; publication is effectively irreversible.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Confirm CI build (tsup dts for all entries), typecheck and biome lint pass on head, and optionally add a type test that imports the new names from each subpath.",
+      "addresses": ["VG-1", "FS-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "Note in TSDoc/changeset that the DynamoDB and encryption EncryptModelOperation et al. are distinct types.",
+      "addresses": ["FS-2"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No CI results and no build/test run: dependencies are not installed and network access is not permitted.",
+      "effect": "Cannot confirm the d.ts bundling, typecheck and lint succeed; verification confidence is medium on the strength of reading the code."
+    },
+    {
+      "id": "CL-2",
+      "description": "encrypt-query.ts and batch-encrypt-query.ts import noClientError from '../index' while encryption/index.ts imports those modules: a pre-existing circular import at base. This change only re-exports already-imported bindings and adds no new edge.",
+      "effect": "Treated as pre-existing and not attributed to this change."
+    },
+    {
+      "id": "CL-3",
+      "description": "PR body, CODEOWNERS, architecture docs and deployment context were not inputs.",
+      "effect": "Intent beyond the changeset text and ownership could not be checked."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 45,
+      "line_end": 59,
+      "claim": "Value re-export block of ten operation classes from the encryption entry.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/encrypt.ts",
+      "rev": "head",
+      "line_start": 30,
+      "line_end": 40,
+      "claim": "EncryptOperation constructor takes the internal FFI Client, plaintext and options; it is now reachable from the public entry.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "diff",
+      "path": "packages/stack/src/dynamodb/index.ts",
+      "rev": "head",
+      "line_start": 101,
+      "line_end": 108,
+      "claim": "Value re-export of four DynamoDB operation classes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/dynamodb/operations/encrypt-model.ts",
+      "rev": "head",
+      "line_start": 19,
+      "line_end": 29,
+      "claim": "DynamoDB EncryptModelOperation is a different class whose constructor takes an EncryptionClient, item, table and options.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "diff",
+      "path": "packages/stack/src/types-public.ts",
+      "rev": "head",
+      "line_start": 14,
+      "line_end": 39,
+      "claim": "EncryptedQuery and EncryptedFromSchema added to the type-only export lists.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/operations/encrypt-query.ts",
+      "rev": "base",
+      "line_start": 20,
+      "line_end": 22,
+      "claim": "@internal tag on EncryptQueryOperation removed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+      "rev": "base",
+      "line_start": 94,
+      "line_end": 96,
+      "claim": "@internal tag on BatchEncryptQueryOperation removed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "diff",
+      "path": "packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 6,
+      "line_end": 8,
+      "claim": "Type-only imports of encryptedColumn/encryptedField added solely for TSDoc links; erased at compile time.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "diff",
+      "path": ".changeset/export-operation-result-types.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 15,
+      "claim": "Minor changeset; author claims no runtime behaviour change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/stack/tsup.config.ts",
+      "rev": "head",
+      "line_start": 3,
+      "line_end": 25,
+      "claim": "Encryption and DynamoDB index files are built as cjs+esm entries with dts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "history_signal",
+      "signal": "tests",
+      "claim": "0 test files changed for 7 source files.",
+      "status": "verified"
+    }
+  ]
+}

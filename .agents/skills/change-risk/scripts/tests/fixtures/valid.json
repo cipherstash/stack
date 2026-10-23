@@ -1,0 +1,108 @@
+{
+  "schema_version": "1",
+  "repository": "example/repo",
+  "base_sha": "1111111111111111111111111111111111111111",
+  "head_sha": "2222222222222222222222222222222222222222",
+  "assessor": { "agent": "test", "model": "none", "skill_version": "1.0.0" },
+  "inputs": {
+    "diff": { "status": "available" },
+    "source_checkout": { "status": "available" },
+    "pr_description": { "status": "unavailable" },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": { "status": "partial", "note": "AGENTS.md only" },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": { "status": "available" },
+    "history_signals": { "status": "available" },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Removes the null short-circuit from encrypt().",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "invariant",
+      "description": "encrypt(null) no longer returns null.",
+      "certainty": "observed",
+      "evidence": ["E-1"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "src/encrypt.ts",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "edited",
+      "evidence": ["E-1"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Null plaintext is encrypted into a real ciphertext",
+      "trigger": "A caller passes null through a cast or JS interop.",
+      "affected_components": ["AC-1"],
+      "mechanism": "The guard that returned null was deleted.",
+      "consequence": "Null columns hold ciphertext; IS NULL queries change meaning.",
+      "impact": "high",
+      "basis": "observed_defect",
+      "evidence": ["E-1"],
+      "existing_verification": [
+        {
+          "description": "encrypt.test.ts exists",
+          "status": "exists_not_run",
+          "evidence": ["E-2"]
+        }
+      ],
+      "missing_verification": [
+        "A test that calls encrypt(null) and expects null."
+      ],
+      "mitigation": "Restore the runtime guard, or reject null with a typed error.",
+      "domain_tags": ["encryption"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No null round-trip test.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-2"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Add a null round-trip test.",
+      "addresses": ["FS-1", "VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "CI results not supplied.",
+      "effect": "Cannot say whether tests ran."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "src/encrypt.ts",
+      "rev": "base",
+      "line_start": 2,
+      "line_end": 2,
+      "claim": "Base line 2 holds the null guard the diff deletes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "test",
+      "path": "src/encrypt.test.ts",
+      "claim": "No case passes null.",
+      "status": "verified"
+    }
+  ]
+}

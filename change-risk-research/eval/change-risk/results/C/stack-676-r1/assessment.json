@@ -1,0 +1,437 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "bab1307fb2e663eca3a143ced81df6d99a04e80f",
+  "head_sha": "804fe3b3317a76eea8247f8a661b0cec6abdc890",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff / git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json (12 check runs on head, all success)"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md / CLAUDE.md at head only; no design doc for the WASM entry"
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "No dependency graph supplied; consumers searched with grep at head"
+    },
+    "codeowners": {
+      "status": "partial",
+      "note": ".github/CODEOWNERS exists at head; not used to draw conclusions"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json / evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No release/deployment notes; npm publish via Changesets inferred from AGENTS.md"
+    }
+  },
+  "summary": "Additive feature: @cipherstash/stack/wasm-inline's WasmEncryptionClient gains encryptQuery and encryptQueryBulk, minting EQL v3 query terms on Deno/edge. Both reuse the native client's shared index resolver and pre-FFI validators (contrary to the PR description, which says a local port was written), so inference and validation cannot drift from the native path. Existing encrypt/decrypt behaviour is unchanged. Scalar query types are verified end to end: CI ran the shared v3 family matrix through the WASM entry against real ZeroKMS and real Postgres/Supabase (Drizzle v3 integration jobs, both passed), and the Deno smoke suite against the built dist passed. The main residual risks are contract-level on a newly published, effectively irreversible API surface: the declared return type (EncryptedQuery | null) does not admit the bare selector string the searchableJson selector path returns, JSON containment/selector terms are only shape-checked, never matched against a database, and the docblock advises that query terms are safe to log-scrub less aggressively. Impact if these bite is medium; no plaintext or key-handling path is changed.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "New public methods WasmEncryptionClient.encryptQuery(plaintext, {table, column, queryType?}) and encryptQueryBulk(terms) plus exported types WasmEncryptQueryOptions and WasmQueryTerm on the published ./wasm-inline subpath export. Released as a minor bump via changeset.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-14"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "invariant",
+      "description": "Index type/queryOp resolution and value validation (NaN/Infinity/out-of-int64 bigint, numeric-on-match) are delegated to the same helpers the native query operations use (resolveIndexType, assertValidNumericValue, assertValueIndexCompatibility); queryOp is omitted rather than sent as undefined because WASM serde rejects undefined.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4", "E-13"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "error_handling",
+      "description": "Errors throw rather than returning the native {data}|{failure} Result envelope, consistent with the existing WASM encrypt/decrypt; null/undefined plaintext returns null without calling the FFI; bulk path is position-stable with null passthrough and the first invalid term aborts the batch.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "public_contract",
+      "description": "The declared return type is EncryptedQuery | null, but for searchableJson with a string value the method returns a bare selector-hash string, which EncryptedQuery does not include (the native client's EncryptedQueryResult does).",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "configuration",
+      "description": "CI: the Drizzle integration workflow now triggers on packages/stack/src/wasm-inline.ts and runs a new integration/wasm family suite; the stack integration vitest config un-stubs the protect-ffi and auth wasm-inline modules for all integration suites; e2e/wasm gains a query-types suite and a deno.lock.",
+      "certainty": "observed",
+      "evidence": ["E-11", "E-12"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "Public docblock examples for the raw SQL shapes (casts to eql_v3.query_<domain>, =, @>, -> with selector) and guidance that query terms are 'safe to log-scrub less aggressively than storage payloads'.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-8"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/stack/src/wasm-inline.ts (@cipherstash/stack/wasm-inline)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "New query methods and exported types on the WASM entry.",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Published dist/wasm-inline.js / wasm-inline.d.ts in the @cipherstash/stack npm package",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "package.json ./wasm-inline export points at dist/wasm-inline.{js,d.ts} built from AC-1 by the ESM-only tsup config; the new value import of the shared resolver is bundled into it.",
+      "evidence": ["E-14", "E-4"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Edge/Deno consumers writing raw SQL with WASM-minted terms",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Customers following the docblock recipes; no in-repo consumer other than tests.",
+      "evidence": ["E-6"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Shared resolver/validators (encryption/helpers/infer-index-type.ts, validation.ts)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Now imported by both native query operations and the WASM entry; a future change to them affects both surfaces.",
+      "evidence": ["E-4", "E-3"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Drizzle integration CI workflow and stack integration vitest config",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New trigger path and suite glob; module aliases restored to real WASM modules for all stack integration suites.",
+      "evidence": ["E-11", "E-12"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Declared return type omits the bare selector string returned for searchableJson selectors",
+      "trigger": "A TypeScript consumer calls encryptQuery('$.path', { queryType: 'searchableJson' }) (or a bulk term with a string value on an ste_vec column) and handles the result as the declared EncryptedQuery object.",
+      "affected_components": ["AC-1", "AC-2", "AC-3"],
+      "mechanism": "encryptQuery is typed Promise<EncryptedQuery | null> (wasm-inline.ts:443) and EncryptedQuery is only the two envelope object types (types.ts:72-74), but the docblock (wasm-inline.ts:416-421) and the e2e test (query-types.test.ts:159-165, which needs `as unknown as string`) confirm the selector path returns a plain string. The native client types the same result as EncryptedQueryResult, which includes string (types.ts:333).",
+      "consequence": "Type-guided code (e.g. reading term.v, or JSON-serialising it before binding as jsonb, giving a quoted string) compiles but builds a wrong selector argument; JSON path queries return no or wrong rows silently. Fixing the type later narrows/widens a published signature.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-5", "E-6", "E-7"],
+      "existing_verification": [
+        {
+          "description": "Deno e2e query-types asserts the selector is a non-empty string at runtime (shape only, via a type-erasing cast).",
+          "status": "ran_passed",
+          "evidence": ["E-7", "E-17"]
+        }
+      ],
+      "missing_verification": [
+        "A type-level test (test:types) pinning encryptQuery's return type for searchableJson string values",
+        "A live SQL test binding the selector to -> / ->> against an eql_v3_json column"
+      ],
+      "mitigation": "Widen the return types to EncryptedQuery | string | null (mirroring EncryptedQueryResult) before release, or add overloads keyed on queryType/value type.",
+      "domain_tags": ["public_api", "serialization_compatibility"]
+    },
+    {
+      "id": "FS-2",
+      "title": "JSON containment/selector terms never matched against a real EQL database",
+      "trigger": "An edge consumer uses the documented searchableJson recipes (prefs @> term::jsonb::eql_v3.query_jsonb, prefs -> selector).",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "The WASM integration adapter's SUPPORTED_OPS (adapter.ts:39-54) covers only scalar ops; the e2e query-types suite only checks term shape (v3, no ciphertext). Nothing executes the JSON SQL shapes from the docblock against Postgres, unlike every scalar query type.",
+      "consequence": "If the WASM-minted ste_vec needle or selector, or the documented cast/operator, does not match what the installed EQL v3 SQL expects, JSON queries silently return no rows (or error) on the edge.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-9", "E-7", "E-6"],
+      "existing_verification": [
+        {
+          "description": "Unit test infers ste_vec queryOp from plaintext shape with a mocked FFI.",
+          "status": "ran_passed",
+          "evidence": ["E-18", "E-19"]
+        },
+        {
+          "description": "Deno e2e asserts containment needle and selector shapes from live ZeroKMS.",
+          "status": "ran_passed",
+          "evidence": ["E-7", "E-17"]
+        }
+      ],
+      "missing_verification": [
+        "Live row-matching test for searchableJson containment and selector via the WASM entry"
+      ],
+      "mitigation": "Add JSON ops to the WASM adapter (or a dedicated integration test) before advertising JSON search on the edge; otherwise mark it experimental in the changeset.",
+      "domain_tags": ["encryption", "serialization_compatibility", "public_api"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Public guidance invites logging query terms that leak equality/order relationships",
+      "trigger": "A consumer follows the docblock note that query terms are 'safe to log-scrub less aggressively than storage payloads' and logs them.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "wasm-inline.ts:371-375 states terms are safe to log-scrub less aggressively. Terms carry HMAC, bloom and ORE/OPE material derived from plaintext; logged terms correlated across requests or against stored rows reveal equality and ordering of searched values.",
+      "consequence": "Search-term metadata (who searched for what, and order/equality relationships) leaks into log stores outside the encryption boundary. Not plaintext, and no key is exposed.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-8"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Security review of the documented logging guidance"
+      ],
+      "mitigation": "Reword the docblock: treat query terms as sensitive (do not log), consistent with the repo's 'do not log plaintext' rule.",
+      "domain_tags": ["plaintext_exposure", "encryption"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No type-level assertion of encryptQuery/encryptQueryBulk return types; the e2e test erases the type to read the selector string.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-7", "E-5"]
+    },
+    {
+      "id": "VG-2",
+      "description": "searchableJson (containment and selector) WASM terms are shape-checked only; the family suite exercises scalar ops only.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-9"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Before publishing, fix the declared return type of encryptQuery/encryptQueryBulk to include string (as EncryptedQueryResult does) and add a test:types assertion.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add a live integration case running the documented @> and -> SQL with WASM-minted searchableJson terms against an eql_v3_json column.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "Replace the 'safe to log-scrub less aggressively' wording with guidance not to log query terms; correct the PR description, which says a local resolver port was written when the shared resolver is imported.",
+      "addresses": ["FS-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Lock-context / identity binding: the WASM entry (before and after this change) has no withLockContext, while the native query path forwards lockContext. Whether WASM-minted terms match rows written by a native client under a lock context depends on ZeroKMS/EQL index-key derivation, which could not be checked offline.",
+      "effect": "Mixed native/edge deployments using lock contexts are not assessed; this limitation predates the change, so it is not raised as a scenario."
+    },
+    {
+      "id": "CL-2",
+      "description": "Docblock SQL shapes using bare operators (email = term::eql_v3.query_text_eq, @>) were not checked against the EQL v3 SQL bundle; the integration adapter uses eql_v3.eq/contains functions instead.",
+      "effect": "Possible doc inaccuracies for operator forms are unassessed."
+    },
+    {
+      "id": "CL-3",
+      "description": "Tests were not run locally; all pass/fail statements rely on ci.json conclusions, which do not list individual test cases. That the wasm family suite actually ran inside the Drizzle v3 jobs is inferred from the workflow glob and the CS_* env present.",
+      "effect": "A skipped or empty wasm suite inside a green job cannot be excluded."
+    },
+    {
+      "id": "CL-4",
+      "description": "Test files (unit suite, e2e, adapter) were skimmed for coverage, not read line by line; bundle contents of dist/wasm-inline.js were not inspected (only import chains and the passing Deno job).",
+      "effect": "Minor test-quality issues may be missed."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 440,
+      "line_end": 452,
+      "claim": "encryptQuery returns null for null/undefined plaintext and otherwise calls wasmEncryptQuery with toFfiQueryTerm; typed Promise<EncryptedQuery | null>.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 477,
+      "line_end": 503,
+      "claim": "encryptQueryBulk filters null values, sends {queries} to wasmEncryptQueryBulk, and reassembles results at original indices.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 654,
+      "line_end": 669,
+      "claim": "toFfiQueryTerm runs assertValidNumericValue, resolveIndexType and assertValueIndexCompatibility and omits queryOp when absent.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/helpers/infer-index-type.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 8,
+      "claim": "The shared resolver imports protect-ffi as type only and runtime values only from ../../types, so importing it into the WASM entry does not pull the native FFI.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 72,
+      "line_end": 74,
+      "claim": "EncryptedQuery is a union of two envelope types with no string arm; EncryptedQueryResult (line 333) includes string.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 408,
+      "line_end": 422,
+      "claim": "Docblock documents JSON containment via @> and that a selector returns the BARE selector-hash string bound to ->.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "test",
+      "path": "e2e/wasm/query-types.test.ts",
+      "rev": "head",
+      "line_start": 153,
+      "line_end": 166,
+      "claim": "e2e asserts typeof selector === 'string' and must cast `as unknown as string`, showing the declared type does not admit a string.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 371,
+      "line_end": 375,
+      "claim": "Docblock says query terms are safe to log-scrub less aggressively than storage payloads.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/integration/wasm/adapter.ts",
+      "rev": "head",
+      "line_start": 39,
+      "line_end": 54,
+      "claim": "WASM adapter SUPPORTED_OPS covers eq/ne/in/notIn/range/matches/order/null ops only; no JSON containment or selector op.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "ci_result",
+      "claim": "Drizzle v3 integration (db=postgres) and (db=supabase) concluded success on the head commit.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".github/workflows/integration-drizzle.yml",
+      "rev": "head",
+      "line_start": 135,
+      "line_end": 138,
+      "claim": "CS_IT_SUITE now includes integration/wasm/**/*.integration.test.ts; wasm-inline.ts added to trigger paths (lines 29-30, 51-52).",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "packages/stack/integration/vitest.config.ts",
+      "rev": "head",
+      "line_start": 68,
+      "line_end": 83,
+      "claim": "Integration vitest config aliases protect-ffi and auth wasm-inline to the real node_modules builds, overriding unit-test stubs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "pr_description",
+      "claim": "PR description says index resolution is a local ~40-line port that never imports native code; the diff instead imports the shared resolveIndexType.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 185,
+      "line_end": 189,
+      "claim": "./wasm-inline export (ESM only) serves dist/wasm-inline.js and .d.ts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/encrypt-query.ts",
+      "rev": "head",
+      "line_start": 163,
+      "line_end": 190,
+      "claim": "Native encryptQuery with lock context forwards lockContext to the FFI; the WASM entry has no lock-context path.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes",
+      "claim": "e2e/wasm/roundtrip.test.ts usually co-changes with examples/supabase-worker files, absent here; integration-drizzle.yml usually co-changes with integration-supabase.yml.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "ci_result",
+      "claim": "Run WASM E2E Tests (Deno) concluded success on the head commit.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "test",
+      "path": "packages/stack/__tests__/wasm-inline-query.test.ts",
+      "rev": "head",
+      "line_start": 138,
+      "line_end": 165,
+      "claim": "Unit test covers ste_vec queryOp inference from plaintext shape with a mocked WASM module; other cases cover resolution, validation, null and bulk position stability.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "ci_result",
+      "claim": "Run Tests (Node 22), Run Tests (Node 24) and Run Tests (Bun) concluded success on the head commit.",
+      "status": "verified"
+    }
+  ]
+}

@@ -1,0 +1,454 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "62e6c4392f2f602f12f19643c6aa4325695c9c41",
+  "head_sha": "71a243635607fac92c76ed5730418d989bfd86d6",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base read via git"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md was given."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md and the skill's cipherstash profile, read at head"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "note": "Only what collect-evidence reported; not read directly"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, already run)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No access to npm registry state or npm trusted-publisher configuration"
+    }
+  },
+  "summary": "Builds the release pipeline for @cipherstash/protect-ffi and its six platform packages inside release.yml. A registry-state gate (scripts/release-gate.mjs) now runs on every push to main. If any FFI version is unpublished, a reusable workflow builds the six native binaries and the WASM output, and a publish-ffi job publishes the platform tarballs before the wrapper, then tags them. The change also moves OIDC and write permissions from the workflow level to the publishing jobs and freezes the release install's lockfile. The FFI branch is meant to stay inert at this head: a CI lint blocks FFI changesets, and the committed 0.31.0 is documented as already on npm. I could not check that against the registry. The live effect of merging is therefore mainly that a new gate job stands in front of every JS release. The main latent risk is in the first real FFI publish. The release path checks only that each platform tarball has the right name and contains an index.node. The architecture/libc checks and the load smoke test exist only in the manually dispatched ffi-preflight.yml. So a mis-targeted binary could go to npm, and npm publishes cannot be undone. Every new control has only static unit tests; no run of the publish path has been seen. Advisory: focused review of the publish path before the cutover.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "A new `gate` job runs on every push to main and calls `npm view <name> versions --json` for every non-private workspace package. It outputs ffi=true when any @cipherstash/protect-ffi* committed version is missing from npm. Any lookup error other than E404 throws. The `release` job (changesets: Version PR + JS publish) now requires `needs.gate.result == 'success'`.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "build_or_release",
+      "description": "When ffi=true, `ffi-artifacts` calls `_build-ffi-artifacts.yml`, which builds the six platform bindings with an explicit CARGO_BUILD_TARGET each, builds the WASM output, packs seven tarballs and verifies their names and file sets. `publish-ffi` then publishes the six platform tarballs before the wrapper, skipping versions already on npm, creates seven git tags and a GitHub release, and uploads the tarballs. `release` runs only if publish-ffi succeeded.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "security_boundary",
+      "description": "Workflow-level permissions in release.yml drop from id-token/contents/pull-requests write to `contents: read`. `release` re-grants all three, and `publish-ffi` gets id-token and contents write. The gate and the build workflow run read-only, with no OIDC token.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-10"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "The release job's install changes from `pnpm install` to `pnpm install --frozen-lockfile`.",
+      "certainty": "observed",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "public_contract",
+      "description": "The seven FFI manifests' repository, bugs and homepage URLs now point at cipherstash/stack, and the platform repository.directory paths are corrected. The Rust crate gets `publish = false`. The InvariantViolation error message now names the cipherstash/stack issue tracker. None of this ships until the next FFI version is published, because the changeset is parked as .md.deferred.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "The customer-shipped skill skills/stash-supply-chain-security/SKILL.md, bundled in the `stash` tarball, gains guidance on the FFI publish path, per-job OIDC scoping and per-action cache inputs. A `stash` patch changeset is added.",
+      "certainty": "observed",
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "BC-7",
+      "kind": "configuration",
+      "description": "The no-caching lint now uses a per-action allowlist that names each action's cache-disabling input, and it covers _build-ffi-artifacts.yml. The new lint-release.yml runs actionlint over the four release workflows on PRs. The dead packages/protect-ffi/.github workflows, which GitHub never ran, are deleted.",
+      "certainty": "observed",
+      "evidence": ["E-12"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/release.yml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New gate, ffi-artifacts and publish-ffi jobs. The release job's run condition and permissions changed.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": ".github/workflows/_build-ffi-artifacts.yml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New reusable workflow that produces the binaries publish-ffi uploads to npm",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/protect-ffi and six @cipherstash/protect-ffi-<platform> npm packages",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "Published by publish-ffi from the tarballs AC-2 builds. Their manifests changed (BC-5).",
+      "evidence": ["E-1", "E-5"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/stack, stack-drizzle, stack-supabase (and the Stack fixed group)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "They depend on @cipherstash/protect-ffi at workspace:*. They are published by the `release` job, which now waits on the gate and, during an FFI release, on publish-ffi.",
+      "evidence": ["E-7", "E-1"]
+    },
+    {
+      "id": "AC-5",
+      "name": "scripts/release-gate.mjs",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Decides from npm registry state whether the FFI branch runs",
+      "evidence": ["E-2"]
+    },
+    {
+      "id": "AC-6",
+      "name": ".github/workflows/ffi-preflight.yml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Manual dry run that holds the only architecture/libc and load smoke checks",
+      "evidence": ["E-4"]
+    },
+    {
+      "id": "AC-7",
+      "name": "stash npm package (bundled skills)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Ships the updated stash-supply-chain-security skill into customer repositories",
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "AC-8",
+      "name": "npm trusted-publisher configuration for the seven FFI packages",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Must name cipherstash/stack + release.yml before publish-ffi can succeed. It cannot be seen from the repository.",
+      "evidence": ["E-8"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "A mis-targeted native binary can be published, because the release path skips the arch/libc and load checks",
+      "trigger": "The first real FFI release (after the cutover renames the deferred changesets) has a platform leg whose build emits the wrong architecture or ABI. Examples: a target or toolchain regression on macos-latest (arm64) for darwin-x64, or the musl leg linking glibc.",
+      "affected_components": ["AC-2", "AC-3", "AC-1", "AC-6"],
+      "mechanism": "_build-ffi-artifacts.yml checks only that each platform tarball has the expected package name and contains package/index.node (lines 278-294). The `file`-based architecture check, the readelf glibc/musl check and the install-and-load smoke test exist only in ffi-preflight.yml (lines 63-151). That workflow is workflow_dispatch-only (lines 17-23) and is not called from release.yml; publish-ffi (release.yml 78-210) uploads whatever ffi-artifacts produced. AGENTS.md says to dispatch the preflight before the cutover, but nothing enforces this on any later release.",
+      "consequence": "A platform package that installs cleanly and then fails to dlopen is published irreversibly with provenance. Every @cipherstash/stack user on that platform cannot load the encryption core until a new version is released. A linux-x64-gnu/musl swap fails only at runtime for Alpine users.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-4", "E-1", "E-9"],
+      "existing_verification": [
+        {
+          "description": "scripts/__tests__/ffi-release-matrix.test.mjs pins each platform's Rust target triple and build script (static unit test)",
+          "status": "exists_not_run",
+          "evidence": ["E-13"]
+        },
+        {
+          "description": "ffi-preflight.yml architecture/libc/smoke checks, run only if someone dispatches it manually",
+          "status": "unknown",
+          "evidence": ["E-4"]
+        }
+      ],
+      "missing_verification": [
+        "Architecture/libc verification of each index.node inside the publish path itself",
+        "A load smoke test of the exact tarballs publish-ffi will upload",
+        "Any recorded run of _build-ffi-artifacts.yml producing all seven tarballs"
+      ],
+      "mitigation": "Move the arch/libc checks (and ideally the host smoke test) from ffi-preflight.yml into _build-ffi-artifacts.yml, so release.yml and the preflight share them, or make publish-ffi depend on them. Run ffi-preflight against the Version Packages branch before the cutover.",
+      "domain_tags": ["build_release"]
+    },
+    {
+      "id": "FS-2",
+      "title": "The new gate job is a hard prerequisite for every JS release and Version PR update",
+      "trigger": "On a push to main, any `npm view` call fails with something other than E404: a registry or network error, rate limiting, or npm CLI output that does not contain the string E404. Alternatively, the registry does not actually hold all seven FFI packages at 0.31.0.",
+      "affected_components": ["AC-5", "AC-1", "AC-4", "AC-8"],
+      "mechanism": "release-gate.mjs throws on any non-404 lookup error (lines 149-161) and runs about 10 lookups per push. The release job requires `needs.gate.result == 'success'` (release.yml 225-231), so the changesets job, which opens and updates the Version PR and publishes JS, does not run. If the 0.31.0 assumption (lint-no-ffi-changeset.mjs:33) is wrong, ffi=true on merge, and publish-ffi fails because the trusted publisher still names protectjs-ffi. The release job is then skipped on every push until that is fixed.",
+      "consequence": "JS releases stall loudly; no binary-less publish happens. Recovery is a re-run in the transient case. If the FFI branch fires early, it needs a cutover or an FFI-version fix before Stack can release again.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-1", "E-8"],
+      "existing_verification": [
+        {
+          "description": "release-gate.test.mjs covers 404-as-unpublished, error propagation, private-skip and classify (unit, with stubbed lookups)",
+          "status": "exists_not_run",
+          "evidence": ["E-14"]
+        }
+      ],
+      "missing_verification": [
+        "Confirmation that every FFI package is on npm at 0.31.0 (registry not accessible here)",
+        "A real run of the gate against the registry before merge"
+      ],
+      "mitigation": "Before merging, run `node scripts/release-gate.mjs` locally and check that it prints ffi=false. Consider retrying transient npm view failures inside the gate, keeping the fail-closed behaviour on persistent errors.",
+      "domain_tags": ["build_release", "configuration"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Partial FFI release: npm packages published but tags, release or the dependent Stack publish missing",
+      "trigger": "During an FFI release, the `Tag and release` step fails after the npm publishes (GitHub API error, or a tag at another commit). Or the wrapper publish fails after some platform packages are already published.",
+      "affected_components": ["AC-1", "AC-3", "AC-4"],
+      "mechanism": "publish-ffi publishes to npm first (release.yml 121-154) and tags afterwards (160-210). A tag-step failure marks publish-ffi as failed, and `release` is then skipped (225-231). The new protect-ffi version is on npm, but the Stack packages that should consume it are not published, and there is no tag or GitHub release. Re-runs are designed to be idempotent: npm view skip, tag-at-same-commit skip, upload --clobber.",
+      "consequence": "Registry and git disagree until someone re-runs the workflow. Users can install the new protect-ffi on its own. Loud and recoverable.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1"],
+      "existing_verification": [
+        {
+          "description": "No test exercises the publish-ffi shell steps; actionlint/shellcheck lint them statically",
+          "status": "unknown",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "A rehearsal of a re-run after a partial failure"
+      ],
+      "mitigation": "Document the re-run procedure for the cutover. Watch the first FFI release run to completion.",
+      "domain_tags": ["build_release", "retry_idempotency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The publish path (_build-ffi-artifacts.yml + publish-ffi) has never been seen running. Its binary-correctness checks live only in a manually dispatched workflow.",
+      "scenarios": ["FS-1", "FS-3"],
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The registry state that keeps the FFI branch inert (all seven at 0.31.0) and the npm trusted-publisher configuration could not be checked.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No CI results were available. All new script and workflow tests are exists_not_run.",
+      "scenarios": ["FS-1", "FS-2", "FS-3"],
+      "evidence": ["E-13", "E-14", "E-10"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Run the architecture/libc verification (and the host smoke install) inside _build-ffi-artifacts.yml, so every publish enforces it rather than only the manual preflight.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "compatibility_check",
+      "description": "Before merging, confirm on npm that all seven FFI packages exist at 0.31.0, and run the gate script read-only to confirm it prints ffi=false.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "review_focus",
+      "description": "Review release.yml: the `release` job's `if:` expression, the job-level permission grants, and the publish-ffi ordering, idempotency and tag logic.",
+      "addresses": ["FS-2", "FS-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "rollback_plan",
+      "description": "For the cutover: dispatch ffi-preflight on the Version Packages branch, watch the first FFI release, and have a re-run and deprecate-and-republish plan ready, since npm publishes cannot be undone.",
+      "addresses": ["FS-1", "FS-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No network: npm registry state, trusted-publisher configuration and GitHub settings were not observable.",
+      "effect": "I could not confirm that the FFI branch is inert at merge (FS-2), and I could not check the publish auth."
+    },
+    {
+      "id": "CL-2",
+      "description": "I could not run tests. node_modules is absent, and running node required approval that was not available, so no vitest suite was executed.",
+      "effect": "Every verification is exists_not_run; verification confidence is low."
+    },
+    {
+      "id": "CL-3",
+      "description": "I read release.yml, release-gate.mjs, ffi-release-matrix.mjs, _build-ffi-artifacts.yml, ffi-preflight.yml and lint-release.yml closely. I skimmed the lint-no-workflow-caching changes, the new script tests, the e2e supply-chain test, the plan doc and the skill text, and did not read them line by line.",
+      "effect": "Subtle defects in the test logic or in the customer-facing skill wording may be missed."
+    },
+    {
+      "id": "CL-4",
+      "description": "There is no PR description or CI results. Behaviour of GitHub Actions (always()/skipped semantics, reusable-workflow permission inheritance) and of npm provenance was judged from general knowledge and the in-file comments.",
+      "effect": "The analysis of the job-condition and permission changes is unconfirmed by any run."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 18,
+      "line_end": 274,
+      "claim": "contents: read at the workflow level. The gate, ffi-artifacts and publish-ffi jobs are new. publish-ffi publishes the platforms before the wrapper and then tags. The release job's if: needs gate success and, when ffi is true, publish-ffi success. Install uses --frozen-lockfile.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 42,
+      "line_end": 181,
+      "claim": "unpublished() looks up every non-private manifest. classify() prefix-matches @cipherstash/protect-ffi. npmVersions returns null only on E404 and throws otherwise.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": ".github/workflows/_build-ffi-artifacts.yml",
+      "rev": "head",
+      "line_start": 278,
+      "line_end": 294,
+      "claim": "The only per-platform verification in the release build is the package name and the presence of index.node. There is no architecture or libc check.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": ".github/workflows/ffi-preflight.yml",
+      "rev": "head",
+      "line_start": 17,
+      "line_end": 151,
+      "claim": "workflow_dispatch only. It holds the file/readelf architecture and libc checks and the install-and-load smoke test.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "diff",
+      "path": "packages/protect-ffi/package.json",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 11,
+      "claim": "The repository, bugs and homepage URLs now point at cipherstash/stack. Version stays 0.31.0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".changeset/protect-ffi-repository-url.md.deferred",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 19,
+      "claim": "The FFI metadata changeset is parked with the .md.deferred suffix, so changesets does not consume it.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 219,
+      "line_end": 219,
+      "claim": "@cipherstash/stack depends on @cipherstash/protect-ffi at workspace:*.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "scripts/lint-no-ffi-changeset.mjs",
+      "rev": "head",
+      "line_start": 33,
+      "line_end": 43,
+      "claim": "The inertness argument rests on all seven packages being on npm at 0.31.0 and on this lint blocking FFI changesets. The registry claim is documentation, not something checked here.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-9",
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 148,
+      "line_end": 158,
+      "claim": "AGENTS.md describes the pipeline as built and inert, and says ffi-preflight.yml should be dispatched against the Version Packages branch before the cutover. This is a manual step.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "test",
+      "path": "scripts/__tests__/workflow-publish-permissions.test.mjs",
+      "rev": "head",
+      "line_start": 110,
+      "line_end": 196,
+      "claim": "A static test asserts that id-token: write is never set at the workflow level and only appears on the listed jobs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "skills/stash-supply-chain-security/SKILL.md",
+      "rev": "head",
+      "line_start": 139,
+      "line_end": 186,
+      "claim": "The customer-shipped skill now documents per-job OIDC scoping and the FFI publish path.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": ".github/workflows/lint-release.yml",
+      "rev": "head",
+      "line_start": 28,
+      "line_end": 84,
+      "claim": "actionlint (with shellcheck) runs on PRs that touch the release workflows. It is static only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "scripts/ffi-release-matrix.mjs",
+      "rev": "head",
+      "line_start": 49,
+      "line_end": 104,
+      "claim": "The matrix takes Rust triples from the platform manifests' neon.rust and picks zigbuild for gnu platforms and build:native for the rest. It has a companion unit test.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "scripts/__tests__/release-gate.test.mjs",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 176,
+      "claim": "Unit tests cover unpublished/classify/workspacePackagePatterns with stubbed lookups. No real registry call is made.",
+      "status": "verified"
+    }
+  ]
+}

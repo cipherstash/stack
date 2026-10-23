@@ -1,0 +1,128 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+  "head_sha": "aca5cc8ebeb99a825c43bd2d9d18d7bdc1f17413",
+  "merge_base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+    "cutoff_date": "2026-09-02T16:06:20+10:00",
+    "commits_read": 4016,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 2,
+    "additions": 54,
+    "deletions": 53,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 2
+    }
+  },
+  "dispersion": {
+    "components": {
+      ".": 2
+    },
+    "component_count": 1,
+    "top_level_dirs": {
+      ".": 2
+    },
+    "languages": {
+      "YAML": 2
+    }
+  },
+  "path_classes": {
+    "lockfile": 1,
+    "dependency_manifest": 1
+  },
+  "files": [
+    {
+      "path": "pnpm-lock.yaml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 51,
+      "deletions": 51,
+      "binary": false,
+      "classes": ["lockfile"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": ".",
+      "language": "YAML"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "pnpm-lock.yaml",
+        "commits": 246,
+        "commits_last_90d": 83,
+        "distinct_authors": 10
+      },
+      {
+        "path": "pnpm-workspace.yaml",
+        "commits": 59,
+        "commits_last_90d": 28,
+        "distinct_authors": 6
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [],
+    "bulk_commits_ignored": 93
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      "pnpm-lock.yaml": ["@cipherstash/developers"],
+      "pnpm-workspace.yaml": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 57
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 0,
+    "source_files_changed": 0,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [],
+    "mapping": [],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

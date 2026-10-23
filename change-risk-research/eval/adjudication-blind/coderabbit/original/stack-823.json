@@ -1,0 +1,72 @@
+{
+  "case": "stack-823",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Partial-progress tests depend on `chmod 0o444` actually blocking a write. Both copies force the sweep to throw by making the second migration read-only, which h",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "The cited test forces the failure with a mocked fs write, not chmod 0o444, and no chmod appears in the tests."
+    },
+    {
+      "id": "CR-2",
+      "title": "Close the clack session before exiting non-zero. Every other abort path in this function emits `if (!embedded) p.outro('Migration aborted.')` before `throw new ",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "migration.ts already calls p.outro('Migration aborted.') when not embedded before throwing CliExit(1)."
+    },
+    {
+      "id": "CR-3",
+      "title": "Duplicate warning with a dangling colon. `rewriteEncryptedMigrations` already emits the identical \"\u2026the rewrite left alone. Review them before migrating:\" warni",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "post-agent.ts at head throws rather than emitting a warning with a dangling colon, so no duplicate warning exists at the cited line."
+    },
+    {
+      "id": "CR-4",
+      "title": "Guard the partial-result read against non-object throws. `err as Partial<RewriteSweepError>` is an unchecked cast: for `throw null` / `throw undefined`, `partia",
+      "nitpick": false,
+      "label": "match",
+      "matches": ["KD-3"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The wizard's sweepMigrationDirs uses an unchecked err cast, so a null/undefined throw raises TypeError inside the catch."
+    },
+    {
+      "id": "CR-5",
+      "title": "Add the `\"public\"` rationale to both rewriters or centralize the assumption. `packages/wizard/src/lib/rewrite-migrations.ts` documents that `\"public\".\"<domain>\"",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is a comment/documentation consistency nit between the two rewriter copies."
+    },
+    {
+      "id": "CR-6",
+      "title": "Guard the partial-result carrier before reading it. A caught value may be `null`/`undefined`; this assertion does not change runtime behavior, so `partial.rewri",
+      "nitpick": true,
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "install.ts has only 227 lines and contains no partial-result cast; the CLI migration.ts already guards with isPartialRewriteResult."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

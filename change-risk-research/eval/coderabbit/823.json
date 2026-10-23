@@ -1,0 +1,69 @@
+{
+  "pr": 823,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/823#discussion_r3670113865",
+      "path": "packages/cli/src/__tests__/rewrite-migrations.test.ts",
+      "line": 1681,
+      "severity_label": "📐 Maintainability & Code Quality | 🟡 Minor | ⚡ Quick win",
+      "claim": "Partial-progress tests depend on `chmod 0o444` actually blocking a write. Both copies force the sweep to throw by making the second migration read-only, which has no effect when tests run as UID 0 (common in CI containers) — the write succeeds, no error is thrown, and the test fails on its own guard instead of exercising the partial-result path.",
+      "is_nitpick": false,
+      "id": "CR-1"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/823#discussion_r3670113868",
+      "path": "packages/cli/src/commands/eql/migration.ts",
+      "line": 344,
+      "severity_label": "📐 Maintainability & Code Quality | 🟡 Minor | ⚡ Quick win",
+      "claim": "Close the clack session before exiting non-zero. Every other abort path in this function emits `if (!embedded) p.outro('Migration aborted.')` before `throw new CliExit(1)`; this new fail-closed exit doesn't, so a standalone run terminates without an outro.",
+      "is_nitpick": false,
+      "id": "CR-2"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/823#discussion_r3670113882",
+      "path": "packages/wizard/src/lib/post-agent.ts",
+      "line": 104,
+      "severity_label": "📐 Maintainability & Code Quality | 🟡 Minor | ⚡ Quick win",
+      "claim": "Duplicate warning with a dangling colon. `rewriteEncryptedMigrations` already emits the identical \"…the rewrite left alone. Review them before migrating:\" warning per directory followed by the actual statement list (Lines 198-206), and the same for unsweepable dirs (Lines 185-187).",
+      "is_nitpick": false,
+      "id": "CR-3"
+    },
+    {
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/823#discussion_r3671847760",
+      "path": "packages/wizard/src/lib/rewrite-migrations.ts",
+      "line": 952,
+      "severity_label": "🩺 Stability & Availability | 🟡 Minor | ⚡ Quick win",
+      "claim": "Guard the partial-result read against non-object throws. `err as Partial<RewriteSweepError>` is an unchecked cast: for `throw null` / `throw undefined`, `partial.rewritten` raises a `TypeError` inside the catch and escapes `sweepMigrationDirs`, defeating the per-directory fail-closed reporting.",
+      "is_nitpick": false,
+      "id": "CR-4"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/823#pullrequestreview-4802975838",
+      "path": "packages/cli/src/commands/db/rewrite-migrations.ts",
+      "line": 831,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | 💤 Low value",
+      "claim": "Add the `\"public\"` rationale to both rewriters or centralize the assumption. `packages/wizard/src/lib/rewrite-migrations.ts` documents that `\"public\".\"<domain>\"` is an install-schema assumption, but `packages/cli/src/commands/db/rewrite-migrations.ts` emits the same unconditional qualifier with only a short comment.",
+      "is_nitpick": true,
+      "id": "CR-5"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/823#pullrequestreview-4802975838",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "line": 672,
+      "severity_label": "nitpick | 🩺 Stability & Availability | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Guard the partial-result carrier before reading it. A caught value may be `null`/`undefined`; this assertion does not change runtime behavior, so `partial.rewritten` can throw and mask the intended `CliExit(1)` path.",
+      "is_nitpick": true,
+      "id": "CR-6"
+    }
+  ],
+  "notes": "Review 4802975838: 3 actionable inline + 2 nitpicks. Review 4805063562: 1 actionable inline (unresolved). First three threads resolved ('Addressed in commits 5aed447 to 143a99d'). r3670113882 outdated (line from original_line). Release-notes block removed from description."
+}

@@ -1,0 +1,48 @@
+{
+  "case": "stack-961",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Upgrade blocks reads and writes on large encrypted tables while every captured index is rebuilt inside one transaction",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same mechanism as F-02, confirmed in the code: one transaction holds the ACCESS EXCLUSIVE locks from the cascade drop through the plain CREATE INDEX rebuilds and ANALYZE until COMMIT."
+    },
+    {
+      "id": "FS-2",
+      "title": "Upgrade now fails, where it used to succeed, when the installer role does not own the indexed customer tables",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "CASCADE drops dependants without per-object ownership checks, but the replayed CREATE INDEX needs table ownership; preflight checks only EQL schema drop rights, and index.ts wraps the resulting error as a generic rollback."
+    },
+    {
+      "id": "FS-3",
+      "title": "An upgrade that changes or removes an EQL function used by an existing index can no longer complete",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Captured definitions are replayed verbatim and verification requires an exact pg_get_indexdef match, so a future bundle that changes an index-referenced function makes the upgrade fail and roll back where base succeeded."
+    }
+  ],
+  "cost_usd": 1.9730672,
+  "wall_seconds": 225.972796,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,152 @@
+{
+  "case": "stack-941",
+  "pr": 941,
+  "condition": "C",
+  "run": 2,
+  "model_requested": "claude-opus-5-5",
+  "exit_code": 0,
+  "started": "2026-10-12T06:21:03.904880+00:00",
+  "wall_seconds": 270.597651,
+  "isolation": {
+    "hidden_paths": [
+      "/home/claude/stack",
+      "/tmp/claude-0",
+      "/root/.claude/projects"
+    ],
+    "git_protocols": "file",
+    "mcp": "none"
+  },
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "skills_loaded": [
+    "session-start-hook",
+    "change-risk",
+    "deep-research",
+    "design",
+    "slides",
+    "design-sync",
+    "dataviz",
+    "artifact-diagramming",
+    "artifact-capabilities",
+    "update-config",
+    "verify",
+    "debug",
+    "code-review",
+    "simplify",
+    "batch",
+    "fewer-permission-prompts",
+    "doctor",
+    "loop",
+    "claude-api",
+    "workflow-authoring",
+    "run",
+    "run-skill-generator",
+    "plugin-authoring",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "anthropic-skills:deep-research",
+    "anthropic-skills:docs",
+    "anthropic-skills:docx",
+    "anthropic-skills:google-workspace",
+    "anthropic-skills:import-memory",
+    "anthropic-skills:morning",
+    "anthropic-skills:pdf",
+    "anthropic-skills:pptx",
+    "anthropic-skills:skill-creator",
+    "anthropic-skills:xlsx"
+  ],
+  "total_cost_usd": 2.2865137000000004,
+  "duration_ms": 269035,
+  "duration_api_ms": 264769,
+  "num_turns": 37,
+  "is_error": false,
+  "subtype": "success",
+  "usage": {
+    "input_tokens": 70,
+    "cache_creation_input_tokens": 130261,
+    "cache_read_input_tokens": 3434034,
+    "output_tokens": 27859,
+    "output_tokens_details": {
+      "thinking_tokens": 8635
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 130261,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1011,
+        "cache_read_input_tokens": 155241,
+        "cache_creation_input_tokens": 2467,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2467
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1469,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0001589,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 70,
+      "outputTokens": 27859,
+      "cacheReadInputTokens": 3434034,
+      "cacheCreationInputTokens": 130261,
+      "webSearchRequests": 0,
+      "costUSD": 2.2863548000000002,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 8635,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "tool_calls": 35,
+  "tool_counts": {
+    "Skill": 1,
+    "Read": 2,
+    "Bash": 31,
+    "Write": 1
+  },
+  "skill_invoked": true,
+  "audit": {
+    "flags": [
+      {
+        "tool": "Bash",
+        "why": "network-looking",
+        "input": "{\"command\": \"cd /srv/cr/stack-941-C-r2/repo; grep -n 'workflow_dispatch: {}\\\\|branch=\\\"${GITHUB_REF_NAME}\\\"\\\\|if \\\\[\\\\[ \\\"$branch\\\" == \\\"main\\\" \\\\]\\\\]\\\\|chore\\\\\\\\(release\\\\\\\\):\\\\*)\\\\|needs.classify.outputs.mode ==\\\\|prerelease-eql-npm:\\\\|prerelease-eql-crate:\\\\|eql-sql:\\\\|eql-docs:\\\\|eql-image:\\\\|no"
+      }
+    ],
+    "clean": false
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

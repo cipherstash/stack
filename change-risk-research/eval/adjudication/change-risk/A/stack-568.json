@@ -1,0 +1,58 @@
+{
+  "case": "stack-568",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Node authStrategy path breaks if protect-ffi 0.28's native newClient does not handle the new getToken() Result envelope (or no longer accepts plain { token })",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Re-exported strategy constructors now return Result envelopes, but stack docs and release note still show passing them directly as authStrategy",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Wizard prerequisites rethrows instead of reporting 'not authenticated' if auth 0.41 failure type strings differ",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    },
+    {
+      "id": "FS-4",
+      "title": "Removal of the AuthError type export breaks TypeScript consumers that import it",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 1.5189631000000001,
+  "wall_seconds": 201.986991
+}

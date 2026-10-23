@@ -1,0 +1,37 @@
+{
+  "case": "stack-1002",
+  "evaluator": "change-risk/C-r3",
+  "run": 3,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Armed EQL crates.io release job now starts on root-workspace Rust pushes",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Arming the npm auth line also arms crates.io publishing in one deletion",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 1.8467498999999996,
+  "wall_seconds": 194.728181,
+  "case_note": "KD-1 missed in this run; rated medium."
+}

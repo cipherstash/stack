@@ -1,0 +1,25 @@
+{
+  "case": "stack-998",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Non-EQL releases now run the Cargo.lock refresh and can commit unrelated lock churn",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.1214233,
+  "wall_seconds": 123.073986
+}

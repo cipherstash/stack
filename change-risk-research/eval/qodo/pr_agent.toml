@@ -1,0 +1,22 @@
+# PR-Agent configuration for the change-risk evaluation.
+# Pinned: The-PR-Agent/pr-agent @ 330f0813b5fe0d1f54b794077c2d02aa85a1fb63 (main, 2026-10-11),
+# which contains require_failure_modes (added in dac1cad, after the 0.47.0 release).
+# The model is set per run with --config.model; see run_pr_agent.py.
+
+[config]
+publish_output = false
+verbosity_level = 1
+temperature = 0.2
+
+[pr_reviewer]
+require_risk_assessment = true
+require_failure_modes = true
+require_merge_recommendation = true
+require_priority_files = true
+require_tests_review = true
+require_security_review = true
+require_estimate_effort_to_review = true
+require_score_review = false
+require_ticket_analysis_review = false
+num_max_findings = 5
+publish_output_no_suggestions = true

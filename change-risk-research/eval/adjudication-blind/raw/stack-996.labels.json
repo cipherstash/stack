@@ -1,0 +1,60 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The new null-envelope check in encryptGroupPerTerm is real, but it is an intended fail-closed improvement on a narrow fallback path, so it adds no release risk."
+    },
+    {
+      "id": "F-02",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The finding says itself that every argument shape routes the same as before; index.ts still discriminates on !args[1] exactly like the old opts check, so no defect is shown."
+    },
+    {
+      "id": "F-03",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Accurate description of the intended per-term null guard (query-encrypt.ts:417-421, plus its test). It can only fire when the client breaks its contract, and it turns silently wrong results into a loud error, so it is immaterial to release risk."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "encrypt now returns EncryptOperation<EncryptResult<P>>, where EncryptResult<P> = Encrypted | (null & P), so JsonDocument callers get Encrypted | null and strict-null code stops compiling, yet the changeset ships this as a minor bump."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "getOperation() on the exported EncryptOperation now returns plaintext: PlaintextInput | null (encrypt.ts:136), where PlaintextInput = Plaintext | JsonDocument, so the output type widens in a release labeled patch and consumers assigning it to Plaintext | null can break."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same type-level breaking change as F-04, supported by encrypt.ts:41 and the client-v3 signature, and shipped as a minor release."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Correctly shows that EncryptResult<P> plus P defaulting to PlaintextForColumn makes Json-column encrypt results nullable, a compile-breaking type change in a minor release; it proposes a semver review and running the typecheck."
+    }
+  ]
+}

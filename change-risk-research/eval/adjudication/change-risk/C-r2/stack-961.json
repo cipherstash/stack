@@ -1,0 +1,58 @@
+{
+  "case": "stack-961",
+  "evaluator": "change-risk/C-r2",
+  "run": 2,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Upgrade blocks all reads and writes on large encrypted tables for the whole index rebuild",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Databases with EQL-dependent views, policies or constraints can no longer upgrade via the CLI",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Customer operator in `public` or customer cast backed by an EQL function is classed as bundle-owned and silently dropped",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Objects created by non-stash sessions between inspection and DROP are silently dropped",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 2.0887585,
+  "wall_seconds": 278.183117
+}
