@@ -127,8 +127,10 @@ Option 2.
    while the label stays, is deferred with the Go SDK's #1308, so both
    SDKs get one answer, including what `i.c` then holds.
    Where the library shows a column name that differs from the attribute,
-   SQLAlchemy's `mapped_column("email_addr")`, the decorator refuses at the
-   class statement, since `i.c` would not match the SQL column.
+   SQLAlchemy's `mapped_column("email_addr")`, `i.c` would not match the
+   SQL column. The core cannot see that rename, since it does not read the
+   mapper; the refusal belongs to the SQLAlchemy layer, and until then the
+   attribute name is the column name.
    A Pydantic alias is a JSON name, not a column, and is left alone.
    The name is open to the reviewers; the alternatives are
    `@stash.encrypted(...)` and `@stash.declare(...)`.
@@ -184,30 +186,54 @@ Option 2.
 5. **The model contract is a `Protocol`, not a dataclass.**
    A model class must give:
    - a field list, each field carrying its stash markers in `Annotated`;
-   - a constructor that accepts every declared field as a keyword argument;
+   - a constructor that accepts every field in the plan as a keyword
+     argument and allows every `Ignore` field to be omitted (a default,
+     or `**kwargs`), since `decrypt` passes the plan's fields and nothing
+     else;
    - attribute access by field name on an instance.
 
    The field list is the library's own where one exists:
-   `dataclasses.fields`, `attrs.fields`, Pydantic's `model_fields`, and
-   SQLAlchemy's mapper columns.
+   `dataclasses.fields`, `attrs.fields` and Pydantic's `model_fields`.
    Those lists exist because the decorator is outermost, and they leave
-   out what is not a column: `ClassVar`, `InitVar`, Pydantic's
-   `model_config`, and a SQLAlchemy relationship.
-   For a class with no such list, the fields are the hints that
+   out what is not a column: `ClassVar`, `InitVar` and Pydantic's
+   `model_config`.
+   For a class with no such list, a SQLAlchemy declarative class
+   included, the fields are the hints that
    `typing.get_type_hints(cls, include_extras=True)` returns, minus
-   `ClassVar` and `InitVar`.
+   `ClassVar` and `InitVar`, read through one generic wrapper by
+   structure (see "Decorator order" below). That call resolves every
+   annotation on the class and its bases before the filter runs, so a
+   `ClassVar` or `InitVar` is out of the plan but its annotation must
+   still resolve; only an attribute with no annotation is never
+   evaluated. The core never reads
+   SQLAlchemy's mapper or `__table__`, so it cannot tell a relationship
+   from a column. An attribute that is not a column, a `relationship()`
+   first of all, carries the hand-written `Ignore` marker inside its
+   `Annotated`; the SDK then neither reads, stores, requires nor shows
+   it. Without the marker, rule A refuses the class: no field is skipped
+   silently.
    A field's hint is evaluated at decoration.
    One that cannot be evaluated then, a forward reference under
    `from __future__ import annotations` or a deferred annotation on 3.14,
-   is a `DeclarationError` naming the field; a relationship never reaches
-   that point, since it is not in the column list.
-   Skipping a relationship covers only this class: the related class is
+   is a `DeclarationError` naming the field. A relationship is in the
+   hint list like any field and carries `Ignore`; its target is usually
+   a forward reference (`list["Post"]`), and the reader resolves it like
+   any other hint: `Post` must be defined, or imported, by the time the
+   decorator runs, so `Post` is written before `User`, or `User` is
+   declared after both exist with `stash.model("users")(User)`. Accepting
+   an `Ignore` field without evaluating its target (3.14's `annotationlib`
+   forward-reference format, a helper on 3.9 to 3.13) is a later change
+   that relaxes this without altering the rule.
+   Ignoring a relationship covers only this class: the related class is
    checked by its own decorator, or not at all, and `Cipher(Post)` refuses
    an undecorated `Post` as decision 4 says.
 
    The first two are checked at decoration.
    The constructor check reads `inspect.signature(cls)` and accepts a
-   `**kwargs` parameter.
+   `**kwargs` parameter. It also checks that every `Ignore` field is
+   omittable, a parameter with a default or `**kwargs`, so a `decrypt`
+   that would fail in the constructor fails at the class statement
+   instead.
    A base that supplies one, Pydantic or SQLAlchemy, passes that check in
    any decorator order, so decision 9 adds a second order check at
    `Cipher(User)`.
@@ -235,8 +261,11 @@ Option 2.
    The marker names are generated from the EQL catalog by `eql-codegen`,
    the way the Go SDK's `encrypt/eql` package is, so Python holds no
    table that maps a kind and an index to an EQL type (principle G1).
-   `Passthrough` is the one hand-written marker: a field stored as it is,
-   and the engine's word for it (principle G2).
+   Two markers are hand-written. `Passthrough` is a field stored as it is,
+   and the engine's word for it (principle G2). `Ignore` is an attribute
+   that is not a column at all, a SQLAlchemy `relationship()` first of
+   all: the SDK neither reads, stores, requires nor shows it, and the
+   marker exists so rule A can hold without a silent skip rule.
    Markers are names, not calls.
    The decorator finds a marker by identity, not by name: it walks the
    `Annotated` metadata and keeps the objects that are stash markers, so
@@ -306,6 +335,16 @@ Option 2.
    That closes the case where a base class supplies a `**kwargs`
    constructor and the constructor check in decision 5 passes in any
    order.
+   `Cipher(User)` also re-runs the decoration-time checks themselves,
+   the constructor signature and the hints against the stored plan, so a
+   class declared after definition (`stash.model("users")(ThirdParty)`)
+   and then changed by a later decorator or an import-time mutation is
+   refused before any request. The decoration-time check stays, so a
+   wrong `@` order still fails at the class statement.
+   A class is declared once: the decorator refuses a class whose own
+   `__dict__` already holds the dunder attribute, identical arguments
+   included. The test is on `cls.__dict__`, not the MRO, so a subclass
+   is undeclared until decorated itself.
    This is Go's `stashgen -redact` made the default, which Python can do
    because the decorator holds the user's class and a generator does not.
    A linter rule that reports a print of an opted-out model is open
@@ -332,8 +371,11 @@ Two more facts from the probe:
 - SQLAlchemy writes its hints as `Mapped[Annotated[str, ...]]`.
   The reader found the markers by looking through the `Mapped` wrapper,
   and SQLAlchemy ignored the unknown marker objects and mapped the column.
-  Which wrappers the core reader looks through is decided with the
-  SQLAlchemy layer (backlog item 2); the core must not import SQLAlchemy.
+  The core reader looks through one generic wrapper around `Annotated`
+  by structure (a hint whose single type argument is `Annotated[...]`),
+  which covers `Mapped` without naming it; the core must not import
+  SQLAlchemy. Checks that need the mapper, such as the `mapped_column`
+  rename refusal above, belong to the SQLAlchemy layer (backlog item 2).
 - With `@dataclass(slots=True)` **above** the decorator (the wrong order),
   the stored attribute survived, because `dataclass` copies the class
   dictionary.
