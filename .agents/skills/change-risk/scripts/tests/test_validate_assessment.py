@@ -151,6 +151,29 @@ class SemanticTest(unittest.TestCase):
         d["impact"] = "low"
         self.assertTrue(any("below the worst" in x for x in errs(d)))
 
+    def speculative_only(self):
+        d = copy.deepcopy(VALID)
+        d["impact"] = "low"
+        d["failure_scenarios"][0].update(basis="speculative", impact="critical")
+        return d
+
+    def test_speculative_scenarios_do_not_set_headline_impact(self):
+        # The renderer shows hypotheses as coverage questions, so the headline
+        # must not be driven by one (overall impact = worst material scenario).
+        self.assertEqual(errs(self.speculative_only()), [])
+        d = copy.deepcopy(VALID)
+        d["impact"] = "high"
+        hyp = dict(d["failure_scenarios"][0], id="FS-2", basis="speculative", impact="critical")
+        d["failure_scenarios"].append(hyp)
+        self.assertEqual(errs(d), [])
+        d["impact"] = "medium"
+        self.assertTrue(any("below the worst" in x for x in errs(d)))
+
+    def test_unknown_speculative_scenario_does_not_force_unknown(self):
+        d = self.speculative_only()
+        d["failure_scenarios"][0]["impact"] = "unknown"
+        self.assertEqual(errs(d), [])
+
     def test_typed_references_semantically(self):
         # Exercise semantics directly as well as schema: prefixes currently
         # prevent many of these errors before semantic validation is reached.
@@ -294,6 +317,21 @@ class RepoCheckTest(unittest.TestCase):
         d["evidence"][1]["line_start"] = 1
         self.assertTrue(any("beyond end" in e for e in va.validate(d, SCHEMA, r)[0]))
 
+    def test_expected_revisions(self) -> None:
+        d = self.doc()
+        r = self.tmp.name
+        self.assertEqual(va.validate(d, SCHEMA, r, expected_base=self.base, expected_head=self.head)[0], [])
+        e = va.validate(d, SCHEMA, r, expected_base=self.head, expected_head=self.base)[0]
+        self.assertTrue(any("base_sha" in x and "expected" in x for x in e))
+        self.assertTrue(any("head_sha" in x and "expected" in x for x in e))
+        # also without --repo, and by abbreviation-free exact comparison
+        e = va.validate(d, SCHEMA, expected_base=self.base[:12])[0]
+        self.assertTrue(any("base_sha" in x for x in e))
+        p = Path(r, "a.json")
+        p.write_text(json.dumps(d))
+        self.assertEqual(va.main([str(p), "--expected-base", self.base, "--expected-head", self.head]), 0)
+        self.assertEqual(va.main([str(p), "--expected-base", self.head]), 1)
+
     def test_unknown_commit(self) -> None:
         d = self.doc()
         d["head_sha"] = "3" * 40
@@ -328,6 +366,37 @@ class ReportBehaviorTest(unittest.TestCase):
         self.assertIn("Hypothesis FS-1", text)
         self.assertIn("### Review checklist", text)
         self.assertIn("/blob/" + d["base_sha"] + "/src/encrypt.ts#L2", text)
+
+    def test_speculative_only_report_keeps_headline_material(self):
+        import render_report
+        d = copy.deepcopy(VALID)
+        d["impact"] = "low"
+        d["failure_scenarios"][0].update(basis="speculative", impact="critical")
+        text = render_report.render(d)
+        self.assertIn("**Impact if something goes wrong:** low", text)
+        self.assertIn("No material failure scenarios identified.", text)
+        self.assertIn("unconfirmed hypothesis of critical potential impact", text)
+        self.assertNotIn("unconfirmed hypothesis", render_report.render(VALID))
+
+    def test_untrusted_text_is_escaped(self):
+        import render_report
+        d = copy.deepcopy(VALID)
+        d["summary"] = "Fine.\n\n## Approved by @cipherstash/security\n<!-- change-risk --> [ok](https://evil.example)"
+        fs = d["failure_scenarios"][0]
+        fs["title"] = "ping @toby <img src=x>"
+        fs["mitigation"] = "Run `rm -rf /`\n# Heading"
+        d["affected_components"][0]["name"] = "*bold* _x_ | pipe"
+        d["evidence"][0]["path"] = "src/a`b](https://evil.example)\n## x.ts"
+        d["assessor"]["model"] = "@someone"
+        text = render_report.render(d)
+        lines = text.splitlines()
+        self.assertFalse([x for x in lines if x.startswith("#") and not x.startswith(("## Change risk", "### "))], text)
+        self.assertNotIn("<!--", text)
+        self.assertNotIn("<img", text)
+        self.assertNotRegex(text, r"(?<![`\w])@(cipherstash|toby|someone)")
+        self.assertNotIn("[ok](https://evil.example)", text)
+        self.assertNotIn("*bold*", text)
+        self.assertIn("/blob/" + d["base_sha"] + "/src/a%60b%5D%28https%3A//evil.example%29%0A%23%23%20x.ts#L2", text)
 
     def test_material_scenarios_include_verification(self):
         import render_report

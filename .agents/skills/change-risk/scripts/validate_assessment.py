@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Validate a change-risk assessment: schema, references, and evidence rules.
 
-    validate_assessment.py assessment.json [--repo PATH] [--schema PATH] [--json]
+    validate_assessment.py assessment.json [--repo PATH] [--schema PATH]
+                           [--expected-base SHA] [--expected-head SHA] [--json]
 
 Exit 0: valid (warnings may be printed). Exit 1: errors. Exit 2: unusable input.
 
@@ -15,6 +16,10 @@ Checks, in order:
   4. With --repo: every cited path exists at the cited revision and line numbers
      fall inside the file.
   5. Strict impact aggregation and readiness consistency (see risk-model.md).
+     Overall impact aggregates material scenarios only; a speculative
+     hypothesis is reported as a coverage question and does not set it.
+  6. With --expected-base/--expected-head: the assessment names exactly the
+     revisions the caller asked about.
 """
 
 from __future__ import annotations
@@ -139,7 +144,8 @@ def semantic(a: dict) -> tuple[list[str], list[str]]:
         sid = fs["id"]
         check_refs(sid, fs.get("evidence", []), "evidence")
         check_refs(sid, fs.get("affected_components", []), "affected_components")
-        worst = max(worst, IMPACT_ORDER.get(fs.get("impact"), -1))
+        if fs.get("basis") != "speculative":
+            worst = max(worst, IMPACT_ORDER.get(fs.get("impact"), -1))
         evs = [evidence[e] for e in fs.get("evidence", []) if e in evidence]
         if fs.get("basis") == "observed_defect" and not any(e.get("status") == "verified" for e in evs):
             errors.append(f"{sid}: basis 'observed_defect' needs at least one verified evidence item")
@@ -181,7 +187,7 @@ def semantic(a: dict) -> tuple[list[str], list[str]]:
 
     overall = IMPACT_ORDER.get(a.get("impact"), -1)
     scenarios = a.get("failure_scenarios", [])
-    unknown_scenario = any(fs["impact"] == "unknown" for fs in scenarios)
+    unknown_scenario = any(fs["impact"] == "unknown" and fs["basis"] != "speculative" for fs in scenarios)
     # Unknown retains uncertainty; known scenarios still record a lower bound.
     if unknown_scenario and a["impact"] != "unknown":
         errors.append("unknown scenario impact requires overall impact unknown")
@@ -255,12 +261,22 @@ def repo_checks(a: dict, repo: str) -> list[str]:
     return errors
 
 
-def validate(a: dict, schema: dict, repo: str | None = None) -> tuple[list[str], list[str]]:
+def revision_errors(a: dict, expected_base: str | None, expected_head: str | None) -> list[str]:
+    errors = []
+    for name, want in (("base_sha", expected_base), ("head_sha", expected_head)):
+        if want is not None and a.get(name) != want:
+            errors.append(f"{name} {a.get(name)} is not the expected revision {want}")
+    return errors
+
+
+def validate(a: dict, schema: dict, repo: str | None = None,
+             expected_base: str | None = None, expected_head: str | None = None) -> tuple[list[str], list[str]]:
     errors = schema_errors(a, schema, schema)
     if errors:  # semantic checks assume the shape is right
         return errors, []
     sem_errors, warnings = semantic(a)
     errors += sem_errors
+    errors += revision_errors(a, expected_base, expected_head)
     if repo:
         errors += repo_checks(a, repo)
     return errors, warnings
@@ -271,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("assessment")
     ap.add_argument("--repo")
     ap.add_argument("--schema", default=str(DEFAULT_SCHEMA))
+    ap.add_argument("--expected-base", help="full SHA the assessment's base_sha must equal")
+    ap.add_argument("--expected-head", help="full SHA the assessment's head_sha must equal")
     ap.add_argument("--json", action="store_true", help="print a JSON result")
     args = ap.parse_args(argv)
     try:
@@ -279,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, json.JSONDecodeError) as e:
         print(f"validate-assessment: cannot read input: {e}", file=sys.stderr)
         return 2
-    errors, warnings = validate(a, schema, args.repo)
+    errors, warnings = validate(a, schema, args.repo, args.expected_base, args.expected_head)
     if args.json:
         print(json.dumps({"valid": not errors, "errors": errors, "warnings": warnings}, indent=2))
     else:

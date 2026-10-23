@@ -34,13 +34,14 @@ class PublishFixtureTest(unittest.TestCase):
         gh.write_text('#!/bin/sh\nprintf "%s\\n" "$CURRENT_SHA"\n')
         gh.chmod(0o755)
 
-    def decide(self, valid='true', current=None):
+    def decide(self, valid='true', current=None, base=None):
         (self.root / 'out/assessment.json').write_text(json.dumps(self.doc))
         output = self.root / 'outputs'
         output.write_text('')
         env = {**os.environ, 'PATH': str(self.root / 'bin') + os.pathsep + os.environ['PATH'],
                'GITHUB_REPOSITORY': 'example/repo', 'PR': '1', 'GITHUB_OUTPUT': str(output),
-               'ASSESSED_SHA': '2' * 40, 'CURRENT_SHA': current or '2' * 40, 'EVIDENCE_VALID': valid}
+               'ASSESSED_SHA': '2' * 40, 'CURRENT_SHA': current or '2' * 40, 'EVIDENCE_VALID': valid,
+               'ASSESSED_BASE': base or '1' * 40}
         if not shutil.which('jq'):
             self.skipTest('jq required by the inactive workflow')
         result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', self.shell], cwd=self.root,
@@ -58,6 +59,35 @@ class PublishFixtureTest(unittest.TestCase):
         self.doc['head_sha'] = '2' * 40
         self.assertIn('outcome=error', self.decide(valid='false'))
         self.assertIn('outcome=stale', self.decide(current='4' * 40))
+
+    def test_assessment_of_another_base_is_not_published(self):
+        # The workflow computed the merge base; an assessment naming any other
+        # base describes a different change.
+        self.doc['base_sha'] = '9' * 40
+        self.assertIn('outcome=error', self.decide())
+        self.doc['base_sha'] = '1' * 40
+        self.assertIn('outcome=error', self.decide(base='8' * 40))
+        self.assertIn('outcome=attention', self.decide())
+
+    def test_assess_validates_both_revisions(self):
+        analysis = self.workflow.split('\n  publish:', 1)[0]
+        validate = analysis.split('      - name: Validate assessment', 1)[1].split('      - name:', 1)[0]
+        self.assertIn('--expected-base "$MERGE_BASE"', validate)
+        self.assertIn('--expected-head "$HEAD_SHA"', validate)
+        self.assertIn('base_sha: ${{ steps.base.outputs.base_sha }}', analysis)
+
+    def test_file_permission_rules_use_edit_syntax(self):
+        # Claude Code file rules are Edit(path), which covers Write; a
+        # Write(path) rule is ignored with a warning (smoke-test record), and a
+        # bare Edit in --disallowedTools denies every write, the assessment
+        # file included. An absolute path needs the // prefix.
+        analysis = self.workflow.split('\n  publish:', 1)[0]
+        allowed = re.search(r'--allowedTools "([^"]*)"', analysis).group(1).split(',')
+        disallowed = re.search(r'--disallowedTools "([^"]*)"', analysis).group(1).split(',')
+        self.assertFalse([t for t in allowed if t.startswith('Write(')], allowed)
+        self.assertIn('Edit(/${{ runner.temp }}/out/**)', allowed)
+        self.assertNotIn('Edit', disallowed)
+        self.assertNotIn('Write', disallowed)
 
     def test_invalid_structure_and_missing_schema(self):
         del self.doc['inputs']

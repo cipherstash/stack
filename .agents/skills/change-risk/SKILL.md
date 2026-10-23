@@ -4,7 +4,7 @@ description: Assess the release risk of a code change (a PR, a branch, or a base
 license: MIT
 compatibility: Needs git and Python 3.9+ (standard library only). Works offline; no external service is called.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   schema-version: "1"
 ---
 

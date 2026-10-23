@@ -42,14 +42,17 @@ A test file existing or changing is not evidence it ran or passed.
 | changes_or_verification_required | A material scenario (usually high or critical) lacks verification or mitigation |
 | insufficient_evidence | Missing inputs or understanding prevent a defensible judgement |
 
-## Enforced consistency (validator revision 1.1)
+## Enforced consistency (validator revision 1.2)
 
-Every listed scenario contributes to overall impact, including a hypothesis retained
-for its consequences. Overall known impact must be at least the highest scenario
-impact. A higher rating needs an explanation in the summary. Impact remains separate
+Overall impact aggregates **material** scenarios (`observed_defect`,
+`plausible_failure`). Overall known impact must be at least the highest material
+scenario impact. A `speculative` hypothesis does not set it: the report shows
+hypotheses as coverage questions, and when one carries a higher potential impact
+than the headline, the headline names it as an unconfirmed hypothesis rather than
+adopting it. A higher rating needs an explanation in the summary. Impact remains separate
 from confidence: passing tests do not reduce the consequence of a failure.
 
-`unknown` is not lower than `low`. An unknown scenario requires overall `unknown`,
+`unknown` is not lower than `low`. An unknown material scenario requires overall `unknown`,
 `insufficient_evidence`, and a coverage limitation explaining what prevents a bound.
 Known scenario impacts remain visible as a lower bound. Overall unknown is also
 allowed when understanding is incomplete even if the listed scenarios have known

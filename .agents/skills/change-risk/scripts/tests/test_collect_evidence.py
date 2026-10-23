@@ -133,6 +133,38 @@ class CollectEvidenceTest(unittest.TestCase):
         self.assertIn({"section": "dependencies", "name": "new", "from": None, "to": "^1"}, deps["dependencies"])
         self.assertIn("exports", deps["fields_changed"])
 
+    def test_cargo_dependency_forms(self) -> None:
+        # Expanded tables, inline tables, multi-line values, target-specific
+        # and workspace dependencies: attributes are never dependency names.
+        self.r.commit({"crate/Cargo.toml": (
+            '[package]\nname = "c"\nversion = "0.1.0"\n\n'
+            '[dependencies]\nleft = { version = "1", features = [\n  "a",\n] }\n\n'
+            '[dependencies.serde]\nversion = "1.0"\nfeatures = ["derive"]\n\n'
+            "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n\n"
+            '[workspace.dependencies]\ntokio = "1"\n')})
+        base = self.r.git("rev-parse", "HEAD").strip()
+        head = self.r.commit({"crate/Cargo.toml": (
+            '[package]\nname = "c"\nversion = "0.2.0"\n\n'
+            '[dependencies]\nleft = { version = "2", features = [\n  "a",\n] }\n\n'
+            '[dependencies.serde]\nversion = "1.1"\nfeatures = ["derive"]\n\n'
+            "[target.'cfg(unix)'.dependencies]\nlibc = \"0.3\"\n\n"
+            '[workspace.dependencies]\ntokio = "1"\n')})
+        deps = run(self.r, base, head)["dependencies"][0]["dependencies"]
+        names = {(d["section"], d["name"]) for d in deps}
+        self.assertEqual(names, {("dependencies", "left"), ("dependencies", "serde"),
+                                 ("target.'cfg(unix)'.dependencies", "libc")})
+        serde = next(d for d in deps if d["name"] == "serde")
+        self.assertIn("1.0", serde["from"])
+        self.assertIn("1.1", serde["to"])
+
+    def test_cargo_unparseable_manifest_is_reported(self) -> None:
+        self.r.commit({"crate/Cargo.toml": '[dependencies]\nleft = "1"\n'})
+        base = self.r.git("rev-parse", "HEAD").strip()
+        head = self.r.commit({"crate/Cargo.toml": '[dependencies\nleft = "2"\n'})
+        dep = run(self.r, base, head)["dependencies"][0]
+        self.assertEqual(dep["dependencies"], [])
+        self.assertTrue([u for u in dep["unparsed"] if u.startswith("head: ")], dep)
+
     def test_components_and_classes(self) -> None:
         head = self.r.commit({"pkg/src/auth/token.ts": "t\n", ".github/workflows/ci.yml": "on: push\n",
                               "db/migrations/001.sql": "create table t();\n"})

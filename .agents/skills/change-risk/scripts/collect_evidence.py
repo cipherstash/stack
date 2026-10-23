@@ -343,31 +343,64 @@ def package_json_changes(repo: str, base: str, head: str, path: str) -> dict:
     return out
 
 
-TOML_DEP = re.compile(r'^\s*([A-Za-z0-9_\-]+)\s*=\s*(.+)$')
+try:
+    import tomllib
+except ImportError:  # Python < 3.11: Cargo manifests are reported as unparsed
+    tomllib = None
+
+CARGO_DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
+
+
+def _cargo_dep_tables(doc: dict) -> dict[str, dict]:
+    """Every dependency table in a parsed Cargo.toml, keyed by its TOML section name."""
+    tables = {name: doc.get(name) for name in CARGO_DEP_TABLES}
+    tables["workspace.dependencies"] = (doc.get("workspace") or {}).get("dependencies")
+    for target, body in (doc.get("target") or {}).items():
+        for name in CARGO_DEP_TABLES:
+            key = f"'{target}'" if not re.fullmatch(r"[A-Za-z0-9_-]+", target) else target
+            tables[f"target.{key}.{name}"] = (body or {}).get(name)
+    return {k: v for k, v in tables.items() if isinstance(v, dict)}
 
 
 def cargo_toml_changes(repo: str, base: str, head: str, path: str) -> dict:
-    def deps(rev: str) -> dict[str, str]:
-        text = git(repo, "show", f"{rev}:{path}", check=False)
-        section, out = "", {}
-        for line in text.splitlines():
-            s = line.strip()
-            if s.startswith("["):
-                section = s.strip("[]")
-                continue
-            if "dependencies" in section:
-                m = TOML_DEP.match(line)
-                if m:
-                    out[f"{section}:{m.group(1)}"] = m.group(2).strip()
-        return out
+    """Dependency specs that differ between base and head, read with a real TOML parser.
 
-    o, n = deps(base), deps(head)
-    changes = [
-        {"section": k.split(":")[0], "name": k.split(":")[1], "from": o.get(k), "to": n.get(k)}
+    A spec is compared whole: a version, a table such as
+    `{ version = "1", features = [...] }`, or `{ workspace = true }`. A manifest
+    that does not parse at a revision is named under `unparsed`, and no entries
+    are reported for it rather than guessed ones.
+    """
+    unparsed: list[str] = []
+
+    def deps(rev: str, label: str) -> dict[tuple[str, str], str] | None:
+        text = git(repo, "show", f"{rev}:{path}", check=False)
+        if not text:
+            return {}
+        if tomllib is None:
+            unparsed.append(f"{label}: tomllib unavailable (Python < 3.11)")
+            return None
+        try:
+            doc = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            unparsed.append(f"{label}: {e}")
+            return None
+        return {
+            (section, name): spec if isinstance(spec, str) else json.dumps(spec, sort_keys=True)
+            for section, table in _cargo_dep_tables(doc).items()
+            for name, spec in table.items()
+        }
+
+    o, n = deps(base, "base"), deps(head, "head")
+    out: dict = {"file": path, "dependencies": []}
+    if unparsed:
+        out["unparsed"] = unparsed
+        return out
+    out["dependencies"] = [
+        {"section": k[0], "name": k[1], "from": o.get(k), "to": n.get(k)}
         for k in sorted(set(o) | set(n))
         if o.get(k) != n.get(k)
     ]
-    return {"file": path, "dependencies": changes}
+    return out
 
 
 def dependency_changes(repo: str, base: str, head: str, files: list[dict]) -> list[dict]:
@@ -382,7 +415,7 @@ def dependency_changes(repo: str, base: str, head: str, files: list[dict]) -> li
             c = cargo_toml_changes(repo, base, head, f["path"])
         else:
             continue
-        if c.get("dependencies") or c.get("fields_changed"):
+        if c.get("dependencies") or c.get("fields_changed") or c.get("unparsed"):
             out.append(c)
     return out
 
@@ -551,7 +584,7 @@ SIGNAL_MEANINGS = {
     "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
     "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
     "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
-    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "dependencies": "Manifest entries whose spec changed (Cargo specs compared as whole TOML values). A manifest under `unparsed` could not be read, so its dependency changes are unknown, not absent. Lockfile-only resolution changes appear in files, not here.",
     "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed.",
 }
 
@@ -582,6 +615,8 @@ def to_markdown(ev: dict) -> str:
                 lines.append(f"- `{d['file']}` {x['section']} {x['name']}: {x['from']} → {x['to']}")
             if d.get("fields_changed"):
                 lines.append(f"- `{d['file']}` fields changed: {', '.join(d['fields_changed'])}")
+            for u in d.get("unparsed", []):
+                lines.append(f"- `{d['file']}` not parsed, dependency changes unknown: {u}")
     return "\n".join(lines) + "\n"
 
 
