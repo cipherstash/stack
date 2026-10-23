@@ -440,7 +440,13 @@ monorepo, which is where the silent failures are.
   `docs-static`'s `mise run test:docs_v3_grep` scanned every one of them: a
   push to main touching only documentation started no EQL workflow at all.
   **`pull_request` was never affected** — it applies no `paths:` filter, and
-  `docs-static` and `doc-anchors` are deliberately not relevance-gated. The
+  `docs-static` and `doc-anchors` never read `relevant:`. They and
+  `known-failures` are gated on the same step's second key, `eql:`, which is
+  **not a fourth copy** and is deliberately wider: the whole subtree (the jobs
+  `git grep` every tracked file and read every tracked `*.md` there), plus the
+  root `mise.toml` and its task includes, `.cargo/config.toml`, and the crates
+  cargo loads to resolve the EQL workspace. The parity check reads `relevant:`
+  alone; `eql:` has its own checks in the same file. The
   derivation reads paths that are WRITTEN DOWN; it cannot see `postgres:up`
   picking up `tests/docker-compose.yml` from its working directory, or the glob
   pathspec in `tasks/test/doc-anchors.sh` (`git ls-files '*.md'`, i.e. every
