@@ -3406,6 +3406,7 @@ dependencies = [
  "clww-ore",
  "miette",
  "ore-rs",
+ "proptest",
  "rust_decimal",
  "serde",
  "serde_json",

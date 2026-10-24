@@ -6,7 +6,9 @@
 //! `@>` and `<@` over the encrypted column against PostgreSQL's own
 //! `jsonb @>` over the plaintexts, for the design's corpus and random
 //! documents, with a GIN index on the projection that the planner is shown
-//! to use.
+//! to use, and again as proptest properties over generated batches of
+//! documents and needles (`json_tree/generated.rs`; `PROPTEST_RNG_SEED`
+//! replays a run).
 
 mod common;
 
@@ -434,6 +436,17 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
         .unwrap();
     assert!(nulls.get::<_, bool>(0));
 }
+
+// =============================================================================
+// PostgreSQL: generated documents
+// =============================================================================
+
+/// The containment oracle again, over documents and needles proptest
+/// generates. A crate root's modules resolve beside it, and a file there would
+/// be a test target of its own, hence the path.
+#[allow(clippy::unwrap_used)]
+#[path = "json_tree/generated.rs"]
+mod generated;
 
 /// Needs an EQL v4 installation. Extraction by selector opens to the leaf;
 /// the subtree walk by a client-derived token returns exactly the nodes

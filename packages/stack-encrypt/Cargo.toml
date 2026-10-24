@@ -117,6 +117,10 @@ zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
+# The generated containment property in tests/json_index.rs. Default features
+# off, as stack-guest-abi takes it: `std` carries the failure persistence and
+# the ChaCha RNG the run is seeded with, and nothing else is needed.
+proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
 # and CI run them. They cannot be relied on to hold under both feature sets

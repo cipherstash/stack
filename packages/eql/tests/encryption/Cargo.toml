@@ -54,6 +54,10 @@ postgres = "0.19"
 # compared.
 #
 cipherstash-client = "=0.42.3"
+# The generated containment oracle (tests/json_tree/generated.rs). The same
+# requirement eql-domains and tests/sqlx carry, so the lockfile gains no
+# second copy.
+proptest = "1"
 # The tampering test decodes a stored body, changes one byte and re-encodes
 # it. The same line eql-bindings uses, so the lockfile gains no second copy.
 base64 = "0.22"
