@@ -52,7 +52,20 @@ EQL is installed automatically on first boot. Pin a specific version with `:17-<
 
 ### Install into an existing database
 
-Execute the install SQL file directly:
+Use the `stash` CLI (recommended):
+
+```sh
+npx stash eql install
+```
+
+It connects using `DATABASE_URL` (or `--database-url` for a one-shot run), checks your role's
+capabilities first (`npx stash eql preflight` runs the same checks standalone), installs as a
+non-superuser, and prints any optional superuser-gated statements it skipped instead of failing
+on them. On platforms where schema changes must go through a migration tool, generate a
+migration instead: `npx stash eql migration --supabase` (or `--drizzle`).
+
+<details>
+<summary>Alternative: apply the raw SQL yourself</summary>
 
 1. Download the latest EQL install script:
 
@@ -65,6 +78,15 @@ Execute the install SQL file directly:
    ```sh
    psql -f cipherstash-encrypt.sql
    ```
+
+> [!WARNING]
+> The bundle is ~6,000 statements and `psql -f` sends one statement per protocol round trip. Over a
+> pooled or high-latency connection — or under a platform command-time ceiling (some managed
+> platforms kill commands after a fixed limit) — this can time out **partway**, leaving a
+> half-installed schema. If you cannot use the CLI, apply the file over a direct (non-pooled)
+> connection, or split it at statement boundaries and apply each chunk as a single command.
+
+</details>
 
 
 ## EQL Components
