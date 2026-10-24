@@ -22,6 +22,7 @@ const tagKey = "stash"
 //	stash:"id,passthrough"                    Name, VerbPassthrough
 //	stash:"tenant,context_field"              Name, VerbContextField
 //	stash:",passthrough"                      VerbPassthrough with no Name, on an embedded struct
+//	stash:"dob,encrypt_into=Date,null=sql"    Null, on a sealed field declared over a pointer
 type tag struct {
 	Omit    bool
 	Context string
@@ -30,6 +31,9 @@ type tag struct {
 	Verb    Verb
 	Indexes []Index
 	EQLType string
+	// Null is how a sealed field declared over a pointer stores nil, when
+	// the tag says; the generator picks NullSealed where it can.
+	Null Null
 	// Identity is set by a policy only; no tag spells it.
 	Identity string
 }
@@ -68,7 +72,7 @@ func parseTagValue(value string) (tag, error) {
 	if strings.ContainsAny(t.Name, "=();") {
 		return tag{}, fmt.Errorf("tag %q: the first part is the field's name, and %q is not a name", value, t.Name)
 	}
-	var sawEncrypt, sawPassthrough, sawIndex, sawInto, sawContextField bool
+	var sawEncrypt, sawPassthrough, sawIndex, sawInto, sawContextField, sawNull bool
 	for _, item := range items[1:] {
 		switch {
 		case item == "encrypt":
@@ -104,15 +108,28 @@ func parseTagValue(value string) (tag, error) {
 			if err != nil {
 				return tag{}, fmt.Errorf("tag %q: %w", value, err)
 			}
+		case strings.HasPrefix(item, "null="):
+			if sawNull {
+				return tag{}, fmt.Errorf("tag %q: null is given twice", value)
+			}
+			sawNull = true
+			switch mode := Null(strings.TrimPrefix(item, "null=")); mode {
+			case NullSealed, NullSQL:
+				t.Null = mode
+			default:
+				return tag{}, fmt.Errorf("tag %q: null= is sealed or sql, not %q", value, mode)
+			}
 		case item == "opaque" || strings.HasPrefix(item, "context="):
 			return tag{}, fmt.Errorf("tag %q: %s goes on the `_ struct{}` field, as `stash:\"context=...\"`", value, item)
 		case item == "":
 			return tag{}, fmt.Errorf("tag %q: an empty part", value)
 		default:
-			return tag{}, fmt.Errorf("tag %q: unknown part %q; the parts are encrypt, encrypt_into=, index=, passthrough, context_field and -", value, item)
+			return tag{}, fmt.Errorf("tag %q: unknown part %q; the parts are encrypt, encrypt_into=, index=, null=, passthrough, context_field and -", value, item)
 		}
 	}
 	switch {
+	case sawNull && (sawPassthrough || sawContextField):
+		return tag{}, fmt.Errorf("tag %q: null= says how a sealed field stores nil; a field stored as it is keeps nil as nil", value)
 	case sawContextField && (sawEncrypt || sawInto || sawIndex || sawPassthrough):
 		return tag{}, fmt.Errorf("tag %q: a context field is the context of the other fields, stored as it is; it takes no other part", value)
 	case sawContextField:

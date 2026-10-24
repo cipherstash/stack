@@ -36,7 +36,7 @@ func wantCode(t *testing.T, err error, code string) {
 func TestGuestRefusalsCarryTheirDiagnostic(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
-	_, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+	_, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.planCheck, buf([]byte{0xff}))
 	})
 	if !errors.Is(err, ErrEncoding) {
@@ -48,7 +48,7 @@ func TestGuestRefusalsCarryTheirDiagnostic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.call(ctx, func(inst *instance) ([]byte, error) {
+	_, err = c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.keyset, buf(selector))
 	})
 	if !errors.Is(err, ErrState) {
@@ -65,7 +65,7 @@ func TestAGuestWithoutLastErrorFailsWithTheBareSentinel(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
 	c.inst.exports.LastError = nil
-	_, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+	_, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.planCheck, buf([]byte{0xff}))
 	})
 	if err != ErrEncoding {

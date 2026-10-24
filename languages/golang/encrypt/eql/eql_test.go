@@ -7,7 +7,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
 )
 
-func TestTypesTableNamesTextEqAsTheOneProducibleType(t *testing.T) {
+func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 	var producible []string
 	for _, typ := range eql.Types {
 		if typ.Producible {
@@ -19,11 +19,33 @@ func TestTypesTableNamesTextEqAsTheOneProducibleType(t *testing.T) {
 			t.Errorf("%s: an unproducible type has a reason", typ.Name)
 		}
 	}
-	if len(producible) != 1 || producible[0] != "TextEq" {
-		t.Fatalf("producible = %v, want [TextEq]", producible)
+	want := []string{
+		"Integer", "IntegerEq", "IntegerOrdOre", "IntegerOrd", "IntegerOrdOpe",
+		"Smallint", "SmallintEq", "SmallintOrdOre", "SmallintOrd", "SmallintOrdOpe",
+		"Bigint", "BigintEq", "BigintOrdOre", "BigintOrd", "BigintOrdOpe",
+		"Date", "DateEq", "DateOrdOre", "DateOrd", "DateOrdOpe",
+		"Timestamp", "TimestampEq", "TimestampOrdOre", "TimestampOrd", "TimestampOrdOpe",
+		"Numeric", "NumericEq", "NumericOrdOre", "NumericOrd", "NumericOrdOpe",
+		"Text", "TextEq", "TextMatch", "TextOrdOre", "TextOrd", "TextOrdOpe", "TextSearchOre", "TextSearch",
+		"Boolean",
+		"Real", "RealEq", "RealOrdOre", "RealOrd", "RealOrdOpe",
+		"Double", "DoubleEq", "DoubleOrdOre", "DoubleOrd", "DoubleOrdOpe",
+	}
+	if len(producible) != len(want) {
+		t.Fatalf("producible = %v, want %v", producible, want)
+	}
+	for i := range want {
+		if producible[i] != want[i] {
+			t.Fatalf("producible = %v, want %v", producible, want)
+		}
+	}
+	for name, plaintext := range map[string]string{"Integer": "int32", "IntegerEq": "int32", "IntegerOrdOre": "int32", "TextOrdOre": "string", "IntegerOrd": "int32", "Smallint": "int16", "SmallintEq": "int16", "SmallintOrdOre": "int16", "SmallintOrdOpe": "int16", "Bigint": "int64", "BigintEq": "int64", "BigintOrdOpe": "int64", "Boolean": "bool", "Real": "float32", "RealEq": "float32", "RealOrd": "float32", "Double": "float64", "DoubleEq": "float64", "DoubleOrdOpe": "float64", "TextOrd": "string", "Date": "date", "DateEq": "date", "Timestamp": "timestamp", "TimestampEq": "timestamp", "Numeric": "decimal", "NumericEq": "decimal", "DateOrdOre": "date", "TimestampOrd": "timestamp", "NumericOrdOpe": "decimal"} {
+		if typ, ok := eql.Lookup(name); !ok || typ.Plaintext != plaintext {
+			t.Errorf("%s: Plaintext = %q, want %q", name, typ.Plaintext, plaintext)
+		}
 	}
 	textEq, ok := eql.Lookup("TextEq")
-	if !ok || textEq.GoName != "TextEq" || textEq.Plaintext != "string" || textEq.Query != "TextEqQuery" || textEq.SQLDomain != "public.eql_v3_text_eq" || len(textEq.Indexes) != 1 || textEq.Indexes[0] != "eq" {
+	if !ok || textEq.GoName != "TextEq" || textEq.Plaintext != "string" || textEq.Query != "TextEqQuery" || textEq.SQLDomain != "public.eql_v4_text_eq" || len(textEq.Indexes) != 1 || textEq.Indexes[0] != "eq" {
 		t.Fatalf("TextEq = %+v", textEq)
 	}
 	if j, ok := eql.Lookup("Json"); !ok || j.GoName != "JSON" {
@@ -35,7 +57,7 @@ func TestTypesTableNamesTextEqAsTheOneProducibleType(t *testing.T) {
 }
 
 func TestValuesRoundTripThroughTheDriverAndJSON(t *testing.T) {
-	doc := []byte(`{"v":3,"i":{"t":"users","c":"email"},"c":"stack-encrypt:1:AA==","hm":"00"}`)
+	doc := []byte(`{"v":4,"i":{"t":"users","c":"email"},"c":"stack-encrypt:1:AA==","hm":"00"}`)
 	v := eql.TextEq(doc)
 	value, err := v.Value()
 	if err != nil || value != string(doc) {

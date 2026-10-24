@@ -155,9 +155,9 @@ func (f NameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eq
 	return eql.TextEq(out.EQL), err
 }
 
-func (f NameField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
-	out, err := f.field.Query(ctx, c, v)
-	return eql.TextEqQuery(out.EQL), err
+func (f NameField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.TextEqQuery(term), err
 }
 
 type EmailField struct {
@@ -172,8 +172,9 @@ func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (E
 	return EncryptedPatientEmail{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
-func (f EmailField) Equality(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
-	return f.field.Equality(ctx, c, v)
+func (f EmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
 }
 
 type ChartField struct {

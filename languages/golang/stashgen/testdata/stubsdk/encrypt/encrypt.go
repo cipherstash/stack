@@ -6,7 +6,10 @@
 // It is not the SDK, and nothing outside stashgen's tests imports it.
 package encrypt
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Cipher is a keyset with any extension of the context.
 type Cipher struct{ _ struct{} }
@@ -33,6 +36,21 @@ type (
 	OpeTerm      []byte
 	JSONTerm     []byte
 )
+
+// Range is a between query on an order index: two terms.
+type Range[T OreTerm | OpeTerm] struct {
+	Low  T
+	High T
+}
+
+// MatchQuery is a matches query on a match index.
+type MatchQuery[T ~string] struct{ _ T }
+
+// EQLMatchQuery is a matches query on an EQL type with a match index.
+type EQLMatchQuery[Q ~[]byte, T ~string] struct {
+	_ Q
+	_ T
+}
 
 // Index is one index on a field, as generated code names it in a declaration.
 type Index interface {
@@ -83,3 +101,21 @@ type clientOptions struct{}
 
 // Close closes the client.
 func (*Client) Close() error { return nil }
+
+// The value types a field can hold beside Go's own. The real ones are
+// aliases of vitaminc's vcvalue types; the generator recognises them by
+// their name in this package.
+type (
+	Date struct {
+		Year  int
+		Month time.Month
+		Day   int
+	}
+	Int128  [16]byte
+	Uint128 [16]byte
+	Decimal struct {
+		Coefficient [12]byte
+		Scale       uint8
+		Negative    bool
+	}
+)

@@ -29,7 +29,7 @@ mod sealed {
 /// How a description receives its plaintext: the `M` parameter of
 /// [`Encryption`](super::Encryption).
 ///
-/// Vitamin C's `Encrypt`, `PrfValue` and `CllwOreEncrypt` consume the value
+/// Vitamin C's `Encrypt` and `PrfValue`, and the order terms, consume the value
 /// they are given, so an operation needs the plaintext by value. A
 /// description can be handed it two ways, and because the mode is a type
 /// parameter the difference is settled at compile time:

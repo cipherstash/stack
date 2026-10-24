@@ -33,11 +33,36 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
-    FfiValue, Output, TargetDescriptor, TargetError, TargetResolver, ValueKind,
+    Output, TargetDescriptor, TargetError, TargetResolver, ValueFrame, ValueKind,
 };
-use stack_encrypt::{KeysetCipher, Label, Pending, SealedValue, StackCipher, StackCipherText};
+use stack_encrypt::{
+    Encrypt, KeysetCipher, Label, PassthroughFrame, Pending, SealedValue, StackCipher,
+    StackCipherText,
+};
 use uuid::Uuid;
-use vitaminc_protected::Protected;
+use vitaminc_aead::plaintext::{visit_map, Physical, Raw, Sink};
+use vitaminc_protected::Controlled;
+
+/// A value as a binding sends it: its frame. `None` for a value no frame
+/// carries (an object with a key given twice, or one nested too deep),
+/// which a binding could not send either.
+fn frame<T: Encrypt>(value: T) -> Option<ValueFrame> {
+    ValueFrame::of(value).ok()
+}
+
+/// An object of `entries`, in order.
+fn object(entries: Vec<(&'static str, ValueFrame)>) -> Option<ValueFrame> {
+    frame(Object(entries))
+}
+
+struct Object(Vec<(&'static str, ValueFrame)>);
+
+impl Encrypt for Object {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let len = Some(self.0.len());
+        visit_map(sink, len, self.0.iter().map(|(key, value)| (*key, value)))
+    }
+}
 
 /// The resolver plans parse under: one producible type, `TextEq` over
 /// strings, and nothing that runs — `check_record` never reaches a cipher.
@@ -50,10 +75,10 @@ impl TargetResolver for Fixed {
             "text",
             "Eq",
             Some(ValueKind::String),
-            "public.eql_v3_text_eq",
+            "public.eql_v4_text_eq",
             vec!["eq".to_string()],
             Some("TextEqQuery".to_string()),
-            Some("eql_v3.query_text_eq".to_string()),
+            Some("eql_v4.query_text_eq".to_string()),
             true,
             None,
         )]
@@ -63,7 +88,7 @@ impl TargetResolver for Fixed {
         _: &str,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
@@ -73,15 +98,16 @@ impl TargetResolver for Fixed {
         _: &'a StackCipher<K>,
         _: &Label,
         _: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
     fn query<'a, K: 'static>(
         &self,
         _: &str,
+        _: &stack_encrypt::target::IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
@@ -139,19 +165,22 @@ enum Ctx {
 }
 
 impl Ctx {
-    fn into_value(self) -> FfiValue {
-        let text = |name: Name| FfiValue::String(name.as_str().into());
+    fn into_value(self) -> Option<ValueFrame> {
         match self {
-            Ctx::Label(a, b) => FfiValue::Array(vec![text(a), text(b)]),
-            Ctx::Extended(a, b, part) => FfiValue::Array(vec![
-                FfiValue::Array(vec![text(a), text(b)]),
-                FfiValue::UInt32(part),
-            ]),
-            Ctx::Text(name) => text(name),
-            Ctx::I64(v) => FfiValue::Int64(v),
-            Ctx::U32(v) => FfiValue::UInt32(v),
-            Ctx::List(items) => FfiValue::Array(items.into_iter().map(Ctx::into_value).collect()),
-            Ctx::Bool(v) => FfiValue::Bool(v),
+            Ctx::Label(a, b) => frame(vec![a.as_str(), b.as_str()]),
+            Ctx::Extended(a, b, part) => {
+                frame(vec![frame(vec![a.as_str(), b.as_str()])?, frame(part)?])
+            }
+            Ctx::Text(name) => frame(name.as_str()),
+            Ctx::I64(v) => frame(v),
+            Ctx::U32(v) => frame(v),
+            Ctx::List(items) => frame(
+                items
+                    .into_iter()
+                    .map(Ctx::into_value)
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            Ctx::Bool(v) => frame(v),
         }
     }
 }
@@ -212,27 +241,20 @@ impl Kind {
 }
 
 impl SpecEntry {
-    fn into_entry(self) -> (String, FfiValue) {
-        match self {
-            SpecEntry::Context(ctx) => ("context".to_string(), ctx.into_value()),
+    fn into_entry(self) -> Option<(&'static str, ValueFrame)> {
+        Some(match self {
+            SpecEntry::Context(ctx) => ("context", ctx.into_value()?),
             SpecEntry::Outputs(names) => (
-                "outputs".to_string(),
-                FfiValue::Array(
-                    names
-                        .into_iter()
-                        .map(|n| FfiValue::String(n.as_str().into()))
-                        .collect(),
-                ),
+                "outputs",
+                frame(names.into_iter().map(Name::as_str).collect::<Vec<_>>())?,
             ),
-            SpecEntry::Target(name) => {
-                ("target".to_string(), FfiValue::String(name.as_str().into()))
-            }
-            SpecEntry::Type(kind) => ("type".to_string(), FfiValue::String(kind.as_str().into())),
-            SpecEntry::ContextWrongShape(v) => ("context".to_string(), FfiValue::UInt32(v)),
-            SpecEntry::OutputsWrongShape(v) => ("outputs".to_string(), FfiValue::UInt32(v)),
-            SpecEntry::TargetWrongShape(v) => ("target".to_string(), FfiValue::UInt32(v)),
-            SpecEntry::Unknown(ctx) => ("bogus".to_string(), ctx.into_value()),
-        }
+            SpecEntry::Target(name) => ("target", frame(name.as_str())?),
+            SpecEntry::Type(kind) => ("type", frame(kind.as_str())?),
+            SpecEntry::ContextWrongShape(v) => ("context", frame(v)?),
+            SpecEntry::OutputsWrongShape(v) => ("outputs", frame(v)?),
+            SpecEntry::TargetWrongShape(v) => ("target", frame(v)?),
+            SpecEntry::Unknown(ctx) => ("bogus", ctx.into_value()?),
+        })
     }
 }
 
@@ -243,18 +265,19 @@ struct PlanSpec {
 }
 
 impl PlanSpec {
-    fn into_value(self) -> FfiValue {
-        FfiValue::Object(
-            self.fields
-                .into_iter()
-                .map(|(name, entries)| {
-                    (
-                        name.as_str().to_string(),
-                        FfiValue::Object(entries.into_iter().map(SpecEntry::into_entry).collect()),
-                    )
-                })
-                .collect(),
-        )
+    fn into_value(self) -> Option<ValueFrame> {
+        let fields = self
+            .fields
+            .into_iter()
+            .map(|(name, entries)| {
+                let spec = entries
+                    .into_iter()
+                    .map(SpecEntry::into_entry)
+                    .collect::<Option<Vec<_>>>()?;
+                Some((name.as_str(), object(spec)?))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        object(fields)
     }
 }
 
@@ -264,7 +287,6 @@ impl PlanSpec {
 #[derive(Arbitrary, Debug)]
 enum Tree {
     Single,
-    None,
     EmptySequence,
     EmptyMap,
     Passthrough,
@@ -284,17 +306,20 @@ fn leaf() -> SealedValue {
     .clone()
 }
 
+/// A value as a passthrough node: its frame, in the clear.
+fn passthrough<T: Encrypt>(value: T) -> StackCipherText {
+    let frame = frame(value).expect("a scalar frames");
+    StackCipherText::Passthrough(PassthroughFrame(frame.into_inner().risky_unwrap()))
+}
+
 impl Tree {
     fn into_ciphertext(self) -> StackCipherText {
         match self {
             Tree::Single => StackCipherText::Single(leaf()),
-            Tree::None => StackCipherText::None(leaf()),
             Tree::EmptySequence => StackCipherText::EmptySequence(leaf()),
             Tree::EmptyMap => StackCipherText::EmptyMap(leaf()),
-            Tree::Passthrough => StackCipherText::Passthrough(Box::new(FfiValue::Null)),
-            Tree::PassthroughBytes => StackCipherText::Passthrough(Box::new(FfiValue::Bytes(
-                Protected::new(b"{}".to_vec()),
-            ))),
+            Tree::Passthrough => passthrough(Raw(None, Physical::Null)),
+            Tree::PassthroughBytes => passthrough(b"{}"),
             Tree::Sequence(items) => {
                 StackCipherText::Sequence(items.into_iter().map(Tree::into_ciphertext).collect())
             }
@@ -320,7 +345,7 @@ impl Tree {
                     .all(|(at, (name, _))| !entries[..at].iter().any(|(prior, _)| prior == name));
                 unique && entries.iter().all(|(_, node)| node.is_clean())
             }
-            Tree::Single | Tree::None | Tree::EmptySequence | Tree::EmptyMap => true,
+            Tree::Single | Tree::EmptySequence | Tree::EmptyMap => true,
         }
     }
 }
@@ -397,7 +422,12 @@ fuzz_target!(|case: Case| {
     let Case { plan: spec, record } = case;
     // The plan parser is fuzzed for panics only: its rules are a separate
     // model, and a plan that does not parse has no record to check.
-    let Ok(plan) = plan_with(spec.into_value(), &Fixed) else {
+    // The plan crosses as a binding sends it, as frame bytes; a spec the
+    // frame cannot carry is no plan.
+    let Some(frame) = spec.into_value() else {
+        return;
+    };
+    let Ok(plan) = plan_with(frame.risky_ref(), &Fixed) else {
         if trace {
             eprintln!("verdict: plan refused");
         }

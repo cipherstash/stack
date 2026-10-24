@@ -378,7 +378,7 @@ async fn match_term_bytes_are_pinned() {
     let bytes = term.to_bytes();
     assert_eq!(
         hex(&bytes),
-        "040005000a000d000e001e002700350038003d0055005e005f0064006f007d007f009c00ad00bc00bd00ca00d000e000e500ef00"
+        "06000f001c0028003300360037003d0040005c0073009400970099009b00a100a300ac00b100b300ba00bb00c500d800f600fb00fe00"
     );
     assert_eq!(
         MatchTerms::<DefaultMatch>::from_bytes(&bytes).expect("decode match term"),
@@ -470,12 +470,12 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
     // differ (see the `sem` module docs).
     assert_eq!(
         hex(term.as_bytes()),
-        "1ae5f8558dc2d7dddd6c5b714e9d285586a1b8390d9140421e78906cba1bd651"
+        "1ba4d59ccb15d505519ad854229ec0c106644fa8b8944ec54c68a1f324499d82"
     );
     assert_eq!(term.to_bytes(), term.as_bytes());
     assert_eq!(term.as_ref(), term.as_bytes());
     assert_eq!(
-        OreTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ore term"),
+        OreTerm::<u32>::from_bytes(term.to_bytes()).expect("decode ore term"),
         term
     );
     // The std conversion is the same decoder.
@@ -496,10 +496,10 @@ async fn ope_term_encoding_is_the_raw_cllw_bytes() {
 
     assert_eq!(
         hex(term.as_bytes()),
-        "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
+        "00a77ed973ff1af2e5d5e3779471df246d17a515f0131eb87e35e02e7a80aa5292"
     );
     assert_eq!(
-        OpeTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ope term"),
+        OpeTerm::<u32>::from_bytes(term.to_bytes()).expect("decode ope term"),
         term
     );
     assert_eq!(
@@ -510,27 +510,29 @@ async fn ope_term_encoding_is_the_raw_cllw_bytes() {
 
 #[test]
 fn ore_term_from_bytes_rejects_wrong_length() {
-    // u32 → OreCllw8V1<32>: exactly 32 bytes.
+    // Every order term is clww-ore's variable-length ciphertext: ORE is
+    // one byte per plaintext bit (a multiple of 8, a u32's 32 here), OPE
+    // that plus a leading carry byte. The length checks are structural:
+    // the type parameter names the source, and nothing in the bytes does.
     assert_eq!(
-        OreTerm::<u32>::from_bytes(&[0u8; 31]),
+        OreTerm::<u32>::from_bytes(vec![0u8; 31]),
         Err(TermBytesError::MalformedCllwCiphertext(31))
     );
     assert_eq!(
-        OreTerm::<u32>::from_bytes(&[0u8; 33]),
+        OreTerm::<u32>::from_bytes(vec![0u8; 33]),
         Err(TermBytesError::MalformedCllwCiphertext(33))
     );
-    // u32 → OpeCllw8V1<33>: exactly 33 bytes.
     assert_eq!(
-        OpeTerm::<u32>::from_bytes(&[0u8; 32]),
+        OpeTerm::<u32>::from_bytes(vec![0u8; 32]),
         Err(TermBytesError::MalformedCllwCiphertext(32))
     );
 }
 
 #[tokio::test]
 async fn variable_length_ore_and_ope_terms_decode() {
-    // String sources produce variable-length CLLW ciphertexts (8 bytes per
-    // plaintext byte; OPE adds a leading carry byte) — their decode path is
-    // the length-validating TryFrom in cllw-ore.
+    // Text is encoded behind vitaminc-ore's one marker byte, so `alice` is six
+    // plaintext bytes: 48 ORE bytes, and 49 for OPE with its leading carry
+    // byte. The decode path is the length-validating TryFrom in clww-ore.
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ore: OreTerm<String> = "alice"
@@ -538,14 +540,14 @@ async fn variable_length_ore_and_ope_terms_decode() {
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .expect("ore term");
-    assert_eq!(ore.as_bytes().len(), 5 * 8);
+    assert_eq!(ore.as_bytes().len(), 6 * 8);
     assert_eq!(
-        OreTerm::<String>::from_bytes(ore.as_bytes()).expect("decode"),
+        OreTerm::<String>::from_bytes(ore.to_bytes()).expect("decode"),
         ore
     );
     assert_eq!(
-        OreTerm::<String>::from_bytes(&ore.as_bytes()[1..]),
-        Err(TermBytesError::MalformedCllwCiphertext(5 * 8 - 1))
+        OreTerm::<String>::from_bytes(ore.as_bytes()[1..].to_vec()),
+        Err(TermBytesError::MalformedCllwCiphertext(6 * 8 - 1))
     );
 
     let ope: OpeTerm<String> = "alice"
@@ -553,13 +555,13 @@ async fn variable_length_ore_and_ope_terms_decode() {
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .expect("ope term");
-    assert_eq!(ope.as_bytes().len(), 5 * 8 + 1);
+    assert_eq!(ope.as_bytes().len(), 6 * 8 + 1);
     assert_eq!(
-        OpeTerm::<String>::from_bytes(ope.as_bytes()).expect("decode"),
+        OpeTerm::<String>::from_bytes(ope.to_bytes()).expect("decode"),
         ope
     );
     assert_eq!(
-        OpeTerm::<String>::from_bytes(&ope.as_bytes()[1..]),
-        Err(TermBytesError::MalformedCllwCiphertext(5 * 8))
+        OpeTerm::<String>::from_bytes(ope.as_bytes()[1..].to_vec()),
+        Err(TermBytesError::MalformedCllwCiphertext(6 * 8))
     );
 }

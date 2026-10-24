@@ -66,7 +66,7 @@ func CreateWithGORM(ctx context.Context, db *gorm.DB, cipher *encrypt.Cipher, li
 }
 
 func IDByPhone(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, phone string) (int64, error) {
-	term, err := Fields.PhoneNumber.Equality(ctx, cipher, phone)
+	term, err := Fields.PhoneNumber.Eq(ctx, cipher, phone)
 	if err != nil {
 		return 0, err
 	}

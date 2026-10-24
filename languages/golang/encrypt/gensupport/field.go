@@ -10,7 +10,7 @@ import (
 
 // Field is one sealed field's entry in a generated Fields value: it encrypts
 // one value of the field, for an update of one column, and derives the
-// terms the field declares, for a query. T is the field's Go type.
+// query term of each operator the field answers. T is the field's Go type.
 type Field[T any] struct {
 	name string
 	plan *record.Plan
@@ -36,16 +36,48 @@ func NewField[T any](d Declaration, name string) Field[T] {
 	return f
 }
 
+// kind is the field's declared kind, as its plan holds it.
+func (f Field[T]) kind() Kind {
+	if pf := f.plan.Field(f.name); pf != nil {
+		return Kind(pf.Kind)
+	}
+	return Untyped
+}
+
 // Encrypt seals one value of the field: its ciphertext and every term it
 // declares, in one request.
 func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, error) {
 	if f.err != nil {
 		return Output{}, f.err
 	}
-	if c == nil {
-		return Output{}, fmt.Errorf("gensupport: %s: Encrypt needs a cipher", f.name)
+	value, err := asKind(f.kind(), v)
+	if err != nil {
+		return Output{}, fmt.Errorf("gensupport: %s: %w", f.name, err)
 	}
-	row := record.Source{f.name: v}
+	return f.seal(ctx, c, "Encrypt", value)
+}
+
+// EncryptNull seals nil for a field that stores nil as a sealed null: a
+// ciphertext as long as a value's, and the term every nil of the field
+// shares. It is the update that sets one such column to nil, which writing
+// SQL NULL is not. A field that stores nil any other way is refused: under
+// null=sql nil is SQL NULL, and a field of no null mode has no nil.
+func (f Field[T]) EncryptNull(ctx context.Context, c *encrypt.Cipher) (Output, error) {
+	if f.err != nil {
+		return Output{}, f.err
+	}
+	if pf := f.plan.Field(f.name); pf == nil || pf.Null != record.SealedNull {
+		return Output{}, fmt.Errorf("%w: gensupport: %s: EncryptNull seals nil only for a field that stores it as a sealed null (null=sealed)", encrypt.ErrEncoding, f.name)
+	}
+	return f.seal(ctx, c, "EncryptNull", nil)
+}
+
+// seal seals one value of the field, or nil, through the field's own plan.
+func (f Field[T]) seal(ctx context.Context, c *encrypt.Cipher, method string, value any) (Output, error) {
+	if c == nil {
+		return Output{}, fmt.Errorf("gensupport: %s: %s needs a cipher", f.name, method)
+	}
+	row := record.Source{f.name: value}
 	if f.plan.ContextField != "" {
 		// One value of one field has no record to take its context from:
 		// the cipher names it, as it does for a query.
@@ -65,58 +97,96 @@ func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, 
 	return outputOf(sealed[0][f.name]), nil
 }
 
-// Query derives the EQL query value for one value of an encrypt_into field:
-// the operand that matches stored values of the field, in Output.EQL. The
-// engine runs the EQL type's own query plan, with no data key.
-func (f Field[T]) Query(ctx context.Context, c *encrypt.Cipher, v T) (Output, error) {
-	if f.err != nil {
-		return Output{}, f.err
-	}
-	if c == nil {
-		return Output{}, fmt.Errorf("gensupport: %s: Query needs a cipher", f.name)
-	}
-	out, err := c.Query(ctx, f.plan, f.name, v)
+// Term derives the term of an exact operator the field answers, for one
+// value: an index term for a field declared with indexes, the query value's
+// JSON for a field that names an EQL type. The generated method for the
+// operator converts it to its query type. The engine picks the index that
+// answers the operator ([encrypt.Cipher.QueryTerm]).
+func (f Field[T]) Term(ctx context.Context, c *encrypt.Cipher, operator string, v T) ([]byte, error) {
+	terms, err := f.query(ctx, c, operator, v, 1)
 	if err != nil {
-		return Output{}, err
+		return nil, err
 	}
-	return Output{EQL: out}, nil
+	return terms[0], nil
 }
 
-// Equality derives the field's equality term for one value.
-func (f Field[T]) Equality(ctx context.Context, c *encrypt.Cipher, v T) (encrypt.EqualityTerm, error) {
-	return f.term(ctx, c, record.Equality, v)
-}
-
-// Match derives the field's match term for one value.
-func (f Field[T]) Match(ctx context.Context, c *encrypt.Cipher, v T) (encrypt.MatchTerm, error) {
-	return f.term(ctx, c, record.Match, v)
-}
-
-// Ore derives the field's ORE term for one value.
-func (f Field[T]) Ore(ctx context.Context, c *encrypt.Cipher, v T) (encrypt.OreTerm, error) {
-	return f.term(ctx, c, record.Ore, v)
-}
-
-// Ope derives the field's OPE term for one value.
-func (f Field[T]) Ope(ctx context.Context, c *encrypt.Cipher, v T) (encrypt.OpeTerm, error) {
-	return f.term(ctx, c, record.Ope, v)
-}
-
-// JSON derives the field's json index term. The engine does not derive it
-// yet, so it fails.
-func (f Field[T]) JSON(context.Context, *encrypt.Cipher, T) (encrypt.JSONTerm, error) {
-	if f.err != nil {
-		return nil, f.err
+// Range derives the two terms of a range operator the field answers, such
+// as between: the low bound's term, then the high bound's.
+func (f Field[T]) Range(ctx context.Context, c *encrypt.Cipher, operator string, lo, hi T) ([]byte, []byte, error) {
+	terms, err := f.query(ctx, c, operator, []any{lo, hi}, 2)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil, fmt.Errorf("gensupport: %s: the engine does not derive the json index yet", f.name)
+	return terms[0], terms[1], nil
 }
 
-func (f Field[T]) term(ctx context.Context, c *encrypt.Cipher, output record.Output, v T) ([]byte, error) {
+// NullTerm derives an exact operator's term for nil: for eq on a field that
+// stores nil as a sealed null, the term every such nil shares, so it finds
+// the rows whose value is absent. The engine refuses it for any other field
+// or operator: nothing else stores a null's term.
+func (f Field[T]) NullTerm(ctx context.Context, c *encrypt.Cipher, operator string) ([]byte, error) {
+	terms, err := f.query(ctx, c, operator, nil, 1)
+	if err != nil {
+		return nil, err
+	}
+	return terms[0], nil
+}
+
+// query derives an exact operator's terms, and refuses an answer of another
+// shape than the generated method's: a probabilistic term has a query type
+// of its own (Matches). Each operand is converted to the field's kind as a
+// written value is ([asKind]), so the query finds what a write stored.
+func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string, input any, parts int) ([][]byte, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	if c == nil {
-		return nil, fmt.Errorf("gensupport: %s: a term needs a cipher", f.name)
+		return nil, fmt.Errorf("%w: gensupport: %s: a query needs a cipher", encrypt.ErrEncoding, f.name)
 	}
-	return c.Derive(ctx, f.plan, f.name, output, v)
+	pair, isPair := input.([]any)
+	values := []any{input}
+	if isPair {
+		values = pair
+	}
+	converted := make([]any, len(values))
+	for i, v := range values {
+		value, err := asKind(f.kind(), v)
+		if err != nil {
+			return nil, fmt.Errorf("gensupport: %s: %w", f.name, err)
+		}
+		converted[i] = value
+	}
+	operand := converted[0]
+	if isPair {
+		operand = converted
+	}
+	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, operand)
+	if err != nil {
+		return nil, err
+	}
+	if term.Fidelity != record.Exact || len(term.Terms) != parts {
+		return nil, fmt.Errorf("gensupport: %s: %s came back as a %s term of %d parts, not an exact one of %d", f.name, operator, term.Fidelity, len(term.Terms), parts)
+	}
+	return term.Terms, nil
+}
+
+// Matches derives the matches query for one value of a field declared with
+// a match index: the term, and what Verify and TargetLimit need. A function,
+// not a method, because only a string field answers matches. A nil cipher
+// is refused by [encrypt.NewMatchQuery], with [encrypt.ErrEncoding].
+func Matches[T ~string](ctx context.Context, f Field[T], c *encrypt.Cipher, v T) (encrypt.MatchQuery[T], error) {
+	if f.err != nil {
+		return encrypt.MatchQuery[T]{}, f.err
+	}
+	return encrypt.NewMatchQuery(ctx, c, f.plan, f.name, v)
+}
+
+// EQLMatches derives the matches query for one value of a field that names
+// an EQL type with a match index: the type's query value Q, and what Verify
+// and TargetLimit need.
+func EQLMatches[Q ~[]byte, T ~string](ctx context.Context, f Field[T], c *encrypt.Cipher, v T) (encrypt.EQLMatchQuery[Q, T], error) {
+	if f.err != nil {
+		return encrypt.EQLMatchQuery[Q, T]{}, f.err
+	}
+	return encrypt.NewEQLMatchQuery[Q](ctx, c, f.plan, f.name, v)
 }

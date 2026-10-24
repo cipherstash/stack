@@ -8,7 +8,8 @@ on:
     branches:
       - "**"
     # Plan documents under docs/plans/ need none of these jobs. Later patterns
-    # win, so the negation has to come after the catch-all.
+    # win, so the negation has to come after the catch-all. While this filter
+    # stands, `tests-required` must not be a required check: see that job.
     paths:
       - '**'
       - '!docs/plans/**'
@@ -51,8 +52,234 @@ jobs:
       - name: Biome check (format + lint)
         run: pnpm run code:check
 
+  # Which of the jobs below this pull request can affect. Runs on every event
+  # and must always succeed: the live jobs `needs:` it, and `tests-required`
+  # reads its result.
+  #
+  # The live jobs build two native bindings, start Postgres, and spend
+  # CipherStash credentials; until this job existed they ran on every pull
+  # request, including ones that changed only Go, the Stack Encrypt crates or
+  # EQL's SQL. The question asked here is the reverse of a `paths:` allowlist:
+  # the jobs run UNLESS every changed file is one they provably cannot read.
+  # An allowlist that forgets a directory stops a suite from running on the
+  # change that breaks it; this list, if it forgets one, only runs the suite
+  # when it did not need to.
+  #
+  # dorny/paths-filter cannot re-include a path after excluding it in one list
+  # (`predicate-quantifier: every` makes a file match only if it matches every
+  # pattern), so the question is split in two:
+  #   `rest`   — any changed file outside the excluded trees, and
+  #   `direct` — any changed file inside them that the jobs do read.
+  # The jobs run when either is true. `tests-workflow-gate.test.mjs` holds
+  # both lists: every exclusion must be a path no gated job reads, and every
+  # build input of the FFI binding must be selected by one or the other.
+  changes:
+    name: Detect JS-relevant changes
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      js: ${{ steps.r.outputs.js }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Only a pull request has a base to diff against. Every other event
+      # takes the default below and runs everything.
+      - id: rest
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            js:
+              - '**'
+              # Plans and ADRs; plan-docs-unread-by-tests.test.mjs holds the
+              # plans half for the `paths:` filter above.
+              - '!docs/**'
+              # The Go module, and the Rust crates no binding these jobs build
+              # depends on. The auth and profile bindings compile stack-auth and
+              # stack-profile, which stay in.
+              - '!languages/golang/**'
+              - '!packages/stack-encrypt/**'
+              - '!packages/stack-encrypt-derive/**'
+              - '!packages/stack-kms/**'
+              - '!packages/stack-guest-abi/**'
+              - '!packages/stack-auth/fuzz/**'
+              # EQL's SQL sources, test suites, codegen and tasks. What the
+              # jobs do read from here is selected by `direct` below.
+              - '!packages/eql/**'
+              # Changeset prose. `.changeset/config.json` is read by the CLI's
+              # release-train test, so only the entries are excluded.
+              - '!.changeset/*.md'
+              # Other workflows. Everything that reads them runs in
+              # `repo-checks`, which is not gated.
+              - '!.github/workflows/**'
+              # Agent instructions, and config for Rust tools these jobs never run.
+              - '!AGENTS.md'
+              - '!CLAUDE.md'
+              - '!CONTEXT-MAP.md'
+              - '!mise.test.toml'
+              - '!.cargo/mutants.toml'
+              - '!.cargo-crap.toml'
+              - '!.config/nextest.toml'
+              - '!release-plz.toml'
+              - '!cliff.toml'
+
+      - id: direct
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            js:
+              - '.github/workflows/tests.yml'
+              # The eql-bindings files cargo compiles into the protect-ffi
+              # binding, as `.github/actions/build-ffi-binding` hashes them,
+              # and the EQL workspace manifest cargo reads for them.
+              - 'packages/eql/crates/eql-bindings/Cargo.toml'
+              - 'packages/eql/crates/eql-bindings/src/lib.rs'
+              - 'packages/eql/crates/eql-bindings/src/sql.rs'
+              - 'packages/eql/crates/eql-bindings/src/from_v2/**'
+              - 'packages/eql/crates/eql-bindings/src/v3/**'
+              - 'packages/eql/crates/eql-bindings/sql/**'
+              - 'packages/eql/Cargo.toml'
+              # `@cipherstash/eql`, the SQL bundle the CLI installs and the
+              # package `pnpm test` runs.
+              - 'packages/eql/packages/eql/**'
+
+      # The event arrives through `env:`, not an interpolated `${{ }}`, so
+      # tests-workflow-gate.test.mjs can run this script once per event.
+      - id: r
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REST: ${{ steps.rest.outputs.js }}
+          DIRECT: ${{ steps.direct.outputs.js }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "js=true" >> "$GITHUB_OUTPUT"
+          elif [ "$REST" = "true" ] || [ "$DIRECT" = "true" ]; then
+            echo "js=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "js=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Checks of the repository itself: lint scripts, the release gate, and the
+  # suites that read workflow files and repo config. None needs a binding, a
+  # database or credentials, and between them they read nearly every file in
+  # the tree, so this job is never gated. They ran in `run-tests` once per Node
+  # leg until the live jobs were gated; a pull request changing only a
+  # workflow would then have run none of the guards on it.
+  repo-checks:
+    name: Repo checks
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6.1.0
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches; pnpm/action-setup v6 no longer ships it.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint — no hardcoded package-manager runners
+        run: pnpm run lint:runners
+
+      # The typecheck gates in `run-tests` only mean something if they compile
+      # source. A tsconfig
+      # with no `include` globs `**/*`, which sweeps the package's own `dist/`
+      # into the program — and whether `dist/` exists during a gate depends on
+      # what an earlier step built transitively, so the gate compiles a
+      # different program in CI than it does locally.
+      - name: Lint — typecheck gates compile source, not build output
+        run: pnpm run lint:typecheck-scope
+
+      # Deleting or renaming a package leaves `packages/<name>` references
+      # dangling in docs and CI config. Nothing else catches it (#760 review).
+      - name: Lint — no references to deleted package directories
+        run: pnpm run lint:package-paths
+
+      # `eql-bindings` emits EQL payloads; `@cipherstash/eql` carries the SQL
+      # that stores them. Both live here now and release at one lockstep
+      # version. A registry pin on either lets them drift apart — it compiles,
+      # it passes every suite, and it fails in a customer's database.
+      - name: Lint — EQL resolves in-tree, not from a registry
+        run: pnpm run lint:eql-pins
+
+      # THE SAME GATE release.yml RUNS, one merge earlier.
+      #
+      # `changeset publish` publishes every public workspace package whose
+      # version is absent from npm — with no dependency ordering, and a failed
+      # publish returns a result rather than throwing, so it does not stop the
+      # siblings that depend on it. A merge can therefore ARM a release that
+      # cannot succeed, and this repository has done it. `@cipherstash/eql` is
+      # published from cipherstash/encrypt-query-language, so a version bumped
+      # in this workspace cannot be published from here — while `languages/typescript/packages/cli`
+      # and `languages/typescript/packages/stack-prisma` carry it in RUNTIME dependencies, so pnpm
+      # packs whatever version this tree holds into both tarballs. Bump it past
+      # what the registry carries and both ship a range no published version
+      # satisfies, in tarballs that publish fine. That is what the hand-applied
+      # 3.0.5 bump did; upstream has since released 3.0.5 and it cleared on its
+      # own. The CONDITION is what this step is for — the verdict is whatever it
+      # prints on the day.
+      #
+      # The gate in release.yml blocks the publish, which is the load-bearing
+      # half. This step is the half that says so BEFORE the merge rather than
+      # after it, which is the difference between a red pull request and a red
+      # main. Same script, same verdict, no second copy to drift.
+      #
+      # It talks to the registry, in a job that already installs the whole
+      # workspace from it — so this adds a class of dependency the job does not
+      # already have, only a few more requests. A lookup that fails for any
+      # reason other than a 404 throws rather than being read as "published".
+      - name: Lint — this tree can be published, and installed
+        run: pnpm run release:gate
+
+
+      # bench-index-expressions checks that the shipped EQL bundle in
+      # `dist/` is a verbatim copy of the committed one. `dist/` is a build
+      # output, and nothing before this step builds it, so build it here.
+      # EQL_DIST_REQUIRED makes that check fail, not skip, if `dist/` is
+      # missing, so dropping this build cannot silently disable it.
+      - name: Build @cipherstash/eql
+        run: pnpm exec turbo run build --filter @cipherstash/eql
+
+      - name: Test — lint script self-tests
+        run: pnpm run test:scripts
+        env:
+          EQL_DIST_REQUIRED: '1'
+
+      # protect-ffi's JS suite reads the root workflows (lintWiring,
+      # integrationSuiteCi) and passes with no binding built, which is a
+      # property it asserts. `run-tests` runs it too, through `pnpm test`;
+      # it runs here as well so that a change to a workflow alone, which the
+      # live jobs skip, still meets it.
+      - name: Test — protect-ffi workflow wiring
+        run: pnpm exec turbo run test --filter @cipherstash/protect-ffi
+
+      # The e2e suites that read only files: workflow hardening and the skill
+      # map. The rest of `e2e/` builds and runs packages, in `e2e-tests`.
+      - name: Test — supply-chain and skill-map checks
+        working-directory: e2e
+        run: pnpm exec vitest run tests/supply-chain.e2e.test.ts tests/skill-map-parity.e2e.test.ts
+
   run-tests:
     name: Run Tests (Node ${{ matrix.node-version }})
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       matrix:
@@ -289,61 +516,6 @@ jobs:
       - name: Typecheck (stash init's scaffolded client)
         run: pnpm exec turbo run typecheck:scaffold --filter stash
 
-      - name: Lint — no hardcoded package-manager runners
-        run: pnpm run lint:runners
-
-      # The gates above only mean something if they compile source. A tsconfig
-      # with no `include` globs `**/*`, which sweeps the package's own `dist/`
-      # into the program — and whether `dist/` exists during a gate depends on
-      # what an earlier step built transitively, so the gate compiles a
-      # different program in CI than it does locally.
-      - name: Lint — typecheck gates compile source, not build output
-        run: pnpm run lint:typecheck-scope
-
-      # Deleting or renaming a package leaves `packages/<name>` references
-      # dangling in docs and CI config. Nothing else catches it (#760 review).
-      - name: Lint — no references to deleted package directories
-        run: pnpm run lint:package-paths
-
-      # `eql-bindings` emits EQL payloads; `@cipherstash/eql` carries the SQL
-      # that stores them. Both live here now and release at one lockstep
-      # version. A registry pin on either lets them drift apart — it compiles,
-      # it passes every suite, and it fails in a customer's database.
-      - name: Lint — EQL resolves in-tree, not from a registry
-        run: pnpm run lint:eql-pins
-
-      # THE SAME GATE release.yml RUNS, one merge earlier.
-      #
-      # `changeset publish` publishes every public workspace package whose
-      # version is absent from npm — with no dependency ordering, and a failed
-      # publish returns a result rather than throwing, so it does not stop the
-      # siblings that depend on it. A merge can therefore ARM a release that
-      # cannot succeed, and this repository has done it. `@cipherstash/eql` is
-      # published from cipherstash/encrypt-query-language, so a version bumped
-      # in this workspace cannot be published from here — while `languages/typescript/packages/cli`
-      # and `languages/typescript/packages/stack-prisma` carry it in RUNTIME dependencies, so pnpm
-      # packs whatever version this tree holds into both tarballs. Bump it past
-      # what the registry carries and both ship a range no published version
-      # satisfies, in tarballs that publish fine. That is what the hand-applied
-      # 3.0.5 bump did; upstream has since released 3.0.5 and it cleared on its
-      # own. The CONDITION is what this step is for — the verdict is whatever it
-      # prints on the day.
-      #
-      # The gate in release.yml blocks the publish, which is the load-bearing
-      # half. This step is the half that says so BEFORE the merge rather than
-      # after it, which is the difference between a red pull request and a red
-      # main. Same script, same verdict, no second copy to drift.
-      #
-      # It talks to the registry, in a job that already installs the whole
-      # workspace from it — so this adds a class of dependency the job does not
-      # already have, only a few more requests. A lookup that fails for any
-      # reason other than a 404 throws rather than being read as "published".
-      - name: Lint — this tree can be published, and installed
-        run: pnpm run release:gate
-
-      - name: Test — lint script self-tests
-        run: pnpm run test:scripts
-
       - name: Create .env file in ./languages/typescript/packages/stack/
         run: |
           touch ./languages/typescript/packages/stack/.env
@@ -397,6 +569,8 @@ jobs:
 
   e2e-tests:
     name: Run E2E Tests
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
@@ -478,6 +652,8 @@ jobs:
   # a silent fallback to the NAPI module is impossible.
   wasm-e2e-tests:
     name: Run WASM E2E Tests (Deno)
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     permissions:
@@ -621,6 +797,8 @@ jobs:
 
   run-tests-bun:
     name: Run Tests (Bun)
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     continue-on-error: true
 
@@ -712,4 +890,34 @@ jobs:
               echo "--- Testing $dir ---"
               (cd "$dir" && bunx --bun vitest run) || true
             fi
+          done
+
+  # One check that summarises the run, for a branch rule to require. A gated
+  # job reports `skipped` on a pull request that cannot affect it, which a
+  # rule requiring that job by name would wait on forever; this job reads
+  # `skipped` as a pass and anything but `success` otherwise as a failure.
+  #
+  # It does not report on a pull request that changes only `docs/plans/**`:
+  # the workflow-level `paths` filter at the top of this file stops the
+  # whole workflow from starting, and GitHub leaves a required check from a
+  # workflow it never started pending. Before a branch rule requires this
+  # check, remove that filter (and `plan-docs-unread-by-tests.test.mjs`,
+  # which exists because of it), or plans-only pull requests cannot merge.
+  tests-required:
+    name: tests-required
+    needs: [lint, changes, repo-checks, run-tests, e2e-tests, wasm-e2e-tests, run-tests-bun]
+    if: always()
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Assert every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "needed results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "a needed job reported '$r'"; exit 1 ;;
+            esac
           done

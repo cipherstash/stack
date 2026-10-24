@@ -38,19 +38,19 @@ fn caller() -> CallerContext {
 #[cfg(feature = "dynamic")]
 #[tokio::test]
 async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
-    use stack_encrypt::dynamic::{FfiValue, Value};
+    use stack_encrypt::dynamic::ValueFrame;
 
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
     let list: Vec<IndexSpec> = vec![IndexSpec::Ore, IndexSpec::Equality];
     assert_eq!(
-        Indexes::<Value>::specs(&list),
+        Indexes::<ValueFrame>::specs(&list),
         [IndexSpec::Ore, IndexSpec::Equality],
         "the specs are the indexes', in the order given"
     );
     assert_eq!(
-        Indexes::<Value>::specs(&vec![IndexSpec::Equality]),
+        Indexes::<ValueFrame>::specs(&vec![IndexSpec::Equality]),
         [IndexSpec::Equality]
     );
     assert_eq!(
@@ -61,8 +61,8 @@ async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
 
     let terms: Vec<stack_encrypt::dynamic::TermBytes> = keyset
         .run(
-            Indexes::<Value>::operations::<_, Borrowed>(&list),
-            &Value::new(FfiValue::UInt32(34)),
+            Indexes::<ValueFrame>::operations::<_, Borrowed>(&list),
+            &ValueFrame::of(34u32).unwrap(),
             caller(),
         )
         .await
@@ -241,7 +241,7 @@ mod given_a_set_of_indexes {
         assert_eq!(<Ore as Indexes<u32>>::specs(&Ore), [IndexSpec::Ore]);
         assert_eq!(<Ope as Indexes<u32>>::specs(&Ope), [IndexSpec::Ope]);
         assert_eq!(
-            <Match as Indexes<String>>::specs(&Match::default()),
+            <Match as Indexes<String>>::specs(&Match),
             [IndexSpec::Match(MatchOptions::default())]
         );
         assert_eq!(
@@ -275,7 +275,7 @@ mod given_a_set_of_indexes {
 
     #[test]
     fn a_match_index_debugs_by_name_whatever_its_configuration() {
-        assert_eq!(format!("{:?}", Match::default()), "Match");
+        assert_eq!(format!("{:?}", Match), "Match");
         assert_eq!(format!("{:?}", Match::<Words>::new()), "Match");
         let copied = Match::<Words>::new();
         let again = copied;
@@ -433,7 +433,7 @@ mod given_a_set_of_indexes {
             .unwrap();
         assert_eq!(q, ope_t, "position 2");
 
-        let four = (Equality, Ore, Ope, Match::default());
+        let four = (Equality, Ore, Ope, Match);
         assert_eq!(
             Index::<String>::spec(Indexes::<String>::select::<Match, _>(&four)),
             IndexSpec::Match(MatchOptions::default()),
@@ -623,7 +623,8 @@ mod given_encrypted_terms_as_a_target {
     async fn same_bytes<S, Terms, X>(value: S, indexes: X)
     where
         S: stack_encrypt::Encrypt
-            + for<'a> stack_encrypt::Decrypt<'a>
+            + stack_encrypt::Decrypt
+            + Send
             + Clone
             + PartialEq
             + std::fmt::Debug
@@ -662,7 +663,7 @@ mod given_encrypted_terms_as_a_target {
     #[tokio::test]
     async fn every_term_alone_lowers_to_its_index() {
         same_bytes::<u32, EqualityTerm, _>(7, Equality).await;
-        same_bytes::<String, MatchTerms, _>("hello world".into(), Match::default()).await;
+        same_bytes::<String, MatchTerms, _>("hello world".into(), Match).await;
         same_bytes::<String, MatchTerms<Words>, _>("Hello World".into(), Match::<Words>::new())
             .await;
         same_bytes::<u32, OreTerm<u32>, _>(7, Ore).await;
@@ -702,7 +703,7 @@ mod given_encrypted_terms_as_a_target {
             _,
         >(
             "Hello World".into(),
-            (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
+            (Equality, Match, Ore, Ope, Match::<Words>::new()),
         )
         .await;
     }
@@ -750,4 +751,30 @@ mod given_encrypted_terms_as_a_target {
             ]
         );
     }
+}
+
+/// A boolean has no equality term, on the typed path as on the dynamic one
+/// (`dynamic::admits`): refused when the term is derived, before any key
+/// is minted. (It has no order term either, which is a compile error:
+/// `bool` is not `sem::Orderable`, so `OreTerm<bool>`, `OpeTerm<bool>` and
+/// a plan `.with::<bool, _>(Ore)` do not build.)
+#[tokio::test]
+async fn a_boolean_has_no_equality_term() {
+    use stack_encrypt::sem::TermError;
+    use stack_encrypt::EncryptInto;
+
+    let (cipher, generates, _) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let equality_term: Result<EqualityTerm, _> = true
+        .encrypt_into_with_context(&keyset, nonempty!("users/flag"))
+        .await;
+    assert!(matches!(
+        equality_term,
+        Err(Error::Term(TermError::NoEqualityTerm))
+    ));
+    assert_eq!(
+        generates.load(Ordering::SeqCst),
+        0,
+        "refused before any key"
+    );
 }

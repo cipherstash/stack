@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 
 use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::{FakeDataKeySource, IdentifiedBy};
+use stack_encrypt::op;
 use stack_encrypt::plan::{
     Field, FieldKind, FieldSchema, FieldValues, Fields, Operation, PlanError,
 };
@@ -101,7 +102,7 @@ type AgeTerms = (EqualityTerm, OreTerm<u32>);
 fn users_plan<K: 'static>() -> Plan<User, K> {
     Plan::context("users")
         .fields()
-        .encrypt_index::<String>("email", (Equality, Match::default()))
+        .encrypt_index::<String>("email", (Equality, Match))
         .encrypt_index::<u32>("age", (Equality, Ore))
         .encrypt::<String>("notes")
         .passthrough::<u64>("id")
@@ -133,7 +134,7 @@ type HandOut = (
     u64,
 );
 fn hand_composed<'s, K: 'static>() -> Encryption<'s, User, HandOut, K, DeclaredContext> {
-    indexed::<String, _, Borrowed, _>((Equality, Match::default()))
+    indexed::<String, _, Borrowed, _>((Equality, Match))
         .under(nonempty!("users").with("email"))
         .project(|u: &User| &u.email)
         .zip(
@@ -158,7 +159,7 @@ async fn the_chain_is_the_hand_composed_combinators_field_for_field() {
         .encrypt(&user)
         .context("users")
         .fields()
-        .encrypt_index::<String>("email", (Equality, Match::default()))
+        .encrypt_index::<String>("email", (Equality, Match))
         .encrypt_index::<u32>("age", (Equality, Ore))
         .encrypt::<String>("notes")
         .passthrough::<u64>("id")
@@ -254,7 +255,7 @@ async fn a_saved_plan_is_the_same_chain_and_decrypts_back() {
         .encrypt(&user)
         .context("users")
         .fields()
-        .encrypt_index::<String>("email", (Equality, Match::default()))
+        .encrypt_index::<String>("email", (Equality, Match))
         .encrypt_index::<u32>("age", (Equality, Ore))
         .encrypt::<String>("notes")
         .passthrough::<u64>("id")
@@ -289,35 +290,27 @@ async fn a_query_derives_under_the_label_the_write_used() {
     let email_plan = users_plan.field("email").unwrap();
     let age_plan = users_plan.field("age").unwrap();
     let eq: EqualityTerm = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(
         eq, email.terms.0,
         "equality query bytes equal the stored term"
     );
-    let matching: MatchTerms = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .index(Match::default())
+    let matching = cipher
+        .query(op::Matches, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(matching.to_bytes(), email.terms.1.to_bytes());
-    let ore: OreTerm<u32> = cipher
-        .query(&34u32)
-        .using(&age_plan)
-        .index(Ore)
-        .await
-        .unwrap();
+    let ore: OreTerm<u32> = cipher.query(op::Lt, &34u32).on(&age_plan).await.unwrap();
     assert_eq!(ore.to_bytes(), age.terms.1.to_bytes());
 
     // A different value is a different term: the query is not a constant.
     let other = cipher
-        .query("eve@example.com")
-        .using(&email_plan)
-        .equality()
+        .query(op::Eq, "eve@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_ne!(other, email.terms.0);
@@ -336,12 +329,12 @@ async fn a_query_extended_like_the_write_matches_it() {
     let email: Encrypted<EmailTerms> = row.take("email").unwrap();
     let email_plan = users_plan.field("email").unwrap();
     let query = |extend: Option<u64>| {
-        let chain = cipher.query("bob@example.com").using(&email_plan);
+        let chain = cipher.query(op::Eq, "bob@example.com");
         let chain = match extend {
             Some(parts) => chain.extend(parts),
             None => chain,
         };
-        chain.equality()
+        chain.on(&email_plan)
     };
     assert_eq!(query(Some(7)).await.unwrap(), email.terms.0);
     assert_ne!(query(None).await.unwrap(), email.terms.0);
@@ -356,21 +349,21 @@ async fn a_query_against_an_undeclared_index_or_type_is_refused() {
     let notes_plan = users_plan.field("notes").unwrap();
 
     assert_eq!(
-        plan_error(cipher.query(&34u32).using(&age_plan).index(Ope).await),
+        plan_error(cipher.query(op::Lt, &34u32).via(Ope).on(&age_plan).await),
         PlanError::IndexNotDeclared {
             field: "age".into(),
             index: "ope"
         }
     );
     assert_eq!(
-        plan_error(cipher.query("x").using(&notes_plan).equality().await),
+        plan_error(cipher.query(op::Eq, "x").on(&notes_plan).await),
         PlanError::IndexNotDeclared {
             field: "notes".into(),
             index: "eq"
         }
     );
     assert_eq!(
-        plan_error(cipher.query(&34u64).using(&age_plan).equality().await),
+        plan_error(cipher.query(op::Eq, &34u64).on(&age_plan).await),
         PlanError::FieldType {
             field: "age".into(),
             expected: "u32"
@@ -402,19 +395,9 @@ async fn a_one_value_plan_writes_queries_by_type_and_reads_back() {
     assert_eq!(chained.terms.0, out.terms.0);
     assert_eq!(chained.terms.1.to_bytes(), out.terms.1.to_bytes());
 
-    let eq = cipher
-        .query(&34u32)
-        .using(&age_plan)
-        .equality()
-        .await
-        .unwrap();
+    let eq = cipher.query(op::Eq, &34u32).on(&age_plan).await.unwrap();
     assert_eq!(eq, out.terms.0);
-    let ore = cipher
-        .query(&34u32)
-        .using(&age_plan)
-        .index::<Ore, _>()
-        .await
-        .unwrap();
+    let ore = cipher.query(op::Gte, &34u32).on(&age_plan).await.unwrap();
     assert_eq!(ore.to_bytes(), out.terms.1.to_bytes());
 
     // Byte-identical to the combinator, under the same label.
@@ -510,7 +493,7 @@ async fn a_one_value_plan_extended_on_write_needs_the_extension_to_query_and_ope
     assert_eq!(sent.lock().unwrap().generated(), ["(users/age)/7u64"]);
 
     let query = |parts: Option<u64>| {
-        let chain = cipher.query(&34u32).using(&age_plan).equality();
+        let chain = cipher.query(op::Eq, &34u32).on(&age_plan);
         match parts {
             Some(parts) => chain.extend(parts),
             None => chain,
@@ -545,7 +528,7 @@ async fn an_index_only_field_matches_its_query_and_mints_no_data_key() {
     let (cipher, sent) = recording_cipher().await;
     let tokens_plan: Plan<User, _> = Plan::context("users")
         .fields()
-        .index::<String>("email", (Equality, Match::default()))
+        .index::<String>("email", (Equality, Match))
         .encrypt::<u32>("age")
         .encrypt::<String>("notes")
         .passthrough::<u64>("id")
@@ -561,9 +544,8 @@ async fn an_index_only_field_matches_its_query_and_mints_no_data_key() {
 
     let email_plan = tokens_plan.field("email").unwrap();
     let query = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(query, eq, "the query derives under the write's label");
@@ -861,9 +843,9 @@ async fn a_refused_chain_never_loads_the_keyset_it_names() {
     assert!(matches!(
         plan_error(
             cipher
-                .query(&34u32)
-                .using(&age_plan)
-                .index(Ope)
+                .query(op::Gt, &34u32)
+                .via(Ope)
+                .on(&age_plan)
                 .keyset("tenant")
                 .await
         ),
@@ -963,13 +945,7 @@ async fn a_passthrough_name_need_not_be_a_label_segment() {
 
     let passthrough_plan = odd_plan.field("2fa_enabled").unwrap();
     assert_eq!(
-        plan_error(
-            cipher
-                .query(&1u64)
-                .using(&passthrough_plan)
-                .equality()
-                .await
-        ),
+        plan_error(cipher.query(op::Eq, &1u64).on(&passthrough_plan).await),
         PlanError::IndexNotDeclared {
             field: "2fa_enabled".into(),
             index: "eq"
@@ -1224,14 +1200,17 @@ async fn match_options_must_agree_for_a_query_to_be_declared() {
             }
         }
     }
+    impl stack_encrypt::op::MatchCase for Shingles {
+        type Case = op::CaseSensitive;
+    }
     let cipher = stack_cipher().await;
     let users_plan: Plan<User, FakeDataKeySource> = users_plan();
     let email_plan = users_plan.field("email").unwrap();
     let refused = plan_error(
         cipher
-            .query("bob")
-            .using(&email_plan)
-            .index(Match::<Shingles>::new())
+            .query(op::Matches.case_sensitive(), "bob")
+            .via(Match::<Shingles>::new())
+            .on(&email_plan)
             .await,
     );
     assert_eq!(
@@ -1259,10 +1238,7 @@ async fn all_settles_several_chains_in_one_request() {
 
     let (row, probe) = stack_encrypt::all((
         cipher.encrypt(&user).using(&users_plan),
-        cipher
-            .query("bob@example.com")
-            .using(&email_plan)
-            .equality(),
+        cipher.query(op::Eq, "bob@example.com").on(&email_plan),
     ))
     .await
     .unwrap();
@@ -1747,9 +1723,13 @@ async fn a_chain_shows_no_value() {
         format!("{:?}", cipher.encrypt(&secret).context("x").with(Equality)),
         format!("{:?}", cipher.encrypt(&user()).context("x").fields()),
         format!("{:?}", cipher.encrypt(&user()).using(&users_plan)),
-        format!("{:?}", cipher.query(&secret)),
-        format!("{:?}", cipher.query(&secret).using(&email_plan)),
-        format!("{:?}", cipher.query(&secret).using(&email_plan).equality()),
+        format!("{:?}", cipher.query(op::Eq, &secret)),
+        format!("{:?}", cipher.query(op::Eq, &secret).via(Equality)),
+        format!("{:?}", cipher.query(op::Eq, &secret).on(&email_plan)),
+        format!(
+            "{:?}",
+            cipher.query(op::Between, &(secret.clone(), secret.clone()))
+        ),
         format!("{:?}", cipher.open(secret.clone())),
         format!("{:?}", cipher.open(FieldValues::new()).using(&users_plan)),
         format!(
@@ -1872,16 +1852,14 @@ async fn every_chain_honours_its_named_keyset() {
     let email: Encrypted<EmailTerms> = row.take("email").unwrap();
     let email_plan = users_plan.field("email").unwrap();
     let under_tenant = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&email_plan)
         .keyset("tenant")
         .await
         .unwrap();
     let under_default = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(under_tenant, email.terms.0);

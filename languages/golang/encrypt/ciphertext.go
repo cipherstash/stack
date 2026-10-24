@@ -15,7 +15,9 @@ import (
 // vitaminc-encrypt and must never scan or marshal where one belongs.
 //
 // A sealed field is one scalar — a string, a number, a bool or a []byte, or
-// a type defined over one — and seals as vitaminc's tagged leaf, which a
+// a type defined over one, or a pointer to either, whose nil is sealed as a
+// null as long as a value or stored as SQL NULL — and seals as vitaminc's
+// tagged leaf, which a
 // Rust record opens when its field is a Value (not a bare u32 or String). A struct, slice or map seals only as part of an opaque struct,
 // which crosses as one JSON document and is one leaf; stashgen refuses it
 // anywhere else, because the engine would seal it as a tree of leaves and a
@@ -50,8 +52,9 @@ func scanBytes(kind string, src any) ([]byte, error) {
 }
 
 // otherLeaf is a leaf of a kind the SDK does not store: the authenticated
-// markers for an absent value, an empty sequence and an empty map, which a
-// record field never produces. Decoding one is an error at the use site.
+// markers for an empty sequence and an empty map, which a record field never
+// produces. Decoding one is an error at the use site. An absent value is a
+// sealed null, a Ciphertext like any other value.
 type otherLeaf struct {
 	kind  vcffi.LeafKind
 	bytes []byte

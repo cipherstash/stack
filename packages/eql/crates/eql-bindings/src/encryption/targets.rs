@@ -10,8 +10,12 @@
 //! the typed call runs. Nothing here derives a term or seals a byte itself
 //! (ADR-0007: one engine, entered through a plan); the dispatch is generated
 //! from `eql-domains::CATALOG` by `eql-codegen` into
-//! [`crate::v3::targets`], beside the inventory, so a type cannot be in the
+//! [`crate::v4::targets`], beside the v4 family modules, so a type cannot be in the
 //! catalog and missing from the table.
+//!
+//! This module needs the `targets` feature, which also turns on Stack
+//! Encrypt's `dynamic` feature. The `stack-encrypt` feature alone gives only
+//! the typed EQL v4 types.
 //!
 //! The guest build that holds the EQL types links this module; the build
 //! without them has no `eql-bindings` and refuses a target name before
@@ -30,10 +34,10 @@
 //!   "family": "text",
 //!   "suffix": "Eq",
 //!   "plaintext": "string",
-//!   "sql_domain": "public.eql_v3_text_eq",
+//!   "sql_domain": "public.eql_v4_text_eq",
 //!   "indexes": ["eq"],
 //!   "query": "TextEqQuery",
-//!   "query_sql_domain": "eql_v3.query_text_eq",
+//!   "query_sql_domain": "eql_v4.query_text_eq",
 //!   "producible": true,
 //!   "reason": null
 //! }
@@ -51,6 +55,11 @@
 //! | `query_sql_domain` | The query twin's PostgreSQL domain, `null` likewise. |
 //! | `producible` | Whether the engine can produce this type today. [`encrypt`] and [`query`] refuse a type that is not, and a generator should too. |
 //! | `reason` | Why not, when `producible` is `false`; `null` when it is. |
+//!
+//! The engine adds an eleventh key, `operators`, when it lists the table:
+//! the operators it answers for the type, computed from the row by its own
+//! rules (`stack_encrypt::dynamic::TargetDescriptor`), so this table holds
+//! none of them.
 //!
 //! The table has one row per stored domain in catalog order; query twins are
 //! not rows (each row names its own). Adding a field is a wire change for
@@ -79,14 +88,15 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
+use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::kms::MaybeSend;
-use stack_encrypt::target::ExpectedContext;
+use stack_encrypt::target::{ExpectedContext, IndexSpec};
 use stack_encrypt::{
-    DecryptInto, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher,
+    Decrypt, DecryptInto, Encrypt, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending,
+    StackCipher,
 };
-use vitaminc_aead_value::{FfiValue, ValueKind};
 
-use crate::v3::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
+use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
 use crate::Identifier;
 
 /// One EQL type a plan may name as a field target: a row of [`targets`].
@@ -108,7 +118,7 @@ pub struct Target {
     /// or `None` while the family's encoding is unspecified. See
     /// [`plaintext_kind`](Self::plaintext_kind) for the parsed kind.
     pub plaintext: Option<&'static str>,
-    /// The stored value's PostgreSQL domain: `public.eql_v3_text_eq`.
+    /// The stored value's PostgreSQL domain: `public.eql_v4_text_eq`.
     pub sql_domain: &'static str,
     /// The indexes the type carries, by `IndexSpec::key()` name.
     pub indexes: &'static [&'static str],
@@ -129,6 +139,19 @@ impl Target {
     /// [`plaintext`](Self::plaintext).
     pub fn plaintext_kind(&self) -> Option<ValueKind> {
         self.plaintext.and_then(|name| name.parse().ok())
+    }
+
+    /// The options this type's match index is built under, for a type that
+    /// carries one (`TextMatch`): [`EqlMatch`](super::EqlMatch)'s, the one
+    /// match configuration every EQL type's filter is built under. `None`
+    /// for a type with no match index. Stack Encrypt answers `matches`
+    /// through the type with them, cutting the query's tokens for `verify`
+    /// as the stored filter was cut.
+    pub fn match_options(&self) -> Option<stack_encrypt::sem::MatchOptions> {
+        use stack_encrypt::sem::MatchConfig;
+        self.indexes
+            .contains(&"match")
+            .then(super::EqlMatch::options)
     }
 }
 
@@ -176,6 +199,15 @@ pub enum TargetError {
     NoQuery {
         /// The type's name.
         name: &'static str,
+    },
+    /// A query asked through an index the type does not carry
+    /// ([`Target::indexes`]), so it has no term to derive.
+    #[error("{name} carries no {index} index, so no query is answered through it")]
+    NoIndex {
+        /// The type's name.
+        name: &'static str,
+        /// The index asked for, by its `IndexSpec::key()`.
+        index: &'static str,
     },
     /// The field's context is not an EQL column: an [`Identifier`] is a
     /// two-segment label, table then column, and this label is not one.
@@ -257,17 +289,9 @@ impl Identifier {
     ///
     /// [`TargetError::Context`] for a label of any other length.
     pub fn from_label(label: &Label) -> Result<NonEmpty<Self>, TargetError> {
-        let context = || TargetError::Context {
+        Identifier::column_of(label).ok_or_else(|| TargetError::Context {
             label: label.to_string(),
-        };
-        let mut segments = label.segments();
-        let (Some(table), Some(column), None) = (segments.next(), segments.next(), segments.next())
-        else {
-            return Err(context());
-        };
-        // A label segment is plain, so never empty; the `Err` arm is the
-        // type's, not a case this function can reach.
-        Identifier::for_column(table, column).map_err(|_| context())
+        })
     }
 }
 
@@ -289,7 +313,7 @@ pub fn encrypt<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
@@ -311,7 +335,7 @@ pub fn decrypt<'a, K: 'static>(
     opener: impl Into<Opener<'a, K>>,
     context: &Label,
     stored: &[u8],
-) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
     decrypt_named(name, opener.into(), column, stored)
@@ -321,21 +345,52 @@ pub fn decrypt<'a, K: 'static>(
 /// matches stored values of the type under `context`'s column, as JSON
 /// bytes. A query derives no data key, so the pending settles without I/O.
 ///
+/// `index` is the type's index that answers the query's operator, one of
+/// [`Target::indexes`]; Stack Encrypt passes the one its
+/// `OpSpec::answered_by` picks. Most twins carry every term of their type
+/// whatever the index. `TextSearchQuery` carries the index's term alone
+/// (EQL v4's search query terms are optional), so `=` and `<` on text too
+/// short for a match term are answered, and `matches` on it is refused.
+///
 /// # Errors
 ///
-/// As [`encrypt`].
+/// As [`encrypt`], and [`TargetError::NoIndex`] for an index the type does
+/// not carry.
 pub fn query<'a, K: 'static>(
     name: &str,
+    index: &IndexSpec,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
-    if let Some(error) = no_query(target(name)) {
+    let Some(target) = target(name) else {
+        return Err(refuse(name));
+    };
+    if let Some(error) = no_query(Some(target)) {
         return Err(error);
     }
+    carries(target, index)?;
     let column = Identifier::from_label(context)?;
-    query_named(name, keyset, column, plaintext)
+    query_named(name, index, keyset, column, plaintext)
+}
+
+/// Refuse a query through an index the type does not carry.
+fn carries(target: &'static Target, index: &IndexSpec) -> Result<(), TargetError> {
+    match target.indexes.iter().find(|key| **key == index.key()) {
+        Some(_) => Ok(()),
+        None => Err(no_index(target.name, index)),
+    }
+}
+
+/// The refusal for a query on `name` through an index it does not carry.
+/// Also the generated query dispatch's fall-through for a twin built per
+/// index.
+pub(crate) fn no_index(name: &'static str, index: &IndexSpec) -> TargetError {
+    TargetError::NoIndex {
+        name,
+        index: index.key(),
+    }
 }
 
 /// Refuse a name the dispatch has no arm for, as the table explains it.
@@ -385,47 +440,146 @@ pub(crate) fn refuse(name: &str) -> TargetError {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for String {}
+    impl Sealed for i16 {}
+    impl Sealed for i32 {}
+    impl Sealed for i64 {}
+    impl Sealed for bool {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+    impl Sealed for crate::v4::plaintext::Date {}
+    impl Sealed for crate::v4::plaintext::Timestamp {}
+    impl Sealed for crate::v4::plaintext::Decimal {}
+    impl<S: super::Plaintext> Sealed for Option<S> {}
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
-/// back into the runtime value. Sealed: the implementations are exactly the
-/// plaintext types the catalog's producible families name, and the generated
-/// dispatch picks one per type. `Zeroize`, because [`from_value`](Self::from_value)
-/// copies the plaintext out of the runtime value's `Protected` buffer and
-/// the copy is wiped when it is dropped ([`run_target`] holds it in
-/// [`zeroize::Zeroizing`]), as the original is.
-pub trait Plaintext: sealed::Sealed + Sized + MaybeSend + zeroize::Zeroize + 'static {
+/// back into the engine's runtime plaintext, a [`ValueFrame`]. Sealed: the
+/// implementations are exactly the plaintext types the catalog's producible
+/// families name, and the generated dispatch picks one per type.
+/// `Zeroize`, because [`from_frame`](Self::from_frame) copies the plaintext
+/// out of the frame's `Protected` buffer and the copy is wiped when it is
+/// dropped (`run_target` holds it in [`zeroize::Zeroizing`]), as the frame
+/// is.
+pub trait Plaintext:
+    sealed::Sealed + Decrypt + Sized + MaybeSend + zeroize::Zeroize + 'static
+{
     /// The kind of value this plaintext is.
     const KIND: ValueKind;
-    /// Read the value as this plaintext, refusing any other kind.
-    fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError>;
-    /// The opened plaintext, as the runtime value.
-    fn into_value(self) -> FfiValue;
+
+    /// Read the value as this plaintext, refusing any other kind: the frame
+    /// is walked into this type's own decrypt sink once its kind is checked,
+    /// so nothing is narrowed or widened.
+    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+        let refused = || TargetError::Plaintext {
+            target,
+            expected: Self::KIND,
+            found: value.kind(),
+        };
+        if value.kind() != Some(Self::KIND) {
+            return Err(refused());
+        }
+        value.visit(Self::sink()).map_err(|_| refused())
+    }
+
+    /// The opened plaintext, as the engine's runtime plaintext.
+    ///
+    /// # Errors
+    ///
+    /// None for the plaintexts here, every one of which is in the engine's
+    /// value model; the `Result` is the frame writer's.
+    fn into_frame(self) -> Result<ValueFrame, Error>;
+}
+
+/// The frame of a plaintext, or the error a value vitaminc cannot write is.
+fn frame_of(value: impl Encrypt) -> Result<ValueFrame, Error> {
+    ValueFrame::of(value).map_err(|error| Error::Other(Box::new(error)))
 }
 
 impl Plaintext for String {
     const KIND: ValueKind = ValueKind::String;
 
-    fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError> {
-        let refused = |found| TargetError::Plaintext {
-            target,
-            expected: Self::KIND,
-            found,
-        };
-        match value {
-            // The bytes are UTF-8 by `Utf8String`'s construction invariant;
-            // checked rather than assumed because this is boundary code. One
-            // that fails the check is a string in name only, so it is
-            // reported as the bytes it is.
-            FfiValue::String(text) => std::str::from_utf8(text.risky_ref())
-                .map(str::to_owned)
-                .map_err(|_| refused(Some(ValueKind::Bytes))),
-            other => Err(refused(other.kind())),
+    /// The frame is written from the opened text, which is wiped when this
+    /// returns: the frame writer copies the text into its own `Protected`
+    /// buffer, and the opened `String` would otherwise go back to the
+    /// allocator with the plaintext still in it.
+    fn into_frame(self) -> Result<ValueFrame, Error> {
+        let text = zeroize::Zeroizing::new(self);
+        frame_of(text.as_str())
+    }
+}
+
+/// The scalar plaintexts read exactly their own kind: a JSON number is not
+/// narrowed or widened into another width, because the stored bytes must be
+/// the declared kind's.
+macro_rules! scalar_plaintext {
+    ($($ty:ident => $variant:ident),+ $(,)?) => {$(
+        impl Plaintext for $ty {
+            const KIND: ValueKind = ValueKind::$variant;
+
+            fn into_frame(self) -> Result<ValueFrame, Error> {
+                frame_of(self)
+            }
+        }
+    )+};
+}
+scalar_plaintext!(
+    i16 => Int16,
+    i32 => Int32,
+    i64 => Int64,
+    bool => Bool,
+    f32 => Float32,
+    f64 => Float64,
+);
+
+/// The date, timestamp and decimal plaintexts read exactly their own kind,
+/// and are range checked as they are read: a frame vitaminc's value model
+/// admits is always in range, so the check refuses nothing a binding can
+/// send. Each wipes itself on drop as well as inside `Zeroizing`.
+mod logical {
+    use super::*;
+    use crate::v4::plaintext::{Date, Decimal, Timestamp};
+    scalar_plaintext!(
+        Date => Date,
+        Timestamp => Timestamp,
+        Decimal => Decimal,
+    );
+}
+
+/// The plaintext of a type whose terms a null has (a storage-only type, or
+/// one whose only term is equality's), which may be absent: what the
+/// generated dispatch reads such a type's value as, opens it into and
+/// queries it with. A null seals as `None`, a typed null of the plaintext's
+/// type, as long as a value when the type is fixed width (vitaminc 0.8), and
+/// opens as a null; a value seals and opens exactly as the plaintext does,
+/// since `Some(v)` walks `v` itself. A null's equality term is the one every
+/// null shares (vitaminc-normalize 0.8), which a query of a `None` derives
+/// too. Whether a field may hold a null is the plan's to decide (its
+/// `"null"`), not the type's.
+impl<S: Plaintext> Plaintext for Option<S> {
+    const KIND: ValueKind = S::KIND;
+
+    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+        if value.kind().is_some() {
+            return S::from_frame(target, value).map(Some);
+        }
+        // No kind: a null, which reads as `None`, or something no plaintext
+        // is (an `undefined`, a passthrough), refused as `S` refuses it.
+        match value.visit(Self::sink()) {
+            Ok(None) => Ok(None),
+            _ => Err(TargetError::Plaintext {
+                target,
+                expected: Self::KIND,
+                found: None,
+            }),
         }
     }
 
-    fn into_value(self) -> FfiValue {
-        FfiValue::String(self.into())
+    fn into_frame(self) -> Result<ValueFrame, Error> {
+        match self {
+            Some(value) => value.into_frame(),
+            None => ValueFrame::from_bytes(&[stack_encrypt::dynamic::frame::tags::NULL])
+                .map_err(|error| Error::Other(Box::new(error))),
+        }
     }
 }
 
@@ -437,7 +591,7 @@ pub(crate) fn run_target<'a, T, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     column: NonEmpty<Identifier>,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
     T: EncryptFrom<S, Context = NonEmpty<Identifier>> + Serialize,
@@ -445,12 +599,38 @@ where
     K: 'static,
 {
     // The copy lives only until `encrypt_as` has cloned what it seals, and
-    // is wiped when this returns: the runtime value kept its bytes in
-    // `Protected`, and the copy is held to the same rule.
-    let plaintext = zeroize::Zeroizing::new(S::from_value(name, plaintext)?);
+    // is wiped when this returns: the frame kept its bytes in `Protected`,
+    // and the copy is held to the same rule.
+    let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
     Ok(keyset
         .encrypt_as::<S, T>(&plaintext, column)
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
+}
+
+/// Run the plan of `P`, a projection of the query twin `Q` that carries one
+/// term, and resolve to `Q`'s JSON bytes: the twin of a type whose query
+/// terms are optional, holding only the term `P` derives. The generated
+/// query dispatch picks `P` by the index that answers the query's operator.
+pub(crate) fn run_projected<'a, P, Q, S, K>(
+    name: &'static str,
+    keyset: &'a KeysetCipher<'_, K>,
+    column: NonEmpty<Identifier>,
+    plaintext: ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
+where
+    P: EncryptFrom<S, Context = NonEmpty<Identifier>> + Into<Q>,
+    Q: Serialize,
+    S: Plaintext,
+    K: 'static,
+{
+    // Wiped when this returns, as in `run_target`.
+    let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
+    Ok(keyset
+        .encrypt_as::<S, P>(&plaintext, column)
+        .try_map(|value| {
+            let query: Q = value.into();
+            serde_json::to_vec(&query).map_err(|error| Error::Other(Box::new(error)))
+        }))
 }
 
 /// Parse a stored EQL value as the target and describe opening it through
@@ -460,7 +640,7 @@ pub(crate) fn open_target<'a, T, S, K>(
     opener: Opener<'a, K>,
     column: NonEmpty<Identifier>,
     stored: &[u8],
-) -> Result<Pending<'a, FfiValue, K>, TargetError>
+) -> Result<Pending<'a, ValueFrame, K>, TargetError>
 where
     T: DeserializeOwned + DecryptInto<S, Context = ExpectedContext<Identifier>> + 'static,
     S: Plaintext,
@@ -478,7 +658,7 @@ where
         Opener::Client(cipher) => cipher.decrypt_as::<S, T>(value, expected),
         Opener::Keyset(keyset) => keyset.decrypt_as::<S, T>(value, expected),
     }
-    .map(S::into_value))
+    .try_map(S::into_frame))
 }
 
 #[cfg(test)]
@@ -520,7 +700,7 @@ mod tests {
         );
         assert_eq!(
             target("TextEq").map(|t| t.sql_domain),
-            Some("public.eql_v3_text_eq")
+            Some("public.eql_v4_text_eq")
         );
         assert_eq!(target("texteq"), None, "names match exactly");
         for t in targets() {
@@ -541,28 +721,13 @@ mod tests {
 
     #[test]
     fn a_producible_type_without_a_query_twin_answers_no_query() {
-        // No such type in the catalog today (`Text` is not producible), so
-        // the rule is pinned on a synthetic row; `refuse_query` on the live
-        // table falls through to `refuse`.
-        let storage_only = Target {
-            name: "Text",
-            family: "text",
-            suffix: "",
-            plaintext: Some("string"),
-            sql_domain: "public.eql_v3_text",
-            indexes: &[],
-            query: None,
-            query_sql_domain: None,
-            producible: true,
-            reason: None,
-        };
-        let leaked: &'static Target = Box::leak(Box::new(storage_only));
+        // `Text` is producible and storage-only, so it has no query twin.
         assert!(matches!(
-            no_query(Some(leaked)),
+            no_query(target("Text")),
             Some(TargetError::NoQuery { name: "Text" })
         ));
         assert_eq!(
-            no_query(Some(leaked)).unwrap().to_string(),
+            refuse_query("Text").to_string(),
             "Text answers no query: it is a storage-only type"
         );
         assert!(
@@ -570,47 +735,93 @@ mod tests {
             "TextEq answers a query"
         );
         assert!(
-            no_query(target("Text")).is_none(),
-            "an unproducible type is refused as that"
+            no_query(target("Json")).is_none(),
+            "an unproducible type without a query twin is refused as unproducible"
         );
         assert!(matches!(
-            refuse_query("Text"),
+            refuse_query("Json"),
             TargetError::Unproducible { .. }
         ));
         assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));
     }
 
     #[test]
+    fn a_query_through_an_index_the_type_lacks_is_refused() {
+        let text_eq = target("TextEq").unwrap();
+        assert!(carries(text_eq, &IndexSpec::Equality).is_ok());
+        let error = carries(text_eq, &IndexSpec::Ope).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                TargetError::NoIndex {
+                    name: "TextEq",
+                    index: "ope"
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "TextEq carries no ope index, so no query is answered through it"
+        );
+    }
+
+    #[test]
     fn refusals_name_the_type_and_its_reason() {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
-            refuse("TextOrdOre"),
-            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("CLLW")
+            refuse("Json"),
+            TargetError::Unproducible { name: "Json", reason } if reason.contains("a JSON value seals as a tree of leaves")
         ));
         assert!(producible("TextEq").is_ok());
+        assert!(producible("TextOrdOre").is_ok());
+        assert!(producible("DateOrdOre").is_ok());
+    }
+
+    fn frame<T: Encrypt>(value: T) -> ValueFrame {
+        ValueFrame::of(value).unwrap()
     }
 
     #[test]
     fn a_string_plaintext_is_read_exactly_and_nothing_else_is_converted() {
-        let text = String::from_value("TextEq", FfiValue::String("café".into())).unwrap();
+        let text = String::from_frame("TextEq", &frame("café")).unwrap();
         assert_eq!(text, "café");
         assert!(matches!(
-            String::from_value("TextEq", FfiValue::UInt64(34)),
+            String::from_frame("TextEq", &frame(34u64)),
             Err(TargetError::Plaintext {
                 target: "TextEq",
                 expected: ValueKind::String,
                 found: Some(ValueKind::UInt64)
             })
         ));
-        let error = String::from_value("TextEq", FfiValue::Null).unwrap_err();
+        let error = String::from_frame("TextEq", &frame(None::<i32>)).unwrap_err();
         assert!(matches!(error, TargetError::Plaintext { found: None, .. }));
         assert_eq!(
             error.to_string(),
             "TextEq is produced from a string plaintext, not a value with no kind"
         );
+        assert_eq!(
+            String::from("x").into_frame().unwrap().risky_ref(),
+            frame("x").risky_ref()
+        );
+    }
+
+    /// A scalar plaintext reads its own kind and width only, and writes the
+    /// frame of the value it holds.
+    #[test]
+    fn a_scalar_plaintext_is_read_at_its_own_width() {
+        let read = i32::from_frame("IntegerEq", &frame(-7i32)).unwrap();
+        assert_eq!(read, -7);
         assert!(matches!(
-            String::from("x").into_value(),
-            FfiValue::String(s) if s.risky_ref() == b"x"
+            i32::from_frame("IntegerEq", &frame(-7i64)),
+            Err(TargetError::Plaintext {
+                found: Some(ValueKind::Int64),
+                ..
+            })
         ));
+        assert_eq!(
+            9i64.into_frame().unwrap().risky_ref(),
+            frame(9i64).risky_ref()
+        );
     }
 }

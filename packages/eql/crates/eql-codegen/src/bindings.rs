@@ -11,9 +11,11 @@ use std::path::{Path, PathBuf};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use eql_domains::{Domain, DomainFamily, Term, CATALOG, ENVELOPE_KEYS};
+use eql_domains::{Domain, DomainFamily, Term, CATALOG, ENVELOPE_KEYS, RANGE_BOUND_KEYS};
 
 use crate::consts::RUST_GENERATED_MARKER;
+use crate::context::v4_optional_query_terms;
+use crate::render::EqlVersion;
 use crate::writer::{
     ensure_generated_paths_writable, normalized_set, remove_generated_orphans,
     write_generated_file, GeneratedKind, WriteError,
@@ -83,6 +85,23 @@ fn capability_label(domain_name: &str) -> &'static str {
     }
 }
 
+/// The schema-qualified domain a payload struct binds, e.g.
+/// `public.eql_v4_integer_eq`. The bindings name it literally, per version,
+/// where the SQL surface writes the `{{prefix}}` placeholder.
+fn domain_name(version: EqlVersion, full: &str) -> String {
+    format!("public.{}_{full}", version.prefix())
+}
+
+/// [`domain_name`] for the v3 payload enums, which describe v3 only.
+fn v3_domain_name(full: &str) -> String {
+    domain_name(EqlVersion::V3, full)
+}
+
+/// The module a version's bindings live in: `v3`, `v4`.
+fn module_name(version: EqlVersion) -> String {
+    format!("v{}", version.number())
+}
+
 /// Render the catalog-derived struct doc lines for a domain: a summary line
 /// (`` `public.<name>` — <label>. ``) and a detail line listing the supported
 /// SQL operators and the required payload keys. Every part is derived from data
@@ -91,14 +110,14 @@ fn capability_label(domain_name: &str) -> &'static str {
 /// `Term::term_json_keys`) — so it stays deterministic and cannot drift from the
 /// payload shape. No free-form prose and no field docs: per-field semantics live
 /// on the shared term newtypes (`terms.rs`) and per-family caveats in `mod.rs`.
-fn struct_doc_lines(full: &str, domain: &Domain) -> [String; 3] {
+fn struct_doc_lines(version: EqlVersion, full: &str, domain: &Domain) -> [String; 3] {
     // Leading space matches the `///` doc-comment convention (`#[doc = " …"]`):
     // rustfmt renders it as `/// …` and ts-rs as ` * …`. Without it the emitted
     // JSDoc/`///` lose the space after the prefix (`*`text`). schemars strips the
     // single leading space, so JSON Schema `description` is unaffected.
     let summary = format!(
         " `{}` — {}.",
-        crate::context::domain_name(full),
+        domain_name(version, full),
         capability_label(domain.name)
     );
 
@@ -159,13 +178,15 @@ fn reference_docs(family: &DomainFamily) -> TokenStream {
 /// no field docs. Term fields come from `Term::payload_terms`, matching on the
 /// enum for the field key and its newtype. The `schema` method returns
 /// `schemars::Schema` (1.x).
-fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
+fn render_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) -> TokenStream {
     let full = domain.full_name(family.name);
     let ident = format_ident!("{}", domain.struct_ident(family.name));
-    let sql_domain = crate::context::domain_name(&full);
-    let [doc_summary, doc_blank, doc_detail] = struct_doc_lines(&full, domain);
+    let sql_domain = domain_name(eql, &full);
+    let [doc_summary, doc_blank, doc_detail] = struct_doc_lines(eql, &full, domain);
     let reference = reference_docs(family);
-    let (encryption, version, context) = encryption_attrs(family, domain, false);
+    let (encryption, version, context) = encryption_attrs(eql, family, domain, false);
+    let ts_export = ts_export(eql);
+    let schema_id = schema_id_override(eql);
 
     // The envelope triple is hardcoded (not looped over `ENVELOPE_KEYS`) because
     // each key maps to a distinct Rust type: `v: SchemaVersion`, `i: Identifier`,
@@ -178,8 +199,9 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     fields.extend(quote! { pub c: Ciphertext, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
-        let tid = format_ident!("{}", term.binding_newtype());
-        fields.extend(quote! { pub #fid: #tid, });
+        let ty = term_type(eql, family, term, stored_term_newtype(eql, domain, term));
+        let attrs = term_field_attrs(eql, term, false);
+        fields.extend(quote! { #attrs pub #fid: #ty, });
     }
 
     // The domain's required term keys, threaded through the trait so
@@ -196,7 +218,7 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
         #reference
         #encryption
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
-        #[ts(export, export_to = "v3/")]
+        #ts_export
         #[serde(deny_unknown_fields)]
         pub struct #ident {
             #fields
@@ -221,6 +243,7 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
             fn schema(&self) -> Schema {
                 schema_for!(#ident)
             }
+            #schema_id
         }
     }
 }
@@ -232,19 +255,21 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
 /// (or any storage key) a parse error, mirroring the SQL `query_<name>` domain
 /// CHECK. Emitted only for term-bearing domains: a storage-only
 /// domain has no operators, so no query operand.
-fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
+fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) -> TokenStream {
     let query_name = domain.query_name(family.name);
     let ident = format_ident!("{}Query", domain.struct_ident(family.name));
     // Query operands live in the public-API schema, NOT `public`: they are
     // never valid column types.
-    let sql_domain = format!("eql_v3.{query_name}");
+    let sql_domain = format!("{}.{query_name}", eql.prefix());
     let reference = reference_docs(family);
-    let (encryption, version, context) = encryption_attrs(family, domain, true);
+    let (encryption, version, context) = encryption_attrs(eql, family, domain, true);
+    let ts_export = ts_export(eql);
+    let schema_id = schema_id_override(eql);
 
     // Query doc: same capability label + operator union as storage, but the
     // required-key list drops `c` (query operands omit the ciphertext).
     let summary = format!(
-        " `eql_v3.{query_name}` — {} query operand.",
+        " `{sql_domain}` — {} query operand.",
         capability_label(domain.name)
     );
     let ops = Term::operators_for_terms(domain.terms);
@@ -253,13 +278,30 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
         .map(|o| format!("`{o}`"))
         .collect::<Vec<_>>()
         .join(" ");
-    let keys_str = ["v", "i"]
-        .into_iter()
-        .chain(Term::term_json_keys(domain.terms))
-        .map(|k| format!("`{k}`"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let detail = format!(" Operators: {ops_str}. Required keys: {keys_str}.");
+    let quoted = |keys: &mut dyn Iterator<Item = &str>| {
+        keys.map(|k| format!("`{k}`")).collect::<Vec<_>>().join(" ")
+    };
+    // An EQL v4 query whose terms are optional carries the one its operator
+    // reads (ADR-0002, amended 2026-10-19): each term is an `Option`, absent
+    // from the JSON when `None`, and the SQL domain requires one of them.
+    let optional = eql == EqlVersion::V4 && v4_optional_query_terms(domain);
+    let detail = if optional {
+        format!(
+            " Operators: {ops_str}. Required keys: {}, and at least one of {}: a query carries \
+             the term its operator reads.",
+            quoted(&mut ["v", "i"].into_iter()),
+            quoted(&mut Term::term_json_keys(domain.terms).into_iter()),
+        )
+    } else {
+        format!(
+            " Operators: {ops_str}. Required keys: {}.",
+            quoted(
+                &mut ["v", "i"]
+                    .into_iter()
+                    .chain(Term::term_json_keys(domain.terms))
+            )
+        )
+    };
 
     // Envelope minus `c`: `v`/`i` only. Kept in lockstep with the storage
     // struct's envelope triple (see `envelope_fields_match_catalog_keys`).
@@ -268,10 +310,20 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     fields.extend(quote! { #context pub i: Identifier, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
-        let tid = format_ident!("{}", term.binding_newtype());
-        fields.extend(quote! { pub #fid: #tid, });
+        let ty = term_type(eql, family, term, term.binding_newtype());
+        let attrs = term_field_attrs(eql, term, optional);
+        fields.extend(if optional {
+            quote! {
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                #attrs
+                pub #fid: Option<#ty>,
+            }
+        } else {
+            quote! { #attrs pub #fid: #ty, }
+        });
     }
     let term_keys = Term::term_json_keys(domain.terms);
+    let projections = render_query_projections(eql, family, domain);
 
     quote! {
         #[doc = #summary]
@@ -280,7 +332,7 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
         #reference
         #encryption
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
-        #[ts(export, export_to = "v3/")]
+        #ts_export
         #[serde(deny_unknown_fields)]
         pub struct #ident {
             #fields
@@ -305,105 +357,608 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
             fn schema(&self) -> Schema {
                 schema_for!(#ident)
             }
+            #schema_id
+        }
+
+        #projections
+    }
+}
+
+/// One range query-operand struct + its `DomainType` impl: the operand of
+/// `eql_v4.between(column, range)` for the ordering term `term`, holding both
+/// bounds of one `BETWEEN` (ADR-0009 decision 7). EQL v4 only: no v3 domain
+/// carries a range, so [`render_family_bindings`] emits these for v4 alone.
+///
+/// The fields are the envelope's `v` and `i`, then the bounds under
+/// [`RANGE_BOUND_KEYS`], each the term type the family's single-bound query
+/// struct for the same term holds (`OreBlockTerm<i32>` for an integer's `ob`,
+/// `OpeTerm<i32>` for its `op`, [`term_type`]):
+/// the single-bound domain's `ob` or `op` value, in a `{v, i, lo, hi}`
+/// envelope. No struct derives Stack Encrypt's traits yet: the ordered types
+/// it ranges over are not producible, and the engine does not build the
+/// envelope (see [`RANGE_BOUND_KEYS`]).
+fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
+    let eql = crate::range::RANGE_VERSION;
+    let ident = format_ident!("{}", family.range_struct_ident(term));
+    let sql_domain = crate::range::range_sql_domain(family, term);
+    let reference = reference_docs(family);
+    let schema_id = schema_id_override(eql);
+    let term_name = crate::range::term_label(term);
+    let summary =
+        format!(" `{sql_domain}` — {term_name} range query operand: both bounds of one `BETWEEN`.");
+    let columns = family
+        .range_columns(term)
+        .iter()
+        .map(|d| format!("`{}`", domain_name(eql, &d.full_name(family.name))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let keys_str = crate::range::range_required_keys()
+        .map(|k| format!("`{k}`"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let detail = format!(
+        " Function: `{prefix}.between(column, range)`, both bounds included. Columns: \
+         {columns}. Required keys: {keys_str}.",
+        prefix = eql.prefix()
+    );
+    let ty = term_type(eql, family, term, term.binding_newtype());
+    let attrs = term_field_attrs(eql, term, false);
+    let [lo, hi] = RANGE_BOUND_KEYS.map(|k| format_ident!("{k}"));
+    let bound_keys = RANGE_BOUND_KEYS;
+
+    quote! {
+        #[doc = #summary]
+        #[doc = ""]
+        #[doc = #detail]
+        #reference
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
+        #[serde(deny_unknown_fields)]
+        pub struct #ident {
+            pub v: SchemaVersion,
+            pub i: Identifier,
+            #attrs
+            pub #lo: #ty,
+            #attrs
+            pub #hi: #ty,
+        }
+
+        impl DomainType for #ident {
+            fn sql_domain_static() -> &'static str {
+                #sql_domain
+            }
+            fn sql_domain(&self) -> &'static str {
+                Self::sql_domain_static()
+            }
+            fn term_json_keys_static() -> Option<&'static [&'static str]> {
+                Some(&[#(#bound_keys),*])
+            }
+            fn term_json_keys(&self) -> Option<&'static [&'static str]> {
+                Self::term_json_keys_static()
+            }
+            fn parse_value(&self, value: &serde_json::Value) -> Result<(), serde_json::Error> {
+                #ident::deserialize(value).map(|_| ())
+            }
+            fn schema(&self) -> Schema {
+                schema_for!(#ident)
+            }
+            #schema_id
         }
     }
 }
 
-/// The `(family, domain)` pairs whose generated structs carry the opt-in
-/// `stack-encrypt` derives. Text equality is the first; every other stored
-/// domain has a reason in [`encryption_gap`], and a test holds the two
-/// together so a new domain cannot arrive without either a derive or a reason.
-pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[("text", "eq")];
+/// The newtype of a stored struct's `term` field. The term's own
+/// ([`Term::binding_newtype`]), except the match term of an EQL v4 search
+/// domain (one whose query terms are optional, [`v4_optional_query_terms`]):
+/// `SearchBloomFilter`, the same JSON as `BloomFilter`, into which Stack
+/// Encrypt derives the empty filter for text too short for a 3-gram instead
+/// of refusing it. Such a value is still found by `=` and `<` through its
+/// other terms; a query, and `TextMatch`, which has no other term, keep
+/// `BloomFilter` and keep refusing that text.
+pub fn stored_term_newtype(eql: EqlVersion, domain: &Domain, term: Term) -> &'static str {
+    if eql == EqlVersion::V4 && term == Term::Bloom && v4_optional_query_terms(domain) {
+        "SearchBloomFilter"
+    } else {
+        term.binding_newtype()
+    }
+}
+
+/// The Rust type of a struct field carrying `term`, in a struct of
+/// `family`. An EQL v4 order term is Stack Encrypt's own term over the
+/// family's plaintext, as [`Term::v4_format`] names it (`OreBlockTerm<Date>`,
+/// `OpeTerm<i32>`): typed by its scheme and by what it orders, and checked
+/// for its structure when it is read. Any other term is `newtype`, the
+/// shared binding newtype the caller picked.
+pub fn term_type(
+    eql: EqlVersion,
+    family: &DomainFamily,
+    term: Term,
+    newtype: &'static str,
+) -> TokenStream {
+    match (eql, term.v4_format()) {
+        (EqlVersion::V4, Some(format)) => {
+            let ty = format_ident!("{}", format.rust_type);
+            let (_, rust) = plaintext_of(family.name)
+                .expect("a family with an order term names its Rust plaintext");
+            let plaintext: syn::Type =
+                syn::parse_str(rust).expect("a family's Rust plaintext is a type path");
+            quote!(#ty<#plaintext>)
+        }
+        _ => {
+            let ty = format_ident!("{newtype}");
+            quote!(#ty)
+        }
+    }
+}
+
+/// The attributes a field of [`term_type`] needs: none for a binding
+/// newtype, and for a Stack Encrypt term, its JSON shape for TypeScript and
+/// JSON Schema (`OreBlockHex`, `OpeHex`), which describe the hex string the
+/// term serializes as. `optional` for a field that holds an `Option`.
+fn term_field_attrs(eql: EqlVersion, term: Term, optional: bool) -> TokenStream {
+    match (eql, term.v4_format()) {
+        (EqlVersion::V4, Some(format)) => {
+            let shape = if optional {
+                format!("Option<{}>", format.json_shape)
+            } else {
+                format.json_shape.to_string()
+            };
+            quote! {
+                #[ts(as = #shape)]
+                #[schemars(with = #shape)]
+            }
+        }
+        _ => TokenStream::new(),
+    }
+}
+
+/// What a family module imports for its terms, in first-use order: the
+/// names it takes from its version's `terms` module, `Ciphertext` first
+/// (each stored struct's newtype, [`stored_term_newtype`], each query
+/// struct's, [`Term::binding_newtype`], and a v4 order term's JSON shape),
+/// and the Stack Encrypt term types it names (`OreBlockTerm`, `OpeTerm`).
+struct FamilyTerms {
+    terms: Vec<&'static str>,
+    sem: Vec<&'static str>,
+}
+
+fn family_terms<'d>(eql: EqlVersion, domains: impl Iterator<Item = &'d Domain>) -> FamilyTerms {
+    fn add(list: &mut Vec<&'static str>, name: &'static str) {
+        if !list.contains(&name) {
+            list.push(name);
+        }
+    }
+    let mut used = FamilyTerms {
+        terms: vec!["Ciphertext"],
+        sem: Vec::new(),
+    };
+    for d in domains {
+        for term in Term::payload_terms(d.terms) {
+            match (eql, term.v4_format()) {
+                (EqlVersion::V4, Some(format)) => {
+                    add(&mut used.terms, format.json_shape);
+                    add(&mut used.sem, format.rust_type);
+                }
+                _ => {
+                    add(&mut used.terms, stored_term_newtype(eql, d, term));
+                    add(&mut used.terms, term.binding_newtype());
+                }
+            }
+        }
+    }
+    used
+}
+
+/// The name of the projection of `domain`'s query twin that carries `term`
+/// alone: `TextSearchEqualityQuery`, `TextSearchOrderQuery`,
+/// `TextSearchMatchQuery`. Named by what the term answers, not by its key,
+/// so the order projection of the ORE twin would read `…OrderQuery` too.
+pub fn query_projection_ident(family: &DomainFamily, domain: &Domain, term: Term) -> String {
+    let role = match term {
+        Term::Hm => "Equality",
+        Term::Ore | Term::Ope => "Order",
+        Term::Bloom => "Match",
+    };
+    format!("{}{role}Query", domain.struct_ident(family.name))
+}
+
+/// For a producible EQL v4 query twin whose terms are optional, one
+/// projection per term: a struct carrying the envelope and that term alone,
+/// deriving `EncryptFrom` so it derives only that term, and converting into
+/// the twin. Stack Encrypt builds the twin through the projection of the
+/// index that answers the query's operator, so a query never derives a term
+/// its operator does not read (a match term, which text shorter than one
+/// 3-gram cannot make, is derived only for `@@`). Not domains: no
+/// `DomainType`, not in the inventory. Empty for every other domain.
+fn render_query_projections(
+    eql: EqlVersion,
+    family: &DomainFamily,
+    domain: &Domain,
+) -> TokenStream {
+    if eql != EqlVersion::V4
+        || !v4_optional_query_terms(domain)
+        || encryption_gap(eql, family, domain).is_some()
+    {
+        return TokenStream::new();
+    }
+    let twin = format_ident!("{}Query", domain.struct_ident(family.name));
+    let query_domain = format!("{}.{}", eql.prefix(), domain.query_name(family.name));
+    let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
+    let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
+    let shown = rust.rsplit("::").next().unwrap_or(rust);
+    let terms = Term::payload_terms(domain.terms);
+    terms
+        .iter()
+        .map(|&term| {
+            let ident = format_ident!("{}", query_projection_ident(family, domain, term));
+            let fid = format_ident!("{}", term.json_key());
+            let tid = term_type(eql, family, term, term.binding_newtype());
+            let ops = Term::operators_for_terms(domain.terms)
+                .into_iter()
+                .filter(|op| Term::extractor_for_operator(domain.terms, op) == Some(term.extractor()))
+                .map(|op| format!("`{op}`"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let summary = format!(
+                " The `{query_domain}` query operand for {ops}: the `{}` term alone.",
+                term.json_key()
+            );
+            let detail = format!(
+                " Implements `EncryptFrom<{shown}>`, deriving only this term, and converts into \
+                 [`{twin}`], which is what is bound in SQL."
+            );
+            let others: TokenStream = terms
+                .iter()
+                .filter(|&&other| other != term)
+                .map(|other| {
+                    let oid = format_ident!("{}", other.json_key());
+                    quote!(#oid: None,)
+                })
+                .collect();
+            quote! {
+                #[doc = #summary]
+                #[doc = ""]
+                #[doc = #detail]
+                #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
+                #[derive(stack_encrypt::EncryptFrom)]
+                #[stash(plaintext = #plaintext_ty)]
+                #[derive(Clone, Debug, PartialEq)]
+                pub struct #ident {
+                    #[stash(default)]
+                    pub v: SchemaVersion,
+                    #[stash(context_field)]
+                    pub i: Identifier,
+                    pub #fid: #tid,
+                }
+
+                impl From<#ident> for #twin {
+                    fn from(query: #ident) -> Self {
+                        #twin {
+                            v: query.v,
+                            i: query.i,
+                            #fid: Some(query.#fid),
+                            #others
+                        }
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+/// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
+/// `stack-encrypt` derives: the storage and equality domains of every family
+/// whose plaintext eql-bindings names (`plaintext_of`), the ordered domains
+/// (`ord` and `ord_ope` with an OPE term, `ord_ore` with a block ORE term) of
+/// those whose order terms the engine derives, and text match and search
+/// (`search` and `search_ore`). Every other stored domain has a reason
+/// in [`encryption_gap`], and a test holds the two together so a new domain
+/// cannot arrive without either a derive or a reason.
+///
+/// Listed in catalog order, which is the order the generated target table
+/// lists them in.
+pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
+    ("integer", ""),
+    ("integer", "eq"),
+    ("integer", "ord_ore"),
+    ("integer", "ord"),
+    ("integer", "ord_ope"),
+    ("smallint", ""),
+    ("smallint", "eq"),
+    ("smallint", "ord_ore"),
+    ("smallint", "ord"),
+    ("smallint", "ord_ope"),
+    ("bigint", ""),
+    ("bigint", "eq"),
+    ("bigint", "ord_ore"),
+    ("bigint", "ord"),
+    ("bigint", "ord_ope"),
+    ("date", ""),
+    ("date", "eq"),
+    ("date", "ord_ore"),
+    ("date", "ord"),
+    ("date", "ord_ope"),
+    ("timestamp", ""),
+    ("timestamp", "eq"),
+    ("timestamp", "ord_ore"),
+    ("timestamp", "ord"),
+    ("timestamp", "ord_ope"),
+    ("numeric", ""),
+    ("numeric", "eq"),
+    ("numeric", "ord_ore"),
+    ("numeric", "ord"),
+    ("numeric", "ord_ope"),
+    ("text", ""),
+    ("text", "eq"),
+    ("text", "match"),
+    ("text", "ord_ore"),
+    ("text", "ord"),
+    ("text", "ord_ope"),
+    ("text", "search_ore"),
+    ("text", "search"),
+    ("boolean", ""),
+    ("real", ""),
+    ("real", "eq"),
+    ("real", "ord_ore"),
+    ("real", "ord"),
+    ("real", "ord_ope"),
+    ("double", ""),
+    ("double", "eq"),
+    ("double", "ord_ore"),
+    ("double", "ord"),
+    ("double", "ord_ope"),
+];
+
+/// Why no `eql_v3` struct derives Stack Encrypt's traits.
+pub const V3_ENCRYPTION_GAP: &str =
+    "Stack Encrypt produces EQL v4 only: its output is not byte-for-byte compatible with \
+     cipherstash-client's, which writes the eql_v3 domains";
+
+/// The plaintext a family's v4 domains are produced from: the vitaminc
+/// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
+/// derive and the by-name dispatch name. `None` for a family eql-bindings
+/// names no Rust plaintext type for yet. A date, a timestamp and a decimal
+/// are Stack Encrypt's own types (`stack_encrypt::value`, re-exported as
+/// `v4::plaintext`), which can be wiped where chrono's and rust_decimal's
+/// cannot.
+pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
+    Some(match family {
+        "text" => ("string", "String"),
+        "smallint" => ("int16", "i16"),
+        "integer" => ("int32", "i32"),
+        "bigint" => ("int64", "i64"),
+        "boolean" => ("bool", "bool"),
+        "real" => ("float32", "f32"),
+        "double" => ("float64", "f64"),
+        "date" => ("date", "crate::v4::plaintext::Date"),
+        "timestamp" => ("timestamp", "crate::v4::plaintext::Timestamp"),
+        "numeric" => ("decimal", "crate::v4::plaintext::Decimal"),
+        _ => return None,
+    })
+}
 
 /// Why a stored domain carries no `stack-encrypt` derive yet, or `None` when
 /// it does. Derived from the catalog's own facts (family, terms), not from a
-/// per-domain list, so it answers for a domain added tomorrow.
-pub fn encryption_gap(family: &DomainFamily, domain: &Domain) -> Option<&'static str> {
+/// per-domain list, so it answers for a domain added tomorrow. No `eql_v3`
+/// domain carries one ([`V3_ENCRYPTION_GAP`]).
+pub fn encryption_gap(
+    version: EqlVersion,
+    family: &DomainFamily,
+    domain: &Domain,
+) -> Option<&'static str> {
+    if version == EqlVersion::V3 {
+        return Some(V3_ENCRYPTION_GAP);
+    }
     if ENCRYPTION_DOMAINS.contains(&(family.name, domain.name)) {
         return None;
     }
-    Some(if family.name != "text" {
-        "only the text family's plaintext encoding is specified for the stack-encrypt \
-         producer profile; the numeric, date, boolean and JSON encodings are plan section 2 \
-         and have not been settled"
-    } else if domain.terms.iter().any(|t| !matches!(t, Term::Hm)) {
-        "ordering and match terms need stack-encrypt operations that have not landed \
-         (block-ORE and OPE term derivation, bloom-filter match terms)"
-    } else if domain.terms.is_empty() {
-        "the storage-only text domain follows once TextEq is proven end to end in \
-         PostgreSQL and the interoperability matrix is recorded"
+    Some(if !domain.is_scalar() {
+        "the JSON index is a new operation in the engine (#1060)"
+    } else if family.name == "json" {
+        "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document \
+         becomes one sealed leaf is not decided"
+    } else if plaintext_of(family.name).is_none() {
+        "eql-bindings has no Rust plaintext type for this family yet: the engine and the Go SDK \
+         carry the kind"
     } else {
-        // Reached by an equality-only text domain other than `eq`: nothing in
-        // the catalog today, but the branch above would otherwise call it
-        // storage-only, which it is not.
-        "an equality-only text domain carries the same term TextEq does and derives the \
-         same way; it is not listed in ENCRYPTION_DOMAINS yet"
+        // Reached by any unlisted domain of a family whose plaintext is
+        // specified (a domain added to such a family, say): nothing in the
+        // catalog today.
+        "this domain derives the way its family's other domains do; it is not listed in \
+         ENCRYPTION_DOMAINS yet"
     })
 }
 
 /// Keep attributes in the generator so regeneration preserves the opt-in
 /// derives without enabling other domains before their operations and
-/// plaintext contracts are supported ([`ENCRYPTION_DOMAINS`]).
+/// plaintext contracts are supported ([`ENCRYPTION_DOMAINS`]). Only a v4
+/// struct gets them, and the v4 module exists only with the `stack-encrypt`
+/// feature (`eql_bindings::v4`), so the attributes are not gated again.
 fn encryption_attrs(
+    version: EqlVersion,
     family: &DomainFamily,
     domain: &Domain,
     query: bool,
 ) -> (TokenStream, TokenStream, TokenStream) {
-    if encryption_gap(family, domain).is_some() {
+    if encryption_gap(version, family, domain).is_some() {
         return Default::default();
     }
-    let decrypt = (!query).then(
-        || quote!(#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]),
-    );
-    let plaintext = if query {
-        " Plaintext input: [`String`]. With the `stack-encrypt` feature, implements \
-         `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
-    } else {
-        " Plaintext input and decrypted output: [`String`]. With the `stack-encrypt` \
-         feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+    let decrypt = (!query).then(|| quote!(#[derive(stack_encrypt::DecryptInto)]));
+    let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
+    let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
+    let shown = rust.rsplit("::").next().unwrap_or(rust);
+    let plaintext_doc = |named: &str| {
+        if query {
+            let terms = match (
+                domain.terms.contains(&Term::Bloom),
+                domain.terms.contains(&Term::Hm),
+                domain.terms.contains(&Term::Ope) || domain.terms.contains(&Term::Ore),
+            ) {
+                (true, _, _) => "match",
+                (false, true, true) => "equality and order",
+                (false, false, true) => "order",
+                _ => "equality",
+            };
+            let null = if nullable_terms(domain) {
+                format!(
+                    ", and `EncryptFrom<Option<{shown}>>`, whose `None` is the query of a stored \
+                     null"
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
+                 query terms{null}. Query operands do not decrypt."
+            )
+        } else if nullable_terms(domain) {
+            // A null is padded to a value's length only where values have
+            // one length; text's ciphertext is as long as the text.
+            let length = if family.name == "text" {
+                "a `None` is sealed as a null that is not padded, since text has no \
+                 one length, so its length may show that the value is absent"
+            } else {
+                "a `None` is sealed as long as a value"
+            };
+            format!(
+                " Plaintext input and decrypted output: {named}. Implements \
+                 `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`, and both for \
+                 `Option<{shown}>`: {length}, and its terms are a null's, which equality \
+                 has and no other index does."
+            )
+        } else {
+            format!(
+                " Plaintext input and decrypted output: {named}. Implements \
+                 `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`."
+            )
+        }
     };
+    let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    // A type whose terms a null has (none, or equality's alone) may be
+    // sealed, or queried, from an `Option` too (#1298).
+    let nullable =
+        nullable_terms(domain).then(|| quote!(#[stash(plaintext = Option<#plaintext_ty>)]));
+    // The twin of an optional-term query is built by its projections
+    // (`render_query_projections`), one per index, so it carries no derive.
+    if query && v4_optional_query_terms(domain) {
+        let projections = Term::payload_terms(domain.terms)
+            .into_iter()
+            .map(|term| format!("[`{}`]", query_projection_ident(family, domain, term)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let built = format!(
+            " Plaintext input: [`{shown}`]({rust}), through one projection per index — \
+             {projections} — each `EncryptFrom<{shown}>` and `Into<Self>`: a query carries the \
+             term of the index that answers its operator. Query operands do not decrypt."
+        );
+        return (
+            quote! {
+                #[doc = ""]
+                #[doc = #built]
+            },
+            quote!(),
+            quote!(),
+        );
+    }
     (
         quote! {
-            #[cfg_attr(doc, doc = "")]
-            #[cfg_attr(doc, doc = #plaintext)]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
-            #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+            #[doc = ""]
+            #[doc = #plaintext]
+            #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
+            #[doc = " See the [complete encryption example](crate::encryption#example)."]
+            #[derive(stack_encrypt::EncryptFrom)]
             #decrypt
-            #[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
+            #[stash(plaintext = #plaintext_ty)]
+            #nullable
         },
-        quote!(#[cfg_attr(feature = "stack-encrypt", stash(default))]),
-        quote!(#[cfg_attr(feature = "stack-encrypt", stash(context_field))]),
+        quote!(#[stash(default)]),
+        quote!(#[stash(context_field)]),
     )
+}
+
+/// Whether a null has every term the domain carries, so its type may be
+/// sealed or queried from an `Option` of its plaintext (#1298): a null has
+/// an equality term (`hm`, vitaminc-normalize 0.8) and no other.
+pub(crate) fn nullable_terms(domain: &Domain) -> bool {
+    domain.terms.iter().all(|term| *term == Term::Hm)
+}
+
+/// A v4 struct's `DomainType::schema_id` overrides: the trait's defaults name
+/// the v3 schema base. Both forms, since the inventory's `PhantomData` handles
+/// reach the type-level one.
+fn schema_id_override(version: EqlVersion) -> TokenStream {
+    match version {
+        EqlVersion::V3 => quote!(),
+        EqlVersion::V4 => quote! {
+            fn schema_id_base_static() -> &'static str {
+                super::SCHEMA_ID_BASE
+            }
+            fn schema_id(&self) -> String {
+                format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
+            }
+        },
+    }
+}
+
+/// The ts-rs export attribute. The v3 structs export to the committed
+/// TypeScript bindings; the v4 structs derive `TS` but export nothing until
+/// `@cipherstash/eql` 4.0 decides how it presents them.
+fn ts_export(version: EqlVersion) -> TokenStream {
+    match version {
+        EqlVersion::V3 => quote!(#[ts(export, export_to = "v3/")]),
+        EqlVersion::V4 => quote!(),
+    }
+}
+
+/// The `use` header every family module shares: the term types the family
+/// names, the trait, and the version's own `SchemaVersion`.
+fn family_imports(version: EqlVersion, used: &FamilyTerms) -> TokenStream {
+    let used_idents: Vec<_> = used.terms.iter().map(|t| format_ident!("{t}")).collect();
+    let sem = (!used.sem.is_empty()).then(|| {
+        let idents = used.sem.iter().map(|t| format_ident!("{t}"));
+        quote!(use stack_encrypt::sem::{ #(#idents),* };)
+    });
+    let module = format_ident!("{}", module_name(version));
+    quote! {
+        use schemars::{schema_for, JsonSchema, Schema};
+        #sem
+
+        use crate::#module::terms::{ #(#used_idents),* };
+        use crate::#module::{DomainType, SchemaVersion};
+        use crate::Identifier;
+        use serde::{Deserialize, Serialize};
+        use ts_rs::TS;
+    }
 }
 
 /// Render a whole family module (`integer.rs`, `text.rs`, …): the import header
 /// (exactly the term newtypes the family uses) followed by every domain's
 /// storage struct + impl, then a query twin for each term-bearing domain.
-pub fn render_family_bindings(family: &DomainFamily) -> String {
-    let mut used: Vec<&'static str> = vec!["Ciphertext"];
-    for d in family.domains {
-        for term in Term::payload_terms(d.terms) {
-            let t = term.binding_newtype();
-            if !used.contains(&t) {
-                used.push(t);
-            }
-        }
-    }
-    let used_idents: Vec<_> = used.iter().map(|t| format_ident!("{t}")).collect();
+pub fn render_family_bindings(version: EqlVersion, family: &DomainFamily) -> String {
+    let used = family_terms(version, family.domains.iter());
+    let imports = family_imports(version, &used);
 
     // Storage structs for every domain, then a query twin for each term-bearing
-    // domain (storage-only domains have no operators, so no query operand).
+    // domain (storage-only domains have no operators, so no query operand),
+    // then, for v4, a range query operand per ordering term.
+    let ranges = match version {
+        EqlVersion::V3 => Vec::new(),
+        EqlVersion::V4 => family.range_terms(),
+    };
     let structs: TokenStream = family
         .domains
         .iter()
-        .map(|d| render_struct(family, d))
+        .map(|d| render_struct(version, family, d))
         .chain(
             family
                 .domains
                 .iter()
                 .filter(|d| !d.terms.is_empty())
-                .map(|d| render_query_struct(family, d)),
+                .map(|d| render_query_struct(version, family, d)),
+        )
+        .chain(
+            ranges
+                .into_iter()
+                .map(|t| render_range_query_struct(family, t)),
         )
         .collect();
 
@@ -415,13 +970,7 @@ pub fn render_family_bindings(family: &DomainFamily) -> String {
     let file = quote! {
         #![doc = #mod_doc]
 
-        use schemars::{schema_for, JsonSchema, Schema};
-
-        use crate::v3::terms::{ #(#used_idents),* };
-        use crate::v3::DomainType;
-        use crate::{Identifier, SchemaVersion};
-        use serde::{Deserialize, Serialize};
-        use ts_rs::TS;
+        #imports
 
         #structs
     };
@@ -438,17 +987,9 @@ pub fn render_family_bindings(family: &DomainFamily) -> String {
 /// `<family>.rs`, so it never clobbers the hand-written module — the hand-written
 /// `json.rs` re-exports the generated struct (`pub use ...::Json;`) so
 /// `super::json::Json` resolves for the inventory/payload renderers.
-pub fn render_scalar_only_bindings(family: &DomainFamily) -> String {
-    let mut used: Vec<&'static str> = vec!["Ciphertext"];
-    for d in family.domains.iter().filter(|d| d.is_scalar()) {
-        for term in Term::payload_terms(d.terms) {
-            let t = term.binding_newtype();
-            if !used.contains(&t) {
-                used.push(t);
-            }
-        }
-    }
-    let used_idents: Vec<_> = used.iter().map(|t| format_ident!("{t}")).collect();
+pub fn render_scalar_only_bindings(version: EqlVersion, family: &DomainFamily) -> String {
+    let used = family_terms(version, family.domains.iter().filter(|d| d.is_scalar()));
+    let imports = family_imports(version, &used);
 
     // Scalar storage structs only, then a query twin for each term-bearing scalar
     // domain (a bare storage domain has empty terms, so no query operand).
@@ -456,35 +997,113 @@ pub fn render_scalar_only_bindings(family: &DomainFamily) -> String {
         .domains
         .iter()
         .filter(|d| d.is_scalar())
-        .map(|d| render_struct(family, d))
+        .map(|d| render_struct(version, family, d))
         .chain(
             family
                 .domains
                 .iter()
                 .filter(|d| d.is_scalar() && !d.terms.is_empty())
-                .map(|d| render_query_struct(family, d)),
+                .map(|d| render_query_struct(version, family, d)),
         )
         .collect();
 
-    let mod_doc = format!(
-        " The generated scalar (storage) domain(s) of the `{}` encrypted-domain family — \
-         generated from the eql-domains catalog. The family's SteVec domains are hand-written \
-         in `{}.rs`.",
-        family.name, family.name
-    );
+    let mod_doc = match version {
+        EqlVersion::V3 => format!(
+            " The generated scalar (storage) domain(s) of the `{}` encrypted-domain family — \
+             generated from the eql-domains catalog. The family's SteVec domains are hand-written \
+             in `{}.rs`.",
+            family.name, family.name
+        ),
+        EqlVersion::V4 => format!(
+            " The generated scalar (storage) domain(s) of the `{}` encrypted-domain family — \
+             generated from the eql-domains catalog. EQL v4 has no SteVec bindings yet.",
+            family.name
+        ),
+    };
 
     let file = quote! {
         #![doc = #mod_doc]
 
-        use schemars::{schema_for, JsonSchema, Schema};
-
-        use crate::v3::terms::{ #(#used_idents),* };
-        use crate::v3::DomainType;
-        use crate::{Identifier, SchemaVersion};
-        use serde::{Deserialize, Serialize};
-        use ts_rs::TS;
+        #imports
 
         #structs
+    };
+
+    format_rs(file)
+}
+
+/// Render the generated `crates/eql-bindings/src/v4/inventory.rs`: every v4
+/// scalar stored type in `all()` and every query twin in `all_query()`, in
+/// CATALOG order. v4 has no SteVec bindings, so unlike v3 its `all()` holds
+/// scalar domains only.
+pub fn render_v4_inventory_rs() -> String {
+    let scalar = || {
+        eql_domains::families_with_scalar_domains().flat_map(|f| {
+            f.domains
+                .iter()
+                .filter(|d| d.is_scalar())
+                .map(move |d| (f, d))
+        })
+    };
+    let all_entries: TokenStream = scalar()
+        .map(|(f, d)| {
+            let m = format_ident!("{}", f.name);
+            let s = format_ident!("{}", d.rust_struct_name(f.name));
+            quote! { Box::new(PhantomData::<super::#m::#s>), }
+        })
+        .collect();
+    let query_entries: TokenStream = scalar()
+        .filter(|(_, d)| !d.terms.is_empty())
+        .map(|(f, d)| {
+            let m = format_ident!("{}", f.name);
+            let s = format_ident!("{}Query", d.struct_ident(f.name));
+            quote! { Box::new(PhantomData::<super::#m::#s>), }
+        })
+        .collect();
+    let range_entries: TokenStream = eql_domains::families_with_scalar_domains()
+        .flat_map(|f| f.range_terms().into_iter().map(move |t| (f, t)))
+        .map(|(f, t)| {
+            let m = format_ident!("{}", f.name);
+            let s = format_ident!("{}", f.range_struct_ident(t));
+            quote! { Box::new(PhantomData::<super::#m::#s>), }
+        })
+        .collect();
+
+    let mod_doc = " The `all()` / `all_query()` / `all_range_query()` inventories — every v4 \
+                   stored, query-operand and range query-operand payload type in \
+                   eql-domains::CATALOG order. Generated from the catalog.";
+
+    let file = quote! {
+        #![doc = #mod_doc]
+
+        use std::marker::PhantomData;
+
+        use super::DomainType;
+
+        /// Every v4 stored-payload domain type, in `eql-domains::CATALOG`
+        /// order — generated. Scalar domains only: v4 has no SteVec bindings.
+        pub fn all() -> Vec<Box<dyn DomainType>> {
+            vec![
+                #all_entries
+            ]
+        }
+
+        /// Every v4 QUERY-operand twin (`eql_v4.query_<name>`), in
+        /// `eql-domains::CATALOG` order — generated.
+        pub fn all_query() -> Vec<Box<dyn DomainType>> {
+            vec![
+                #query_entries
+            ]
+        }
+
+        /// Every v4 RANGE query operand (`eql_v4.query_<family>_range_<term>`),
+        /// one per family and ordering term, in `eql-domains::CATALOG` order —
+        /// generated. The operand of `eql_v4.between`; EQL v3 has none.
+        pub fn all_range_query() -> Vec<Box<dyn DomainType>> {
+            vec![
+                #range_entries
+            ]
+        }
     };
 
     format_rs(file)
@@ -604,7 +1223,7 @@ pub fn render_payload_rs() -> String {
         let module = format_ident!("{}", f.name);
         let strukt = format_ident!("{}", d.rust_struct_name(f.name));
         let full = d.full_name(f.name);
-        let doc = format!(" The `{}` payload.", crate::context::domain_name(&full));
+        let doc = format!(" The `{}` payload.", v3_domain_name(&full));
         variants.extend(quote! {
             #[doc = #doc]
             #strukt(super::#module::#strukt),
@@ -824,8 +1443,10 @@ pub fn render_query_payload_rs() -> String {
     format_rs(file)
 }
 
-/// Relative path (from repo root) of the generated v3 bindings directory.
-const V3_BINDINGS_DIR: &str = "crates/eql-bindings/src/v3";
+/// Relative path (from repo root) of a version's generated bindings directory.
+fn bindings_dir(version: EqlVersion) -> String {
+    format!("crates/eql-bindings/src/{}", module_name(version))
+}
 
 /// Render every binding file to memory (NO filesystem writes): one
 /// `(<dir>/<family>.rs, body)` per catalog family in CATALOG order, then
@@ -839,7 +1460,7 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
         .map(|f| {
             (
                 dir.join(format!("{}.rs", f.name)),
-                render_family_bindings(f),
+                render_family_bindings(EqlVersion::V3, f),
             )
         })
         .collect();
@@ -852,16 +1473,99 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
     for f in eql_domains::families_with_scalar_domains().filter(|f| !f.is_scalar()) {
         rendered.push((
             dir.join(format!("{}_storage.rs", f.name)),
-            render_scalar_only_bindings(f),
+            render_scalar_only_bindings(EqlVersion::V3, f),
         ));
     }
     rendered.push((dir.join("payload.rs"), render_payload_rs()));
     rendered.push((dir.join("query_payload.rs"), render_query_payload_rs()));
-    // The stack-encrypt target table and dispatch (`crate::targets`); gated
-    // to the `stack-encrypt` feature by the hand-written mod.rs.
-    rendered.push((dir.join("targets.rs"), crate::targets::render_targets_rs()));
     rendered.push((dir.join("inventory.rs"), render_inventory_rs()));
     rendered
+}
+
+/// Render the v4 bindings: one module per family with a scalar domain (a
+/// mixed family's scalar domains under its own name, since v4 has no
+/// hand-written SteVec module to sit beside), and the Stack Encrypt target
+/// table and dispatch (`targets.rs`, declared under the `targets` feature in
+/// the hand-written `v4/mod.rs`), and the typed query chain's impls
+/// (`answers.rs`, `stack-encrypt` alone). Stack Encrypt produces v4 only, so the
+/// target table lives here.
+fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut rendered: Vec<(PathBuf, String)> = eql_domains::families_with_scalar_domains()
+        .map(|f| {
+            let body = if f.is_scalar() {
+                render_family_bindings(EqlVersion::V4, f)
+            } else {
+                render_scalar_only_bindings(EqlVersion::V4, f)
+            };
+            (dir.join(format!("{}.rs", f.name)), body)
+        })
+        .collect();
+    rendered.push((dir.join("targets.rs"), crate::targets::render_targets_rs()));
+    rendered.push((dir.join("answers.rs"), crate::targets::render_answers_rs()));
+    rendered.push((dir.join("inventory.rs"), render_v4_inventory_rs()));
+    rendered.push((dir.join("term_formats.rs"), render_v4_term_formats_rs()));
+    rendered
+}
+
+/// Render the generated `crates/eql-bindings/src/v4/term_formats.rs`: for
+/// each term EQL v4 stores in its own format ([`Term::v4_format`]), the type
+/// that names that term's JSON for TypeScript and JSON Schema (`OreBlockHex`,
+/// `OpeHex`). A field holds Stack Encrypt's term; these say what its JSON
+/// is, with the catalog's pattern, the one the domain CHECKs are made from.
+pub fn render_v4_term_formats_rs() -> String {
+    let every = [Term::Hm, Term::Ore, Term::Bloom, Term::Ope];
+    let shapes: TokenStream = every
+        .into_iter()
+        .filter_map(|term| term.v4_format().map(|format| (term, format)))
+        .map(|(term, format)| {
+            let ident = format_ident!("{}", format.json_shape);
+            let name = format.json_shape;
+            let pattern = format.pattern();
+            let description = format.description;
+            let summary = format!(
+                " The JSON of an EQL v4 `{}` term. {description}",
+                term.json_key()
+            );
+            let detail = format!(
+                " Names the JSON of a [`stack_encrypt::sem::{}`] field for TypeScript and JSON \
+                 Schema, and holds no term itself. Its pattern, `{pattern}`, takes the prefixes \
+                 the domain CHECKs require.",
+                format.rust_type
+            );
+            quote! {
+                #[doc = #summary]
+                #[doc = ""]
+                #[doc = #detail]
+                #[derive(Clone, Debug, TS)]
+                pub struct #ident(pub String);
+
+                impl JsonSchema for #ident {
+                    fn schema_name() -> Cow<'static, str> {
+                        #name.into()
+                    }
+
+                    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+                        json_schema!({
+                            "type": "string",
+                            "pattern": #pattern,
+                            "description": #description,
+                        })
+                    }
+                }
+            }
+        })
+        .collect();
+    format_rs(quote! {
+        //! Generated: the JSON of the terms EQL v4 stores in its own format,
+        //! for TypeScript and JSON Schema. See `eql_domains::V4TermFormat`.
+
+        use std::borrow::Cow;
+
+        use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+        use ts_rs::TS;
+
+        #shapes
+    })
 }
 
 /// Regenerate every committed Rust binding file under `out_root`: one
@@ -878,9 +1582,11 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
 /// prunes `<family>.rs` for a type dropped from the catalog, marker-aware so the
 /// hand-written `terms.rs` / `domain_type.rs` / `mod.rs` are always preserved.
 pub fn generate_bindings(out_root: &Path) -> Result<Vec<PathBuf>, WriteError> {
-    let dir = out_root.join(V3_BINDINGS_DIR);
+    let v3 = out_root.join(bindings_dir(EqlVersion::V3));
+    let v4 = out_root.join(bindings_dir(EqlVersion::V4));
 
-    let rendered = render_bindings(&dir);
+    let mut rendered = render_bindings(&v3);
+    rendered.extend(render_v4_bindings(&v4));
     let targets: Vec<PathBuf> = rendered.iter().map(|(p, _)| p.clone()).collect();
 
     ensure_generated_paths_writable(&targets, GeneratedKind::Rust)?;
@@ -890,7 +1596,9 @@ pub fn generate_bindings(out_root: &Path) -> Result<Vec<PathBuf>, WriteError> {
         write_generated_file(p, body, GeneratedKind::Rust)?;
         written.push(p.clone());
     }
-    remove_generated_orphans(&dir, GeneratedKind::Rust, &normalized_set(&written))?;
+    let keep = normalized_set(&written);
+    remove_generated_orphans(&v3, GeneratedKind::Rust, &keep)?;
+    remove_generated_orphans(&v4, GeneratedKind::Rust, &keep)?;
 
     Ok(written)
 }
@@ -924,7 +1632,7 @@ mod tests {
 
     #[test]
     fn integer_family_structs_have_pinned_shape() {
-        let out = render_family_bindings(family("integer"));
+        let out = render_family_bindings(EqlVersion::V3, family("integer"));
         assert!(out.starts_with(crate::consts::RUST_GENERATED_MARKER));
         for s in [
             "struct Integer ",
@@ -973,7 +1681,7 @@ mod tests {
         // twin = the storage struct minus `c`, on the `eql_v3.query_<name>`
         // domain (prefix naming). Storage-only domains (no
         // operators) get no twin.
-        let out = render_family_bindings(family("integer"));
+        let out = render_family_bindings(EqlVersion::V3, family("integer"));
         for s in [
             "struct IntegerEqQuery ",
             "struct IntegerOrdOreQuery ",
@@ -1001,7 +1709,7 @@ mod tests {
         // Dual-term text domains keep BOTH terms in the query twin, still no `c`.
         // `_ord` and `_search` are OPE-backed (`op`); `_ord_ore` and
         // `_search_ore` keep `ob`.
-        let text = render_family_bindings(family("text"));
+        let text = render_family_bindings(EqlVersion::V3, family("text"));
         assert_eq!(field_idents(&text, "TextOrdQuery"), ["v", "i", "hm", "op"]);
         assert_eq!(
             field_idents(&text, "TextOrdOreQuery"),
@@ -1024,7 +1732,7 @@ mod tests {
         // the capability label + the operator union (`Term::operators_for_terms`)
         // + the required-key list (`ENVELOPE_KEYS` ++ `Term::term_json_keys`).
         // No field docs, no new free-form catalog prose.
-        let integer = render_family_bindings(family("integer"));
+        let integer = render_family_bindings(EqlVersion::V3, family("integer"));
 
         // Storage-only: no operators.
         assert!(integer.contains("`public.eql_v3_integer` — storage-only domain."));
@@ -1046,7 +1754,7 @@ mod tests {
 
         // text_ord carries BOTH `hm` and `ob` — the dual-term distinction that
         // previously lived only in hand-written prose is now derivable in the doc.
-        let text = render_family_bindings(family("text"));
+        let text = render_family_bindings(EqlVersion::V3, family("text"));
         assert!(text.contains("Required keys: `v` `i` `c` `hm` `ob`."));
         assert!(text.contains("`public.eql_v3_text_match` — match domain."));
         assert!(text.contains("Operators: `@@`."));
@@ -1055,7 +1763,7 @@ mod tests {
 
     #[test]
     fn text_family_includes_bloom_and_dual_term_ord() {
-        let out = render_family_bindings(family("text"));
+        let out = render_family_bindings(EqlVersion::V3, family("text"));
         for s in [
             "struct Text ",
             "struct TextEq ",
@@ -1096,9 +1804,53 @@ mod tests {
         );
     }
 
+    /// A v4 search domain's stored filter is `SearchBloomFilter`, which takes
+    /// the empty filter of text too short for a 3-gram; `TextMatch` and every
+    /// query keep `BloomFilter`, which refuses that text. v3 is untouched.
+    #[test]
+    fn a_v4_search_domain_stores_a_filter_that_may_be_empty() {
+        let v4 = render_family_bindings(EqlVersion::V4, family("text"));
+        let field = |out: &str, name: &str| {
+            let start = out
+                .find(&format!("pub struct {name} {{"))
+                .unwrap_or_else(|| panic!("no struct {name}"));
+            let body = &out[start..];
+            let body = &body[..body.find('}').unwrap()];
+            body.lines()
+                .find(|line| line.contains("pub bf:"))
+                .map(|line| line.trim().to_owned())
+        };
+        assert_eq!(
+            field(&v4, "TextSearch").as_deref(),
+            Some("pub bf: SearchBloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchOre").as_deref(),
+            Some("pub bf: SearchBloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextMatch").as_deref(),
+            Some("pub bf: BloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextMatchQuery").as_deref(),
+            Some("pub bf: BloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchMatchQuery").as_deref(),
+            Some("pub bf: BloomFilter,")
+        );
+        assert_eq!(
+            field(&v4, "TextSearchQuery").as_deref(),
+            Some("pub bf: Option<BloomFilter>,")
+        );
+        let v3 = render_family_bindings(EqlVersion::V3, family("text"));
+        assert!(!v3.contains("SearchBloomFilter"));
+    }
+
     #[test]
     fn bool_storage_only_family_has_one_struct_no_terms() {
-        let out = render_family_bindings(family("boolean"));
+        let out = render_family_bindings(EqlVersion::V3, family("boolean"));
         assert_eq!(out.matches("pub struct ").count(), 1);
         assert!(out.contains("`public.eql_v3_boolean` — storage-only domain."));
         assert_eq!(field_idents(&out, "Boolean"), ["v", "i", "c"]);
@@ -1108,24 +1860,68 @@ mod tests {
         assert!(!out.contains("BloomFilter"));
     }
 
+    /// Stack Encrypt produces EQL v4 only (ADR-0002): no v3 struct derives
+    /// its traits, and the v4 structs that do name the v4 domain and `v: 4`.
+    #[test]
+    fn only_v4_structs_derive_stack_encrypt_traits() {
+        for f in eql_domains::families_with_scalar_domains() {
+            let v3 = if f.is_scalar() {
+                render_family_bindings(EqlVersion::V3, f)
+            } else {
+                render_scalar_only_bindings(EqlVersion::V3, f)
+            };
+            assert!(!v3.contains("stack_encrypt"), "{}: v3 derives", f.name);
+        }
+        for (family, domain) in stored_payload_domains().filter(|(_, d)| d.is_scalar()) {
+            assert_eq!(
+                encryption_gap(EqlVersion::V3, family, domain),
+                Some(V3_ENCRYPTION_GAP)
+            );
+        }
+        let text = render_family_bindings(EqlVersion::V4, family("text"));
+        assert!(text.contains("derive(stack_encrypt::EncryptFrom)"));
+        assert!(text.contains("`public.eql_v4_text_eq` — equality domain."));
+        assert!(text.contains("\"eql_v4.query_text_eq\""));
+        assert!(text.contains("use crate::v4::{DomainType, SchemaVersion};"));
+        assert!(!text.contains("eql_v3"));
+    }
+
     #[test]
     fn generate_bindings_writes_family_files_and_inventory_with_markers() {
         let tmp = crate::writer::test_support::tempdir();
         let written = generate_bindings(tmp.path()).unwrap();
         let dir = tmp.path().join("crates/eql-bindings/src/v3");
-        // scalar families + jsonb_storage + payload + query_payload + targets
-        // + inventory.
-        assert_eq!(written.len(), eql_domains::scalar_families().count() + 5);
+        let v4 = tmp.path().join("crates/eql-bindings/src/v4");
+        // v3: scalar families + json_storage + payload + query_payload +
+        // inventory. v4: every family with a scalar domain + targets +
+        // answers + inventory + term_formats.
+        let families = eql_domains::scalar_families().count();
+        let v4_families = eql_domains::families_with_scalar_domains().count();
+        assert_eq!(written.len(), (families + 4) + (v4_families + 4));
+        assert!(tmp
+            .path()
+            .join("crates/eql-bindings/src/v4/term_formats.rs")
+            .is_file());
         assert!(dir.join("integer.rs").is_file());
         assert!(dir.join("text.rs").is_file());
         assert!(dir.join("json_storage.rs").is_file());
         assert!(dir.join("payload.rs").is_file());
-        assert!(dir.join("targets.rs").is_file());
         assert!(dir.join("inventory.rs").is_file());
         assert!(
-            !dir.join("mod.rs").exists(),
-            "mod.rs stays hand-written; not generated"
+            !dir.join("targets.rs").exists(),
+            "Stack Encrypt targets are v4 only"
         );
+        assert!(v4.join("text.rs").is_file());
+        assert!(v4.join("json.rs").is_file());
+        assert!(v4.join("targets.rs").is_file());
+        assert!(v4.join("answers.rs").is_file());
+        assert!(v4.join("inventory.rs").is_file());
+        for d in [&dir, &v4] {
+            assert!(
+                !d.join("mod.rs").exists(),
+                "mod.rs stays hand-written; not generated"
+            );
+        }
         for p in &written {
             let body = std::fs::read_to_string(p).unwrap();
             assert!(
@@ -1141,17 +1937,17 @@ mod tests {
         // source, so a render panic aborts before deletion. Lock in the
         // load-bearing property: render writes NOTHING to disk. A pre-existing
         // file in the target dir survives the render call untouched, and render
-        // returns one entry per family plus payload, query_payload, targets
-        // and inventory (last).
+        // returns one entry per family plus json_storage, payload,
+        // query_payload and inventory (last).
         let tmp = crate::writer::test_support::tempdir();
-        let dir = tmp.path().join(V3_BINDINGS_DIR);
+        let dir = tmp.path().join(bindings_dir(EqlVersion::V3));
         std::fs::create_dir_all(&dir).unwrap();
         let sentinel = dir.join("integer.rs");
         std::fs::write(&sentinel, "SENTINEL").unwrap();
 
         let rendered = render_bindings(&dir);
 
-        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 5);
+        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 4);
         assert_eq!(
             std::fs::read_to_string(&sentinel).unwrap(),
             "SENTINEL",
@@ -1331,7 +2127,7 @@ mod tests {
         // trait object (`DomainType::term_json_keys`) and validates converted
         // payloads through `DomainType::parse_value` — both must be emitted on
         // every generated scalar impl, derived from `Term::term_json_keys`.
-        let integer = render_family_bindings(family("integer"));
+        let integer = render_family_bindings(EqlVersion::V3, family("integer"));
         assert!(integer.contains("fn term_json_keys_static() -> Option<&'static [&'static str]>"));
         assert!(integer.contains("fn term_json_keys(&self) -> Option<&'static [&'static str]>"));
         assert!(
@@ -1347,7 +2143,7 @@ mod tests {
         assert!(integer.contains(r#"&["op"]"#));
 
         // Multi-term domains list keys in catalog (wire) order.
-        let text = render_family_bindings(family("text"));
+        let text = render_family_bindings(EqlVersion::V3, family("text"));
         assert!(text.contains(r#"&["hm", "op", "bf"]"#), "text_search keys");
         assert!(
             text.contains(r#"&["hm", "ob", "bf"]"#),
@@ -1364,7 +2160,7 @@ mod tests {
         // together: the leading fields of a generated struct must equal
         // `ENVELOPE_KEYS`, in order, so a change to the catalog's envelope keys
         // can't silently diverge from the emitter.
-        let out = render_family_bindings(family("integer"));
+        let out = render_family_bindings(EqlVersion::V3, family("integer"));
         let leading: Vec<String> = field_idents(&out, "Integer");
         let expected: Vec<String> = eql_domains::ENVELOPE_KEYS
             .iter()
@@ -1406,7 +2202,7 @@ mod tests {
     #[test]
     fn render_bindings_skips_non_scalar_families() {
         let tmp = crate::writer::test_support::tempdir();
-        let dir = tmp.path().join(V3_BINDINGS_DIR);
+        let dir = tmp.path().join(bindings_dir(EqlVersion::V3));
         let rendered = render_bindings(&dir);
         // The hand-written SteVec module `json.rs` is never generated...
         assert!(
@@ -1419,9 +2215,9 @@ mod tests {
             rendered.iter().any(|(p, _)| p.ends_with("json_storage.rs")),
             "the json family's scalar storage domain must generate json_storage.rs"
         );
-        // One file per scalar family + jsonb_storage + payload + query_payload +
-        // targets + inventory.
-        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 5);
+        // One file per scalar family + json_storage + payload + query_payload +
+        // inventory.
+        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 4);
     }
 
     #[test]
@@ -1456,7 +2252,7 @@ mod tests {
     fn every_stored_domain_has_an_encryption_derive_or_a_reason() {
         let mut derived = Vec::new();
         for (family, domain) in stored_payload_domains() {
-            match encryption_gap(family, domain) {
+            match encryption_gap(EqlVersion::V4, family, domain) {
                 None => derived.push((family.name, domain.name)),
                 // Every reason is a string literal, so "not empty" cannot
                 // fail; what can is a reason that describes a different
@@ -1464,16 +2260,14 @@ mod tests {
                 // catalog fact that selects it.
                 Some(reason) => {
                     let full = domain.full_name(family.name);
-                    let expected = if family.name != "text" {
-                        "only the text family"
-                    } else if domain.terms.iter().any(|t| !matches!(t, Term::Hm)) {
-                        "ordering and match terms"
+                    let expected = if !domain.is_scalar() {
+                        "JSON index"
+                    } else if family.name == "json" {
+                        "tree of leaves"
+                    } else if plaintext_of(family.name).is_none() {
+                        "no Rust plaintext type for this family"
                     } else {
-                        assert!(
-                            domain.terms.is_empty(),
-                            "{full}: an hm-only text domain other than eq is not in the catalog"
-                        );
-                        "storage-only text domain"
+                        panic!("{full}: every domain of a specified family is derived: {reason}")
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }
@@ -1491,10 +2285,15 @@ mod tests {
         for (family, domain) in stored_payload_domains() {
             let listed = ENCRYPTION_DOMAINS.contains(&(family.name, domain.name));
             for query in [false, true] {
-                let attrs = encryption_attrs(family, domain, query).0.to_string();
+                let attrs = encryption_attrs(EqlVersion::V4, family, domain, query)
+                    .0
+                    .to_string();
+                // A query whose terms are optional is built by its per-index
+                // projections, which derive in its place.
+                let projected = query && v4_optional_query_terms(domain);
                 assert_eq!(
                     attrs.contains("stack_encrypt :: EncryptFrom"),
-                    listed,
+                    listed && !projected,
                     "{} (query = {query})",
                     domain.full_name(family.name)
                 );
@@ -1509,7 +2308,7 @@ mod tests {
     }
 
     #[test]
-    fn an_equality_only_text_domain_is_not_called_storage_only() {
+    fn an_unlisted_equality_only_domain_says_it_is_unlisted() {
         // Not in the catalog, which is why the branch needs a synthetic
         // domain: the only text domain reaching the hm-only branch today has
         // no terms, so a wrong reason there would survive every catalog walk.
@@ -1522,8 +2321,11 @@ mod tests {
             terms: &[Term::Hm],
             shape: eql_domains::Shape::Scalar,
         };
-        let reason = encryption_gap(&family, &hm_only).unwrap();
-        assert!(reason.contains("equality-only"), "{reason}");
+        let reason = encryption_gap(EqlVersion::V4, &family, &hm_only).unwrap();
+        assert!(
+            reason.contains("not listed in ENCRYPTION_DOMAINS"),
+            "{reason}"
+        );
         assert!(!reason.contains("storage-only"), "{reason}");
     }
 }

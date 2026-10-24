@@ -112,10 +112,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  age 45 > 40 => {}", age_45 > query_40);
 
     // Strings order lexicographically.
-    let apple: OreTerm<&str> = "apple"
+    let apple: OreTerm<String> = "apple"
+        .to_string()
         .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
-    let banana: OreTerm<&str> = "banana"
+    let banana: OreTerm<String> = "banana"
+        .to_string()
         .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
     println!("  \"apple\" < \"banana\" => {}", apple < banana);

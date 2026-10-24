@@ -252,7 +252,8 @@ EQL versions installed** in the database.
   rather than listing it, so a task added there tomorrow is covered.
 
   `typecheck` is the deliberate exception: it *should* run under `turbo run
-  typecheck`, and does, from `tests.yml`, on every PR. It needs no credentials
+  typecheck`, and does, from `tests.yml`, on every PR that can reach the JS
+  side (see "`tests.yml` gates its live jobs" below). It needs no credentials
   and no database, and its tsconfig sets `checkJs` so the suite's two `.cjs`
   fixtures are compiled too — one of them is a real `AccessKeyStrategy` call
   site, and a `tests/**/*.ts` scope would leave it checked by nothing but the
@@ -681,22 +682,40 @@ monorepo, which is where the silent failures are.
 - **Changesets for `@cipherstash/eql` go in the repo-root `.changeset/`.** The
   subtree's own `.changeset/` was deleted with the import; there is no second
   one to put them in by mistake.
+- **The JSON tree family is EQL v4 only and spans two crates.** The engine
+  half is `packages/stack-encrypt/src/json/` (the `Json` index, `JsonDocument`,
+  the query terms); the SQL is `packages/eql/src/v3/json_tree/` under
+  `-- ONLY EQL VERSION: 4`; the EQL types are hand-written in
+  `packages/eql/crates/eql-bindings/src/v4/json_tree.rs`; and the live
+  oracle, containment over the encrypted column against PostgreSQL's own
+  `jsonb @>` over the plaintexts, is `packages/eql/tests/encryption/tests/json_tree.rs`,
+  run by `mise run test:encryption:postgres`. The design and its
+  implementation notes are `docs/plans/2026-10-17-json-tree-index.md`.
+  A change to the derivations on one side (a PAE domain, the header layout,
+  the projection shape) is a change to the other: the Postgres suite is
+  what holds them together.
 
 ## Working on the Rust crates
 
 The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
-`cipherstash-client`, `cts-common`, `zerokms-protocol`, `recipher` and
-`cllw-ore`. Here those come from crates.io, and `Cargo.lock` holds their
-exact versions. In the root `Cargo.toml`, `recipher` and `cllw-ore` are
-pinned with `=`. `cts-common` and `zerokms-protocol` take caret
+`cipherstash-client`, `cts-common`, `zerokms-protocol` and `recipher`. Here
+those come from crates.io, and `Cargo.lock` holds their exact versions. In the
+root `Cargo.toml`, `recipher` is pinned with `=`, and so are the order
+schemes `clww-ore` (formerly `cllw-ore`) and `ore-rs`, which live in
+`cipherstash/ore.rs`: a new release of either can change every stored order
+term. `cts-common` and `zerokms-protocol` take caret
 requirements, because the published `stack-auth` inherits them, and an
 exact pin would stop the suite sharing one `cts-common` with it.
 
 - **Three Cargo workspaces, not one.** The root workspace (the six stack-*
   crates and the three node binding crates), protect-ffi's and EQL's. The root
   `Cargo.toml` excludes the other two, and they pin their own vitaminc. The
-  three fuzz crates and the two Go guests are detached workspaces too, each
-  with its own `Cargo.lock`.
+  three fuzz crates, the two Go guests and the EQL v4 block ORE timing
+  harness's ciphertext generator
+  (`packages/eql/tests/timing/ore_block_v2/ctgen`) are detached workspaces
+  too, each with its own `Cargo.lock`. None of them has a Dependabot entry.
+  CI builds the generator nowhere, so `test-eql.yml` checks its lock with
+  `cargo metadata --locked`, and `run.sh` builds it with `--locked`.
 - **The toolchain is pinned in the root `mise.toml`:** Rust 1.94.1 (the
   `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics) and
   Go 1.26.10, the module's `go` minimum (#1300: the first 1.26 patch whose
@@ -724,7 +743,9 @@ exact pin would stop the suite sharing one `cts-common` with it.
 - **CI:** `tests-crates.yml` (fmt, clippy, nextest including the trybuild
   `tests/ui` binary, doctests, rustdoc, the node bindings and
   `stack-auth-wasm`), `tests-golang.yml` (WASI checks, the guests, the Go
-  module on Linux, macOS and Windows, and the live tests), `crap-crates.yml`,
+  module on Linux, macOS and Windows, its PostgreSQL tests against the EQL v4
+  bundle built from the tree — `mise run go:test:postgres` locally — and the
+  live tests), `crap-crates.yml`,
   `mutants.yml`, `fuzz.yml`, `miri.yml` and `udeps.yml`.
   `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
   `mise.toml` or the five crate `tasks.toml` files loses its last CI caller.
@@ -933,6 +954,16 @@ pnpm changeset:publish
   `languages/typescript/packages/cli/tests/e2e/**` run via `pnpm --filter stash
   test:e2e` (requires a build). See `languages/typescript/packages/cli/AGENTS.md` for when to
   add or update them.
+- **`tests.yml` gates its live jobs on what a pull request changes.** Its
+  `changes` job skips `run-tests`, `e2e-tests`, `wasm-e2e-tests` and
+  `run-tests-bun` when every changed file sits in a tree they cannot read
+  (the Go module, the Stack Encrypt crates, EQL's SQL and Rust outside the
+  compiled `eql-bindings` files, docs, other workflows). A test that reads a
+  path in one of those trees would be skipped on the change that breaks it:
+  `scripts/__tests__/tests-workflow-gate.test.mjs` scans for that and fails.
+  Checks that read the whole tree (the lint scripts, `test:scripts`, the
+  release gate, the suites that read workflow files) run in the ungated
+  `repo-checks` job instead.
 
 ## Bundling and Deployment Notes
 
@@ -992,6 +1023,39 @@ pnpm changeset:publish
 
    A skills-only change is **not** internal: `skills/` ships inside the
    `stash` tarball, so it needs a `stash` patch changeset.
+
+## Review guidelines
+
+These apply to every agent that reviews a pull request here, human-prompted
+or automated (Codex, Copilot, CodeRabbit, Claude Code's `/code-review`).
+
+### Known non-findings
+
+These are deliberate design decisions, recorded in ADRs. Do not report them
+as defects or security issues, and do not change code to "fix" them. If a
+change seems to need one reversed, say so and link the ADR.
+
+- **A sealed container's membership, order and length are not
+  authenticated.** Each leaf is bound to its context, its map key, its role
+  (single value or sequence element), its type tag and the wire version. But
+  which entries a stored map holds, and a stored sequence's order, length
+  and duplicates, are deliberately not bound: stored values are database
+  rows and columns, which come back in any order and in part. A target that
+  refuses a container's shape (a missing field, say) is a shape mismatch,
+  `Error::OpenedType`, not tampering, `Error::Aead`. Stricter authentication
+  will be opt-in, through named types. See
+  `packages/stack-encrypt/docs/adr/0010-what-a-stored-value-authenticates.md`
+  and vitaminc's ADR 0002.
+- **A passthrough field is not authenticated.** It is stored in the clear,
+  by definition, and comes back as the store holds it. A plan's context
+  field is the exception: every other field is sealed under it, so a change
+  to it is caught. Same ADR.
+- **Two leaves sealed under the same context are interchangeable between
+  rows.** Binding a value to its row is the caller's choice of context (a
+  row id or tenant in it). Same ADR.
+
+A finding that a *leaf* is not bound to its context, key, role, type or
+version is a real defect: report it.
 
 ## Useful Links
 

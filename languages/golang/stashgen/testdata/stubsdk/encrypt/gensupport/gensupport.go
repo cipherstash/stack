@@ -25,16 +25,25 @@ type Kind string
 
 // The kinds.
 const (
-	Untyped Kind = ""
-	Bool    Kind = "bool"
-	Int32   Kind = "int32"
-	Int64   Kind = "int64"
-	Uint32  Kind = "uint32"
-	Uint64  Kind = "uint64"
-	Float32 Kind = "float32"
-	Float64 Kind = "float64"
-	String  Kind = "string"
-	Bytes   Kind = "bytes"
+	Untyped   Kind = ""
+	Bool      Kind = "bool"
+	Int8      Kind = "int8"
+	Int16     Kind = "int16"
+	Int32     Kind = "int32"
+	Int64     Kind = "int64"
+	Int128    Kind = "int128"
+	Uint8     Kind = "uint8"
+	Uint16    Kind = "uint16"
+	Uint32    Kind = "uint32"
+	Uint64    Kind = "uint64"
+	Uint128   Kind = "uint128"
+	Float32   Kind = "float32"
+	Float64   Kind = "float64"
+	Decimal   Kind = "decimal"
+	Date      Kind = "date"
+	Timestamp Kind = "timestamp"
+	String    Kind = "string"
+	Bytes     Kind = "bytes"
 )
 
 // Redacted formats a value with its sealed fields hidden.
@@ -119,17 +128,21 @@ type Field[T any] struct{ _ struct{} }
 // NewField makes the entry for one field of a declaration.
 func NewField[T any](Declaration, string) Field[T] { return Field[T]{} }
 
-func (Field[T]) Encrypt(context.Context, *encrypt.Cipher, T) (Output, error) { return Output{}, nil }
-func (Field[T]) Query(context.Context, *encrypt.Cipher, T) (Output, error)   { return Output{}, nil }
-func (Field[T]) Equality(context.Context, *encrypt.Cipher, T) (encrypt.EqualityTerm, error) {
-	return nil, nil
+func (Field[T]) Encrypt(context.Context, *encrypt.Cipher, T) (Output, error)      { return Output{}, nil }
+func (Field[T]) Term(context.Context, *encrypt.Cipher, string, T) ([]byte, error) { return nil, nil }
+func (Field[T]) Range(context.Context, *encrypt.Cipher, string, T, T) ([]byte, []byte, error) {
+	return nil, nil, nil
 }
-func (Field[T]) Match(context.Context, *encrypt.Cipher, T) (encrypt.MatchTerm, error) {
-	return nil, nil
+
+// Matches derives a matches query.
+func Matches[T ~string](context.Context, Field[T], *encrypt.Cipher, T) (encrypt.MatchQuery[T], error) {
+	return encrypt.MatchQuery[T]{}, nil
 }
-func (Field[T]) Ore(context.Context, *encrypt.Cipher, T) (encrypt.OreTerm, error)   { return nil, nil }
-func (Field[T]) Ope(context.Context, *encrypt.Cipher, T) (encrypt.OpeTerm, error)   { return nil, nil }
-func (Field[T]) JSON(context.Context, *encrypt.Cipher, T) (encrypt.JSONTerm, error) { return nil, nil }
+
+// EQLMatches derives the matches query on an EQL type with a match index.
+func EQLMatches[Q ~[]byte, T ~string](context.Context, Field[T], *encrypt.Cipher, T) (encrypt.EQLMatchQuery[Q, T], error) {
+	return encrypt.EQLMatchQuery[Q, T]{}, nil
+}
 
 // RecordsCodec encrypts into and decrypts from a model.
 type RecordsCodec[P, R any] struct{ _ struct{} }
@@ -151,3 +164,35 @@ func NoticePrintsPlaintext(typeName string)           {}
 
 // Identity gives a field a context part other than its name.
 func (d Declaration) Identity(name, identity string) Declaration { return d }
+
+// NullMode is how a sealed field declared over a pointer stores nil.
+type NullMode string
+
+const (
+	NullSealed NullMode = "sealed"
+	NullSQL    NullMode = "sql"
+)
+
+// Null says how the named field, declared over a pointer, stores nil.
+func (d Declaration) Null(name string, mode NullMode) Declaration { return d }
+
+// Deref is a field declared over a pointer as Source gives it.
+func Deref[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// EncryptNull seals nil for a field that stores it as a sealed null.
+func (f Field[T]) EncryptNull(context.Context, *encrypt.Cipher) (Output, error) {
+	return Output{}, nil
+}
+
+// NullTerm derives an exact operator's term for nil.
+func (f Field[T]) NullTerm(context.Context, *encrypt.Cipher, string) ([]byte, error) {
+	return nil, nil
+}
+
+// GetPtr reads one opened field declared over a pointer.
+func GetPtr[T any](Values, string) (*T, error) { return nil, nil }

@@ -71,7 +71,7 @@ pub fn export(f: impl FnOnce() -> Result<Vec<u8>, u32>) -> u64 {
 }
 
 /// The full error behind the most recent failed export, as a packed buffer
-/// result: a transport-codec object of `code`, `message`, `help`, `url`
+/// result: a transport-frame map of `code`, `message`, `help`, `url`
 /// (when set), `severity`, `fields` and `causes` (see
 /// [`last_error::encode`]). Zero when there is none — no export has failed
 /// since the last success, or the error was already handed over.

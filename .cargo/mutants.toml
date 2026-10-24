@@ -72,6 +72,11 @@ exclude_re = [
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace client_key_provider -> EnvKeyProvider with Default::default\(\)$',
   'stack-encrypt/src/target/pending\.rs:443:9: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
   # stack-encrypt — equivalent.
+  # An operator and an index are unit structs, whose `Default` is the value
+  # `clone` and `case_sensitive` already return.
+  'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace <impl Clone for Matches<C>>::clone -> Self with Default::default\(\)$',
+  'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace Matches::case_sensitive -> Matches<CaseSensitive> with Default::default\(\)$',
+  'stack-encrypt/src/target/index\.rs:\d+:\d+: replace <impl Clone for Match<O>>::clone -> Self with Default::default\(\)$',
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
   # Both unit-context conversions explicitly return Self::default().
@@ -80,6 +85,42 @@ exclude_re = [
   # the empty list (`dynamic::target::NoTargets`), which a test asserts on
   # and `resolve` turns into `TargetError::NoTargets`; `vec![]` is the body.
   'stack-encrypt/src/dynamic/target\.rs:\d+:\d+: replace <impl TargetResolver for NoTargets>::targets -> Vec<TargetDescriptor> with vec!\[\]$',
+  # A passthrough, and a typed null as any null, has no kind:
+  # `KindOf::passthrough` and `KindOf::typed_null` return `Ok(None)`, which
+  # is `Ok(Default::default())`. `a_frame_names_its_kind` asserts the first.
+  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::(passthrough|typed_null) -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
+  # `model`'s `admits` guard on a date, decimal or undefined value is checked
+  # again by vitaminc on every path that reaches it: the frame writer behind
+  # `Modeled` and `ModelOnly` refuses an inadmissible logical value
+  # (`FrameWriteError::Invalid`, mapped to the same `Expected`), and
+  # `ValueFrame::check` only walks frames `Frame::parse` has validated. So
+  # `true` there refuses the same values with the same error. The guard stays
+  # so the model says what it holds without leaning on the writer behind it.
+  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace match guard logical\.admits\(&value\) with true in model$',
+  # A serde visitor's `expecting` writes only the "expected ..." half of a
+  # serde error's message, and no caller of these three reads that message:
+  # a context, statistics and a plan's root are each refused with one fixed
+  # `Reason` (`ContextKind`, `NotStats`, `NotAnObject`), and the plan's
+  # field-level reasons are read from the error's path, so writing nothing
+  # refuses the same input with the same error.
+  'stack-encrypt/src/dynamic/(context|query|record)\.rs:\d+:\d+: replace <impl (Visitor<\x27de> for ContextVisitor|serde::Deserialize<\x27de> for Confidence>::deserialize::<impl serde::de::Visitor<\x27_> for V|Deserialize<\x27de> for PlanWire>::deserialize::<impl Visitor<\x27de> for V)>::expecting -> fmt::Result with Ok\(Default::default\(\)\)$',
+  # The same for the visitor that reads a refused plan's keys back
+  # (`entry_key`): its error is discarded (`.ok()`), so its message is never
+  # read at all.
+  'stack-encrypt/src/dynamic/record\.rs:\d+:\d+: replace entry_key::<impl Deserialize<\x27de> for Keys>::deserialize::<impl Visitor<\x27de> for V>::expecting -> fmt::Result with Ok\(Default::default\(\)\)$',
+  # The JSON index. `unhex` joins a high nibble shifted into the top four
+  # bits with a low nibble below 16: the bits never overlap, so `^` is `|`.
+  'stack-encrypt/src/json/mod\.rs:\d+:\d+: replace \| with \^ in unhex$',
+  # `JsonPath::root` is `Self::default()`.
+  'stack-encrypt/src/json/path\.rs:\d+:\d+: replace JsonPath::root -> Self with Default::default\(\)$',
+  # The sealed root's `None` token: with that arm gone, the root falls to
+  # the arm that wraps its parent's token, and the root has no parent, so
+  # it is `None` there too. `the_sealed_root_has_no_token_and_its_fields_are_heads`
+  # pins the value; the arm stays so the match says it.
+  'stack-encrypt/src/json/derive\.rs:\d+:\d+: delete match arm \(0, true\) in Walker<\x27_>::visit$',
+  # A document always has a root, so its terms are never empty: `false` is
+  # the value `is_empty` returns. The `true` replacement is still caught.
+  'stack-encrypt/src/json/derive\.rs:\d+:\d+: replace JsonTerms::is_empty -> bool with false$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

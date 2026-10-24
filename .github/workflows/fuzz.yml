@@ -78,6 +78,7 @@ jobs:
           - { task: "fuzz:term-decode", slug: term-decode }
           - { task: "fuzz:check-record", slug: check-record }
           - { task: "fuzz:plan-build", slug: plan-build }
+          - { task: "fuzz:json-wire", slug: json-wire }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -126,6 +127,7 @@ jobs:
           - { task: "fuzz:term-decode",  slug: term-decode,  dir: packages/stack-encrypt, target: term_decode }
           - { task: "fuzz:check-record", slug: check-record, dir: packages/stack-encrypt, target: check_record }
           - { task: "fuzz:plan-build",   slug: plan-build,   dir: packages/stack-encrypt, target: plan_build }
+          - { task: "fuzz:json-wire",    slug: json-wire,    dir: packages/stack-encrypt, target: json_wire_decode }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:

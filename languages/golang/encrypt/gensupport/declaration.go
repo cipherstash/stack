@@ -19,20 +19,35 @@ import (
 // the engine refuses a plan whose indexed field has no type.
 type Kind string
 
-// The kinds. int8, int16 and int32 are Int32; int and int64 are Int64;
-// uint8, uint16 and uint32 are Uint32; uint and uint64 are Uint64; []byte is
-// Bytes. A type defined over one of these has its underlying kind.
+// The kinds. Each Go integer type has the kind of its own width: int8 is
+// Int8, int16 Int16, int32 Int32, int and int64 Int64, uint8 Uint8, uint16
+// Uint16, uint32 Uint32, uint and uint64 Uint64, and encrypt.Int128 and
+// encrypt.Uint128 the 128-bit kinds. time.Time is Timestamp, encrypt.Date
+// Date and encrypt.Decimal Decimal. []byte is Bytes. A type defined over a
+// basic type has its underlying kind. A field stored as an EQL type takes
+// the type's kind instead, when every value of its Go type fits it (an int16
+// into Integer's int32), and its value is converted to that kind before it
+// crosses.
 const (
-	Untyped Kind = ""
-	Bool    Kind = "bool"
-	Int32   Kind = "int32"
-	Int64   Kind = "int64"
-	Uint32  Kind = "uint32"
-	Uint64  Kind = "uint64"
-	Float32 Kind = "float32"
-	Float64 Kind = "float64"
-	String  Kind = "string"
-	Bytes   Kind = "bytes"
+	Untyped   Kind = ""
+	Bool      Kind = "bool"
+	Int8      Kind = "int8"
+	Int16     Kind = "int16"
+	Int32     Kind = "int32"
+	Int64     Kind = "int64"
+	Int128    Kind = "int128"
+	Uint8     Kind = "uint8"
+	Uint16    Kind = "uint16"
+	Uint32    Kind = "uint32"
+	Uint64    Kind = "uint64"
+	Uint128   Kind = "uint128"
+	Float32   Kind = "float32"
+	Float64   Kind = "float64"
+	Decimal   Kind = "decimal"
+	Date      Kind = "date"
+	Timestamp Kind = "timestamp"
+	String    Kind = "string"
+	Bytes     Kind = "bytes"
 )
 
 // OpaqueField is the one field of an opaque declaration: the whole struct,
@@ -61,7 +76,24 @@ type field struct {
 	verb     verb
 	indexes  []encrypt.Index
 	eqlType  string
+	null     NullMode
 }
+
+// NullMode is how a sealed field declared over a pointer (*T) stores nil:
+// stashgen's `null=` tag. A field with none is never nil.
+type NullMode string
+
+const (
+	// NullSealed seals nil like a value, as a null as long as a value of
+	// the field's kind, so the stored record does not show which rows are
+	// absent. Decrypt gives nil. An equality index stores the term every nil
+	// shares, which [Field.NullTerm] queries; the field has no other index,
+	// and its kind has a fixed width.
+	NullSealed NullMode = "sealed"
+	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
+	// which shows that the value is absent. Decrypt gives nil.
+	NullSQL NullMode = "sql"
+)
 
 // Declaration is a generated struct's declaration as data: its context and,
 // for each field, what happens to it. Only generated code builds one, from
@@ -135,6 +167,35 @@ func (d Declaration) Index(name string, kind Kind, indexes ...encrypt.Index) Dec
 // beside it, and the stored field holds the value as it is.
 func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration {
 	return d.add(field{name: name, kind: kind, verb: verbEncryptInto, eqlType: eqlType})
+}
+
+// Null says how the named field, declared over a pointer, stores nil. The
+// engine decides whether the field can, when the declaration is first used:
+// a sealed null needs a field whose only index is equality, of a kind of
+// fixed width.
+func (d Declaration) Null(name string, mode NullMode) Declaration {
+	if d.err != nil {
+		return d
+	}
+	if mode != NullSealed && mode != NullSQL {
+		d.err = fmt.Errorf("gensupport: Null(%q): unknown mode %q", name, mode)
+		return d
+	}
+	for i := range d.fields {
+		if d.fields[i].name != name {
+			continue
+		}
+		if !d.fields[i].sealed() {
+			d.err = fmt.Errorf("gensupport: Null(%q): only a sealed field stores nil", name)
+			return d
+		}
+		// A copy, so the receiver's fields are not changed under it.
+		d.fields = slices.Clone(d.fields)
+		d.fields[i].null = mode
+		return d
+	}
+	d.err = fmt.Errorf("gensupport: Null(%q): no such field", name)
+	return d
 }
 
 // Omit leaves the field out: it does not cross the binding and is not
@@ -223,7 +284,7 @@ func (d Declaration) plan() (*record.Plan, error) {
 		if !f.sealed() {
 			continue
 		}
-		rf := record.Field{Name: f.name, Identity: f.identity, Kind: record.Kind(f.kind)}
+		rf := record.Field{Name: f.name, Identity: f.identity, Kind: record.Kind(f.kind), Null: record.Null(f.null)}
 		switch f.verb {
 		case verbEncryptInto:
 			// The EQL type's own plan decides the outputs; the engine

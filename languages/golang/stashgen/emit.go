@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/format"
 	"strings"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // emit writes the generated file from the model. It writes gofmt-ready Go and
@@ -19,6 +21,9 @@ func emit(f *genFile) ([]byte, error) {
 				return nil, fieldErr(f.typeName, g.GoName, "index %s: index options have no Go form yet", idx)
 			}
 		}
+	}
+	if err := planQueries(f); err != nil {
+		return nil, err
 	}
 	w := &writer{}
 	w.header(f)
@@ -208,36 +213,56 @@ func (w *writer) shapeStruct(name string, fields []shapeField) {
 }
 
 // kindExpr is the gensupport kind of a Go type: the wire type the field
-// seals as. The mapping is vcffi's: int8, int16 and int32 travel as int32,
-// int and int64 as int64, the unsigned ones likewise, []byte as bytes. A
-// composite is untyped and seals as one self-describing value.
+// seals as. Each integer type has the kind of its own width (int8 is Int8,
+// int and int64 are Int64, uint8 and byte Uint8, uint, uint64 and uintptr
+// Uint64), []byte is Bytes, time.Time is Timestamp, and encrypt's Date,
+// Int128, Uint128 and Decimal have their own kinds. A composite is untyped
+// and seals as one self-describing value.
 func kindExpr(t GoType) string {
-	switch t.Kind {
-	case KindString:
-		return "gensupport.String"
-	case KindBool:
-		return "gensupport.Bool"
-	case KindBytes:
-		return "gensupport.Bytes"
-	case KindInt:
-		switch t.Basic {
-		case "int8", "int16", "int32":
-			return "gensupport.Int32"
-		}
-		return "gensupport.Int64"
-	case KindUint:
-		switch t.Basic {
-		case "uint8", "uint16", "uint32", "byte":
-			return "gensupport.Uint32"
-		}
-		return "gensupport.Uint64"
-	case KindFloat:
-		if t.Basic == "float32" {
-			return "gensupport.Float32"
-		}
-		return "gensupport.Float64"
+	return "gensupport." + kindConst(wireKind(t))
+}
+
+// kindConst is the name of a wire kind's constant in gensupport.
+func kindConst(k record.Kind) string {
+	switch k {
+	case record.Bool:
+		return "Bool"
+	case record.Int8:
+		return "Int8"
+	case record.Int16:
+		return "Int16"
+	case record.Int32:
+		return "Int32"
+	case record.Int64:
+		return "Int64"
+	case record.Int128:
+		return "Int128"
+	case record.Uint8:
+		return "Uint8"
+	case record.Uint16:
+		return "Uint16"
+	case record.Uint32:
+		return "Uint32"
+	case record.Uint64:
+		return "Uint64"
+	case record.Uint128:
+		return "Uint128"
+	case record.Float32:
+		return "Float32"
+	case record.Float64:
+		return "Float64"
+	case record.Decimal:
+		return "Decimal"
+	case record.Date:
+		return "Date"
+	case record.Timestamp:
+		return "Timestamp"
+	case record.String:
+		return "String"
+	case record.Bytes:
+		return "Bytes"
 	}
-	return "gensupport.Untyped"
+	return "Untyped"
 }
 
 func indexExpr(idx Index) string {
@@ -269,7 +294,7 @@ func (w *writer) declaration(f *genFile) {
 	}
 	for i, fld := range fields {
 		end := "."
-		if i == len(fields)-1 && fld.Identity == "" {
+		if i == len(fields)-1 && fld.Identity == "" && fld.Null == NotNull {
 			end = ""
 		}
 		switch fld.Verb {
@@ -280,7 +305,11 @@ func (w *writer) declaration(f *genFile) {
 		case VerbEncrypt:
 			w.p("\tEncrypt(%q, %s)%s", fld.Name, kindExpr(fld.GoType), end)
 		case VerbEncryptInto:
-			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kindExpr(fld.GoType), fld.EQLType, end)
+			kind := kindExpr(fld.GoType)
+			if wire, ok := f.intoKinds[fld.Name]; ok {
+				kind = "gensupport." + kindConst(wire)
+			}
+			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kind, fld.EQLType, end)
 		case VerbEncryptIndex, VerbIndex:
 			call := "EncryptIndex"
 			if fld.Verb == VerbIndex {
@@ -294,12 +323,27 @@ func (w *writer) declaration(f *genFile) {
 		}
 		if fld.Identity != "" {
 			end = "."
-			if i == len(fields)-1 {
+			if i == len(fields)-1 && fld.Null == NotNull {
 				end = ""
 			}
 			w.p("\tIdentity(%q, %q)%s", fld.Name, fld.Identity, end)
 		}
+		if fld.Null != NotNull {
+			end = "."
+			if i == len(fields)-1 {
+				end = ""
+			}
+			w.p("\tNull(%q, %s)%s", fld.Name, nullExpr(fld.Null), end)
+		}
 	}
+}
+
+// nullExpr is a null mode's constant in gensupport.
+func nullExpr(n Null) string {
+	if n == NullSQL {
+		return "gensupport.NullSQL"
+	}
+	return "gensupport.NullSealed"
 }
 
 // literal writes a composite literal: one line with one entry, one entry per
@@ -355,6 +399,11 @@ func (w *writer) source(f *genFile) {
 	} else {
 		entries := make([]string, len(f.fields))
 		for i, g := range f.fields {
+			if g.nullable() {
+				// nil crosses as nil, not as a nil pointer.
+				entries[i] = fmt.Sprintf("%q: gensupport.Deref(v.%s)", g.Name, g.GoName)
+				continue
+			}
 			entries[i] = fmt.Sprintf("%q: v.%s", g.Name, g.GoName)
 		}
 		w.literal("\t\t", "return gensupport.Values{", entries, "}")
@@ -390,17 +439,35 @@ func (w *writer) seal(f *genFile) {
 		w.p("\t\t}")
 	}
 	for _, g := range f.fields {
-		switch g.Verb {
-		case VerbPassthrough, VerbContextField:
-		case VerbEncryptInto:
-			w.p("\t\te.%s = %s(rec[%q].EQL)", g.GoName, g.outputType, g.Name)
-		default:
-			entries := make([]string, len(g.outputs))
-			for i, o := range g.outputs {
-				entries[i] = fmt.Sprintf("%s: rec[%q].%s", o.name, g.Name, o.name)
-			}
-			w.literal("\t\t", fmt.Sprintf("e.%s = %s{", g.GoName, g.outputType), entries, "}")
+		if g.Stored() {
+			continue
 		}
+		if g.Null == NullSQL {
+			// A nil stores nothing: the record has no entry, and the
+			// member stays nil, so its columns hold SQL NULL.
+			w.p("\t\tif o, ok := rec[%q]; ok {", g.Name)
+			if g.Verb == VerbEncryptInto {
+				w.p("\t\t\tv := %s(o.EQL)", g.outputType)
+			} else {
+				entries := make([]string, len(g.outputs))
+				for i, o := range g.outputs {
+					entries[i] = fmt.Sprintf("%s: o.%s", o.name, o.name)
+				}
+				w.literal("\t\t\t", fmt.Sprintf("v := %s{", g.outputType), entries, "}")
+			}
+			w.p("\t\t\te.%s = &v", g.GoName)
+			w.p("\t\t}")
+			continue
+		}
+		if g.Verb == VerbEncryptInto {
+			w.p("\t\te.%s = %s(rec[%q].EQL)", g.GoName, g.outputType, g.Name)
+			continue
+		}
+		entries := make([]string, len(g.outputs))
+		for i, o := range g.outputs {
+			entries[i] = fmt.Sprintf("%s: rec[%q].%s", o.name, g.Name, o.name)
+		}
+		w.literal("\t\t", fmt.Sprintf("e.%s = %s{", g.GoName, g.outputType), entries, "}")
 	}
 	w.p("\t\treturn e, nil")
 	w.p("\t},")
@@ -413,22 +480,48 @@ func (w *writer) open(f *genFile) {
 		w.p("\t},")
 		return
 	}
-	entries := make([]string, len(f.fields))
-	for i, g := range f.fields {
+	output := func(g genField, e string) string {
 		switch g.Verb {
 		case VerbPassthrough, VerbContextField:
-			entries[i] = fmt.Sprintf("%q: {Value: e.%s}", g.Name, g.GoName)
+			return fmt.Sprintf("{Value: %s}", e)
 		case VerbEncryptInto:
-			entries[i] = fmt.Sprintf("%q: {EQL: e.%s}", g.Name, g.GoName)
-		default:
-			parts := make([]string, len(g.outputs))
-			for n, o := range g.outputs {
-				parts[n] = fmt.Sprintf("%s: e.%s.%s", o.name, g.GoName, o.name)
-			}
-			entries[i] = fmt.Sprintf("%q: {%s}", g.Name, strings.Join(parts, ", "))
+			return fmt.Sprintf("{EQL: %s}", e)
 		}
+		parts := make([]string, len(g.outputs))
+		for n, o := range g.outputs {
+			parts[n] = fmt.Sprintf("%s: %s.%s", o.name, e, o.name)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	}
-	w.literal("\t\t", "return gensupport.Record{", entries, "}")
+	var entries []string
+	var absent []genField
+	for _, g := range f.fields {
+		if g.Null == NullSQL {
+			absent = append(absent, g)
+			continue
+		}
+		entries = append(entries, fmt.Sprintf("%q: %s", g.Name, output(g, "e."+g.GoName)))
+	}
+	if len(absent) == 0 {
+		w.literal("\t\t", "return gensupport.Record{", entries, "}")
+		w.p("\t},")
+		return
+	}
+	w.literal("\t\t", "rec := gensupport.Record{", entries, "}")
+	for _, g := range absent {
+		// A nil member stored nothing: the record leaves it out, and it
+		// opens as nil.
+		w.p("\t\tif e.%s != nil {", g.GoName)
+		// An EQL value is a slice and is dereferenced; an output struct's
+		// fields are read through the pointer.
+		member := "e." + g.GoName
+		if g.Verb == VerbEncryptInto {
+			member = "*" + member
+		}
+		w.p("\t\t\trec[%q] = gensupport.Output%s", g.Name, output(g, member))
+		w.p("\t\t}")
+	}
+	w.p("\t\treturn rec")
 	w.p("\t},")
 }
 
@@ -460,6 +553,25 @@ func (w *writer) value(f *genFile) {
 			if g.Verb == VerbIndex {
 				// An index-only field stores no ciphertext, so nothing opens
 				// for it: the struct gets the field's zero value.
+				continue
+			}
+			if g.nullable() && g.definedScalar() {
+				// The engine returns the underlying type, or nil; the
+				// conversion to the defined type is the struct's own.
+				w.p("\t\traw%s, err := gensupport.GetPtr[%s](vals, %q)", g.GoName, g.GoType.Basic, g.Name)
+				w.p("\t\tif err != nil {")
+				fail()
+				w.p("\t\t}")
+				w.p("\t\tif raw%s != nil {", g.GoName)
+				w.p("\t\t\tv%s := %s(*raw%s)", g.GoName, g.valueExpr, g.GoName)
+				w.p("\t\t\tv.%s = &v%s", g.GoName, g.GoName)
+				w.p("\t\t}")
+				continue
+			}
+			if g.nullable() {
+				w.p("\t\tif v.%s, err = gensupport.GetPtr[%s](vals, %q); err != nil {", g.GoName, g.valueExpr, g.Name)
+				fail()
+				w.p("\t\t}")
 				continue
 			}
 			if g.Sealed() && g.definedScalar() {
@@ -524,52 +636,225 @@ func (w *writer) fieldEntries(f *genFile) {
 	}
 	w.p("}{")
 	for _, g := range sealed {
-		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.typeExpr, f.declVar, g.Name)
+		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.valueExpr, f.declVar, g.Name)
 	}
 	w.p("}")
 	for _, g := range sealed {
 		w.nl()
 		w.p("type %s struct {", g.fieldType)
-		w.p("\tfield gensupport.Field[%s]", g.typeExpr)
+		w.p("\tfield gensupport.Field[%s]", g.valueExpr)
 		w.p("}")
 		w.nl()
-		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.typeExpr, g.outputType)
-		switch {
-		case g.Verb == VerbEncryptInto:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\treturn %s(out.EQL), err", g.outputType)
-		case len(g.outputs) == 1:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\treturn %s{%s: out.%s}, err", g.outputType, g.outputs[0].name, g.outputs[0].name)
-		default:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\tif err != nil {")
-			w.p("\t\treturn %s{}, err", g.outputType)
-			w.p("\t}")
-			parts := make([]string, len(g.outputs))
-			for i, o := range g.outputs {
-				parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
-			}
-			w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
-		}
+		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
+		w.sealedOutput(g, "f.field.Encrypt(ctx, c, v)")
 		w.p("}")
-		if g.queryType != "" {
+		if g.Null == NullSealed {
+			// The update of one column to nil: a sealed null is a value,
+			// so writing SQL NULL would not store it.
 			w.nl()
-			w.p("func (f %s) Query(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.typeExpr, g.queryType)
-			w.p("\tout, err := f.field.Query(ctx, c, v)")
-			w.p("\treturn %s(out.EQL), err", g.queryType)
+			w.b.WriteString(wrapComment(fmt.Sprintf("EncryptNull seals nil for %s, as long as a value, for an update that sets the column to nil. Write what it returns, not SQL NULL: the field stores nil as a sealed null.", g.GoName), 80))
+			w.p("func (f %s) EncryptNull(ctx context.Context, c *encrypt.Cipher) (%s, error) {", g.fieldType, g.outputType)
+			w.sealedOutput(g, "f.field.EncryptNull(ctx, c)")
 			w.p("}")
 		}
-		for _, o := range g.outputs {
-			if o.index == "" {
-				continue
-			}
+		for _, q := range g.queries {
 			w.nl()
-			w.p("func (f %s) %s(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, o.name, g.typeExpr, o.typeExpr)
-			w.p("\treturn f.field.%s(ctx, c, v)", o.name)
-			w.p("}")
+			w.query(g, q)
+			if g.Null == NullSealed && q.operator.Name == "eq" && !q.operator.Pair && !q.operator.Probabilistic {
+				// A sealed nil stores the term every nil of the field
+				// shares, so eq answers for nil too.
+				w.nl()
+				w.b.WriteString(wrapComment(fmt.Sprintf("%sNull derives the %s query for nil: the term every stored nil of the field shares, so it finds the rows whose value is absent.", q.method, q.operator.Name), 80))
+				w.p("func (f %s) %sNull(ctx context.Context, c *encrypt.Cipher) (%s, error) {", g.fieldType, q.method, q.resultType)
+				w.p("\tterm, err := f.field.NullTerm(ctx, c, %q)", q.operator.Name)
+				w.p("\treturn %s(term), err", q.resultType)
+				w.p("}")
+			}
 		}
 	}
+}
+
+// sealedOutput writes the body of a method that seals through call, a
+// gensupport.Field method returning an Output, and converts the Output to
+// the field's output type.
+func (w *writer) sealedOutput(g genField, call string) {
+	w.p("\tout, err := %s", call)
+	switch {
+	case g.Verb == VerbEncryptInto:
+		w.p("\treturn %s(out.EQL), err", g.outputType)
+	case len(g.outputs) == 1:
+		w.p("\treturn %s{%s: out.%s}, err", g.outputType, g.outputs[0].name, g.outputs[0].name)
+	default:
+		w.p("\tif err != nil {")
+		w.p("\t\treturn %s{}, err", g.outputType)
+		w.p("\t}")
+		parts := make([]string, len(g.outputs))
+		for i, o := range g.outputs {
+			parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
+		}
+		w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
+	}
+}
+
+// queryMethod is one generated method for an operator the engine answers on
+// a field.
+type queryMethod struct {
+	method     string // "Eq", "Between", "Matches"
+	operator   Operator
+	resultType string // "encrypt.EqualityTerm", "encrypt.Range[encrypt.OreTerm]", "encrypt.MatchQuery[string]"
+	termType   string // for a range, the bound's type: "encrypt.OreTerm"; for an EQL matches query, the query type: "eql.TextMatchQuery"
+}
+
+// planQueries picks each sealed field's query methods from the operators the
+// engine answers on it: one method for each, named for the operator, whose
+// result is the Go type of what the operator's term is. An operator the SDK
+// has no Go type for stops the generator, naming the field, rather than
+// leaving the field without a query the engine answers.
+func planQueries(f *genFile) error {
+	for i := range f.fields {
+		g := &f.fields[i]
+		g.queries = nil
+		for _, op := range g.operators {
+			q, err := queryFor(g, op)
+			if err != nil {
+				return fieldErr(f.typeName, g.GoName, "%v", err)
+			}
+			g.queries = append(g.queries, q)
+		}
+		unqueried, err := indexesAnswer(g)
+		if err != nil {
+			return fieldErr(f.typeName, g.GoName, "%v", err)
+		}
+		for _, n := range unqueried {
+			f.notices = append(f.notices, g.GoName+": "+n)
+			f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
+		}
+	}
+	return nil
+}
+
+// indexesAnswer checks a field's indexes against the operators the engine
+// answers on it.
+//
+// It refuses a probabilistic query on an index-only field: the query's rows
+// are checked by decrypting them with Verify, and an index-only field
+// stores no ciphertext, so Verify could never pass and every real match
+// would be thrown away.
+//
+// It returns a notice for each index the engine answers no operator
+// through on the field: the index stores a term no generated method can
+// query. That is an ore or ope index on bytes (the engine stores it and
+// answers the orderings over integers, floats, text, decimals, dates and
+// timestamps only), or a second
+// order index beside the one the engine already answers the orderings
+// with. Storing it is allowed, since a program may compare the stored terms
+// itself, but an order term tells anyone who reads the column how its
+// values order, so the generator says so.
+func indexesAnswer(g *genField) ([]string, error) {
+	if g.Verb != VerbEncryptIndex && g.Verb != VerbIndex {
+		return nil, nil
+	}
+	answers := map[IndexName]string{}
+	for _, op := range g.operators {
+		if op.Probabilistic && g.Verb == VerbIndex {
+			return nil, fmt.Errorf("the %s index answers %s, whose rows are checked by decrypting them with Verify, and an index-only field stores no ciphertext to decrypt; seal it as well (encrypt,index=%s)", op.Index, op.Name, op.Index)
+		}
+		if _, ok := answers[op.Index]; !ok {
+			answers[op.Index] = op.Name
+		}
+	}
+	var notices []string
+	for _, ix := range g.Indexes {
+		if _, ok := answers[ix.Name]; ok {
+			continue
+		}
+		why := ""
+		if ix.Name == IndexOre || ix.Name == IndexOpe {
+			why = ": the orderings are answered over integers, floats, text, decimals, dates and timestamps only"
+			for _, other := range []IndexName{IndexOre, IndexOpe} {
+				if op, ok := answers[other]; ok && other != ix.Name {
+					why = fmt.Sprintf(": the %s index already answers %s and the other orderings", other, op)
+				}
+			}
+		}
+		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.valueExpr, why))
+	}
+	return notices, nil
+}
+
+func queryFor(g *genField, op Operator) (queryMethod, error) {
+	q := queryMethod{method: operatorMethod(op.Name), operator: op}
+	if !isIdent(q.method) || q.method == "Encrypt" {
+		return q, fmt.Errorf("the engine answers the operator %q, which has no Go method name", op.Name)
+	}
+	if g.Verb == VerbEncryptInto {
+		// The term of every operator on an EQL type is the type's query
+		// value.
+		switch {
+		case g.queryType == "":
+			return q, fmt.Errorf("the engine answers %s on %s, which has no query type", op.Name, g.EQLType)
+		case op.Pair:
+			return q, fmt.Errorf("the engine answers %s on %s with two values, and an EQL query value is one", op.Name, g.EQLType)
+		case op.Probabilistic && (op.Index != IndexMatch || g.GoType.Kind != KindString):
+			return q, fmt.Errorf("the engine answers %s on %s with a probabilistic term through the %s index, and the SDK verifies only a match index over a string", op.Name, g.EQLType, op.Index)
+		case op.Probabilistic:
+			// The query value is the type's, and the query keeps what Verify
+			// and TargetLimit need, as a MatchQuery does.
+			q.resultType = "encrypt.EQLMatchQuery[" + g.queryType + ", " + g.valueExpr + "]"
+			q.termType = g.queryType
+			return q, nil
+		}
+		q.resultType = g.queryType
+		return q, nil
+	}
+	termType := map[IndexName]string{IndexEquality: "encrypt.EqualityTerm", IndexOre: "encrypt.OreTerm", IndexOpe: "encrypt.OpeTerm"}[op.Index]
+	switch {
+	case op.Probabilistic && op.Index == IndexMatch && !op.Pair && g.GoType.Kind == KindString:
+		q.resultType = "encrypt.MatchQuery[" + g.valueExpr + "]"
+	case op.Probabilistic || termType == "":
+		return q, fmt.Errorf("the engine answers %s through the %s index, and the SDK has no Go type for that query", op.Name, op.Index)
+	case op.Pair && op.Index != IndexEquality:
+		q.resultType = "encrypt.Range[" + termType + "]"
+		q.termType = termType
+	case op.Pair:
+		return q, fmt.Errorf("the engine answers %s with two values through the %s index, and the SDK has no Go type for that range", op.Name, op.Index)
+	default:
+		q.resultType = termType
+	}
+	return q, nil
+}
+
+// operatorMethod is the Go method for an operator: its name with the first
+// letter upper case, eq -> Eq, between -> Between.
+func operatorMethod(name string) string {
+	if name == "" {
+		return ""
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// query writes one operator's method on a field's entry.
+func (w *writer) query(g genField, q queryMethod) {
+	recv := fmt.Sprintf("func (f %s) %s(ctx context.Context, c *encrypt.Cipher, ", g.fieldType, q.method)
+	switch {
+	case q.operator.Probabilistic:
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the %s query for v. Its answer can hold rows that do not match: decrypt the rows it fetches and keep those Verify reports true.", q.method, q.operator.Name), 80))
+		w.p("%sv %s) (%s, error) {", recv, g.valueExpr, q.resultType)
+		if g.Verb == VerbEncryptInto {
+			w.p("	return gensupport.EQLMatches[%s](ctx, f.field, c, v)", q.termType)
+		} else {
+			w.p("	return gensupport.Matches(ctx, f.field, c, v)")
+		}
+	case q.operator.Pair:
+		w.p("%slo, hi %s) (%s, error) {", recv, g.valueExpr, q.resultType)
+		w.p("	low, high, err := f.field.Range(ctx, c, %q, lo, hi)", q.operator.Name)
+		w.p("	return %s{Low: low, High: high}, err", q.resultType)
+	default:
+		w.p("%sv %s) (%s, error) {", recv, g.valueExpr, q.resultType)
+		w.p("	term, err := f.field.Term(ctx, c, %q, v)", q.operator.Name)
+		w.p("	return %s(term), err", q.resultType)
+	}
+	w.p("}")
 }
 
 func (w *writer) model(f *genFile, m *genModel) {

@@ -115,6 +115,10 @@ func Call(ctx context.Context, mem *Allocator, m api.Module, e Exports, fn api.F
 		return nil, fmt.Errorf("%w: guest call: %w", ErrTrap, err)
 	}
 	ptr, n, err := PackedResult(res[0])
+	if errors.Is(err, ErrNeedsIO) {
+		// A pause records no error: there is nothing to diagnose.
+		return nil, err
+	}
 	if err != nil {
 		return nil, e.diagnose(ctx, m, err)
 	}

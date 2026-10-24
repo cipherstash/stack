@@ -14,6 +14,7 @@ This directory contains the documentation for the Encrypt Query Language (EQL).
 - [Writing fast queries against EQL columns](reference/query-performance.md) - Performance overview (points to Database Indexes)
 - [Adding a Scalar Encrypted-Domain Type](reference/adding-a-scalar-encrypted-domain-type.md) - How the `eql_v3.<T>` domain families are generated
 - [EQL with JSON and JSONB](reference/json-support.md)
+- [What an encrypted JSON tree reveals](reference/json-tree-leakage.md) - What `public.eql_v4_json_tree` (EQL v4) shows the database at rest and at query time, and what it does not
 - [EQL payload / wire format](../crates/eql-bindings/README.md) - Canonical wire types for the encrypted payload (envelope `v`/`i`/`c` and the `hm`/`op`/`ob`/`bf` index terms)
 - [Client-side index configuration](https://cipherstash.com/docs/stack/cipherstash/encryption/schema) - Configuring searchable encryption in CipherStash Stack / CipherStash Proxy
 

@@ -2,7 +2,7 @@
 
 A runnable tour of the Go SDK against real ZeroKMS: declare a struct with
 `stash` tags, generate its encrypted type, seal a batch in one request, derive
-a query term, and open the batch again.
+a query term, open the batch again, and verify a matches query over it.
 
 ## Running it
 
@@ -28,5 +28,5 @@ until they are built.
 - `model.go`: the struct and its `go:generate` line.
 - `user_stash.go`: what `stashgen` wrote from the tags. Regenerate it with
   `go generate ./...`; CI fails when that changes a committed file.
-- `main.go`: `Encrypt`, `Fields.Email.Equality` and `Decrypt`, the only three
-  calls a program makes.
+- `main.go`: `Encrypt`, `Fields.Email.Eq`, `Decrypt`, and `Fields.Email.Matches`
+  with `Verify` on the decrypted rows.

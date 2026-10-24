@@ -150,7 +150,6 @@ func TestTermsAndLeavesScanAndValue(t *testing.T) {
 func TestLeafSetKeepsStackEncryptLeavesDistinct(t *testing.T) {
 	ct := map[string]any{
 		"a": Ciphertext{1},
-		"b": otherLeaf{kind: vcffi.LeafNone, bytes: []byte{2}},
 		"c": otherLeaf{kind: vcffi.LeafEmptySeq, bytes: []byte{3}},
 		"d": otherLeaf{kind: vcffi.LeafEmptyMap, bytes: []byte{4}},
 		"p": vcvalue.Plain{V: "clear"},

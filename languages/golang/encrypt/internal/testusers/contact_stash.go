@@ -124,9 +124,9 @@ func (f ContactEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v str
 	return eql.TextEq(out.EQL), err
 }
 
-func (f ContactEmailField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
-	out, err := f.field.Query(ctx, c, v)
-	return eql.TextEqQuery(out.EQL), err
+func (f ContactEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.TextEqQuery(term), err
 }
 
 type ContactNotesField struct {

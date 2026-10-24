@@ -6,9 +6,11 @@
 // to check one.
 //
 // The spellings here are wire format, fixed by stack-encrypt's
-// dynamic::record: the output keys "c", "eq", "match", "ore", "ope" and
-// "passthrough", and the type names "bool", "int32", "int64", "uint32",
-// "uint64", "float32", "float64", "string" and "bytes". A field's context is
+// dynamic::record: the output keys "c", "eq", "match", "ore", "ope",
+// "ore_block" and "passthrough", and the type names "bool", "int8", "int16", "int32",
+// "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128",
+// "float32", "float64", "decimal", "date", "timestamp", "string" and
+// "bytes". A field's context is
 // its label — the plan's context segments and the field's identity — nested
 // to the left under each part the caller extends it by.
 //
@@ -41,16 +43,25 @@ type Kind string
 
 // The kinds. The names are vitaminc's ValueKind names, frozen.
 const (
-	Untyped Kind = ""
-	Bool    Kind = "bool"
-	Int32   Kind = "int32"
-	Int64   Kind = "int64"
-	Uint32  Kind = "uint32"
-	Uint64  Kind = "uint64"
-	Float32 Kind = "float32"
-	Float64 Kind = "float64"
-	String  Kind = "string"
-	Bytes   Kind = "bytes"
+	Untyped   Kind = ""
+	Bool      Kind = "bool"
+	Int8      Kind = "int8"
+	Int16     Kind = "int16"
+	Int32     Kind = "int32"
+	Int64     Kind = "int64"
+	Int128    Kind = "int128"
+	Uint8     Kind = "uint8"
+	Uint16    Kind = "uint16"
+	Uint32    Kind = "uint32"
+	Uint64    Kind = "uint64"
+	Uint128   Kind = "uint128"
+	Float32   Kind = "float32"
+	Float64   Kind = "float64"
+	Decimal   Kind = "decimal"
+	Date      Kind = "date"
+	Timestamp Kind = "timestamp"
+	String    Kind = "string"
+	Bytes     Kind = "bytes"
 )
 
 // Output is one output of a sealed field, by its wire key.
@@ -64,6 +75,7 @@ const (
 	Match       Output = "match"
 	Ore         Output = "ore"
 	Ope         Output = "ope"
+	OreBlock    Output = "ore_block"
 	Passthrough Output = "passthrough"
 )
 
@@ -94,7 +106,30 @@ type Field struct {
 	// type's own plan decides what is sealed and which terms sit beside it,
 	// and the engine returns the finished value under EQLKey.
 	Target string
+	// Null is how the field stores a value that is not there: NotNull for a
+	// field every row has, SealedNull or SQLNull for one declared over a
+	// pointer.
+	Null Null
 }
+
+// Null is how a field stores a value that is not there: the plan's "null".
+// The spellings are wire format, stack-encrypt's dynamic::NullMode.
+type Null string
+
+const (
+	// NotNull is a field every row has. A typed field refuses a nil.
+	NotNull Null = ""
+	// SealedNull seals a nil like a value, as a typed null as long as one of
+	// the field's kind, so the stored record does not show which rows are
+	// absent; it opens as nil. Beside an equality index it stores the term
+	// every nil shares. The engine takes it on a field whose only index is
+	// equality, of a kind of fixed width.
+	SealedNull Null = "sealed"
+	// SQLNull stores nothing for a nil: the field is left out of the record,
+	// a source may leave it out, and a stored record without it opens it as
+	// nil. Its columns hold SQL NULL, which shows that the value is absent.
+	SQLNull Null = "sql"
+)
 
 // IsTarget reports whether the field names an EQL type.
 func (f Field) IsTarget() bool { return f.Target != "" }
@@ -249,6 +284,11 @@ func (p *Plan) Validate() error {
 		if !f.Kind.Known() {
 			return fmt.Errorf("record: field %q: unknown kind %q", f.Name, f.Kind)
 		}
+		switch f.Null {
+		case NotNull, SealedNull, SQLNull:
+		default:
+			return fmt.Errorf("record: field %q: unknown null %q", f.Name, f.Null)
+		}
 		if f.IsTarget() {
 			if len(f.Outputs) != 0 {
 				return fmt.Errorf("record: field %q names the EQL type %s and outputs; a field has one or the other", f.Name, f.Target)
@@ -292,7 +332,8 @@ func (p *Plan) Validate() error {
 // Known reports whether k is a kind that the engine names; Untyped is one.
 func (k Kind) Known() bool {
 	switch k {
-	case Untyped, Bool, Int32, Int64, Uint32, Uint64, Float32, Float64, String, Bytes:
+	case Untyped, Bool, Int8, Int16, Int32, Int64, Int128, Uint8, Uint16, Uint32, Uint64, Uint128,
+		Float32, Float64, Decimal, Date, Timestamp, String, Bytes:
 		return true
 	}
 	return false
@@ -345,6 +386,9 @@ func (p *Plan) Wire() vcvalue.Object {
 		if f.Kind != Untyped {
 			spec = append(spec, vcvalue.Field{Key: "type", Value: string(f.Kind)})
 		}
+		if f.Null != NotNull {
+			spec = append(spec, vcvalue.Field{Key: "null", Value: string(f.Null)})
+		}
 		out = append(out, vcvalue.Field{Key: f.Name, Value: spec})
 	}
 	return out
@@ -391,7 +435,8 @@ func (p *Plan) Descriptor(f Field) string {
 
 // Source is one record's plaintext for the engine: each sealed field's value
 // by name, and the context field's string when the plan has one.
-// Passthrough and omitted fields are not in it.
+// Passthrough and omitted fields are not in it, nor need a SQLNull field
+// that is nil be.
 type Source = map[string]any
 
 // Outputs is what the engine produced for one sealed field, or what it
@@ -410,14 +455,17 @@ type Outputs struct {
 }
 
 // Sealed is one record as stored: each sealed field's outputs by name, and
-// the context field's under its name when the plan has one.
+// the context field's under its name when the plan has one. A SQLNull field
+// that was nil has no entry.
 type Sealed = map[string]Outputs
 
 // Target is one EQL type as se_targets lists it. The entry's keys are wire
 // format, written by eql-bindings' serialiser and read by [ParseTargets]:
 // name, family, suffix, plaintext (a ValueKind name, or null), sql_domain,
-// indexes (eq | match | ore | ope | json), query (or null), query_sql_domain
-// (or null), producible and reason (or null).
+// indexes (eq | match | ore | ope | ore_block | json), query (or null), query_sql_domain
+// (or null), producible, reason (or null), and operators, which the engine
+// adds: the operators it answers for the type, each an object of operator,
+// fidelity (exact | probabilistic), arity (one | pair) and index.
 type Target struct {
 	// Name is the Go type name, and the value of encrypt_into: TextEq.
 	Name string
@@ -439,4 +487,37 @@ type Target struct {
 	// Reason says why not when it does not.
 	Producible bool
 	Reason     string
+	// Operators are the operators the engine answers for a field that names
+	// the type, in the engine's order; none for a type it does not produce.
+	Operators []Operator
+}
+
+// Fidelity says how far the server's answer to an operator can be trusted:
+// [Exact], or [Probabilistic], whose rows a caller verifies after decrypt.
+type Fidelity string
+
+// The fidelities an operator has.
+const (
+	// Exact is an answer the server gives whole: nothing to verify.
+	Exact Fidelity = "exact"
+	// Probabilistic is an answer that can hold false positives and no false
+	// negatives: each decrypted row is verified, and the fetch is sized for
+	// the false positives.
+	Probabilistic Fidelity = "probabilistic"
+)
+
+// Operator is one operator the engine answers for a field: for an EQL type,
+// as se_targets lists it, and for any field of a plan, as se_operators
+// lists it.
+type Operator struct {
+	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
+	// gte, between or matches.
+	Name string
+	// Fidelity is how far the server's answer can be trusted.
+	Fidelity Fidelity
+	// Pair says the operator takes two values, low then high, as between
+	// does, where every other takes one.
+	Pair bool
+	// Index is the index that answers it: the field's, or its EQL type's.
+	Index Output
 }

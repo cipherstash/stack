@@ -88,7 +88,7 @@ func TestEverySealedKindRoundTrips(t *testing.T) {
 		t.Fatalf("DecryptKinds =\n%+v\nwant\n%+v", back, in)
 	}
 	// A defined type's field entry takes and derives at the defined type.
-	term, err := testusers.KindsFields.E.Equality(ctx, cipher, testusers.Email("alice@example.com"))
+	term, err := testusers.KindsFields.E.Eq(ctx, cipher, testusers.Email("alice@example.com"))
 	if err != nil || !term.Equal(encrypted[0].E.Equality) {
 		t.Fatalf("defined-type probe: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestEverySealedKindRoundTrips(t *testing.T) {
 	if err != nil || len(one.Ciphertext) == 0 {
 		t.Fatalf("Score field: %v", err)
 	}
-	if probe, err := testusers.KindsFields.St.Equality(ctx, cipher, "active"); err != nil || !probe.Equal(encrypted[0].St.Equality) {
+	if probe, err := testusers.KindsFields.St.Eq(ctx, cipher, "active"); err != nil || !probe.Equal(encrypted[0].St.Equality) {
 		t.Fatalf("Status probe: %v", err)
 	}
 }
@@ -110,16 +110,16 @@ func TestModelRowsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	probe, err := testusers.Fields.Email.Equality(t.Context(), cipher, people[1].Email)
+	probe, err := testusers.Fields.Email.Eq(t.Context(), cipher, people[1].Email)
 	if err != nil || !probe.Equal(rows[1].EmailEq) || probe.Equal(rows[0].EmailEq) {
 		t.Fatalf("EmailEq does not hold the email's equality term: %v", err)
 	}
-	ageProbe, err := testusers.Fields.Age.Ore(t.Context(), cipher, people[1].Age)
+	ageProbe, err := testusers.Fields.Age.Lt(t.Context(), cipher, people[1].Age)
 	if err != nil || ageProbe.Compare(rows[1].AgeOre) != 0 || !rows[1].AgeOre.Less(rows[0].AgeOre) {
 		t.Fatalf("AgeOre does not hold the age's ORE term: %v", err)
 	}
-	match, err := testusers.Fields.Email.Match(t.Context(), cipher, people[1].Email)
-	if err != nil || !bytes.Equal(match, rows[1].EmailMatch) || len(rows[1].Notes) == 0 || rows[1].ID != people[1].ID {
+	match, err := testusers.Fields.Email.Matches(t.Context(), cipher, people[1].Email)
+	if err != nil || !bytes.Equal(match.Term(), rows[1].EmailMatch) || len(rows[1].Notes) == 0 || rows[1].ID != people[1].ID {
 		t.Fatalf("the other columns: %v %+v", err, rows[1])
 	}
 	want := append([]testusers.User(nil), people...)
@@ -179,7 +179,7 @@ func TestIndexOnlyFieldsDecryptToTheirZeroValue(t *testing.T) {
 	if !encrypted[1].Score.Ore.Less(encrypted[0].Score.Ore) || len(encrypted[0].Code.Equality) == 0 {
 		t.Fatalf("index-only terms: %+v", encrypted)
 	}
-	probe, err := testusers.LookupFields.Code.Equality(ctx, cipher, "gold")
+	probe, err := testusers.LookupFields.Code.Eq(ctx, cipher, "gold")
 	if err != nil || !probe.Equal(encrypted[0].Code.Equality) {
 		t.Fatalf("Code probe: %v", err)
 	}

@@ -18,7 +18,7 @@
 //!
 //! # Wire format
 //!
-//! [`TargetDescriptor::to_value`] is the entry a guest's `se_targets` export
+//! A [`TargetDescriptor`], serialized, is the entry a guest's `se_targets` export
 //! lists for each type; the keys are fixed on [`TargetDescriptor`], in the
 //! crate that owns the data grammar, and `eql-bindings` is tested to spell
 //! its table the same way.
@@ -27,15 +27,18 @@
 
 use std::fmt;
 
-use vitaminc_aead_value::{FfiValue, ValueKind};
+use super::query::target_operators;
+use super::{OpSpec, ValueFrame, ValueKind};
 
+use crate::sem::MatchOptions;
+use crate::target::IndexSpec;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 
 /// One EQL type a plan may name as a target, as the host describes it.
 ///
 /// # Wire format
 ///
-/// [`to_value`](Self::to_value) is the entry a guest's `se_targets` export
+/// The descriptor, serialized (it is `Serialize`), is the entry a guest's `se_targets` export
 /// lists for each type, so a generator can ask the engine it embeds which
 /// EQL types it holds. Every key is always present; an absent value is
 /// null, never a missing key.
@@ -52,6 +55,21 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 /// | `query_sql_domain` | string or null: the query twin's PostgreSQL domain |
 /// | `producible` | bool: whether the engine produces the type today |
 /// | `reason` | string or null: why not, when it does not |
+/// | `operators` | list of objects: the operators the engine answers for the type ([`operators`](Self::operators)), each `{"operator", "fidelity", "arity", "index"}`; empty for a type it does not produce |
+///
+/// Each `operators` entry has every key:
+///
+/// | key | value |
+/// |---|---|
+/// | `operator` | string: the operator's name, `eq` ([`OpSpec::name`]) |
+/// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`](super::Fidelity::name)) |
+/// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
+/// | `index` | string: the key of the type's index that answers it, `eq` |
+///
+/// The first ten keys are the row `eql-bindings` serializes for the type;
+/// `operators` is the engine's, computed from the row by the table every
+/// plan field is held to ([`OpSpec::answered_by`]), so a generator reads the
+/// operators from the engine it embeds rather than from a copy of the rules.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TargetDescriptor {
@@ -75,6 +93,52 @@ pub struct TargetDescriptor {
     pub producible: bool,
     /// Why it does not, when it does not.
     pub reason: Option<String>,
+    /// The options the type's match index is built under, for a type that
+    /// carries one and whose builder says which ([`with_match_options`]).
+    /// Not on the wire: the engine needs them to answer `matches` through
+    /// the type (to cut the query's tokens for [`verify`] as the stored
+    /// filter was cut, and to read a query term), and a host does not.
+    ///
+    /// [`with_match_options`]: Self::with_match_options
+    /// [`verify`]: super::verify
+    pub match_options: Option<MatchOptions>,
+}
+
+/// The descriptor in its wire form: the object a guest's `se_targets`
+/// lists, every key present (see [the type's wire format](TargetDescriptor#wire-format)).
+impl serde::Serialize for TargetDescriptor {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct Wire<'a> {
+            name: &'a str,
+            family: &'a str,
+            suffix: &'a str,
+            plaintext: Option<&'static str>,
+            sql_domain: &'a str,
+            indexes: &'a [String],
+            query: Option<&'a str>,
+            query_sql_domain: Option<&'a str>,
+            producible: bool,
+            reason: Option<&'a str>,
+            operators: Vec<super::OperatorEntry>,
+        }
+        serde::Serialize::serialize(
+            &Wire {
+                name: &self.name,
+                family: &self.family,
+                suffix: &self.suffix,
+                plaintext: self.plaintext.map(ValueKind::name),
+                sql_domain: &self.sql_domain,
+                indexes: &self.indexes,
+                query: self.query.as_deref(),
+                query_sql_domain: self.query_sql_domain.as_deref(),
+                producible: self.producible,
+                reason: self.reason.as_deref(),
+                operators: self.operator_entries(),
+            },
+            s,
+        )
+    }
 }
 
 impl TargetDescriptor {
@@ -104,36 +168,44 @@ impl TargetDescriptor {
             query_sql_domain,
             producible,
             reason,
+            match_options: None,
         }
     }
 
-    /// The descriptor in its wire form: the object a guest's `se_targets`
-    /// lists, every key present (see [the type's wire format](Self#wire-format)).
-    pub fn to_value(&self) -> FfiValue {
-        let text = |s: &str| FfiValue::String(s.into());
-        let optional = |s: &Option<String>| s.as_deref().map_or(FfiValue::Null, text);
-        FfiValue::Object(vec![
-            ("name".to_string(), text(&self.name)),
-            ("family".to_string(), text(&self.family)),
-            ("suffix".to_string(), text(&self.suffix)),
-            (
-                "plaintext".to_string(),
-                self.plaintext
-                    .map_or(FfiValue::Null, |kind| text(kind.name())),
-            ),
-            ("sql_domain".to_string(), text(&self.sql_domain)),
-            (
-                "indexes".to_string(),
-                FfiValue::Array(self.indexes.iter().map(|k| text(k)).collect()),
-            ),
-            ("query".to_string(), optional(&self.query)),
-            (
-                "query_sql_domain".to_string(),
-                optional(&self.query_sql_domain),
-            ),
-            ("producible".to_string(), FfiValue::Bool(self.producible)),
-            ("reason".to_string(), optional(&self.reason)),
-        ])
+    /// The descriptor of a type whose match index is built under `options`:
+    /// such a type answers `matches` through its query twin
+    /// ([`operators`](Self::operators)). A type with a match index and no
+    /// options given answers no probabilistic operator, since `verify`
+    /// could not cut the query's tokens as the stored filter was cut.
+    #[must_use]
+    pub fn with_match_options(mut self, options: MatchOptions) -> Self {
+        self.match_options = Some(options);
+        self
+    }
+
+    /// The entries of [`operators`](Self::operators), each with the index
+    /// that answers it, as the wire form lists them.
+    fn operator_entries(&self) -> Vec<super::OperatorEntry> {
+        target_operators(self)
+            .iter()
+            .map(|(op, index)| super::OperatorEntry::new(*op, index))
+            .collect()
+    }
+
+    /// The operators the engine answers for a field that names this type,
+    /// in [`OpSpec::ALL`]'s order: none for a type it does not produce or
+    /// that has no query twin, and otherwise each operator of one value
+    /// that one of the type's indexes answers for its plaintext kind
+    /// ([`OpSpec::answered_by`]): the exact ones, and `matches` when the
+    /// type's match options are known ([`with_match_options`](Self::with_match_options)).
+    /// The query for each is the type's query twin. `between` is not
+    /// answered through a type yet: see [`query_term`](super::query_term)'s
+    /// module.
+    pub fn operators(&self) -> Vec<OpSpec> {
+        target_operators(self)
+            .into_iter()
+            .map(|(op, _)| op)
+            .collect()
     }
 }
 
@@ -423,7 +495,7 @@ pub trait TargetResolver {
         name: &str,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
-        plaintext: FfiValue,
+        plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 
     /// Open a stored value of the named type back to its plaintext, checking
@@ -442,10 +514,20 @@ pub trait TargetResolver {
         cipher: &'a StackCipher<K>,
         label: &Label,
         stored: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError>;
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError>;
 
     /// Run the named type's query twin over one value: the operand that
     /// matches stored values under `label`'s column, as JSON bytes.
+    ///
+    /// `index` is the type's index that answers the query's operator, one of
+    /// the descriptor's [`indexes`](TargetDescriptor::indexes):
+    /// [`query_term`](super::query_term()) passes the one
+    /// [`OpSpec::answered_by`] picks. A twin that carries every term of the
+    /// type may ignore it. A twin whose terms are optional (EQL v4's
+    /// `TextSearchQuery`) carries that index's term alone, so a query whose
+    /// operator needs one term is not refused for want of another: a match
+    /// term, which text shorter than one token cannot make, is derived only
+    /// for `matches`.
     ///
     /// # Errors
     ///
@@ -453,9 +535,10 @@ pub trait TargetResolver {
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        index: &IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
-        plaintext: FfiValue,
+        plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 }
 
@@ -484,7 +567,7 @@ impl TargetResolver for NoTargets {
         name: &str,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -495,16 +578,17 @@ impl TargetResolver for NoTargets {
         _: &'a StackCipher<K>,
         _: &Label,
         _: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         Self::refuse(name)
     }
 
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        _: &IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -519,6 +603,7 @@ impl fmt::Display for TargetDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::test_frame::Tree;
 
     fn text_eq() -> TargetDescriptor {
         TargetDescriptor::new(
@@ -526,10 +611,10 @@ mod tests {
             "text",
             "Eq",
             Some(ValueKind::String),
-            "public.eql_v3_text_eq",
+            "public.eql_v4_text_eq",
             vec!["eq".to_string()],
             Some("TextEqQuery".to_string()),
-            Some("eql_v3.query_text_eq".to_string()),
+            Some("eql_v4.query_text_eq".to_string()),
             true,
             None,
         )
@@ -541,10 +626,10 @@ mod tests {
             "text",
             "OrdOre",
             Some(ValueKind::String),
-            "public.eql_v3_text_ord_ore",
+            "public.eql_v4_text_ord_ore",
             vec!["eq".to_string(), "ore".to_string()],
             Some("TextOrdOreQuery".to_string()),
-            Some("eql_v3.query_text_ord_ore".to_string()),
+            Some("eql_v4.query_text_ord_ore".to_string()),
             false,
             Some("block ORE is not CLLW ORE".to_string()),
         )
@@ -562,7 +647,7 @@ mod tests {
             _: &str,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
@@ -572,15 +657,16 @@ mod tests {
             _: &'a StackCipher<K>,
             _: &Label,
             _: &[u8],
-        ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("not run here")
         }
         fn query<'a, K: 'static>(
             &self,
             _: &str,
+            _: &IndexSpec,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
@@ -588,7 +674,7 @@ mod tests {
 
     #[test]
     fn the_wire_form_has_every_key_in_order_with_null_for_absent() {
-        let FfiValue::Object(entries) = text_eq().to_value() else {
+        let Tree::Object(entries) = crate::dynamic::test_frame::value_of(&text_eq()) else {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
@@ -604,27 +690,28 @@ mod tests {
                 "query",
                 "query_sql_domain",
                 "producible",
-                "reason"
+                "reason",
+                "operators"
             ],
             "the se_targets entry's keys, in order"
         );
-        assert!(matches!(&entries[3].1, FfiValue::String(s) if s.risky_ref() == b"string"));
-        assert!(matches!(&entries[8].1, FfiValue::Bool(true)));
+        assert!(matches!(&entries[3].1, Tree::String(s) if s.as_bytes() == b"string"));
+        assert!(matches!(&entries[8].1, Tree::Bool(true)));
         assert!(
-            matches!(&entries[9].1, FfiValue::Null),
+            matches!(&entries[9].1, Tree::Null),
             "no reason is null, not absent"
         );
         let mut unspecified = text_eq();
         unspecified.plaintext = None;
         unspecified.query = None;
-        let FfiValue::Object(entries) = unspecified.to_value() else {
+        let Tree::Object(entries) = crate::dynamic::test_frame::value_of(&unspecified) else {
             panic!("an object");
         };
-        assert!(matches!(&entries[3].1, FfiValue::Null));
-        assert!(matches!(&entries[6].1, FfiValue::Null));
+        assert!(matches!(&entries[3].1, Tree::Null));
+        assert!(matches!(&entries[6].1, Tree::Null));
         assert_eq!(
             entries.len(),
-            10,
+            11,
             "an absent value is null, never a missing key"
         );
     }

@@ -258,8 +258,8 @@ fn query_types_path(family_name: &str) -> String {
 pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String {
     use crate::consts::sql_str;
     use crate::context::{
-        domain_name, environment, extractor_entry, query_domain_name, wrapper_entry,
-        FunctionsContext,
+        domain_name, environment, query_domain_name, query_extractor_entry,
+        v4_optional_query_terms, wrapper_entry, FunctionsContext,
     };
     let name = domain.full_name(family_name);
     let query_name = domain.query_name(family_name);
@@ -269,9 +269,10 @@ pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String
 
     let mut entries = Vec::new();
     // Extractor overloads on the query domain (the template renders `a {{ dom }}`
-    // with dom = the query domain).
+    // with dom = the query domain). Over an operand whose terms are optional
+    // in EQL v4, each raises there when its term is absent.
     for term in Term::extractor_terms(domain.terms) {
-        entries.push(extractor_entry(term));
+        entries.push(query_extractor_entry(domain, term, &query_dom));
     }
     // Comparison wrappers: (storage, query) and its (query, storage) commutator,
     // for supported operators only (a query operand is never sent for a blocked
@@ -307,12 +308,18 @@ pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String
         ));
     }
 
+    let mut requires = vec![
+        V3_SCHEMA.to_string(),
+        query_types_path(family_name),
+        scalar_path(family_name, &format!("{name}_functions.sql")),
+    ];
+    // The v4 extractors over an operand with optional terms raise through the
+    // shared helper there.
+    if v4_optional_query_terms(domain) {
+        requires.push(V3_SCALARS_BLOCKER.to_string());
+    }
     let ctx = FunctionsContext {
-        requires: vec![
-            V3_SCHEMA.to_string(),
-            query_types_path(family_name),
-            scalar_path(family_name, &format!("{name}_functions.sql")),
-        ],
+        requires,
         family_name: family_name.to_string(),
         name: query_name,
         domain_lit: sql_str(&query_dom),
@@ -964,6 +971,22 @@ pub fn render_type(spec: &DomainFamily, out_dir: &Path) -> Vec<(PathBuf, String)
             rendered.push((out_dir.join(format!("{name}_aggregates.sql")), agg));
         }
     }
+    // The EQL v4 range surface (ADR-0009 decisions 7 and 8): a range query
+    // domain per ordering term, its bound accessors and `between`. Both files
+    // carry `-- ONLY EQL VERSION: 4`, so the build renders them into the v4
+    // bundle only. None for a family with no ordering term.
+    if let Some(body) = crate::range::render_range_types_file(spec) {
+        rendered.push((
+            out_dir.join(crate::range::range_types_file(family_name)),
+            body,
+        ));
+    }
+    if let Some(body) = crate::range::render_range_functions_file(spec) {
+        rendered.push((
+            out_dir.join(crate::range::range_functions_file(family_name)),
+            body,
+        ));
+    }
     // json_entry cross-type operators: bind the fixed
     // public.eql_v3_json_entry leaf to every query operand this family declares
     // that carries the term json_entry can serve (Term::Ope) AND whose values
@@ -1150,6 +1173,65 @@ mod tests {
             .expect("domain name")
     }
 
+    // The renderers emit placeholder SQL. These shadow them, rendering their
+    // output as eql_v3, so the assertions below read as installed SQL and every
+    // rendered file is also checked to be free of literal names and unknown
+    // placeholders.
+    fn v3(sql: String) -> String {
+        crate::render::render_str(&sql, crate::render::EqlVersion::V3).expect("renders as eql_v3")
+    }
+
+    fn render_types_file(spec: &DomainFamily) -> String {
+        v3(super::render_types_file(spec))
+    }
+
+    fn render_functions_file(family_name: &str, domain: &Domain) -> String {
+        v3(super::render_functions_file(family_name, domain))
+    }
+
+    fn render_operators_file(family_name: &str, domain: &Domain) -> String {
+        v3(super::render_operators_file(family_name, domain))
+    }
+
+    fn render_aggregates_file(family_name: &str, domain: &Domain) -> Option<String> {
+        super::render_aggregates_file(family_name, domain).map(v3)
+    }
+
+    fn render_ore_fallback_file() -> String {
+        v3(super::render_ore_fallback_file())
+    }
+
+    fn render_json_entry_cross_functions(
+        spec: &DomainFamily,
+        domains: &[&Domain],
+        blocked_domains: &[&Domain],
+    ) -> String {
+        v3(super::render_json_entry_cross_functions(
+            spec,
+            domains,
+            blocked_domains,
+        ))
+    }
+
+    fn render_json_entry_cross_operators(
+        spec: &DomainFamily,
+        domains: &[&Domain],
+        blocked_domains: &[&Domain],
+    ) -> String {
+        v3(super::render_json_entry_cross_operators(
+            spec,
+            domains,
+            blocked_domains,
+        ))
+    }
+
+    fn render_type(spec: &DomainFamily, out_dir: &Path) -> Vec<(PathBuf, String)> {
+        super::render_type(spec, out_dir)
+            .into_iter()
+            .map(|(p, sql)| (p, v3(sql)))
+            .collect()
+    }
+
     use std::fs;
 
     #[test]
@@ -1219,10 +1301,13 @@ mod tests {
         // Query-operand + json_entry cross-type files for the term-bearing domains.
         assert!(names.contains(&"json_entry_integer_functions.sql".to_string()));
         assert!(names.contains(&"json_entry_integer_operators.sql".to_string()));
+        // The EQL v4 range surface: domains, then accessors and `between`.
+        assert!(names.contains(&"query_integer_range_types.sql".to_string()));
+        assert!(names.contains(&"query_integer_range_functions.sql".to_string()));
         // 1 types + 1 query_types + 2 per domain (5) + 2 query per term-bearing
         // domain (4) + 3 ord-capable aggregates = 1+1+10+8+3 = 23, plus the 2
-        // json_entry cross files.
-        assert_eq!(written.len(), 25);
+        // json_entry cross files and the 2 range files.
+        assert_eq!(written.len(), 27);
         for p in &written {
             assert!(fs::read_to_string(p)
                 .unwrap()
@@ -1873,8 +1958,8 @@ mod tests {
                 shape: Shape::Scalar,
             },
         );
-        assert_eq!(block.typname, "eql_v3_integer_q"); // no quote present → unchanged
-                                                       // keys are sql_str-escaped key tokens; none should carry a bare unescaped quote.
+        assert_eq!(block.typname, "{{prefix}}_integer_q"); // no quote present → unchanged
+                                                           // keys are sql_str-escaped key tokens; none should carry a bare unescaped quote.
         assert!(block.keys.iter().all(|k| !k.contains("o'")));
     }
 
@@ -2169,7 +2254,7 @@ mod tests {
     fn json_entry_type_is_derived_from_the_catalog() {
         // Not a hardcoded literal: a catalog rename or PUBLIC_TYPNAME_PREFIX bump
         // must flow through rather than silently drift (cf. #398 jsonb -> json).
-        assert_eq!(json_entry_type(), "public.eql_v3_json_entry");
+        assert_eq!(json_entry_type(), "public.{{prefix}}_json_entry");
         assert_eq!(json_entry_stem("integer"), "json_entry_integer");
         assert_eq!(
             json_entry_functions_path("integer"),
@@ -2450,5 +2535,122 @@ mod tests {
                 "{family}: blocked operators carry no planner metadata"
             );
         }
+    }
+
+    /// The CHECK of `name`'s CREATE DOMAIN in `sql`, rendered as `prefix`.
+    fn domain_check(sql: &str, prefix: &str, name: &str) -> String {
+        let start = sql
+            .find(&format!("CREATE DOMAIN {prefix}.{name} AS"))
+            .unwrap_or_else(|| panic!("{prefix}.{name}"));
+        let end = start + sql[start..].find(");").expect("CHECK closes");
+        sql[start..end].to_string()
+    }
+
+    /// EQL v4's search query operands carry only the terms their operator
+    /// reads (ADR-0002, amended 2026-10-19); eql_v3's keep requiring every
+    /// term, as before.
+    #[test]
+    fn a_v4_search_query_operand_needs_one_term_and_v3_needs_all() {
+        use crate::render::{render_str, EqlVersion};
+        let text = spec("text");
+        let types = super::render_query_types_file(text);
+        let v3 = render_str(&types, EqlVersion::V3).unwrap();
+        let v4 = render_str(&types, EqlVersion::V4).unwrap();
+
+        let search3 = domain_check(&v3, "eql_v3", "query_text_search");
+        for key in ["hm", "op", "bf"] {
+            assert!(
+                search3.contains(&format!("AND VALUE ? '{key}'")),
+                "{search3}"
+            );
+        }
+        let search4 = domain_check(&v4, "eql_v4", "query_text_search");
+        assert!(
+            search4.contains("AND (VALUE ? 'hm' OR VALUE ? 'op' OR VALUE ? 'bf')"),
+            "{search4}"
+        );
+        assert!(!search4.contains("AND VALUE ? 'hm'"), "{search4}");
+        assert!(
+            search4.contains("AND VALUE ? 'v'") && search4.contains("NOT (VALUE ? 'c')"),
+            "{search4}"
+        );
+        // The ORE twin: a present `ob` is a non-empty array in v3, and in v4
+        // a string with a block ORE prefix.
+        let ore3 = domain_check(&v3, "eql_v3", "query_text_search_ore");
+        assert!(ore3.contains("AND VALUE ? 'ob'"), "{ore3}");
+        assert!(
+            ore3.contains("AND jsonb_typeof(VALUE -> 'ob') = 'array'"),
+            "{ore3}"
+        );
+        let ore4 = domain_check(&v4, "eql_v4", "query_text_search_ore");
+        assert!(
+            ore4.contains("AND (VALUE ? 'hm' OR VALUE ? 'ob' OR VALUE ? 'bf')")
+                && ore4.contains(
+                    "AND (NOT (VALUE ? 'ob') OR (jsonb_typeof(VALUE -> 'ob') = 'string'\n          \
+                     AND left(VALUE ->> 'ob', 4) IN ('0202', '0203')))"
+                ),
+            "{ore4}"
+        );
+        assert!(!ore4.contains("'array'"), "{ore4}");
+        // An order term is a string with its scheme's prefix in v4 only.
+        let ord3 = domain_check(&v3, "eql_v3", "query_text_ord");
+        let ord4 = domain_check(&v4, "eql_v4", "query_text_ord");
+        assert!(!ord3.contains("left(VALUE"), "{ord3}");
+        assert!(
+            ord4.contains(
+                "AND jsonb_typeof(VALUE -> 'op') = 'string'\n        \
+                 AND left(VALUE ->> 'op', 2) IN ('00', '01')"
+            ),
+            "{ord4}"
+        );
+        // Every query operand without an order term is the same in both versions.
+        for other in ["query_text_eq", "query_text_match"] {
+            assert_eq!(
+                domain_check(&v3, "eql_v3", other)
+                    .replace("eql_v3", "eql_vN")
+                    .replace("'3'", "'N'"),
+                domain_check(&v4, "eql_v4", other)
+                    .replace("eql_v4", "eql_vN")
+                    .replace("'4'", "'N'"),
+                "{other}"
+            );
+        }
+
+        // Each v4 extractor over the operand raises without its term; v3's
+        // reads the term as before.
+        let functions = super::render_query_functions_file("text", domain(text, "search"));
+        let f3 = render_str(&functions, EqlVersion::V3).unwrap();
+        let f4 = render_str(&functions, EqlVersion::V4).unwrap();
+        assert!(!f3.contains("require_query_term"), "{f3}");
+        assert!(f3.contains("AS $$ SELECT eql_v3_internal.hmac_256(a::jsonb) $$;"));
+        for (ctor, key, ops) in [
+            ("hmac_256", "hm", "= and <>"),
+            ("ope_cllw", "op", "<, <=, > and >="),
+            ("bloom_filter", "bf", "@@"),
+        ] {
+            let body = format!(
+                "SELECT eql_v4_internal.{ctor}(eql_v4_internal.require_query_term(a::jsonb, \
+                 'eql_v4.query_text_search', '{key}', '{ops}'))"
+            );
+            assert!(f4.contains(&body), "{body} in {f4}");
+        }
+        // A query operand whose terms are not optional reads them directly,
+        // in one form for both versions.
+        let eq = super::render_query_functions_file("text", domain(text, "eq"));
+        assert!(!eq.contains("require_query_term") && !eq.contains("{{#v"));
+    }
+
+    #[test]
+    fn only_the_search_domains_have_optional_v4_query_terms() {
+        let optional: Vec<String> = CATALOG
+            .iter()
+            .flat_map(|f| {
+                f.domains
+                    .iter()
+                    .filter(|d| d.is_scalar() && crate::context::v4_optional_query_terms(d))
+                    .map(move |d| d.full_name(f.name))
+            })
+            .collect();
+        assert_eq!(optional, ["text_search_ore", "text_search"]);
     }
 }

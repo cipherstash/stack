@@ -137,6 +137,10 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // statement about the caller's input, raised by the engine the
         // record exports run their plans through.
         stack_encrypt::Error::Plan(_) => STATUS_ENCODING,
+        // A ciphertext that authenticated but holds another type than the
+        // one it was opened as: sealed as that type, not tampered with, so
+        // the caller's input and not STATUS_AUTH.
+        stack_encrypt::Error::OpenedType { .. } => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
@@ -283,6 +287,10 @@ mod tests {
     fn aead_and_composition_errors_map_to_the_vitaminc_codes() {
         assert_eq!(status_for_error(&stack_encrypt::Error::Aead), STATUS_AUTH);
         assert_eq!(
+            status_for_error(&stack_encrypt::Error::OpenedType { expected: "i32" }),
+            STATUS_ENCODING
+        );
+        assert_eq!(
             status_for_error(&stack_encrypt::Error::DescriptorTooLong { len: 513 }),
             STATUS_ENCODING
         );
@@ -414,8 +422,8 @@ mod tests {
     /// such. Swapping the arms, or dropping the `Other` one, fails here.
     #[test]
     fn target_refusals_are_encoding_and_a_resolver_failure_is_internal() {
+        use stack_encrypt::dynamic::ValueKind;
         use stack_encrypt::dynamic::{Error, TargetError};
-        use vitaminc_aead_value::ValueKind;
         let refusals = [
             TargetError::NoTargets {
                 name: "TextEq".into(),
@@ -424,8 +432,8 @@ mod tests {
                 name: "Nope".into(),
             },
             TargetError::Unproducible {
-                name: "TextOrdOre".into(),
-                reason: "block ORE".into(),
+                name: "DateOrdOre".into(),
+                reason: "no kind for this family".into(),
             },
             TargetError::Extended {
                 name: "email".into(),

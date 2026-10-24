@@ -154,6 +154,10 @@ func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypte
 			switch {
 			case f.verb == verbOmit:
 				continue
+			case !ok && f.null == NullSQL:
+				// The field was nil, so nothing was stored for it; it opens
+				// as nil.
+				continue
 			case !ok:
 				return nil, fmt.Errorf("gensupport: %s: value %d: Open gave no field %q", c.g.TypeName, i, f.name)
 			case f.verb == verbContextField:
@@ -190,10 +194,13 @@ func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypte
 }
 
 // split sorts a value's fields into what crosses the binding and what stays:
-// every declared field must be present and nothing else may be.
+// every declared field must be present and nothing else may be. A nil field
+// declared with NullSQL is left out of the row, since nothing is stored for
+// it; one declared with NullSealed crosses as nil, which the engine seals.
 func (c *Codec[P, E]) split(vals Values) (record.Source, map[string]any, error) {
 	row := make(record.Source, len(c.plan.Fields))
 	keep := map[string]any{}
+	left := 0
 	for _, f := range c.g.Declaration.fields {
 		if f.verb == verbOmit {
 			continue
@@ -202,13 +209,21 @@ func (c *Codec[P, E]) split(vals Values) (record.Source, map[string]any, error) 
 		if !ok {
 			return nil, nil, fmt.Errorf("the generated Source gave no field %q", f.name)
 		}
+		if v == nil && f.null == NullSQL {
+			left++
+			continue
+		}
 		if f.crosses() {
-			row[f.name] = v
+			converted, err := asKind(f.kind, v)
+			if err != nil {
+				return nil, nil, fmt.Errorf("field %q: %w", f.name, err)
+			}
+			row[f.name] = converted
 		} else {
 			keep[f.name] = v
 		}
 	}
-	if len(vals) != len(row)+len(keep) {
+	if len(vals) != len(row)+len(keep)+left {
 		for name := range vals {
 			if _, ok := row[name]; ok {
 				continue
@@ -291,6 +306,33 @@ func Get[T any](vals Values, name string) (T, error) {
 		return out, fmt.Errorf("gensupport: field %q: %w: %w", name, encrypt.ErrEncoding, err)
 	}
 	return out, nil
+}
+
+// Deref is a field declared over a pointer as Source gives it: nil for a nil
+// pointer, else the value it points to.
+func Deref[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// GetPtr reads one opened field declared over a pointer: nil for a field
+// that opened as nil, which it stored as a null or as nothing, else a
+// pointer to the value as [Get] reads it.
+func GetPtr[T any](vals Values, name string) (*T, error) {
+	v, ok := vals[name]
+	if !ok {
+		return nil, fmt.Errorf("gensupport: the opened value has no field %q", name)
+	}
+	if v == nil {
+		return nil, nil
+	}
+	out, err := Get[T](vals, name)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // Records wraps a codec with a model's conversions, for separate columns:

@@ -3,7 +3,7 @@
 --! @file v3/aggregates.sql
 --! @brief Aggregates for grouping and deduplicating encrypted values.
 --!
---! Provides `eql_v3.grouped_value` — the aggregate you need to run a `GROUP BY`
+--! Provides `{{prefix}}.grouped_value` — the aggregate you need to run a `GROUP BY`
 --! over an encrypted column and still get the encrypted value back.
 --!
 --! ## Grouping encrypted values
@@ -11,13 +11,13 @@
 --! Encryption in EQL is non-deterministic: encrypting the same value twice gives
 --! two different ciphertexts. So you cannot group rows by comparing the stored
 --! ciphertext. Instead you group by the column's *equality term*,
---! `eql_v3.eq_term(col)` — a deterministic keyed hash that is identical for equal
+--! `{{prefix}}.eq_term(col)` — a deterministic keyed hash that is identical for equal
 --! plaintexts. Counting how many rows share each encrypted value looks like this
 --! (the term itself is opaque, so there is no reason to select it):
 --!
 --!   SELECT count(*)
 --!   FROM users
---!   GROUP BY eql_v3.eq_term(email);
+--!   GROUP BY {{prefix}}.eq_term(email);
 --!
 --! The equality term is opaque, though — you usually want the encrypted value
 --! itself back so your application can decrypt it. Adding the column to the
@@ -25,17 +25,17 @@
 --!
 --!   SELECT email, count(*)                        -- email is not in GROUP BY
 --!   FROM users
---!   GROUP BY eql_v3.eq_term(email);
+--!   GROUP BY {{prefix}}.eq_term(email);
 --!   -- ERROR: column "email" must appear in the GROUP BY clause or be used in
 --!   --        an aggregate function
 --!
 --! Every row in a group is an encryption of the same plaintext, so any one of
---! them represents the group. `eql_v3.grouped_value` is the aggregate that hands
+--! them represents the group. `{{prefix}}.grouped_value` is the aggregate that hands
 --! one back:
 --!
---!   SELECT eql_v3.grouped_value(email) AS email, count(*)
+--!   SELECT {{prefix}}.grouped_value(email) AS email, count(*)
 --!   FROM users
---!   GROUP BY eql_v3.eq_term(email);
+--!   GROUP BY {{prefix}}.eq_term(email);
 --!
 --! ## Deduplicating without an aggregate
 --!
@@ -43,11 +43,11 @@
 --! `count`), you do not need `grouped_value` — use `DISTINCT ON` on the equality
 --! term, which lets you project the column directly:
 --!
---!   SELECT DISTINCT ON (eql_v3.eq_term(email)) email
+--!   SELECT DISTINCT ON ({{prefix}}.eq_term(email)) email
 --!   FROM users
---!   ORDER BY eql_v3.eq_term(email);
+--!   ORDER BY {{prefix}}.eq_term(email);
 --!
---! Deduplicate on `eql_v3.eq_term(col)`, never on the column itself: a plain
+--! Deduplicate on `{{prefix}}.eq_term(col)`, never on the column itself: a plain
 --! `SELECT DISTINCT email` compares the raw ciphertext, so two encryptions of the
 --! same value are NOT collapsed.
 --!
@@ -75,8 +75,8 @@
 --! @param value jsonb New value from the current row.
 --! @return jsonb The running state (first non-null value).
 --!
---! @see eql_v3.grouped_value
-CREATE FUNCTION eql_v3_internal.grouped_value_sfunc(state jsonb, value jsonb)
+--! @see {{prefix}}.grouped_value
+CREATE FUNCTION {{prefix}}_internal.grouped_value_sfunc(state jsonb, value jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
 SET search_path = pg_catalog, extensions, public
@@ -90,9 +90,9 @@ $$;
 --!
 --! Returns the first non-null value encountered within a `GROUP BY` group. Its
 --! primary use is projecting an encrypted column while grouping by that column's
---! equality term (`GROUP BY eql_v3.eq_term(col)`), where PostgreSQL will not let
+--! equality term (`GROUP BY {{prefix}}.eq_term(col)`), where PostgreSQL will not let
 --! you `SELECT col` directly — see the file header for the worked example.
---! Accepts any eql_v3 encrypted-domain value (each is a jsonb-backed domain) and
+--! Accepts any {{prefix}} encrypted-domain value (each is a jsonb-backed domain) and
 --! returns it unchanged, performing no decryption or comparison. `PARALLEL SAFE`
 --! with a combine function, so it works under partial/parallel aggregation on
 --! large `GROUP BY` workloads.
@@ -107,22 +107,22 @@ $$;
 --!   matches the eql_v2 original.
 --!
 --! Group encrypted rows by encrypted equality and project the encrypted
---! column. GROUP BY eql_v3.eq_term(...) groups by the HMAC equality term;
+--! column. GROUP BY {{prefix}}.eq_term(...) groups by the HMAC equality term;
 --! grouped_value(...) returns a representative ciphertext for each group so
 --! PostgreSQL does not reject the bare column reference.
 --!
 --! @code{.sql}
---! SELECT eql_v3.grouped_value(encrypted_foo) AS encrypted_foo,
+--! SELECT {{prefix}}.grouped_value(encrypted_foo) AS encrypted_foo,
 --!        count(*)
 --! FROM some_table
---! GROUP BY eql_v3.eq_term(encrypted_foo);
+--! GROUP BY {{prefix}}.eq_term(encrypted_foo);
 --! @endcode
 --!
---! @see eql_v3_internal.grouped_value_sfunc
---! @see eql_v3.eq_term
-CREATE AGGREGATE eql_v3.grouped_value(jsonb) (
-  sfunc = eql_v3_internal.grouped_value_sfunc,
+--! @see {{prefix}}_internal.grouped_value_sfunc
+--! @see {{prefix}}.eq_term
+CREATE AGGREGATE {{prefix}}.grouped_value(jsonb) (
+  sfunc = {{prefix}}_internal.grouped_value_sfunc,
   stype = jsonb,
-  combinefunc = eql_v3_internal.grouped_value_sfunc,
+  combinefunc = {{prefix}}_internal.grouped_value_sfunc,
   parallel = safe
 );

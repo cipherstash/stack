@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -393,4 +395,90 @@ func check(err error, ok bool) error {
 		return fmt.Errorf("wrong value")
 	}
 	return nil
+}
+
+// A value sealed at an EQL integer type's kind is converted to it on the
+// host: any Go integer of a value that fits, from a narrower type or a wider
+// one, and a value that does not fit is refused with ErrEncoding, naming the
+// kind and not the value (ADR-0002).
+func TestAsKindConvertsAnIntegerThatFitsAndRefusesOneThatDoesNot(t *testing.T) {
+	for _, c := range []struct {
+		kind Kind
+		in   any
+		want any
+	}{
+		{Int32, int8(-7), int32(-7)},
+		{Int32, uint16(65535), int32(65535)},
+		{Int32, int64(math.MaxInt32), int32(math.MaxInt32)},
+		{Int32, int(math.MinInt32), int32(math.MinInt32)},
+		{Int64, uint32(math.MaxUint32), int64(math.MaxUint32)},
+		{Int64, uint64(math.MaxInt64), int64(math.MaxInt64)},
+		{Int8, int8(3), int8(3)},
+		{String, "s", "s"},
+	} {
+		got, err := asKind(c.kind, c.in)
+		if err != nil || got != c.want {
+			t.Errorf("asKind(%s, %T) = %v (%T), %v; want %v (%T)", c.kind, c.in, got, got, err, c.want, c.want)
+		}
+	}
+	for _, c := range []struct {
+		kind Kind
+		in   any
+	}{
+		{Int32, int64(math.MaxInt32) + 1},
+		{Int32, int64(math.MinInt32) - 1},
+		{Int32, uint32(math.MaxUint32)},
+		{Int64, uint64(math.MaxInt64) + 1},
+		{Uint8, int8(-1)},
+	} {
+		_, err := asKind(c.kind, c.in)
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Errorf("asKind(%s, %T out of range) = %v, want ErrEncoding", c.kind, c.in, err)
+		}
+		if err != nil && strings.Contains(err.Error(), fmt.Sprint(c.in)) {
+			t.Errorf("asKind's error names the value: %v", err)
+		}
+	}
+}
+
+// encodedInt is an integer type that writes itself, as an int32 of its value
+// plus 100.
+type encodedInt int16
+
+func (v encodedInt) EncryptValue(enc vcffi.Encoder) error {
+	enc.Int32(int32(v) + 100)
+	return nil
+}
+
+// A value whose type writes itself crosses as it is, whatever the kind: a
+// conversion to a built-in integer would drop its EncryptValue, so a write
+// would store one value and a query, which keeps it, ask for another.
+func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
+	for _, kind := range []Kind{Int16, Int32, Int64} {
+		got, err := asKind(kind, encodedInt(7))
+		if err != nil || got != encodedInt(7) {
+			t.Errorf("asKind(%s, encodedInt(7)) = %v (%T), %v; want encodedInt(7)", kind, got, got, err)
+		}
+	}
+}
+
+// EncryptNull seals nil only for a field that stores it as a sealed null.
+// Under null=sql nil is SQL NULL, and a field of no null mode has no nil,
+// so both are refused before any cipher is used.
+func TestEncryptNullOnlyForASealedNull(t *testing.T) {
+	d := Declare("people").
+		EncryptIndex("age", Int32, encrypt.Equality).Null("age", NullSealed).
+		Encrypt("nick", String).Null("nick", NullSQL).
+		Encrypt("score", Int64)
+	for _, name := range []string{"nick", "score"} {
+		_, err := NewField[int64](d, name).EncryptNull(context.Background(), nil)
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "null=sealed") {
+			t.Fatalf("%s: EncryptNull = %v", name, err)
+		}
+	}
+	// A sealed null passes the check and reaches the cipher.
+	_, err := NewField[int32](d, "age").EncryptNull(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "EncryptNull needs a cipher") {
+		t.Fatalf("age: EncryptNull = %v", err)
+	}
 }

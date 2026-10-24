@@ -118,7 +118,7 @@ func deterministicClient(ctx context.Context, wasm []byte, seed [32]byte) (*Clie
 		_ = c.Close()
 		return nil, err
 	}
-	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.cipherInit, buf(encoded))
 	})
 	if err != nil {

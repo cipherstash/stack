@@ -56,7 +56,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-ORDERED="${1:-src/deps-ordered-v3.txt}"
+ORDERED="${1:-build/render/eql_v3/deps-ordered.txt}"
 # Overridable so the self-test can exercise the missing-allowlist path without
 # disturbing the committed one.
 ALLOW="${SYMBOL_ORDER_ALLOWLIST:-tasks/test/symbol_order_allowlist.txt}"

@@ -44,11 +44,11 @@ Your program calls those functions, and it never builds or names a plan.
    ```go
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
-   query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
+   query, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
    ```
 
 6. Store the encrypted type.
-   Each `encrypt_into` field is one EQL column: `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database library binds and scans it as the JSON a `public.eql_v3_text_eq` column holds.
+   Each `encrypt_into` field is one EQL column: `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database library binds and scans it as the JSON a `public.eql_v4_text_eq` column holds. Stack Encrypt writes EQL v4; see the `encrypt` package README for the EQL types it produces and the Go field type each takes.
 
 7. Run the generator again after each change to the struct or to a tag.
    A change to the fields of the struct stops the build until you do.
@@ -79,6 +79,7 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
 | `stash:"-"` | leave the field out |
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
+| `stash:"born,encrypt_into=DateEq,null=sql"` | on a field declared over a pointer (`*encrypt.Date`): how it stores `nil`, `null=sealed` or `null=sql`; see "Optional fields" |
 
 A struct has one context: either a `_ struct{}` field with `context=`, or one field with `context_field`, not both.
 A `context_field` is a `string` whose value is a label such as `"tenants/acme"`, segments separated by `/`.
@@ -100,14 +101,34 @@ A query on such a type derives its term under the context the cipher names, so i
 > To update one column, use its `Fields` entry, such as `Fields.Email.Encrypt`.
 
 The index names are `equality`, `match`, `ore`, `ope` and `json`.
-A `match` index needs text with at least one token: the engine derives no match term for an empty string, separator-only text, or text shorter than the n-gram length (3 characters), because an empty term would match every row.
-`Encrypt` then fails for the whole batch, with an error naming the row, the field and the index.
-So an optional or short value does not belong under `match`: give the field `equality` alone, or make the value required.
+A `match` index stores text with no token (an empty string, separator-only text, or text shorter than the n-gram length of 3 characters) as the empty filter, which no query matches, so an optional or short value can live under `match`; the empty filter tells a reader of the column that the value is one of those.
+A match query of such text is refused, because an empty filter as a query would match every row.
+An EQL `TextMatch` field is stricter: see below.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
 `opaque` seals the whole struct as one `bytes` field holding a JSON document (see "What crosses the binding").
 `json` names the JSON index, which the Rust API does not declare yet; this build refuses it.
+
+### Optional fields
+
+A sealed field declared over a pointer to one scalar (`*encrypt.Date`, `*int32`, `*string`, a pointer to a type defined over a scalar) is optional: `nil` is a value it may hold, and `Decrypt` gives it back as `nil`.
+`null=` says how the field stores `nil`. There are two ways, and they differ in what a reader of the database can see:
+
+| `null=` | Stored for `nil` | What a reader of the column sees |
+|---|---|---|
+| `sealed` | a sealed null, as long as a sealed value of the field's type, and beside an equality index the one term every null of the field shares | nothing in the ciphertext; in an equality column, that the absent rows are one group, as rows holding one repeated value are |
+| `sql` | nothing: the field's columns are `NULL`, and its member in the generated type is `nil` | which rows have no value |
+
+A sealed null hides that the value is absent only where its length matches a value's and no index beside it shows it, so it is the default for a field whose type has a fixed width (a `bool`, a number, `encrypt.Date`, `time.Time`, `encrypt.Decimal`, `encrypt.Int128` and `encrypt.Uint128`) and whose only index, if it has one, is `equality`: sealed with `encrypt`, `encrypt,index=equality`, or into an EQL type with no index or with equality alone (`Date`, `DateEq`, `Integer`, `IntegerEq`, ...).
+A null has an equality term, so its rows are one equality group and a query finds them: the generated `EqNull` derives the `eq` query of `nil`, which matches every row whose value is absent.
+A `null=sealed` field's entry in the generated `Fields` value also has `EncryptNull`, which seals `nil` for an update of that one column: a sealed null is a value, so set the column to what it returns, not to SQL `NULL`.
+A null has no order or match term, so a field with any other index, and a field of text or bytes, has to write `null=sql`: an order or match column would show which values are absent, and text shows its length, and `stashgen` will not choose a visible `NULL` for you.
+`null=sealed` on such a field stops `stashgen` with the reason.
+
+A `null=sql` field's member in the generated type is a pointer (`*eql.DateEq`, `*EncryptedUserScore`), `nil` when the value was; a `null=sealed` field's is the same type as a non-optional field's, and its column is never `NULL`.
+A stored null read into a field that is not a pointer is an error from `Decrypt`, naming the field, never a zero value.
+`-model` does not map a `null=sql` field yet, and `stashgen` stops if it is asked to.
 
 An embedded struct of your own adds its tagged fields to the outer struct.
 An embedded struct from another package takes one tag for all of its fields: `stash:",passthrough"` stores them as they are, and `stash:"-"` leaves them out.
@@ -127,7 +148,12 @@ For `-type User`, the file `user_stash.go` holds:
 - `Encrypt` and `Decrypt`, which take a slice and return a slice, and send one ZeroKMS request for each 500 sealed values in it, plus one the first time a keyset is used.
 - `Fields`, with one entry for each sealed field.
   An opaque struct, or a struct with no sealed field outside an opaque one, gets no `Fields`: nothing in it is sealed on its own, so nothing can be queried.
-  An entry encrypts one value, and it has a query method only for what the field declares: `Query` for `encrypt_into`, and `Equality`, `Match`, `Ore` or `Ope` for `index=`.
+  An entry encrypts one value, and has one query method for each operator the engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches`.
+  stashgen asks the embedded engine which operators each field answers, and which index answers each one, so it holds no copy of those rules: an equality index answers `Eq`, a match index on a string `Matches`, and an ORE or OPE index on an integer of 16 bits or more, a float, a string, an `encrypt.Decimal`, an `encrypt.Date` or a `time.Time` the four orderings and `Between`, through ORE when the field declares both. A float orders as PostgreSQL's `float8` does (`-0.0` ties `0.0`, NaN sorts last), and a string by its folded form: case and accents folded, under Unicode 16.
+  `encrypt_into=TextEq` answers `Eq`, which returns the type's query value, `eql.TextEqQuery`.
+  `encrypt_into=TextMatch` answers `Matches`, which returns an `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand, with `Verify` and `TargetLimit`.
+  The query of `Matches` carries `Verify` and `TargetLimit`, because its answer can hold rows that do not match; an exact operator's query carries neither.
+  See the encrypt package's README for each method's result and the query with `database/sql`.
 - `String` and `LogValue` on `EncryptedUser`, which print the passthrough fields and hide the sealed ones.
 - A copy of the fields of `User`, so a change to them stops the build.
 
@@ -153,7 +179,30 @@ The same input always gives the same file: fields keep their declared order, and
 `stashgen` checks each declaration with the engine, and holds no copy of the engine's rules: it runs the WASI guest the SDK embeds and asks it, one field at a time, so the error names the field.
 It asks the engine for the EQL types it holds: each name, its plaintext type, its indexes, its query form, and whether the engine produces it today.
 The command links the build of the engine that holds the EQL types (`encrypt/eql`), so it can answer for every type; a generated file imports `encrypt/eql` only when it names one.
-The engine produces `TextEq` today; `encrypt_into` with any other type is refused with the type's name.
+The engine produces these EQL types today, each from one Go field type:
+
+| `encrypt_into` | Go field |
+|---|---|
+| `TextEq`, `Text`, `TextMatch`, `TextOrd`, `TextOrdOpe`, `TextOrdOre`, `TextSearch`, `TextSearchOre` | `string` |
+| `Smallint`, `SmallintEq`, `SmallintOrd`, `SmallintOrdOpe`, `SmallintOrdOre` | `int16`, or any Go integer type |
+| `Integer`, `IntegerEq`, `IntegerOrd`, `IntegerOrdOpe`, `IntegerOrdOre` | `int32`, or any Go integer type |
+| `Bigint`, `BigintEq`, `BigintOrd`, `BigintOrdOpe`, `BigintOrdOre` | `int64`, or any Go integer type |
+| `Boolean` | `bool` |
+| `Real`, `RealEq`, `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `float32` |
+| `Double`, `DoubleEq`, `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `float64` |
+| `Date`, `DateEq` | `encrypt.Date` |
+| `Timestamp`, `TimestampEq` | `time.Time` |
+| `Numeric`, `NumericEq` | `encrypt.Decimal` |
+
+The `Eq` types answer `Eq`; the `Ord`, `OrdOpe` and `OrdOre` types answer `Lt`, `Lte`, `Gt` and `Gte`, and on text `Eq` too; `TextMatch` answers `Matches`, and `TextSearch` and `TextSearchOre` all of `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, each query carrying only the term its operator reads; `Text`, `Smallint`, `Integer`, `Bigint`, `Boolean`, `Real`, `Double`, `Date`, `Timestamp` and `Numeric` are stored and read only, with no query method.
+The ordered date, timestamp and numeric types are refused: the engine derives no order term for these kinds yet.
+An ordered type has no `Between` method yet, because a `BETWEEN` operand needs EQL v4's range query domains.
+
+Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
+A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.
+A `TextSearch` field stores such text with an empty match filter, so its `Eq`, `Lt`, `Lte`, `Gt` and `Gte` queries find it and no `Matches` query does; those queries take such text too, and its `Matches` query refuses it.
+Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`): the other operand order finds nothing until #1171 is fixed.
+`encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 
 A field with `encrypt_into` is stored under its table and column, which is what an EQL value records in its `i`.
@@ -223,10 +272,13 @@ No warning, error or log line holds a plaintext value.
 ## What crosses the binding
 
 Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
-A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext.
+A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext (a `driver.Valuer`, a `sql.NullTime`).
 An `opaque` struct crosses as one JSON document and is one column, decoded back into the exact Go types the struct declares; a field may be any type `encoding/json` carries both ways (a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, `time.Time`).
 A float in an opaque struct must be finite: `encoding/json` refuses NaN and the infinities, so `Encrypt` fails for the batch with `encrypt.ErrEncoding`. A sealed float field outside an opaque struct carries them.
-A sealed field outside an opaque struct is one scalar, or a type defined over one; a struct, slice or map field seals only inside an opaque struct.
+A sealed field outside an opaque struct is one scalar, a type defined over one, or a pointer to either (see "Optional fields"); a struct, slice or map field seals only inside an opaque struct.
+The scalars are `string`, `[]byte`, `bool`, every integer type (each sealed at its own width, `int` and `uint` as 64-bit), `encrypt.Int128` and `encrypt.Uint128`, `float32`, `float64`, `encrypt.Decimal`, `encrypt.Date` and `time.Time` (a timestamp). The wire type `stashgen` writes for each is the field's own: `int8` is `gensupport.Int8`, `time.Time` is `gensupport.Timestamp`, and so on.
+A decimal orders by value, so `1.5` ties `1.50`; a `time.Time` orders by the microsecond, so instants within one microsecond tie.
+The zero `encrypt.Date` is not a date: a date field must be set, and `Encrypt` refuses a zero one with `encrypt.ErrEncoding`, naming the field. An optional date is a `*encrypt.Date` field (see "Optional fields").
 A nil `[]byte` in a sealed field, or a nil slice of a type defined over `[]byte`, comes back from `Decrypt` as an empty, non-nil slice; inside an opaque struct, nil comes back as nil.
 A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-go puts its members in wrapper types, not in the message struct, and `Generate` refuses it.
 

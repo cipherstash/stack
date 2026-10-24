@@ -127,7 +127,15 @@ pub fn render_go_eql() -> String {
             )
         };
         let status = match (row.reason, row.plaintext) {
-            (None, Some(kind)) => format!("The engine produces it from a {kind}."),
+            (None, Some(kind)) => {
+                // The Go kinds are read as words: "an int32", "a float64".
+                let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                    "an"
+                } else {
+                    "a"
+                };
+                format!("The engine produces it from {article} {kind}.")
+            }
             (None, None) => "The engine produces it.".to_owned(),
             (Some(reason), _) => format!("The engine cannot produce it yet: {reason}."),
         };
@@ -147,7 +155,37 @@ pub fn render_go_eql() -> String {
             methods(&mut out, &query_go, query_domain);
         }
     }
+    range_types(&mut out);
     out
+}
+
+/// The range query types: one per family and ordering term, the operand of
+/// `eql_v4.between` (ADR-0009 decision 7), so a `Between` term binds as one
+/// parameter. Each holds the JSON `{"v", "i", "lo", "hi"}` value as bytes,
+/// like every other query type. Not in the `Types` table, which lists
+/// stored types; no stored type is producible yet for a range to query.
+fn range_types(out: &mut String) {
+    for family in eql_domains::families_with_scalar_domains() {
+        for term in family.range_terms() {
+            let go = go_name(&family.range_struct_ident(term));
+            let domain = crate::range::range_sql_domain(family, term);
+            let index = crate::targets::index_key(term);
+            let columns: Vec<String> = family
+                .range_columns(term)
+                .iter()
+                .map(|d| go_name(&d.rust_struct_name(family.name)))
+                .collect();
+            let _ = write!(
+                out,
+                "\n// {go} is a range query value over the {index} index of the {family} family: \
+                 both bounds of one BETWEEN,\n// included, as the one operand {domain} takes in \
+                 eql_v4.between. It ranges over {columns}.\ntype {go} []byte\n",
+                family = family.name,
+                columns = columns.join(", "),
+            );
+            methods(out, &go, &domain);
+        }
+    }
 }
 
 /// Write `eql_gen.go` under `out_root` (the EQL subtree root, or the
@@ -203,14 +241,52 @@ mod tests {
         // so no type is declared twice.
         assert_eq!(out.matches("\ntype JSON []byte\n").count(), 1);
         assert_eq!(out.matches("\ntype SteVecQuery []byte\n").count(), 1);
-        // TextEq is producible and says so; TextOrdOre is not and says why.
-        assert!(out.contains("// TextEq is the EQL type stored in public.eql_v3_text_eq"));
+        // TextEq is producible and says so; Json is not and says why.
+        assert!(out.contains("// TextEq is the EQL type stored in public.eql_v4_text_eq"));
         assert!(out.contains("Producible: true, Reason: \"\""));
-        assert!(out.contains("Name: \"TextOrdOre\"") && out.contains("CLLW"));
+        assert!(
+            out.contains("Name: \"Json\"")
+                && out.contains("a JSON value seals as a tree of leaves")
+        );
         // Every table row is one line: the shape gofmt leaves alone.
         for line in out.lines().filter(|l| l.starts_with("\t{Name: ")) {
             assert!(line.ends_with("},"), "{line}");
         }
+    }
+
+    #[test]
+    fn the_package_has_one_range_type_per_family_and_ordering_term() {
+        let out = render_go_eql();
+        let mut count = 0;
+        for family in eql_domains::families_with_scalar_domains() {
+            for term in family.range_terms() {
+                let go = family.range_struct_ident(term);
+                assert_eq!(
+                    out.matches(&format!("\ntype {go} []byte\n")).count(),
+                    1,
+                    "{go}"
+                );
+                assert!(out.contains(&format!("func (v {go}) Value() (driver.Value, error)")));
+                count += 1;
+            }
+        }
+        assert_eq!(count, 18, "nine ordered families, ORE and OPE each");
+        assert!(out.contains(
+            "// IntegerRangeOreQuery is a range query value over the ore_block index of the integer family: \
+             both bounds of one BETWEEN,\n// included, as the one operand eql_v4.query_integer_range_ore \
+             takes in eql_v4.between. It ranges over IntegerOrdOre.\n"
+        ));
+        assert!(out.contains("It ranges over TextOrd, TextOrdOpe, TextSearch.\n"));
+        // Range types are query types, not stored ones: not in the table.
+        assert!(!out.contains("Name: \"IntegerRangeOreQuery\""));
+    }
+
+    #[test]
+    fn the_plaintext_kind_takes_the_article_it_is_read_with() {
+        let out = render_go_eql();
+        assert!(out.contains("The engine produces it from an int32."));
+        assert!(out.contains("The engine produces it from a float64."));
+        assert!(!out.contains("from a int"), "a int32 or a int64");
     }
 
     #[test]

@@ -1,0 +1,5 @@
+---
+'@cipherstash/eql': minor
+---
+
+**EQL v4 compares ore-rs's 6-bit block ORE, and Stack Encrypt produces the block ORE types `IntegerOrdOre`, `SmallintOrdOre`, `BigintOrdOre`, `RealOrdOre`, `DoubleOrdOre`, `TextOrdOre` and `TextSearchOre`.** A v4 `ob` term is one ore-rs ciphertext: the fixed-width scheme for numbers, the chained scheme for text (padded to a power-of-two length bucket of at least 16 bytes). The v4 bundle names its block ORE objects `ore_block_v2` (`eql_v4_internal.ore_block_v2_term`, `compare_ore_block_v2_term`) and compares them with a new comparator that checks each term's shape, raises on malformed or mismatched terms, and runs a constant operation count for terms of one shape. The EQL v3 bundle is unchanged, byte for byte: its `ob` is still cipherstash-client's 8-bit block ORE under `ore_block_256`. See [U-002](../../docs/upgrading/v3.1.md#u-002-the-block-ore-term-is-ore-rss-6-bit-scheme): the comparator refuses the 8-bit terms the previous `eql_v4` bundle compared, so rows or operands holding them must be written again through Stack Encrypt.

@@ -28,6 +28,7 @@ Current targets:
 | `fuzz:term-decode`   | `stack-encrypt` | `term_decode`       | the SEM term decoders (`EqualityTerm`, `MatchTerms`, `OreTerm`, `OpeTerm` `from_bytes`) |
 | `fuzz:check-record`  | `stack-encrypt` | `check_record`      | `dynamic::record::check_record` over an `Arbitrary`-derived plan and tree, against a model of the record rules (structure-aware) |
 | `fuzz:plan-build`    | `stack-encrypt` | `plan_build`        | `plan::FieldsBuilder::build` over `Arbitrary`-derived untrusted names (context, fields, identities); a built field's label must render and parse back, and passthrough names are never refused (structure-aware) |
+| `fuzz:json-wire`     | `stack-encrypt` | `json_wire_decode`  | the JSON index's wire decoders (`JsonDocument`, `JsonNode`, `JsonProjection`, `JsonLeafQuery` from JSON text; `JsonHeader::from_bytes`), over base64 tags and base85 ciphertexts; an accepted document or node must round-trip through its wire form |
 
 Each target is a few lines — `libfuzzer-sys` hands a `&str` (or `&[u8]`
 for the byte decoders) to the parser via the `arbitrary` crate:

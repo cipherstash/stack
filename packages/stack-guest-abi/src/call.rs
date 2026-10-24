@@ -16,6 +16,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::buffers;
 use crate::last_error;
+use crate::status::STATUS_NEEDS_IO;
 
 /// Run an export's body: clear the last error, run `f` (a panic is an
 /// internal failure), and then clear the last error again if `f` succeeded,
@@ -33,6 +34,11 @@ pub fn run<T>(f: impl FnOnce() -> Result<T, u32>) -> Result<T, u32> {
             // the host will ask about.
             last_error::clear();
             Ok(out)
+        }
+        // A paused operation has not failed: nothing is recorded.
+        Err(STATUS_NEEDS_IO) => {
+            last_error::clear();
+            Err(STATUS_NEEDS_IO)
         }
         Err(status) => {
             last_error::ensure(status);
@@ -93,7 +99,19 @@ pub fn take_last_error() -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::status::{STATUS_ENCODING, STATUS_INTERNAL};
-    use vitaminc_aead_value::{transport as codec, FfiValue};
+
+    /// A paused operation is not a failure: it records no error, and clears
+    /// one recorded on the way to the pause.
+    #[test]
+    fn a_pause_records_no_error() {
+        let paused = run::<()>(|| {
+            let _ = last_error::malformed("on the way");
+            Err(STATUS_NEEDS_IO)
+        });
+        assert_eq!(paused, Err(STATUS_NEEDS_IO));
+        assert!(!last_error::is_set());
+    }
+    use crate::value::HostValue;
 
     /// A packed result, read the way the Go host reads it.
     #[derive(Debug, PartialEq)]
@@ -117,16 +135,8 @@ mod tests {
     /// The recorded error's code, handed over as the host would get it.
     fn last_code() -> Option<String> {
         let bytes = take_last_error()?;
-        let value = codec::decode_value(&mut codec::Reader::new(&bytes)).expect("decodes");
-        let FfiValue::Object(entries) = value else {
-            return None;
-        };
-        entries.into_iter().find_map(|(key, value)| match value {
-            FfiValue::String(code) if key == "code" => {
-                String::from_utf8(code.risky_ref().to_vec()).ok()
-            }
-            _ => None,
-        })
+        let value = HostValue::decode(&bytes).expect("decodes");
+        value.get("code")?.as_text().map(str::to_owned)
     }
 
     #[test]

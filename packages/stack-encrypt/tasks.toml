@@ -62,6 +62,16 @@ description = "Fuzz stack-encrypt's fields-plan build over untrusted names (stru
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run plan_build --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
+# Fuzz the JSON index's wire decoders: a stored `json_tree` document and the
+# entries `->` and the walks return come back through them before anything is
+# authenticated. The base64 tags, the base85 ciphertexts (SIMD-decoded on
+# aarch64 and x86_64) and the header's frozen layout must never panic, and an
+# accepted document or entry must survive a round trip through its wire form.
+["fuzz:json-wire"]
+description = "Fuzz stack-encrypt's JSON index wire decoders: JsonDocument, JsonNode, JsonProjection, JsonLeafQuery and JsonHeader (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "mise x --env test -- cargo +nightly fuzz run json_wire_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
 # warning fails the build. Doc *examples* are `test:doc:stack-encrypt`. Both run
 # with all features so nothing feature-gated goes unchecked; the root `doc`

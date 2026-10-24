@@ -286,38 +286,47 @@ async fn match_rejects_invalid_options() {
 }
 
 #[tokio::test]
-async fn match_rejects_text_that_yields_no_tokens() {
-    use stack_encrypt::sem::TermError;
-
+async fn match_stores_text_that_yields_no_tokens_as_the_empty_filter() {
     let cipher = generator().await;
     let gen = cipher.default_keyset();
+    let query = gen
+        .match_terms::<DefaultMatch>("hello", nonempty!("users/bio"))
+        .await
+        .unwrap();
 
-    // An empty term used as a query would vacuously match every stored row.
-    for text in ["", "  "] {
+    // Empty or separator-only text, and text shorter than the n-gram, cut
+    // no token. The stored side keeps such a value as the empty filter: a
+    // query always has a token, and the empty filter holds none of its
+    // positions, so no query matches the value. (A query of such text is
+    // refused by the query chain instead; `tests/op.rs` holds that.)
+    for text in ["", "  ", "hi"] {
+        let stored = gen
+            .match_terms::<DefaultMatch>(text, nonempty!("users/bio"))
+            .await
+            .unwrap_or_else(|error| panic!("{text:?} stores: {error}"));
         assert!(
-            matches!(
-                gen.match_terms::<DefaultMatch>(text, nonempty!("users/bio"))
-                    .await,
-                Err(Error::Term(TermError::EmptyTermText))
-            ),
-            "{text:?} must be rejected"
+            stored.positions().is_empty(),
+            "{text:?} is the empty filter"
+        );
+        assert!(stored.to_bytes().is_empty());
+        assert!(!stored.contains(&query), "{text:?}: no query matches it");
+        assert!(
+            !query.contains(&stored),
+            "{text:?}: and the empty filter, as a query, matches nothing"
+        );
+        assert_eq!(
+            MatchTerms::<DefaultMatch>::from_bytes(&stored.to_bytes()).unwrap(),
+            stored,
+            "{text:?}: the empty filter round-trips through its bytes"
         );
     }
 
-    // A probe shorter than the n-gram length could never match a stored gram
-    // (v1 indexer semantics) — rejected instead of a silent false negative.
-    assert!(matches!(
-        gen.match_terms::<DefaultMatch>("hi", nonempty!("users/bio"))
-            .await,
-        Err(Error::Term(TermError::EmptyTermText))
-    ));
-
     // Separator-only text under the Standard tokenizer.
-    assert!(matches!(
-        gen.match_terms::<WordMatch>(" ,;:! ", nonempty!("users/bio"))
-            .await,
-        Err(Error::Term(TermError::EmptyTermText))
-    ));
+    let stored = gen
+        .match_terms::<WordMatch>(" ,;:! ", nonempty!("users/bio"))
+        .await
+        .unwrap();
+    assert!(stored.positions().is_empty());
 }
 
 #[tokio::test]
@@ -366,11 +375,11 @@ async fn string_ore_terms_preserve_lexicographic_order() {
     let cipher = generator().await;
     let gen = cipher.default_keyset();
     let apple = gen
-        .ore_term("apple", nonempty!("users/name"))
+        .ore_term("apple".to_string(), nonempty!("users/name"))
         .await
         .unwrap();
     let banana = gen
-        .ore_term("banana", nonempty!("users/name"))
+        .ore_term("banana".to_string(), nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(apple.cmp(&banana), Ordering::Less);
@@ -397,29 +406,4 @@ async fn ore_and_ope_keys_are_domain_separated() {
     let ore = gen.ore_term(42u64, nonempty!("users/age")).await.unwrap();
     let ope = gen.ope_term(42u64, nonempty!("users/age")).await.unwrap();
     assert_ne!(ore.as_ref(), ope.as_ref());
-}
-
-#[tokio::test]
-async fn owned_and_borrowed_text_yield_identical_ore_and_ope_terms() {
-    let cipher = generator().await;
-    let gen = cipher.default_keyset();
-    let borrowed = gen
-        .ore_term("apple", nonempty!("users/name"))
-        .await
-        .unwrap();
-    let owned = gen
-        .ore_term(String::from("apple"), nonempty!("users/name"))
-        .await
-        .unwrap();
-    assert_eq!(borrowed.as_ref(), owned.as_ref());
-
-    let borrowed = gen
-        .ope_term("apple", nonempty!("users/name"))
-        .await
-        .unwrap();
-    let owned = gen
-        .ope_term(String::from("apple"), nonempty!("users/name"))
-        .await
-        .unwrap();
-    assert_eq!(borrowed.as_ref(), owned.as_ref());
 }

@@ -63,6 +63,20 @@ func TestRefusals(t *testing.T) {
 		want  string
 	}{
 		{"an exported field with no stash tag", user(ctx + "\tEmail string"), stashgen.Request{Type: "User"}, "Email", "no stash tag"},
+		// Optional fields (#1298): a pointer to one scalar, and how it stores nil.
+		{"a sealed pointer to a pointer", user(ctx + "\tAge **int32 `stash:\"age,encrypt\"`"), stashgen.Request{Type: "User"}, "Age", "a sealed field is one scalar"},
+		{"a sealed pointer to a struct", user(ctx + "\tAddr *crm.Contact `stash:\"addr,encrypt\"`"), stashgen.Request{Type: "User"}, "Addr", "a sealed field is one scalar"},
+		{"a sealed pointer to a slice", user(ctx + "\tTags *[]string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "a sealed field is one scalar"},
+		{"null= on a field that is not a pointer", user(ctx + "\tAge int32 `stash:\"age,encrypt,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "a field of type int32 is never nil"},
+		{"null= on a passthrough", user(ctx + "\tAge *int32 `stash:\"age,passthrough,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "keeps nil as nil"},
+		{"an unknown null mode", user(ctx + "\tAge *int32 `stash:\"age,encrypt,null=zero\"`"), stashgen.Request{Type: "User"}, "Age", "null= is sealed or sql"},
+		{"null= given twice", user(ctx + "\tAge *int32 `stash:\"age,encrypt,null=sql,null=sql\"`"), stashgen.Request{Type: "User"}, "Age", "null is given twice"},
+		{"an ordered pointer that does not say null=sql", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=ore\"`"), stashgen.Request{Type: "User"}, "Age", "Write null=sql to say so"},
+		{"an ordered pointer with equality that does not say null=sql", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=equality;ore\"`"), stashgen.Request{Type: "User"}, "Age", "Write null=sql to say so"},
+		{"a pointer to text that does not say null=sql", user(ctx + "\tNick *string `stash:\"nick,encrypt\"`"), stashgen.Request{Type: "User"}, "Nick", "a string shows its length"},
+		{"a sealed null on an ordered pointer", user(ctx + "\tAge *int32 `stash:\"age,encrypt,index=ore,null=sealed\"`"), stashgen.Request{Type: "User"}, "Age", "a nil has an equality term and no other"},
+		{"a sealed null on a pointer to bytes", user(ctx + "\tBlob *[]byte `stash:\"blob,encrypt,null=sealed\"`"), stashgen.Request{Type: "User"}, "Blob", "a []byte shows its length"},
+		{"a match query on an index-only field", user(ctx + "\tName string `stash:\"name,index=match\"`"), stashgen.Request{Type: "User"}, "Name", "an index-only field stores no ciphertext to decrypt"},
 		{"a tag that does not parse", user(ctx + "\tEmail string `stash:\"email,shred\"`"), stashgen.Request{Type: "User"}, "Email", `unknown part "shred"`},
 		{"two fields with one name", user(ctx + "\tEmail string `stash:\"email,encrypt\"`\n\tAlt string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Alt", `two fields write the name "email"`},
 		{"an omitted field whose name a column takes", user(ctx + "\tEmail string `stash:\"-\"`\n\tAddr string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Addr", `two fields write the name "email"`},
@@ -80,8 +94,10 @@ func TestRefusals(t *testing.T) {
 		{"a _ field with no context", user("\t_ struct{}\n\tEmail string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "_", "carries the context tag"},
 		{"an index that does not apply to the field type", user(ctx + "\tAge int32 `stash:\"age,encrypt,index=match\"`"), stashgen.Request{Type: "User"}, "Age", "match applies to a string, not to int32"},
 		{"an EQL type that does not apply to the field type", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=TextEq\"`"), stashgen.Request{Type: "User"}, "Age", "TextEq seals a string, and int64 is int"},
+		{"a 128-bit integer into a narrower EQL type", user(ctx + "\tAge encrypt.Int128 `stash:\"age,encrypt_into=Integer\"`"), stashgen.Request{Type: "User"}, "Age", "Integer seals int32, and an encrypt.Int128 is not converted to it"},
+		{"a float of another width", user(ctx + "\tScore float64 `stash:\"score,encrypt_into=Real\"`"), stashgen.Request{Type: "User"}, "Score", "Real seals float32, and float64 seals as float64"},
 		{"a field type the engine cannot seal", user(ctx + "\tDone chan int `stash:\"done,encrypt\"`"), stashgen.Request{Type: "User"}, "Done", "seals only as part of an opaque struct"},
-		{"a composite sealed outside an opaque struct", user(ctx + "\tAt time.Time `stash:\"at,encrypt\"`"), stashgen.Request{Type: "User"}, "At", "a time.Time seals only as part of an opaque struct"},
+		{"a composite sealed outside an opaque struct", user(ctx + "\tAt time.Location `stash:\"at,encrypt\"`"), stashgen.Request{Type: "User"}, "At", "a time.Location seals only as part of an opaque struct"},
 		{"a slice sealed outside an opaque struct", user(ctx + "\tTags []string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "seals only as part of an opaque struct"},
 		{"a map sealed outside an opaque struct", user(ctx + "\tCounts map[string]int64 `stash:\"counts,encrypt\"`"), stashgen.Request{Type: "User"}, "Counts", "seals only as part of an opaque struct"},
 		{"a slice of ints sealed outside an opaque struct", user(ctx + "\tNs []int64 `stash:\"ns,encrypt\"`"), stashgen.Request{Type: "User"}, "Ns", "seals only as part of an opaque struct"},
@@ -89,7 +105,7 @@ func TestRefusals(t *testing.T) {
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
-		{"an EQL type the engine cannot produce yet", user(ctx + "\tEmail string `stash:\"email,encrypt_into=TextMatch\"`"), stashgen.Request{Type: "User"}, "Email", "has no EQL type TextMatch"},
+		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=BigintOrdOre\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type BigintOrdOre"},
 		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
 		{"the json index, not in the engine yet", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "cannot derive the json index yet"},
 		{"an index option a query term cannot use", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "a query term uses only the default index options"},
@@ -260,13 +276,17 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 	}
 	defer engine.(io.Closer).Close()
 	for _, c := range []struct{ name, field, line, want string }{
-		{"time.Time", "At", "\tAt time.Time `stash:\"at,encrypt\"`", "seals only as part of an opaque struct"},
+		{"time.Location", "At", "\tAt time.Location `stash:\"at,encrypt\"`", "seals only as part of an opaque struct"},
 		{"a channel", "Done", "\tDone chan int `stash:\"done,encrypt\"`", "seals only as part of an opaque struct"},
 		{"equality on a map", "Attrs", "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`", "seals only as part of an opaque struct"},
 		{"a sealed []string", "Tags", "\tTags []string `stash:\"tags,encrypt\"`", "seals only as part of an opaque struct"},
 		{"a sealed map[string]int64", "Counts", "\tCounts map[string]int64 `stash:\"counts,encrypt\"`", "seals only as part of an opaque struct"},
-		{"equality on a float", "Score", "\tScore float64 `stash:\"score,encrypt,index=equality\"`", "the engine refuses the declaration"},
 		{"equality on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=equality\"`", "the engine refuses the declaration"},
+		{"order on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ore\"`", "the engine refuses the declaration"},
+		{"ope on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=ope\"`", "the engine refuses the declaration"},
+		{"order on an int8", "Rank", "\tRank int8 `stash:\"rank,encrypt,index=ore\"`", "the engine refuses the declaration"},
+		{"ope on a uint8", "Rank", "\tRank uint8 `stash:\"rank,encrypt,index=ope\"`", "the engine refuses the declaration"},
+		{"order on a byte", "Rank", "\tRank byte `stash:\"rank,encrypt,index=equality;ore\"`", "the engine refuses the declaration"},
 		{"match on an integer", "Age", "\tAge int32 `stash:\"age,encrypt,index=match\"`", "the engine refuses the declaration"},
 		{"encrypt_into, no EQL type in this build", "Email", "\tEmail string `stash:\"email,encrypt_into=TextEq\"`", "EQL types are not available yet"},
 	} {
@@ -282,16 +302,31 @@ func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
 			}
 		})
 	}
-	// What the fake refuses, the engine refuses: the same cases against both.
+	// What the fake refuses, the engine refuses, and what both accept they
+	// write the same file for: the same query methods, from the same
+	// operators. The same cases against both.
 	for _, c := range []struct{ name, line string }{
+		{"equality on a bool", "\tDone bool `stash:\"done,encrypt,index=equality\"`"},
+		{"order on a bool", "\tDone bool `stash:\"done,encrypt,index=ore\"`"},
+		{"order on an int8", "\tRank int8 `stash:\"rank,encrypt,index=ore\"`"},
+		{"ope on a uint8", "\tRank uint8 `stash:\"rank,encrypt,index=ope\"`"},
+		{"equality on an int8", "\tRank int8 `stash:\"rank,encrypt,index=equality\"`"},
 		{"equality on a float", "\tScore float64 `stash:\"score,encrypt,index=equality\"`"},
 		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
+		{"every index on an integer", "\tScore int64 `stash:\"score,encrypt,index=equality;ore;ope\"`\n\tRank int32 `stash:\"rank,index=ope\"`"},
+		{"orders on a decimal, a date and a timestamp", "\tAmount encrypt.Decimal `stash:\"amount,encrypt,index=equality;ore\"`\n\tDay encrypt.Date `stash:\"day,encrypt,index=ope\"`\n\tAt time.Time `stash:\"at,encrypt,index=equality;ore\"`"},
+		{"orders on text, bytes and a float", "\tName string `stash:\"name,encrypt,index=ore;ope;match\"`\n\tBlob []byte `stash:\"blob,encrypt,index=equality;ore\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`"},
+		{"a match query on an index-only field", "\tName string `stash:\"name,index=match\"`"},
 	} {
 		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
-		_, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})
-		_, fake := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User"})
+		realFile, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})
+		fakeFile, fake := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User"})
 		if (real == nil) != (fake == nil) {
 			t.Errorf("%s: the engine says %v, the fake says %v", c.name, real, fake)
+			continue
+		}
+		if real == nil && string(realFile.Content) != string(fakeFile.Content) {
+			t.Errorf("%s: the engine and the fake write different files:\n%s", c.name, diff(string(realFile.Content), string(fakeFile.Content)))
 		}
 	}
 }
@@ -312,13 +347,48 @@ func TestTheWholeDeclarationIsCheckedAgainstTheEmbeddedEngine(t *testing.T) {
 		{Name: "medicare_number", GoName: "MedicareNo", GoType: stashgen.GoType{Name: "string", Kind: stashgen.KindString, Basic: "string"}, Verb: stashgen.VerbEncrypt, Identity: "id"},
 		{Name: "legacy_number", GoName: "LegacyNo", GoType: stashgen.GoType{Name: "string", Kind: stashgen.KindString, Basic: "string"}, Verb: stashgen.VerbEncrypt, Identity: "id"},
 	}}
-	err = engine.Check(context.Background(), decl)
+	_, err = engine.Check(context.Background(), decl)
 	var fe *stashgen.FieldError
 	if !errors.As(err, &fe) || fe.Field != "" || !strings.Contains(err.Error(), "as a whole") {
 		t.Fatalf("err = %v, want the whole-declaration refusal naming no field", err)
 	}
 	decl.Fields[1].Identity = ""
-	if err := engine.Check(context.Background(), decl); err != nil {
+	if _, err := engine.Check(context.Background(), decl); err != nil {
 		t.Fatalf("distinct identities: %v", err)
+	}
+}
+
+// An index no generated method queries is stored, and the generator says
+// so, on stderr and in the file: an order index on bytes, and the second
+// of two order indexes on an integer, a float or text. An order index on
+// text or a float answers the orderings, so it gets methods and no notice.
+func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
+	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tBlob []byte `stash:\"blob,encrypt,index=ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore;ope\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
+	file, err := generate(t, src, stashgen.Request{Type: "User"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices := strings.Join(file.Notices, "\n")
+	for _, want := range []string{
+		"stashgen: User.Blob: stores ope terms that no generated method queries",
+		"stashgen: User.Age: stores ope terms that no generated method queries: the engine answers no query through the ope index on this field (int64): the ore index already answers",
+	} {
+		if !strings.Contains(notices, want) {
+			t.Errorf("notices lack %q:\n%s", want, notices)
+		}
+	}
+	for _, field := range []string{"User.Name", "User.Rank", "User.Score"} {
+		if strings.Contains(notices, field) {
+			t.Errorf("an order index that answers the orderings got a notice (%s):\n%s", field, notices)
+		}
+	}
+	if !strings.Contains(string(file.Content), "// Blob: stores ope terms that no generated method queries") {
+		t.Errorf("the file does not carry the notice:\n%s", file.Content)
+	}
+	if !strings.Contains(string(file.Content), "func (f NameField) Lt(") {
+		t.Errorf("a text field with ope has no Lt:\n%s", file.Content)
+	}
+	if !strings.Contains(string(file.Content), "func (f ScoreField) Between(") {
+		t.Errorf("a float field with ore has no Between:\n%s", file.Content)
 	}
 }

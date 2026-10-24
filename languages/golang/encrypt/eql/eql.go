@@ -3,7 +3,7 @@
 // the type's domain, and the query types that match them.
 //
 // A field with `stash:"email,encrypt_into=TextEq"` is an [TextEq] in the
-// generated encrypted type, and its Fields entry's Query returns a
+// generated encrypted type, and its Fields entry's Eq returns a
 // [TextEqQuery]. The guest builds every value: generated code stores what
 // the guest returns and never assembles an EQL value itself (ADR-0007,
 // amended 2026-10-06). Each type implements driver.Valuer and sql.Scanner
@@ -18,9 +18,9 @@
 //
 // The types and the [Types] table are generated from the EQL catalog by
 // eql-codegen (`mise run types:generate` in packages/eql); eql_gen.go is
-// committed and drift-gated. The engine produces [TextEq] today; every
-// other type is listed with the reason it cannot be produced yet, and
-// stashgen refuses it.
+// committed and drift-gated. [Types] says which types the engine produces
+// today; every other type is listed with the reason it cannot be produced
+// yet, and stashgen refuses it.
 package eql
 
 import (

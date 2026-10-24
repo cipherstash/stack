@@ -111,6 +111,9 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 			return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, hostDir, err)
 		}
 	}
+	// A call never runs under its caller's context (see guest.Detach), so
+	// this closes the module only for a call that ran on long after its
+	// caller gave up: ProfileStore.callArgs.
 	config := wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache()).
 		WithCloseOnContextDone(true)
@@ -183,8 +186,8 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 
 // release runs the guest's shutdown — every buffer it still holds wiped —
 // and closes the runtime, which frees the linear memory through the
-// allocator's wipe, then the directory handle the mount holds. A module an
-// interrupted call or a trap already closed cannot run sa_shutdown; the
+// allocator's wipe, then the directory handle the mount holds. A module a
+// stuck call or a trap already closed cannot run sa_shutdown; the
 // runtime close still wipes and frees its memory.
 func (inst *instance) release() error {
 	ctx := context.Background()

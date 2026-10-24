@@ -16,7 +16,7 @@ fn main() {
     let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(Equality);
     let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>((Equality, Ore));
     let _ = indexed::<u32, FakeDataKeySource, Owned, _>((Equality, Ore, Ope));
-    let _ = indexed::<String, FakeDataKeySource, Borrowed, _>(Match::default());
+    let _ = indexed::<String, FakeDataKeySource, Borrowed, _>(Match);
     let _ = indexed::<String, FakeDataKeySource, Borrowed, _>((
         Equality,
         Match::<Words>::new(),
@@ -25,7 +25,7 @@ fn main() {
     ));
     let _ = indexed::<String, FakeDataKeySource, Owned, _>((
         Equality,
-        Match::default(),
+        Match,
         Ore,
         Ope,
         Match::<Words>::new(),

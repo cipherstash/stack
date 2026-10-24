@@ -1,18 +1,19 @@
-//! An [`FfiValue`] read as an encryption context. See [`context`](context()).
+//! A context read from a binding's frame. See [`context`](context()).
 
 use std::borrow::Cow;
+use std::fmt;
 
-use vitaminc_aead_value::FfiValue;
-use vitaminc_protected::Controlled;
+use serde::de::{self, Deserializer, SeqAccess, Unexpected, Visitor};
+use serde::Deserialize;
 
 use super::{Error, Reason};
 use crate::{ContextPiece, NonEmpty};
 
-/// A context arrives from a binding as a value and becomes a [`ContextPiece`]
-/// tree: vitaminc's runtime form of a context, and the *identity* of one.
-/// vitaminc's law (pinned there by quickcheck over every built-in context
-/// type) is that a context's two derivations each equal the same derivation
-/// of its parts view:
+/// A context arrives from a binding as a frame and becomes a
+/// [`ContextPiece`] tree: vitaminc's runtime form of a context, and the
+/// *identity* of one. vitaminc's law (pinned there by quickcheck over every
+/// built-in context type) is that a context's two derivations each equal the
+/// same derivation of its parts view:
 ///
 /// ```text
 /// x.into_aad()         == x.into_context().into_aad()
@@ -35,13 +36,15 @@ use crate::{ContextPiece, NonEmpty};
 /// ```
 ///
 /// A bare string is one text part. An array is a list, and may nest as deep
-/// as the transport codec allows
-/// ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels, counted
-/// from the root of the encoded value); a deeper value is refused by the
-/// codec before this module sees it. Text and bytes with the same content
-/// are distinct contexts (UTF-8 versus bytes typed leaves) — the same
-/// distinction the Rust types make. Booleans, floats, null, undefined,
-/// objects and passthroughs are not contexts.
+/// as the transport frame allows
+/// ([`MAX_DEPTH`](vitaminc_aead::frame::MAX_DEPTH) levels, counted
+/// from the root of the frame); a deeper frame is refused before it is
+/// read. Text and bytes with the same content are distinct contexts (UTF-8
+/// versus bytes typed leaves) — the same distinction the Rust types make.
+/// An integer's width is part of its identity, so it is read at the width
+/// the frame carries, and only the four widths above are contexts.
+/// Booleans, floats, null, objects, other integer widths, a scalar with a
+/// logical type and passthroughs are not contexts.
 ///
 /// # Which Rust contexts a list spells
 ///
@@ -70,66 +73,124 @@ use crate::{ContextPiece, NonEmpty};
 /// context:
 ///
 /// ```
-/// use stack_encrypt::dynamic::{context, FfiValue};
+/// use stack_encrypt::dynamic::context;
 /// use stack_encrypt::{nonempty, IntoAad};
 ///
-/// let parsed = context(FfiValue::Array(vec![
-///     FfiValue::Array(vec![
-///         FfiValue::String("users".into()),
-///         FfiValue::String("age".into()),
-///     ]),
-///     FfiValue::UInt64(7),
-/// ]))?;
+/// // `[["users", "age"], 7u64]`, as a binding writes it.
+/// let frame = vitaminc_aead_frame::serde::to_vec(&(("users", "age"), 7u64))?;
+/// let parsed = context(&frame)?;
 /// let typed = nonempty!("users").with("age").with(7u64);
 /// assert_eq!(
 ///     parsed.into_inner().into_aad().as_bytes(),
 ///     typed.into_aad().as_bytes()
 /// );
-/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
 ///
 /// [`Error::Context`] for anything outside the shape above
-/// ([`Reason::ContextKind`], [`Reason::ContextNotUtf8`]), and for a context
-/// that renders empty ([`Reason::EmptyContext`]). It names no field: the
-/// caller that knows the field names it ([`Error::in_field`]).
-pub fn context(value: FfiValue) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
-    NonEmpty::new(piece_of(value)?).map_err(|_| Error::bad_context(Reason::EmptyContext))
+/// ([`Reason::ContextKind`]), including bytes that are not one frame, and
+/// for a context that renders empty ([`Reason::EmptyContext`]). It names no
+/// field: the caller that knows the field names it ([`Error::in_field`]).
+pub fn context(frame: &[u8]) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
+    let Context(piece) = vitaminc_aead_frame::serde::from_slice(frame)
+        .map_err(|_| Error::bad_context(Reason::ContextKind))?;
+    non_empty(piece)
 }
 
-fn piece_of(value: FfiValue) -> Result<ContextPiece<'static>, Error> {
-    Ok(match value {
-        // Valid UTF-8 by `Utf8String`'s construction invariant; checked
-        // rather than assumed because this is boundary code. The payload
-        // moves out of its `Protected` rather than being copied: a context
-        // is not secret, and the copy would only be wiped and freed.
-        FfiValue::String(s) => ContextPiece::Text(Cow::Owned(
-            String::from_utf8(s.into_inner().risky_unwrap())
-                .map_err(|_| Error::bad_context(Reason::ContextNotUtf8))?,
-        )),
-        FfiValue::Bytes(bytes) => ContextPiece::Bytes(Cow::Owned(bytes.risky_unwrap())),
-        FfiValue::Int32(v) => ContextPiece::I32(v),
-        FfiValue::Int64(v) => ContextPiece::I64(v),
-        FfiValue::UInt32(v) => ContextPiece::U32(v),
-        FfiValue::UInt64(v) => ContextPiece::U64(v),
-        // Nesting depth is bounded by the codec's `MAX_DEPTH` before the
-        // value reaches here.
-        FfiValue::Array(items) => ContextPiece::List(
-            items
-                .into_iter()
-                .map(piece_of)
-                .collect::<Result<Vec<_>, Error>>()?,
-        ),
-        FfiValue::Null
-        | FfiValue::Undefined
-        | FfiValue::Bool(_)
-        | FfiValue::Float32(_)
-        | FfiValue::Float64(_)
-        | FfiValue::Object(_)
-        | FfiValue::Passthrough(_) => return Err(Error::bad_context(Reason::ContextKind)),
-    })
+/// A context tree, proven non-empty by vitaminc's rule.
+pub(super) fn non_empty(
+    piece: ContextPiece<'static>,
+) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
+    NonEmpty::new(piece).map_err(|_| Error::bad_context(Reason::EmptyContext))
 }
+
+/// One context as serde reads it from a frame (see [`context`](context())).
+/// A visitor rather than a derive: an untagged enum would buffer the value
+/// through serde's own content type, which lets a text variant take bytes,
+/// and would read an integer at whichever variant's width it fits first.
+pub(super) struct Context(pub(super) ContextPiece<'static>);
+
+impl<'de> Deserialize<'de> for Context {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(ContextVisitor).map(Context)
+    }
+}
+
+struct ContextVisitor;
+
+impl<'de> Visitor<'de> for ContextVisitor {
+    type Value = ContextPiece<'static>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a context: a string, bytes, an i32, i64, u32 or u64, or a list of contexts")
+    }
+
+    fn visit_str<E>(self, text: &str) -> Result<Self::Value, E> {
+        Ok(ContextPiece::Text(Cow::Owned(text.to_owned())))
+    }
+
+    fn visit_bytes<E>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+        Ok(ContextPiece::Bytes(Cow::Owned(bytes.to_vec())))
+    }
+
+    fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E> {
+        Ok(ContextPiece::I32(v))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+        Ok(ContextPiece::I64(v))
+    }
+
+    fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E> {
+        Ok(ContextPiece::U32(v))
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+        Ok(ContextPiece::U64(v))
+    }
+
+    // serde forwards the narrow widths to the 64-bit methods by default,
+    // which would read a `u8` as a `u64` context: a different identity.
+    fn visit_i8<E: de::Error>(self, v: i8) -> Result<Self::Value, E> {
+        Err(E::invalid_type(Unexpected::Signed(v.into()), &self))
+    }
+
+    fn visit_i16<E: de::Error>(self, v: i16) -> Result<Self::Value, E> {
+        Err(E::invalid_type(Unexpected::Signed(v.into()), &self))
+    }
+
+    fn visit_u8<E: de::Error>(self, v: u8) -> Result<Self::Value, E> {
+        Err(E::invalid_type(Unexpected::Unsigned(v.into()), &self))
+    }
+
+    fn visit_u16<E: de::Error>(self, v: u16) -> Result<Self::Value, E> {
+        Err(E::invalid_type(Unexpected::Unsigned(v.into()), &self))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut parts = Vec::with_capacity(reserved(seq.size_hint()));
+        while let Some(Context(part)) = seq.next_element()? {
+            parts.push(part);
+        }
+        Ok(ContextPiece::List(parts))
+    }
+}
+
+/// How many elements to reserve room for before reading a list or an
+/// object a control frame declares `hint` of. The hint is the count the frame
+/// declares, which nothing has checked against the bytes that follow: a few
+/// bytes can declare four billion elements, which would abort the guest on
+/// allocation. So at most [`RESERVED`] are reserved, and a longer list grows as
+/// it is read.
+pub(super) fn reserved(hint: Option<usize>) -> usize {
+    hint.unwrap_or(0).min(RESERVED)
+}
+
+/// The most elements [`reserved`] reserves room for: more than a context or
+/// a plan holds in practice.
+const RESERVED: usize = 64;
 
 /// A view of a context tree that borrows its text and bytes, so a context
 /// parsed and proven once can be handed to every output of every row without
@@ -163,11 +224,18 @@ pub fn borrowed<'b>(piece: &'b ContextPiece<'_>) -> ContextPiece<'b> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::test_frame::frame_of;
+    use crate::dynamic::test_frame::Tree;
     use crate::{nonempty, Descriptor, IntoAad, IntoPrfContext};
-    use vitaminc_protected::Protected;
+    use vitaminc_aead_frame::serde::to_vec;
 
-    fn s(value: &str) -> FfiValue {
-        FfiValue::String(value.into())
+    fn s(value: &str) -> Tree {
+        Tree::String(value.into())
+    }
+
+    /// The context `value` spells, read from its frame.
+    fn ctx(value: Tree) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
+        context(&frame_of(&value))
     }
 
     /// `borrowed` is a view, so it must be the same context for every
@@ -217,7 +285,7 @@ mod tests {
 
     #[test]
     fn a_bare_string_is_the_flat_context() {
-        let parsed = context(s("users/age")).expect("flat context");
+        let parsed = ctx(s("users/age")).expect("flat context");
         assert_eq!(
             parsed.get(),
             &ContextPiece::Text(Cow::Borrowed("users/age")),
@@ -232,8 +300,8 @@ mod tests {
 
     #[test]
     fn a_list_encodes_as_the_tuple_on_both_sides() {
-        let parsed = context(FfiValue::Array(vec![s("users/age"), FfiValue::UInt64(7)]))
-            .expect("extended context");
+        let parsed =
+            ctx(Tree::Array(vec![s("users/age"), Tree::UInt64(7)])).expect("extended context");
         let tuple = nonempty!("users/age").with(7u64);
         assert_eq!(
             parsed.clone().into_inner().into_aad().as_bytes(),
@@ -249,7 +317,7 @@ mod tests {
 
     #[test]
     fn a_list_renders_the_descriptor_the_tuple_does() {
-        let parsed = context(FfiValue::Array(vec![s("users"), s("age")])).expect("a pair");
+        let parsed = ctx(Tree::Array(vec![s("users"), s("age")])).expect("a pair");
         assert_eq!(
             Descriptor::of(parsed.into_inner()).as_str(),
             "users/age",
@@ -260,9 +328,9 @@ mod tests {
             "users/age",
             "the tuple renders the same descriptor"
         );
-        let parsed = context(FfiValue::Array(vec![
-            FfiValue::Array(vec![s("users"), s("age")]),
-            FfiValue::UInt64(7),
+        let parsed = ctx(Tree::Array(vec![
+            Tree::Array(vec![s("users"), s("age")]),
+            Tree::UInt64(7),
         ]))
         .expect("an extended pair");
         assert_eq!(
@@ -278,9 +346,9 @@ mod tests {
 
     #[test]
     fn a_nested_list_encodes_as_the_nested_tuple() {
-        let parsed = context(FfiValue::Array(vec![
+        let parsed = ctx(Tree::Array(vec![
             s("users/age"),
-            FfiValue::Array(vec![s("t"), FfiValue::Int32(-3)]),
+            Tree::Array(vec![s("t"), Tree::Int32(-3)]),
         ]))
         .expect("nested context");
         let tuple = ("users/age", ("t", -3i32));
@@ -299,12 +367,9 @@ mod tests {
     /// The borrowed view is the same context as the owned tree.
     #[test]
     fn the_borrowed_view_encodes_as_the_owned_tree() {
-        let parsed = context(FfiValue::Array(vec![
+        let parsed = ctx(Tree::Array(vec![
             s("users/age"),
-            FfiValue::Array(vec![
-                FfiValue::Bytes(Protected::new(b"k".to_vec())),
-                FfiValue::Int64(-1),
-            ]),
+            Tree::Array(vec![Tree::Bytes(b"k".to_vec()), Tree::Int64(-1)]),
         ]))
         .expect("context");
         let owned = parsed.clone().into_inner();
@@ -328,13 +393,13 @@ mod tests {
     #[test]
     fn a_left_nested_list_is_the_with_chain() {
         let chain = nonempty!("a").with(7u64).with("eu");
-        let nested = context(FfiValue::Array(vec![
-            FfiValue::Array(vec![s("a"), FfiValue::UInt64(7)]),
+        let nested = ctx(Tree::Array(vec![
+            Tree::Array(vec![s("a"), Tree::UInt64(7)]),
             s("eu"),
         ]))
         .expect("nested")
         .into_inner();
-        let flat = context(FfiValue::Array(vec![s("a"), FfiValue::UInt64(7), s("eu")]))
+        let flat = ctx(Tree::Array(vec![s("a"), Tree::UInt64(7), s("eu")]))
             .expect("flat")
             .into_inner();
         assert_eq!(
@@ -363,7 +428,7 @@ mod tests {
     /// (vitaminc 0.4.0 made the `Option` PRF context follow its parts view).
     #[test]
     fn a_one_element_list_is_some() {
-        let list = context(FfiValue::Array(vec![FfiValue::UInt64(7)]))
+        let list = ctx(Tree::Array(vec![Tree::UInt64(7)]))
             .expect("list")
             .into_inner();
         let some = Some(7u64);
@@ -386,8 +451,8 @@ mod tests {
 
     #[test]
     fn a_one_element_list_is_not_the_bare_part() {
-        let list = context(FfiValue::Array(vec![s("a")])).expect("list");
-        let bare = context(s("a")).expect("bare");
+        let list = ctx(Tree::Array(vec![s("a")])).expect("list");
+        let bare = ctx(s("a")).expect("bare");
         assert_ne!(
             list.clone().into_inner().into_aad().as_bytes(),
             bare.clone().into_inner().into_aad().as_bytes(),
@@ -404,8 +469,8 @@ mod tests {
     /// on both sides (vitaminc 0.5; before it they shared AAD bytes).
     #[test]
     fn text_and_bytes_are_distinct_contexts_on_both_sides() {
-        let text = context(s("ab")).expect("text").into_inner();
-        let bytes = context(FfiValue::Bytes(Protected::new(b"ab".to_vec())))
+        let text = ctx(s("ab")).expect("text").into_inner();
+        let bytes = ctx(Tree::Bytes(b"ab".to_vec()))
             .expect("bytes")
             .into_inner();
         assert_ne!(
@@ -424,32 +489,32 @@ mod tests {
     fn emptiness_follows_the_tuple_rule() {
         for (label, empty) in [
             ("an empty string", s("")),
-            ("empty bytes", FfiValue::Bytes(Protected::new(Vec::new()))),
-            ("an empty list", FfiValue::Array(vec![])),
-            ("a list of one empty string", FfiValue::Array(vec![s("")])),
+            ("empty bytes", Tree::Bytes(Vec::new())),
+            ("an empty list", Tree::Array(vec![])),
+            ("a list of one empty string", Tree::Array(vec![s("")])),
             (
                 "a list of empties",
-                FfiValue::Array(vec![FfiValue::Array(vec![]), s("")]),
+                Tree::Array(vec![Tree::Array(vec![]), s("")]),
             ),
         ] {
             assert!(
-                matches!(context(empty), Err(Error::Context { .. })),
+                matches!(ctx(empty), Err(Error::Context { .. })),
                 "{label} is empty by the tuple rule and must be refused"
             );
         }
         for (label, non_empty) in [
-            ("a zero integer", FfiValue::UInt64(0)),
+            ("a zero integer", Tree::UInt64(0)),
             (
                 "an empty string beside an integer",
-                FfiValue::Array(vec![s(""), FfiValue::Int32(0)]),
+                Tree::Array(vec![s(""), Tree::Int32(0)]),
             ),
             (
                 "a nested non-empty list",
-                FfiValue::Array(vec![FfiValue::Array(vec![s("x")])]),
+                Tree::Array(vec![Tree::Array(vec![s("x")])]),
             ),
         ] {
             assert!(
-                context(non_empty).is_ok(),
+                ctx(non_empty).is_ok(),
                 "{label} carries bytes and must be accepted"
             );
         }
@@ -458,24 +523,93 @@ mod tests {
     #[test]
     fn non_context_values_are_encoding_errors() {
         for (label, bad) in [
-            ("null", FfiValue::Null),
-            ("undefined", FfiValue::Undefined),
-            ("a boolean", FfiValue::Bool(true)),
-            ("a float32", FfiValue::Float32(1.0)),
-            ("a float64", FfiValue::Float64(1.0)),
-            (
-                "an object",
-                FfiValue::Object(vec![("k".to_string(), s("v"))]),
-            ),
+            ("null", Tree::Null),
+            ("undefined", Tree::Undefined),
+            ("a boolean", Tree::Bool(true)),
+            ("a float32", Tree::Float32(1.0)),
+            ("a float64", Tree::Float64(1.0)),
+            ("an object", Tree::Object(vec![("k".to_string(), s("v"))])),
             (
                 "a list with a boolean in it",
-                FfiValue::Array(vec![s("ok"), FfiValue::Bool(false)]),
+                Tree::Array(vec![s("ok"), Tree::Bool(false)]),
             ),
         ] {
             assert!(
-                matches!(context(bad), Err(Error::Context { .. })),
+                matches!(ctx(bad), Err(Error::Context { .. })),
                 "{label} is not a context and must be refused"
             );
+        }
+    }
+
+    /// An integer's width is its identity, so only the four widths a
+    /// context takes are read, each at its own width; the others are
+    /// refused rather than widened.
+    #[test]
+    fn an_integer_is_read_at_its_own_width() {
+        let read = |frame: Vec<u8>| context(&frame).map(NonEmpty::into_inner);
+        assert_eq!(read(to_vec(&7i32).unwrap()).unwrap(), ContextPiece::I32(7));
+        assert_eq!(read(to_vec(&7i64).unwrap()).unwrap(), ContextPiece::I64(7));
+        assert_eq!(read(to_vec(&7u32).unwrap()).unwrap(), ContextPiece::U32(7));
+        assert_eq!(read(to_vec(&7u64).unwrap()).unwrap(), ContextPiece::U64(7));
+        for (label, frame) in [
+            ("an i8", to_vec(&7i8).unwrap()),
+            ("an i16", to_vec(&7i16).unwrap()),
+            ("a u8", to_vec(&7u8).unwrap()),
+            ("a u16", to_vec(&7u16).unwrap()),
+            ("an i128", to_vec(&7i128).unwrap()),
+            ("a u128", to_vec(&7u128).unwrap()),
+            ("a u8 in a list", to_vec(&("users", 7u8)).unwrap()),
+        ] {
+            assert!(
+                matches!(
+                    read(frame),
+                    Err(Error::Context {
+                        reason: Reason::ContextKind,
+                        ..
+                    })
+                ),
+                "{label} is not a context"
+            );
+        }
+    }
+
+    /// What a frame declares is reserved only up to a bound, whatever it
+    /// declares.
+    #[test]
+    fn a_declared_count_reserves_at_most_the_bound() {
+        assert_eq!(reserved(None), 0);
+        assert_eq!(reserved(Some(3)), 3);
+        assert_eq!(reserved(Some(RESERVED)), RESERVED);
+        assert_eq!(reserved(Some(u32::MAX as usize)), RESERVED);
+    }
+
+    /// A list that declares more parts than its frame holds is refused
+    /// when the parts run out, without reserving room for the count it
+    /// declared: four billion parts would abort the guest on allocation.
+    #[test]
+    fn a_list_that_declares_more_parts_than_it_holds_is_refused() {
+        let mut bytes = vec![vitaminc_aead::frame::ARRAY];
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(matches!(
+            context(&bytes),
+            Err(Error::Context {
+                reason: Reason::ContextKind,
+                ..
+            })
+        ));
+    }
+
+    /// Bytes that are not one frame are not a context.
+    #[test]
+    fn bytes_that_are_not_a_frame_are_refused() {
+        for bytes in [&[][..], &[0xff, 1, 2], &to_vec(&"a").unwrap()[..2]] {
+            assert!(matches!(
+                context(bytes),
+                Err(Error::Context {
+                    reason: Reason::ContextKind,
+                    ..
+                })
+            ));
         }
     }
 }

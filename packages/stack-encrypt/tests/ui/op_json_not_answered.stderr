@@ -1,0 +1,73 @@
+error[E0277]: `Contains` has no default index given `std::string::String`
+  --> tests/ui/op_json_not_answered.rs:14:46
+   |
+14 |     let _ = cipher.query(op::Contains, "{}").on(&profile_plan);
+   |                                              ^^ no default index answers this operator here
+   |
+   = note: `op::Eq` defaults to `Equality`; `op::Matches` defaults to `Match` with the default configuration, which is case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between` default to `Ore` over an integer, and `Between` takes a pair; name another index, such as `Ope`, with `.via(index)`; `op::Contains`, `op::ContainedBy` and `op::AtPath` default to `Json` over a `serde_json::Value`
+help: the trait `DefaultIndex<std::string::String>` is not implemented for `Contains`
+      but trait `DefaultIndex<serde_json::value::Value>` is implemented for it
+  --> src/json/query.rs
+   |
+   |         impl DefaultIndex<Value> for $op {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+   | containment!(Contains, ContainedBy);
+   | ----------------------------------- in this macro invocation
+   = help: for that trait implementation, expected `serde_json::value::Value`, found `std::string::String`
+   = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Equality>>` to implement `Chooses<Contains, std::string::String, Whole>`
+   = note: this error originates in the macro `containment` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0271]: type mismatch resolving `<(&str, &str) as Input<Pathed<One>>>::Plaintext == String`
+  --> tests/ui/op_json_not_answered.rs:17:10
+   |
+17 |         .on(&profile_plan);
+   |          ^^ expected `String`, found `Value`
+   |
+   = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Equality>>` to implement `Chooses<AtPath<stack_encrypt::op::Eq>, (&str, &str), _>`
+
+error[E0277]: the trait bound `stack_encrypt::Equality: Select<stack_encrypt::Json, _>` is not satisfied
+  --> tests/ui/op_json_not_answered.rs:17:10
+   |
+17 |         .on(&profile_plan);
+   |          ^^ the trait `Select<stack_encrypt::Json, _>` is not implemented for `stack_encrypt::Equality`
+   |
+   = help: the following other types implement trait `Select<I, Position>`:
+             `(A, B)` implements `Select<A, At<0>>`
+             `(A, B)` implements `Select<B, At<1>>`
+             `(A, B, C)` implements `Select<A, At<0>>`
+             `(A, B, C)` implements `Select<B, At<1>>`
+             `(A, B, C)` implements `Select<C, At<2>>`
+             `(A, B, C, D)` implements `Select<A, At<0>>`
+             `(A, B, C, D)` implements `Select<B, At<1>>`
+             `(A, B, C, D)` implements `Select<C, At<2>>`
+           and $N others
+   = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Equality>>` to implement `Chooses<AtPath<stack_encrypt::op::Eq>, (&str, &str), _>`
+
+error[E0277]: the trait bound `stack_encrypt::Equality: Select<stack_encrypt::Json, _>` is not satisfied
+  --> tests/ui/op_json_not_answered.rs:17:13
+   |
+17 |         .on(&profile_plan);
+   |          -- ^^^^^^^^^^^^^ the trait `Select<stack_encrypt::Json, _>` is not implemented for `stack_encrypt::Equality`
+   |          |
+   |          required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `Select<I, Position>`:
+             `(A, B)` implements `Select<A, At<0>>`
+             `(A, B)` implements `Select<B, At<1>>`
+             `(A, B, C)` implements `Select<A, At<0>>`
+             `(A, B, C)` implements `Select<B, At<1>>`
+             `(A, B, C)` implements `Select<C, At<2>>`
+             `(A, B, C, D)` implements `Select<A, At<0>>`
+             `(A, B, C, D)` implements `Select<B, At<1>>`
+             `(A, B, C, D)` implements `Select<C, At<2>>`
+           and $N others
+   = note: required for `ValuePlan<std::string::String, Indexed<stack_encrypt::Equality>>` to implement `Chooses<AtPath<stack_encrypt::op::Eq>, (&str, &str), _>`
+note: required by a bound in `QueryBuilder::<'a, Op, F, K>::on`
+  --> src/plan/chain.rs
+   |
+   |     pub fn on<P, At>(self, plan: &P) -> QueryOp<'a, F, Op, P::Via, K>
+   |            -- required by a bound in this associated function
+   |     where
+   |         P: Chooses<Op, F, At>,
+   |            ^^^^^^^^^^^^^^^^^^ required by this bound in `QueryBuilder::<'a, Op, F, K>::on`

@@ -44,13 +44,17 @@ type genFile struct {
 	codecVar        string // "codec"
 	fieldsVar       string // "Fields"
 	fieldTypePrefix string // "" or the -name
-	encryptFn       string
-	decryptFn       string
-	paramName       string // the slice parameter of Encrypt
+	// The kind each EncryptInto field of another integer width seals as:
+	// the EQL type's own kind, which gensupport converts the value to.
+	intoKinds map[string]record.Kind
+	encryptFn string
+	decryptFn string
+	paramName string // the slice parameter of Encrypt
 
 	notices         []string
 	printsPlaintext bool
 	unexported      []string
+	unqueried       []string // stderr notices: indexes no generated method queries
 	redact          bool
 	redactRecv      string
 
@@ -88,22 +92,30 @@ type encMember struct {
 // genField is one stored field with what the emitter writes for it.
 type genField struct {
 	Field
-	typeExpr   string   // the field's Go type
-	via        string   // the embedded passthrough struct it is promoted from, or ""
-	tags       string   // the other libraries' tags, without stash
-	outputType string   // the encrypted type's field type: "eql.TextEq" or "EncryptedContactEmail"
-	outputs    []output // the outputs of a sealed field in separate columns
-	queryType  string   // "eql.TextEqQuery", or "" when the field has no query
-	fieldType  string   // "EmailField"
-	pathType   string   // the type with its package path, for model checks
+	typeExpr   string        // the field's Go type
+	valueExpr  string        // the type of one value: typeExpr, or what a nullable field points to
+	memberType string        // the encrypted type's member: outputType, or a pointer to it for NullSQL
+	via        string        // the embedded passthrough struct it is promoted from, or ""
+	tags       string        // the other libraries' tags, without stash
+	outputType string        // the encrypted type's field type: "eql.TextEq" or "EncryptedContactEmail"
+	outputs    []output      // the outputs of a sealed field in separate columns
+	queryType  string        // "eql.TextEqQuery", or "" when the field has no query
+	operators  []Operator    // the operators the engine answers on the field
+	queries    []queryMethod // the field's query methods, one for each operator
+	fieldType  string        // "EmailField"
+	pathType   string        // the type with its package path, for model checks
 }
 
 // definedScalar reports whether the field's type is a named type over a
 // scalar (type Email string): the engine returns the underlying type, and
 // the generated code converts.
 func (g genField) definedScalar() bool {
-	return g.GoType.Kind.Scalar() && g.GoType.Basic != "" && g.typeExpr != g.GoType.Basic
+	return g.GoType.Kind.Scalar() && g.GoType.Basic != "" && g.valueExpr != g.GoType.Basic
 }
+
+// nullable reports whether the field is declared over a pointer, so its
+// value may be nil.
+func (g genField) nullable() bool { return g.Null != NotNull }
 
 // output is one output of a sealed field in separate columns.
 type output struct {
@@ -680,15 +692,38 @@ func (r *reader) buildFields(c *collected) error {
 		if t.Omit {
 			field.Verb = VerbOmit
 		}
+		// A sealed field declared over a pointer to one scalar may be nil:
+		// it is that scalar's field, and says how it stores nil (#1298).
+		pointer := field.Sealed() && field.GoType.Kind == KindPointer && field.GoType.Elem != nil && field.GoType.Elem.Kind.Scalar()
+		if pointer {
+			field.GoType = *field.GoType.Elem
+		}
+		if t.Null != NotNull && !pointer {
+			return fieldErr(typeName, cf.goName, "null= says how a field declared over a pointer stores nil, and a field of type %s is never nil; declare it as a pointer to one scalar, *%s", r.typeExpr(cf.typ), r.typeExpr(cf.typ))
+		}
+		if pointer {
+			mode, err := r.nullMode(field, t.Null)
+			if err != nil {
+				return fieldErr(typeName, cf.goName, "%s", err)
+			}
+			field.Null = mode
+		}
+		if field.Null == NullSQL && len(r.req.Models) > 0 {
+			return fieldErr(typeName, cf.goName, "a null=sql field stores no columns when it is nil, and -model does not map such a field yet; leave out -model, or store nil as a sealed null")
+		}
 		f.decl.Fields = append(f.decl.Fields, field)
 		if t.Omit {
 			continue
 		}
 		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ)}
+		g.valueExpr = g.typeExpr
+		if pointer {
+			g.valueExpr = field.GoType.Name
+		}
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool or []byte, or a type defined over one); a %s seals only as part of an opaque struct", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:
@@ -714,6 +749,12 @@ func (r *reader) buildFields(c *collected) error {
 				}
 				return fieldErr(typeName, cf.goName, "the engine cannot produce the EQL type %s yet: %s", field.EQLType, reason)
 			}
+			if wire, ok := intoKind(g.GoType, eqlType.wire); ok && wire != wireKind(g.GoType) {
+				if f.intoKinds == nil {
+					f.intoKinds = map[string]record.Kind{}
+				}
+				f.intoKinds[field.Name] = wire
+			}
 			f.imports.add(eqlPath, "eql")
 			g.outputType = "eql." + EQLGoName(eqlType.Name)
 			g.outputs = []output{{name: "EQL", typeExpr: g.outputType, pathType: eqlPath + "." + EQLGoName(eqlType.Name)}}
@@ -732,6 +773,10 @@ func (r *reader) buildFields(c *collected) error {
 		if g.Sealed() {
 			g.fieldType = f.fieldTypePrefix + cf.goName + "Field"
 		}
+		g.memberType = g.outputType
+		if g.Null == NullSQL {
+			g.memberType = "*" + g.outputType
+		}
 		f.fields = append(f.fields, g)
 		if cf.via != "" {
 			if !embedded[cf.via] {
@@ -740,9 +785,49 @@ func (r *reader) buildFields(c *collected) error {
 			}
 			continue
 		}
-		f.members = append(f.members, encMember{name: cf.goName, typeExpr: g.outputType, tags: cf.tags})
+		f.members = append(f.members, encMember{name: cf.goName, typeExpr: g.memberType, tags: cf.tags})
 	}
 	return nil
+}
+
+// nullMode is how a sealed field declared over a pointer stores nil: the
+// tag's `null=` if it says, else NullSealed where a sealed nil hides that the
+// value is absent. That needs a type of fixed width, so a nil is as long as a
+// value, and no index but equality, the one index a nil has a term for
+// (#1298): any other index's column would show which values are absent.
+// Anywhere else the field says null=sql, so a visible SQL NULL is a choice
+// the source shows.
+func (r *reader) nullMode(field Field, tagged Null) (Null, error) {
+	indexes := make([]IndexName, 0, len(field.Indexes))
+	for _, idx := range field.Indexes {
+		indexes = append(indexes, idx.Name)
+	}
+	if field.Verb == VerbEncryptInto {
+		for _, eqlType := range r.eql {
+			if eqlType.Name == field.EQLType {
+				indexes = eqlType.Indexes
+			}
+		}
+	}
+	indexed := false
+	for _, name := range indexes {
+		indexed = indexed || name != IndexEquality
+	}
+	fixed := field.GoType.Kind.fixedWidth()
+	switch {
+	case tagged == NullSQL:
+		return NullSQL, nil
+	case tagged == NullSealed && indexed:
+		return "", fmt.Errorf("a nil has an equality term and no other, so another index's column would show which values are absent; write null=sql, which stores SQL NULL")
+	case tagged == NullSealed && !fixed:
+		return "", fmt.Errorf("a sealed nil is as long as a value only for a type of fixed width, and a %s shows its length; write null=sql, which stores SQL NULL", field.GoType)
+	case fixed && !indexed:
+		return NullSealed, nil
+	case indexed:
+		return "", fmt.Errorf("a field with an index other than equality stores nil as SQL NULL, which shows which values are absent: a nil has an equality term and no other. Write null=sql to say so")
+	default:
+		return "", fmt.Errorf("a %s field stores nil as SQL NULL, which shows which values are absent: a %s shows its length, so a sealed nil would not hide it. Write null=sql to say so", "*"+field.GoType.Name, field.GoType)
+	}
 }
 
 func (r *reader) embeddedTags(fieldName string) string {
@@ -770,6 +855,10 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 	}
 	seen[t] = true
 	defer delete(seen, t)
+	if kind, ok := valueKind(t); ok {
+		g.Kind = kind
+		return g
+	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		g.Basic = u.Name()
@@ -811,6 +900,55 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		}
 	}
 	return g
+}
+
+// vcvaluePath is vitaminc's Go value module, whose types encrypt's value
+// types alias.
+const vcvaluePath = "github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+
+// valueKind is the kind of a value type the generator knows by name:
+// time.Time, and encrypt's Date, Int128, Uint128 and Decimal, whether the
+// field names the alias in encrypt or the vcvalue type it stands for. A type
+// defined over one of them is not one: the codec writes these by their exact
+// type, so it is classified by its underlying type and refused as a struct
+// or array.
+func valueKind(t types.Type) (Kind, bool) {
+	named := func(t types.Type) (string, string, bool) {
+		switch t := t.(type) {
+		case *types.Alias:
+			if obj := t.Obj(); obj.Pkg() != nil {
+				return obj.Pkg().Path(), obj.Name(), true
+			}
+		case *types.Named:
+			if obj := t.Obj(); obj.Pkg() != nil {
+				return obj.Pkg().Path(), obj.Name(), true
+			}
+		}
+		return "", "", false
+	}
+	for _, candidate := range []types.Type{t, types.Unalias(t)} {
+		path, name, ok := named(candidate)
+		if !ok {
+			continue
+		}
+		if path == "time" && name == "Time" {
+			return KindTimestamp, true
+		}
+		if path != encryptPath && path != vcvaluePath {
+			continue
+		}
+		switch name {
+		case "Date":
+			return KindDate, true
+		case "Int128":
+			return KindInt128, true
+		case "Uint128":
+			return KindUint128, true
+		case "Decimal":
+			return KindDecimal, true
+		}
+	}
+	return KindOther, false
 }
 
 // checkDirectives stops when another go:generate line in the package would

@@ -1592,4 +1592,23 @@ mod shape_tests {
             "JSON must be catalogued at the flip"
         );
     }
+
+    /// EQL v4 stores the two order terms as hex strings of Stack Encrypt's
+    /// types, and the others as EQL v3 does. A pattern accepts a prefix and
+    /// whole units of lowercase hex, and nothing else.
+    #[test]
+    fn v4_formats_name_the_order_terms_and_their_patterns() {
+        use crate::Term;
+        assert_eq!(Term::Hm.v4_format(), None);
+        assert_eq!(Term::Bloom.v4_format(), None);
+        let ore = Term::Ore.v4_format().expect("ob has a v4 format");
+        assert_eq!(
+            (ore.rust_type, ore.json_shape),
+            ("OreBlockTerm", "OreBlockHex")
+        );
+        assert_eq!(ore.pattern(), "^(0202|0203)([0-9a-f]{2})+$");
+        let ope = Term::Ope.v4_format().expect("op has a v4 format");
+        assert_eq!((ope.rust_type, ope.json_shape), ("OpeTerm", "OpeHex"));
+        assert_eq!(ope.pattern(), "^(00|01)([0-9a-f]{16})+$");
+    }
 }
