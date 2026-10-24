@@ -117,6 +117,10 @@ zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
+# The JSON index's executable leakage profile (`tests/json_leakage`): random
+# columns for its positive control, and the seeded generator its simulator
+# draws from. Already in the workspace graph (stack-auth, stack-guest-abi).
+proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
 # and CI run them. They cannot be relied on to hold under both feature sets
