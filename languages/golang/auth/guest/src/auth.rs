@@ -6,6 +6,13 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use cts_common::Crn;
+// Sound on wasm32 only. There stack-auth runs a token refresh inline, so a
+// plain executor can drive `get_token` to completion. On a native target
+// stack-auth spawns the refresh onto the current Tokio runtime, and
+// `block_on` provides none, so the first refresh panics (and inside a
+// current-thread runtime it would block the thread the task needs). `token`
+// and `refresh` below are reached only through the wasm32 `abi` exports. A
+// native build, a test included, must not call them.
 use futures::executor::block_on;
 use serde::Deserialize;
 use stack_auth::{

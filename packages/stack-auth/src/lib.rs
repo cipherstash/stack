@@ -267,6 +267,13 @@ pub mod store {
 /// Only one refresh runs at a time, regardless of how many callers request a
 /// token concurrently.
 ///
+/// On native targets, refreshes run in an owned task on the current Tokio
+/// runtime. Cancelling `get_token` cancels only that caller's wait: the exchange,
+/// persistence and token installation continue, preserving rotating device
+/// sessions. Keep the runtime alive until outstanding refreshes finish; runtime
+/// shutdown can still interrupt them. On wasm32 the host drives refreshes inline
+/// to completion (there is no Tokio task executor).
+///
 /// [`OidcFederationStrategy`] runs one such engine **per provider JWT**: its
 /// provider is asked for the caller's JWT on every call, and the engine for
 /// that JWT is the one that refreshes, so users sharing a client never share a
