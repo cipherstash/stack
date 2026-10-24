@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A JSON index, `target::Json`** (`docs/plans/2026-10-17-json-tree-index.md`,
   ADR-0009). An `Index<serde_json::Value>` whose stored form,
   `json::JsonDocument`, is one entry per node under one data key per
-  document: a path selector, the node's own ciphertext, a chain of tokens
-  derived by ordinal that the server walks from one client-derived token,
+  document: a path selector, the node's own ciphertext, a self tag and a
+  parent tag by which the server finds the node a client-derived token
+  names and walks beneath it, every token derivable from its node's path
+  alone,
   a stored containment projection that agrees with `jsonb @>` across array
   elements, and, at the paths `JsonOptions::ordered` names, an ordering
   term on number and string leaves. It is what EQL v4's `json_tree` family
@@ -29,45 +31,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `JsonExtracted`, which refuses an entry that does not carry the
   selector (another path's, or the sealed root in place of a node) before
   any key is retrieved; `JsonSubtreeKey::open(rows)` builds a
-  `JsonSubtree`, which refuses a row that is not where the walk's rows must
-  be: a reached node without the path's selector or position, a row
-  without the selector of its parent's path and its own label (the key
-  holds the keyset's index-key PRF and the column's context to derive
-  it), and a row that does not follow the one before it in the document
-  or whose parent is not among the rows. Each refusal is the new
-  `Error::JsonWrongEntry`. Not checked, by design, is which row of the
-  column an entry comes from (ADR 0010). `JsonOptions::sealed_root`,
-  on by default, makes the root entry the whole document so no token for
-  the root exists. A document is at most 127 levels deep. New `TermError`
-  variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`,
-  `JsonLeafNotOrdered`, `JsonPathNotOrdered`, `JsonOrderingAtPosition`
-  and `JsonValueNotScalar`. `JsonTooWide` also refuses a subtree key for a
-  path naming an array position past 2^31 - 1, PostgreSQL's `integer`,
-  which the SQL walk casts a position gate to. `JsonOptions::ordering([..])` names the
+  `JsonSubtree`, which refuses a row that is not where the read's rows
+  must be: a node a token names without the path's selector or last step
+  (its key, its position, or the root), a row without the selector of its
+  parent's path and its own label (the key holds the keyset's index-key
+  PRF and the column's context to derive it), a row that does not follow
+  the one before it in the document or whose parent is not among the
+  rows, and a row whose self tag is not the one the client recomputes
+  (unauthenticated, so a consistency check). Each refusal is the new
+  `Error::JsonWrongEntry`. Not checked, by design: which row of the column
+  an entry comes from (ADR 0010), which element a node at a selector sits
+  under, and whether the database withheld rows. `JsonOptions::sealed_root`,
+  on by default, makes the root entry the whole document and chains the
+  top-level fields from nothing, so the root's token finds the root entry
+  and nothing beneath it. A document is at most 127 levels deep. New
+  `TermError` variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`,
+  `JsonWildcardTooWide`, `JsonLeafNotOrdered`, `JsonPathNotOrdered`,
+  `JsonOrderingAtPosition` and `JsonValueNotScalar`. `JsonTooWide` also
+  refuses a subtree key for a path naming an array position, or a
+  wildcard bound, past 2^31 - 1, PostgreSQL's `integer`: no stored
+  document has an element there. `JsonOptions::ordering([..])` names the
   ordered paths, `JsonPath::covers` is the rule that matches them, and a
   path naming an array position is refused there and in an ordering
   query, since the comparison extracts by selector and reads a position as
   the wildcard. A data plan reads and writes the index (`"json"`, or
   `{"json": {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to
   run it with `Reason::JsonIndexPending`. `JsonPath` implements `Serialize`
-  and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key is a token and
-  `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
-  or `#n:<selector>` for an array position. A walk past its budget returns
-  the sealed root in place of the subtree. The key carries the path it
-  was derived from (`JsonSubtreeKey::path`) and builds the rows' wrapper,
-  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor; from
-  its gates it knows whether the rows are below the path's node
-  (`json_tree_subtree`) or at the nodes it reaches (`json_tree_subtree_at`),
-  so the rows open to the same value either way, over `JsonPath::select`,
-  which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
-  of `q`, `p`, `op`, `h`, tokens and gates) is padded standard base64, and
+  and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key
+  (`KeysetCipher::json_subtree_key`, or `json_subtree_key_with_bound`) is
+  one token per concrete path its path names, in document order:
+  exactly one for a path with no wildcard, `$` included, and for each
+  wildcard level the positions below its bound (64 by default,
+  `JsonSubtreeKey::DEFAULT_BOUND`) and a probe at the bound
+  (`JsonSubtreeKey::tokens()`, `probes()`, `bound()`), which
+  `json_tree_subtree(doc, tokens, budget)` takes. A read whose probe finds
+  an element, an array longer than the bound, fails with the new
+  `Error::JsonWildcardTruncated { bound }` rather than return part of the
+  answer, and a read that would send more than 65,536 tokens is refused
+  as `JsonWildcardTooWide`. The rows open as a `Value` (the node at the
+  path, `{}`, `[]` and scalars included), an `Option<Value>` (`None` where
+  the row has no node there) or a `Vec<Value>` (one value per concrete
+  path reached). A read past its budget returns the sealed root in place
+  of the rows; the key carries the path it was derived from
+  (`JsonSubtreeKey::path`) and builds the rows' wrapper,
+  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor, and
+  evaluates its concrete paths and probes over the whole document, so the
+  rows open to the same answer either way, the truncation included, over
+  `JsonPath::select`, which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
+  of `q`, `x`, `p`, `op`, `h` and the tokens) is padded standard base64, and
   the ciphertext `c` is RFC 1924 base85 (`base85-simd`). The document's
   plaintext is held under `Protected` throughout, as the scalar paths hold
   theirs: each node's plaintext is encoded straight from the caller's value
   into a `Protected<Vec<u8>>` for the cipher, and what an entry opens to
   (a key, a scalar, a sealed root's document) stays wrapped until it is
   handed to the caller. The sealed-root fallback moves the nodes at the
-  walked path out of the whole document rather than copying them, so their
+  read's paths out of the whole document rather than copying them, so their
   plaintext exists once, and the rest of the document is wiped.
 
 - **A layout chosen by value, `target::Layout`, and

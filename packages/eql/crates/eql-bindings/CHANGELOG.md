@@ -13,17 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature). `JsonTreeDocument` is `public.eql_v4_json_tree`, `{v, i, h, sv,
   q}`: the document's entries, one per JSON node, and `q`, its containment
   projection, which the server compares with a needle by native `jsonb @>`.
-  `JsonTreeEntry` is one entry as `->` and the walks return it,
+  `JsonTreeEntry` is one entry as `->` and the subtree reads return it,
+  `{s, c, x, p?, op?}` with the extractors' grafted fields,
   `JsonTreeQuery` the containment needle and `JsonTreeLeafQuery` the
-  ordering operand at a path. `JsonTreeSubtree` collects a walk's rows; past
-  the walk's budget the server returns the sealed root instead, which
-  opens at the path the walk's key was derived from: the rows are built
+  ordering operand at a path. `JsonTreeSubtree` collects a read's rows
+  (`eql_v4.json_tree_subtree(doc, key.tokens(), budget)`) and opens to the
+  value at the path as a `Value`, to `Option<Value>` (`None` where the row
+  has no node there) or to one value per concrete path as a `Vec<Value>`;
+  past the read's budget the server returns the sealed root instead, which
+  opens to the same answer under the read's key: the rows are built
   with `JsonTreeSubtree::from_key(&key, rows)`, and there is no
   constructor without the key.
   An entry `->` returned opens through the selector that asked for it,
   `JsonTreeExtracted::from_selector(&selector, entry)`, which refuses an
   entry carrying another selector (`stack_encrypt::Error::JsonWrongEntry`),
-  and a walk's rows through the key that keyed it, which checks each row
+  and a read's rows through the key that keyed it, which checks each row
   against the path the same way; `JsonTreeEntry` does not open on its own.
   The document is an `EncryptFrom<Value>` and `DecryptInto<Value>` target,
   the extracted entry and the subtree open through `DecryptInto`, and the needle and
@@ -33,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seals with `keyset.run(JsonTree::new(options).encryption(), ..)`), such
   as the paths that carry an ordering term. The wire fields are typed apart
   from the v3 hex terms, and each names its text encoding:
-  `JsonTreeSelector` (`s`, and the pairs of `q`), `JsonTreeTag` (`p`),
+  `JsonTreeSelector` (`s`, and the pairs of `q`), `JsonTreeTag` (`x` and `p`),
   `JsonTreeOrderingTerm` (`op`) and `JsonTreeKeyHeader` (`h`) hold an
   `encoding::Base64Text`, padded standard base64, and `JsonTreeCiphertext`
   (`c`) an `encoding::Base85Text`, RFC 1924 base85. Each encoding newtype

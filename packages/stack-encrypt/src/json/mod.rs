@@ -12,13 +12,23 @@
 //!   value, and for a container its child count. Nothing beneath a node is
 //!   encrypted in that node's entry, so a document's ciphertext is linear
 //!   in its size;
+//! - the **self tag** `x`, the first eight bytes of `H("x" ‖ iv ‖ t)`,
+//!   `t` being the node's own **token**, on every entry: how the server
+//!   finds the node a client-derived token names. Every token derives from
+//!   its node's path alone: the root's (and, under the sealed root, each
+//!   top-level field's) is a PRF of its path, an object member's is
+//!   `H16("t" ‖ t(parent) ‖ s(member))` and an array element's
+//!   `H16("t" ‖ t(array) ‖ s(element) ‖ LE32(i))`, `i` its index. So the
+//!   client sends exactly the tokens of the nodes it reads;
 //! - the **parent tag** `p`, the first eight bytes of
-//!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, which lets the server walk the subtree under a node from one client-derived
-//!   token and nothing else: the ordinals `o` under a node are dense from
-//!   zero, so a walk probes them in turn until the first miss, and derives
-//!   each hit's own token as `H("t" ‖ t(parent) ‖ s ‖ LE32(o))` from the
-//!   hit's own selector `s`, which keeps an array element's token apart
-//!   from an object member's at the same ordinal;
+//!   `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`, below the chain's heads, which
+//!   lets the server enumerate the subtree under a node from its token and
+//!   nothing else: the ordinals `o` under a node are dense from zero (an
+//!   element's is its index, a member's its keyed rank among its
+//!   siblings), so the server probes them in turn until the first miss.
+//!   Nothing stored says whether a hit is a member or an element, so the
+//!   server derives the member rule's token for it, keeps it if the hit's
+//!   self tag is that token's, and otherwise tries the element rule's;
 //! - a leaf ordering term `op` on the number and string leaves at the
 //!   paths the index declares ordered ([`JsonOptions::ordered`]), the
 //!   same OPE term the scalar [`Ope`](crate::target::Ope) index derives,
@@ -31,10 +41,10 @@
 //! exact containment. The value selectors live there and nowhere else.
 //!
 //! By default the root is **sealed** ([`JsonOptions::sealed_root`]): the root
-//! entry's ciphertext is the whole document, the top-level fields are the
-//! heads of the chain, and no token exists for the root, so no query can
-//! hand the server a token that unlocks the shape of every row in the
-//! column.
+//! entry's ciphertext is the whole document and the top-level fields are
+//! the heads of the chain, chained from nothing, so the root's token finds
+//! the root entry and nothing beneath it, and no query can hand the server
+//! a token that unlocks the shape of every row in the column.
 //!
 //! # What the types are
 //!
@@ -71,17 +81,16 @@
 //!   `N² / 2^97`, negligible for any document. The ordinal still binds the
 //!   entry to its place through the AAD, so a moved or reordered entry fails
 //!   to open as the design requires. The cost is twelve bytes per entry.
-//! - **Tokens chain by ordinal, not by label, and nothing stores a token.**
-//!   The design wraps each child's label-derived token under its parent's
-//!   (`w`) and stores the ordinal (`o`) so the server can find and unmask
-//!   it. Here a child's token is a hash of its parent's token, its own
-//!   selector and its ordinal, so the server derives it as it walks and
-//!   both fields go. The
-//!   ordinals under a node are dense from zero, so the walk needs no
-//!   fan-out bound either: it probes until the first miss. The price is
-//!   that the client cannot derive an object member's token (its ordinal
-//!   is a rank among sibling keys it does not know), so it walks from the
-//!   nearest token it can derive through one gate per step
+//! - **Tokens chain by selector, and nothing stores a token.** The design
+//!   wraps each child's label-derived token under its parent's (`w`) and
+//!   stores the ordinal (`o`) so the server can find and unmask it. Here a
+//!   child's token is a hash of its parent's token and its own selector,
+//!   with its index for an array element, so the client derives any node's
+//!   token from the path and the server derives each child's as it walks,
+//!   and both fields go. The ordinals under a node are dense from zero, so
+//!   the walk needs no fan-out bound either: it probes until the first
+//!   miss. A wildcard names no one node, so the client expands it into
+//!   concrete paths up to a bound, with a probe past it
 //!   ([`JsonSubtreeKey`]).
 //!
 //! # Byte encodings
@@ -90,9 +99,9 @@
 //! field the SQL compares, derives or decodes is standard base64 with
 //! padding, which is what PostgreSQL's `encode(x, 'base64')` writes and
 //! `decode(x, 'base64')` reads: the selectors `s` and the pairs of `q`
-//! (sixteen bytes, 24 characters), the parent tag `p` (eight bytes, 12
-//! characters), the ordering term `op`, the tokens and gates a walk
-//! takes, and the header `h`, which the SQL reads the `iv` and the
+//! (sixteen bytes, 24 characters), the self tag `x` and the parent tag `p`
+//! (eight bytes, 12 characters each), the ordering term `op`, the tokens a
+//! read takes, and the header `h`, which the SQL reads the `iv` and the
 //! sealed-root flag from. The ciphertext `c`, which nothing in SQL
 //! decodes, is RFC 1924 base85 (`base85-simd`): five characters per four
 //! bytes against base64's eight per six, on the one field that is most of
@@ -126,12 +135,20 @@ pub(crate) use derive::{seal_pending, terms_pending};
 pub type Tag = [u8; 16];
 
 /// An eight-byte parent tag: the first eight bytes of the parent-tag hash.
+/// [`SelfTag`] has the same width for the same reason.
 /// A parent tag is a lookup key for the server's walk and nothing else (an
 /// entry's AAD binds its selector and ordinal, not its parent tag), so it
 /// needs only to be distinct among the entries of one document; eight
 /// bytes put a collision in a document of ten thousand nodes below one in
 /// 10^11, and save eight bytes an entry over the full hash.
 pub type ParentTag = [u8; 8];
+
+/// An eight-byte self tag: the first eight bytes of `H("x" ‖ iv ‖ t)`, `t`
+/// being the entry's own token. A lookup key for the server, by which it
+/// finds the node a token names; like the parent tag, it is not bound by
+/// the entry's AAD and needs only to be distinct among the entries of one
+/// document.
+pub type SelfTag = [u8; 8];
 
 /// How a JSON index lays a document out, and which of its leaves it
 /// orders. Part of the index's identity: a stored document and the query
@@ -363,13 +380,15 @@ impl JsonHeader {
 
 /// One entry of a stored document: one JSON node.
 ///
-/// `s` and `c` are always present. `p` is present on a node whose parent
-/// has a token (everything below the chain's heads); `op` on a number or
-/// string leaf at a path the index orders ([`JsonOptions::ordered`]).
+/// `s`, `c` and `x` are always present. `p` is present on a node that
+/// chains from its parent (everything below the chain's heads); `op` on a
+/// number or string leaf at a path the index orders
+/// ([`JsonOptions::ordered`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonEntry {
     s: Tag,
     c: Vec<u8>,
+    x: SelfTag,
     p: Option<ParentTag>,
     op: Option<Vec<u8>>,
 }
@@ -383,7 +402,11 @@ impl JsonEntry {
     pub fn ciphertext(&self) -> &[u8] {
         &self.c
     }
-    /// The parent tag, when the parent has a token.
+    /// The self tag, on every entry.
+    pub fn self_tag(&self) -> &SelfTag {
+        &self.x
+    }
+    /// The parent tag, when the node chains from its parent.
     pub fn parent_tag(&self) -> Option<&ParentTag> {
         self.p.as_ref()
     }
@@ -431,16 +454,29 @@ impl JsonDocument {
         &self.projection
     }
 
+    /// The entry whose self tag is `token`'s, as the server finds the node
+    /// a token names: its ordinal and the entry. `None` for a token that
+    /// names no node of this document.
+    pub fn find(&self, token: &Tag) -> Option<(usize, &JsonEntry)> {
+        let x = derive::self_tag(&self.header.iv, token);
+        self.entries.iter().enumerate().find(|(_, e)| e.x == x)
+    }
+
     /// The children of the node whose token is `token`, as the server
-    /// finds them: the entries at the ordinals `0, 1, 2, …` under it,
-    /// probed until the first miss, each with its own token derived. A
-    /// token that names no node yields nothing.
+    /// enumerates them: the entries at the ordinals `0, 1, 2, …` under it,
+    /// probed until the first miss, each with the token the server derives
+    /// for it, by the member rule or the element rule, whichever the entry's
+    /// self tag matches, and `None` when it matches neither. A token that
+    /// names no node yields nothing.
     ///
     /// What `json_tree_children(doc, token)` returns; one level of the
     /// walk [`subtree`](Self::subtree) runs to the bottom.
-    pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Tag)> {
+    pub fn children(&self, token: &Tag) -> Vec<(usize, &JsonEntry, Option<Tag>)> {
         let iv = &self.header.iv;
         let mut out = Vec::new();
+        if self.find(token).is_none() {
+            return out;
+        }
         // A node has at most as many children as the document has entries,
         // so the probe loop is bounded whatever the entries say.
         let most = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
@@ -454,25 +490,33 @@ impl JsonDocument {
             else {
                 break;
             };
-            out.push((j, entry, derive::child_token(token, &entry.s, o)));
+            out.push((j, entry, derive::hit_token(iv, token, entry, o)));
         }
         out
     }
 
-    /// Every entry under the node whose token is `token`, with its depth
-    /// below that node, as the server's recursive walk finds them: the node
-    /// itself is not included, since the walk addresses nodes by their
-    /// parent. In depth-first order, siblings by ordinal.
+    /// The rows the server's read returns for `tokens` with no budget:
+    /// for each token in order, the node it names at depth `0` and every
+    /// entry beneath it with its depth below that node, in document order.
+    /// A token that names no node yields nothing. What
+    /// `json_tree_subtree(doc, tokens, 0)` returns.
     ///
     /// A stored document is untrusted, and its tags need not form a tree:
     /// whoever holds a token can write a chain deeper than any document the
-    /// index seals, or a cycle. The walk stops descending below the deepest
-    /// level a sealed document has, and stops once it has returned as many
-    /// entries as the document holds, which a tree never exceeds, so it
-    /// ends, and in bounded stack, on any document.
-    pub fn subtree(&self, token: &Tag) -> Vec<(usize, &JsonEntry, u32)> {
+    /// index seals, or a cycle. Each token's walk stops descending below the
+    /// deepest level a sealed document has, and stops once it has returned
+    /// as many entries as the document holds, which a tree never exceeds,
+    /// so it ends, and in bounded stack, on any document.
+    pub fn subtree(&self, tokens: &[Tag]) -> Vec<(usize, &JsonEntry, u32)> {
         let mut out = Vec::new();
-        self.walk(token, 1, &mut out);
+        for token in tokens {
+            let Some((j, entry)) = self.find(token) else {
+                continue;
+            };
+            let mut rows = vec![(j, entry, 0)];
+            self.walk(token, 1, &mut rows);
+            out.extend(rows);
+        }
         out
     }
 
@@ -490,7 +534,9 @@ impl JsonDocument {
                 return;
             }
             out.push((j, entry, depth));
-            self.walk(&child, depth + 1, out);
+            if let Some(child) = child {
+                self.walk(&child, depth + 1, out);
+            }
         }
     }
 
@@ -617,29 +663,27 @@ where
     }
 }
 
-/// The entries the server's walk returned for one key, ready to open:
-/// what `json_tree_subtree(doc, token)` or `json_tree_subtree_at(doc,
-/// token, gates)` yields, collected, and what
-/// [`DecryptInto<Value>`](crate::DecryptInto) reassembles into the value
-/// under the walked path. Built only by the key that keyed the walk
-/// ([`JsonSubtreeKey::open`]), so it always carries the walked path, and
-/// what checks every row against it when the rows are opened (see
+/// The entries the server returned for one subtree read, ready to open:
+/// what `json_tree_subtree(doc, key.tokens(), budget)` yields, collected,
+/// and what [`DecryptInto<Value>`](crate::DecryptInto),
+/// `DecryptInto<Option<Value>>` and `DecryptInto<Vec<Value>>` open into the
+/// value at the read's path. Built only by the key that keyed the read
+/// ([`JsonSubtreeKey::open`]), so it always carries the key, and what
+/// checks every row against it when the rows are opened (see
 /// [`JsonSubtreeKey::open`] for the checks).
 ///
-/// The ungated walk returns the node's descendants and not the node
-/// itself, so the node's kind is read from its children's labels: elements
-/// make an array, members an object. A node with no descendants, an empty
-/// container or a scalar, yields no rows and so no value; `->` on its
-/// selector returns the node itself. A gated walk also returns each node
-/// its gates reach, at depth `0`, with that node's descendants beneath it.
+/// The rows are, for each token of the key that names a node, the node at
+/// depth `0` and everything beneath it, so the four answers `jsonb #>`
+/// gives are four answers here: an empty object's entry, an empty array's
+/// entry, a scalar's entry, and no rows for a node the row does not have.
 ///
-/// Past its budget, a walk over a document with a sealed root returns the
-/// root entry alone, at depth `0`, instead of a subtree it would be
-/// cheaper to open whole: the client opens the document and takes the
-/// walked path over it, to the same value the walked rows open to. Whether
-/// the path names the node walked below (`json_tree_subtree`) or the nodes
-/// reached (`json_tree_subtree_at`) is the key's to say, by whether it has
-/// gates, so no caller attaches it.
+/// Past its budget, a read of a document with a sealed root returns the
+/// root entry alone, at depth `0`, instead of rows it would be cheaper to
+/// open whole: the client opens the document and evaluates the key's
+/// concrete paths and probes over it, to the same values the walked rows
+/// open to, a probe that finds an element included. A read of `$` under
+/// the sealed root is answered with the same one row, the root, which
+/// opens to the whole document.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonSubtree {
     nodes: Vec<JsonNode>,
@@ -647,9 +691,7 @@ pub struct JsonSubtree {
 }
 
 impl JsonSubtree {
-    /// The rows of a walk `key` keyed: below the path's node when the key
-    /// has no gates (`json_tree_subtree`), at the nodes it reaches
-    /// otherwise.
+    /// The rows of the read `key` keyed.
     pub(crate) fn keyed(nodes: Vec<JsonNode>, key: JsonSubtreeKey) -> Self {
         Self { nodes, key }
     }
@@ -659,24 +701,18 @@ impl JsonSubtree {
         &self.nodes
     }
 
-    /// The path the walk was keyed from.
+    /// The path the read was keyed from.
     pub fn path(&self) -> &JsonPath {
         &self.key.path
-    }
-
-    /// Whether the rows are the descendants of the path's node
-    /// (`json_tree_subtree`, a key with no gates) rather than the nodes
-    /// the path reaches.
-    pub(crate) fn below(&self) -> bool {
-        self.key.gates.is_empty()
     }
 
     pub(crate) fn into_parts(self) -> (Vec<JsonNode>, JsonSubtreeKey) {
         (self.nodes, self.key)
     }
 
-    /// Whether the rows are the sealed root the server returned in place
-    /// of a subtree past its budget: one row, the root, at depth `0`.
+    /// Whether the rows are the sealed root alone, at depth `0`: what the
+    /// server returns in place of a read past its budget, and for a read of
+    /// `$` under the sealed root. Either way it opens whole.
     pub fn is_sealed_root(&self) -> bool {
         matches!(
             self.nodes.as_slice(),
@@ -750,13 +786,15 @@ struct DocumentWire {
     q: query::GroupWire,
 }
 
-/// One entry, as stored: the tags and the ordering term in base64, the
+/// One entry, as stored, `{s, c, x, p?, op?}`: the tags and the ordering
+/// term in base64, the
 /// ciphertext in base85.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EntryWire {
     s: String,
     c: String,
+    x: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     p: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -768,6 +806,7 @@ impl From<&JsonEntry> for EntryWire {
         Self {
             s: base64(&e.s),
             c: base85(&e.c),
+            x: base64(&e.x),
             p: e.p.as_ref().map(|t| base64(t)),
             op: e.op.as_deref().map(base64),
         }
@@ -781,6 +820,7 @@ impl TryFrom<EntryWire> for JsonEntry {
         Ok(Self {
             s: unbase64_16(&w.s)?,
             c: unbase85(&w.c)?,
+            x: unbase64_8(&w.x)?,
             p: w.p.as_deref().map(unbase64_8).transpose()?,
             op: w.op.as_deref().map(unbase64).transpose()?,
         })
@@ -936,11 +976,13 @@ mod tests {
     }
 
     /// An entry at ordinal `o` under `parent`, as whoever holds `parent` can
-    /// write one: its parent tag is public given the token.
+    /// write one: its parent tag and its self tag as a member are public
+    /// given the token.
     fn chained(iv: &[u8], parent: &Tag, o: u32) -> JsonEntry {
         JsonEntry {
             s: [0; 16],
             c: o.to_le_bytes().to_vec(),
+            x: derive::self_tag(iv, &derive::member_token(parent, &[0; 16])),
             p: Some(derive::parent_tag(iv, parent, o)),
             op: None,
         }
@@ -955,24 +997,30 @@ mod tests {
         let mut entries = vec![JsonEntry {
             s: [0; 16],
             c: vec![0],
+            x: derive::self_tag(&iv, &token),
             p: None,
             op: None,
         }];
         let mut parent = token;
         for _ in 0..1000 {
             entries.push(chained(&iv, &parent, 0));
-            parent = derive::child_token(&parent, &[0; 16], 0);
+            parent = derive::member_token(&parent, &[0; 16]);
         }
         let chain = JsonDocument::new(
             JsonHeader::new(Uuid::from_u128(7), iv, vec![], true),
             entries,
             JsonProjection::default(),
         );
-        let walked = chain.subtree(&token);
-        assert_eq!(walked.len(), derive::MAX_DEPTH, "cut at the deepest level");
+        let walked = chain.subtree(&[token]);
+        assert_eq!(
+            walked.len(),
+            derive::MAX_DEPTH + 1,
+            "the token's node, then cut at the deepest level"
+        );
         assert_eq!(
             walked.last().map(|(_, _, depth)| *depth as usize),
-            Some(derive::MAX_DEPTH)
+            Some(derive::MAX_DEPTH),
+            "no row below the deepest level a sealed document has"
         );
     }
 

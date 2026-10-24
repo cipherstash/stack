@@ -312,15 +312,15 @@ pub enum TermError {
         help("The JSON index numbers at most 2147483647 children under one node, so no stored document has an element past position 2147483647. Split the array, or ask for a position below that.")
     )]
     JsonTooWide,
-    /// A subtree key was asked for the root, or a path whose first step is
-    /// a wildcard, of a JSON index whose root is sealed: no token exists
-    /// for the root, by design, and the document opens whole instead.
-    #[error("the sealed root of a JSON document has no subtree token")]
+    /// A subtree read's wildcards would expand to more tokens than one read
+    /// sends: a wildcard expands to its bound plus one tokens under each node
+    /// it sits below, so nested wildcards multiply.
+    #[error("a JSON subtree read expands to too many tokens")]
     #[diagnostic(
-        code(stack_encrypt::json_sealed_root),
-        help("Under the sealed root (the default) the chain starts at the top-level fields: walk a subtree from `$.field` down, or open the whole document.")
+        code(stack_encrypt::json_wildcard_too_wide),
+        help("A read sends at most 65536 tokens. Lower the wildcard bound (`json_subtree_key_with_bound`), use fewer nested wildcards, or read the array itself.")
     )]
-    JsonSealedRoot,
+    JsonWildcardTooWide,
     /// An ordering at a JSON path was asked with a value that is neither a
     /// number nor a string, the only leaves the index orders.
     #[error("an ordering at a JSON path takes a number or a string")]
@@ -374,7 +374,7 @@ impl crate::ErrorPayload for TermError {
             | Self::Normalize(_)
             | Self::JsonTooDeep
             | Self::JsonTooWide
-            | Self::JsonSealedRoot
+            | Self::JsonWildcardTooWide
             | Self::JsonLeafNotOrdered
             | Self::JsonPathNotOrdered
             | Self::JsonOrderingAtPosition

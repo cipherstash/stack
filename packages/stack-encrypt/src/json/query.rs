@@ -346,37 +346,33 @@ impl Serialize for JsonSelector {
     }
 }
 
-/// One gate of a subtree walk: what the entry at one depth below the
-/// walk's token must be for the walk to descend through it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Gate {
-    /// The selector of the path down to that depth: a key step, or a
-    /// wildcard, whose selector every element carries.
-    Selector(Tag),
-    /// An array position: the one ordinal probed at that depth, and the
-    /// selector of an element there (the wildcard's), which the entry at
-    /// that ordinal must carry. The ordinal alone would admit an object
-    /// member that ranks there in a row whose node at the path is an
-    /// object.
-    Slot(u32, Tag),
+/// One token a subtree read sends: the token of the node at a concrete
+/// path (no wildcard), the path, and whether it is a probe, the element at
+/// the bound of a wildcard level, which the read sends to learn whether an
+/// array there is longer than the bound and never answers with.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Read {
+    pub(crate) token: Tag,
+    pub(crate) path: JsonPath,
+    pub(crate) probe: bool,
 }
 
-impl Gate {
-    /// The gate as `json_tree_subtree_at` takes it: the selector's base64, or
-    /// `#n:` and the element selector's base64 for a position.
-    fn text(&self) -> String {
-        match self {
-            Gate::Selector(s) => base64(s),
-            Gate::Slot(n, s) => format!("#{n}:{}", base64(s)),
-        }
-    }
-}
-
-/// The key of a subtree walk: the token of the deepest node on the path
-/// the client can derive, one gate per step below it, and the path it was
-/// derived from, which [`open`](Self::open) attaches to the rows the walk
-/// returns. Serializes as `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted
-/// when empty; the path is not part of the wire.
+/// The key of a subtree read: one token per concrete path the read's path
+/// names, in document order, with a probe per wildcard level, the bound
+/// the wildcards were expanded to, and the path it was derived from, which
+/// [`open`](Self::open) attaches to the rows the read returns. What
+/// `json_tree_subtree(doc, tokens, budget)` takes is
+/// [`tokens`](Self::tokens). Serializes as `{"t": ["…", …]}`; the paths
+/// are not part of the wire.
+///
+/// Every token derives from its node's path alone, so a path with no
+/// wildcard sends exactly one token and nothing that covers a node above
+/// it. A wildcard (`$.items[*].price`) names no one node: the key holds a
+/// token for each position below the bound (`$.items[0].price` …
+/// `$.items[N − 1].price`) and a probe for the element at the bound
+/// (`$.items[N]`, the element itself). A row where a probe names a node
+/// opens to [`Error::JsonWildcardTruncated`](crate::Error::JsonWildcardTruncated),
+/// never to part of the answer.
 ///
 /// The key also holds what derives selectors under the column it was
 /// derived for (the keyset's index-key PRF, shared with the keyset handle,
@@ -385,32 +381,47 @@ impl Gate {
 /// serialized.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JsonSubtreeKey {
-    pub(crate) token: Tag,
-    pub(crate) gates: Vec<Gate>,
+    pub(crate) reads: Vec<Read>,
+    pub(crate) bound: u32,
     pub(crate) path: JsonPath,
     pub(crate) selectors: Selectors,
 }
 
 impl JsonSubtreeKey {
-    /// The token, as the base64 the walk takes.
-    pub fn token(&self) -> String {
-        base64(&self.token)
+    /// The bound a wildcard expands to when the caller names none: 64
+    /// elements per wildcard level, in the spirit of the walk's default
+    /// budget.
+    pub const DEFAULT_BOUND: u32 = 64;
+
+    /// The tokens, as the base64 `json_tree_subtree` takes in its `tokens`
+    /// array, in the key's order, the probes among them.
+    pub fn tokens(&self) -> Vec<String> {
+        self.reads.iter().map(|read| base64(&read.token)).collect()
     }
 
-    /// The token's bytes. A token is a capability over the structure of
-    /// one subtree in every row of the column, for as long as the column
-    /// lives: send it to the server for a query, and nowhere else.
-    pub fn token_bytes(&self) -> &Tag {
-        &self.token
+    /// The tokens' bytes, in the key's order. A token is a capability over
+    /// the structure of its node's subtree in every row of the column, for
+    /// as long as the column lives: send it to the server for a query, and
+    /// nowhere else.
+    pub fn token_bytes(&self) -> Vec<Tag> {
+        self.reads.iter().map(|read| read.token).collect()
     }
 
-    /// The gates the walk descends through below the token, one per step,
-    /// as `json_tree_subtree_at` takes them: a selector's base64, or
-    /// `#n:<selector>` for an array position, the selector being the array
-    /// elements' own. Empty when the token names the walked node itself,
-    /// which `json_tree_subtree` takes.
-    pub fn gates(&self) -> Vec<String> {
-        self.gates.iter().map(Gate::text).collect()
+    /// Which of [`tokens`](Self::tokens) are probes, by their places in it:
+    /// one per element a wildcard level sits below, last at its level.
+    /// Empty for a path with no wildcard.
+    pub fn probes(&self) -> Vec<usize> {
+        self.reads
+            .iter()
+            .enumerate()
+            .filter(|(_, read)| read.probe)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// The bound each wildcard level was expanded to.
+    pub fn bound(&self) -> u32 {
+        self.bound
     }
 
     /// The path the key was derived from.
@@ -418,41 +429,40 @@ impl JsonSubtreeKey {
         &self.path
     }
 
-    /// The rows the walk this key keyed returned, ready to open: the only
-    /// way to build a [`JsonSubtree`], so the rows always carry the path
-    /// a sealed-root fallback is opened at. With no gates the rows came
-    /// from `json_tree_subtree(doc, token)` and are the descendants of the
-    /// path's node; with gates they came from `json_tree_subtree_at(doc,
-    /// token, gates)` and are the nodes the path reaches, with theirs. The
-    /// key knows which, so the fallback opens to what the walked rows
-    /// open to either way.
+    /// The rows the read this key keyed returned, ready to open: the only
+    /// way to build a [`JsonSubtree`], so the rows always carry the key a
+    /// sealed-root fallback is evaluated under.
     ///
     /// Opening the rows checks each one against the key, and refuses the
-    /// rows with [`Error::JsonWrongEntry`] if one does not fit: a node the
-    /// path reaches must carry the path's selector, at depth `0`, with the
-    /// position the path names if it ends in one; every other row must
-    /// carry the selector of its parent's path extended by its own label
-    /// (its key, or the wildcard for an array element), sit one level
-    /// below its parent, and follow the row before it in the document with
-    /// no entry between, so that each node's rows are exactly its subtree.
-    /// A row whose parent is not among the rows is refused.
+    /// rows with [`Error::JsonWrongEntry`] if one does not fit: a node a
+    /// token names, at depth `0`, must carry the self tag of one of the
+    /// key's tokens (each matched once, in order) and that token's path's
+    /// selector and last step (its key, its position, or the root); every
+    /// row beneath it must carry the selector of its parent's path extended
+    /// by its own label, sit one level below its parent, follow the row
+    /// before it in the document with no entry between, and carry the self
+    /// tag of the token its label derives under its parent's. The self tags
+    /// are not authenticated: matching them catches a corrupted row or a
+    /// server that walked wrongly, and the selector, the position and the
+    /// label are what bind a row to its place.
     ///
-    /// Not covered: which row of the column the entries come from (ADR
-    /// 0010), and, until the walk returns the node it starts from, which
-    /// node at the path's selector a walk with no gates descends from. An
-    /// array position before the last step of a path reads as the wildcard
-    /// to the selectors, so another element's subtree at the same depth
-    /// passes too.
+    /// Not covered, by design: which row of the column the entries come
+    /// from (ADR 0010), and which element a node at the path's selector
+    /// sits under, since every element of an array shares its selector: a
+    /// read of `$.items[1].price` can be answered with `$.items[0].price`
+    /// of the same row.
     pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
         JsonSubtree::keyed(rows, self.clone())
     }
 }
 
-/// The token is a capability: it prints as the key's shape, not its bytes.
+/// The tokens are capabilities: the key prints as its shape, not its bytes.
 impl fmt::Debug for JsonSubtreeKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("JsonSubtreeKey")
-            .field("gates", &self.gates.len())
+            .field("tokens", &self.reads.len())
+            .field("probes", &self.reads.iter().filter(|r| r.probe).count())
+            .field("bound", &self.bound)
             .finish_non_exhaustive()
     }
 }
@@ -461,15 +471,9 @@ impl Serialize for JsonSubtreeKey {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
         struct Wire {
-            t: String,
-            #[serde(skip_serializing_if = "Vec::is_empty")]
-            g: Vec<String>,
+            t: Vec<String>,
         }
-        Wire {
-            t: base64(&self.token),
-            g: self.gates(),
-        }
-        .serialize(s)
+        Wire { t: self.tokens() }.serialize(s)
     }
 }
 
@@ -825,35 +829,39 @@ mod tests {
             format!("JsonSelector({})", "q6urq6urq6urq6urq6urqw==")
         );
         let key = JsonSubtreeKey {
-            token: [0xcd; 16],
-            gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3, [0xab; 16])],
-            path: JsonPath::parse("$.a.b[3]").unwrap(),
+            reads: vec![
+                Read {
+                    token: [0xcd; 16],
+                    path: JsonPath::parse("$.a[0]").unwrap(),
+                    probe: false,
+                },
+                Read {
+                    token: [0xab; 16],
+                    path: JsonPath::parse("$.a[1]").unwrap(),
+                    probe: true,
+                },
+            ],
+            bound: 1,
+            path: JsonPath::parse("$.a[*]").unwrap(),
             selectors: Selectors::for_tests(),
         };
-        assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
-        assert_eq!(key.token_bytes(), &[0xcd; 16]);
         assert_eq!(
-            key.gates(),
-            ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]
+            key.tokens(),
+            ["zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "q6urq6urq6urq6urq6urqw=="],
+            "every token, in order, the probe among them"
         );
+        assert_eq!(key.token_bytes(), [[0xcd; 16], [0xab; 16]]);
+        assert_eq!(key.probes(), [1], "the probe is marked by its place");
+        assert_eq!(key.bound(), 1);
         assert_eq!(
             serde_json::to_value(&key).unwrap(),
-            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "g": ["q6urq6urq6urq6urq6urqw==", "#3:q6urq6urq6urq6urq6urqw=="]})
+            serde_json::json!({"t": ["zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "q6urq6urq6urq6urq6urqw=="]}),
+            "the wire carries the tokens and nothing of the paths"
         );
         assert_eq!(
             format!("{key:?}"),
-            "JsonSubtreeKey { gates: 2, .. }",
+            "JsonSubtreeKey { tokens: 2, probes: 1, bound: 1, .. }",
             "a token is a capability: it never prints"
-        );
-        let bare = JsonSubtreeKey {
-            token: [0xcd; 16],
-            gates: Vec::new(),
-            path: JsonPath::parse("$.a").unwrap(),
-            selectors: Selectors::for_tests(),
-        };
-        assert_eq!(
-            serde_json::to_value(&bare).unwrap(),
-            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ=="})
         );
     }
 

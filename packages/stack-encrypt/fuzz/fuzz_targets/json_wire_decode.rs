@@ -6,7 +6,7 @@ use stack_encrypt::json::{JsonDocument, JsonHeader, JsonLeafQuery, JsonNode, Jso
 // Fuzz the JSON index's wire decoders. A stored `json_tree` document, and
 // every entry `->` or a walk returns, come back from the database through
 // these before anything is authenticated, so the text is attacker-controlled:
-// the base64 of the selectors, parent tags, ordering terms and header, the
+// the base64 of the selectors, self and parent tags, ordering terms and header, the
 // base85 of the ciphertexts (decoded with SIMD code on aarch64 and x86_64),
 // and the header's frozen byte layout. Decoding must never panic, only
 // return `Err`.

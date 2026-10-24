@@ -1,7 +1,7 @@
 //! What the client checks when it opens the rows a JSON index read
 //! returned, with no database: the entry `->` returns must carry the
 //! selector the client derived for the path, and every row of a subtree
-//! walk must sit where the key that keyed the walk says its rows are.
+//! read must sit where the key that keyed the read says its rows are.
 //! Each entry's ciphertext is bound to its own selector and position, so
 //! without these checks any entry of the row would open in place of the one
 //! asked for.
@@ -117,53 +117,14 @@ fn row(doc: &JsonDocument, j: usize, d: Option<u32>) -> JsonNode {
     serde_json::from_value(wire).unwrap()
 }
 
-/// The rows the SQL walk returns for `key`, walked as it walks: with no
-/// gates, every descendant of the token's node from depth 1; with gates,
-/// through each gate (a selector, or `#n:<selector>`), then each node the
-/// gates reach at depth 0 with everything beneath it.
+/// The rows `json_tree_subtree(doc, key.tokens(), 0)` returns for `key`,
+/// read as the SQL reads them: for each token, the node it names at depth
+/// 0 and everything beneath it.
 fn walk(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
-    let gates = key.gates();
-    if gates.is_empty() {
-        return doc
-            .subtree(key.token_bytes())
-            .iter()
-            .map(|(j, _, d)| row(doc, *j, Some(*d)))
-            .collect();
-    }
-    let mut frontier = vec![(None, *key.token_bytes())];
-    for gate in &gates {
-        let mut next = Vec::new();
-        for (_, token) in &frontier {
-            let children = doc.children(token);
-            match gate.strip_prefix('#') {
-                Some(slot) => {
-                    let (n, wanted) = slot.split_once(':').unwrap();
-                    if let Some((j, entry, t)) = children.get(n.parse::<usize>().unwrap()) {
-                        if base64(entry.selector()) == wanted {
-                            next.push((Some(*j), *t));
-                        }
-                    }
-                }
-                None => next.extend(
-                    children
-                        .iter()
-                        .filter(|(_, entry, _)| base64(entry.selector()) == *gate)
-                        .map(|(j, _, t)| (Some(*j), *t)),
-                ),
-            }
-        }
-        frontier = next;
-    }
-    let mut rows = Vec::new();
-    for (j, token) in frontier {
-        rows.push(row(doc, j.unwrap(), Some(0)));
-        rows.extend(
-            doc.subtree(&token)
-                .iter()
-                .map(|(j, _, d)| row(doc, *j, Some(*d))),
-        );
-    }
-    rows
+    doc.subtree(&key.token_bytes())
+        .iter()
+        .map(|(j, _, d)| row(doc, *j, Some(*d)))
+        .collect()
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -291,10 +252,10 @@ mod given_the_entry_arrow_returned {
     }
 }
 
-mod given_the_rows_of_a_walk_without_gates {
+mod given_the_rows_of_a_read {
     use super::*;
 
-    const CHILD: &str = "a child of the walked node";
+    const REACHED: &str = "a node the walked path reaches";
     const NEXT: &str = "the next node of the walked subtree";
 
     #[tokio::test]
@@ -302,16 +263,15 @@ mod given_the_rows_of_a_walk_without_gates {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
-        assert!(nested.gates().is_empty(), "a chain head's token");
         let rows = walk(&doc, &nested);
-        assert_eq!(rows.len(), 6, "nested's descendants");
+        assert_eq!(rows.len(), 7, "nested and its descendants");
         let value = open_value(&cipher, nested.open(rows.clone())).await;
         assert_eq!(value.unwrap(), fixture()["nested"], "the sub-document");
         let list = open_list(&cipher, nested.open(rows)).await;
         assert_eq!(
             list.unwrap(),
-            vec![json!("constant"), json!([{"x": 1}, {"x": 2}])],
-            "the members' values"
+            vec![fixture()["nested"].clone()],
+            "one node, one value"
         );
     }
 
@@ -321,10 +281,65 @@ mod given_the_rows_of_a_walk_without_gates {
         let doc = seal(&cipher, &json!({"a": {"x": 1}, "b": {"x": 2}})).await;
         let a = key(&cipher, "$.a").await;
         let b = key(&cipher, "$.b").await;
-        // The database answers `$.a` with `$.b`'s subtree: one genuine
-        // member, in its place, but under `$.b`'s path.
-        let refused = open_value(&cipher, a.open(walk(&doc, &b))).await;
-        assertions::wrong_entry(refused, CHILD);
+        // The database answers `$.a` with `$.b`'s subtree: genuine entries,
+        // in their places, under `$.b`'s path.
+        assertions::wrong_entry(open_value(&cipher, a.open(walk(&doc, &b))).await, REACHED);
+        // The same with `$.b`'s self tag rewritten to `$.a`'s token's: the
+        // self tag is the database's to write, and the selector still says
+        // which path the node is at.
+        let forged = with_x(walk(&doc, &b), 0, x_of(&doc, &a));
+        assertions::wrong_entry(open_value(&cipher, a.open(forged)).await, REACHED);
+    }
+
+    #[tokio::test]
+    async fn another_position_of_the_array_is_refused_by_its_label() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let second = key(&cipher, "$.nested.list[1]").await;
+        let first = key(&cipher, "$.nested.list[0]").await;
+        // The first element carries the same selector as the second, and
+        // here the second's self tag: its decrypted position tells them
+        // apart.
+        let forged = with_x(walk(&doc, &first), 0, x_of(&doc, &second));
+        assertions::wrong_entry(open_value(&cipher, second.open(forged)).await, REACHED);
+    }
+
+    #[tokio::test]
+    async fn a_node_no_token_names_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let hello = key(&cipher, "$.hello").await;
+        // `$.hello`'s own entry with another self tag: the database walked
+        // from a token the read did not send.
+        let forged = with_x(walk(&doc, &hello), 0, "AAAAAAAAAAA=".into());
+        assertions::wrong_entry(open_value(&cipher, hello.open(forged)).await, REACHED);
+    }
+
+    #[tokio::test]
+    async fn one_token_answered_twice_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let xs = key(&cipher, "$.nested.list[*].x").await;
+        // Both x, the second carrying the first's self tag: each a genuine
+        // node at the selector, but the read sent each token once, and a
+        // row matches only a token after the one before it.
+        let rows = walk(&doc, &xs);
+        assert_eq!(rows.len(), 2, "both x");
+        let first = serde_json::to_value(&rows[0]).unwrap()["x"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let forged = with_x(rows, 1, first);
+        assertions::wrong_entry(open_list(&cipher, xs.open(forged)).await, REACHED);
+    }
+
+    #[tokio::test]
+    async fn a_child_with_a_forged_self_tag_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let nested = key(&cipher, "$.nested").await;
+        let forged = with_x(walk(&doc, &nested), 2, "AAAAAAAAAAA=".into());
+        assertions::wrong_entry(open_value(&cipher, nested.open(forged)).await, NEXT);
     }
 
     #[tokio::test]
@@ -333,12 +348,14 @@ mod given_the_rows_of_a_walk_without_gates {
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
         // `number` (9) sits right after nested's subtree in the document,
-        // so it follows the rows without a gap; its selector is not a
-        // member of nested's.
+        // so it follows the rows without a gap; no token the read sent
+        // names it.
         let mut rows = walk(&doc, &nested);
         rows.push(row(&doc, 9, Some(1)));
-        let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        assertions::wrong_entry(open_value(&cipher, nested.open(rows)).await, REACHED);
+        let mut rows = walk(&doc, &nested);
+        rows.push(row(&doc, 9, None));
+        assertions::wrong_entry(open_value(&cipher, nested.open(rows)).await, REACHED);
     }
 
     #[tokio::test]
@@ -352,8 +369,21 @@ mod given_the_rows_of_a_walk_without_gates {
             .into_iter()
             .filter(|n| n.ordinal() != 5)
             .collect();
+        assertions::wrong_entry(open_value(&cipher, nested.open(rows)).await, NEXT);
+    }
+
+    #[tokio::test]
+    async fn a_truncated_read_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let nested = key(&cipher, "$.nested").await;
+        let mut rows = walk(&doc, &nested);
+        let _ = rows.pop();
         let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, NEXT);
+        assert!(
+            matches!(refused, Err(Error::OpenedType { .. })),
+            "{refused:?}"
+        );
     }
 
     #[tokio::test]
@@ -361,37 +391,19 @@ mod given_the_rows_of_a_walk_without_gates {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
-        let rows: Vec<JsonNode> = walk(&doc, &nested)
-            .into_iter()
-            .map(|n| {
-                if n.ordinal() == 6 {
-                    row(&doc, 6, Some(1))
-                } else {
-                    n
-                }
-            })
-            .collect();
-        let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, NEXT);
-    }
-
-    #[tokio::test]
-    async fn a_member_reported_at_the_wrong_depth_is_refused() {
-        let (cipher, _) = cipher().await;
-        let doc = seal(&cipher, &fixture()).await;
-        let nested = key(&cipher, "$.nested").await;
-        let rows: Vec<JsonNode> = walk(&doc, &nested)
-            .into_iter()
-            .map(|n| {
-                if n.ordinal() == 3 {
-                    row(&doc, 3, Some(2))
-                } else {
-                    n
-                }
-            })
-            .collect();
-        let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        for (j, d, expected) in [(6, 1, NEXT), (3, 2, NEXT), (2, 1, REACHED)] {
+            let rows: Vec<JsonNode> = walk(&doc, &nested)
+                .into_iter()
+                .map(|n| {
+                    if n.ordinal() == j as u64 {
+                        row(&doc, j, Some(d))
+                    } else {
+                        n
+                    }
+                })
+                .collect();
+            assertions::wrong_entry(open_value(&cipher, nested.open(rows)).await, expected);
+        }
     }
 
     #[tokio::test]
@@ -399,11 +411,14 @@ mod given_the_rows_of_a_walk_without_gates {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
-        // `deep` (3) and then the second element's `x` (8) alone: its
-        // parent and everything between are missing.
-        let rows = vec![row(&doc, 3, Some(1)), row(&doc, 8, Some(3))];
-        let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        // nested, `deep` (3) and then the second element's `x` (8) alone:
+        // its parent and everything between are missing.
+        let rows = vec![
+            row(&doc, 2, Some(0)),
+            row(&doc, 3, Some(1)),
+            row(&doc, 8, Some(3)),
+        ];
+        assertions::wrong_entry(open_value(&cipher, nested.open(rows)).await, NEXT);
     }
 
     #[tokio::test]
@@ -417,8 +432,17 @@ mod given_the_rows_of_a_walk_without_gates {
             .into_iter()
             .filter(|n| n.ordinal() != 3)
             .collect();
-        let refused = open_value(&cipher, a.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        assertions::wrong_entry(open_value(&cipher, a.open(rows)).await, NEXT);
+    }
+
+    #[tokio::test]
+    async fn the_sealed_root_among_read_rows_is_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let list = key(&cipher, "$.nested.list").await;
+        let mut rows = walk(&doc, &list);
+        rows.push(row(&doc, 0, Some(1)));
+        assertions::wrong_entry(open_value(&cipher, list.open(rows)).await, REACHED);
     }
 
     #[tokio::test]
@@ -433,9 +457,16 @@ mod given_the_rows_of_a_walk_without_gates {
         let doc = seal_with(&cipher, &value, &open_root()).await;
         let root = key_with(&cipher, "$", &open_root()).await;
         let rows = walk(&doc, &root);
-        assert_eq!(rows.len(), 127, "every node below the root");
+        assert_eq!(rows.len(), 128, "the root and every node below it");
         let opened = open_value(&cipher, root.open(rows)).await;
         assert_eq!(opened.unwrap(), value, "the whole document");
+        let deepest = key_with(&cipher, &format!("${}", "[0]".repeat(126)), &open_root()).await;
+        let opened = open_value(&cipher, deepest.open(walk(&doc, &deepest))).await;
+        assert_eq!(
+            opened.unwrap(),
+            json!([1]),
+            "126 positions down, by its own token"
+        );
     }
 
     #[tokio::test]
@@ -443,8 +474,6 @@ mod given_the_rows_of_a_walk_without_gates {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
-        // The depth is the database's report; the rows' positions and the
-        // opened nodes place them, so rows without it open the same.
         let rows: Vec<JsonNode> = walk(&doc, &nested)
             .iter()
             .map(|n| row(&doc, n.ordinal() as usize, None))
@@ -454,78 +483,101 @@ mod given_the_rows_of_a_walk_without_gates {
     }
 }
 
-mod given_the_rows_of_a_gated_walk {
+/// What the read check allows by design, and says it allows: no bound field
+/// names an entry's row, or the element a node at a selector sits under.
+mod given_answers_the_check_cannot_tell_apart {
     use super::*;
 
-    const REACHED: &str = "a node the walked path reaches";
-
     #[tokio::test]
-    async fn the_honest_rows_open_to_the_reached_nodes() {
+    async fn another_rows_node_at_the_same_path_opens() {
         let (cipher, _) = cipher().await;
-        let doc = seal(&cipher, &fixture()).await;
-        let second = key(&cipher, "$.nested.list[1]").await;
-        let value = open_value(&cipher, second.open(walk(&doc, &second))).await;
-        assert_eq!(value.unwrap(), json!({"x": 2}), "the second element");
-        let xs = key(&cipher, "$.nested.list[*].x").await;
-        let values = open_list(&cipher, xs.open(walk(&doc, &xs))).await;
-        assert_eq!(values.unwrap(), vec![json!(1), json!(2)], "every x");
+        let other = seal(&cipher, &json!({"nested": {"deep": "other", "list": []}})).await;
+        let nested = key(&cipher, "$.nested").await;
+        // Row provenance is the database's word (ADR 0010).
+        let opened = open_value(&cipher, nested.open(walk(&other, &nested))).await;
+        assert_eq!(
+            opened.unwrap(),
+            json!({"deep": "other", "list": []}),
+            "the other row's"
+        );
     }
 
     #[tokio::test]
-    async fn another_position_of_the_array_is_refused() {
+    async fn the_same_selector_under_another_element_opens() {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
-        let second = key(&cipher, "$.nested.list[1]").await;
-        // The first element carries the same selector as the second: the
-        // position in its label tells them apart.
-        let first = key(&cipher, "$.nested.list[0]").await;
-        let refused = open_value(&cipher, second.open(walk(&doc, &first))).await;
-        assertions::wrong_entry(refused, REACHED);
+        let second = key(&cipher, "$.nested.list[1].x").await;
+        // `$.nested.list[0].x` (6) with `$.nested.list[1].x`'s self tag:
+        // the same selector and the same label, which is all a row binds.
+        let forged = vec![{
+            let mut wire = serde_json::to_value(row(&doc, 6, Some(0))).unwrap();
+            wire["x"] = json!(x_of(&doc, &second));
+            serde_json::from_value::<JsonNode>(wire).unwrap()
+        }];
+        let opened = open_value(&cipher, second.open(forged)).await;
+        assert_eq!(
+            opened.unwrap(),
+            json!(1),
+            "the first element's x, by design"
+        );
     }
+}
+
+/// The four answers a read at a path with no wildcard gives, as `jsonb #>`
+/// gives them: an empty object, an empty array, a scalar and no node, as a
+/// `Value`, an `Option<Value>` and a `Vec<Value>`.
+mod given_a_read_of_one_node {
+    use super::*;
 
     #[tokio::test]
-    async fn a_node_of_another_path_is_refused() {
+    async fn each_answer_opens_as_jsonb_holds_it() {
         let (cipher, _) = cipher().await;
-        let doc = seal(&cipher, &fixture()).await;
-        let xs = key(&cipher, "$.nested.list[*].x").await;
-        let refused = open_list(&cipher, xs.open(vec![row(&doc, 3, Some(0))])).await;
-        assertions::wrong_entry(refused, REACHED);
+        let document = json!({"o": {}, "a": [], "s": "text", "n": null, "z": 0});
+        let doc = seal(&cipher, &document).await;
+        for (path, expected) in [
+            ("$.o", Some(json!({}))),
+            ("$.a", Some(json!([]))),
+            ("$.s", Some(json!("text"))),
+            ("$.n", Some(Value::Null)),
+            ("$.missing", None),
+            ("$.o.missing", None),
+            ("$.a[0]", None),
+        ] {
+            let read = key(&cipher, path).await;
+            let rows = walk(&doc, &read);
+            let option = cipher
+                .decrypt_as::<Option<Value>, JsonSubtree>(read.open(rows.clone()), aead())
+                .await
+                .unwrap();
+            assert_eq!(option, expected, "{path} as Option<Value>");
+            let list = open_list(&cipher, read.open(rows.clone())).await.unwrap();
+            assert_eq!(
+                list,
+                expected.clone().into_iter().collect::<Vec<_>>(),
+                "{path} as Vec<Value>"
+            );
+            match (open_value(&cipher, read.open(rows)).await, expected) {
+                (Ok(value), Some(expected)) => assert_eq!(value, expected, "{path} as Value"),
+                (Err(Error::OpenedType { expected }), None) => {
+                    assert_eq!(expected, "a node at the walked path", "{path}")
+                }
+                (got, expected) => panic!("{path}: {got:?}, expected {expected:?}"),
+            }
+        }
     }
+}
 
-    #[tokio::test]
-    async fn a_descendant_left_without_its_reached_node_is_refused() {
-        let (cipher, _) = cipher().await;
-        let doc = seal(&cipher, &fixture()).await;
-        let list = key(&cipher, "$.nested.list").await;
-        // The list's own row is dropped: what is left are its children,
-        // which the gated walk does not return on their own.
-        let rows: Vec<JsonNode> = walk(&doc, &list)
-            .into_iter()
-            .filter(|n| n.ordinal() != 4)
-            .collect();
-        let refused = open_value(&cipher, list.open(rows)).await;
-        assertions::wrong_entry(refused, REACHED);
-    }
+/// The self tag the stored node at `key`'s only token carries, as the
+/// database could write it on any entry: it holds the token and the `iv`.
+fn x_of(doc: &JsonDocument, key: &JsonSubtreeKey) -> String {
+    let (j, _) = doc.find(&key.token_bytes()[0]).expect("the node is there");
+    base64(doc.entries()[j].self_tag())
+}
 
-    #[tokio::test]
-    async fn a_reached_node_reported_below_depth_zero_is_refused() {
-        let (cipher, _) = cipher().await;
-        let doc = seal(&cipher, &fixture()).await;
-        let xs = key(&cipher, "$.nested.list[*].x").await;
-        let refused = open_list(&cipher, xs.open(vec![row(&doc, 6, Some(1))])).await;
-        assertions::wrong_entry(refused, REACHED);
-    }
-
-    #[tokio::test]
-    async fn the_sealed_root_among_walked_rows_is_refused() {
-        let (cipher, _) = cipher().await;
-        let doc = seal(&cipher, &fixture()).await;
-        let list = key(&cipher, "$.nested.list").await;
-        // The root at depth 1 is not the fallback, and its selector is not
-        // the list's.
-        let mut rows = walk(&doc, &list);
-        rows.push(row(&doc, 0, Some(1)));
-        let refused = open_value(&cipher, list.open(rows)).await;
-        assertions::wrong_entry(refused, REACHED);
-    }
+/// `rows` with the self tag of the row at `at` rewritten to `x`.
+fn with_x(mut rows: Vec<JsonNode>, at: usize, x: String) -> Vec<JsonNode> {
+    let mut wire = serde_json::to_value(&rows[at]).unwrap();
+    wire["x"] = json!(x);
+    rows[at] = serde_json::from_value(wire).unwrap();
+    rows
 }

@@ -1,0 +1,134 @@
+{
+  "_comment": "The JSON index's s, x and p per entry, and the tokens a read sends, under the deterministic key source. Read by tests/json_tree_vectors.rs; regenerate with STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS=1 only for an intended break. Do not edit by hand.",
+  "document": {
+    "a": {
+      "b": [
+        1,
+        {
+          "c": true
+        }
+      ]
+    },
+    "d": "e"
+  },
+  "open_root": {
+    "entries": [
+      {
+        "p": null,
+        "s": "GUG6+MOjeHGk8vJS5CJOxA==",
+        "x": "PelL2/QWv0M="
+      },
+      {
+        "p": "8OU5UZoL5Hw=",
+        "s": "8OVeBxReEgPVrjL7qGYAbg==",
+        "x": "p7/wbsjaDjQ="
+      },
+      {
+        "p": "WN3/UZRAros=",
+        "s": "HlQhfaUoEj5O+JR/j9trVQ==",
+        "x": "W0aJLUxlVdA="
+      },
+      {
+        "p": "ZOSBKJZJ/NY=",
+        "s": "0AOmEo3aMm7GHQ6VNNv+Vw==",
+        "x": "EVNlMjX0dyE="
+      },
+      {
+        "p": "ZHxAvDKdFsI=",
+        "s": "0AOmEo3aMm7GHQ6VNNv+Vw==",
+        "x": "q22q1h6JGj0="
+      },
+      {
+        "p": "/EJ22V9WvdY=",
+        "s": "z1M7JTZ8C8WMd3dqhuZpfA==",
+        "x": "hMhl3B9cj/0="
+      },
+      {
+        "p": "sIWG0EdV0i8=",
+        "s": "Ie6Xm6ZxkV/9nBoIK7zXsQ==",
+        "x": "HRuqzbdL4ew="
+      }
+    ],
+    "iv": "OtEqUO60j5CMut+3HQzYSA==",
+    "tokens": {
+      "$": [
+        "tJdy239uYbuNLuRBLfJuNQ=="
+      ],
+      "$.a": [
+        "ZDj2w3vE5Yb+ozBC9vU/xQ=="
+      ],
+      "$.a.b": [
+        "/wnqVYhdW/Z2syRn3UT7BQ=="
+      ],
+      "$.a.b[0]": [
+        "WDnRCSnfT++Ut0INNwLbJg=="
+      ],
+      "$.a.b[1]": [
+        "Jmb/eVBOYiQpM4LoFylYJA=="
+      ],
+      "$.a.b[1].c": [
+        "9o1SJ8daeeeWXi3Xn6duhw=="
+      ]
+    }
+  },
+  "sealed_root": {
+    "entries": [
+      {
+        "p": null,
+        "s": "GUG6+MOjeHGk8vJS5CJOxA==",
+        "x": "PelL2/QWv0M="
+      },
+      {
+        "p": null,
+        "s": "8OVeBxReEgPVrjL7qGYAbg==",
+        "x": "wl8ZJzvRwJ0="
+      },
+      {
+        "p": "Dy1WgDveXQU=",
+        "s": "HlQhfaUoEj5O+JR/j9trVQ==",
+        "x": "12lMeBeDMpo="
+      },
+      {
+        "p": "sJXI7nmR44s=",
+        "s": "0AOmEo3aMm7GHQ6VNNv+Vw==",
+        "x": "/yUSe3uTE98="
+      },
+      {
+        "p": "d0RUZY7M9PI=",
+        "s": "0AOmEo3aMm7GHQ6VNNv+Vw==",
+        "x": "7n2djhOoEXo="
+      },
+      {
+        "p": "4mV5CHfjZEg=",
+        "s": "z1M7JTZ8C8WMd3dqhuZpfA==",
+        "x": "A/QZeMRJngk="
+      },
+      {
+        "p": null,
+        "s": "Ie6Xm6ZxkV/9nBoIK7zXsQ==",
+        "x": "uGnxy4JLUhk="
+      }
+    ],
+    "iv": "OtEqUO60j5CMut+3HQzYSA==",
+    "tokens": {
+      "$": [
+        "tJdy239uYbuNLuRBLfJuNQ=="
+      ],
+      "$.a": [
+        "eU6Mev5Z/qvIfCQXhnj0rg=="
+      ],
+      "$.a.b": [
+        "0RFumQCVxgGHhXQQ9dxRLQ=="
+      ],
+      "$.a.b[0]": [
+        "8hKJRkRA3odRkB9gErDAxg=="
+      ],
+      "$.a.b[1]": [
+        "/SE/9hQBrjXTjmuZ7qmhNQ=="
+      ],
+      "$.a.b[1].c": [
+        "AYlWSivEpmukX15V4GUrug=="
+      ]
+    }
+  }
+}

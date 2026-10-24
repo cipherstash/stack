@@ -113,11 +113,6 @@ exclude_re = [
   'stack-encrypt/src/json/mod\.rs:\d+:\d+: replace \| with \^ in unhex$',
   # `JsonPath::root` is `Self::default()`.
   'stack-encrypt/src/json/path\.rs:\d+:\d+: replace JsonPath::root -> Self with Default::default\(\)$',
-  # The sealed root's `None` token: with that arm gone, the root falls to
-  # the arm that wraps its parent's token, and the root has no parent, so
-  # it is `None` there too. `the_sealed_root_has_no_token_and_its_fields_are_heads`
-  # pins the value; the arm stays so the match says it.
-  'stack-encrypt/src/json/derive\.rs:\d+:\d+: delete match arm \(0, true\) in Walker<\x27_>::visit$',
   # A document always has a root, so its terms are never empty: `false` is
   # the value `is_empty` returns. The `true` replacement is still caught.
   'stack-encrypt/src/json/derive\.rs:\d+:\d+: replace JsonTerms::is_empty -> bool with false$',

@@ -24,7 +24,7 @@ use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
     PlainJson,
 };
-use super::query::{Gate, JsonSelector, JsonSubtreeKey};
+use super::query::{JsonSelector, JsonSubtreeKey, Read};
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
 use crate::sem::TermError;
@@ -176,12 +176,15 @@ pub(crate) struct TermNode {
     pub(crate) positional: JsonPath,
     pub(crate) s: Tag,
     pub(crate) vs: Tag,
-    /// The node's token: every node has one except the sealed root.
-    pub(crate) token: Option<Tag>,
+    /// The node's token, derivable from its path alone: every node has
+    /// one, the root and the chain's heads included.
+    pub(crate) token: Tag,
     /// The leaf ordering term, on a number or string.
     pub(crate) op: Option<Vec<u8>>,
     pub(crate) parent: Option<usize>,
-    /// The node's ordinal under its parent, when the parent has a token.
+    /// The node's ordinal under its parent, when it chains from its parent
+    /// (everything below the chain's heads): its index for an array
+    /// element, its keyed rank among its siblings for an object member.
     pub(crate) ordinal: Option<u32>,
     /// The nearest enclosing array element that is a container.
     pub(crate) element: Option<usize>,
@@ -352,22 +355,62 @@ fn h16(parts: &[&[u8]]) -> Tag {
     truncate(&hasher.finalize())
 }
 
-/// `H("t" ‖ t(parent) ‖ s(child) ‖ LE32(ordinal))`: the token of the child
-/// at `ordinal` under a node, whose selector is `selector`. Column-wide like
-/// every token (no document salt), so the client derives an array
-/// element's token from the path alone, and the server derives every hit's
-/// from its parent's and the hit's stored `s` as it walks; no token is ever
-/// stored.
+/// `H16("t" ‖ t(parent) ‖ s(member))`: the token of the object member whose
+/// selector is `selector`, under the object whose token is `parent`.
+/// Column-wide like every token (no document salt), and free of the
+/// member's ordinal, which is a rank among its siblings' keys: so the
+/// client derives a member's token from the path alone, whatever else the
+/// object holds in a row, and the server derives a hit's from its parent's
+/// and the hit's stored `s` as it walks. No token is ever stored.
 ///
-/// The selector is what keeps an element apart from an object member. An
-/// ordinal alone does not: a member's is its rank among its siblings, and
-/// rows of one column need not agree on a node's kind, so without it the
-/// token of `$.a[0]` would be the token of whichever member of an object
-/// `$.a` ranks first, in every row whose `$.a` is an object. An element's
-/// selector is the wildcard's and a member's names its key, so the two
-/// never share a token.
-pub(super) fn child_token(parent: &Tag, selector: &Tag, ordinal: u32) -> Tag {
-    h16(&[b"t", parent, selector, &ordinal.to_le_bytes()])
+/// Object keys are unique, so the selector alone tells a member from its
+/// siblings. It also keeps a member apart from an array element: an
+/// element's selector is the wildcard path's and a member's names its key,
+/// and an element's input is four bytes longer ([`element_token`]), so the
+/// two never share a token.
+pub(super) fn member_token(parent: &Tag, selector: &Tag) -> Tag {
+    h16(&[b"t", parent, selector])
+}
+
+/// `H16("t" ‖ t(array) ‖ s(element) ‖ LE32(index))`: the token of the
+/// element at `index` of the array whose token is `array`, `selector` being
+/// the selector every element of that array shares. An element's ordinal is
+/// its index, so this is derivable from the path alone too.
+pub(super) fn element_token(array: &Tag, selector: &Tag, index: u32) -> Tag {
+    h16(&[b"t", array, selector, &index.to_le_bytes()])
+}
+
+/// The first eight bytes of `H("x" ‖ iv ‖ t(node))`: the self tag every
+/// entry carries, by which the server finds the node a token names. Salted
+/// by the document like the parent tag, so it is unrelated bytes in every
+/// row until a query supplies the token. Eight bytes, as the parent tag
+/// ([`SelfTag`](super::SelfTag)).
+pub(super) fn self_tag(iv: &[u8], token: &Tag) -> super::SelfTag {
+    let full = h16(&[b"x", iv, token]);
+    let mut tag = super::SelfTag::default();
+    tag.copy_from_slice(&full[..8]);
+    tag
+}
+
+/// The token the server derives for `entry`, found at `ordinal` under the
+/// node whose token is `parent`: the member rule's if the entry's self tag
+/// is that token's, else the element rule's if it is that one's, else none.
+/// Nothing stored says whether a node is a member or an element (its kind
+/// is inside `c`), so the self tag is what chooses. An entry that matches
+/// neither is still a child, and is returned, but the walk does not descend
+/// into it.
+pub(super) fn hit_token(
+    iv: &[u8],
+    parent: &Tag,
+    entry: &super::JsonEntry,
+    ordinal: u32,
+) -> Option<Tag> {
+    let member = member_token(parent, &entry.s);
+    if self_tag(iv, &member) == entry.x {
+        return Some(member);
+    }
+    let element = element_token(parent, &entry.s, ordinal);
+    (self_tag(iv, &element) == entry.x).then_some(element)
 }
 
 /// The first eight bytes of `H("p" ‖ iv ‖ t(parent) ‖ LE32(ordinal))`:
@@ -384,11 +427,13 @@ pub(super) fn parent_tag(iv: &[u8], parent: &Tag, ordinal: u32) -> super::Parent
 
 /// `PRF(json/rank ‖ column, PAE(t(parent), key))`: what an object's members
 /// are ranked by for their ordinals, so an ordinal does not rank key names.
-/// Keyed with the index key (the design's decision 11). The chain below a
-/// token is public to whoever holds it (the server derives each child's
-/// token from its ordinal), so an unkeyed rank would let a token's holder
+/// Keyed with the index key (the design's decision 11). The ordinals below
+/// a token are public to whoever holds it (the server enumerates a node's
+/// children by probing them), so an unkeyed rank would let a token's holder
 /// rank guessed key names and compare the order with the selector it finds
-/// at each ordinal, in every row. Only the client ranks, when it seals.
+/// at each ordinal, in every row. Only the client ranks, when it seals. A
+/// member's token does not depend on its rank ([`member_token`]); its parent
+/// tag does.
 fn rank(
     prf: &HmacSha256Prf,
     context: &Context<'_>,
@@ -519,7 +564,6 @@ fn walk(
         None,
         None,
         None,
-        None,
         0,
     )?;
     let alt = if Kind::of(value).is_container() {
@@ -540,6 +584,10 @@ fn walk(
 }
 
 impl Walker<'_> {
+    /// Visit `value`, the node at `positional`. `chain` is its parent's
+    /// token and its ordinal under it when it chains from its parent, and
+    /// `None` for the root and, under the sealed root, for the chain's
+    /// heads, whose tokens are PRFs of their paths.
     #[allow(clippy::too_many_arguments)]
     fn visit(
         &mut self,
@@ -548,8 +596,7 @@ impl Walker<'_> {
         wild: &JsonPath,
         label: LabelRef<'_>,
         parent: Option<usize>,
-        parent_token: Option<Tag>,
-        ordinal: Option<u32>,
+        chain: Option<(Tag, u32)>,
         element: Option<usize>,
         depth: usize,
     ) -> Result<usize, TermError> {
@@ -564,18 +611,20 @@ impl Walker<'_> {
             &wild.selector_bytes(),
         )?;
         let vs = value_selector(self.prf, self.context, &s, value)?;
-        let token = match (depth, self.options.sealed_root) {
-            (0, true) => None,
-            (0, false) | (1, true) => Some(prf16(
+        let token = match (chain, label) {
+            (Some((parent, _)), LabelRef::Key(_)) => member_token(&parent, &s),
+            (Some((parent, o)), LabelRef::Index(_)) => element_token(&parent, &s, o),
+            _ => prf16(
                 self.prf,
                 TOKEN_DOMAIN,
                 self.context,
                 &positional.token_bytes().unwrap_or_default(),
-            )?),
-            _ => parent_token
-                .zip(ordinal)
-                .map(|(p, o)| child_token(&p, &s, o)),
+            )?,
         };
+        let ordinal = chain.map(|(_, o)| o);
+        // Under the sealed root nothing chains from the root: its members
+        // are the chain's heads.
+        let chains = depth > 0 || !self.options.sealed_root;
         let op = if self.options.orders(positional) {
             leaf_op(self.prf, self.context, value)?
         } else {
@@ -608,19 +657,21 @@ impl Walker<'_> {
         };
         match value {
             Value::Object(map) => {
-                let ordinals: Option<BTreeMap<String, u32>> = token
-                    .map(|t| shuffled_ordinals(self.prf, self.context, &t, map))
+                let ordinals: Option<BTreeMap<String, u32>> = chains
+                    .then(|| shuffled_ordinals(self.prf, self.context, &token, map))
                     .transpose()?;
                 for (key, child) in map {
-                    let ordinal = ordinals.as_ref().and_then(|o| o.get(key).copied());
+                    let chain = ordinals
+                        .as_ref()
+                        .and_then(|o| o.get(key).copied())
+                        .map(|o| (token, o));
                     let _ = self.visit(
                         child,
                         &positional.then(Segment::Key(key.clone())),
                         &wild.then(Segment::Key(key.clone())),
                         LabelRef::Key(key),
                         Some(index),
-                        token,
-                        ordinal,
+                        chain,
                         child_element,
                         depth + 1,
                     )?;
@@ -629,15 +680,17 @@ impl Walker<'_> {
             Value::Array(items) => {
                 for (i, child) in items.iter().enumerate() {
                     let i = u64::try_from(i).map_err(|_| TermError::JsonTooWide)?;
-                    let ordinal = token.map(|_| fit_ordinal(i)).transpose()?;
+                    let chain = chains
+                        .then(|| fit_ordinal(i))
+                        .transpose()?
+                        .map(|o| (token, o));
                     let _ = self.visit(
                         child,
                         &positional.then(Segment::Index(i)),
                         &wild.then(Segment::Wildcard),
                         LabelRef::Index(i),
                         Some(index),
-                        token,
-                        ordinal,
+                        chain,
                         child_element,
                         depth + 1,
                     )?;
@@ -864,13 +917,14 @@ fn seal(
             )
             .map_err(|_| Error::Aead)?;
         let c = c.as_ref().to_vec();
-        let parent_token = node.parent.and_then(|p| nodes[p].token);
-        let p = parent_token
+        let p = node
+            .parent
             .zip(node.ordinal)
-            .map(|(parent, o)| parent_tag(&iv, &parent, o));
+            .map(|(parent, o)| parent_tag(&iv, &nodes[parent].token, o));
         entries.push(JsonEntry {
             s: node.s,
             c,
+            x: self_tag(&iv, &node.token),
             p,
             op: node.op.clone(),
         });
@@ -1176,161 +1230,113 @@ impl DecryptInto<Value> for JsonExtracted {
     }
 }
 
-/// Open the rows of a walk: each complete subtree the rows hold, as a
-/// value, in order. What `json_tree_subtree_at` returns is one subtree per
-/// node its gates reached, each rooted at depth `0`; what
-/// `json_tree_subtree` returns is the children of one node, which
-/// [`DecryptInto<Value>`] assembles into that node's value, or this opens
-/// into its children's values. The sealed root a walk fell back to opens
-/// whole, and the key's path selects over it to the same values the walked
-/// rows open to: one per node the path reaches, for a key with gates
-/// (`json_tree_subtree_at`); the children of the one node at the path, for
-/// a key without (`json_tree_subtree`). An object's members come in an
-/// order neither form fixes, and without their keys; open it as a
-/// [`Value`] to keep them. Every row is checked against the key first
-/// ([`JsonSubtreeKey::open`]); a row that does not fit is
-/// [`Error::JsonWrongEntry`].
+/// Open the rows of a read into the values of the nodes its tokens named,
+/// in the key's order, each still under its `Protected`. Shared by the
+/// three openings below, so they agree on every row and on the fallback:
+/// the sealed root a read fell back to opens whole, and the key's concrete
+/// paths and probes are evaluated over it to the same values the walked
+/// rows open to, the truncation included.
+fn open_reads<'a, K>(
+    subtree: JsonSubtree,
+    cipher: &'a StackCipher<K>,
+    context: AeadContext,
+) -> Pending<'a, Vec<Protected<PlainJson>>, K> {
+    if subtree.is_sealed_root() {
+        open_fallback(subtree, cipher, context)
+            .try_map(|(key, mut whole)| select_reads(&key, &mut whole))
+    } else {
+        open_subtree(subtree, cipher, context)
+    }
+}
+
+/// The one value a read reached, or none; more than one (a wildcard that
+/// reached several nodes) is [`Error::OpenedType`].
+fn one_reached(
+    mut values: Vec<Protected<PlainJson>>,
+) -> Result<Option<Protected<PlainJson>>, Error> {
+    match values.len() {
+        0 | 1 => Ok(values.pop()),
+        _ => Err(shape("one node at the walked path")),
+    }
+}
+
+/// Open the rows of a read into a list: one value per concrete path the
+/// key's tokens named that the row has, in the key's order, which is
+/// document order. For a path with no wildcard that is the node at the path
+/// or nothing; for a wildcard, every element it reaches below the bound.
+/// A probe that named a node (an array longer than the bound) is
+/// [`Error::JsonWildcardTruncated`], never a partial list. Every row is
+/// checked against the key first ([`JsonSubtreeKey::open`]); a row that
+/// does not fit is [`Error::JsonWrongEntry`].
 impl DecryptInto<Vec<Value>> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
         Decryption::from_open(move |cipher| {
-            if self.is_sealed_root() {
-                let below = self.below();
-                return open_fallback(self, cipher, context).try_map(move |(path, mut whole)| {
-                    // The selected nodes move out of the document's
-                    // `Protected` into one of their own, leaving `null`
-                    // behind, so their plaintext is never copied; what is
-                    // left of the document is wiped when it drops at the
-                    // end of this closure.
-                    let selected = take_protected(&mut whole, |doc: &mut PlainJson| {
-                        let mut found = path.select_mut(doc.value_mut());
-                        let selected = if below {
-                            match found.as_mut_slice() {
-                                [node] => take_children(node),
-                                _ => return None,
-                            }
-                        } else {
-                            found.into_iter().map(std::mem::take).collect()
-                        };
-                        Some(PlainJson::from_value(Value::Array(selected)))
-                    })
-                    .ok_or_else(|| shape("one node at the walked path"))?;
-                    Ok(match hand_over(selected) {
-                        Value::Array(items) => items,
-                        other => vec![other],
-                    })
-                });
-            }
-            open_subtree(self, cipher, context)
-                .map(|forest| forest.into_iter().map(|(_, v)| hand_over(v)).collect())
+            open_reads(self, cipher, context)
+                .map(|values| values.into_iter().map(hand_over).collect())
         })
     }
 }
 
-/// Open the rows of a walk into the one value they hold. For
-/// `json_tree_subtree(doc, token)`, the rows are the descendants of the
-/// token's node and the value is that node's: an array when the rows are
-/// elements, an object when they are members. For a gated
-/// `json_tree_subtree_at`, the rows are the node the gates reached, at
-/// depth `0`, and its descendants, and the value is that node's; more than
-/// one reached node (a wildcard) is [`Error::OpenedType`], and opens
-/// through [`DecryptInto<Vec<Value>>`] instead. No rows is no value
-/// ([`Error::OpenedType`]): an empty container and a scalar both have no
-/// descendants, and `->` on the node's selector returns the node itself.
-/// The sealed root a walk fell back to opens whole, and the key's path
-/// ([`JsonSubtreeKey::open`]) selects the one value under it; a path that
-/// reaches no node, or more than one, is [`Error::OpenedType`]. Every row
-/// is checked against the key first ([`JsonSubtreeKey::open`]); a row that
-/// does not fit is [`Error::JsonWrongEntry`].
+/// Open the rows of a read into the value at the path, or `None` where the
+/// row has no node there: the four answers `jsonb #>` gives, an object, an
+/// array and a scalar (`null` included) as `Some`, and SQL `NULL` as
+/// `None`, the way `->` returns SQL `NULL` for a path the row lacks. More
+/// than one node (a wildcard that reached several) is
+/// [`Error::OpenedType`]; a probe that named a node is
+/// [`Error::JsonWildcardTruncated`].
+impl DecryptInto<Option<Value>> for JsonSubtree {
+    type Context = AeadContext;
+    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<Value>, K> {
+        Decryption::from_open(move |cipher| {
+            open_reads(self, cipher, context)
+                .try_map(|values| Ok(one_reached(values)?.map(hand_over)))
+        })
+    }
+}
+
+/// Open the rows of a read into the value at the path: an object, an array
+/// or a scalar, empty containers included, as `jsonb` holds them there. No
+/// node at the path is [`Error::OpenedType`]; open as `Option<Value>` to
+/// read that as `None`. More than one node is [`Error::OpenedType`] too,
+/// and opens through [`DecryptInto<Vec<Value>>`] instead; a probe that
+/// named a node is [`Error::JsonWildcardTruncated`].
 impl DecryptInto<Value> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
         Decryption::from_open(move |cipher| {
-            if self.is_sealed_root() {
-                return open_fallback(self, cipher, context).try_map(|(path, mut whole)| {
-                    // The one node at the path moves out of the document's
-                    // `Protected` into one of its own, leaving `null`
-                    // behind, so its plaintext is never copied; what is
-                    // left of the document is wiped when it drops at the
-                    // end of this closure.
-                    let mut reached = 0;
-                    let selected = take_protected(&mut whole, |doc: &mut PlainJson| {
-                        let mut found = path.select_mut(doc.value_mut());
-                        reached = found.len();
-                        match found.as_mut_slice() {
-                            [node] => Some(PlainJson::from_value(std::mem::take(&mut **node))),
-                            _ => None,
-                        }
-                    });
-                    match (selected, reached) {
-                        (Some(value), _) => Ok(hand_over(value)),
-                        (None, 0) => Err(shape("a node at the walked path")),
-                        (None, _) => Err(shape("one node at the walked path")),
-                    }
-                });
-            }
-            let below = self.below();
-            open_subtree(self, cipher, context).try_map(move |forest| {
-                if !below {
-                    let mut values: Vec<Protected<PlainJson>> =
-                        forest.into_iter().map(|(_, v)| v).collect();
-                    return match values.len() {
-                        1 => Ok(hand_over(values.remove(0))),
-                        _ => Err(shape("one node at the walked path")),
-                    };
-                }
-                let mut members = None;
-                let mut elements: Vec<(u64, Protected<PlainJson>)> = Vec::new();
-                for (label, value) in forest {
-                    match label {
-                        Label::Key(key) => {
-                            insert_member(members.get_or_insert_with(protected_object), key, value)
-                        }
-                        Label::Index(i) => elements.push((i, value)),
-                        Label::Root => return Err(shape("a subtree below the root")),
-                    }
-                }
-                match (members, elements.is_empty()) {
-                    (Some(members), true) => Ok(hand_over(members)),
-                    (None, false) => {
-                        elements.sort_by_key(|(i, _)| *i);
-                        let mut array = protected_array(elements.len());
-                        for (_, element) in elements {
-                            push_element(&mut array, element);
-                        }
-                        Ok(hand_over(array))
-                    }
-                    (None, true) => Err(shape("a node with children")),
-                    (Some(_), false) => Err(shape("the children of one node")),
-                }
+            open_reads(self, cipher, context).try_map(|values| {
+                one_reached(values)?
+                    .map(hand_over)
+                    .ok_or_else(|| shape("a node at the walked path"))
             })
         })
     }
 }
 
-/// One row of a walk, opened: the node, and the selector, position and
-/// depth the server returned it with. The depth is the server's report and
-/// optional on the wire; the rows are placed by their positions and the
-/// opened nodes' child counts, and a depth that disagrees with the place
-/// a row is put in is refused.
+/// One row of a read, opened: the node, and the selector, self tag,
+/// position and depth the server returned it with. The depth is the
+/// server's report and optional on the wire; the rows are placed by their
+/// positions and the opened nodes' child counts, and a depth that disagrees
+/// with the place a row is put in is refused.
 struct Row {
     node: Opened,
     s: Tag,
+    x: super::SelfTag,
     j: u64,
     d: Option<u32>,
 }
 
-/// Open every row and rebuild each complete subtree, labelled, each still
-/// under its `Protected`, checking every row against the key as it goes
-/// ([`place`]).
+/// Open every row and place each node a token named, checking every row
+/// against the key as it goes ([`place`]).
 fn open_subtree<'a, K>(
     subtree: JsonSubtree,
     cipher: &'a StackCipher<K>,
     context: AeadContext,
-) -> Pending<'a, Vec<(Label, Protected<PlainJson>)>, K> {
+) -> Pending<'a, Vec<Protected<PlainJson>>, K> {
     let (mut nodes, key) = subtree.into_parts();
     nodes.sort_by_key(|n| n.j);
-    // A walk returns each entry once. Two rows at one ordinal are the
+    // A read returns each entry once. Two rows at one ordinal are the
     // server repeating an entry, which would let it line up one container
     // as many times as it likes.
     if nodes.windows(2).any(|pair| pair[0].j == pair[1].j) {
@@ -1356,86 +1362,110 @@ fn open_subtree<'a, K>(
                 Ok(Row {
                     node: open_entry(&aes, &header, &aad, &n.entry, n.j)?,
                     s: n.entry.s,
+                    x: n.entry.x,
                     j: n.j,
                     d: n.depth,
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        place(rows, &key)
+        place(rows, &key, &header.iv)
     })
 }
 
-/// Put the opened rows of a walk back into the subtrees they hold, in
-/// document order, refusing any row that is not where the key says the
-/// walk's rows are ([`Error::JsonWrongEntry`]).
+/// What [`rebuild_walked`] checks a row's derived fields with: the selectors
+/// of the key's column, and the document's `iv`, which salts every self tag.
+struct Check<'k> {
+    selectors: &'k Selectors,
+    iv: &'k [u8],
+}
+
+/// Put the opened rows of a read back into the nodes its tokens named, in
+/// the key's order, refusing any row that is not where the key says the
+/// read's rows are ([`Error::JsonWrongEntry`]), and the whole read with
+/// [`Error::JsonWildcardTruncated`] if a probe named a node.
 ///
 /// Each entry opened under its own selector `s` and position `j`, which its
 /// ciphertext is bound to, so each is a genuine node of the row; what the
-/// check adds is that it is the node the walk asked for. A subtree's rows
-/// in a document are its root and then every node beneath it, at
-/// consecutive positions, each node's children in order; so the rows are
-/// placed one by one, each the next position after the one before, one
-/// level below its parent, and carrying the selector of its parent's path
-/// extended by its own label, which the key derives from the decrypted
-/// label. With gates, each subtree's root is a node the path reaches: the
-/// path's selector, at depth `0`, at the position the path names if its
-/// last step is one. Without gates, the rows are the children of the
-/// path's node and their subtrees, side by side: each child carries the
-/// selector of the path extended by its label, at depth `1`, right after
-/// the subtree before it.
+/// check adds is that it is the node the read asked for. A read's rows are,
+/// for each token that names a node, that node at depth `0` and then every
+/// node beneath it at consecutive positions, each node's children in order,
+/// and the key's tokens are in document order. So the rows are placed one
+/// by one. A node at depth `0` must carry the self tag of a token of the
+/// key not yet matched, and that token's path's selector and last step (its
+/// key, its position, or the root). Every row beneath it must be the next
+/// position after the one before, one level below its parent, carry the
+/// selector of its parent's path extended by its own label, and carry the
+/// self tag of the token its label derives under its parent's.
+///
+/// The self tags are not authenticated, and the database holds every token
+/// the read sent and every row's `iv`, so matching them is a consistency
+/// check, which catches a corrupted row or a server that walked wrongly,
+/// not a dishonest database. The selector, the position and the label,
+/// which the AAD and the ciphertext cover, are what bind a row to its
+/// place. Still allowed by design: an entry from another row of the
+/// column, returned with that row's header (ADR 0010), and a node at the
+/// same selector under another element (`$.items[0].price` for
+/// `$.items[1].price`), which no bound field tells apart.
 fn place(
     rows: Vec<Row>,
     key: &JsonSubtreeKey,
-) -> Result<Vec<(Label, Protected<PlainJson>)>, Error> {
-    let below = key.gates.is_empty();
-    let at = Protected::new(key.path.selector_bytes());
-    let reached = key.selectors.of(at.clone())?;
+    iv: &[u8],
+) -> Result<Vec<Protected<PlainJson>>, Error> {
+    let check = Check {
+        selectors: &key.selectors,
+        iv,
+    };
+    let refused = || wrong("a node the walked path reaches");
     let mut rest = rows.into_iter();
-    let mut forest = Vec::new();
-    // Without gates, the position the next child of the path's node must
-    // have: right after the subtree of the one before.
-    let mut next: Option<u64> = None;
+    // The first token of the key not yet matched to a row.
+    let mut next = 0;
+    let mut reached = Vec::new();
+    let mut truncated = false;
     while let Some(top) = rest.next() {
-        let (bytes, depth) = if below {
-            let bytes = child_selector_bytes(&at, &top.node.label)
-                .ok_or_else(|| wrong("a child of the walked node"))?;
-            if top.d.is_some_and(|d| d != 1)
-                || next.is_some_and(|j| j != top.j)
-                || key.selectors.of(bytes.clone())? != top.s
-            {
-                return Err(wrong("a child of the walked node"));
-            }
-            (bytes, 1)
+        if top.d.is_some_and(|d| d != 0) {
+            return Err(refused());
+        }
+        let at = key.reads[next..]
+            .iter()
+            .position(|read| self_tag(iv, &read.token) == top.x)
+            .ok_or_else(refused)?
+            + next;
+        next = at + 1;
+        let read = &key.reads[at];
+        let bytes = Protected::new(read.path.selector_bytes());
+        if key.selectors.of(bytes.clone())? != top.s || !names(&read.path, &top.node.label) {
+            return Err(refused());
+        }
+        let mut cursor = top.j.checked_add(1).ok_or_else(refused)?;
+        let value = rebuild_walked(
+            top.node,
+            &bytes,
+            &read.token,
+            0,
+            &mut rest,
+            &mut cursor,
+            &check,
+        )?;
+        if read.probe {
+            truncated = true;
         } else {
-            if top.d.is_some_and(|d| d != 0)
-                || top.s != reached
-                || !reaches(&key.path, &top.node.label)
-            {
-                return Err(wrong("a node the walked path reaches"));
-            }
-            (at.clone(), 0)
-        };
-        let mut cursor = top
-            .j
-            .checked_add(1)
-            .ok_or_else(|| wrong("a node of the walk"))?;
-        let (label, node) = take_label(top.node);
-        let value = rebuild_walked(node, &bytes, depth, &mut rest, &mut cursor, &key.selectors)?;
-        next = Some(cursor);
-        forest.push((label, value));
+            reached.push(value);
+        }
     }
-    Ok(forest)
+    if truncated {
+        return Err(Error::JsonWildcardTruncated { bound: key.bound });
+    }
+    Ok(reached)
 }
 
-/// Whether a node with `label` is one `path` reaches by its last step,
-/// beyond what the selector says: a position names the element at that
-/// position, where the selector reads every position as the wildcard.
-fn reaches(path: &JsonPath, label: &Label) -> bool {
-    match path.segments().last() {
-        Some(Segment::Index(n)) => matches!(label, Label::Index(at) if at == n),
-        Some(Segment::Wildcard) => matches!(label, Label::Index(_)),
-        Some(Segment::Key(_)) => matches!(label, Label::Key(_)),
-        None => matches!(label, Label::Root),
+/// Whether a node with `label` is the one the concrete `path` names by its
+/// last step: the key, the position, or the root for `$`.
+fn names(path: &JsonPath, label: &Label) -> bool {
+    match (path.segments().last(), label) {
+        (None, Label::Root) => true,
+        (Some(Segment::Key(want)), Label::Key(got)) => got.risky_ref() == want,
+        (Some(Segment::Index(want)), Label::Index(got)) => got == want,
+        _ => false,
     }
 }
 
@@ -1466,12 +1496,24 @@ fn child_selector_bytes(parent: &Protected<Vec<u8>>, label: &Label) -> Option<Pr
     Some(out)
 }
 
-/// [`rebuild`] for a walk's rows, checking each child as it is taken:
-/// that it is at `cursor`, the position after the row before it; that it
-/// is one level below `node`, which sits `d` levels below the walk's start;
-/// and that it carries the selector of `node`'s path, whose selector bytes
-/// are `bytes`, extended by its own label. A sealed root among the rows is
-/// not a node of any walk.
+/// The token of the child labelled `label`, whose selector is `s`, under the
+/// node whose token is `parent`: the member rule for a key, the element rule
+/// for a position. `None` for the root, which is no node's child.
+fn labelled_token(parent: &Tag, s: &Tag, label: &Label) -> Option<Tag> {
+    match label {
+        Label::Key(_) => Some(member_token(parent, s)),
+        Label::Index(i) => u32::try_from(*i).ok().map(|i| element_token(parent, s, i)),
+        Label::Root => None,
+    }
+}
+
+/// [`rebuild`] for a read's rows, checking each child as it is taken: that
+/// it is at `cursor`, the position after the row before it; that it is one
+/// level below `node`, which sits `d` levels below the node a token named;
+/// that it carries the selector of `node`'s path, whose selector bytes are
+/// `bytes`, extended by its own label; and that it carries the self tag of
+/// the token its label derives under `token`, `node`'s. A sealed root
+/// among the rows is not a node of any walk.
 ///
 /// The rows are consecutive entries of one sealed document, placed by its
 /// authenticated child counts, so they nest no deeper than the document
@@ -1480,10 +1522,11 @@ fn child_selector_bytes(parent: &Protected<Vec<u8>>, label: &Label) -> Option<Pr
 fn rebuild_walked(
     node: Opened,
     bytes: &Protected<Vec<u8>>,
+    token: &Tag,
     d: u32,
     rest: &mut impl Iterator<Item = Row>,
     cursor: &mut u64,
-    selectors: &Selectors,
+    check: &Check<'_>,
 ) -> Result<Protected<PlainJson>, Error> {
     if node.whole.is_some() {
         return Err(wrong("a node of the walked subtree"));
@@ -1491,33 +1534,43 @@ fn rebuild_walked(
     if d as usize > MAX_DEPTH {
         return Err(shape("a JSON document no deeper than the index seals"));
     }
+    let next = || wrong("the next node of the walked subtree");
     let child = |rest: &mut dyn Iterator<Item = Row>, cursor: &mut u64| {
         let row = rest
             .next()
             .ok_or_else(|| shape("a complete JSON subtree"))?;
-        let child_bytes = child_selector_bytes(bytes, &row.node.label)
-            .ok_or_else(|| wrong("the next node of the walked subtree"))?;
+        let child_bytes = child_selector_bytes(bytes, &row.node.label).ok_or_else(next)?;
         if row.j != *cursor
             || row.d.is_some_and(|got| Some(got) != d.checked_add(1))
-            || selectors.of(child_bytes.clone())? != row.s
+            || check.selectors.of(child_bytes.clone())? != row.s
         {
-            return Err(wrong("the next node of the walked subtree"));
+            return Err(next());
         }
-        *cursor = cursor
-            .checked_add(1)
-            .ok_or_else(|| wrong("the next node of the walked subtree"))?;
-        Ok::<_, Error>((row.node, child_bytes))
+        let child_token = labelled_token(token, &row.s, &row.node.label).ok_or_else(next)?;
+        if self_tag(check.iv, &child_token) != row.x {
+            return Err(next());
+        }
+        *cursor = cursor.checked_add(1).ok_or_else(next)?;
+        Ok::<_, Error>((row.node, child_bytes, child_token))
     };
     match node.kind {
         Kind::Object => {
             let mut object = protected_object();
             for _ in 0..node.children {
-                let (member, member_bytes) = child(rest, cursor)?;
+                let (member, member_bytes, member_token) = child(rest, cursor)?;
                 let (label, member) = take_label(member);
                 let Label::Key(key) = label else {
                     return Err(shape("an object member"));
                 };
-                let value = rebuild_walked(member, &member_bytes, d + 1, rest, cursor, selectors)?;
+                let value = rebuild_walked(
+                    member,
+                    &member_bytes,
+                    &member_token,
+                    d + 1,
+                    rest,
+                    cursor,
+                    check,
+                )?;
                 insert_member(&mut object, key, value);
             }
             Ok(object)
@@ -1525,13 +1578,21 @@ fn rebuild_walked(
         Kind::Array => {
             let mut array = protected_array(node.children as usize);
             for i in 0..node.children {
-                let (element, element_bytes) = child(rest, cursor)?;
+                let (element, element_bytes, element_token) = child(rest, cursor)?;
                 if !matches!(element.label, Label::Index(at) if at == u64::from(i)) {
                     return Err(shape("an array element in order"));
                 }
                 push_element(
                     &mut array,
-                    rebuild_walked(element, &element_bytes, d + 1, rest, cursor, selectors)?,
+                    rebuild_walked(
+                        element,
+                        &element_bytes,
+                        &element_token,
+                        d + 1,
+                        rest,
+                        cursor,
+                        check,
+                    )?,
                 );
             }
             Ok(array)
@@ -1540,31 +1601,52 @@ fn rebuild_walked(
     }
 }
 
-/// The values of a node's children, in the node's order, moved out of it:
-/// an array's elements, an object's member values (each leaving `null`
-/// under its key, which stays in the document to be wiped with it), and
-/// none for a scalar. What a `json_tree_subtree` walk's rows open to as a
-/// [`Vec`], taken out of the whole document when the walk fell back to the
-/// sealed root.
-fn take_children(node: &mut Value) -> Vec<Value> {
-    match node {
-        Value::Array(items) => std::mem::take(items),
-        Value::Object(members) => members.values_mut().map(std::mem::take).collect(),
-        _ => Vec::new(),
+/// The key's reads evaluated over the whole document a read fell back to,
+/// to what the walked rows open to: each concrete path's node, moved out of
+/// the document's `Protected` into one of its own (leaving `null` behind,
+/// so its plaintext is never copied), in the key's order, and the same
+/// [`Error::JsonWildcardTruncated`] when a probe's path names a node. The
+/// key's paths are disjoint, so moving one node out never touches another.
+/// What is left of the document is wiped when it drops.
+fn select_reads(
+    key: &JsonSubtreeKey,
+    whole: &mut Protected<PlainJson>,
+) -> Result<Vec<Protected<PlainJson>>, Error> {
+    let truncated = {
+        let doc = whole.risky_ref().value();
+        key.reads
+            .iter()
+            .any(|read| read.probe && !read.path.select(doc).is_empty())
+    };
+    if truncated {
+        return Err(Error::JsonWildcardTruncated { bound: key.bound });
     }
+    Ok(key
+        .reads
+        .iter()
+        .filter(|read| !read.probe)
+        .filter_map(|read| {
+            take_protected(whole, |doc: &mut PlainJson| {
+                read.path
+                    .select_mut(doc.value_mut())
+                    .into_iter()
+                    .next()
+                    .map(|node| PlainJson::from_value(std::mem::take(node)))
+            })
+        })
+        .collect())
 }
 
-/// Open the sealed root a walk fell back to: the whole document, under its
-/// `Protected`, with the path the rows were keyed from, which the caller
-/// selects over. The key that built the rows attached the path, so it is
-/// always there.
+/// Open the sealed root a read fell back to: the whole document, under its
+/// `Protected`, with the key that keyed the read, whose reads the caller
+/// evaluates over it.
 fn open_fallback<'a, K>(
     subtree: JsonSubtree,
     cipher: &'a StackCipher<K>,
     context: AeadContext,
-) -> Pending<'a, (JsonPath, Protected<PlainJson>), K> {
-    let path = subtree.path().clone();
-    let Some(root) = subtree.nodes().first().cloned() else {
+) -> Pending<'a, (JsonSubtreeKey, Protected<PlainJson>), K> {
+    let (nodes, key) = subtree.into_parts();
+    let Some(root) = nodes.into_iter().next() else {
         return Pending::failed(cipher, shape("the sealed root"));
     };
     let (request, aad) = match retrieval(&root.header, context) {
@@ -1572,11 +1654,11 @@ fn open_fallback<'a, K>(
         Err(error) => return Pending::failed(cipher, error),
     };
     Pending::request(cipher, vec![request], move |responses| {
-        let key = responses.next_retrieved_key()?;
-        let aes = leaf_cipher(&key)?;
+        let retrieved = responses.next_retrieved_key()?;
+        let aes = leaf_cipher(&retrieved)?;
         let opened = open_entry(&aes, &root.header, &aad, &root.entry, root.j)?;
         let whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;
-        Ok((path, whole))
+        Ok((key, whole))
     })
 }
 
@@ -1584,79 +1666,185 @@ fn open_fallback<'a, K>(
 // Extraction keys, on the keyset cipher
 // =============================================================================
 
-/// The key that walks `path`: the token of the deepest node on it the
-/// client can derive, and one gate per step below that.
+/// The most tokens one subtree read sends. A wildcard expands to `N + 1`
+/// tokens under each node it sits below, so wildcards nested `w` deep send
+/// `N^w + … + N + 1`: two levels at the default bound send 4,161, three
+/// would send 266,305. Past this a read is refused
+/// ([`TermError::JsonWildcardTooWide`]) rather than built.
+pub(crate) const MAX_READ_TOKENS: u64 = 1 << 16;
+
+/// How a path expands into the concrete paths a read sends tokens for.
+struct Expansion<'p> {
+    segments: &'p [Segment],
+    /// The selector of each step's path, from the first step down: every
+    /// element of an array shares one, so it is the same for every concrete
+    /// path the read expands to.
+    steps: &'p [Tag],
+    bound: u32,
+    reads: Vec<Read>,
+}
+
+impl Expansion<'_> {
+    /// Expand the steps from `k` on below the node at the concrete path
+    /// `at`, whose token is `token`, in document order: a key by the member
+    /// rule, a position by the element rule, and a wildcard into the
+    /// positions `0 … N − 1`, each expanded in turn, then the probe at `N`.
+    /// The recursion is as deep as the path, which the caller bounds.
+    fn descend(&mut self, at: JsonPath, token: Tag, k: usize) -> Result<(), TermError> {
+        let Some(segment) = self.segments.get(k) else {
+            self.reads.push(Read {
+                token,
+                path: at,
+                probe: false,
+            });
+            return Ok(());
+        };
+        let s = self.steps[k];
+        match segment {
+            Segment::Key(key) => self.descend(
+                at.then(Segment::Key(key.clone())),
+                member_token(&token, &s),
+                k + 1,
+            ),
+            Segment::Index(index) => {
+                let i = fit_ordinal(*index)?;
+                self.descend(
+                    at.then(Segment::Index(*index)),
+                    element_token(&token, &s, i),
+                    k + 1,
+                )
+            }
+            Segment::Wildcard => {
+                for i in 0..self.bound {
+                    self.descend(
+                        at.then(Segment::Index(u64::from(i))),
+                        element_token(&token, &s, i),
+                        k + 1,
+                    )?;
+                }
+                self.reads.push(Read {
+                    token: element_token(&token, &s, self.bound),
+                    path: at.then(Segment::Index(u64::from(self.bound))),
+                    probe: true,
+                });
+                Ok(())
+            }
+        }
+    }
+}
+
+/// How many tokens a read of a path with `wildcards` wildcard steps sends
+/// at `bound`: `bound^w + … + bound + 1`, or `None` past
+/// [`MAX_READ_TOKENS`].
+fn read_tokens(wildcards: usize, bound: u32) -> Option<u64> {
+    let mut count: u64 = 1;
+    for _ in 0..wildcards {
+        count = count
+            .checked_mul(u64::from(bound))?
+            .checked_add(1)
+            .filter(|count| *count <= MAX_READ_TOKENS)?;
+    }
+    Some(count)
+}
+
+/// The key that reads `path`: one token per concrete path the path names,
+/// each derived from the path alone, in document order, with a probe per
+/// wildcard level for the element at `bound`.
 ///
-/// A chain head's token is a PRF of its path. An array element's is one
-/// hash under its parent's, by its position and the element selector, so
-/// the client follows array steps as far as they run from the head. An
-/// object member's ordinal is a rank among its siblings' keys, which the
-/// client does not know, so from the first key step on the client cannot
-/// derive tokens and the server walks instead, through gates: the step's
-/// selector for a key or a wildcard (every element's selector is the
-/// wildcard's, so a wildcard admits them all), and for an array step the
-/// position with the element selector, so a member that happens to sit at
-/// that ordinal under an object is not taken for an element.
+/// Every node's token derives from its path: the root's and, under the
+/// sealed root, each chain head's are PRFs of their paths; below them a
+/// member's is one hash under its parent's with its selector, and an
+/// element's one hash with its selector and its index. So a path with no
+/// wildcard sends exactly one token, its node's. A wildcard names no one
+/// node, and the client expands it to the positions `0 … bound − 1`, plus
+/// the probe at `bound`: the element itself, not the path below it, since
+/// an element past the bound need not have what the path names.
 fn subtree_key_for(
     selectors: Selectors,
     options: &JsonOptions,
     path: &JsonPath,
+    bound: u32,
 ) -> Result<JsonSubtreeKey, TermError> {
-    let prf = &selectors.keyset.prf;
-    let context = &selectors.context;
+    let bound = fit_ordinal(bound)?;
     let segments = path.segments();
-    let (head, rest) = if options.sealed_root {
-        let Some((first, rest)) = segments.split_first() else {
-            return Err(TermError::JsonSealedRoot);
-        };
-        let head = JsonPath::root().then(first.clone());
-        (head, rest)
-    } else {
-        (JsonPath::root(), segments)
-    };
-    // A wildcard head names no one node.
-    let head_bytes = head.token_bytes().ok_or(TermError::JsonSealedRoot)?;
-    let mut token = prf16(prf, TOKEN_DOMAIN, context, &head_bytes)?;
-    let mut prefix = head;
-    let mut rest = rest.iter();
-    let mut gates = Vec::new();
-    for segment in rest.by_ref() {
-        prefix = prefix.then(segment.clone());
-        match segment {
-            Segment::Index(index) => {
-                let o = fit_ordinal(*index)?;
-                let element = prf16(prf, SELECTOR_DOMAIN, context, &prefix.selector_bytes())?;
-                token = child_token(&token, &element, o);
-            }
-            Segment::Key(_) | Segment::Wildcard => {
-                gates.push(Gate::Selector(prf16(
-                    prf,
-                    SELECTOR_DOMAIN,
-                    context,
-                    &prefix.selector_bytes(),
-                )?));
-                break;
-            }
+    // No sealed document has a node deeper than this, and the expansion
+    // recurses once per step.
+    if segments.len() > MAX_DEPTH {
+        return Err(TermError::JsonTooDeep);
+    }
+    for segment in segments {
+        if let Segment::Index(index) = segment {
+            let _ = fit_ordinal(*index)?;
         }
     }
-    for segment in rest {
+    let wildcards = segments
+        .iter()
+        .filter(|segment| matches!(segment, Segment::Wildcard))
+        .count();
+    let count = read_tokens(wildcards, bound).ok_or(TermError::JsonWildcardTooWide)?;
+    let prf = &selectors.keyset.prf;
+    let context = &selectors.context;
+    let mut steps = Vec::with_capacity(segments.len());
+    let mut prefix = JsonPath::root();
+    for segment in segments {
         prefix = prefix.then(segment.clone());
-        gates.push(match segment {
-            Segment::Index(index) => Gate::Slot(
-                fit_ordinal(*index)?,
-                prf16(prf, SELECTOR_DOMAIN, context, &prefix.selector_bytes())?,
-            ),
-            Segment::Key(_) | Segment::Wildcard => Gate::Selector(prf16(
-                prf,
-                SELECTOR_DOMAIN,
-                context,
-                &prefix.selector_bytes(),
-            )?),
-        });
+        steps.push(prf16(
+            prf,
+            SELECTOR_DOMAIN,
+            context,
+            &prefix.selector_bytes(),
+        )?);
+    }
+    let mut expansion = Expansion {
+        segments,
+        steps: &steps,
+        bound,
+        reads: Vec::with_capacity(usize::try_from(count).unwrap_or_default()),
+    };
+    let head = |at: &JsonPath| {
+        prf16(
+            prf,
+            TOKEN_DOMAIN,
+            context,
+            &at.token_bytes().unwrap_or_default(),
+        )
+    };
+    match segments.first() {
+        // Under the sealed root the chain starts at the heads, each a PRF
+        // of its path; a wildcard head is each position's head in turn.
+        Some(first) if options.sealed_root => {
+            let heads: Vec<(Segment, bool)> = match first {
+                Segment::Wildcard => (0..bound)
+                    .map(|i| (Segment::Index(u64::from(i)), false))
+                    .chain(std::iter::once((Segment::Index(u64::from(bound)), true)))
+                    .collect(),
+                step => vec![(step.clone(), false)],
+            };
+            for (step, probe) in heads {
+                let at = JsonPath::root().then(step);
+                let token = head(&at)?;
+                if probe {
+                    expansion.reads.push(Read {
+                        token,
+                        path: at,
+                        probe,
+                    });
+                } else {
+                    expansion.descend(at, token, 1)?;
+                }
+            }
+        }
+        // `$` itself, under either root, or any path from an open root:
+        // the root's token, and every step below it by rule.
+        _ => {
+            let root = JsonPath::root();
+            let token = head(&root)?;
+            expansion.descend(root, token, 0)?;
+        }
     }
     Ok(JsonSubtreeKey {
-        token,
-        gates,
+        reads: expansion.reads,
+        bound,
         path: path.clone(),
         selectors,
     })
@@ -1684,36 +1872,62 @@ impl<K> KeysetCipher<'_, K> {
         Pending::ready(self, selector)
     }
 
-    /// The key that walks the subtree under `path`, under the field
-    /// `descriptor` and the index's `options`: the token of the deepest
-    /// node on the path the client can derive (a chain head, then array
-    /// positions), and one gate per step below it, which the server walks
-    /// through. What `json_tree_subtree` and `json_tree_subtree_at` take.
+    /// The key that reads the node at `path`, under the field `descriptor`
+    /// and the index's `options`, with wildcards expanded to
+    /// [`JsonSubtreeKey::DEFAULT_BOUND`] elements: one token per concrete
+    /// path, each derived from the path alone, which is what
+    /// `json_tree_subtree(doc, key.tokens(), budget)` takes. See
+    /// [`json_subtree_key_with_bound`](Self::json_subtree_key_with_bound).
     ///
     /// # Errors
     ///
-    /// [`TermError::JsonSealedRoot`] for the root, or for a path whose
-    /// first step is a wildcard, under the sealed root: no token exists for
-    /// the root, and the document opens whole instead.
-    /// [`TermError::JsonTooWide`] for a path naming an array position past
-    /// 2³¹ − 1, PostgreSQL's `integer`: no stored document has an element
-    /// there.
+    /// As [`json_subtree_key_with_bound`](Self::json_subtree_key_with_bound).
     pub fn json_subtree_key<'c>(
         &self,
         path: &JsonPath,
         options: &JsonOptions,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSubtreeKey, K> {
+        self.json_subtree_key_with_bound(path, options, JsonSubtreeKey::DEFAULT_BOUND, descriptor)
+    }
+
+    /// The key that reads the node at `path`, under the field `descriptor`
+    /// and the index's `options`, with each wildcard step expanded to the
+    /// positions `0 … bound − 1`. A path with no wildcard sends exactly one
+    /// token, its node's, and nothing that covers any node above it; `$`
+    /// is a read too, of the root entry, which under the sealed root opens
+    /// to the whole document. A path with a wildcard sends one token per
+    /// concrete path and, per wildcard level, a probe for the element at
+    /// `bound`; a row where a probe names a node has an array longer than
+    /// `bound` there, and its rows open to
+    /// [`Error::JsonWildcardTruncated`] rather than to part of the answer.
+    /// Raise `bound`, or read the array itself, for longer arrays; lower it
+    /// for a nested wildcard over many rows, which sends `bound² + bound +
+    /// 1` tokens. Derived locally; the pending carries no request.
+    ///
+    /// # Errors
+    ///
+    /// [`TermError::JsonTooWide`] for a path naming an array position, or
+    /// a `bound`, past 2³¹ − 1: no stored document has an element there.
+    /// [`TermError::JsonTooDeep`] for a path deeper than any document the
+    /// index seals. [`TermError::JsonWildcardTooWide`] for a path whose
+    /// wildcards would expand past 65,536 tokens at `bound`.
+    pub fn json_subtree_key_with_bound<'c>(
+        &self,
+        path: &JsonPath,
+        options: &JsonOptions,
+        bound: u32,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Pending<'_, JsonSubtreeKey, K> {
         let context = descriptor.into_prf_context().into_owned();
         let selectors = Selectors::new(Arc::clone(self.state()), context);
-        let key = subtree_key_for(selectors, options, path);
+        let key = subtree_key_for(selectors, options, path, bound);
         Pending::ready(self, key.map_err(Error::from))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::base64;
     use super::*;
     use serde_json::json;
     use vitaminc_prf::PrfKeyInit;
@@ -1779,7 +1993,6 @@ mod tests {
             &json!({"alice@example.com": {"ssn": "123"}}),
             &JsonOptions::default(),
         );
-        assert!(t.nodes()[1].token.is_some(), "the terms hold a token");
         let printed = format!("{t:?}");
         assert_eq!(printed, "JsonTerms { nodes: 3, .. }");
         assert!(!printed.contains("alice"));
@@ -1797,119 +2010,410 @@ mod tests {
     }
 
     #[test]
-    fn the_sealed_root_has_no_token_and_its_fields_are_heads() {
+    fn every_node_has_a_token_and_only_what_chains_has_an_ordinal() {
         let sealed = terms(&json!({"a": {"b": 1}}), &JsonOptions::default());
-        assert!(sealed.nodes()[0].token.is_none());
-        assert!(sealed.nodes()[1].token.is_some());
-        assert!(sealed.nodes()[1].ordinal.is_none(), "a head has no ordinal");
-        assert!(sealed.nodes()[2].ordinal.is_some());
         let open = terms(&json!({"a": {"b": 1}}), &open_root());
-        assert!(open.nodes()[0].token.is_some());
-        assert!(open.nodes()[1].ordinal.is_some());
-        // The chain below a head is the same hash chain either way, but
-        // the heads differ: one is a PRF of the path, the other a hash
-        // under the root's token.
-        assert_ne!(sealed.nodes()[1].token, open.nodes()[1].token);
-    }
-
-    #[test]
-    fn the_subtree_key_derives_what_it_can_and_gates_the_rest() {
-        let value = json!({"a": {"b": [1, {"c": 2}]}, "l": [[0], 1]});
-        let key = |options: &JsonOptions, path: &str| {
-            subtree_key_for(
-                Selectors::for_tests(),
-                options,
-                &JsonPath::parse(path).unwrap(),
-            )
-        };
-        let at = |t: &JsonTerms, path: &str| {
-            t.nodes()
-                .iter()
-                .find(|n| n.positional == JsonPath::parse(path).unwrap())
-                .unwrap()
-                .clone()
-        };
-        let options = JsonOptions::default();
-        let t = terms(&value, &options);
-        // A head's token, and the positions under it, derive exactly.
-        for path in ["$.a", "$.l", "$.l[0]", "$.l[0][0]", "$.l[1]"] {
-            let k = key(&options, path).unwrap();
-            assert_eq!(Some(*k.token_bytes()), at(&t, path).token, "{path}");
-            assert!(k.gates().is_empty(), "{path}");
-        }
-        // The server derives an object member's token the same way, from
-        // its parent's, its selector and its ordinal.
-        let a = at(&t, "$.a");
-        let b = at(&t, "$.a.b");
+        let root = prf16(
+            &prf(),
+            TOKEN_DOMAIN,
+            &Context::from_encoded(b"users/profile"),
+            &[],
+        )
+        .unwrap();
         assert_eq!(
-            b.token,
-            Some(child_token(&a.token.unwrap(), &b.s, b.ordinal.unwrap()))
+            sealed.nodes()[0].token,
+            root,
+            "the sealed root's token is the PRF of `$`"
         );
-        // The selector is bound: the same parent and ordinal under another
-        // selector (an element where the row holds a member) is another
-        // token.
+        assert_eq!(open.nodes()[0].token, root, "and so is the open root's");
+        assert!(
+            sealed.nodes()[1].ordinal.is_none(),
+            "a head chains from nothing under the sealed root"
+        );
+        assert!(
+            sealed.nodes()[2].ordinal.is_some(),
+            "below a head, everything chains"
+        );
+        assert!(
+            open.nodes()[1].ordinal.is_some(),
+            "under an open root, a top-level field chains"
+        );
+        assert_eq!(
+            open.nodes()[1].token,
+            member_token(&root, &open.nodes()[1].s),
+            "a top-level field under an open root is a member of the root"
+        );
+        // The chain below a head is the same rule either way, but the heads
+        // differ: one is a PRF of the path, the other a hash under the
+        // root's token.
         assert_ne!(
-            b.token,
-            Some(child_token(&a.token.unwrap(), &a.s, b.ordinal.unwrap()))
+            sealed.nodes()[1].token,
+            open.nodes()[1].token,
+            "the heads differ"
         );
-        // Below a key step, gates: the step's selector, a position, the
-        // wildcard's selector (every element's).
-        let k = key(&options, "$.a.b[1].c").unwrap();
-        assert_eq!(Some(*k.token_bytes()), a.token);
         assert_eq!(
-            k.gates(),
-            [
-                base64(&b.s),
-                format!("#1:{}", base64(&at(&t, "$.a.b[1]").s)),
-                base64(&at(&t, "$.a.b[1].c").s)
-            ]
+            sealed.nodes()[2].token,
+            member_token(&sealed.nodes()[1].token, &sealed.nodes()[2].s),
+            "a member's token is one hash under its parent's"
         );
-        let k = key(&options, "$.a.b[*].c").unwrap();
-        assert_eq!(
-            k.gates(),
-            [
-                base64(&b.s),
-                base64(&at(&t, "$.a.b[0]").s),
-                base64(&at(&t, "$.a.b[1].c").s)
-            ]
-        );
-        // Under the sealed root the root has no token; under an open root
-        // it has, and `$.a` is then one gate below it.
-        assert!(matches!(
-            key(&JsonOptions::default(), "$"),
-            Err(TermError::JsonSealedRoot)
-        ));
-        let open = open_root();
-        let root = key(&open, "$").unwrap();
-        assert!(root.gates().is_empty());
-        let a = key(&open, "$.a").unwrap();
-        assert_eq!(a.token_bytes(), root.token_bytes());
-        assert_eq!(a.gates().len(), 1);
+    }
+
+    fn key_for(options: &JsonOptions, path: &str, bound: u32) -> Result<JsonSubtreeKey, TermError> {
+        subtree_key_for(
+            Selectors::for_tests(),
+            options,
+            &JsonPath::parse(path).unwrap(),
+            bound,
+        )
+    }
+
+    fn node<'t>(t: &'t JsonTerms, path: &str) -> &'t TermNode {
+        t.nodes()
+            .iter()
+            .find(|n| n.positional == JsonPath::parse(path).unwrap())
+            .unwrap_or_else(|| panic!("the document has {path}"))
+    }
+
+    mod given_a_path_with_no_wildcard {
+        use super::*;
+
+        #[test]
+        fn the_key_sends_exactly_the_token_of_the_node_at_the_path() {
+            let value = json!({"a": {"b": [1, {"c": 2}], "": {"$": [[3]]}}, "l": [[0], 1]});
+            for options in [JsonOptions::default(), open_root()] {
+                let t = terms(&value, &options);
+                for path in [
+                    "$",
+                    "$.a",
+                    "$.a.b",
+                    "$.a.b[0]",
+                    "$.a.b[1]",
+                    "$.a.b[1].c",
+                    "$.l",
+                    "$.l[0]",
+                    "$.l[0][0]",
+                    "$.l[1]",
+                    r#"$.a[""]"#,
+                    r#"$.a[""]["$"][0][0]"#,
+                ] {
+                    let key = key_for(&options, path, 64).unwrap();
+                    assert_eq!(
+                        key.token_bytes(),
+                        [node(&t, path).token],
+                        "{path} under {options:?}: one token, the node's own"
+                    );
+                    assert!(
+                        key.probes().is_empty(),
+                        "{path}: no probe without a wildcard"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn the_root_is_a_read_under_the_sealed_root_too() {
+            let key = key_for(&JsonOptions::default(), "$", 64).unwrap();
+            assert_eq!(key.reads.len(), 1, "one token");
+            assert_eq!(key.reads[0].path, JsonPath::root(), "the root's");
+        }
+
+        #[test]
+        fn a_position_past_postgres_integer_is_refused_not_sent() {
+            for path in [
+                "$.a.b[2147483648]",
+                "$.a[2147483648]",
+                "$[2147483648]",
+                "$.a[4294967296]",
+            ] {
+                assert!(
+                    matches!(
+                        key_for(&JsonOptions::default(), path, 64),
+                        Err(TermError::JsonTooWide)
+                    ),
+                    "{path}: no stored document has an element there"
+                );
+            }
+            let last = key_for(&JsonOptions::default(), "$.a.b[2147483647]", 64).unwrap();
+            assert_eq!(
+                last.reads.len(),
+                1,
+                "the last position PostgreSQL's integer holds"
+            );
+            assert_eq!(fit_ordinal(i32::MAX.unsigned_abs()).unwrap(), 2_147_483_647);
+            assert!(matches!(
+                fit_ordinal(2_147_483_648_u64),
+                Err(TermError::JsonTooWide)
+            ));
+        }
+
+        #[test]
+        fn a_path_deeper_than_any_document_is_refused() {
+            let deepest = format!("${}", "[0]".repeat(MAX_DEPTH));
+            assert!(
+                key_for(&JsonOptions::default(), &deepest, 64).is_ok(),
+                "the deepest path a sealed document has"
+            );
+            let deeper = format!("${}", "[0]".repeat(MAX_DEPTH + 1));
+            assert!(
+                matches!(
+                    key_for(&JsonOptions::default(), &deeper, 64),
+                    Err(TermError::JsonTooDeep)
+                ),
+                "one step deeper names no node of any document"
+            );
+        }
+    }
+
+    mod given_a_path_with_a_wildcard {
+        use super::*;
+
+        #[test]
+        fn the_key_sends_each_position_below_the_bound_and_a_probe_at_it() {
+            let t = terms(
+                &json!({"a": [{"b": 1}, {"b": 2}, {"b": 3}]}),
+                &JsonOptions::default(),
+            );
+            let key = key_for(&JsonOptions::default(), "$.a[*].b", 2).unwrap();
+            let paths: Vec<String> = key.reads.iter().map(|r| r.path.to_string()).collect();
+            assert_eq!(
+                paths,
+                ["$.a[0].b", "$.a[1].b", "$.a[2]"],
+                "N + 1, in document order"
+            );
+            assert_eq!(key.probes(), [2], "the probe last, the element itself");
+            assert_eq!(key.bound(), 2);
+            for read in &key.reads {
+                assert_eq!(
+                    read.token,
+                    node(&t, &read.path.to_string()).token,
+                    "{}: the token the stored node carries",
+                    read.path
+                );
+            }
+        }
+
+        #[test]
+        fn nested_wildcards_multiply() {
+            for bound in [0, 1, 3, 64] {
+                let key = key_for(&JsonOptions::default(), "$.a[*].b[*]", bound).unwrap();
+                let n = bound as usize;
+                assert_eq!(key.reads.len(), n * n + n + 1, "N² + N + 1 at N = {bound}");
+                assert_eq!(key.probes().len(), n + 1, "N inner probes and one outer");
+                assert_eq!(
+                    key.reads.last().map(|r| r.path.to_string()),
+                    Some(format!("$.a[{bound}]")),
+                    "the outer probe last"
+                );
+                let mut tokens: Vec<Tag> = key.token_bytes();
+                tokens.sort_unstable();
+                tokens.dedup();
+                assert_eq!(tokens.len(), key.reads.len(), "every token distinct");
+            }
+        }
+
+        #[test]
+        fn a_wildcard_head_expands_under_the_sealed_root() {
+            let t = terms(&json!([{"x": 1}, {"x": 2}]), &JsonOptions::default());
+            let key = key_for(&JsonOptions::default(), "$[*].x", 2).unwrap();
+            let paths: Vec<String> = key.reads.iter().map(|r| r.path.to_string()).collect();
+            assert_eq!(paths, ["$[0].x", "$[1].x", "$[2]"]);
+            assert_eq!(key.reads[0].token, node(&t, "$[0].x").token, "below a head");
+            assert_eq!(
+                key.reads[2].token,
+                prf16(
+                    &prf(),
+                    TOKEN_DOMAIN,
+                    &Context::from_encoded(b"users/profile"),
+                    &JsonPath::parse("$[2]").unwrap().token_bytes().unwrap(),
+                )
+                .unwrap(),
+                "the probe is the head at the bound"
+            );
+        }
+
+        #[test]
+        fn an_expansion_past_the_token_limit_is_refused() {
+            assert_eq!(read_tokens(2, 255), Some(65_281), "two levels at 255");
+            assert_eq!(
+                read_tokens(2, 256),
+                None,
+                "two levels at 256 is past 65,536"
+            );
+            assert_eq!(
+                read_tokens(3, 64),
+                None,
+                "three levels at the default bound"
+            );
+            assert_eq!(
+                read_tokens(0, u32::MAX),
+                Some(1),
+                "no wildcard is one token"
+            );
+            assert_eq!(read_tokens(1, 65_535), Some(65_536), "the limit itself");
+            assert!(
+                matches!(
+                    key_for(&JsonOptions::default(), "$.a[*].b[*].c[*]", 64),
+                    Err(TermError::JsonWildcardTooWide)
+                ),
+                "refused before any token is derived"
+            );
+            assert!(
+                matches!(
+                    key_for(&JsonOptions::default(), "$.a[*]", 2_147_483_648),
+                    Err(TermError::JsonTooWide)
+                ),
+                "a bound past PostgreSQL's integer"
+            );
+        }
     }
 
     #[test]
-    fn a_position_past_postgres_integer_is_refused_not_sent() {
-        let key = |path: &str| {
-            subtree_key_for(
-                Selectors::for_tests(),
-                &JsonOptions::default(),
-                &JsonPath::parse(path).unwrap(),
-            )
+    fn a_hit_takes_the_rule_its_self_tag_matches() {
+        let iv = [3; 16];
+        let parent = [5; 16];
+        let s = [6; 16];
+        let entry = |x: crate::json::SelfTag| JsonEntry {
+            s,
+            c: vec![],
+            x,
+            p: None,
+            op: None,
         };
-        // The last position PostgreSQL's integer holds reaches the server
-        // as a gate it can cast, and finds nothing there.
-        let last = key("$.a.b[2147483647]").unwrap();
-        assert!(last.gates()[1].starts_with("#2147483647:"));
-        // One past it fits u32 but not integer: refused here, as a gate and
-        // as a position the client chains itself.
-        for path in ["$.a.b[2147483648]", "$.a[2147483648]", "$.a[4294967296]"] {
-            assert!(matches!(key(path), Err(TermError::JsonTooWide)), "{path}");
+        let member = member_token(&parent, &s);
+        let element = element_token(&parent, &s, 2);
+        assert_eq!(
+            hit_token(&iv, &parent, &entry(self_tag(&iv, &member)), 2),
+            Some(member)
+        );
+        assert_eq!(
+            hit_token(&iv, &parent, &entry(self_tag(&iv, &element)), 2),
+            Some(element)
+        );
+        assert_eq!(
+            hit_token(&iv, &parent, &entry(self_tag(&iv, &element)), 3),
+            None,
+            "the element rule takes the hit's own ordinal"
+        );
+        assert_eq!(
+            hit_token(&iv, &parent, &entry([0; 8]), 2),
+            None,
+            "neither rule"
+        );
+        assert_ne!(
+            member,
+            element_token(&parent, &s, 0),
+            "a member is never an element"
+        );
+        assert_ne!(
+            self_tag(&iv, &member),
+            self_tag(&[4; 16], &member),
+            "salted by the iv"
+        );
+    }
+
+    /// A member's token is the same in every row, whatever its siblings:
+    /// the property the change exists for, and what makes a read of
+    /// `$.a.b` send `$.a.b`'s token alone.
+    mod given_random_documents {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn key_name() -> impl Strategy<Value = String> {
+            prop_oneof![
+                Just(String::new()),
+                Just("0".to_owned()),
+                Just("a.b".to_owned()),
+                Just("[*]".to_owned()),
+                Just("$".to_owned()),
+                Just("\"\\".to_owned()),
+                Just("é✓".to_owned()),
+                "[a-d]{1,3}",
+            ]
         }
-        assert_eq!(fit_ordinal(i32::MAX.unsigned_abs()).unwrap(), 2_147_483_647);
-        assert!(matches!(
-            fit_ordinal(2_147_483_648_u64),
-            Err(TermError::JsonTooWide)
-        ));
+
+        fn siblings() -> impl Strategy<Value = Vec<(String, i64)>> {
+            prop::collection::vec((key_name(), any::<i64>()), 0..12)
+        }
+
+        proptest! {
+            #[test]
+            fn a_members_token_ignores_its_siblings(
+                left in siblings(),
+                right in siblings(),
+                sealed in any::<bool>(),
+            ) {
+                let options = JsonOptions { sealed_root: sealed, ..JsonOptions::new() };
+                let row = |siblings: &[(String, i64)], b: Value| {
+                    let mut a: Map<String, Value> = siblings
+                        .iter()
+                        .filter(|(k, _)| k != "b" && k != "c")
+                        .map(|(k, v)| (k.clone(), json!(v)))
+                        .collect();
+                    let _ = a.insert("b".into(), b);
+                    terms(&json!({"a": a, "z": 1}), &options)
+                };
+                let one = row(&left, json!({"c": 1}));
+                let two = row(&right, json!([true]));
+                prop_assert_eq!(node(&one, "$.a.b").token, node(&two, "$.a.b").token);
+                let key = key_for(&options, "$.a.b", 64).unwrap();
+                prop_assert_eq!(key.token_bytes(), vec![node(&one, "$.a.b").token]);
+                prop_assert_ne!(node(&one, "$.a.b").token, node(&one, "$.a.b.c").token);
+                let c = key_for(&options, "$.a.c", 64).unwrap();
+                prop_assert_ne!(c.token_bytes(), key.token_bytes(), "$.a.b and $.a.c differ");
+            }
+
+            #[test]
+            fn element_tokens_differ_by_index_and_from_every_member(
+                len in 1usize..20,
+                keys in prop::collection::btree_set(key_name(), 0..8),
+            ) {
+                let options = JsonOptions::default();
+                let array = terms(&json!({"a": vec![0; len]}), &options);
+                let object: Map<String, Value> = keys.iter().map(|k| (k.clone(), json!(0))).collect();
+                let object = terms(&json!({"a": object}), &options);
+                let mut elements: Vec<Tag> = (0..len)
+                    .map(|i| node(&array, &format!("$.a[{i}]")).token)
+                    .collect();
+                for member in object.nodes().iter().skip(2) {
+                    prop_assert!(!elements.contains(&member.token), "a member is never an element");
+                }
+                elements.sort_unstable();
+                elements.dedup();
+                prop_assert_eq!(elements.len(), len, "every index its own token");
+            }
+
+            #[test]
+            fn every_concrete_path_the_document_has_keys_its_own_token(
+                value in arbitrary_json(),
+                sealed in any::<bool>(),
+            ) {
+                let options = JsonOptions { sealed_root: sealed, ..JsonOptions::new() };
+                let t = terms(&value, &options);
+                for n in t.nodes() {
+                    let key = subtree_key_for(Selectors::for_tests(), &options, &n.positional, 4).unwrap();
+                    prop_assert_eq!(key.token_bytes(), vec![n.token], "{}", n.positional);
+                }
+            }
+        }
+
+        /// Small documents over the keys that stress the path encoding.
+        pub(super) fn arbitrary_json() -> impl Strategy<Value = Value> {
+            let leaf = prop_oneof![
+                Just(Value::Null),
+                any::<bool>().prop_map(Value::Bool),
+                any::<i64>().prop_map(|n| json!(n)),
+                Just(json!(2.0)),
+                Just(json!(-0.0)),
+                "[a-z]{0,4}".prop_map(Value::String),
+            ];
+            leaf.prop_recursive(4, 32, 5, |inner| {
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..5).prop_map(Value::Array),
+                    prop::collection::btree_map(key_name(), inner, 0..5)
+                        .prop_map(|m| Value::Object(m.into_iter().collect())),
+                ]
+            })
+        }
     }
 
     #[test]
@@ -2148,15 +2652,38 @@ mod tests {
 
         #[test]
         fn the_last_step_of_a_path_names_the_label_it_reaches() {
-            assert!(reaches(&path("$.a[2]"), &Label::Index(2)), "the position");
-            assert!(!reaches(&path("$.a[2]"), &Label::Index(1)), "another one");
-            assert!(!reaches(&path("$.a[2]"), &key("2")), "a member");
-            assert!(reaches(&path("$.a[*]"), &Label::Index(9)), "any element");
-            assert!(!reaches(&path("$.a[*]"), &key("x")), "not a member");
-            assert!(reaches(&path("$.a.b"), &key("b")), "a member");
-            assert!(!reaches(&path("$.a.b"), &Label::Index(0)), "not an element");
-            assert!(reaches(&path("$"), &Label::Root), "the root");
-            assert!(!reaches(&path("$"), &key("a")), "only the root");
+            assert!(names(&path("$.a[2]"), &Label::Index(2)), "the position");
+            assert!(!names(&path("$.a[2]"), &Label::Index(1)), "another one");
+            assert!(!names(&path("$.a[2]"), &key("2")), "a member");
+            assert!(names(&path("$.a.b"), &key("b")), "the member");
+            assert!(!names(&path("$.a.b"), &key("c")), "another member");
+            assert!(!names(&path("$.a.b"), &Label::Index(0)), "not an element");
+            assert!(names(&path("$"), &Label::Root), "the root");
+            assert!(!names(&path("$"), &key("a")), "only the root");
+            assert!(!names(&path("$.a"), &Label::Root), "the root is no member");
+        }
+
+        #[test]
+        fn a_childs_token_follows_its_label() {
+            let (parent, s) = ([1; 16], [2; 16]);
+            assert_eq!(
+                labelled_token(&parent, &s, &key("k")),
+                Some(member_token(&parent, &s))
+            );
+            assert_eq!(
+                labelled_token(&parent, &s, &Label::Index(3)),
+                Some(element_token(&parent, &s, 3))
+            );
+            assert_eq!(
+                labelled_token(&parent, &s, &Label::Root),
+                None,
+                "the root is no child"
+            );
+            assert_eq!(
+                labelled_token(&parent, &s, &Label::Index(u64::from(u32::MAX) + 1)),
+                None,
+                "no element sits past u32"
+            );
         }
 
         #[test]

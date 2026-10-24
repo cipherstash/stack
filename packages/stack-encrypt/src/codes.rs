@@ -52,6 +52,7 @@ mod tests {
             Error::JsonWrongEntry { .. } => Error::JsonWrongEntry {
                 expected: "the entry at the path asked for",
             },
+            Error::JsonWildcardTruncated { .. } => Error::JsonWildcardTruncated { bound: 64 },
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
@@ -98,7 +99,7 @@ mod tests {
             }),
             TermError::JsonTooDeep => TermError::JsonTooDeep,
             TermError::JsonTooWide => TermError::JsonTooWide,
-            TermError::JsonSealedRoot => TermError::JsonSealedRoot,
+            TermError::JsonWildcardTooWide => TermError::JsonWildcardTooWide,
             TermError::JsonLeafNotOrdered => TermError::JsonLeafNotOrdered,
             TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
             TermError::JsonOrderingAtPosition => TermError::JsonOrderingAtPosition,
@@ -405,6 +406,10 @@ mod tests {
                     expected: "the entry at the path asked for",
                 }),
                 json!({ "expected": "the entry at the path asked for" }),
+            ),
+            (
+                Box::new(Error::JsonWildcardTruncated { bound: 64 }),
+                json!({ "bound": 64 }),
             ),
             (
                 Box::new(LeafBytesError::UnknownVersion(9)),

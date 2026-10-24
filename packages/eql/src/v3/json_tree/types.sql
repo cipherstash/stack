@@ -12,7 +12,7 @@
 --! so the native-jsonb firewall in blockers.sql attaches):
 --!   - public.{{prefix}}_json_tree       — storage: an EQL envelope `{v, i, h, sv, q}`.
 --!   - public.{{prefix}}_json_tree_entry — one `sv` element (returned by `->`
---!                                        and the subtree walk).
+--!                                        and the subtree read).
 --!   - {{prefix}}.query_json_tree         — a containment needle: the element-nested
 --!                                        projection of the needle's selectors.
 --!   - {{prefix}}.query_json_tree_leaf    — an ordering operand at a path: a
@@ -25,17 +25,25 @@
 --!   `c`  the node's own ciphertext (RFC 1924 base85, which no SQL function
 --!        decodes): its label, its kind and, for a scalar, its value. The
 --!        root's is the whole document when the root is sealed (the default).
+--!   `x`  the self tag, the first eight bytes of `H("x" ‖ iv ‖ t)` (base64,
+--!        twelve characters), `t` being the node's own token: on every
+--!        entry, the root and the chain's heads included. Every token derives
+--!        from its node's path alone (a member's as `H("t" ‖ t(parent) ‖ s)`,
+--!        an element's as `H("t" ‖ t(parent) ‖ s ‖ LE32(i))`), so the server
+--!        finds the node a client-derived token names by its self tag.
 --!   `p`  the parent tag, the first eight bytes of
 --!        `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))` (base64), where `o` is the
 --!        node's ordinal under its parent: present below the chain's heads.
---!        The ordinals under a node are dense from 0, so a walk holding
+--!        The ordinals under a node are dense from 0, so a read holding
 --!        `t(parent)` probes them in turn until the first miss, and derives
---!        each hit's own token as `H("t" ‖ t(parent) ‖ s ‖ LE32(o))` from
---!        the hit's selector. Nothing stores a token or an ordinal.
+--!        each hit's own token by the member rule or the element rule,
+--!        whichever the hit's self tag matches. Nothing stores a token or an
+--!        ordinal.
 --!   `op` the leaf ordering term (CLLW OPE, base64) on number and string leaves.
 --! The header `h` (base64) carries the document's data key material once; the
 --! SQL reads only the sealed-root flag at byte offset 1 and the ZeroKMS `iv`
---! at byte offset 22 of it, the per-document salt of the parent tags, and
+--! at byte offset 22 of it, the per-document salt of the self and parent
+--! tags, and
 --! otherwise carries it opaquely. `q` is the document's containment
 --! projection, `{"sv": [{s, vs}, …], "el": [group, …]}`: one `{s, vs}` pair
 --! per node, `vs` being the value selector of the node's kind and, for a
@@ -44,16 +52,16 @@
 --! live: the server compares it with a needle by native `jsonb @>`.
 --! The CHECK validates its shape, not that it agrees with `sv`: containment
 --! answers from `q` as written, so a row written by anything but Stack
---! Encrypt's JSON index can answer `@>` differently from `->`, the walks
+--! Encrypt's JSON index can answer `@>` differently from `->`, the reads
 --! and decryption, which answer from `sv`.
 
 --! @brief Validate one JSON tree entry.
 --! @internal
 --! @param val jsonb Candidate entry.
---! @return boolean True when `val` is an object with string `s` and `c`,
---!         optional string `p` and `op`, and the metadata the extractors
+--! @return boolean True when `val` is an object with string `s`, `c` and
+--!         `x`, optional string `p` and `op`, and the metadata the extractors
 --!         graft: string `h`, numeric `j` (the entry's ordinal in the
---!         document) and `d` (its depth below a walk's start), and the
+--!         document) and `d` (its depth below the node a read's token named), and the
 --!         envelope's `v` and `i`. No other key.
 CREATE OR REPLACE FUNCTION public.{{prefix}}_is_valid_json_tree_entry_payload(val jsonb)
   RETURNS boolean
@@ -63,12 +71,13 @@ AS $$
     jsonb_typeof(val) = 'object'
      AND jsonb_typeof(val -> 's') = 'string'
      AND jsonb_typeof(val -> 'c') = 'string'
+     AND jsonb_typeof(val -> 'x') = 'string'
      AND (NOT (val ? 'p') OR jsonb_typeof(val -> 'p') = 'string')
      AND (NOT (val ? 'op') OR jsonb_typeof(val -> 'op') = 'string')
      AND (NOT (val ? 'h') OR jsonb_typeof(val -> 'h') = 'string')
      AND (NOT (val ? 'j') OR jsonb_typeof(val -> 'j') = 'number')
      AND (NOT (val ? 'd') OR jsonb_typeof(val -> 'd') = 'number')
-     AND val - ARRAY['s', 'c', 'p', 'op', 'h', 'j', 'd', 'v', 'i']::text[] = '{}'::jsonb,
+     AND val - ARRAY['s', 'c', 'x', 'p', 'op', 'h', 'j', 'd', 'v', 'i']::text[] = '{}'::jsonb,
     false
   )
 $$;
@@ -194,10 +203,10 @@ $$;
 
 --! @brief Domain type for one entry of a JSON tree document.
 --!
---! What `->`, the path functions and the subtree walk return: the entry with
+--! What `->`, the path functions and the subtree read return: the entry with
 --! the document's `h`, `v` and `i` and its own ordinal `j` grafted on, so it
---! opens on its own. A walk also grafts `d`, the entry's depth below the
---! walk's start.
+--! opens on its own. A read also grafts `d`, the entry's depth below the
+--! node its token named.
 --!
 --! @note The CHECK calls the validator rather than inlining it: an entry is
 --!       constructed by the extractors, not cast on the query hot path.

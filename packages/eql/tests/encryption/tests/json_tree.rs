@@ -16,7 +16,9 @@ use eql_bindings::v4::json_tree::{
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
-use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath, JsonSelector, JsonSubtreeKey};
+use stack_encrypt::json::{
+    JsonDocument, JsonOptions, JsonPath, JsonSelector, JsonSubtreeKey, Segment,
+};
 use stack_encrypt::plan::{Laid, ValuePlan};
 use stack_encrypt::target::{Json, Layout};
 use stack_encrypt::{op, NonEmpty, Plan};
@@ -575,65 +577,77 @@ fn postgres_extracts_walks_and_orders_by_path() {
         .collect();
     assert_eq!(tags, vec![json!("x"), json!("y")]);
 
-    // The subtree under `$.nested`, from a token derived on the client from
-    // the path alone: six entries in row 1, reassembling the sub-document;
-    // two in row 2.
+    // The read of `$.nested`, from a token derived on the client from the
+    // path alone: nested itself and its six entries in row 1, reassembling
+    // the sub-document; nested and two in row 2; nothing in row 3.
     let nested = subtree_key("$.nested");
-    assert!(nested.gates().is_empty(), "a chain head's token");
-    for (id, expected) in [
-        (1, fixture()["nested"].clone()),
-        (2, rows[1].1["nested"].clone()),
-    ] {
-        let walked: Vec<JsonTreeEntry> = db
-            .query(
-                "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text) e WHERE id = $2",
-                &[&nested.token(), &id],
-            )
-            .unwrap()
-            .iter()
-            .map(entry)
-            .collect();
-        assert_eq!(walked.len(), if id == 1 { 6 } else { 2 });
-        assert!(walked
-            .iter()
-            .all(|e| e.d.is_some() && e.j.is_some() && e.h.is_some()));
-        let value: Value = wait(
-            &runtime,
-            cipher.decrypt_as(JsonTreeSubtree::from_key(&nested, walked), column()),
-        )
-        .unwrap();
-        assert_eq!(value, expected, "row {id}");
-    }
-    let garbage: i64 = db
-        .query_one(
-            "SELECT count(*) FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text) e",
-            &[&"00".repeat(16)],
-        )
-        .unwrap()
-        .get(0);
-    assert_eq!(garbage, 0, "a wrong token unlocks nothing in any row");
-
-    // The budget: past it the walk returns the sealed root alone, at depth
-    // 0, and the rows open to the value at the walked path; at it, or
-    // with the budget off, the walk is complete; a wrong token still
-    // yields nothing under any budget.
-    let walked = |db: &mut postgres::Client, budget: i32| -> Vec<JsonTreeEntry> {
+    assert_eq!(nested.tokens().len(), 1, "one token for one node");
+    let read = |db: &mut postgres::Client,
+                key: &JsonSubtreeKey,
+                id: i32,
+                budget: i32|
+     -> Vec<JsonTreeEntry> {
         db.query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text, $2::int) e WHERE id = 1",
-            &[&nested.token(), &budget],
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text[], $2::int) e WHERE id = $3",
+            &[&key.tokens(), &budget, &id],
         )
         .unwrap()
         .iter()
         .map(entry)
         .collect()
     };
-    assert_eq!(walked(&mut db, 6).len(), 6, "at the budget, the subtree");
-    assert_eq!(walked(&mut db, 0).len(), 6, "budget 0 never falls back");
-    let root = walked(&mut db, 5);
+    for (id, expected) in [
+        (1, Some(fixture()["nested"].clone())),
+        (2, Some(rows[1].1["nested"].clone())),
+        (3, None),
+    ] {
+        let walked = read(&mut db, &nested, id, 0);
+        assert_eq!(walked.len(), [0, 7, 3, 0][id as usize], "row {id}");
+        assert!(walked
+            .iter()
+            .all(|e| e.d.is_some() && e.j.is_some() && e.h.is_some() && e.v.is_some()));
+        let value: Option<Value> = wait(
+            &runtime,
+            cipher.decrypt_as(JsonTreeSubtree::from_key(&nested, walked), column()),
+        )
+        .unwrap();
+        assert_eq!(value, expected, "row {id}");
+    }
+    // The default budget, as a caller who names none gets it.
+    let defaulted: i64 = db
+        .query_one(
+            "SELECT count(*) FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text[]) e WHERE id = 1",
+            &[&nested.tokens()],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(defaulted, 7, "under the default budget of 64");
+    let garbage: i64 = db
+        .query_one(
+            "SELECT count(*) FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text[]) e",
+            &[&vec!["AAAAAAAAAAAAAAAAAAAAAA==".to_owned()]],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(garbage, 0, "a wrong token finds nothing in any row");
+
+    // The budget counts rows, the node a token names included: past it the
+    // read returns the sealed root alone, at depth 0, and the rows open to
+    // the value at the path; at it, or with the budget off, the read is
+    // complete; a wrong token still yields nothing under any budget.
+    assert_eq!(
+        read(&mut db, &nested, 1, 7).len(),
+        7,
+        "at the budget, the subtree"
+    );
+    assert_eq!(
+        read(&mut db, &nested, 1, 0).len(),
+        7,
+        "budget 0 never falls back"
+    );
+    let root = read(&mut db, &nested, 1, 6);
     assert_eq!(root.len(), 1, "past the budget, the root alone");
     assert_eq!((root[0].j, root[0].d), (Some(0), Some(0)));
-    // The key that keyed the walk builds the rows, so the path the
-    // fallback is opened at is always there.
     let value: Value = wait(
         &runtime,
         cipher.decrypt_as(JsonTreeSubtree::from_key(&nested, root), column()),
@@ -642,181 +656,101 @@ fn postgres_extracts_walks_and_orders_by_path() {
     assert_eq!(value, fixture()["nested"]);
     let garbage: i64 = db
         .query_one(
-            "SELECT count(*) FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text, 1) e",
-            &[&"00".repeat(16)],
+            "SELECT count(*) FROM json_tree_rows, eql_v4.json_tree_subtree(doc, $1::text[], 1) e",
+            &[&vec!["AAAAAAAAAAAAAAAAAAAAAA==".to_owned()]],
         )
         .unwrap()
         .get(0);
     assert_eq!(garbage, 0);
-    // The fallback opens to what the walk opens to, as a list too, so a
-    // caller's result does not change shape when a document grows past the
-    // budget: `$.nested`'s member values from `json_tree_subtree`, whose
-    // rows are the head's descendants (its key has no gates), and the list
-    // itself from the gated walk to `$.nested.list`, whose rows are the
-    // node the gates reach. The key says which.
-    let sorted = |mut values: Vec<Value>| {
-        values.sort_by_key(ToString::to_string);
-        values
-    };
-    let open_list = |rows: Vec<JsonTreeEntry>, key: &JsonSubtreeKey| -> Vec<Value> {
-        wait(
-            &runtime,
-            cipher.decrypt_as(JsonTreeSubtree::from_key(key, rows), column()),
-        )
-        .unwrap()
-    };
-    let walked_members = walked(&mut db, 0);
-    assert_eq!(walked_members.len(), 6);
-    let fallen_back = walked(&mut db, 5);
-    assert_eq!(fallen_back.len(), 1);
-    let members = sorted(vec![json!("constant"), json!([{"x": 1}, {"x": 2}])]);
-    assert_eq!(sorted(open_list(walked_members, &nested)), members);
-    assert_eq!(sorted(open_list(fallen_back, &nested)), members);
-    let list = subtree_key("$.nested.list");
-    let list_rows = |db: &mut postgres::Client, budget: i32| -> Vec<JsonTreeEntry> {
-        db.query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], $3::int) e WHERE id = 1",
-            &[&list.token(), &list.gates(), &budget],
-        )
-        .unwrap()
-        .iter()
-        .map(entry)
-        .collect()
-    };
-    let walked_list = list_rows(&mut db, 0);
-    assert_eq!(
-        walked_list.len(),
-        5,
-        "the list, its two elements and their x"
-    );
-    let fallen_back = list_rows(&mut db, 3);
-    assert_eq!(fallen_back.len(), 1);
-    assert_eq!(
-        open_list(walked_list, &list),
-        vec![fixture()["nested"]["list"].clone()]
-    );
-    assert_eq!(
-        open_list(fallen_back, &list),
-        vec![fixture()["nested"]["list"].clone()]
-    );
     // The budget is gated on the header's sealed-root flag, the bit
     // `JsonHeader` writes: with the flags byte cleared, the same document
-    // has no root to return and is walked out under any budget.
+    // has no root to return and is read in full under any budget.
     let unflagged: i64 = db
         .query_one(
             "SELECT count(*) FROM json_tree_rows,
                eql_v4.json_tree_subtree(
                  jsonb_set(doc::jsonb, '{h}', to_jsonb(encode(set_byte(decode(doc::jsonb ->> 'h', 'base64'), 1, 0), 'base64')))::public.eql_v4_json_tree,
-                 $1::text, 1) e
+                 $1::text[], 1) e
              WHERE id = 1",
-            &[&nested.token()],
+            &[&nested.tokens()],
         )
         .unwrap()
         .get(0);
-    assert_eq!(unflagged, 6, "an unsealed root is walked out");
+    assert_eq!(unflagged, 7, "an unsealed root is read in full");
 
-    // A path below the head walks from the head's token through one gate
-    // per step: `$.nested.list[*].x` is the list's selector, then every
-    // element's (the wildcard's), then x's; each `x` comes back as a
-    // complete subtree.
+    // A wildcard: the client expands `$.nested.list[*].x` to one token per
+    // position below the bound and a probe at it; each `x` comes back as a
+    // node of its own. Past the budget the read falls back the same way,
+    // and the concrete paths are evaluated over the whole document.
     let xs = subtree_key("$.nested.list[*].x");
-    assert_eq!(xs.token(), nested.token(), "anchored at the head");
-    assert_eq!(xs.gates().len(), 3);
-    let walked: Vec<JsonTreeEntry> = db
-        .query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[]) e WHERE id = 1",
-            &[&xs.token(), &xs.gates()],
+    assert_eq!(xs.tokens().len(), 65, "64 positions and the probe");
+    for budget in [0, 1, 64] {
+        let rows = read(&mut db, &xs, 1, budget);
+        let values: Vec<Value> = wait(
+            &runtime,
+            cipher.decrypt_as(JsonTreeSubtree::from_key(&xs, rows), column()),
         )
-        .unwrap()
-        .iter()
-        .map(entry)
-        .collect();
-    let values: Vec<Value> = wait(
-        &runtime,
-        cipher.decrypt_as(JsonTreeSubtree::from_key(&xs, walked), column()),
-    )
-    .unwrap();
-    assert_eq!(values, vec![json!(1), json!(2)]);
-    // Past the budget, the gated walk falls back the same way, and the
-    // wildcard path selects every subtree over the whole document.
-    let root: Vec<JsonTreeEntry> = db
-        .query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 1) e WHERE id = 1",
-            &[&xs.token(), &xs.gates()],
-        )
-        .unwrap()
-        .iter()
-        .map(entry)
-        .collect();
-    assert_eq!(root.len(), 1);
-    assert_eq!(root[0].d, Some(0));
-    let values: Vec<Value> = wait(
-        &runtime,
-        cipher.decrypt_as(JsonTreeSubtree::from_key(&xs, root), column()),
-    )
-    .unwrap();
-    assert_eq!(values, vec![json!(1), json!(2)]);
+        .unwrap();
+        assert_eq!(values, vec![json!(1), json!(2)], "budget {budget}");
+    }
 
-    // A positional path below a key step: the second element's subtree,
-    // through the list's selector and the position `#1`, with the selector
-    // every element of the list carries.
+    // A position below a key step: the second element's own token.
     let second = subtree_key("$.nested.list[1]");
-    assert_eq!(
-        second.gates()[1],
-        format!("#1:{}", selector("$.nested.list[*]"))
-    );
-    let walked: Vec<JsonTreeEntry> = db
-        .query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[]) e WHERE id = 1",
-            &[&second.token(), &second.gates()],
-        )
-        .unwrap()
-        .iter()
-        .map(entry)
-        .collect();
     let value: Value = wait(
         &runtime,
-        cipher.decrypt_as(JsonTreeSubtree::from_key(&second, walked), column()),
+        cipher.decrypt_as(
+            JsonTreeSubtree::from_key(&second, read(&mut db, &second, 1, 0)),
+            column(),
+        ),
     )
     .unwrap();
     assert_eq!(value, json!({"x": 2}));
 
-    // The array functions, by the head's token and the list's gate.
+    // The array functions, by the list's own token: a count per row, NULL
+    // where the row has no list.
     let list = subtree_key("$.nested.list");
-    assert_eq!(list.gates().len(), 1);
-    let counts: Vec<(i32, i32)> = db
+    let counts: Vec<(i32, Option<i32>)> = db
         .query(
-            "SELECT id, eql_v4.json_tree_child_count(doc, $1::text, $2::text[]) FROM json_tree_rows ORDER BY id",
-            &[&list.token(), &list.gates()],
+            "SELECT id, eql_v4.json_tree_child_count(doc, $1::text) FROM json_tree_rows ORDER BY id",
+            &[&list.tokens()[0]],
         )
         .unwrap()
         .iter()
         .map(|r| (r.get(0), r.get(1)))
         .collect();
-    assert_eq!(counts, [(1, 2), (2, 0), (3, 0)]);
+    assert_eq!(counts, [(1, Some(2)), (2, Some(0)), (3, None)]);
     let elements: Vec<JsonTreeEntry> = db
         .query(
-            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_children(doc, $1::text, $2::text[]) e WHERE id = 1",
-            &[&list.token(), &list.gates()],
+            "SELECT e::jsonb::text FROM json_tree_rows, eql_v4.json_tree_children(doc, $1::text) e WHERE id = 1",
+            &[&list.tokens()[0]],
         )
         .unwrap()
         .iter()
         .map(entry)
         .collect();
-    assert_eq!(elements.len(), 2);
     assert_eq!(
         elements.iter().map(|e| (e.j, e.d)).collect::<Vec<_>>(),
         [(Some(5), Some(1)), (Some(7), Some(1))]
     );
-    // The head's own children, with no gate: deep and list.
     let members: i32 = db
         .query_one(
             "SELECT eql_v4.json_tree_child_count(doc, $1::text) FROM json_tree_rows WHERE id = 1",
-            &[&nested.token()],
+            &[&nested.tokens()[0]],
         )
         .unwrap()
         .get(0);
-    assert_eq!(members, 2);
+    assert_eq!(members, 2, "nested's own members: deep and list");
+    // The sealed root's members chain from nothing, so its token cannot
+    // count them: NULL, not a count of zero.
+    let root_key = subtree_key("$");
+    let root_count: Option<i32> = db
+        .query_one(
+            "SELECT eql_v4.json_tree_child_count(doc, $1::text) FROM json_tree_rows WHERE id = 1",
+            &[&root_key.tokens()[0]],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(root_count, None);
 
     // Orderings at a path: the rows whose `$.number` is in range, and
     // sorted by the leaf's term.
@@ -1243,15 +1177,584 @@ fn postgres_the_planner_picks_the_indexes_without_help() {
     );
 }
 
+// =============================================================================
+// Subtree reads against jsonb
+// =============================================================================
+
+/// `path` in PostgreSQL's SQL/JSON path language, strict: a key quoted as a
+/// JSON string, so the keys that stress the path encoding (`.`, `[`, `*`,
+/// `$`, quotes, backslashes, the empty key) name exactly one member. Strict,
+/// because a lax path reads `$.a[0]` on an object as `$.a`, and `#>` reads a
+/// position as a key; the index reads a position as an element only.
+fn pg_path(path: &JsonPath) -> String {
+    let mut out = String::from("strict $");
+    for segment in path.segments() {
+        match segment {
+            Segment::Key(key) => {
+                out.push('.');
+                out.push_str(&serde_json::to_string(key).unwrap());
+            }
+            Segment::Index(index) => out.push_str(&format!("[{index}]")),
+            Segment::Wildcard => out.push_str("[*]"),
+        }
+    }
+    out
+}
+
+/// Every node's path in `value`, positionally, the root first.
+fn node_paths(value: &Value) -> Vec<JsonPath> {
+    fn visit(value: &Value, at: &str, out: &mut Vec<String>) {
+        out.push(at.to_owned());
+        match value {
+            Value::Object(map) => {
+                for (key, child) in map {
+                    visit(
+                        child,
+                        &format!("{at}[{}]", serde_json::to_string(key).unwrap()),
+                        out,
+                    );
+                }
+            }
+            Value::Array(items) => {
+                for (i, child) in items.iter().enumerate() {
+                    visit(child, &format!("{at}[{i}]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    visit(value, "$", &mut out);
+    out.iter()
+        .map(|text| JsonPath::parse(text).unwrap())
+        .collect()
+}
+
+/// A temp table of `documents` sealed under `options`, beside their
+/// plaintexts, ids from 1.
+fn store(
+    db: &mut postgres::Client,
+    runtime: &tokio::runtime::Runtime,
+    cipher: &Cipher,
+    table: &str,
+    options: &JsonOptions,
+    documents: &[Value],
+) {
+    db.batch_execute(&format!(
+        "CREATE TEMP TABLE {table} (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL)"
+    ))
+    .unwrap();
+    for (id, plain) in (1..).zip(documents) {
+        let stored = wait(
+            runtime,
+            cipher.default_keyset().run(
+                JsonTree::new(options.clone()).encryption(),
+                plain,
+                column(),
+            ),
+        )
+        .unwrap();
+        db.execute(
+            &format!("INSERT INTO {table} VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_tree)"),
+            &[&id, &plain.to_string(), &serde_json::to_string(&stored).unwrap()],
+        )
+        .unwrap();
+    }
+}
+
+/// The rows `json_tree_subtree(doc, key.tokens(), budget)` returns in row `id`.
+fn subtree_rows(
+    db: &mut postgres::Client,
+    table: &str,
+    id: i32,
+    key: &JsonSubtreeKey,
+    budget: i32,
+) -> Vec<JsonTreeEntry> {
+    db.query(
+        &format!("SELECT e::jsonb::text FROM {table}, eql_v4.json_tree_subtree(doc, $1::text[], $2::int) e WHERE id = $3"),
+        &[&key.tokens(), &budget, &id],
+    )
+    .unwrap_or_else(|error| panic!("{table} {}: {error}", key.path()))
+    .iter()
+    .map(|r| serde_json::from_str(&r.get::<_, String>(0)).unwrap())
+    .collect()
+}
+
+/// What `jsonb_path_query_first(plain, 'strict <path>')` holds in row `id`.
+fn jsonb_first(db: &mut postgres::Client, table: &str, id: i32, path: &JsonPath) -> Option<Value> {
+    db.query_one(
+        &format!("SELECT jsonb_path_query_first(plain, $1::text::jsonpath, '{{}}', true)::text FROM {table} WHERE id = $2"),
+        &[&pg_path(path), &id],
+    )
+    .unwrap()
+    .get::<_, Option<String>>(0)
+    .map(|text| serde_json::from_str(&text).unwrap())
+}
+
+/// What `jsonb_path_query(plain, 'strict <path>')` returns in row `id`,
+/// one concrete path at a time: the wildcards are expanded over the
+/// plaintext's own arrays, and each concrete path is asked of `jsonb` with
+/// [`jsonb_first`]. Strict mode aborts the whole query on the first element
+/// a step does not fit (`.x` on a number), where the index answers for each
+/// element on its own, so asking each concrete path keeps strict mode's
+/// answer for every element without its abort. In document order.
+fn jsonb_all(
+    db: &mut postgres::Client,
+    table: &str,
+    id: i32,
+    plain: &Value,
+    path: &JsonPath,
+) -> Vec<Value> {
+    fn expand(value: Option<&Value>, at: JsonPath, rest: &[Segment], out: &mut Vec<JsonPath>) {
+        let Some((step, rest)) = rest.split_first() else {
+            out.push(at);
+            return;
+        };
+        match step {
+            Segment::Wildcard => {
+                let len = value.and_then(Value::as_array).map_or(0, Vec::len);
+                for i in 0..len {
+                    let next = value.and_then(|v| v.as_array()).and_then(|a| a.get(i));
+                    expand(next, append(&at, &Segment::Index(i as u64)), rest, out);
+                }
+            }
+            Segment::Key(key) => {
+                let next = value.and_then(Value::as_object).and_then(|o| o.get(key));
+                expand(next, append(&at, step), rest, out);
+            }
+            Segment::Index(i) => {
+                let next = value
+                    .and_then(Value::as_array)
+                    .and_then(|a| a.get(*i as usize));
+                expand(next, append(&at, step), rest, out);
+            }
+        }
+    }
+    let mut concrete = Vec::new();
+    expand(
+        Some(plain),
+        JsonPath::root(),
+        path.segments(),
+        &mut concrete,
+    );
+    concrete
+        .iter()
+        .filter_map(|q| jsonb_first(db, table, id, q))
+        .collect()
+}
+
+/// `at` with one more step.
+fn append(at: &JsonPath, step: &Segment) -> JsonPath {
+    let text = match step {
+        Segment::Key(key) => format!("[{}]", serde_json::to_string(key).unwrap()),
+        Segment::Index(i) => format!("[{i}]"),
+        Segment::Wildcard => "[*]".to_owned(),
+    };
+    JsonPath::parse(&format!("{at}{text}")).unwrap()
+}
+
+/// The child count jsonb gives the node at `path` in row `id`: an object's
+/// keys, an array's length, `0` for a scalar (where jsonb raises), NULL
+/// where there is no node.
+fn jsonb_child_count(
+    db: &mut postgres::Client,
+    table: &str,
+    id: i32,
+    path: &JsonPath,
+) -> Option<i32> {
+    db.query_one(
+        &format!(
+            "SELECT CASE WHEN v IS NULL THEN NULL
+                      WHEN jsonb_typeof(v) = 'object' THEN (SELECT count(*)::int FROM jsonb_object_keys(v))
+                      WHEN jsonb_typeof(v) = 'array' THEN jsonb_array_length(v)
+                      ELSE 0 END
+             FROM (SELECT jsonb_path_query_first(plain, $1::text::jsonpath, '{{}}', true) AS v FROM {table} WHERE id = $2) AS q"
+        ),
+        &[&pg_path(path), &id],
+    )
+    .unwrap()
+    .get(0)
+}
+
+/// The documents the read oracle stores: nested empties, degenerate roots,
+/// the keys that stress the path encoding, numbers that `jsonb` spells
+/// differently, a `null` leaf beside an absent key, a wide object, and the
+/// shapes #1356 found.
+fn read_documents() -> Vec<Value> {
+    let wide: Map<String, Value> = (0..300).map(|i| (format!("k{i}"), json!(i))).collect();
+    let mut deep = json!(1);
+    for _ in 0..40 {
+        deep = json!({"d": [deep]});
+    }
+    vec![
+        json!({"p": {}, "l": [{}, [], "s", {"x": 1}], "h": {"p": {}, "l": [[], {}, null]}}),
+        json!({"p": [], "l": [[]], "h": {"p": []}}),
+        json!({"p": "text", "l": ["a", 0, false], "h": {"p": 7, "l": [true]}}),
+        json!({"q": 1, "h": {"q": null}}),
+        json!({"p": null, "l": [], "h": []}),
+        json!({"p": {"a": 1, "b": [2, {"c": null}]}, "l": [{"a": [1, 2]}, 5], "h": {"p": {"a": {"b": {}}}, "l": [{"a": 1}]}}),
+        json!({"p": [[], {}], "l": [[{}], [[]]], "h": {"l": [[{"x": []}]]}}),
+        json!({"a": {}}),
+        json!([[]]),
+        json!({"a": [{}]}),
+        json!([]),
+        json!({}),
+        json!("scalar"),
+        json!(7),
+        json!(null),
+        json!([{"x": 1}, {"y": 2}, 3]),
+        json!({
+            "": 1,
+            "a.b": {"[*]": [{"$": 2}]},
+            "\"\\": null,
+            "é✓": ["unicode"],
+            "0": {"x": "the key 0"},
+            "arr": [{"x": "the index 0"}],
+            "*": {"[": {"]": true}},
+        }),
+        json!({"n": [2, 2.0, 1e30, -0.0, -9223372036854775808i64, 18446744073709551615u64, 1.5, 1e-7]}),
+        json!({"null": null, "nested": {"null": null}}),
+        json!({"wide": wide}),
+        json!({"deep": deep}),
+    ]
+}
+
+/// Needs an EQL v4 installation. Every read of a path with no wildcard
+/// returns the node the path names with everything beneath it, so it answers
+/// as `jsonb` does: an empty object, an empty array, a scalar (`null`
+/// included) and a node the document does not have are four different
+/// answers, held here to `jsonb_path_query_first(plain, 'strict <path>')`
+/// over the plaintexts, as `Option<Value>`, `Value` and `Vec<Value>`. Every
+/// node of every document is read, at a chain head, under positions and
+/// deep, plus paths no document has, with the root sealed and open, read
+/// in full (budget 0), past a budget of 1 (where every read of more than
+/// one row falls back to the sealed root) and under the default. The same
+/// pass holds `json_tree_child_count` and `json_tree_children` to `jsonb`'s
+/// counts, and `->` to the read for every scalar at a path with no
+/// position.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_every_subtree_read_answers_as_jsonb_does() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = wait(&runtime, common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    let documents = read_documents();
+    // Every node's path, but of the wide object's 300 members only the
+    // first, the last and one past it: each member is the same read.
+    let mut paths: Vec<JsonPath> = documents
+        .iter()
+        .flat_map(node_paths)
+        .filter(|p| {
+            !matches!(p.segments(), [Segment::Key(w), Segment::Key(k)]
+                if w == "wide" && !["k0", "k299"].contains(&k.as_str()))
+        })
+        .collect();
+    for extra in [
+        "$.q",
+        "$.p.missing",
+        "$[0]",
+        "$[1]",
+        "$.l[9]",
+        "$.h.l[0][0]",
+        r#"$["0"]"#,
+        "$.arr[1]",
+        r#"$["a.b"]["[*]"][0]["$"]"#,
+        "$.n[7]",
+        "$.wide.k300",
+    ] {
+        paths.push(JsonPath::parse(extra).unwrap());
+    }
+    paths.sort();
+    paths.dedup();
+    let mut checked = [0usize; 4];
+    for sealed_root in [true, false] {
+        let options = JsonOptions {
+            sealed_root,
+            ..JsonOptions::default()
+        };
+        let table = if sealed_root {
+            "json_tree_reads_sealed"
+        } else {
+            "json_tree_reads_open"
+        };
+        store(&mut db, &runtime, &cipher, table, &options, &documents);
+        for path in &paths {
+            let key = wait(&runtime, keyset.json_subtree_key(path, &options, column())).unwrap();
+            assert_eq!(key.tokens().len(), 1, "{path}: one token");
+            let selector = wait(&runtime, keyset.json_selector(path, column())).unwrap();
+            for id in 1..=documents.len() as i32 {
+                let expected = jsonb_first(&mut db, table, id, path);
+                checked[match &expected {
+                    None => 0,
+                    Some(Value::Object(o)) if o.is_empty() => 1,
+                    Some(Value::Array(a)) if a.is_empty() => 2,
+                    Some(_) => 3,
+                }] += 1;
+                let at = format!("{table} {path}, row {id}");
+                for budget in [0, 1, 64] {
+                    let rows = subtree_rows(&mut db, table, id, &key, budget);
+                    let fell_back = sealed_root && rows.len() == 1 && rows[0].j == Some(0);
+                    if expected.is_none() {
+                        assert!(rows.is_empty(), "{at}: no node, no row");
+                    } else if budget == 0 {
+                        assert!(
+                            !fell_back || path.segments().is_empty(),
+                            "{at}: read in full"
+                        );
+                    }
+                    let opened: Option<Value> = wait(
+                        &runtime,
+                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows.clone()), column()),
+                    )
+                    .unwrap_or_else(|error| panic!("{at}, budget {budget}: {error}"));
+                    assert_eq!(opened, expected, "{at}, budget {budget}, as Option<Value>");
+                    let list: Vec<Value> = wait(
+                        &runtime,
+                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows.clone()), column()),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        list,
+                        expected.clone().into_iter().collect::<Vec<_>>(),
+                        "{at}, as Vec<Value>"
+                    );
+                    let one: Result<Value, _> = wait(
+                        &runtime,
+                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows), column()),
+                    );
+                    match (&expected, one) {
+                        (Some(expected), Ok(one)) => assert_eq!(&one, expected, "{at}, as Value"),
+                        (None, Err(stack_encrypt::Error::OpenedType { expected })) => {
+                            assert_eq!(expected, "a node at the walked path", "{at}")
+                        }
+                        (expected, one) => panic!("{at}: {expected:?} opened as {one:?}"),
+                    }
+                }
+
+                // The children and their count, by the node's own token.
+                let count: Option<i32> = db
+                    .query_one(
+                        &format!("SELECT eql_v4.json_tree_child_count(doc, $1::text) FROM {table} WHERE id = $2"),
+                        &[&key.tokens()[0], &id],
+                    )
+                    .unwrap()
+                    .get(0);
+                let children: i64 = db
+                    .query_one(
+                        &format!("SELECT count(*) FROM {table}, eql_v4.json_tree_children(doc, $1::text) e WHERE id = $2"),
+                        &[&key.tokens()[0], &id],
+                    )
+                    .unwrap()
+                    .get(0);
+                if sealed_root && path.segments().is_empty() {
+                    assert_eq!(
+                        count, None,
+                        "{at}: the sealed root's members chain from nothing"
+                    );
+                    assert_eq!(children, 0, "{at}");
+                } else {
+                    assert_eq!(
+                        count,
+                        jsonb_child_count(&mut db, table, id, path),
+                        "{at}: child_count"
+                    );
+                    assert_eq!(children, i64::from(count.unwrap_or(0)), "{at}: children");
+                }
+
+                // `->` returns the first entry at the path's selector, which
+                // reads a position as the wildcard: for a scalar at a path
+                // with no position it is the read's node.
+                if !path
+                    .segments()
+                    .iter()
+                    .any(|s| matches!(s, Segment::Index(_)))
+                    && expected
+                        .as_ref()
+                        .is_some_and(|v| !v.is_object() && !v.is_array())
+                {
+                    let arrow: Option<String> = db
+                        .query_one(
+                            &format!(
+                                "SELECT (doc -> $1::text)::jsonb::text FROM {table} WHERE id = $2"
+                            ),
+                            &[&selector.to_string(), &id],
+                        )
+                        .unwrap()
+                        .get(0);
+                    let entry: JsonTreeEntry = serde_json::from_str(&arrow.unwrap()).unwrap();
+                    let value: Value = wait(
+                        &runtime,
+                        cipher.decrypt_as(
+                            JsonTreeExtracted::from_selector(&selector, entry),
+                            column(),
+                        ),
+                    )
+                    .unwrap();
+                    assert_eq!(Some(value), expected, "{at}: `->` and the read agree");
+                }
+            }
+        }
+    }
+    assert!(
+        checked.iter().all(|n| *n > 0),
+        "the corpus reaches no node, `{{}}`, `[]` and other values: {checked:?}"
+    );
+}
+
+/// Whether a read of `pattern` at `bound` over `value` finds an array longer
+/// than the bound at a wildcard level it reaches, which is when one of its
+/// probes names a node.
+fn truncated(value: &Value, pattern: &[Segment], bound: usize) -> bool {
+    let Some((step, rest)) = pattern.split_first() else {
+        return false;
+    };
+    match (step, value) {
+        (Segment::Key(key), Value::Object(map)) => {
+            map.get(key).is_some_and(|v| truncated(v, rest, bound))
+        }
+        (Segment::Index(i), Value::Array(items)) => items
+            .get(*i as usize)
+            .is_some_and(|v| truncated(v, rest, bound)),
+        (Segment::Wildcard, Value::Array(items)) => {
+            items.len() > bound || items.iter().any(|v| truncated(v, rest, bound))
+        }
+        _ => false,
+    }
+}
+
+/// Needs an EQL v4 installation. A wildcard read answers as
+/// `jsonb_path_query(plain, 'strict <path>')` when every array it expands is
+/// at most the bound long, in document order, and fails with the bound
+/// otherwise, never with part of the list: at the bound minus one, at it
+/// and one past it, under one wildcard and two, with the root sealed and
+/// open, read in full, past a budget of 1 (the sealed-root fallback, which
+/// evaluates the same probes) and under the default.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_wildcard_reads_answer_as_jsonb_path_query() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = wait(&runtime, common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    let row = |n: usize, inner: usize| -> Value {
+        let items: Vec<Value> = (0..n)
+            .map(|i| json!({"x": i, "y": (0..inner).map(|k| json!({"z": k * 10 + i})).collect::<Vec<_>>()}))
+            .collect();
+        json!({"items": items, "top": (0..n).collect::<Vec<_>>(), "obj": {"items": [{"x": "o"}]}})
+    };
+    let mut cases: Vec<(u32, Vec<Value>)> = Vec::new();
+    for bound in [3u32, 64] {
+        let n = bound as usize;
+        cases.push((
+            bound,
+            vec![
+                row(n - 1, n - 1),
+                row(n, n),
+                row(n + 1, 1),
+                row(1, n + 1),
+                row(0, 0),
+                json!({"items": {"0": {"x": 1}}, "top": {}}),
+                json!([{"x": 1}, {"x": 2}]),
+                json!({"items": [1, [2], {"x": null}]}),
+            ],
+        ));
+    }
+    let patterns = [
+        "$.items[*].x",
+        "$.items[*]",
+        "$.top[*]",
+        "$.items[*].y[*].z",
+        "$.items[*].y[*]",
+        "$.obj.items[*].x",
+        "$[*].x",
+        "$.items[0].y[*].z",
+        "$.missing[*]",
+    ];
+    let mut outcomes = [0usize; 2];
+    for (bound, documents) in &cases {
+        for sealed_root in [true, false] {
+            let options = JsonOptions {
+                sealed_root,
+                ..JsonOptions::default()
+            };
+            let table = format!(
+                "json_tree_wild_{bound}_{}",
+                if sealed_root { "sealed" } else { "open" }
+            );
+            store(&mut db, &runtime, &cipher, &table, &options, documents);
+            for pattern in patterns {
+                let path = JsonPath::parse(pattern).unwrap();
+                let key = wait(
+                    &runtime,
+                    keyset.json_subtree_key_with_bound(&path, &options, *bound, column()),
+                )
+                .unwrap();
+                for (id, plain) in (1..).zip(documents) {
+                    let expected = jsonb_all(&mut db, &table, id, plain, &path);
+                    let too_long = truncated(plain, path.segments(), *bound as usize);
+                    outcomes[usize::from(too_long)] += 1;
+                    for budget in [0, 1, 64] {
+                        let at = format!("{table} {pattern}, row {id}, budget {budget}");
+                        let rows = subtree_rows(&mut db, &table, id, &key, budget);
+                        let list: Result<Vec<Value>, stack_encrypt::Error> = wait(
+                            &runtime,
+                            cipher.decrypt_as(
+                                JsonTreeSubtree::from_key(&key, rows.clone()),
+                                column(),
+                            ),
+                        );
+                        let one: Result<Option<Value>, stack_encrypt::Error> = wait(
+                            &runtime,
+                            cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows), column()),
+                        );
+                        if too_long {
+                            for result in [list.map(|_| ()), one.map(|_| ())] {
+                                match result {
+                                    Err(stack_encrypt::Error::JsonWildcardTruncated {
+                                        bound: b,
+                                    }) => {
+                                        assert_eq!(b, *bound, "{at}: the error names the bound")
+                                    }
+                                    other => panic!(
+                                        "{at}: an array past the bound must fail, got {other:?}"
+                                    ),
+                                }
+                            }
+                        } else {
+                            assert_eq!(list.unwrap(), expected, "{at}: as jsonb_path_query");
+                            match (one, expected.len()) {
+                                (Ok(found), 0 | 1) => {
+                                    assert_eq!(found, expected.first().cloned(), "{at}")
+                                }
+                                (Err(stack_encrypt::Error::OpenedType { .. }), _) => {}
+                                (other, n) => panic!("{at}: {n} nodes opened as {other:?}"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        outcomes.iter().all(|n| *n > 0),
+        "both answers reached: {outcomes:?}"
+    );
+}
+
 /// Needs an EQL v4 installation. A position names an array element and
 /// nothing else, in every row of the column, as a strict SQL/JSON path does
-/// (`jsonb_path_query_first(plain, 'strict $.a[1]')`): where a
-/// row's node at the path is an object, an object member ranked at that
-/// ordinal is not returned, whether the client derived the position's
-/// token (`$.a[1]`, directly after the head) or the walk took it as a gate
-/// (`$.h.a[0]`, below a key step). Each walk's rows open to the plaintext's
-/// value at the strict path, or come back empty where it has none. (`#>`
-/// would not do as the oracle: it reads `1` as a key of an object.)
+/// (`jsonb_path_query_first(plain, 'strict $.a[1]')`): where a row's node at
+/// the path is an object, a member is not returned, the member named `"1"`
+/// included, whether the position follows a head (`$.a[1]`) or a key step
+/// (`$.h.a[0]`). A member's token and an element's are different hashes,
+/// so no entry there carries the element's self tag.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_a_position_reaches_array_elements_only() {
@@ -1262,106 +1765,70 @@ fn postgres_a_position_reaches_array_elements_only() {
     let (cipher, _) = wait(&runtime, common::cipher());
     let keyset = cipher.default_keyset();
     let mut db = connect();
-    db.batch_execute(
-        "CREATE TEMP TABLE json_tree_positions (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL)",
-    )
-    .unwrap();
-    let rows = [
+    let documents = [
         json!({"a": [{"x": 1}, {"x": 2}], "h": {"a": [{"x": 3}, {"x": 4}]}}),
         json!({"a": {"k": {"x": 9}, "m": {"x": 6}}, "h": {"a": {"k": {"x": 8}, "m": {"x": 5}}}}),
         json!({"a": {"0": {"x": 7}, "1": {"x": 7}}, "h": {"a": {"0": {"x": 7}}}}),
     ];
-    for (id, plain) in (1..).zip(&rows) {
-        let stored = wait(&runtime, seal(&cipher, plain));
-        let stored = serde_json::to_string(&stored).unwrap();
-        db.execute(
-            "INSERT INTO json_tree_positions VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_tree)",
-            &[&id, &plain.to_string(), &stored],
-        )
-        .unwrap();
-    }
+    store(
+        &mut db,
+        &runtime,
+        &cipher,
+        "json_tree_positions",
+        &options(),
+        &documents,
+    );
     for path in ["$.a[1]", "$.h.a[0]"] {
+        let path = JsonPath::parse(path).unwrap();
         let key = wait(
             &runtime,
-            keyset.json_subtree_key(&JsonPath::parse(path).unwrap(), &options(), column()),
+            keyset.json_subtree_key(&path, &options(), column()),
         )
         .unwrap();
         for id in 1..=3 {
-            let walked: Vec<JsonTreeEntry> = db
-                .query(
-                    "SELECT e::jsonb::text FROM json_tree_positions, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 0) e WHERE id = $3",
-                    &[&key.token(), &key.gates(), &id],
-                )
-                .unwrap()
-                .iter()
-                .map(|r| serde_json::from_str(&r.get::<_, String>(0)).unwrap())
-                .collect();
-            let expected: Option<String> = db
-                .query_one(
-                    "SELECT jsonb_path_query_first(plain, ('strict ' || $1::text)::jsonpath, '{}', true)::text FROM json_tree_positions WHERE id = $2",
-                    &[&path, &id],
-                )
-                .unwrap()
-                .get(0);
-            match expected {
-                None => assert!(walked.is_empty(), "{path}, row {id}: jsonb has no node"),
-                Some(expected) => {
-                    let value: Value = wait(
-                        &runtime,
-                        cipher.decrypt_as(JsonTreeSubtree::from_key(&key, walked), column()),
-                    )
-                    .unwrap();
-                    assert_eq!(
-                        value,
-                        serde_json::from_str::<Value>(&expected).unwrap(),
-                        "{path}, row {id}"
-                    );
-                }
+            let walked = subtree_rows(&mut db, "json_tree_positions", id, &key, 0);
+            let expected = jsonb_first(&mut db, "json_tree_positions", id, &path);
+            if expected.is_none() {
+                assert!(walked.is_empty(), "{path}, row {id}: jsonb has no node");
             }
+            let value: Option<Value> = wait(
+                &runtime,
+                cipher.decrypt_as(JsonTreeSubtree::from_key(&key, walked), column()),
+            )
+            .unwrap();
+            assert_eq!(value, expected, "{path}, row {id}");
         }
+        let counts: Vec<(i32, Option<i32>)> = db
+            .query(
+                "SELECT id, eql_v4.json_tree_child_count(doc, $1::text) FROM json_tree_positions ORDER BY id",
+                &[&key.tokens()[0]],
+            )
+            .unwrap()
+            .iter()
+            .map(|r| (r.get(0), r.get(1)))
+            .collect();
+        assert_eq!(
+            counts,
+            [(1, Some(1)), (2, None), (3, None)],
+            "{path}: x, in row 1 only"
+        );
     }
-    // A position gate that does not name the elements' selector admits
-    // nothing: an ordinal alone cannot tell an element from a member.
-    let key = wait(
-        &runtime,
-        keyset.json_subtree_key(&JsonPath::parse("$.h.a[0]").unwrap(), &options(), column()),
-    )
-    .unwrap();
-    let bare = [key.gates()[0].clone(), "#0".to_owned()];
-    let none: i64 = db
-        .query_one(
-            "SELECT count(*) FROM json_tree_positions, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 0) e",
-            &[&key.token(), &bare.as_slice()],
-        )
-        .unwrap()
-        .get(0);
-    assert_eq!(none, 0);
-    let counts: Vec<(i32, i32)> = db
-        .query(
-            "SELECT id, eql_v4.json_tree_child_count(doc, $1::text, $2::text[]) FROM json_tree_positions ORDER BY id",
-            &[&key.token(), &key.gates()],
-        )
-        .unwrap()
-        .iter()
-        .map(|r| (r.get(0), r.get(1)))
-        .collect();
-    assert_eq!(
-        counts,
-        [(1, 1), (2, 0), (3, 0)],
-        "one member, x, under $.h.a[0] in row 1 only"
-    );
 }
 
-/// Needs an EQL v4 installation. What `->` and the walks return is checked
+/// Needs an EQL v4 installation. What `->` and the reads return is checked
 /// by the client to be what it asked for: every entry of a row is genuine
 /// and opens under its own selector and position, so an answer made of the
 /// wrong entries would open unless the client refuses it. Real rows come
 /// back from PostgreSQL here, from a database answering the wrong question
-/// (another path's entry, the sealed root, another position's subtree) and
-/// from stored rows tampered with (a parent tag rewritten so the walk takes
-/// a top-level field for a member, and two entries swapped in `sv`). Each
-/// is refused: the wrong entry as `JsonWrongEntry`, a moved entry as
-/// `Aead`, since its ciphertext is bound to the position it was sealed at.
+/// (another path's entry, the sealed root, another position's subtree with
+/// its self tag forged) and from stored rows tampered with (a self tag
+/// forged so the read finds the wrong node, a top-level field moved under
+/// another node, two entries swapped in `sv`). Each is refused: the wrong
+/// entry as `JsonWrongEntry`, a moved entry as `Aead`, since its ciphertext
+/// is bound to the position it was sealed at. Two answers are allowed by
+/// design and shown to open: another row's node at the path (ADR 0010),
+/// and the node at the same selector under another element, which no field
+/// a row binds tells apart.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_hostile_answers_are_refused_by_the_client() {
@@ -1374,18 +1841,16 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     let (cipher, _) = wait(&runtime, common::cipher());
     let keyset = cipher.default_keyset();
     let mut db = connect();
-    db.batch_execute(
-        "CREATE TEMP TABLE json_tree_hostile (id int PRIMARY KEY, doc public.eql_v4_json_tree NOT NULL)",
-    )
-    .unwrap();
-    for id in [1, 2] {
-        let stored = serde_json::to_string(&wait(&runtime, seal(&cipher, &fixture()))).unwrap();
-        db.execute(
-            "INSERT INTO json_tree_hostile VALUES ($1, $2::text::jsonb::public.eql_v4_json_tree)",
-            &[&id, &stored],
-        )
-        .unwrap();
-    }
+    let other =
+        json!({"hello": "world-2", "nested": {"deep": "other", "list": [{"x": 3}]}, "number": 2});
+    store(
+        &mut db,
+        &runtime,
+        &cipher,
+        "json_tree_hostile",
+        &JsonOptions::default(),
+        &[fixture(), fixture(), other.clone()],
+    );
     let selector_of = |path: &str| -> JsonSelector {
         wait(
             &runtime,
@@ -1404,7 +1869,6 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
         )
         .unwrap()
     };
-    // `doc -> selector` in row `id`.
     let arrow = |db: &mut postgres::Client, id: i32, selector: &JsonSelector| -> JsonTreeEntry {
         let row = db
             .query_one(
@@ -1414,16 +1878,8 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
             .unwrap();
         serde_json::from_str(&row.get::<_, String>(0)).unwrap()
     };
-    // The walk `key` keys in row `id`, walked out (budget 0).
-    let walked = |db: &mut postgres::Client, id: i32, key: &JsonSubtreeKey| -> Vec<JsonTreeEntry> {
-        db.query(
-            "SELECT e::jsonb::text FROM json_tree_hostile, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 0) e WHERE id = $3",
-            &[&key.token(), &key.gates(), &id],
-        )
-        .unwrap()
-        .iter()
-        .map(|r| serde_json::from_str(&r.get::<_, String>(0)).unwrap())
-        .collect()
+    let read = |db: &mut postgres::Client, id: i32, key: &JsonSubtreeKey| {
+        subtree_rows(db, "json_tree_hostile", id, key, 0)
     };
     let extracted = |asked: &JsonSelector, entry: JsonTreeEntry| -> Result<Value, Error> {
         wait(
@@ -1443,6 +1899,15 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
             "{what}: {result:?}"
         );
     };
+    // The self tag a read of `key` finds in row `id`.
+    let x_of = |db: &mut postgres::Client, id: i32, key: &JsonSubtreeKey| -> String {
+        db.query_one(
+            "SELECT eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64')) FROM json_tree_hostile WHERE id = $2",
+            &[&key.tokens()[0], &id],
+        )
+        .unwrap()
+        .get(0)
+    };
 
     // `->` on `$.hello` answered with the row's `$.number`, and with the
     // sealed root, which opens to the whole document.
@@ -1460,50 +1925,86 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     assert_eq!(
         extracted(&selector_of("$"), root).unwrap(),
         fixture(),
-        "the root asked for at `$`"
+        "`$`"
     );
 
-    // The walk to `$.nested.list[1]` answered with the rows of the walk to
-    // `$.nested.list[0]`: the same selectors, another position.
+    // The read of `$.nested.list[1]` answered with `$.nested.list[0]`'s
+    // rows, its self tag forged to the second element's: the same selector,
+    // and the position in its label tells them apart.
     let second = subtree_key("$.nested.list[1]");
     assert_eq!(
-        opened(&second, walked(&mut db, 1, &second)).unwrap(),
+        opened(&second, read(&mut db, 1, &second)).unwrap(),
         json!({"x": 2})
     );
-    wrong(
-        opened(
-            &second,
-            walked(&mut db, 1, &subtree_key("$.nested.list[0]")),
-        ),
-        "another position's subtree",
+    let mut forged = read(&mut db, 1, &subtree_key("$.nested.list[0]"));
+    forged[0].x = serde_json::from_value(json!(x_of(&mut db, 1, &second))).unwrap();
+    wrong(opened(&second, forged), "another position's subtree");
+
+    // Allowed: `$.nested.list[0].x` for `$.nested.list[1].x`, self tag
+    // forged; the same selector, the same label.
+    let second_x = subtree_key("$.nested.list[1].x");
+    let mut forged = read(&mut db, 1, &subtree_key("$.nested.list[0].x"));
+    forged[0].x = serde_json::from_value(json!(x_of(&mut db, 1, &second_x))).unwrap();
+    assert_eq!(
+        opened(&second_x, forged).unwrap(),
+        json!(1),
+        "another element's x, by design"
+    );
+    // Allowed: another row's node at the path, with its own header.
+    let nested = subtree_key("$.nested");
+    assert_eq!(
+        opened(&nested, read(&mut db, 3, &nested)).unwrap(),
+        other["nested"],
+        "ADR 0010"
     );
 
-    // A stored row whose `$.number` (entry 9) carries a parent tag under
-    // `$.nested`'s token, at the ordinal after its two members: the walk
-    // takes it for nested's third member, and returns it right after
-    // nested's subtree, where it sits in `sv`.
-    let nested = subtree_key("$.nested");
-    assert!(nested.gates().is_empty());
+    // A truncated read and a reordered one.
+    let mut truncated = read(&mut db, 1, &nested);
+    let _ = truncated.pop();
+    assert!(opened(&nested, truncated).is_err(), "a truncated read");
+    let mut reordered = read(&mut db, 1, &nested);
+    reordered.swap(2, 3);
     assert_eq!(
-        opened(&nested, walked(&mut db, 1, &nested)).unwrap(),
-        fixture()["nested"]
+        opened(&nested, reordered).unwrap(),
+        fixture()["nested"],
+        "the rows are placed by their positions, not the order they came in"
     );
+
+    // A stored row whose `$.number` (entry 9) is moved under `$.nested`:
+    // a parent tag at the ordinal after its two members and a member's self
+    // tag. The read takes it for nested's third member and returns it after
+    // nested's subtree; nested's child count says two, and the row is
+    // refused.
     db.execute(
-        "UPDATE json_tree_hostile SET doc = jsonb_set(doc::jsonb, '{sv,9,p}',
+        "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb, '{sv,9,p}',
            to_jsonb(eql_v4_internal.json_tree_parent_tag(
-             eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'), 2)))::public.eql_v4_json_tree
+             eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'), 2))),
+           '{sv,9,x}',
+           to_jsonb(eql_v4_internal.json_tree_self_tag(
+             eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'),
+             eql_v4_internal.json_tree_member_token(decode($1::text, 'base64'), decode(doc::jsonb -> 'sv' -> 9 ->> 's', 'base64')))))::public.eql_v4_json_tree
          WHERE id = 1",
-        &[&nested.token()],
+        &[&nested.tokens()[0]],
     )
     .unwrap();
-    let rows = walked(&mut db, 1, &nested);
-    assert_eq!(rows.len(), 7, "the walk took number for a member");
-    assert_eq!(
-        rows.last().map(|e| (e.j, e.d)),
-        Some((Some(9), Some(1))),
-        "number, one level below nested"
-    );
+    let rows = read(&mut db, 1, &nested);
+    assert_eq!(rows.len(), 8, "the read took number for a member");
+    assert_eq!(rows.last().map(|e| (e.j, e.d)), Some((Some(9), Some(1))));
     wrong(opened(&nested, rows), "a top-level field as a member");
+
+    // A stored row whose `$.hello` (1) carries `$.number`'s self tag: the
+    // read of `$.number` finds hello, whose selector is not number's.
+    let number = subtree_key("$.number");
+    db.execute(
+        "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb, '{sv,1,x}', doc::jsonb -> 'sv' -> 9 -> 'x'),
+           '{sv,9,x}', '\"AAAAAAAAAAA=\"')::public.eql_v4_json_tree WHERE id = 2",
+        &[],
+    )
+    .unwrap();
+    wrong(
+        opened(&number, read(&mut db, 2, &number)),
+        "a forged self tag",
+    );
 
     // A stored row whose `deep` (3) and `number` (9) swapped places: each
     // entry is found where it now sits, and fails to open there.
@@ -1517,59 +2018,317 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
     let deep = selector_of("$.nested.deep");
     let moved = extracted(&deep, arrow(&mut db, 2, &deep));
     assert!(matches!(moved, Err(Error::Aead)), "`->`: {moved:?}");
-    let moved = opened(&nested, walked(&mut db, 2, &nested));
-    assert!(matches!(moved, Err(Error::Aead)), "the walk: {moved:?}");
+    let moved = opened(&nested, read(&mut db, 2, &nested));
+    assert!(matches!(moved, Err(Error::Aead)), "the read: {moved:?}");
+}
+
+/// A small deterministic generator of documents with arrays of objects, so
+/// that a selector has several elements under it.
+fn tamper_document(rng: &mut Lcg, depth: u32) -> Value {
+    match rng.below(if depth == 0 { 3 } else { 6 }) {
+        0 => json!(rng.below(4)),
+        1 => json!(["s", "t", "u"][rng.below(3) as usize]),
+        2 => Value::Null,
+        3 | 4 => Value::Array(
+            (0..rng.below(4))
+                .map(|_| tamper_document(rng, depth - 1))
+                .collect(),
+        ),
+        _ => {
+            let mut map = Map::new();
+            for _ in 0..rng.below(4) {
+                let key = ["a", "b", "c", "0"][rng.below(4) as usize].to_owned();
+                let _ = map.insert(key, tamper_document(rng, depth - 1));
+            }
+            Value::Object(map)
+        }
+    }
+}
+
+/// Every answer the read check cannot tell from the right one, by design:
+/// the value at every concrete path that shares `path`'s selector and last
+/// step, under another element of an array before it.
+fn same_selector_values(plain: &Value, path: &JsonPath) -> Vec<Value> {
+    let segments = path.segments();
+    let pattern: Vec<String> = segments
+        .iter()
+        .enumerate()
+        .map(|(i, segment)| match segment {
+            Segment::Key(key) => format!("[{}]", serde_json::to_string(key).unwrap()),
+            Segment::Index(n) if i + 1 == segments.len() => format!("[{n}]"),
+            _ => "[*]".to_owned(),
+        })
+        .collect();
+    JsonPath::parse(&format!("${}", pattern.concat()))
+        .unwrap()
+        .select(plain)
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+/// Needs an EQL v4 installation. No tampering with a stored row makes a
+/// read answer wrongly without saying so. Random documents are stored, one
+/// random change is made to each stored row (a self tag, parent tag or
+/// selector rewritten, two entries swapped, an entry dropped or
+/// duplicated, a node moved under another parent, an entry swapped with
+/// the same position of another row, a read's rows truncated), and every
+/// path of the untampered document is then read. The client either opens
+/// exactly the `jsonb` answer over the untampered plaintext, or refuses, or
+/// opens one of the answers it allows by design, each modelled here: no
+/// node (`None`, the database withholding the rows, which no row can prove
+/// it should have returned), and the node at the same selector and last
+/// step under another element. Nothing else is accepted.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_reads_never_answer_wrongly_under_tampering() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = wait(&runtime, common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    db.batch_execute(
+        "CREATE TEMP TABLE json_tree_tamper (id int PRIMARY KEY, plain jsonb NOT NULL, doc public.eql_v4_json_tree NOT NULL)",
+    )
+    .unwrap();
+    let mut rng = Lcg(0x5eed_7a3e);
+    let mut outcomes = std::collections::BTreeMap::<&str, usize>::new();
+    const MUTATIONS: u64 = 9;
+    for round in 0..120i32 {
+        let id = round;
+        let mut plain = Value::Object(Map::new());
+        while plain.as_object().is_some_and(Map::is_empty) {
+            plain = json!({"a": tamper_document(&mut rng, 3), "b": [tamper_document(&mut rng, 2), tamper_document(&mut rng, 2)]});
+        }
+        let stored = serde_json::to_value(wait(&runtime, seal(&cipher, &plain))).unwrap();
+        let other = serde_json::to_value(wait(&runtime, seal(&cipher, &plain))).unwrap();
+        let sv = stored["sv"].as_array().unwrap().clone();
+        let n = sv.len();
+        let pick = |rng: &mut Lcg| rng.below(n as u64) as usize;
+        let mut tampered = stored.clone();
+        let mutation = rng.below(MUTATIONS);
+        let mut truncate_rows = false;
+        let what = match mutation {
+            0 => {
+                let (i, k) = (pick(&mut rng), pick(&mut rng));
+                tampered["sv"][i]["x"] = sv[k]["x"].clone();
+                "a self tag copied from another entry"
+            }
+            1 => {
+                let (i, k) = (pick(&mut rng), pick(&mut rng));
+                match sv[k].get("p") {
+                    Some(p) => tampered["sv"][i]["p"] = p.clone(),
+                    None => {
+                        let _ = tampered["sv"][i].as_object_mut().unwrap().remove("p");
+                    }
+                }
+                "a parent tag copied, or removed"
+            }
+            2 => {
+                let (i, k) = (pick(&mut rng), pick(&mut rng));
+                tampered["sv"][i]["s"] = sv[k]["s"].clone();
+                "a selector rewritten"
+            }
+            3 => {
+                let (i, k) = (pick(&mut rng), pick(&mut rng));
+                tampered["sv"].as_array_mut().unwrap().swap(i, k);
+                "two entries swapped"
+            }
+            4 => {
+                let i = pick(&mut rng);
+                if n > 1 {
+                    let _ = tampered["sv"].as_array_mut().unwrap().remove(i);
+                }
+                "an entry dropped"
+            }
+            5 => {
+                let (i, k) = (pick(&mut rng), pick(&mut rng));
+                tampered["sv"]
+                    .as_array_mut()
+                    .unwrap()
+                    .insert(k, sv[i].clone());
+                "an entry duplicated"
+            }
+            6 => {
+                let i = pick(&mut rng);
+                tampered["sv"][i] = other["sv"][i].clone();
+                "an entry swapped with another row's at its position"
+            }
+            7 => {
+                truncate_rows = true;
+                "a read's rows truncated"
+            }
+            _ => "a node moved under another parent",
+        };
+        let inserted = db.execute(
+            "INSERT INTO json_tree_tamper VALUES ($1, $2::text::jsonb, $3::text::jsonb::public.eql_v4_json_tree)",
+            &[&id, &plain.to_string(), &tampered.to_string()],
+        );
+        if inserted.is_err() {
+            *outcomes.entry("refused by the domain CHECK").or_default() += 1;
+            continue;
+        }
+        let paths = node_paths(&plain);
+        if mutation == 8 && paths.len() > 2 {
+            // Move a random non-root node under a random container (not
+            // itself or beneath it) as that container's next child.
+            let from = &paths[1 + pick(&mut rng) % (paths.len() - 1)];
+            let containers: Vec<&JsonPath> = paths
+                .iter()
+                .filter(|p| {
+                    !p.segments().starts_with(from.segments())
+                        && p.select(&plain)
+                            .first()
+                            .is_some_and(|v| v.is_object() || v.is_array())
+                        && !p.segments().is_empty()
+                })
+                .collect();
+            if let Some(to) = containers.get(pick(&mut rng) % containers.len().max(1)) {
+                let to_key = wait(
+                    &runtime,
+                    keyset.json_subtree_key(to, &JsonOptions::default(), column()),
+                )
+                .unwrap();
+                let from_key = wait(
+                    &runtime,
+                    keyset.json_subtree_key(from, &JsonOptions::default(), column()),
+                )
+                .unwrap();
+                let width = match to.select(&plain)[0] {
+                    Value::Object(m) => m.len(),
+                    Value::Array(a) => a.len(),
+                    _ => 0,
+                } as i32;
+                let member = matches!(from.segments().last(), Some(Segment::Key(_)));
+                db.execute(
+                    "UPDATE json_tree_tamper SET doc = (
+                       SELECT jsonb_set(jsonb_set(doc::jsonb, ARRAY['sv', j::text, 'p'],
+                                to_jsonb(eql_v4_internal.json_tree_parent_tag(iv, t, $3))),
+                              ARRAY['sv', j::text, 'x'],
+                              to_jsonb(eql_v4_internal.json_tree_self_tag(iv, CASE WHEN $4
+                                THEN eql_v4_internal.json_tree_member_token(t, s)
+                                ELSE eql_v4_internal.json_tree_element_token(t, s, $3) END)))
+                       FROM (SELECT eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h') AS iv,
+                                    decode($2::text, 'base64') AS t,
+                                    (eql_v4_internal.json_tree_by_self(doc::jsonb)
+                                      -> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64')) ->> 'j') AS j,
+                                    decode(eql_v4_internal.json_tree_by_self(doc::jsonb)
+                                      -> eql_v4_internal.json_tree_self_tag(eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64')) ->> 's', 'base64') AS s) AS q
+                     )::public.eql_v4_json_tree WHERE id = $5",
+                    &[&from_key.tokens()[0], &to_key.tokens()[0], &width, &member, &id],
+                )
+                .unwrap();
+            }
+        }
+        for path in &paths {
+            let key = wait(
+                &runtime,
+                keyset.json_subtree_key(path, &JsonOptions::default(), column()),
+            )
+            .unwrap();
+            let expected = path.select(&plain).first().cloned().cloned();
+            let allowed = same_selector_values(&plain, path);
+            for budget in [0, 1] {
+                let mut rows = subtree_rows(&mut db, "json_tree_tamper", id, &key, budget);
+                if truncate_rows && rows.len() > 1 {
+                    let _ = rows.pop();
+                }
+                let opened: Result<Option<Value>, stack_encrypt::Error> = wait(
+                    &runtime,
+                    cipher.decrypt_as(JsonTreeSubtree::from_key(&key, rows), column()),
+                );
+                let outcome = match opened {
+                    Err(_) => "refused",
+                    Ok(found) if found == expected => "the right answer",
+                    Ok(None) => "withheld",
+                    Ok(Some(found)) if allowed.contains(&found) => "another element at the selector",
+                    Ok(found) => panic!(
+                        "round {round}, {what}: {path} at budget {budget} opened to {found:?}, where jsonb holds {expected:?}"
+                    ),
+                };
+                *outcomes.entry(outcome).or_default() += 1;
+            }
+        }
+    }
+    assert!(
+        outcomes.get("refused").copied().unwrap_or(0) > 0,
+        "{outcomes:?}"
+    );
+    assert!(
+        outcomes.get("the right answer").copied().unwrap_or(0) > 0,
+        "{outcomes:?}"
+    );
+    eprintln!("tampering outcomes: {outcomes:?}");
+}
+
+// =============================================================================
+// Hostile documents
+// =============================================================================
+
+/// A document built in SQL: a root, then `levels` levels each holding
+/// `copies` entries, every one a member (selector all zero) of the level
+/// above with that member's self tag, at the ordinals `0 … copies − 1` when
+/// `spread`, else all at ordinal 0 (one parent tag, repeated). `flags` is
+/// the header's flags byte. Built from the SQL chain primitives, as whoever
+/// holds the all-zero token could build one.
+fn forged_chain(flags: i32, levels: i64, copies: i64, spread: bool) -> String {
+    let ordinal = if spread { "copy.c" } else { "0" };
+    format!(
+        "WITH RECURSIVE k AS (
+           SELECT set_byte(set_byte(decode(repeat('00', 40), 'hex'), 0, 1), 1, {flags}) AS h,
+                  decode(repeat('00', 16), 'hex') AS iv
+         ), link(n, t) AS (
+             SELECT 0, decode(repeat('00', 16), 'hex')
+           UNION ALL
+             SELECT n + 1, eql_v4_internal.json_tree_member_token(t, decode(repeat('00', 16), 'hex')) FROM link WHERE n < {last}
+         ), copy(c) AS (SELECT generate_series(0, {copies} - 1))
+         SELECT (jsonb_build_object(
+           'v', 4, 'i', jsonb_build_object('t', 'users', 'c', 'profile'),
+           'h', (SELECT encode(h, 'base64') FROM k),
+           'sv', jsonb_build_array(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', '00',
+                   'x', (SELECT eql_v4_internal.json_tree_self_tag(k.iv, decode(repeat('00', 16), 'hex')) FROM k)))
+                 || (SELECT jsonb_agg(jsonb_build_object(
+                       's', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', to_hex(copy.c),
+                       'x', eql_v4_internal.json_tree_self_tag(k.iv, eql_v4_internal.json_tree_member_token(link.t, decode(repeat('00', 16), 'hex'))),
+                       'p', eql_v4_internal.json_tree_parent_tag(k.iv, link.t, {ordinal})) ORDER BY n, copy.c)
+                     FROM link, k, copy),
+           'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_tree",
+        last = levels - 1
+    )
 }
 
 /// Needs an EQL v4 installation. A stored document is untrusted input: its
-/// parent tags are not authenticated, so whoever holds a token can write a
-/// chain of them deeper than any sealed document. A child's token is a
-/// hash of its parent's, so the chain cannot loop back, and the walk, which
-/// carries no depth bound, still ends after one row per entry: here a chain
-/// of 300, past the 127 levels a sealed document can nest.
-/// `statement_timeout` turns a walk that would not end into a failure
-/// instead of a hung suite.
+/// self tags and parent tags are not authenticated, so whoever holds a
+/// token can write a chain of them deeper than any sealed document. The
+/// read, which carries no depth bound, still ends: here a chain of 300,
+/// past the 127 levels a sealed document can nest, under the sealed root
+/// and not, in full and past a budget. `statement_timeout` turns a read
+/// that would not end into a failure instead of a hung suite.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_walks_end_on_hostile_documents() {
     let mut db = connect();
     db.batch_execute("SET statement_timeout = '10s'").unwrap();
-    // A root, then 300 entries each the only child of the one before, under
-    // the all-zero token. `flags` is the header's flags byte, so the same
-    // document is built with its root sealed and not.
-    let chain = |flags: i32| {
-        format!(
-            "WITH RECURSIVE k AS (
-               SELECT set_byte(set_byte(decode(repeat('00', 40), 'hex'), 0, 1), 1, {flags}) AS h,
-                      decode(repeat('00', 16), 'hex') AS iv
-             ), link(n, t) AS (
-                 SELECT 0, decode(repeat('00', 16), 'hex')
-               UNION ALL
-                 SELECT n + 1, eql_v4_internal.json_tree_child_token(t, decode(repeat('00', 16), 'hex'), 0) FROM link WHERE n < 299
-             )
-             SELECT (jsonb_build_object(
-               'v', 4, 'i', jsonb_build_object('t', 'users', 'c', 'profile'),
-               'h', (SELECT encode(h, 'base64') FROM k),
-               'sv', jsonb_build_array(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', '00'))
-                     || (SELECT jsonb_agg(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', '00', 'p', eql_v4_internal.json_tree_parent_tag(k.iv, link.t, 0)) ORDER BY n) FROM link, k),
-               'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_tree"
-        )
-    };
-    let token = "AAAAAAAAAAAAAAAAAAAAAA==".to_owned();
-    for (flags, budget, expected) in [(0, 0, 300), (0, 64, 300), (1, 0, 300), (1, 64, 1)] {
-        let doc = chain(flags);
+    let token = vec!["AAAAAAAAAAAAAAAAAAAAAA==".to_owned()];
+    for (flags, budget, expected) in [(0, 0, 301), (0, 64, 301), (1, 0, 301), (1, 64, 1)] {
+        let doc = forged_chain(flags, 300, 1, false);
         let walked: i64 = db
             .query_one(
-                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_subtree(d.doc, $1::text, {budget}) e"),
+                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_subtree(d.doc, $1::text[], {budget}) e"),
                 &[&token],
             )
             .unwrap_or_else(|error| panic!("flags {flags}, budget {budget}: {error}"))
             .get(0);
-        assert_eq!(walked, expected, "flags {flags}, budget {budget}");
+        assert_eq!(
+            walked, expected,
+            "flags {flags}, budget {budget}: the root and its chain"
+        );
         let children: i64 = db
             .query_one(
                 &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_children(d.doc, $1::text) e"),
-                &[&token],
+                &[&token[0]],
             )
             .unwrap()
             .get(0);
@@ -1578,48 +2337,28 @@ fn postgres_walks_end_on_hostile_documents() {
 }
 
 /// Needs an EQL v4 installation. Entries that share a parent tag do not
-/// multiply a walk. Here every level of a 60-level chain is written twice:
-/// two entries with the same `p`, so the same parent and ordinal, and the
-/// same `s`, told apart only by `c`. Walked once per copy, the rows would
-/// double at every level, 2^60 in all; the walk keeps one entry per tag and
-/// reads its recursion through the entry count, so it returns one row per
-/// level, under no budget (`0`), under an open root, and under a budget
-/// above the entry count, and still falls back past a budget below it.
+/// multiply a read. Here every level of a 60-level chain is written twice:
+/// two entries with the same `p`, so the same parent and ordinal, the same
+/// `s` and the same self tag, told apart only by `c`. The map keeps one
+/// entry per tag, so the read returns one row per level and the root, under
+/// no budget (`0`), under an open root, and under a budget above the entry
+/// count, and still falls back past a budget below it.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_walks_do_not_multiply_on_duplicated_entries() {
     let mut db = connect();
     db.batch_execute("SET statement_timeout = '10s'").unwrap();
     const LEVELS: i64 = 60;
-    let doc = |flags: i32| {
-        format!(
-            "WITH RECURSIVE k AS (
-               SELECT set_byte(set_byte(decode(repeat('00', 40), 'hex'), 0, 1), 1, {flags}) AS h,
-                      decode(repeat('00', 16), 'hex') AS iv
-             ), link(n, t) AS (
-                 SELECT 0, decode(repeat('00', 16), 'hex')
-               UNION ALL
-                 SELECT n + 1, eql_v4_internal.json_tree_child_token(t, decode(repeat('00', 16), 'hex'), 0) FROM link WHERE n < {last}
-             ), copy(c) AS (VALUES ('00'), ('01'))
-             SELECT (jsonb_build_object(
-               'v', 4, 'i', jsonb_build_object('t', 'users', 'c', 'profile'),
-               'h', (SELECT encode(h, 'base64') FROM k),
-               'sv', jsonb_build_array(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', '00'))
-                     || (SELECT jsonb_agg(jsonb_build_object('s', 'AAAAAAAAAAAAAAAAAAAAAA==', 'c', copy.c, 'p', eql_v4_internal.json_tree_parent_tag(k.iv, link.t, 0)) ORDER BY n, copy.c) FROM link, k, copy),
-               'q', '{{\"sv\": [], \"el\": []}}'::jsonb))::public.eql_v4_json_tree",
-            last = LEVELS - 1
-        )
-    };
-    let token = "AAAAAAAAAAAAAAAAAAAAAA==".to_owned();
+    let token = vec!["AAAAAAAAAAAAAAAAAAAAAA==".to_owned()];
     let entries = 1 + 2 * LEVELS;
     for (flags, budget, expected) in [
-        (0, 0, LEVELS),
-        (1, 0, LEVELS),
-        (0, 10, LEVELS),
-        (1, 200, LEVELS),
+        (0, 0, LEVELS + 1),
+        (1, 0, LEVELS + 1),
+        (0, 10, LEVELS + 1),
+        (1, 200, LEVELS + 1),
         (1, 10, 1),
     ] {
-        let doc = doc(flags);
+        let doc = forged_chain(flags, LEVELS, 2, false);
         let stored: i64 = db
             .query_one(
                 &format!("SELECT jsonb_array_length(d.doc::jsonb -> 'sv')::bigint FROM ({doc}) AS d(doc)"),
@@ -1630,7 +2369,7 @@ fn postgres_walks_do_not_multiply_on_duplicated_entries() {
         assert_eq!(stored, entries);
         let walked: i64 = db
             .query_one(
-                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_subtree(d.doc, $1::text, {budget}) e"),
+                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_subtree(d.doc, $1::text[], {budget}) e"),
                 &[&token],
             )
             .unwrap_or_else(|error| panic!("flags {flags}, budget {budget}: {error}"))
@@ -1640,10 +2379,53 @@ fn postgres_walks_do_not_multiply_on_duplicated_entries() {
         let children: i64 = db
             .query_one(
                 &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_children(d.doc, $1::text) e"),
-                &[&token],
+                &[&token[0]],
             )
             .unwrap()
             .get(0);
         assert_eq!(children, 1, "flags {flags}");
+    }
+}
+
+/// Needs an EQL v4 installation. A member's token is a hash of its
+/// parent's and its selector, not of the probe that found it, so two
+/// entries forged under one parent, at ordinals 0 and 1, with one selector
+/// and the member rule's self tag, derive one token: the read visits the
+/// subtree beneath it once for each, and level after level the rows would
+/// double, 2^60 for 60 levels. The read takes its recursion through `LIMIT`
+/// the entry count times the number of tokens, so it ends at that, and
+/// returns no more rows than that under any budget.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_walks_do_not_multiply_on_forged_member_tags() {
+    let mut db = connect();
+    db.batch_execute("SET statement_timeout = '10s'").unwrap();
+    const LEVELS: i64 = 60;
+    let token = vec!["AAAAAAAAAAAAAAAAAAAAAA==".to_owned()];
+    let entries = 1 + 2 * LEVELS;
+    for (flags, budget) in [(0, 0), (1, 0), (1, 64), (1, 1000)] {
+        let doc = forged_chain(flags, LEVELS, 2, true);
+        let walked: i64 = db
+            .query_one(
+                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_subtree(d.doc, $1::text[], {budget}) e"),
+                &[&token],
+            )
+            .unwrap_or_else(|error| panic!("flags {flags}, budget {budget}: {error}"))
+            .get(0);
+        assert!(
+            walked <= entries,
+            "flags {flags}, budget {budget}: {walked} rows"
+        );
+        if flags == 1 && budget == 64 {
+            assert_eq!(walked, 1, "past the budget, the sealed root");
+        }
+        let children: i64 = db
+            .query_one(
+                &format!("SELECT count(*) FROM ({doc}) AS d(doc), eql_v4.json_tree_children(d.doc, $1::text) e"),
+                &[&token[0]],
+            )
+            .unwrap()
+            .get(0);
+        assert_eq!(children, 2, "flags {flags}: both forged children");
     }
 }

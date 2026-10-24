@@ -117,6 +117,9 @@ zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
+# Property tests of the JSON index's derivations and reads. Without `fork`
+# and `timeout`, which the suite does not use, as stack-guest-abi takes it.
+proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
 # and CI run them. They cannot be relied on to hold under both feature sets
