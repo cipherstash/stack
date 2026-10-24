@@ -49,6 +49,9 @@ mod tests {
             Error::Kms(_) => Error::Kms(crate::kms::Error::Unexpected("kms".into())),
             Error::Aead => Error::Aead,
             Error::OpenedType { .. } => Error::OpenedType { expected: "i32" },
+            Error::JsonWrongEntry { .. } => Error::JsonWrongEntry {
+                expected: "the entry at the path asked for",
+            },
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
@@ -396,6 +399,12 @@ mod tests {
             (
                 Box::new(Error::OpenedType { expected: "i32" }),
                 json!({ "expected": "i32" }),
+            ),
+            (
+                Box::new(Error::JsonWrongEntry {
+                    expected: "the entry at the path asked for",
+                }),
+                json!({ "expected": "the entry at the path asked for" }),
             ),
             (
                 Box::new(LeafBytesError::UnknownVersion(9)),

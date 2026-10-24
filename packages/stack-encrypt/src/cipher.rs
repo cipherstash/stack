@@ -173,6 +173,34 @@ pub enum Error {
         help("Open the value as the type it was sealed as. The ciphertext is authentic: it was sealed as another type, not altered.")
     )]
     OpenedType { expected: &'static str },
+    /// The database answered a JSON index read with an entry other than
+    /// the one the read asked for: `->` returned the entry of another path,
+    /// or the sealed root in place of a node, or a subtree walk returned a
+    /// row that is not where the walk's key says its rows are (a node of
+    /// another path, a row out of its place in the document, or a row
+    /// whose parent is not among the rows). Refused by the client, which
+    /// derived the path's selector itself; see
+    /// [`JsonSelector::open`](crate::json::JsonSelector::open) and
+    /// [`JsonSubtreeKey::open`](crate::json::JsonSubtreeKey::open).
+    ///
+    /// Not [`Aead`](Self::Aead): every entry may be genuine, sealed in
+    /// this column and this row. Not [`OpenedType`](Self::OpenedType)
+    /// either: the entry is not of an unexpected shape, it is the answer to
+    /// another question. A database that answers the query it was sent
+    /// never returns one, so this says the rows were tampered with or the
+    /// query that produced them was not the one the key or selector keyed.
+    ///
+    /// Which row a value belongs to is not checked: an entry from another
+    /// row of the same column at the same path, returned with that row's
+    /// header, opens (ADR 0010, `docs/adr/0010-what-a-stored-value-authenticates.md`).
+    ///
+    /// `expected` names what the read expected, never what the entry held.
+    #[error("the database returned a JSON index entry other than {expected}")]
+    #[diagnostic(
+        code(stack_encrypt::json_wrong_entry),
+        help("The entry opened, but it is not the one the query asked for. A database that answers the query it was sent never returns one: check that the rows came from the query the selector or subtree key was derived for, and treat them as tampered with if they did.")
+    )]
+    JsonWrongEntry { expected: &'static str },
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     #[diagnostic(code(stack_encrypt::key_count_mismatch))]
@@ -343,7 +371,9 @@ impl crate::ErrorPayload for Error {
                 ("expected", (*expected).into()),
                 ("received", (*received).into()),
             ]),
-            Self::OpenedType { expected } => payload([("expected", (*expected).into())]),
+            Self::OpenedType { expected } | Self::JsonWrongEntry { expected } => {
+                payload([("expected", (*expected).into())])
+            }
             Self::DescriptorTooLong { len } => payload([
                 ("len", (*len).into()),
                 ("limit", Descriptor::MAX_LEN.into()),

@@ -20,8 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens at the path the walk's key was derived from: the rows are built
   with `JsonTreeSubtree::from_key(&key, rows)`, and there is no
   constructor without the key.
+  An entry `->` returned opens through the selector that asked for it,
+  `JsonTreeExtracted::from_selector(&selector, entry)`, which refuses an
+  entry carrying another selector (`stack_encrypt::Error::JsonWrongEntry`),
+  and a walk's rows through the key that keyed it, which checks each row
+  against the path the same way; `JsonTreeEntry` does not open on its own.
   The document is an `EncryptFrom<Value>` and `DecryptInto<Value>` target,
-  the entry and the subtree open through `DecryptInto`, and the needle and
+  the extracted entry and the subtree open through `DecryptInto`, and the needle and
   the ordering operand convert from Stack Encrypt's `JsonQuery` and
   `JsonLeafQuery`. `JsonTree::new(options)` is the `json_tree` layout under
   index options other than the defaults (a `Layout<Value>`, so a program

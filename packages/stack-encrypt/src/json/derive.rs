@@ -8,6 +8,7 @@
 //! ordinal `j` is its place in that order, and the AAD of its ciphertext
 //! binds it there.
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
@@ -16,15 +17,16 @@ use vitaminc_aead::{Cipher, Context, IntoAad, IntoContext, LocalCipherText};
 use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_prf::{BlockVisitor, IntoPrfContext, PrfValue};
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{AsProtectedRef, Controlled, Protected};
 
-use super::path::{JsonPath, Segment};
+use super::path::{key_step_len, push_key, JsonPath, Segment, ARRAY_STEP};
 use super::plain::{
     insert_member, protected_array, protected_object, push_element, read_protected, take_protected,
     PlainJson,
 };
 use super::query::{Gate, JsonSelector, JsonSubtreeKey};
-use super::{JsonDocument, JsonEntry, JsonHeader, JsonNode, JsonOptions, JsonSubtree, Tag};
+use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
+use crate::keyset::KeysetState;
 use crate::sem::TermError;
 use crate::target::{AeadContext, CallerContext, Decryption, Pending, Request};
 use crate::{DecryptInto, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
@@ -269,6 +271,18 @@ fn prf16(
     context: &Context<'_>,
     input: &[u8],
 ) -> Result<Tag, TermError> {
+    prf16_of(prf, domain, context, input)
+}
+
+/// [`prf16`] over any PRF input: a `Protected<Vec<u8>>` derives exactly
+/// what its bytes do, so input built from decrypted plaintext stays
+/// wrapped up to the PRF.
+fn prf16_of(
+    prf: &HmacSha256Prf,
+    domain: &[u8],
+    context: &Context<'_>,
+    input: impl PrfValue,
+) -> Result<Tag, TermError> {
     let block: [u8; 32] = input
         .prf_visit_with_context(
             prf,
@@ -279,6 +293,53 @@ fn prf16(
         .map_err(TermError::from_prf)?;
     Ok(truncate(&block))
 }
+
+/// What derives path selectors under one column after the keyset handle
+/// that derived a subtree key is gone: the keyset's loaded state (its
+/// index-key PRF), shared, and the column's PRF context. A
+/// [`JsonSubtreeKey`] holds one, so that opening a walk's rows can derive
+/// the selector each row must carry from its parent's path and its own
+/// decrypted label. Never printed; compared by keyset and context.
+#[derive(Clone)]
+pub(crate) struct Selectors {
+    keyset: Arc<KeysetState>,
+    context: Context<'static>,
+}
+
+impl Selectors {
+    pub(crate) fn new(keyset: Arc<KeysetState>, context: Context<'static>) -> Self {
+        Self { keyset, context }
+    }
+
+    /// The selector of the path whose selector bytes are `bytes`.
+    fn of(&self, bytes: Protected<Vec<u8>>) -> Result<Tag, Error> {
+        prf16_of(&self.keyset.prf, SELECTOR_DOMAIN, &self.context, bytes).map_err(Error::from)
+    }
+}
+
+#[cfg(test)]
+impl Selectors {
+    /// Selectors under a fixed test keyset (index key `[7; 32]`, as the
+    /// unit tests' `prf()`) and the column `users/profile`.
+    pub(crate) fn for_tests() -> Self {
+        use vitaminc_prf::PrfKeyInit;
+        Self::new(
+            Arc::new(KeysetState {
+                id: Uuid::from_u128(1),
+                name: None,
+                prf: HmacSha256Prf::new(Protected::new([7; 32])),
+            }),
+            Context::from_encoded(b"users/profile").into_owned(),
+        )
+    }
+}
+
+impl PartialEq for Selectors {
+    fn eq(&self, other: &Self) -> bool {
+        self.keyset.id == other.keyset.id && self.context == other.context
+    }
+}
+impl Eq for Selectors {}
 
 /// The first sixteen bytes of SHA-256 over the concatenation of `parts`.
 /// Plain SHA-256 by design: the design's "Why plain SHA-256 is enough here"
@@ -1076,22 +1137,35 @@ impl DecryptInto<Value> for JsonDocument {
     }
 }
 
-/// Open one extracted node: the scalar it holds, or the whole document for
-/// a sealed root. A container node holds no value of its own and is
-/// refused with [`Error::OpenedType`]; its subtree opens through
-/// [`JsonSubtree`].
-impl DecryptInto<Value> for JsonNode {
+/// The refusal of a row that is not the one a read asked for.
+fn wrong(expected: &'static str) -> Error {
+    Error::JsonWrongEntry { expected }
+}
+
+/// Open the entry `->` returned for a selector: the scalar it holds, or the
+/// whole document for a sealed root asked for at `$`. An entry that does
+/// not carry the selector asked for is refused with
+/// [`Error::JsonWrongEntry`] before any key is retrieved: it is another
+/// path's entry, or the sealed root (whose selector is the root's) in place
+/// of a node, and it would open, since every entry is sealed under its own
+/// selector. A container node holds no value of its own and is refused
+/// with [`Error::OpenedType`]; its subtree opens through [`JsonSubtree`].
+impl DecryptInto<Value> for JsonExtracted {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
+        let (node, selector) = self.into_parts();
+        if node.entry.s != selector {
+            return Decryption::failed(wrong("the entry at the path asked for"));
+        }
         Decryption::from_open(move |cipher| {
-            let (request, aad) = match retrieval(&self.header, context) {
+            let (request, aad) = match retrieval(&node.header, context) {
                 Ok(parts) => parts,
                 Err(error) => return Pending::failed(cipher, error),
             };
             Pending::request(cipher, vec![request], move |responses| {
                 let key = responses.next_retrieved_key()?;
                 let aes = leaf_cipher(&key)?;
-                let opened = open_entry(&aes, &self.header, &aad, &self.entry, self.j)?;
+                let opened = open_entry(&aes, &node.header, &aad, &node.entry, node.j)?;
                 opened
                     .whole
                     .or(opened.scalar)
@@ -1113,13 +1187,15 @@ impl DecryptInto<Value> for JsonNode {
 /// (`json_tree_subtree_at`); the children of the one node at the path, for
 /// a key without (`json_tree_subtree`). An object's members come in an
 /// order neither form fixes, and without their keys; open it as a
-/// [`Value`] to keep them.
+/// [`Value`] to keep them. Every row is checked against the key first
+/// ([`JsonSubtreeKey::open`]); a row that does not fit is
+/// [`Error::JsonWrongEntry`].
 impl DecryptInto<Vec<Value>> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
         Decryption::from_open(move |cipher| {
             if self.is_sealed_root() {
-                let below = self.below;
+                let below = self.below();
                 return open_fallback(self, cipher, context).try_map(move |(path, mut whole)| {
                     // The selected nodes move out of the document's
                     // `Protected` into one of their own, leaving `null`
@@ -1163,7 +1239,9 @@ impl DecryptInto<Vec<Value>> for JsonSubtree {
 /// descendants, and `->` on the node's selector returns the node itself.
 /// The sealed root a walk fell back to opens whole, and the key's path
 /// ([`JsonSubtreeKey::open`]) selects the one value under it; a path that
-/// reaches no node, or more than one, is [`Error::OpenedType`].
+/// reaches no node, or more than one, is [`Error::OpenedType`]. Every row
+/// is checked against the key first ([`JsonSubtreeKey::open`]); a row that
+/// does not fit is [`Error::JsonWrongEntry`].
 impl DecryptInto<Value> for JsonSubtree {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
@@ -1191,9 +1269,9 @@ impl DecryptInto<Value> for JsonSubtree {
                     }
                 });
             }
-            let reached = self.nodes.iter().any(|n| n.depth == Some(0));
+            let below = self.below();
             open_subtree(self, cipher, context).try_map(move |forest| {
-                if reached {
+                if !below {
                     let mut values: Vec<Protected<PlainJson>> =
                         forest.into_iter().map(|(_, v)| v).collect();
                     return match values.len() {
@@ -1230,14 +1308,27 @@ impl DecryptInto<Value> for JsonSubtree {
     }
 }
 
+/// One row of a walk, opened: the node, and the selector, position and
+/// depth the server returned it with. The depth is the server's report and
+/// optional on the wire; the rows are placed by their positions and the
+/// opened nodes' child counts, and a depth that disagrees with the place
+/// a row is put in is refused.
+struct Row {
+    node: Opened,
+    s: Tag,
+    j: u64,
+    d: Option<u32>,
+}
+
 /// Open every row and rebuild each complete subtree, labelled, each still
-/// under its `Protected`.
+/// under its `Protected`, checking every row against the key as it goes
+/// ([`place`]).
 fn open_subtree<'a, K>(
     subtree: JsonSubtree,
     cipher: &'a StackCipher<K>,
     context: AeadContext,
 ) -> Pending<'a, Vec<(Label, Protected<PlainJson>)>, K> {
-    let mut nodes = subtree.nodes;
+    let (mut nodes, key) = subtree.into_parts();
     nodes.sort_by_key(|n| n.j);
     // A walk returns each entry once. Two rows at one ordinal are the
     // server repeating an entry, which would let it line up one container
@@ -1257,21 +1348,196 @@ fn open_subtree<'a, K>(
         Err(error) => return Pending::failed(cipher, error),
     };
     Pending::request(cipher, vec![request], move |responses| {
-        let key = responses.next_retrieved_key()?;
-        let aes = leaf_cipher(&key)?;
-        let opened = nodes
+        let key_bytes = responses.next_retrieved_key()?;
+        let aes = leaf_cipher(&key_bytes)?;
+        let rows = nodes
             .iter()
-            .map(|n| open_entry(&aes, &header, &aad, &n.entry, n.j))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut forest = Vec::new();
-        let mut rest = opened.into_iter();
-        while let Some(top) = rest.next() {
-            let (label, top) = take_label(top);
-            let value = rebuild(top, &mut rest, 0)?;
-            forest.push((label, value));
-        }
-        Ok(forest)
+            .map(|n| {
+                Ok(Row {
+                    node: open_entry(&aes, &header, &aad, &n.entry, n.j)?,
+                    s: n.entry.s,
+                    j: n.j,
+                    d: n.depth,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        place(rows, &key)
     })
+}
+
+/// Put the opened rows of a walk back into the subtrees they hold, in
+/// document order, refusing any row that is not where the key says the
+/// walk's rows are ([`Error::JsonWrongEntry`]).
+///
+/// Each entry opened under its own selector `s` and position `j`, which its
+/// ciphertext is bound to, so each is a genuine node of the row; what the
+/// check adds is that it is the node the walk asked for. A subtree's rows
+/// in a document are its root and then every node beneath it, at
+/// consecutive positions, each node's children in order; so the rows are
+/// placed one by one, each the next position after the one before, one
+/// level below its parent, and carrying the selector of its parent's path
+/// extended by its own label, which the key derives from the decrypted
+/// label. With gates, each subtree's root is a node the path reaches: the
+/// path's selector, at depth `0`, at the position the path names if its
+/// last step is one. Without gates, the rows are the children of the
+/// path's node and their subtrees, side by side: each child carries the
+/// selector of the path extended by its label, at depth `1`, right after
+/// the subtree before it.
+fn place(
+    rows: Vec<Row>,
+    key: &JsonSubtreeKey,
+) -> Result<Vec<(Label, Protected<PlainJson>)>, Error> {
+    let below = key.gates.is_empty();
+    let at = Protected::new(key.path.selector_bytes());
+    let reached = key.selectors.of(at.clone())?;
+    let mut rest = rows.into_iter();
+    let mut forest = Vec::new();
+    // Without gates, the position the next child of the path's node must
+    // have: right after the subtree of the one before.
+    let mut next: Option<u64> = None;
+    while let Some(top) = rest.next() {
+        let (bytes, depth) = if below {
+            let bytes = child_selector_bytes(&at, &top.node.label)
+                .ok_or_else(|| wrong("a child of the walked node"))?;
+            if top.d.is_some_and(|d| d != 1)
+                || next.is_some_and(|j| j != top.j)
+                || key.selectors.of(bytes.clone())? != top.s
+            {
+                return Err(wrong("a child of the walked node"));
+            }
+            (bytes, 1)
+        } else {
+            if top.d.is_some_and(|d| d != 0)
+                || top.s != reached
+                || !reaches(&key.path, &top.node.label)
+            {
+                return Err(wrong("a node the walked path reaches"));
+            }
+            (at.clone(), 0)
+        };
+        let mut cursor = top
+            .j
+            .checked_add(1)
+            .ok_or_else(|| wrong("a node of the walk"))?;
+        let (label, node) = take_label(top.node);
+        let value = rebuild_walked(node, &bytes, depth, &mut rest, &mut cursor, &key.selectors)?;
+        next = Some(cursor);
+        forest.push((label, value));
+    }
+    Ok(forest)
+}
+
+/// Whether a node with `label` is one `path` reaches by its last step,
+/// beyond what the selector says: a position names the element at that
+/// position, where the selector reads every position as the wildcard.
+fn reaches(path: &JsonPath, label: &Label) -> bool {
+    match path.segments().last() {
+        Some(Segment::Index(n)) => matches!(label, Label::Index(at) if at == n),
+        Some(Segment::Wildcard) => matches!(label, Label::Index(_)),
+        Some(Segment::Key(_)) => matches!(label, Label::Key(_)),
+        None => matches!(label, Label::Root),
+    }
+}
+
+/// The selector bytes of the child labelled `label` of the node whose
+/// selector bytes are `parent`: the parent's, then the child's step, a key
+/// for a member and the array step for an element, as
+/// [`JsonPath::selector_bytes`] writes them. A member's key is decrypted
+/// plaintext, so the bytes are built inside a `Protected`, sized before
+/// they are written. `None` for the root, which is no node's child.
+fn child_selector_bytes(parent: &Protected<Vec<u8>>, label: &Label) -> Option<Protected<Vec<u8>>> {
+    let parent_len = parent.risky_ref().len();
+    let mut out = match label {
+        Label::Root => return None,
+        Label::Index(_) => Protected::new(Vec::with_capacity(parent_len + 1)),
+        Label::Key(key) => Protected::new(Vec::with_capacity(
+            parent_len + key_step_len(key.risky_ref().len()),
+        )),
+    };
+    out.update_with_ref(parent.as_protected_ref(), |out, parent: &Vec<u8>| {
+        out.extend_from_slice(parent);
+    });
+    match label {
+        Label::Key(key) => out.update_with_ref(key.as_protected_ref(), |out, key: &String| {
+            push_key(out, key);
+        }),
+        _ => out.update(|out| out.push(ARRAY_STEP)),
+    }
+    Some(out)
+}
+
+/// [`rebuild`] for a walk's rows, checking each child as it is taken:
+/// that it is at `cursor`, the position after the row before it; that it
+/// is one level below `node`, which sits `d` levels below the walk's start;
+/// and that it carries the selector of `node`'s path, whose selector bytes
+/// are `bytes`, extended by its own label. A sealed root among the rows is
+/// not a node of any walk.
+///
+/// The rows are consecutive entries of one sealed document, placed by its
+/// authenticated child counts, so they nest no deeper than the document
+/// does, which is never deeper than [`MAX_DEPTH`]; a document that does is
+/// refused as a shape mismatch rather than recursed into.
+fn rebuild_walked(
+    node: Opened,
+    bytes: &Protected<Vec<u8>>,
+    d: u32,
+    rest: &mut impl Iterator<Item = Row>,
+    cursor: &mut u64,
+    selectors: &Selectors,
+) -> Result<Protected<PlainJson>, Error> {
+    if node.whole.is_some() {
+        return Err(wrong("a node of the walked subtree"));
+    }
+    if d as usize > MAX_DEPTH {
+        return Err(shape("a JSON document no deeper than the index seals"));
+    }
+    let child = |rest: &mut dyn Iterator<Item = Row>, cursor: &mut u64| {
+        let row = rest
+            .next()
+            .ok_or_else(|| shape("a complete JSON subtree"))?;
+        let child_bytes = child_selector_bytes(bytes, &row.node.label)
+            .ok_or_else(|| wrong("the next node of the walked subtree"))?;
+        if row.j != *cursor
+            || row.d.is_some_and(|got| Some(got) != d.checked_add(1))
+            || selectors.of(child_bytes.clone())? != row.s
+        {
+            return Err(wrong("the next node of the walked subtree"));
+        }
+        *cursor = cursor
+            .checked_add(1)
+            .ok_or_else(|| wrong("the next node of the walked subtree"))?;
+        Ok::<_, Error>((row.node, child_bytes))
+    };
+    match node.kind {
+        Kind::Object => {
+            let mut object = protected_object();
+            for _ in 0..node.children {
+                let (member, member_bytes) = child(rest, cursor)?;
+                let (label, member) = take_label(member);
+                let Label::Key(key) = label else {
+                    return Err(shape("an object member"));
+                };
+                let value = rebuild_walked(member, &member_bytes, d + 1, rest, cursor, selectors)?;
+                insert_member(&mut object, key, value);
+            }
+            Ok(object)
+        }
+        Kind::Array => {
+            let mut array = protected_array(node.children as usize);
+            for i in 0..node.children {
+                let (element, element_bytes) = child(rest, cursor)?;
+                if !matches!(element.label, Label::Index(at) if at == u64::from(i)) {
+                    return Err(shape("an array element in order"));
+                }
+                push_element(
+                    &mut array,
+                    rebuild_walked(element, &element_bytes, d + 1, rest, cursor, selectors)?,
+                );
+            }
+            Ok(array)
+        }
+        _ => node.scalar.ok_or_else(|| shape("a JSON scalar")),
+    }
 }
 
 /// The values of a node's children, in the node's order, moved out of it:
@@ -1332,11 +1598,12 @@ fn open_fallback<'a, K>(
 /// position with the element selector, so a member that happens to sit at
 /// that ordinal under an object is not taken for an element.
 fn subtree_key_for(
-    prf: &HmacSha256Prf,
-    context: &Context<'_>,
+    selectors: Selectors,
     options: &JsonOptions,
     path: &JsonPath,
 ) -> Result<JsonSubtreeKey, TermError> {
+    let prf = &selectors.keyset.prf;
+    let context = &selectors.context;
     let segments = path.segments();
     let (head, rest) = if options.sealed_root {
         let Some((first, rest)) = segments.split_first() else {
@@ -1391,6 +1658,7 @@ fn subtree_key_for(
         token,
         gates,
         path: path.clone(),
+        selectors,
     })
 }
 
@@ -1437,7 +1705,8 @@ impl<K> KeysetCipher<'_, K> {
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSubtreeKey, K> {
         let context = descriptor.into_prf_context().into_owned();
-        let key = subtree_key_for(self.prf(), &context, options, path);
+        let selectors = Selectors::new(Arc::clone(self.state()), context);
+        let key = subtree_key_for(selectors, options, path);
         Pending::ready(self, key.map_err(Error::from))
     }
 }
@@ -1545,10 +1814,13 @@ mod tests {
 
     #[test]
     fn the_subtree_key_derives_what_it_can_and_gates_the_rest() {
-        let context = Context::from_encoded(b"users/profile");
         let value = json!({"a": {"b": [1, {"c": 2}]}, "l": [[0], 1]});
         let key = |options: &JsonOptions, path: &str| {
-            subtree_key_for(&prf(), &context, options, &JsonPath::parse(path).unwrap())
+            subtree_key_for(
+                Selectors::for_tests(),
+                options,
+                &JsonPath::parse(path).unwrap(),
+            )
         };
         let at = |t: &JsonTerms, path: &str| {
             t.nodes()
@@ -1617,11 +1889,9 @@ mod tests {
 
     #[test]
     fn a_position_past_postgres_integer_is_refused_not_sent() {
-        let context = Context::from_encoded(b"users/profile");
         let key = |path: &str| {
             subtree_key_for(
-                &prf(),
-                &context,
+                Selectors::for_tests(),
                 &JsonOptions::default(),
                 &JsonPath::parse(path).unwrap(),
             )
@@ -1841,6 +2111,92 @@ mod tests {
             "the longest tag the field holds round-trips"
         );
         assert!(matches!(sealed(longest + 1), Err(Error::Other(_))));
+    }
+
+    mod given_a_walked_row {
+        use super::*;
+
+        fn path(text: &str) -> JsonPath {
+            JsonPath::parse(text).unwrap()
+        }
+
+        fn key(text: &str) -> Label {
+            Label::Key(Protected::new(text.to_owned()))
+        }
+
+        #[test]
+        fn a_childs_selector_bytes_are_its_paths() {
+            let parent = Protected::new(path("$.a[3]").selector_bytes());
+            for (label, child) in [(key("b"), "$.a[*].b"), (Label::Index(7), "$.a[*][*]")] {
+                let bytes = child_selector_bytes(&parent, &label).expect("a child");
+                assert_eq!(
+                    bytes.risky_ref(),
+                    &path(child).selector_bytes(),
+                    "{child}: the parent's bytes and the child's step"
+                );
+                assert_eq!(
+                    bytes.risky_ref().len(),
+                    bytes.risky_ref().capacity(),
+                    "{child}: sized before it is written"
+                );
+            }
+            assert!(
+                child_selector_bytes(&parent, &Label::Root).is_none(),
+                "the root is no node's child"
+            );
+        }
+
+        #[test]
+        fn the_last_step_of_a_path_names_the_label_it_reaches() {
+            assert!(reaches(&path("$.a[2]"), &Label::Index(2)), "the position");
+            assert!(!reaches(&path("$.a[2]"), &Label::Index(1)), "another one");
+            assert!(!reaches(&path("$.a[2]"), &key("2")), "a member");
+            assert!(reaches(&path("$.a[*]"), &Label::Index(9)), "any element");
+            assert!(!reaches(&path("$.a[*]"), &key("x")), "not a member");
+            assert!(reaches(&path("$.a.b"), &key("b")), "a member");
+            assert!(!reaches(&path("$.a.b"), &Label::Index(0)), "not an element");
+            assert!(reaches(&path("$"), &Label::Root), "the root");
+            assert!(!reaches(&path("$"), &key("a")), "only the root");
+        }
+
+        #[test]
+        fn selectors_are_the_ones_the_key_derives_and_compare_by_keyset_and_column() {
+            let selectors = Selectors::for_tests();
+            let at = |text: &str| {
+                prf16(
+                    &prf(),
+                    SELECTOR_DOMAIN,
+                    &Context::from_encoded(b"users/profile"),
+                    &path(text).selector_bytes(),
+                )
+                .unwrap()
+            };
+            assert_eq!(
+                selectors
+                    .of(Protected::new(path("$.a.b").selector_bytes()))
+                    .unwrap(),
+                at("$.a.b"),
+                "a protected input derives what its bytes do"
+            );
+            assert!(
+                selectors == Selectors::for_tests(),
+                "same keyset, same column"
+            );
+            let other_column = Selectors::new(
+                Arc::clone(&selectors.keyset),
+                Context::from_encoded(b"users/bio").into_owned(),
+            );
+            assert!(selectors != other_column, "another column");
+            let other_keyset = Selectors::new(
+                Arc::new(KeysetState {
+                    id: Uuid::from_u128(2),
+                    name: None,
+                    prf: prf(),
+                }),
+                selectors.context.clone(),
+            );
+            assert!(selectors != other_keyset, "another keyset");
+        }
     }
 
     #[test]

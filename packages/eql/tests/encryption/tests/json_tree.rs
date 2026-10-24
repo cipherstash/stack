@@ -11,11 +11,12 @@
 mod common;
 
 use eql_bindings::v4::json_tree::{
-    JsonTree, JsonTreeDocument, JsonTreeEntry, JsonTreeLeafQuery, JsonTreeQuery, JsonTreeSubtree,
+    JsonTree, JsonTreeDocument, JsonTreeEntry, JsonTreeExtracted, JsonTreeLeafQuery, JsonTreeQuery,
+    JsonTreeSubtree,
 };
 use eql_bindings::Identifier;
 use serde_json::{json, Map, Value};
-use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath, JsonSubtreeKey};
+use stack_encrypt::json::{JsonDocument, JsonOptions, JsonPath, JsonSelector, JsonSubtreeKey};
 use stack_encrypt::plan::{Laid, ValuePlan};
 use stack_encrypt::target::{Json, Layout};
 use stack_encrypt::{op, NonEmpty, Plan};
@@ -118,16 +119,49 @@ async fn a_document_round_trips_through_the_typed_target() {
     );
 
     // An entry lifted from the stored document, with the header and its
-    // ordinal grafted as `->` grafts them, opens to its scalar.
+    // ordinal grafted as `->` grafts them, opens to its scalar through the
+    // selector that asked for it, and only through that one.
+    let keyset = cipher.default_keyset();
+    let selector = |path: &str| {
+        let path = JsonPath::parse(path).unwrap();
+        let keyset = keyset.clone();
+        async move { keyset.json_selector(&path, column()).await.unwrap() }
+    };
+    let hello = selector("$.hello").await;
     let mut entry = stored.sv[1].clone();
     entry.h = Some(stored.h.clone());
     entry.j = Some(1);
     entry.i = Some(stored.i.clone());
     entry.v = Some(stored.v);
-    let scalar: Value = cipher.decrypt_as(entry, column()).await.unwrap();
+    let scalar: Value = cipher
+        .decrypt_as(
+            JsonTreeExtracted::from_selector(&hello, entry.clone()),
+            column(),
+        )
+        .await
+        .unwrap();
     assert_eq!(scalar, json!("world-1"));
+    let asked = JsonTreeExtracted::from_selector(&hello, entry.clone());
+    assert_eq!(asked.entry(), &entry);
+    assert_eq!(asked.selector(), &hello);
+    let number = selector("$.number").await;
+    let refused = cipher
+        .decrypt_as::<Value, _>(JsonTreeExtracted::from_selector(&number, entry), column())
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(stack_encrypt::Error::JsonWrongEntry {
+                expected: "the entry at the path asked for"
+            })
+        ),
+        "another path's selector refuses the entry: {refused:?}"
+    );
     let bare = stored.sv[1].clone();
-    assert!(cipher.decrypt_as::<Value, _>(bare, column()).await.is_err());
+    assert!(cipher
+        .decrypt_as::<Value, _>(JsonTreeExtracted::from_selector(&hello, bare), column())
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -471,14 +505,14 @@ fn postgres_extracts_walks_and_orders_by_path() {
         )
         .unwrap();
     }
-    let selector = |path: &str| {
+    let selector_of = |path: &str| -> JsonSelector {
         wait(
             &runtime,
             keyset.json_selector(&JsonPath::parse(path).unwrap(), column()),
         )
         .unwrap()
-        .to_string()
     };
+    let selector = |path: &str| selector_of(path).to_string();
     let subtree_key = |path: &str| {
         wait(
             &runtime,
@@ -493,8 +527,13 @@ fn postgres_extracts_walks_and_orders_by_path() {
     let entry = |row: &postgres::Row| -> JsonTreeEntry {
         serde_json::from_str(&row.get::<_, String>(0)).unwrap()
     };
-    let open =
-        |e: JsonTreeEntry| -> Value { wait(&runtime, cipher.decrypt_as(e, column())).unwrap() };
+    let open = |asked: &JsonSelector, e: JsonTreeEntry| -> Value {
+        wait(
+            &runtime,
+            cipher.decrypt_as(JsonTreeExtracted::from_selector(asked, e), column()),
+        )
+        .unwrap()
+    };
 
     // `->` by selector opens to the leaf; a missing path is NULL.
     let hello = selector("$.hello");
@@ -504,7 +543,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
             &[&hello],
         )
         .unwrap();
-    assert_eq!(open(entry(&row)), json!("world-2"));
+    assert_eq!(open(&selector_of("$.hello"), entry(&row)), json!("world-2"));
     let missing = db
         .query_one(
             "SELECT (doc -> $1::text)::jsonb::text FROM json_tree_rows WHERE id = 3",
@@ -532,7 +571,7 @@ fn postgres_extracts_walks_and_orders_by_path() {
         )
         .unwrap()
         .iter()
-        .map(|r| open(entry(r)))
+        .map(|r| open(&selector_of("$.tags[*]"), entry(r)))
         .collect();
     assert_eq!(tags, vec![json!("x"), json!("y")]);
 
@@ -1311,6 +1350,175 @@ fn postgres_a_position_reaches_array_elements_only() {
         [(1, 1), (2, 0), (3, 0)],
         "one member, x, under $.h.a[0] in row 1 only"
     );
+}
+
+/// Needs an EQL v4 installation. What `->` and the walks return is checked
+/// by the client to be what it asked for: every entry of a row is genuine
+/// and opens under its own selector and position, so an answer made of the
+/// wrong entries would open unless the client refuses it. Real rows come
+/// back from PostgreSQL here, from a database answering the wrong question
+/// (another path's entry, the sealed root, another position's subtree) and
+/// from stored rows tampered with (a parent tag rewritten so the walk takes
+/// a top-level field for a member, and two entries swapped in `sv`). Each
+/// is refused: the wrong entry as `JsonWrongEntry`, a moved entry as
+/// `Aead`, since its ciphertext is bound to the position it was sealed at.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_hostile_answers_are_refused_by_the_client() {
+    use stack_encrypt::Error;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = wait(&runtime, common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    db.batch_execute(
+        "CREATE TEMP TABLE json_tree_hostile (id int PRIMARY KEY, doc public.eql_v4_json_tree NOT NULL)",
+    )
+    .unwrap();
+    for id in [1, 2] {
+        let stored = serde_json::to_string(&wait(&runtime, seal(&cipher, &fixture()))).unwrap();
+        db.execute(
+            "INSERT INTO json_tree_hostile VALUES ($1, $2::text::jsonb::public.eql_v4_json_tree)",
+            &[&id, &stored],
+        )
+        .unwrap();
+    }
+    let selector_of = |path: &str| -> JsonSelector {
+        wait(
+            &runtime,
+            keyset.json_selector(&JsonPath::parse(path).unwrap(), column()),
+        )
+        .unwrap()
+    };
+    let subtree_key = |path: &str| -> JsonSubtreeKey {
+        wait(
+            &runtime,
+            keyset.json_subtree_key(
+                &JsonPath::parse(path).unwrap(),
+                &JsonOptions::default(),
+                column(),
+            ),
+        )
+        .unwrap()
+    };
+    // `doc -> selector` in row `id`.
+    let arrow = |db: &mut postgres::Client, id: i32, selector: &JsonSelector| -> JsonTreeEntry {
+        let row = db
+            .query_one(
+                "SELECT (doc -> $1::text)::jsonb::text FROM json_tree_hostile WHERE id = $2",
+                &[&selector.to_string(), &id],
+            )
+            .unwrap();
+        serde_json::from_str(&row.get::<_, String>(0)).unwrap()
+    };
+    // The walk `key` keys in row `id`, walked out (budget 0).
+    let walked = |db: &mut postgres::Client, id: i32, key: &JsonSubtreeKey| -> Vec<JsonTreeEntry> {
+        db.query(
+            "SELECT e::jsonb::text FROM json_tree_hostile, eql_v4.json_tree_subtree_at(doc, $1::text, $2::text[], 0) e WHERE id = $3",
+            &[&key.token(), &key.gates(), &id],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| serde_json::from_str(&r.get::<_, String>(0)).unwrap())
+        .collect()
+    };
+    let extracted = |asked: &JsonSelector, entry: JsonTreeEntry| -> Result<Value, Error> {
+        wait(
+            &runtime,
+            cipher.decrypt_as(JsonTreeExtracted::from_selector(asked, entry), column()),
+        )
+    };
+    let opened = |key: &JsonSubtreeKey, rows: Vec<JsonTreeEntry>| -> Result<Value, Error> {
+        wait(
+            &runtime,
+            cipher.decrypt_as(JsonTreeSubtree::from_key(key, rows), column()),
+        )
+    };
+    let wrong = |result: Result<Value, Error>, what: &str| {
+        assert!(
+            matches!(result, Err(Error::JsonWrongEntry { .. })),
+            "{what}: {result:?}"
+        );
+    };
+
+    // `->` on `$.hello` answered with the row's `$.number`, and with the
+    // sealed root, which opens to the whole document.
+    let hello = selector_of("$.hello");
+    assert_eq!(
+        extracted(&hello, arrow(&mut db, 1, &hello)).unwrap(),
+        json!("world-1")
+    );
+    wrong(
+        extracted(&hello, arrow(&mut db, 1, &selector_of("$.number"))),
+        "another path's entry",
+    );
+    let root = arrow(&mut db, 1, &selector_of("$"));
+    wrong(extracted(&hello, root.clone()), "the sealed root");
+    assert_eq!(
+        extracted(&selector_of("$"), root).unwrap(),
+        fixture(),
+        "the root asked for at `$`"
+    );
+
+    // The walk to `$.nested.list[1]` answered with the rows of the walk to
+    // `$.nested.list[0]`: the same selectors, another position.
+    let second = subtree_key("$.nested.list[1]");
+    assert_eq!(
+        opened(&second, walked(&mut db, 1, &second)).unwrap(),
+        json!({"x": 2})
+    );
+    wrong(
+        opened(
+            &second,
+            walked(&mut db, 1, &subtree_key("$.nested.list[0]")),
+        ),
+        "another position's subtree",
+    );
+
+    // A stored row whose `$.number` (entry 9) carries a parent tag under
+    // `$.nested`'s token, at the ordinal after its two members: the walk
+    // takes it for nested's third member, and returns it right after
+    // nested's subtree, where it sits in `sv`.
+    let nested = subtree_key("$.nested");
+    assert!(nested.gates().is_empty());
+    assert_eq!(
+        opened(&nested, walked(&mut db, 1, &nested)).unwrap(),
+        fixture()["nested"]
+    );
+    db.execute(
+        "UPDATE json_tree_hostile SET doc = jsonb_set(doc::jsonb, '{sv,9,p}',
+           to_jsonb(eql_v4_internal.json_tree_parent_tag(
+             eql_v4_internal.json_tree_iv(doc::jsonb ->> 'h'), decode($1::text, 'base64'), 2)))::public.eql_v4_json_tree
+         WHERE id = 1",
+        &[&nested.token()],
+    )
+    .unwrap();
+    let rows = walked(&mut db, 1, &nested);
+    assert_eq!(rows.len(), 7, "the walk took number for a member");
+    assert_eq!(
+        rows.last().map(|e| (e.j, e.d)),
+        Some((Some(9), Some(1))),
+        "number, one level below nested"
+    );
+    wrong(opened(&nested, rows), "a top-level field as a member");
+
+    // A stored row whose `deep` (3) and `number` (9) swapped places: each
+    // entry is found where it now sits, and fails to open there.
+    db.execute(
+        "UPDATE json_tree_hostile SET doc = jsonb_set(jsonb_set(doc::jsonb,
+           '{sv,3}', doc::jsonb -> 'sv' -> 9), '{sv,9}', doc::jsonb -> 'sv' -> 3)::public.eql_v4_json_tree
+         WHERE id = 2",
+        &[],
+    )
+    .unwrap();
+    let deep = selector_of("$.nested.deep");
+    let moved = extracted(&deep, arrow(&mut db, 2, &deep));
+    assert!(matches!(moved, Err(Error::Aead)), "`->`: {moved:?}");
+    let moved = opened(&nested, walked(&mut db, 2, &nested));
+    assert!(matches!(moved, Err(Error::Aead)), "the walk: {moved:?}");
 }
 
 /// Needs an EQL v4 installation. A stored document is untrusted input: its

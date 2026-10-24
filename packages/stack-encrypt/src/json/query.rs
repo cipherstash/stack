@@ -12,9 +12,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::derive::{JsonTerms, TermNode};
+use super::derive::{JsonTerms, Selectors, TermNode};
 use super::path::JsonPath;
-use super::{base64, JsonDocument, JsonNode, JsonOptions, JsonSubtree, Tag};
+use super::{base64, JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonSubtree, Tag};
 use crate::op::{
     Answers, AtPath, Between, ContainedBy, Contains, DefaultIndex, Eq, Gt, Gte, Input,
     LabelledTarget, Lt, Lte, One, Pair, Pathed, QueryTerm, QueryToken, Supports,
@@ -296,6 +296,10 @@ impl<'de> Deserialize<'de> for JsonLeafQuery {
 
 /// A path selector: what `->` and the path functions take. Prints and
 /// serializes as the base64 the stored entry carries in `s`.
+///
+/// It is also what opens the entry `->` returns ([`open`](Self::open)):
+/// the selector the client derived for the path is the one the entry must
+/// carry, so a database that answers with another path's entry is refused.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct JsonSelector(pub(crate) Tag);
 
@@ -303,6 +307,24 @@ impl JsonSelector {
     /// The sixteen bytes.
     pub fn as_bytes(&self) -> &Tag {
         &self.0
+    }
+
+    /// The entry `col -> selector` returned, ready to open: the only way to
+    /// open one. Opening it ([`DecryptInto<Value>`](crate::DecryptInto))
+    /// first checks that the entry carries this selector, and refuses any
+    /// other with [`Error::JsonWrongEntry`] before a key is retrieved: an
+    /// entry's ciphertext is bound to the selector it carries, so a
+    /// database that answers `$.salary` with the row's `$.bonus`, or with
+    /// the sealed root (the whole document, whose selector is the root's),
+    /// returns an entry that would open, and is not the one asked for.
+    ///
+    /// What the check covers is the path, read as a selector reads it: a
+    /// position reads as the wildcard, so any element at the path passes,
+    /// as `->` returns the first one. It does not cover the row: the same
+    /// path's entry from another row of the column, returned with that
+    /// row's header, opens (ADR 0010).
+    pub fn open(&self, node: JsonNode) -> JsonExtracted {
+        JsonExtracted::keyed(node, self.0)
     }
 }
 
@@ -355,11 +377,18 @@ impl Gate {
 /// derived from, which [`open`](Self::open) attaches to the rows the walk
 /// returns. Serializes as `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted
 /// when empty; the path is not part of the wire.
+///
+/// The key also holds what derives selectors under the column it was
+/// derived for (the keyset's index-key PRF, shared with the keyset handle,
+/// and the column's context), so that opening the rows can check each
+/// one's selector against the path it must sit at. Neither is printed or
+/// serialized.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JsonSubtreeKey {
     pub(crate) token: Tag,
     pub(crate) gates: Vec<Gate>,
     pub(crate) path: JsonPath,
+    pub(crate) selectors: Selectors,
 }
 
 impl JsonSubtreeKey {
@@ -397,8 +426,25 @@ impl JsonSubtreeKey {
     /// token, gates)` and are the nodes the path reaches, with theirs. The
     /// key knows which, so the fallback opens to what the walked rows
     /// open to either way.
+    ///
+    /// Opening the rows checks each one against the key, and refuses the
+    /// rows with [`Error::JsonWrongEntry`] if one does not fit: a node the
+    /// path reaches must carry the path's selector, at depth `0`, with the
+    /// position the path names if it ends in one; every other row must
+    /// carry the selector of its parent's path extended by its own label
+    /// (its key, or the wildcard for an array element), sit one level
+    /// below its parent, and follow the row before it in the document with
+    /// no entry between, so that each node's rows are exactly its subtree.
+    /// A row whose parent is not among the rows is refused.
+    ///
+    /// Not covered: which row of the column the entries come from (ADR
+    /// 0010), and, until the walk returns the node it starts from, which
+    /// node at the path's selector a walk with no gates descends from. An
+    /// array position before the last step of a path reads as the wildcard
+    /// to the selectors, so another element's subtree at the same depth
+    /// passes too.
     pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
-        JsonSubtree::keyed(rows, self.path.clone(), self.gates.is_empty())
+        JsonSubtree::keyed(rows, self.clone())
     }
 }
 
@@ -782,6 +828,7 @@ mod tests {
             token: [0xcd; 16],
             gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3, [0xab; 16])],
             path: JsonPath::parse("$.a.b[3]").unwrap(),
+            selectors: Selectors::for_tests(),
         };
         assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
         assert_eq!(key.token_bytes(), &[0xcd; 16]);
@@ -802,6 +849,7 @@ mod tests {
             token: [0xcd; 16],
             gates: Vec::new(),
             path: JsonPath::parse("$.a").unwrap(),
+            selectors: Selectors::for_tests(),
         };
         assert_eq!(
             serde_json::to_value(&bare).unwrap(),

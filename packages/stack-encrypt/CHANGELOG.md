@@ -21,8 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EncryptFrom<Value>` / `DecryptInto<Value>` target, and it answers
   `op::Contains`, `op::ContainedBy`, `op::AtPath(op::Eq)` (a scalar at a
   path) and the orderings at an ordered path; `KeysetCipher::json_selector`
-  and `json_subtree_key` derive the extraction keys, and `JsonNode` and
-  `JsonSubtree` open what the server returns. `JsonOptions::sealed_root`,
+  and `json_subtree_key` derive the extraction keys. What the server
+  returns (`JsonNode` rows) opens only through what the client derived for
+  the read, which checks that the rows are the ones it asked for: an
+  entry's ciphertext is bound to its own selector and position, so any
+  entry of the row would otherwise open. `JsonSelector::open(node)` builds
+  a `JsonExtracted`, which refuses an entry that does not carry the
+  selector (another path's, or the sealed root in place of a node) before
+  any key is retrieved; `JsonSubtreeKey::open(rows)` builds a
+  `JsonSubtree`, which refuses a row that is not where the walk's rows must
+  be: a reached node without the path's selector or position, a row
+  without the selector of its parent's path and its own label (the key
+  holds the keyset's index-key PRF and the column's context to derive
+  it), and a row that does not follow the one before it in the document
+  or whose parent is not among the rows. Each refusal is the new
+  `Error::JsonWrongEntry`. Not checked, by design, is which row of the
+  column an entry comes from (ADR 0010). `JsonOptions::sealed_root`,
   on by default, makes the root entry the whole document so no token for
   the root exists. A document is at most 127 levels deep. New `TermError`
   variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`,

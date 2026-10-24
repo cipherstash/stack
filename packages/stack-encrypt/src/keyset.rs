@@ -614,6 +614,13 @@ impl<'k, K> KeysetCipher<'k, K> {
         &self.state.prf
     }
 
+    /// The keyset's loaded state, shared: for a value that must derive
+    /// terms after this handle is gone, such as a JSON subtree key, which
+    /// derives the selectors a walk's rows must carry when it opens them.
+    pub(crate) fn state(&self) -> &Arc<KeysetState> {
+        &self.state
+    }
+
     /// The underlying data-key source.
     pub fn kms(&self) -> &'k K {
         self.cipher.kms()

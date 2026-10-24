@@ -62,7 +62,7 @@ impl crate::ErrorPayload for JsonPathError {
 const KEY_STEP: u8 = 0x01;
 /// The tag byte of an array step (positional or wildcard) in a path's
 /// canonical bytes.
-const ARRAY_STEP: u8 = 0x02;
+pub(crate) const ARRAY_STEP: u8 = 0x02;
 
 impl JsonPath {
     /// The root, `$`.
@@ -308,11 +308,19 @@ impl JsonPath {
     }
 }
 
-/// A key step: the tag, the key's length and the key.
-fn push_key(out: &mut Vec<u8>, key: &str) {
+/// A key step: the tag, the key's length and the key. What
+/// [`JsonPath::selector_bytes`] writes for a key, and what a walk's rows
+/// are checked against when the client extends a path by a member's
+/// decrypted key.
+pub(crate) fn push_key(out: &mut Vec<u8>, key: &str) {
     out.push(KEY_STEP);
     out.extend_from_slice(&(key.len() as u32).to_le_bytes());
     out.extend_from_slice(key.as_bytes());
+}
+
+/// How many bytes [`push_key`] writes for a key of `len` bytes.
+pub(crate) const fn key_step_len(len: usize) -> usize {
+    1 + 4 + len
 }
 
 /// The JSON string at the front of `text`, which starts at its opening

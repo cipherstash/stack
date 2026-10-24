@@ -12,7 +12,8 @@ mod common;
 use common::stack_cipher;
 use serde_json::{json, Map, Value};
 use stack_encrypt::json::{
-    JsonDocument, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree, JsonSubtreeKey,
+    JsonDocument, JsonExtracted, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSelector,
+    JsonSubtree, JsonSubtreeKey,
 };
 use stack_encrypt::op;
 use stack_encrypt::sem::TermError;
@@ -309,6 +310,28 @@ async fn subtree_key(
         .await
 }
 
+/// The selector of `path` under the suite's column.
+async fn selector_of(cipher: &StackCipher<FakeDataKeySource>, path: &str) -> JsonSelector {
+    cipher
+        .default_keyset()
+        .json_selector(
+            &JsonPath::parse(path).unwrap(),
+            nonempty!("users").with("profile"),
+        )
+        .await
+        .unwrap()
+}
+
+/// `node` as `->` on `path` returned it, opened by the selector derived
+/// for `path`: the only way to open an extracted entry.
+async fn extracted(
+    cipher: &StackCipher<FakeDataKeySource>,
+    path: &str,
+    node: JsonNode,
+) -> JsonExtracted {
+    selector_of(cipher, path).await.open(node)
+}
+
 /// `rows` as the key derived for `path` opens them: the only way to build
 /// a [`JsonSubtree`].
 async fn keyed(
@@ -551,16 +574,24 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
     let cipher = stack_cipher().await;
     let doc = seal(&cipher, &fixture()).await;
     let node = |j: usize| doc.node(j).unwrap();
-    let scalar = |j: usize| cipher.decrypt_as::<Value, JsonNode>(node(j), aead());
-    assert_eq!(scalar(1).await.unwrap(), json!("world-1"));
-    assert_eq!(scalar(6).await.unwrap(), json!(1));
+    let scalar = |path: &'static str, j: usize| {
+        let cipher = &cipher;
+        let node = node(j);
+        async move {
+            cipher
+                .decrypt_as::<Value, JsonExtracted>(extracted(cipher, path, node).await, aead())
+                .await
+        }
+    };
+    assert_eq!(scalar("$.hello", 1).await.unwrap(), json!("world-1"));
+    assert_eq!(scalar("$.nested.list[0].x", 6).await.unwrap(), json!(1));
     assert_eq!(
-        scalar(0).await.unwrap(),
+        scalar("$", 0).await.unwrap(),
         fixture(),
         "the sealed root is the document"
     );
     assert!(
-        matches!(scalar(2).await, Err(Error::OpenedType { .. })),
+        matches!(scalar("$.nested", 2).await, Err(Error::OpenedType { .. })),
         "a container node holds no value of its own"
     );
 
@@ -583,20 +614,14 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
         .unwrap();
     assert_eq!(forest, vec![json!("constant"), json!([{"x": 1}, {"x": 2}])]);
 
-    // The list's token is the server's to derive, one level under nested.
-    let list = doc
-        .children(key.token_bytes())
-        .into_iter()
-        .find(|(j, _, _)| *j == 4)
-        .map(|(_, _, t)| t)
+    // The list is one gate below nested: the walk reaches it and returns
+    // it with its subtree.
+    let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
+        .await
         .unwrap();
-    let rows: Vec<JsonNode> = doc
-        .subtree(&list)
-        .iter()
-        .map(|(j, _, _)| node(*j))
-        .collect();
+    let rows = gated_walk(&doc, &list);
     let elements = cipher
-        .decrypt_as::<Value, JsonSubtree>(keyed(&cipher, "$.nested.list", rows).await, aead())
+        .decrypt_as::<Value, JsonSubtree>(list.open(rows), aead())
         .await
         .unwrap();
     assert_eq!(elements, json!([{"x": 1}, {"x": 2}]));
@@ -610,7 +635,10 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
     assert_eq!(back.ordinal(), 6);
     assert_eq!(
         cipher
-            .decrypt_as::<Value, JsonNode>(back, aead())
+            .decrypt_as::<Value, JsonExtracted>(
+                extracted(&cipher, "$.nested.list[*].x", back).await,
+                aead()
+            )
             .await
             .unwrap(),
         json!(1)
@@ -620,8 +648,8 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
 /// The rows of a walk come from the server, which can repeat an entry or
 /// pick which entries to return. Every entry is authentic, but the rebuild
 /// nests the containers it is handed: a repeated row is refused, and so is
-/// a line of containers deeper than any document the index seals, as a
-/// shape mismatch rather than a recursion as deep as the rows.
+/// a line of containers that are not one subtree's consecutive entries,
+/// before the rebuild can recurse as deep as the rows.
 #[tokio::test]
 async fn subtree_rows_the_server_repeats_or_lines_up_are_refused() {
     let cipher = stack_cipher().await;
@@ -657,7 +685,7 @@ async fn subtree_rows_the_server_repeats_or_lines_up_are_refused() {
                 aead()
             )
             .await,
-        Err(Error::OpenedType { .. })
+        Err(Error::JsonWrongEntry { .. })
     ));
 
     // The same through arrays: one outer array, then every key's inner
@@ -678,7 +706,7 @@ async fn subtree_rows_the_server_repeats_or_lines_up_are_refused() {
         cipher
             .decrypt_as::<Vec<Value>, JsonSubtree>(keyed(&cipher, "$.k000", arrays).await, aead())
             .await,
-        Err(Error::OpenedType { .. })
+        Err(Error::JsonWrongEntry { .. })
     ));
 }
 
@@ -745,7 +773,9 @@ async fn a_moved_reordered_or_regrafted_entry_fails_to_open() {
     lifted["j"] = json!(2);
     let lifted: JsonNode = serde_json::from_value(lifted).unwrap();
     assert!(matches!(
-        cipher.decrypt_as::<Value, JsonNode>(lifted, aead()).await,
+        cipher
+            .decrypt_as::<Value, JsonExtracted>(extracted(&cipher, "$.a", lifted).await, aead())
+            .await,
         Err(Error::Aead)
     ));
 }
@@ -1548,18 +1578,21 @@ async fn gated_walk_rows_open_to_the_reached_nodes_value() {
         }
         other => panic!("{other:?}"),
     }
-    // Without a d = 0 row the same entries are the children of one node and
-    // assemble into it.
+    // The key says which walk the rows came from: the children of the
+    // list, which an ungated walk from the list's token would return, are
+    // not what the gated walk to the list returns, and are refused.
     let rows: Vec<JsonNode> = doc
         .subtree(&list)
         .iter()
         .map(|(j, _, _)| doc.node(*j).unwrap())
         .collect();
-    let elements = cipher
+    let refused = cipher
         .decrypt_as::<Value, JsonSubtree>(keyed(&cipher, "$.nested.list", rows).await, aead())
-        .await
-        .unwrap();
-    assert_eq!(elements, json!([{"x": 1}, {"x": 2}]));
+        .await;
+    assert!(
+        matches!(refused, Err(Error::JsonWrongEntry { .. })),
+        "{refused:?}"
+    );
 }
 
 /// A document, an extracted node and a walked subtree are each the one
@@ -1569,24 +1602,18 @@ async fn gated_walk_rows_open_to_the_reached_nodes_value() {
 async fn each_stored_form_opens_as_a_record_field() {
     let cipher = stack_cipher().await;
     let doc = seal(&cipher, &fixture()).await;
-    let node = doc.node(1).unwrap();
-    let key = subtree_key(&cipher, "$.nested", JsonOptions::default())
+    let node = extracted(&cipher, "$.hello", doc.node(1).unwrap()).await;
+    let list = subtree_key(&cipher, "$.nested.list", JsonOptions::default())
         .await
         .unwrap();
-    let list = doc
-        .children(key.token_bytes())
-        .into_iter()
-        .find(|(j, _, _)| *j == 4)
-        .map(|(_, _, t)| t)
-        .unwrap();
-    let rows: Vec<JsonNode> = doc
-        .subtree(&list)
-        .iter()
-        .map(|(j, _, _)| doc.node(*j).unwrap())
-        .collect();
-    let subtree = keyed(&cipher, "$.nested.list", rows.clone()).await;
+    let rows = gated_walk(&doc, &list);
+    let subtree = list.open(rows.clone());
     assert_eq!(subtree.nodes(), rows.as_slice());
-    assert_eq!(subtree.nodes().len(), 4, "both elements and both leaves");
+    assert_eq!(
+        subtree.nodes().len(),
+        5,
+        "the list, both elements and both leaves"
+    );
 
     let opening: Option<Decryption<Value, FakeDataKeySource>> = doc.decryption_field(aead());
     let opened = cipher
@@ -1669,14 +1696,18 @@ async fn the_sealed_root_a_walk_fell_back_to_opens_at_the_path() {
     }
 
     // The same root at depth 1, or at depth 0 under an unsealed document,
-    // is a walk's row and not the fallback; neither assembles.
+    // is a walk's row and not the fallback, and not a child of the walked
+    // node either: its selector is the root's.
     let mut as_walked = serde_json::to_value(doc.node(0).unwrap()).unwrap();
     as_walked["d"] = json!(1);
     let as_walked: JsonNode = serde_json::from_value(as_walked).unwrap();
     let rows = keyed(&cipher, "$.nested", vec![as_walked]).await;
     assert!(!rows.is_sealed_root());
     let refused = cipher.decrypt_as::<Value, JsonSubtree>(rows, aead()).await;
-    assert!(matches!(refused, Err(Error::OpenedType { .. })));
+    assert!(
+        matches!(refused, Err(Error::JsonWrongEntry { .. })),
+        "{refused:?}"
+    );
     let open_doc = seal_with(&cipher, &fixture(), &open_root()).await;
     assert!(!keyed(&cipher, "$.nested", vec![fallback(&open_doc)])
         .await

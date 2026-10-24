@@ -23,8 +23,8 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
-    JsonSubtreeKey,
+    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSelector,
+    JsonSubtree, JsonSubtreeKey,
 };
 use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec, Json, Layout};
 use stack_encrypt::{
@@ -94,7 +94,13 @@ pub struct JsonTreeDocument {
 /// `c` the node's own ciphertext; `p` the parent tag below the chain's
 /// heads, which the walk probes by ordinal; `op` the leaf ordering term.
 /// `h`, `j`, `d`, `v` and `i` are what the extractors graft onto an entry
-/// they return, so it opens on its own.
+/// they return, so that it can be opened.
+///
+/// An entry a query returned is the database's word and does not open on
+/// its own: open the entry `->` returned through the selector that asked
+/// for it ([`JsonTreeExtracted::from_selector`]), and a walk's rows through
+/// the key that keyed it ([`JsonTreeSubtree::from_key`]). Each checks that
+/// the rows are the ones it asked for.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeEntry {
@@ -163,6 +169,42 @@ pub struct JsonTreeQuery {
 pub struct JsonTreeLeafQuery {
     pub s: JsonTreeSelector,
     pub op: JsonTreeOrderingTerm,
+}
+
+/// The entry `col -> selector` returned, with the selector that asked for
+/// it: opens to the scalar the entry holds, or to the whole document for a
+/// sealed root asked for at `$`. The only constructor,
+/// [`from_selector`](Self::from_selector), takes the selector, and opening
+/// refuses an entry that does not carry it
+/// ([`Error::JsonWrongEntry`](stack_encrypt::Error::JsonWrongEntry)), as
+/// [`JsonSelector::open`] does: a database that answers one path with
+/// another path's entry, or with the sealed root, returns an entry that
+/// would otherwise open.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonTreeExtracted {
+    entry: JsonTreeEntry,
+    selector: JsonSelector,
+}
+
+impl JsonTreeExtracted {
+    /// The entry `col -> selector` returned for `selector`, as the server
+    /// sent it.
+    pub fn from_selector(selector: &JsonSelector, entry: JsonTreeEntry) -> Self {
+        Self {
+            entry,
+            selector: *selector,
+        }
+    }
+
+    /// The entry.
+    pub fn entry(&self) -> &JsonTreeEntry {
+        &self.entry
+    }
+
+    /// The selector the read asked for.
+    pub fn selector(&self) -> &JsonSelector {
+        &self.selector
+    }
 }
 
 /// The rows a subtree walk returned (`eql_v4.json_tree_subtree` or
@@ -396,14 +438,18 @@ where
 }
 
 /// An extracted entry opens to the scalar it holds, or to the whole
-/// document for a sealed root, under the column it was extracted from. A
+/// document for a sealed root asked for at `$`, under the column it was
+/// extracted from, once it is shown to carry the selector asked for. A
 /// container node holds no value of its own; its subtree opens through
 /// [`JsonTreeSubtree`].
-impl DecryptInto<Value> for JsonTreeEntry {
+impl DecryptInto<Value> for JsonTreeExtracted {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
-        match self.node() {
-            Ok(node) => node.decryption(AeadContext::from(context)),
+        match self.entry.node() {
+            Ok(node) => self
+                .selector
+                .open(node)
+                .decryption(AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
     }

@@ -48,8 +48,13 @@
 //! `AtPath<Eq>`), [`JsonLeafQuery`] (ordering at a path), and the two
 //! extraction keys a caller derives through the keyset cipher,
 //! [`JsonSelector`] and [`JsonSubtreeKey`]. What the server returns for an
-//! extraction opens through [`JsonNode`] (one entry) and [`JsonSubtree`]
-//! (the entries under a token).
+//! extraction is [`JsonNode`] rows, which open only through what the
+//! client derived for the read: [`JsonSelector::open`] for the one entry
+//! `->` returns ([`JsonExtracted`]), [`JsonSubtreeKey::open`] for the rows
+//! of a walk ([`JsonSubtree`]). Each checks that the rows are the ones the
+//! read asked for, which their ciphertexts alone do not say: an entry is
+//! sealed under its own selector and position, so any entry of the row
+//! opens.
 //!
 //! # Where this deviates from the design
 //!
@@ -528,9 +533,13 @@ where
 
 /// One entry as an extraction returns it: the entry, the document's header
 /// grafted beside it, and the entry's ordinal `j` in the document, which
-/// its ciphertext is bound to. What `->` and the walk return per row, and
-/// what [`DecryptInto<Value>`](crate::DecryptInto) opens to the node's
-/// scalar, or to the whole document for a sealed root.
+/// its ciphertext is bound to. What `->` and the walk return per row.
+///
+/// A row is the database's word, so it does not open on its own: the
+/// selector the client derived opens the entry `->` returned
+/// ([`JsonSelector::open`]), and the key that keyed a walk opens its rows
+/// ([`JsonSubtreeKey::open`]), each after checking the rows are the ones
+/// it asked for.
 ///
 /// Deserializes from the entry's wire fields plus `h` and `j`, and tolerates
 /// the envelope fields the SQL grafts beside them (`i`, `v`, `d`).
@@ -562,10 +571,43 @@ impl JsonNode {
     }
 }
 
-impl Decryptable for JsonNode {
+/// The entry `->` returned, with the selector the client asked for: what
+/// [`DecryptInto<Value>`](crate::DecryptInto) opens to the node's scalar,
+/// or to the whole document for a sealed root asked for at `$`. Built only
+/// by [`JsonSelector::open`], so it always carries the selector the entry
+/// is checked against; an entry carrying another is refused with
+/// [`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry) before any key
+/// is retrieved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsonExtracted {
+    node: JsonNode,
+    selector: Tag,
+}
+
+impl JsonExtracted {
+    pub(crate) fn keyed(node: JsonNode, selector: Tag) -> Self {
+        Self { node, selector }
+    }
+
+    /// The row, as the database returned it.
+    pub fn node(&self) -> &JsonNode {
+        &self.node
+    }
+
+    /// The selector the read asked for.
+    pub fn selector(&self) -> JsonSelector {
+        JsonSelector(self.selector)
+    }
+
+    pub(crate) fn into_parts(self) -> (JsonNode, Tag) {
+        (self.node, self.selector)
+    }
+}
+
+impl Decryptable for JsonExtracted {
     const DECRYPTABLE: bool = true;
 }
-impl<P: 'static, Ctx> DecryptField<P, Ctx> for JsonNode
+impl<P: 'static, Ctx> DecryptField<P, Ctx> for JsonExtracted
 where
     Self: crate::DecryptInto<P>,
     Ctx: Into<<Self as crate::DecryptInto<P>>::Context>,
@@ -580,7 +622,9 @@ where
 /// token, gates)` yields, collected, and what
 /// [`DecryptInto<Value>`](crate::DecryptInto) reassembles into the value
 /// under the walked path. Built only by the key that keyed the walk
-/// ([`JsonSubtreeKey::open`]), so it always carries the walked path.
+/// ([`JsonSubtreeKey::open`]), so it always carries the walked path, and
+/// what checks every row against it when the rows are opened (see
+/// [`JsonSubtreeKey::open`] for the checks).
 ///
 /// The ungated walk returns the node's descendants and not the node
 /// itself, so the node's kind is read from its children's labels: elements
@@ -599,15 +643,15 @@ where
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonSubtree {
     nodes: Vec<JsonNode>,
-    path: JsonPath,
-    below: bool,
+    key: JsonSubtreeKey,
 }
 
 impl JsonSubtree {
-    /// The rows of a walk keyed from `path`: below the path's node when
-    /// `below` (`json_tree_subtree`), at the nodes it reaches otherwise.
-    pub(crate) fn keyed(nodes: Vec<JsonNode>, path: JsonPath, below: bool) -> Self {
-        Self { nodes, path, below }
+    /// The rows of a walk `key` keyed: below the path's node when the key
+    /// has no gates (`json_tree_subtree`), at the nodes it reaches
+    /// otherwise.
+    pub(crate) fn keyed(nodes: Vec<JsonNode>, key: JsonSubtreeKey) -> Self {
+        Self { nodes, key }
     }
 
     /// The rows.
@@ -617,7 +661,18 @@ impl JsonSubtree {
 
     /// The path the walk was keyed from.
     pub fn path(&self) -> &JsonPath {
-        &self.path
+        &self.key.path
+    }
+
+    /// Whether the rows are the descendants of the path's node
+    /// (`json_tree_subtree`, a key with no gates) rather than the nodes
+    /// the path reaches.
+    pub(crate) fn below(&self) -> bool {
+        self.key.gates.is_empty()
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<JsonNode>, JsonSubtreeKey) {
+        (self.nodes, self.key)
     }
 
     /// Whether the rows are the sealed root the server returned in place
