@@ -644,9 +644,9 @@ pub struct JsonSubtree {
 }
 
 impl JsonSubtree {
-    /// The rows of a walk `key` keyed: below the path's node when the key
-    /// has no gates (`json_tree_subtree`), at the nodes it reaches
-    /// otherwise.
+    /// The rows of a walk `key` keyed: the nodes the key's path reaches,
+    /// each with everything beneath it, from `json_tree_subtree` for a key
+    /// with no gates and `json_tree_subtree_at` for one with.
     pub(crate) fn keyed(nodes: Vec<JsonNode>, key: JsonSubtreeKey) -> Self {
         Self { nodes, key }
     }

@@ -1521,8 +1521,8 @@ fn rebuild_walked(
 /// an array's elements, an object's member values (each leaving `null`
 /// under its key, which stays in the document to be wiped with it), and
 /// none for a scalar. What a `json_tree_subtree` walk's rows open to as a
-/// [`Vec`], taken out of the whole document when the walk fell back to the
-/// sealed root.
+/// [`Vec`], taken out of the node the rows reached, or out of the whole
+/// document when the walk fell back to the sealed root.
 fn take_children(node: &mut Value) -> Vec<Value> {
     match node {
         Value::Array(items) => std::mem::take(items),
