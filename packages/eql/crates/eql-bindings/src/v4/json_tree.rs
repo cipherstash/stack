@@ -207,18 +207,21 @@ impl JsonTreeExtracted {
     }
 }
 
-/// The rows a subtree walk returned (`eql_v4.json_tree_subtree` or
-/// `json_tree_subtree_at`), collected with the key that keyed the walk:
-/// opens to the value under the walked path, or to the list of complete
-/// subtrees the rows hold.
+/// The rows a subtree walk returned, collected with the key that keyed
+/// the walk: `eql_v4.json_tree_subtree(doc, key.token(), key.selector())`
+/// for a key with no gates (a chain head, or the root when it is not
+/// sealed), `json_tree_subtree_at(doc, key.token(), key.gates())` for one
+/// with. Every walk returns each node the path reaches at depth `0` with
+/// everything beneath it, so the rows open to the value at the walked path,
+/// `{}`, `[]` and scalars included; to `None` as an `Option<Value>` when
+/// there is no node there; or to a list.
 ///
 /// Past its budget a walk returns the sealed root alone, at depth `0`;
 /// those rows open to the whole document, and the key's path selects the
-/// same value(s) the walked rows open to. The key also says which walk the
-/// rows came from (no gates: `json_tree_subtree`, the rows below the path's
-/// node; gates: `json_tree_subtree_at`, the nodes the path reaches), so the
-/// only constructor, [`from_key`](Self::from_key), takes it, and rows
-/// cannot be opened without it.
+/// same value(s) the walked rows open to. The only constructor,
+/// [`from_key`](Self::from_key), takes the key, which checks every row
+/// against its path when the rows are opened, so rows cannot be opened
+/// without it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsonTreeSubtree {
     rows: Vec<JsonTreeEntry>,
@@ -455,8 +458,8 @@ impl DecryptInto<Value> for JsonTreeExtracted {
     }
 }
 
-/// The rows of `json_tree_subtree(doc, token)` open to the value under the
-/// walked node.
+/// The rows of a walk open to the value at the walked path; no node there
+/// is an error, which `Option<Value>` reads as `None`.
 impl DecryptInto<Value> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
@@ -467,8 +470,21 @@ impl DecryptInto<Value> for JsonTreeSubtree {
     }
 }
 
-/// The rows of a walk open to the complete subtrees they hold, in order:
-/// one per node the gates of `json_tree_subtree_at` reached.
+/// The rows of a walk open to the value at the walked path, or `None`
+/// where the document has no node there: the four answers `jsonb #>` gives.
+impl DecryptInto<Option<Value>> for JsonTreeSubtree {
+    type Context = NonEmpty<Identifier>;
+    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<Value>, K> {
+        match self.subtree() {
+            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
+            Err(error) => Decryption::failed(error),
+        }
+    }
+}
+
+/// The rows of a walk open to a list: one value per node the gates of
+/// `json_tree_subtree_at` reached, or, for a key with no gates, the values
+/// of the node's children.
 impl DecryptInto<Vec<Value>> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {

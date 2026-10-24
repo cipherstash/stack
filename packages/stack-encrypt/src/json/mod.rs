@@ -462,7 +462,9 @@ impl JsonDocument {
     /// Every entry under the node whose token is `token`, with its depth
     /// below that node, as the server's recursive walk finds them: the node
     /// itself is not included, since the walk addresses nodes by their
-    /// parent. In depth-first order, siblings by ordinal.
+    /// parent (`json_tree_subtree` adds a chain head by its selector, and a
+    /// gated walk the node its last gate admits). In depth-first order,
+    /// siblings by ordinal.
     ///
     /// A stored document is untrusted, and its tags need not form a tree:
     /// whoever holds a token can write a chain deeper than any document the
@@ -618,28 +620,23 @@ where
 }
 
 /// The entries the server's walk returned for one key, ready to open:
-/// what `json_tree_subtree(doc, token)` or `json_tree_subtree_at(doc,
-/// token, gates)` yields, collected, and what
+/// what `json_tree_subtree(doc, token, selector)` or
+/// `json_tree_subtree_at(doc, token, gates)` yields, collected, and what
 /// [`DecryptInto<Value>`](crate::DecryptInto) reassembles into the value
-/// under the walked path. Built only by the key that keyed the walk
+/// at the walked path. Built only by the key that keyed the walk
 /// ([`JsonSubtreeKey::open`]), so it always carries the walked path, and
 /// what checks every row against it when the rows are opened (see
 /// [`JsonSubtreeKey::open`] for the checks).
 ///
-/// The ungated walk returns the node's descendants and not the node
-/// itself, so the node's kind is read from its children's labels: elements
-/// make an array, members an object. A node with no descendants, an empty
-/// container or a scalar, yields no rows and so no value; `->` on its
-/// selector returns the node itself. A gated walk also returns each node
-/// its gates reach, at depth `0`, with that node's descendants beneath it.
+/// Every walk returns each node the path reaches at depth `0`, with that
+/// node's descendants beneath it, so the rows open to the node's own
+/// value: `{}`, `[]` and a scalar each come back as themselves, and no rows
+/// is no node at the path, which `Option<Value>` opens to `None`.
 ///
 /// Past its budget, a walk over a document with a sealed root returns the
 /// root entry alone, at depth `0`, instead of a subtree it would be
 /// cheaper to open whole: the client opens the document and takes the
-/// walked path over it, to the same value the walked rows open to. Whether
-/// the path names the node walked below (`json_tree_subtree`) or the nodes
-/// reached (`json_tree_subtree_at`) is the key's to say, by whether it has
-/// gates, so no caller attaches it.
+/// walked path over it, to the same value the walked rows open to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonSubtree {
     nodes: Vec<JsonNode>,
@@ -664,9 +661,9 @@ impl JsonSubtree {
         &self.key.path
     }
 
-    /// Whether the rows are the descendants of the path's node
-    /// (`json_tree_subtree`, a key with no gates) rather than the nodes
-    /// the path reaches.
+    /// Whether the key has no gates: it names a chain head or the root, its
+    /// walk is `json_tree_subtree`, and its rows open as a list to the
+    /// node's children rather than to the nodes the path reaches.
     pub(crate) fn below(&self) -> bool {
         self.key.gates.is_empty()
     }

@@ -15,7 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projection, which the server compares with a needle by native `jsonb @>`.
   `JsonTreeEntry` is one entry as `->` and the walks return it,
   `JsonTreeQuery` the containment needle and `JsonTreeLeafQuery` the
-  ordering operand at a path. `JsonTreeSubtree` collects a walk's rows; past
+  ordering operand at a path. `JsonTreeSubtree` collects a walk's rows
+  (`eql_v4.json_tree_subtree(doc, key.token(), key.selector())` for a key
+  with no gates, `json_tree_subtree_at(doc, key.token(), key.gates())` for
+  one with), which hold the node at the path itself, so they open to its
+  value, `{}`, `[]` and scalars included, or, as `Option<Value>`, to
+  `None` where the row has no node there; past
   the walk's budget the server returns the sealed root instead, which
   opens at the path the walk's key was derived from: the rows are built
   with `JsonTreeSubtree::from_key(&key, rows)`, and there is no

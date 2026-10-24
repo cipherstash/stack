@@ -477,47 +477,51 @@ AS $$
   SELECT count(*)::integer FROM {{prefix}}.json_tree_children(e, token, gates)
 $$;
 
---! @brief The entries under the node the gates reach from the node whose
---!        token is `token`, as rows: the recursive walk of the chain, in
---!        core SQL.
+--! @brief The walk behind `json_tree_subtree` and `json_tree_subtree_at`:
+--!        from the node whose token is `token`, through `gates`, each node
+--!        the gates reach and everything beneath it, as rows.
 --!
 --! Each level probes the ordinals under the node in hand until the first
---! miss, derives each hit's token, and recurses. A token that names no node
---! yields no row, and nothing in a row is linkable to anything without the
---! token. At depth `d` (1 below the token) the gate `gates[d]`, if there
---! is one, decides which hits the walk descends through: an entry whose
---! `s` is the gate's selector, or, for a gate `#n:<selector>`, the one hit
---! at ordinal `n` if it carries that selector. Rows are returned from the depth of the last gate down: the
---! node a gate chain reaches, with `d = 0`, and everything beneath it, with
---! `d` its depth below that node. The start node is never returned. With
---! no gates, every descendant of the start node, with `d` its depth below
---! it, from 1.
+--! miss, derives each hit's token, and recurses; a token that names no node
+--! yields no row. At depth `d` (1 below the token) the gate `gates[d]`, if
+--! there is one, decides which hits the walk descends through: an entry
+--! whose `s` is the gate's selector, or, for `#n:<selector>`, the one hit
+--! at ordinal `n` if it carries that selector. Rows are returned from the
+--! depth of the last gate down: each node a gate chain reaches, with
+--! `d = 0`, and everything beneath it, with `d` its depth below that node.
+--!
+--! No probe finds the start node, since a node is found by its parent's
+--! token. With no gates it is returned only when `selector` names it: it
+--! is then a chain head, or an open root, which carries no parent tag, so
+--! it is the one entry with no `p` whose `s` is `selector`, returned with
+--! `d = 0`. When `selector` names no such entry the walk returns nothing:
+--! there is no node at the path.
 --!
 --! **The budget.** A walk returns about two hundred characters per entry,
---! where a sealed root holds the whole document in one ciphertext of about
---! the plaintext's size. So when the root is sealed and the walk would
---! return more than `budget` entries, it stops and returns the root entry
---! alone, with `d = 0`: the client opens it to the whole document and takes
---! the path itself, which is cheaper on both sides than the walk past that
---! point. The default of 64 is past the crossover by bytes (about a dozen
---! entries) by a margin that keeps a small subtree arriving as the entries
---! it is. A `budget` of `0` never falls back. A token that names no node
---! yields no row under any budget, and a document whose root is not sealed
---! is always walked in full, since its root holds no document to return.
+--! where a sealed root holds the whole document in about the plaintext's
+--! size. So when the root is sealed and the walk would return more than
+--! `budget` entries, it returns the root entry alone, with `d = 0`, and the
+--! client takes the path over the whole document. A `budget` of `0` never
+--! falls back; a walk that finds no node yields no row under any budget;
+--! a document whose root is not sealed is always walked in full.
 --!
+--! @internal
 --! @param e public.{{prefix}}_json_tree The stored document.
 --! @param token text The start node's token, base64.
 --! @param gates text[] One gate per step below the token: a selector, base64,
---!        or `#n:<selector>` for the array position `n`, with the array
---!        elements' selector. Empty for the whole subtree.
+--!        or `#n:<selector>` for the array position `n`.
 --! @param budget integer The most entries to return before falling back to
---!        the sealed root; `0` to always walk out. Default 64.
+--!        the sealed root; `0` to always walk out.
+--! @param selector text The start node's own selector, base64, to return it
+--!        at `d = 0`; NULL to return what the gates reach.
 --! @return SETOF public.{{prefix}}_json_tree_entry The entries, each with its
---!         depth `d` below the node the gates reach, in document order; or
---!         the root entry alone, with `j = 0` and `d = 0`, past the budget.
-CREATE FUNCTION {{prefix}}.json_tree_subtree_at(e public.{{prefix}}_json_tree, token text, gates text[], budget integer DEFAULT 64)
+--!         depth `d` below the node reached, in document order; or the root
+--!         entry alone, with `j = 0` and `d = 0`, past the budget.
+--! @note Not STRICT: `selector` is NULL for a gated walk. The public
+--!       wrappers are STRICT, so nothing else here is ever NULL.
+CREATE FUNCTION {{prefix}}_internal.json_tree_walk(e public.{{prefix}}_json_tree, token text, gates text[], budget integer, selector text)
   RETURNS SETOF public.{{prefix}}_json_tree_entry
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
 AS $$
   WITH RECURSIVE
     doc AS MATERIALIZED (
@@ -527,14 +531,30 @@ AS $$
              e::jsonb -> 'sv' -> 0 AS root,
              jsonb_array_length(e::jsonb -> 'sv') AS entries,
              budget > 0 AND {{prefix}}_internal.json_tree_sealed_root(e::jsonb ->> 'h') AS capped,
-             COALESCE(array_length(gates, 1), 0) AS gated
+             COALESCE(array_length(gates, 1), 0) AS gated,
+             start.entry AS start,
+             selector IS NULL OR start.entry IS NOT NULL AS found
+      FROM (
+        -- The start node by its selector: the first entry with no parent tag
+        -- that carries it, with its ordinal `j` in `sv`.
+        SELECT (
+          SELECT elem || jsonb_build_object('j', ord - 1)
+          FROM jsonb_array_elements(e::jsonb -> 'sv') WITH ORDINALITY AS t(elem, ord)
+          WHERE selector IS NOT NULL AND NOT (elem ? 'p') AND elem ->> 's' = selector
+          ORDER BY ord
+          LIMIT 1
+        ) AS entry
+      ) AS start
     ),
     -- One row per hit, after the seed row for the start node. `pt` and `o`
     -- are where the hit sits, its parent's token and its ordinal; `t` is its
     -- own token; `ppass` whether every gate down to its parent admitted the
-    -- parent, `pass` whether this hit's gate admits it too.
+    -- parent, `pass` whether this hit's gate admits it too. A start node its
+    -- selector names no entry for seeds nothing.
     walk(depth, pt, o, entry, t, ppass, pass) AS (
         SELECT 0, NULL::bytea, NULL::integer, NULL::jsonb, decode(token, 'base64'), true, true
+        FROM doc
+        WHERE doc.found
       UNION ALL
         SELECT probe.depth, probe.pt, probe.o, hit.entry,
                {{prefix}}_internal.json_tree_child_token(probe.pt, decode(hit.entry ->> 's', 'base64'), probe.o),
@@ -569,22 +589,30 @@ AS $$
         WHERE hit.entry IS NOT NULL
     ),
     -- At most one row per entry and the seed (see "The bound" above),
-    -- whatever the budget: a budget of 0, or an open root, leaves `found`
+    -- whatever the budget: a budget of 0, or an open root, leaves `reached`
     -- uncapped, and this is then the walk's only limit.
     visited AS MATERIALIZED (
       SELECT w.* FROM walk AS w LIMIT (SELECT doc.entries + 1 FROM doc)
     ),
     -- One row past the budget is enough to know the walk went over; a walk
     -- under it is the subtree complete. Uncapped, the limit is NULL: all
-    -- that `visited` holds.
-    found AS MATERIALIZED (
-      SELECT w.depth, w.entry
-      FROM visited AS w, doc
-      WHERE w.entry IS NOT NULL AND w.pass AND w.depth >= doc.gated
+    -- that `visited` holds. The start node, when its selector named it,
+    -- counts as one of the rows.
+    reached AS MATERIALIZED (
+      SELECT r.depth, r.entry
+      FROM (
+        SELECT 0 AS depth, doc.start AS entry
+        FROM doc
+        WHERE doc.start IS NOT NULL
+        UNION ALL
+        SELECT w.depth, w.entry
+        FROM visited AS w, doc
+        WHERE w.entry IS NOT NULL AND w.pass AND w.depth >= doc.gated
+      ) AS r
       LIMIT (SELECT CASE WHEN doc.capped THEN budget + 1 END FROM doc)
     ),
     over AS MATERIALIZED (
-      SELECT doc.capped AND (SELECT count(*) FROM found) > budget AS fallback FROM doc
+      SELECT doc.capped AND (SELECT count(*) FROM reached) > budget AS fallback FROM doc
     )
   SELECT rows.entry
   FROM (
@@ -593,28 +621,75 @@ AS $$
     FROM doc, over
     WHERE over.fallback
     UNION ALL
-    SELECT (f.entry ->> 'j')::integer,
-           (doc.meta || f.entry || jsonb_build_object('d', f.depth - doc.gated))::public.{{prefix}}_json_tree_entry
-    FROM found AS f, doc, over
+    SELECT (r.entry ->> 'j')::integer,
+           (doc.meta || r.entry || jsonb_build_object('d', r.depth - doc.gated))::public.{{prefix}}_json_tree_entry
+    FROM reached AS r, doc, over
     WHERE NOT over.fallback
   ) AS rows
   ORDER BY rows.j
 $$;
 
---! @brief Every entry under the node whose token is `token`:
---!        `json_tree_subtree_at` with no gates.
+--! @brief The nodes the gates reach from the node whose token is `token`,
+--!        each with everything beneath it, as rows: the recursive walk of
+--!        the chain, in core SQL.
+--!
+--! The walk of `{{prefix}}_internal.json_tree_walk` with no start selector.
+--! Rows are the node each gate chain reaches, with `d = 0`, and everything
+--! beneath it, with `d` its depth below that node, so an empty object, an
+--! empty array and a scalar each come back as one row, and no node as none.
+--! With no gates the start node itself is not among the rows, since
+--! nothing the walk probes names it: `json_tree_subtree` returns it by its
+--! selector. Past `budget` entries, with the root sealed, the root entry
+--! alone, with `d = 0`. The default budget of 64 is past the crossover by
+--! bytes (about a dozen entries) by a margin that keeps a small subtree
+--! arriving as the entries it is.
+--!
 --! @param e public.{{prefix}}_json_tree The stored document.
---! @param token text The subtree's token, base64.
+--! @param token text The start node's token, base64.
+--! @param gates text[] One gate per step below the token: a selector, base64,
+--!        or `#n:<selector>` for the array position `n`, with the array
+--!        elements' selector.
 --! @param budget integer The most entries to return before falling back to
---!        the sealed root; `0` to always walk the subtree out. Default 64.
---! @return SETOF public.{{prefix}}_json_tree_entry The descendants, each with its
---!         depth `d` below the node, in document order; or the root entry
---!         alone, with `d = 0`, past the budget.
-CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_tree, token text, budget integer DEFAULT 64)
+--!        the sealed root; `0` to always walk out. Default 64.
+--! @return SETOF public.{{prefix}}_json_tree_entry The entries, each with its
+--!         depth `d` below the node the gates reach, in document order; or
+--!         the root entry alone, with `j = 0` and `d = 0`, past the budget.
+CREATE FUNCTION {{prefix}}.json_tree_subtree_at(e public.{{prefix}}_json_tree, token text, gates text[], budget integer DEFAULT 64)
   RETURNS SETOF public.{{prefix}}_json_tree_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT * FROM {{prefix}}.json_tree_subtree_at(e, token, ARRAY[]::text[], budget)
+  SELECT * FROM {{prefix}}_internal.json_tree_walk(e, token, gates, budget, NULL)
+$$;
+
+--! @brief A chain head (or, with the root not sealed, the root) and every
+--!        entry under it: the node whose token is `token` and whose
+--!        selector is `selector`, with `d = 0`, then its descendants.
+--!
+--! A chain head has no parent token, so no probe finds it; it is the one
+--! entry with no parent tag that carries `selector`, which no other
+--! top-level node carries. Its descendants are found from `token`. An
+--! empty object, an empty array and a scalar come back as one row each,
+--! and a node the document does not have as no row, so the four answers
+--! `jsonb #>` gives are told apart. A token that is not the node's finds
+--! no descendant, and the node alone comes back, as `->` on the selector
+--! would return it. Past `budget` entries, with the root sealed, the root
+--! entry alone, with `d = 0`.
+--!
+--! @param e public.{{prefix}}_json_tree The stored document.
+--! @param token text The node's token, base64.
+--! @param selector text The node's selector, base64: what `->` takes for the
+--!        same path.
+--! @param budget integer The most entries to return before falling back to
+--!        the sealed root; `0` to always walk the subtree out. Default 64.
+--! @return SETOF public.{{prefix}}_json_tree_entry The node with `d = 0` and
+--!         its descendants, each with its depth `d` below it, in document
+--!         order; nothing when the document has no such node; or the root
+--!         entry alone, with `d = 0`, past the budget.
+CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_tree, token text, selector text, budget integer DEFAULT 64)
+  RETURNS SETOF public.{{prefix}}_json_tree_entry
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT * FROM {{prefix}}_internal.json_tree_walk(e, token, ARRAY[]::text[], budget, selector)
 $$;
 
 ------------------------------------------------------------------------------

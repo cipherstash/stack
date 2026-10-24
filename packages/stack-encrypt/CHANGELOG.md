@@ -52,14 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run it with `Reason::JsonIndexPending`. `JsonPath` implements `Serialize`
   and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key is a token and
   `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
-  or `#n:<selector>` for an array position. A walk past its budget returns
+  or `#n:<selector>` for an array position; a path's last step is always
+  a gate when it is a position, and a key with no gates (a chain head, or
+  the open root) carries the node's selector, `JsonSubtreeKey::selector()`,
+  which `json_tree_subtree(doc, token, selector)` finds the node by. Every
+  walk returns the node the path names, at depth `0`, with everything
+  beneath it, so `JsonSubtree` opens to that node's value, `{}`, `[]` and
+  scalars included, and, as `Option<Value>`, to `None` where the document
+  has no node at the path. A walk past its budget returns
   the sealed root in place of the subtree. The key carries the path it
   was derived from (`JsonSubtreeKey::path`) and builds the rows' wrapper,
-  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor; from
-  its gates it knows whether the rows are below the path's node
-  (`json_tree_subtree`) or at the nodes it reaches (`json_tree_subtree_at`),
-  so the rows open to the same value either way, over `JsonPath::select`,
-  which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
+  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor, so the
+  fallback opens to the same answer as the walked rows, over
+  `JsonPath::select`, which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
   of `q`, `p`, `op`, `h`, tokens and gates) is padded standard base64, and
   the ciphertext `c` is RFC 1924 base85 (`base85-simd`). The document's
   plaintext is held under `Protected` throughout, as the scalar paths hold

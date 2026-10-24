@@ -118,16 +118,28 @@ fn row(doc: &JsonDocument, j: usize, d: Option<u32>) -> JsonNode {
 }
 
 /// The rows the SQL walk returns for `key`, walked as it walks: with no
-/// gates, every descendant of the token's node from depth 1; with gates,
-/// through each gate (a selector, or `#n:<selector>`), then each node the
-/// gates reach at depth 0 with everything beneath it.
+/// gates (`json_tree_subtree`), the entry with no parent tag that carries
+/// the key's selector at depth 0, then every descendant of the token's
+/// node, or nothing when no such entry exists; with gates
+/// (`json_tree_subtree_at`), through each gate (a selector, or
+/// `#n:<selector>`), then each node the gates reach at depth 0 with
+/// everything beneath it.
 fn walk(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
     let gates = key.gates();
     if gates.is_empty() {
-        return doc
-            .subtree(key.token_bytes())
+        let Some(head) = doc
+            .entries()
             .iter()
-            .map(|(j, _, d)| row(doc, *j, Some(*d)))
+            .position(|e| e.parent_tag().is_none() && e.selector() == key.selector().as_bytes())
+        else {
+            return Vec::new();
+        };
+        return std::iter::once(row(doc, head, Some(0)))
+            .chain(
+                doc.subtree(key.token_bytes())
+                    .iter()
+                    .map(|(j, _, d)| row(doc, *j, Some(*d))),
+            )
             .collect();
     }
     let mut frontier = vec![(None, *key.token_bytes())];
@@ -294,7 +306,7 @@ mod given_the_entry_arrow_returned {
 mod given_the_rows_of_a_walk_without_gates {
     use super::*;
 
-    const CHILD: &str = "a child of the walked node";
+    const REACHED: &str = "a node the walked path reaches";
     const NEXT: &str = "the next node of the walked subtree";
 
     #[tokio::test]
@@ -304,7 +316,7 @@ mod given_the_rows_of_a_walk_without_gates {
         let nested = key(&cipher, "$.nested").await;
         assert!(nested.gates().is_empty(), "a chain head's token");
         let rows = walk(&doc, &nested);
-        assert_eq!(rows.len(), 6, "nested's descendants");
+        assert_eq!(rows.len(), 7, "nested and its descendants");
         let value = open_value(&cipher, nested.open(rows.clone())).await;
         assert_eq!(value.unwrap(), fixture()["nested"], "the sub-document");
         let list = open_list(&cipher, nested.open(rows)).await;
@@ -321,10 +333,10 @@ mod given_the_rows_of_a_walk_without_gates {
         let doc = seal(&cipher, &json!({"a": {"x": 1}, "b": {"x": 2}})).await;
         let a = key(&cipher, "$.a").await;
         let b = key(&cipher, "$.b").await;
-        // The database answers `$.a` with `$.b`'s subtree: one genuine
-        // member, in its place, but under `$.b`'s path.
+        // The database answers `$.a` with `$.b`'s subtree: genuine
+        // entries, in their place, but at `$.b`'s path.
         let refused = open_value(&cipher, a.open(walk(&doc, &b))).await;
-        assertions::wrong_entry(refused, CHILD);
+        assertions::wrong_entry(refused, REACHED);
     }
 
     #[tokio::test]
@@ -338,7 +350,7 @@ mod given_the_rows_of_a_walk_without_gates {
         let mut rows = walk(&doc, &nested);
         rows.push(row(&doc, 9, Some(1)));
         let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        assertions::wrong_entry(refused, REACHED);
     }
 
     #[tokio::test]
@@ -391,7 +403,7 @@ mod given_the_rows_of_a_walk_without_gates {
             })
             .collect();
         let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        assertions::wrong_entry(refused, NEXT);
     }
 
     #[tokio::test]
@@ -399,11 +411,26 @@ mod given_the_rows_of_a_walk_without_gates {
         let (cipher, _) = cipher().await;
         let doc = seal(&cipher, &fixture()).await;
         let nested = key(&cipher, "$.nested").await;
-        // `deep` (3) and then the second element's `x` (8) alone: its
-        // parent and everything between are missing.
-        let rows = vec![row(&doc, 3, Some(1)), row(&doc, 8, Some(3))];
+        // nested, `deep` (3) and then the second element's `x` (8) alone:
+        // its parent and everything between are missing.
+        let rows = vec![
+            row(&doc, 2, Some(0)),
+            row(&doc, 3, Some(1)),
+            row(&doc, 8, Some(3)),
+        ];
         let refused = open_value(&cipher, nested.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        assertions::wrong_entry(refused, NEXT);
+    }
+
+    #[tokio::test]
+    async fn the_descendants_without_the_node_are_refused() {
+        let (cipher, _) = cipher().await;
+        let doc = seal(&cipher, &fixture()).await;
+        let nested = key(&cipher, "$.nested").await;
+        // What the walk returned before it returned the node itself.
+        let rows: Vec<JsonNode> = walk(&doc, &nested).into_iter().skip(1).collect();
+        let refused = open_value(&cipher, nested.open(rows)).await;
+        assertions::wrong_entry(refused, REACHED);
     }
 
     #[tokio::test]
@@ -418,7 +445,7 @@ mod given_the_rows_of_a_walk_without_gates {
             .filter(|n| n.ordinal() != 3)
             .collect();
         let refused = open_value(&cipher, a.open(rows)).await;
-        assertions::wrong_entry(refused, CHILD);
+        assertions::wrong_entry(refused, NEXT);
     }
 
     #[tokio::test]
@@ -433,7 +460,7 @@ mod given_the_rows_of_a_walk_without_gates {
         let doc = seal_with(&cipher, &value, &open_root()).await;
         let root = key_with(&cipher, "$", &open_root()).await;
         let rows = walk(&doc, &root);
-        assert_eq!(rows.len(), 127, "every node below the root");
+        assert_eq!(rows.len(), 128, "the root and every node below it");
         let opened = open_value(&cipher, root.open(rows)).await;
         assert_eq!(opened.unwrap(), value, "the whole document");
     }
@@ -527,5 +554,217 @@ mod given_the_rows_of_a_gated_walk {
         rows.push(row(&doc, 0, Some(1)));
         let refused = open_value(&cipher, list.open(rows)).await;
         assertions::wrong_entry(refused, REACHED);
+    }
+}
+
+/// Every subtree read returns the node the path names, so a node with
+/// nothing beneath it (`{}`, `[]`, a scalar) opens to itself, and no node
+/// is told apart from all three: `Option<Value>` opens to `None`, as `->`
+/// returns SQL `NULL`. The sealed root a walk falls back to past its budget
+/// opens to the same answers.
+mod given_a_node_with_nothing_beneath_it {
+    use super::*;
+
+    async fn open_option(cipher: &Cipher, rows: JsonSubtree) -> Result<Option<Value>, Error> {
+        cipher
+            .decrypt_as::<Option<Value>, JsonSubtree>(rows, aead())
+            .await
+    }
+
+    /// The rows a walk past its budget returns: the sealed root alone.
+    fn fallback(doc: &JsonDocument) -> Vec<JsonNode> {
+        vec![row(doc, 0, Some(0))]
+    }
+
+    /// `path` in `value` read every way the client can read it, walked and
+    /// (with the root sealed) from the fallback, against what the path
+    /// selects in the plaintext.
+    async fn holds(cipher: &Cipher, value: &Value, path: &str, options: &JsonOptions) {
+        let doc = seal_with(cipher, value, options).await;
+        let key = key_with(cipher, path, options).await;
+        let expected = JsonPath::parse(path)
+            .unwrap()
+            .select(value)
+            .first()
+            .map(|v| (*v).clone());
+        let mut answers = vec![("walked", walk(&doc, &key))];
+        if options.sealed_root {
+            answers.push(("past the budget", fallback(&doc)));
+        }
+        for (how, rows) in answers {
+            let opened = open_option(cipher, key.open(rows.clone())).await;
+            assert_eq!(opened.unwrap(), expected, "{path} in {value}, {how}");
+            let one = open_value(cipher, key.open(rows)).await;
+            match &expected {
+                Some(expected) => assert_eq!(&one.unwrap(), expected, "{path} in {value}, {how}"),
+                None => match one {
+                    Err(Error::OpenedType { expected }) => assert_eq!(
+                        expected, "a node at the walked path",
+                        "{path} in {value}, {how}: no node is no value"
+                    ),
+                    other => panic!("{path} in {value}, {how}: {other:?}"),
+                },
+            }
+        }
+    }
+
+    const NOTHING_BENEATH: [&str; 7] = [
+        "{}",
+        "[]",
+        "\"text\"",
+        "0",
+        "null",
+        "false",
+        "{\"a\": [1, {\"b\": null}]}",
+    ];
+
+    fn each_node() -> impl Iterator<Item = Value> {
+        NOTHING_BENEATH
+            .iter()
+            .map(|text| serde_json::from_str(text).unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_chain_head_opens_to_its_own_value() {
+        let (cipher, _) = cipher().await;
+        for node in each_node() {
+            holds(
+                &cipher,
+                &json!({"p": node, "q": 1}),
+                "$.p",
+                &JsonOptions::default(),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn an_array_position_after_a_head_opens_to_its_own_value() {
+        let (cipher, _) = cipher().await;
+        let elements: Vec<Value> = each_node().collect();
+        let value = json!({ "l": elements });
+        for n in 0..=elements.len() {
+            holds(
+                &cipher,
+                &value,
+                &format!("$.l[{n}]"),
+                &JsonOptions::default(),
+            )
+            .await;
+        }
+        // A position in an array of arrays, chained through the first.
+        let nested = json!({"l": [[{}, [], 3]]});
+        for n in 0..4 {
+            holds(
+                &cipher,
+                &nested,
+                &format!("$.l[0][{n}]"),
+                &JsonOptions::default(),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_node_behind_a_gate_opens_to_its_own_value() {
+        let (cipher, _) = cipher().await;
+        for node in each_node() {
+            let value = json!({"h": {"p": node.clone(), "l": [node]}});
+            for path in ["$.h.p", "$.h.l[0]", "$.h.l[1]", "$.h.q"] {
+                holds(&cipher, &value, path, &JsonOptions::default()).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn no_node_opens_to_none_and_retrieves_no_key() {
+        let (cipher, retrieved) = cipher().await;
+        for path in ["$.p", "$.l[0]", "$.h.p", "$.h.l[0]"] {
+            holds(
+                &cipher,
+                &json!({"q": 1, "h": []}),
+                path,
+                &JsonOptions::default(),
+            )
+            .await;
+        }
+        let doc = seal(&cipher, &json!({"q": 1})).await;
+        let p = key(&cipher, "$.p").await;
+        assert!(walk(&doc, &p).is_empty(), "no entry carries `$.p`");
+        let before = retrieved.load(Ordering::SeqCst);
+        let opened = open_option(&cipher, p.open(Vec::new())).await;
+        assert_eq!(opened.unwrap(), None, "no node");
+        assert_eq!(
+            retrieved.load(Ordering::SeqCst),
+            before,
+            "no rows retrieve no key"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_the_root_open_every_read_opens_to_its_own_value() {
+        let (cipher, _) = cipher().await;
+        for node in each_node() {
+            let value = json!({"p": node.clone(), "l": [node]});
+            for path in ["$", "$.p", "$.l[0]", "$.l[1]", "$.q"] {
+                holds(&cipher, &value, path, &open_root()).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_heads_children_open_as_a_list_walked_and_past_the_budget() {
+        let (cipher, _) = cipher().await;
+        for (node, children) in [
+            (json!({}), vec![]),
+            (json!([]), vec![]),
+            (json!("text"), vec![]),
+            (json!([1, {}]), vec![json!(1), json!({})]),
+            (json!({"b": [], "a": 1}), vec![json!(1), json!([])]),
+        ] {
+            let doc = seal(&cipher, &json!({"p": node})).await;
+            let p = key(&cipher, "$.p").await;
+            for (how, rows) in [
+                ("walked", walk(&doc, &p)),
+                ("past the budget", fallback(&doc)),
+            ] {
+                let list = open_list(&cipher, p.open(rows)).await;
+                assert_eq!(list.unwrap(), children, "{node}, {how}");
+            }
+        }
+        let doc = seal(&cipher, &json!({"q": 1})).await;
+        let p = key(&cipher, "$.p").await;
+        for (how, rows) in [
+            ("walked", walk(&doc, &p)),
+            ("past the budget", fallback(&doc)),
+        ] {
+            match open_list(&cipher, p.open(rows)).await {
+                Err(Error::OpenedType { expected }) => {
+                    assert_eq!(expected, "a node at the walked path", "{how}")
+                }
+                other => panic!("{how}: no node has no children to list: {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_reaching_nodes_with_nothing_beneath_them_lists_each() {
+        let (cipher, _) = cipher().await;
+        let elements: Vec<Value> = each_node().collect();
+        let doc = seal(&cipher, &json!({"h": {"l": elements.clone()}})).await;
+        let all = key(&cipher, "$.h.l[*]").await;
+        for (how, rows) in [
+            ("walked", walk(&doc, &all)),
+            ("past the budget", fallback(&doc)),
+        ] {
+            let list = open_list(&cipher, all.open(rows.clone())).await;
+            assert_eq!(list.unwrap(), elements, "{how}");
+            match open_option(&cipher, all.open(rows)).await {
+                Err(Error::OpenedType { expected }) => {
+                    assert_eq!(expected, "one node at the walked path", "{how}")
+                }
+                other => panic!("{how}: a wildcard is no one node: {other:?}"),
+            }
+        }
     }
 }

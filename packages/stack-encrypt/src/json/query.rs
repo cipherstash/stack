@@ -375,8 +375,21 @@ impl Gate {
 /// The key of a subtree walk: the token of the deepest node on the path
 /// the client can derive, one gate per step below it, and the path it was
 /// derived from, which [`open`](Self::open) attaches to the rows the walk
-/// returns. Serializes as `{"t": "…", "g": ["…", "#0:…", …]}`, `g` omitted
-/// when empty; the path is not part of the wire.
+/// returns. Serializes as `{"t": "…", "g": ["…", "#0:…", …]}` for a key
+/// with gates and `{"t": "…", "s": "…"}` for one without; the path is not
+/// part of the wire.
+///
+/// Every walk returns the node the path names (each node, for a
+/// wildcard) at depth `0`, with everything beneath it, so an empty object,
+/// an empty array, a scalar and a missing node are four different answers.
+/// A key with [`gates`](Self::gates) keys `json_tree_subtree_at(doc,
+/// token, gates)`, which reaches the node through them. A key without
+/// names a chain head, or with the root open the root, which no parent
+/// token reaches: it keys `json_tree_subtree(doc, token, selector)`, which
+/// finds the node by its [`selector`](Self::selector) and its descendants
+/// by the token. A path that ends in an array position walks from the
+/// array's token through a position gate, so that the element itself comes
+/// back.
 ///
 /// The key also holds what derives selectors under the column it was
 /// derived for (the keyset's index-key PRF, shared with the keyset handle,
@@ -388,6 +401,8 @@ pub struct JsonSubtreeKey {
     pub(crate) token: Tag,
     pub(crate) gates: Vec<Gate>,
     pub(crate) path: JsonPath,
+    /// The selector of `path`: what the nodes the walk reaches carry.
+    pub(crate) selector: Tag,
     pub(crate) selectors: Selectors,
 }
 
@@ -407,10 +422,24 @@ impl JsonSubtreeKey {
     /// The gates the walk descends through below the token, one per step,
     /// as `json_tree_subtree_at` takes them: a selector's base64, or
     /// `#n:<selector>` for an array position, the selector being the array
-    /// elements' own. Empty when the token names the walked node itself,
-    /// which `json_tree_subtree` takes.
+    /// elements' own. Empty when the token names the walked node itself (a
+    /// chain head, or the open root), whose walk is `json_tree_subtree`.
     pub fn gates(&self) -> Vec<String> {
         self.gates.iter().map(Gate::text).collect()
+    }
+
+    /// The selector of the key's path: what `json_tree_subtree(doc, token,
+    /// selector)` takes beside the token when the key has no gates, to
+    /// return the node itself. A chain head has no parent token, so the
+    /// walk finds it by its selector, which no other top-level node
+    /// carries. It is the selector `->` sends for the same path, so the
+    /// database learns nothing from it it could not from `->`; with the
+    /// token beside it, it learns which top-level field the token is for,
+    /// which the stored order shows it the first time the token reaches
+    /// one of the field's members (the entry before the first member is its
+    /// parent).
+    pub fn selector(&self) -> JsonSelector {
+        JsonSelector(self.selector)
     }
 
     /// The path the key was derived from.
@@ -420,12 +449,13 @@ impl JsonSubtreeKey {
 
     /// The rows the walk this key keyed returned, ready to open: the only
     /// way to build a [`JsonSubtree`], so the rows always carry the path
-    /// a sealed-root fallback is opened at. With no gates the rows came
-    /// from `json_tree_subtree(doc, token)` and are the descendants of the
-    /// path's node; with gates they came from `json_tree_subtree_at(doc,
-    /// token, gates)` and are the nodes the path reaches, with theirs. The
-    /// key knows which, so the fallback opens to what the walked rows
-    /// open to either way.
+    /// a sealed-root fallback is opened at. The rows are the nodes the path
+    /// reaches, each at depth `0` with everything beneath it, from
+    /// `json_tree_subtree(doc, token, selector)` for a key with no gates and
+    /// `json_tree_subtree_at(doc, token, gates)` for one with; no rows means
+    /// no node at the path. Past the walk's budget they are the sealed root
+    /// alone, and the key's path selects over the whole document to the
+    /// same answer.
     ///
     /// Opening the rows checks each one against the key, and refuses the
     /// rows with [`Error::JsonWrongEntry`] if one does not fit: a node the
@@ -438,11 +468,9 @@ impl JsonSubtreeKey {
     /// A row whose parent is not among the rows is refused.
     ///
     /// Not covered: which row of the column the entries come from (ADR
-    /// 0010), and, until the walk returns the node it starts from, which
-    /// node at the path's selector a walk with no gates descends from. An
-    /// array position before the last step of a path reads as the wildcard
-    /// to the selectors, so another element's subtree at the same depth
-    /// passes too.
+    /// 0010). An array position before the last step of a path reads as
+    /// the wildcard to the selectors, so another element's subtree at the
+    /// same depth passes too.
     pub fn open(&self, rows: Vec<JsonNode>) -> JsonSubtree {
         JsonSubtree::keyed(rows, self.clone())
     }
@@ -464,10 +492,13 @@ impl Serialize for JsonSubtreeKey {
             t: String,
             #[serde(skip_serializing_if = "Vec::is_empty")]
             g: Vec<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            s: Option<String>,
         }
         Wire {
             t: base64(&self.token),
             g: self.gates(),
+            s: self.gates.is_empty().then(|| base64(&self.selector)),
         }
         .serialize(s)
     }
@@ -828,6 +859,7 @@ mod tests {
             token: [0xcd; 16],
             gates: vec![Gate::Selector([0xab; 16]), Gate::Slot(3, [0xab; 16])],
             path: JsonPath::parse("$.a.b[3]").unwrap(),
+            selector: [0xab; 16],
             selectors: Selectors::for_tests(),
         };
         assert_eq!(key.token(), "zc3Nzc3Nzc3Nzc3Nzc3NzQ==");
@@ -849,12 +881,15 @@ mod tests {
             token: [0xcd; 16],
             gates: Vec::new(),
             path: JsonPath::parse("$.a").unwrap(),
+            selector: [0xab; 16],
             selectors: Selectors::for_tests(),
         };
         assert_eq!(
             serde_json::to_value(&bare).unwrap(),
-            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ=="})
+            serde_json::json!({"t": "zc3Nzc3Nzc3Nzc3Nzc3NzQ==", "s": "q6urq6urq6urq6urq6urqw=="}),
+            "a key with no gates carries the head's selector"
         );
+        assert_eq!(bare.selector(), JsonSelector([0xab; 16]));
     }
 
     #[test]

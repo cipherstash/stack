@@ -516,10 +516,14 @@ async fn a_token_derived_from_the_path_alone_unlocks_exactly_its_subtree() {
     assert_eq!(open_key.token_bytes(), root.token_bytes());
     assert_eq!(open_key.gates().len(), 3);
     let array_doc = seal_with(&cipher, &json!([[1, 2], [3]]), &open_root()).await;
-    let second_row = subtree_key(&cipher, "$[1]", open_root()).await.unwrap();
-    assert!(second_row.gates().is_empty(), "positions derive");
+    let below_second = subtree_key(&cipher, "$[1][0]", open_root()).await.unwrap();
+    assert_eq!(
+        below_second.gates().len(),
+        1,
+        "positions derive up to the last, which is a gate"
+    );
     let found: Vec<usize> = array_doc
-        .subtree(second_row.token_bytes())
+        .subtree(below_second.token_bytes())
         .iter()
         .map(|(j, _, _)| *j)
         .collect();
@@ -598,11 +602,7 @@ async fn an_extracted_node_opens_to_its_scalar_and_a_subtree_to_its_value() {
     let key = subtree_key(&cipher, "$.nested", JsonOptions::default())
         .await
         .unwrap();
-    let rows: Vec<JsonNode> = doc
-        .subtree(key.token_bytes())
-        .iter()
-        .map(|(j, _, _)| node(*j))
-        .collect();
+    let rows = gated_walk(&doc, &key);
     let nested = cipher
         .decrypt_as::<Value, JsonSubtree>(key.open(rows.clone()), aead())
         .await
@@ -1463,17 +1463,21 @@ async fn a_position_reaches_no_object_member() {
     let first = subtree_key(&cipher, "$.a[0]", JsonOptions::default())
         .await
         .unwrap();
-    assert!(
-        first.gates().is_empty(),
-        "a position after the head derives"
+    assert_eq!(
+        first.gates().len(),
+        1,
+        "a last position is a gate from its array's token"
     );
     let array = seal(&cipher, &json!({"a": [{"x": 2}]})).await;
-    let found: Vec<usize> = array
-        .subtree(first.token_bytes())
+    let found: Vec<u64> = gated_walk(&array, &first)
         .iter()
-        .map(|(j, _, _)| *j)
+        .map(JsonNode::ordinal)
         .collect();
-    assert_eq!(found, [3], "$, $.a, $.a[0], $.a[0].x");
+    assert_eq!(found, [2, 3], "$, $.a, $.a[0], $.a[0].x");
+    // A position the client chains, before the last step.
+    let below = subtree_key(&cipher, "$.a[0].x", JsonOptions::default())
+        .await
+        .unwrap();
     for object in [
         json!({"a": {"k": {"x": 1}}}),
         json!({"a": {"k": [1, 2]}}),
@@ -1481,8 +1485,12 @@ async fn a_position_reaches_no_object_member() {
     ] {
         let doc = seal(&cipher, &object).await;
         assert!(
-            doc.subtree(first.token_bytes()).is_empty(),
+            gated_walk(&doc, &first).is_empty(),
             "{object}: an object member is not an element"
+        );
+        assert!(
+            gated_walk(&doc, &below).is_empty(),
+            "{object}: nor beneath one"
         );
     }
     // The same below a key step, where the position is a gate: the walk
@@ -1722,13 +1730,32 @@ async fn the_sealed_root_a_walk_fell_back_to_opens_at_the_path() {
 /// walked here as the SQL walks them: from the key's token, through each
 /// gate (a selector the entry at that depth must carry, or `#n:<selector>`,
 /// the child at ordinal `n` carrying it), then everything beneath each node
-/// the gates reach, each row with its depth below that node.
+/// the gates reach, each row with its depth below that node. For a key
+/// with no gates, what `json_tree_subtree(doc, token, selector)` returns:
+/// the entry with no parent tag that carries the key's selector, then its
+/// descendants.
 fn gated_walk(doc: &JsonDocument, key: &JsonSubtreeKey) -> Vec<JsonNode> {
     let with_depth = |j: usize, d: u32| -> JsonNode {
         let mut wire = serde_json::to_value(doc.node(j).unwrap()).unwrap();
         wire["d"] = json!(d);
         serde_json::from_value(wire).unwrap()
     };
+    if key.gates().is_empty() {
+        let Some(head) = doc
+            .entries()
+            .iter()
+            .position(|e| e.parent_tag().is_none() && e.selector() == key.selector().as_bytes())
+        else {
+            return Vec::new();
+        };
+        let mut rows = vec![with_depth(head, 0)];
+        rows.extend(
+            doc.subtree(key.token_bytes())
+                .iter()
+                .map(|(j, _, d)| with_depth(*j, *d)),
+        );
+        return rows;
+    }
     let mut frontier = vec![(None, *key.token_bytes())];
     for gate in key.gates() {
         let mut next = Vec::new();
@@ -1796,7 +1823,7 @@ async fn the_key_built_fallback_opens_to_what_the_walk_opens_to() {
         ("$.list", false),
         ("$.obj", false),
         ("$.hello", false),
-        ("$.list[1]", false),
+        ("$.list[1]", true),
         ("$.obj.b", true),
         ("$.obj.c.d", true),
         ("$.obj.b[0]", true),
@@ -1808,14 +1835,7 @@ async fn the_key_built_fallback_opens_to_what_the_walk_opens_to() {
             .await
             .unwrap();
         assert_eq!(!key.gates().is_empty(), gated, "{text}");
-        let walked = if gated {
-            gated_walk(&doc, &key)
-        } else {
-            doc.subtree(key.token_bytes())
-                .iter()
-                .map(|(j, _, _)| doc.node(*j).unwrap())
-                .collect()
-        };
+        let walked = gated_walk(&doc, &key);
         let fallen_back = key.open(vec![root.clone()]);
         assert!(fallen_back.is_sealed_root(), "{text}");
         let as_walked = cipher
@@ -1828,11 +1848,6 @@ async fn the_key_built_fallback_opens_to_what_the_walk_opens_to() {
             .unwrap();
         // An object's members come back in an order neither form fixes.
         assert_eq!(sorted(as_fallen), sorted(as_walked), "{text}, as a list");
-        // A walk with no rows (a scalar's, or an empty container's) is
-        // never past a budget, so it never falls back: nothing to compare.
-        if walked.is_empty() {
-            continue;
-        }
         let one_walked = cipher
             .decrypt_as::<Value, JsonSubtree>(key.open(walked), aead())
             .await;
@@ -1866,7 +1881,7 @@ async fn the_key_built_fallback_opens_to_what_the_walk_opens_to() {
         .await
     {
         Err(Error::OpenedType { expected }) => {
-            assert_eq!(expected, "one node at the walked path")
+            assert_eq!(expected, "a node at the walked path")
         }
         other => panic!("{other:?}"),
     }
