@@ -154,20 +154,24 @@ so a change to any of them fails it until the change is covered.
 `src/storage/proofs.rs` holds Kani proofs about the storage reader, for
 every input within their bounds:
 
-- the header is refused exactly as rules 1 and 2 say;
-- a count is never more than the bytes left;
-- reading a scalar, an object's key or a map's key from any position
-  never panics and stays within the input, and a map's key is only an
-  integer, text or bytes;
-- a node past the depth bound is refused before any of it is read;
+- the header is refused exactly as rules 1 and 2 say (up to 6 bytes);
+- a count is the four bytes at the cursor, and never more than the bytes
+  left (up to 8 bytes, from any position);
+- reading a scalar, an object's key or a map's key never panics, and reads
+  the bytes at the cursor (up to 6 bytes, from any position); a map's key
+  is only an integer, text or bytes; a wide scalar is read whole when the
+  input holds it, and refused otherwise (up to 17 bytes);
+- the depth bound is 128: a node past it is refused before any of it is
+  read, and a node at it is still read;
 - two integer map keys are one key exactly when their values are equal,
-  across every pair of widths;
-- text, bytes and integer keys are never one key.
+  across every pair of widths and every value;
+- two text keys, or two bytes keys, are one key exactly when their bytes
+  are equal, and keys of different kinds never are (up to 2 bytes).
 
 A proof over whole bodies did not solve in a usable time, even for three
 bytes, so whole bodies are left to the property tests and fuzzing. Run
 the proofs with `cargo kani -p vitaminc-aead-frame --features serde`; CI
-runs them in `.github/workflows/kani.yml`.
+runs them in `.github/workflows/kani-storage.yml`.
 
 `tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
 the new path and gets the frame it was sealed from, so the leaf format,
