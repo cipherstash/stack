@@ -15,22 +15,23 @@ pub enum Refusal {
 }
 
 /// Which of the rules numbered 3 to 9 in STORAGE.md's *Reading* a
-/// malformed blob breaks: the first the reader meets.
+/// malformed blob breaks, the first the reader meets, and which part of
+/// the rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Broken {
-    /// 3: the body is truncated, or bytes follow its node.
-    NotOneNode,
+    /// 3: the body ends before its node does, or bytes follow its node.
+    NotOneNode { trailing: bool },
     /// 4: a byte the grammar does not allow where it is, as a node or as a
     /// map's key.
     Tag { byte: u8, as_key: bool },
-    /// 5: a length or a count runs past the end of the blob.
-    PastTheEnd,
-    /// 6: an object's key or a text scalar is not UTF-8.
-    NotUtf8,
+    /// 5: a length, or a count, larger than the bytes left when it is read.
+    PastTheEnd { count: bool },
+    /// 6: an object's key, or a text scalar, is not UTF-8.
+    NotUtf8 { key: bool },
     /// 7: one object has two entries with the same key.
     RepeatedField,
-    /// 8: one map has two equal keys.
-    RepeatedKey,
+    /// 8: one map has two equal keys, starting with these tags.
+    RepeatedKey { first: u8, second: u8 },
     /// 9: a node is deeper than 128.
     TooDeep,
 }
@@ -38,7 +39,7 @@ pub enum Broken {
 const MAX_DEPTH: usize = 128;
 
 /// The tags a map's key may start with: every integer width, text, bytes.
-const KEY_TAGS: [u8; 12] = [
+pub const KEY_TAGS: [u8; 12] = [
     0x0C, 0x0E, 0x04, 0x05, 0x10, 0x0D, 0x0F, 0x06, 0x07, 0x11, 0x0A, 0x0B,
 ];
 
@@ -56,7 +57,7 @@ pub fn decode(bytes: &[u8]) -> Result<Model, Refusal> {
     };
     let node = reader.node(0).map_err(Refusal::Malformed)?;
     if reader.at != reader.bytes.len() {
-        return Err(Refusal::Malformed(Broken::NotOneNode));
+        return Err(Refusal::Malformed(Broken::NotOneNode { trailing: true }));
     }
     Ok(node)
 }
@@ -83,7 +84,7 @@ impl Reader<'_> {
 
     /// A fixed-width field: a blob that ends inside one is truncated.
     fn array<const N: usize>(&mut self) -> Result<[u8; N], Broken> {
-        self.take(N, Broken::NotOneNode)
+        self.take(N, Broken::NotOneNode { trailing: false })
             .map(|b| b.try_into().expect("N bytes"))
     }
 
@@ -95,30 +96,23 @@ impl Reader<'_> {
     /// its end.
     fn counted(&mut self) -> Result<&[u8], Broken> {
         let len = self.u32()?;
-        self.take(len, Broken::PastTheEnd)
+        self.take(len, Broken::PastTheEnd { count: false })
     }
 
     /// A count of children: more than the bytes left runs past the end of
-    /// the blob, since a child is at least one byte.
+    /// the blob, since a child is at least one byte. A count the bytes left
+    /// could hold, whose children then end early, is truncated.
     fn count(&mut self) -> Result<usize, Broken> {
         let count = self.u32()?;
         if count > self.left() {
-            return Err(Broken::PastTheEnd);
+            return Err(Broken::PastTheEnd { count: true });
         }
         Ok(count)
     }
 
-    /// Before each child a count promised: a blob that ends there ran out
-    /// before its count did. One that ends inside a child is truncated.
-    fn next_child(&self) -> Result<(), Broken> {
-        if self.left() == 0 {
-            return Err(Broken::PastTheEnd);
-        }
-        Ok(())
-    }
-
-    fn text(&mut self) -> Result<String, Broken> {
-        String::from_utf8(self.counted()?.to_vec()).map_err(|_| Broken::NotUtf8)
+    /// A text scalar, or an object's key when `key`.
+    fn text(&mut self, key: bool) -> Result<String, Broken> {
+        String::from_utf8(self.counted()?.to_vec()).map_err(|_| Broken::NotUtf8 { key })
     }
 
     fn node(&mut self, depth: usize) -> Result<Model, Broken> {
@@ -142,14 +136,13 @@ impl Reader<'_> {
             0x11 => Model::U128(u128::from_le_bytes(self.array()?)),
             0x08 => Model::F32(u32::from_le_bytes(self.array()?)),
             0x09 => Model::F64(u64::from_le_bytes(self.array()?)),
-            0x0A => Model::Text(self.text()?),
+            0x0A => Model::Text(self.text(false)?),
             0x0B => Model::Bytes(self.counted()?.to_vec()),
             0xF5 => Model::Some(Box::new(self.node(depth + 1)?)),
             0xF0 => {
                 let count = self.count()?;
                 let mut items = Vec::new();
                 for _ in 0..count {
-                    self.next_child()?;
                     items.push(self.node(depth + 1)?);
                 }
                 Model::Array(items)
@@ -158,8 +151,7 @@ impl Reader<'_> {
                 let count = self.count()?;
                 let mut entries: Vec<(String, Model)> = Vec::new();
                 for _ in 0..count {
-                    self.next_child()?;
-                    let key = self.text()?;
+                    let key = self.text(true)?;
                     if entries.iter().any(|(k, _)| *k == key) {
                         return Err(Broken::RepeatedField);
                     }
@@ -171,18 +163,23 @@ impl Reader<'_> {
                 let count = self.count()?;
                 let mut entries: Vec<(Model, Model)> = Vec::new();
                 for _ in 0..count {
-                    self.next_child()?;
-                    let byte = self.bytes[self.at];
+                    let byte = *self
+                        .bytes
+                        .get(self.at)
+                        .ok_or(Broken::NotOneNode { trailing: false })?;
                     if !KEY_TAGS.contains(&byte) {
                         return Err(Broken::Tag { byte, as_key: true });
                     }
                     let key = self.node(depth + 1)?;
                     let same = key_value(&key).expect("a key tag reads as a key");
-                    if entries
+                    if let Some((earlier, _)) = entries
                         .iter()
-                        .any(|(k, _)| key_value(k) == Some(same.clone()))
+                        .find(|(k, _)| key_value(k) == Some(same.clone()))
                     {
-                        return Err(Broken::RepeatedKey);
+                        return Err(Broken::RepeatedKey {
+                            first: tag_of(earlier),
+                            second: byte,
+                        });
                     }
                     entries.push((key, self.node(depth + 1)?));
                 }
@@ -229,5 +226,32 @@ pub fn key_value(key: &Model) -> Option<KeyValue> {
         Model::Text(v) => Some(KeyValue::Text(v.clone())),
         Model::Bytes(v) => Some(KeyValue::Bytes(v.clone())),
         _ => None,
+    }
+}
+
+/// The tag a node starts with.
+pub fn tag_of(node: &Model) -> u8 {
+    match node {
+        Model::Null => 0x00,
+        Model::Bool(false) => 0x02,
+        Model::Bool(true) => 0x03,
+        Model::I8(_) => 0x0C,
+        Model::I16(_) => 0x0E,
+        Model::I32(_) => 0x04,
+        Model::I64(_) => 0x05,
+        Model::I128(_) => 0x10,
+        Model::U8(_) => 0x0D,
+        Model::U16(_) => 0x0F,
+        Model::U32(_) => 0x06,
+        Model::U64(_) => 0x07,
+        Model::U128(_) => 0x11,
+        Model::F32(_) => 0x08,
+        Model::F64(_) => 0x09,
+        Model::Text(_) => 0x0A,
+        Model::Bytes(_) => 0x0B,
+        Model::Some(_) => 0xF5,
+        Model::Array(_) => 0xF0,
+        Model::Object(_) => 0xF1,
+        Model::Map(_) => 0xF6,
     }
 }
