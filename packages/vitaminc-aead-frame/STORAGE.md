@@ -115,6 +115,9 @@ Stable, and covered by this specification:
   and `storage::MAP`;
 - `storage::ErrorKind`, the class of a refusal.
 
+The Go module `bindings/go/vcffi` implements the same format
+(`MarshalStorage`, `UnmarshalStorage`), held to the same corpus.
+
 Not stable, and not covered: everything else in `vitaminc-aead-frame`.
 The transport frame (`Frame`, `FrameWriter`, `to_frame`), the transport
 serde format (`serde::to_vec`, `serde::from_slice`, `serde::from_frame`)
@@ -242,6 +245,8 @@ returning it.
 
 A field skipped with `skip_serializing_if` is not written. A `Vec<u8>` is a
 sequence of `u8` in serde, so it is an array; `serde_bytes` makes it bytes.
+Go's `[]byte` is always bytes, so a type whose values Go also reads keeps its
+byte strings as bytes.
 serde writes a struct with a `#[serde(flatten)]` field as a map, so it is a
 map node whose keys are text. A value serialized through `Display`
 (`collect_str`) is text.
