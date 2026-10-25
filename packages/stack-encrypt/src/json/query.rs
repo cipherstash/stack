@@ -806,6 +806,15 @@ impl Json {
     }
 }
 
+/// A uniform shuffle of `items`, `below(n)` drawing a uniform index under
+/// `n` (spike, #1357).
+pub(crate) fn fisher_yates<T>(items: &mut [T], below: &mut impl FnMut(u32) -> u32) {
+    for i in (1..items.len()).rev() {
+        let j = below(u32::try_from(i + 1).unwrap_or(u32::MAX)) as usize;
+        items.swap(i, j.min(i));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -975,14 +984,5 @@ mod tests {
             sv: vec![pair(9)],
             el: vec![],
         }));
-    }
-}
-
-/// A uniform shuffle of `items`, `below(n)` drawing a uniform index under
-/// `n` (spike, #1357).
-pub(crate) fn fisher_yates<T>(items: &mut [T], below: &mut impl FnMut(u32) -> u32) {
-    for i in (1..items.len()).rev() {
-        let j = below(u32::try_from(i + 1).unwrap_or(u32::MAX)) as usize;
-        items.swap(i, j.min(i));
     }
 }

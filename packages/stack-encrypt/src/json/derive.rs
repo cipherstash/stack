@@ -1002,7 +1002,7 @@ fn seal(
     // Where each node is stored: its walk index, or (spike, #1357) a random
     // slot, the root staying at 0. The AAD binds the slot.
     let mut rng = shuffled()
-        .then(|| vitaminc::random::SafeRand::from_entropy())
+        .then(vitaminc::random::SafeRand::from_entropy)
         .transpose()
         .map_err(|_| Error::Other("no entropy for the stored order".into()))?;
     let slots = slots(nodes.len(), rng.as_mut());
@@ -2118,6 +2118,42 @@ impl<K> KeysetCipher<'_, K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_aead_tag_is_the_last_sixteen_bytes_of_the_ciphertext() {
+        let c: Vec<u8> = (0..40).collect();
+        assert_eq!(aead_tag(&c), &c[24..]);
+        assert_eq!(aead_tag(&c).len(), 16);
+        // A ciphertext shorter than a tag is taken whole, so a truncated
+        // entry still contributes something its parent was sealed over.
+        assert_eq!(aead_tag(&[1, 2, 3]), &[1, 2, 3]);
+        assert_eq!(aead_tag(&[]), &[] as &[u8]);
+    }
+
+    #[test]
+    fn the_children_digest_covers_each_tag_in_order() {
+        let a: Vec<u8> = (0..40).collect();
+        let b: Vec<u8> = (100..140).collect();
+        let ab = children_digest([a.as_slice(), b.as_slice()]);
+        let ba = children_digest([b.as_slice(), a.as_slice()]);
+        assert_ne!(ab, ba, "order is part of the digest");
+        assert_ne!(ab, leaf_digest(), "a container is not a leaf");
+        assert_eq!(leaf_digest(), children_digest(std::iter::empty()));
+        // Only the tag counts: two ciphertexts with the same last sixteen
+        // bytes digest the same.
+        let mut a2 = a.clone();
+        a2[0] ^= 0xff;
+        assert_eq!(
+            children_digest([a.as_slice()]),
+            children_digest([a2.as_slice()])
+        );
+        let mut a3 = a.clone();
+        a3[39] ^= 0xff;
+        assert_ne!(
+            children_digest([a.as_slice()]),
+            children_digest([a3.as_slice()])
+        );
+    }
     use serde_json::json;
     use vitaminc_prf::PrfKeyInit;
 
