@@ -751,8 +751,7 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
         // An error about the key itself (an unknown key) stays at the
         // object's path: putting the key on the path would print it, and a
         // message never repeats what a host sent.
-        seed.deserialize(BorrowedStrDeserializer::<Error>::new(key))
-            .map(Some)
+        seed.deserialize(KeyDeserializer(key)).map(Some)
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
@@ -773,6 +772,43 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
 
     fn size_hint(&self) -> Option<usize> {
         Some(self.left)
+    }
+}
+
+/// Reads an object's key, which is text, into the key type. A key written
+/// from a newtype struct around a string reads back into it, as serde's
+/// own string deserializer would refuse; everything else is that
+/// deserializer's.
+struct KeyDeserializer<'de>(&'de str);
+
+impl<'de> de::Deserializer<'de> for KeyDeserializer<'de> {
+    type Error = Error;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        visitor.visit_borrowed_str(self.0)
+    }
+
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
+        visitor.visit_newtype_struct(self)
+    }
+
+    fn deserialize_enum<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Error> {
+        BorrowedStrDeserializer::<Error>::new(self.0).deserialize_enum(name, variants, visitor)
+    }
+
+    ::serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct seq tuple tuple_struct map
+        struct identifier ignored_any
     }
 }
 

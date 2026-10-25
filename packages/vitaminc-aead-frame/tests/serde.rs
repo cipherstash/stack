@@ -492,6 +492,23 @@ fn map_keys_are_text_and_nothing_else() {
         from_slice(&to_vec(&BTreeMap::from([(Wrapped("w".into()), 3u8)])).expect("writes"))
             .expect("reads");
     assert_eq!(by_newtype, BTreeMap::from([("w".to_owned(), 3)]));
+    // Each reads back into the key type it was written from, a newtype
+    // around a string included.
+    let wrapped = BTreeMap::from([(Wrapped("w".into()), 3u8)]);
+    assert_eq!(
+        from_slice::<BTreeMap<Wrapped, u8>>(&to_vec(&wrapped).expect("writes")),
+        Ok(wrapped)
+    );
+    let variants = BTreeMap::from([(Key::Alpha, 2u8)]);
+    assert_eq!(
+        from_slice::<BTreeMap<Key, u8>>(&to_vec(&variants).expect("writes")),
+        Ok(variants)
+    );
+    let chars = BTreeMap::from([('c', 1u8)]);
+    assert_eq!(
+        from_slice::<BTreeMap<char, u8>>(&to_vec(&chars).expect("writes")),
+        Ok(chars)
+    );
 
     /// One key of each kind serde can serialize that is not text.
     #[derive(Serialize)]
