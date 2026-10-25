@@ -150,6 +150,25 @@ right shape, that reads as the clause says. A refused row only counts if
 it reads once the clause's cause is removed.
 The test holds STORAGE.md's rules, clauses and key grammar word for word,
 so a change to any of them fails it until the change is covered.
+
+`src/storage/proofs.rs` holds Kani proofs about the storage reader, for
+every input within their bounds:
+
+- the header is refused exactly as rules 1 and 2 say;
+- a count is never more than the bytes left;
+- reading a scalar, an object's key or a map's key from any position
+  never panics and stays within the input, and a map's key is only an
+  integer, text or bytes;
+- a node past the depth bound is refused before any of it is read;
+- two integer map keys are one key exactly when their values are equal,
+  across every pair of widths;
+- text, bytes and integer keys are never one key.
+
+A proof over whole bodies did not solve in a usable time, even for three
+bytes, so whole bodies are left to the property tests and fuzzing. Run
+the proofs with `cargo kani -p vitaminc-aead-frame --features serde`; CI
+runs them in `.github/workflows/kani.yml`.
+
 `tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
 the new path and gets the frame it was sealed from, so the leaf format,
 the AAD derivations and the container rules stay what shipped.
