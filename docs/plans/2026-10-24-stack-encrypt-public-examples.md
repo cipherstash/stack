@@ -5,6 +5,12 @@ Date: 2026-10-24. Companion to the
 The separate [context examples](2026-10-24-stack-encrypt-context-examples.md)
 explore directional source selection, storing context, and decrypt inputs
 across nine scenarios. Their attributes are proposals, not implemented APIs.
+The [JSON operation contract](2026-10-25-stack-encrypt-json-operations.md)
+covers the comprehensive first-release JSON workflows with Rust, dynamic
+and SQL examples, including extraction and walks.
+
+The user clarified on 2026-10-25 that this API is an early prototype:
+backward compatibility with its old APIs and encodings is not required.
 
 This document tests the proposed public API against three complete workflows:
 encrypt, persist, load, and decrypt a user; the searchable workflow also
@@ -21,6 +27,36 @@ the examples really encode, write, read, and decode their stored forms.
 
 ## What is agreed, and what these examples propose
 
+**Ownership decision (2026-10-25):** `encrypt` and `encrypt_into` consume
+their inputs, including context-taking variants. Their implementations must
+guard owned plaintext and temporary buffers for cleanup on success, error,
+and request drop; passthrough fields intentionally transfer to the output.
+The single-ciphertext capabilities are named `OpaqueEncode` / `OpaqueDecode`.
+Plaintext types must implement `Zeroize`; no new cleanup trait is planned.
+The candidate programs below predate that bound: update their source derives
+and any reuse of consumed input when making them executable.
+`Serialize` alone does not establish the cleanup contract for `OpaqueBlob<T>`.
+
+**Decrypt decision (2026-10-25):** retain direct `keyset.decrypt` and
+`decrypt_with_context` for opaque ciphertext, alongside destination-directed
+`T::decrypt_from` and `decrypt_from_with_context` for declared targets.
+Successful calls return ordinary owned `T: Zeroize`; the caller then owns
+cleanup responsibility. Stack guards intermediate plaintext. Support
+explicit drop-guarded results without imposing a wrapper by default;
+`Zeroize` alone does not wipe returned values on drop. These are accepted
+API contracts, not a claim that the prototype already implements them.
+
+**Collection decision (2026-10-25):** direct `keyset.encrypt(value)` handles
+one single-value input and produces `Ciphertext`; it does not automatically
+encrypt collections element by element. Collection batching uses
+`EncryptInto`, for example
+`let encrypted: Vec<Ciphertext> = vec![1_i32, 3_i32].encrypt_into(&keyset).await?`.
+`keyset.encrypt(OpaqueBlob::new(vec![1_i32, 3_i32])).await?` instead produces
+one ciphertext for the encoded collection. The latest recommendation
+applies the same rule to byte vectors, with no wrapper or special case
+needed to preserve prototype behavior. These calls require the proposed
+opaque ciphertext and no-context target support.
+
 | Surface | Status in this review |
 | --- | --- |
 | `keyset.encrypt(value)` and `encrypt_with_context(value, context)` | Agreed direction; current code still has the two-argument `encrypt` method |
@@ -32,10 +68,11 @@ the examples really encode, write, read, and decode their stored forms.
 | `Ciphertext` | Proposed name for an opaque single-value ciphertext; **not** today's `StackCipherText` or `CipherText` enum |
 | `Ciphertext::to_bytes` / `from_bytes` | Proposed direct access to the existing canonical sealed-leaf encoding, without node extraction |
 | `Ciphertext: Serialize + Deserialize` | Proposed storage contract: Base64 of the canonical bytes for human-readable serializers, bytes for binary serializers |
-| `Ciphertext` as an encryption/decryption target | Proposed scalar target, including support for `String` and `Vec<u8>`; does not silently flatten a struct into a blob |
+| Encoded ciphertext field targets | Accepted: dedicated ciphertext wrappers for Base64/Base85 storage compose with encrypt/decrypt targets; final names remain for the naming pass |
+| `Ciphertext` as an encryption/decryption target | Proposed single-value target, including scalars and `String`; use `OpaqueBlob<Vec<u8>>` for a whole byte vector under the latest recommendation |
 | Decrypt into `OpaqueBlob<T>`, then `into_inner()` | Proposed symmetric decoding path; returns the original application value after authentication and decoding |
-| `cipher.decrypt_with_context` | Proposed companion to `encrypt_with_context`; ordinary decrypt naming remains a review decision |
-| `User::decrypt_from` / `decrypt_from_with_context` | Existing `DecryptFrom` extension conveniences, retained here pending the decrypt naming discussion |
+| Direct `decrypt` / `decrypt_with_context` | Accepted ordinary decrypt pair, symmetric with direct encryption |
+| `User::decrypt_from` / `decrypt_from_with_context` | Accepted destination-directed pair on `DecryptFrom` |
 | `SearchableEmail` in example 3 | Application-defined target composed from ciphertext and an existing `EqualityTerm` |
 
 The first three Rust blocks use proposed `OpaqueBlob`, `Ciphertext`, and/or
@@ -46,8 +83,8 @@ subject to review where marked proposed or provisional.
 The proposed opaque ciphertext is intentionally untyped: the decrypt call's
 expected type selects decoding. A typed wrapper remains an open alternative.
 Its byte decoder parses a stored envelope; authentication happens on decrypt.
-For a derived field it must preserve the existing context and leaf encoding,
-not introduce a new cryptographic format just to improve ergonomics.
+Context and leaf encodings must agree across the new Rust and dynamic
+implementations; preserving the prototype's encoding is not required.
 
 The trait name `DecryptFrom` is somewhat surprising: it supplies the
 convenience functions, while `#[derive(DecryptInto)]` describes how an
@@ -84,8 +121,8 @@ application to select and invoke a codec. The proposed wrapper owns the input;
 operation. The context identifies the application's document schema and binds
 this document to an externally known record id.
 
-For this draft the wrapper accepts Serde `Serialize` on write and
-`DeserializeOwned` on read. That input-trait choice is provisional: it does
+For this draft the wrapper accepts `Serialize + Zeroize` on write and
+`DeserializeOwned + Zeroize` on read. This does
 not claim that arbitrary Serde implementations can satisfy a constant-time
 contract. The initial wrapper has one library-selected, versioned binary
 codec, not a caller-selected codec parameter. Selecting and specifying that
@@ -163,7 +200,7 @@ raw bytes. Application schema evolution remains explicit: a codec version
 does not automatically migrate changes to `User`.
 
 **Without application context:** use `keyset.encrypt(OpaqueBlob::new(user))`
-form. A matching no-context `reader.decrypt(loaded)` is proposed for symmetry;
+form. A matching no-context `reader.decrypt(loaded)` is accepted for symmetry;
 it is not the signature of today's two-argument decrypt method. This document
 uses explicit context in the full example so the saved format is unambiguous.
 
@@ -547,7 +584,7 @@ separate adapter example to add once that boundary is settled.
 | Is an encrypted output type generated automatically? | No; the layout examples deliberately define it |
 
 The principal unresolved choices exposed by the examples are the opaque
-ciphertext name and storage contract, the public decrypt spelling, the blob
+ciphertext name and storage contract, the blob
 codec and timing contract, EQL context adaptation, and optional source-side output
 generation. None requires reintroducing public `encrypt_as`.
 

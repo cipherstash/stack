@@ -7,11 +7,19 @@ Companion: [complete public workflow examples](2026-10-24-stack-encrypt-public-e
 an API design draft covering encryption, persistence, decryption, and queries.
 The [directional context examples](2026-10-24-stack-encrypt-context-examples.md)
 explore context sources and storage using Serde-inspired attribute syntax.
+The [implementation plan](2026-10-24-stack-encrypt-api-plan.md) records
+requirements, recommended decisions, sequencing, and completion criteria.
 
 This is a running issue log. Add a numbered section as each issue is found;
 keep observations, proposed changes, and unresolved decisions distinct.
 All issues below remain unimplemented. Individual decisions are recorded
 within each issue; proposed APIs are illustrative, not implemented.
+
+**User clarification, 2026-10-25:** this API has never shipped beyond an
+early prototype. Earlier suggestions to preserve old encodings or public
+imports are superseded: backward compatibility and prototype data migration
+are not requirements. New Rust, Go, guest, and EQL implementations must
+agree with each other, but need not retain the prototype's representations.
 
 ## 1. Cipher trait mismatch and explicit context ergonomics
 
@@ -130,6 +138,22 @@ the simple scalar case.
 
 ### Proposed direction and open decisions
 
+**Subsequent decision:** ordinary encryption should produce one opaque
+ciphertext; choose structural encryption through an explicit target, or
+encode a composite plaintext first with `OpaqueBlob<T>`. The
+[implementation plan](2026-10-24-stack-encrypt-api-plan.md) recommends
+adapting a native single sealed leaf through the existing transcoder,
+without serializing an entire encrypted tree or re-encrypting it.
+
+**Collection decision, 2026-10-25:** direct `encrypt` handles a single-value
+input and does not automatically lift over collections. Retain collection
+composition through `EncryptInto`, including
+`let encrypted: Vec<Ciphertext> = vec![1_i32, 3_i32].encrypt_into(&keyset).await?`.
+Use `OpaqueBlob<Vec<T>>` to encode and seal a complete collection as one
+ciphertext. This settles the previously reopened collection question.
+The spelling for byte buffers (`Vec<u8>` versus an explicit bytes wrapper)
+remains a separate detail to resolve.
+
 Provide a straightforward opaque ciphertext storage round trip for scalar
 values, with direct byte conversion and reconstruction. Decide whether this
 means a dedicated scalar result type, a wrapper, or conversion helpers on
@@ -138,8 +162,19 @@ the existing API.
 Also decide whether Base64 and Serde should be supported conveniences, and
 whether whole-tree serialization belongs in Stack or remains caller-owned.
 If it remains caller-owned, make that distinction explicit and keep it out
-of the simple scalar path. Preserve the existing canonical leaf encoding;
-an ergonomic improvement should not require changing stored ciphertext.
+of the simple scalar path. The prototype's canonical leaf encoding is a
+useful starting point, not a backward-compatibility obligation.
+
+**Follow-up, 2026-10-25:** text conversions must use the existing
+`Base64Text` / `Base85Text` wrappers from EQL bindings. Explore moving these
+general encoding types below Stack/EQL and supporting ciphertext-specific
+encoded field targets. The persisted ZeroKMS key tag must be extractable
+simply in Rust and PL/pgSQL. A refinable-tag protocol is being designed
+separately. The user clarified that ZeroKMS checks policy/logs against the
+refined tag and returns the original tag for reconstruction of leaf AAD;
+record these distinct roles in the implementation. The
+[persistence requirements](2026-10-24-stack-encrypt-api-plan.md#typed-encodings-and-extractable-zerokms-tags)
+record the proposals and the Base85/SQL decoding constraint.
 
 **Sources:** [ciphertext alias and leaf encoding](../../packages/stack-encrypt/src/cipher.rs)
 (`StackCipherText`, `SealedValue`) and
@@ -540,11 +575,10 @@ become another public API users must understand.
   Move the value-level backend adapters too, or separate a lower-level
   core/primitive boundary.
 - Context composition, type tags, ciphertext framing, index normalization,
-  and binding transport frames have compatibility consequences. Preserve
-  their existing encodings when changing ownership; any deliberate semantic
-  change needs separate versioning and migration treatment.
-- Retain one canonical trait/type identity. Compatibility re-exports can
-  preserve an old path where dependencies permit; copied independent trait
+  and binding transport frames must agree across the new consumers. They
+  may change without preserving prototype data or providing migration.
+- Retain one canonical trait/type identity. Update consumers directly;
+  compatibility re-exports are unnecessary. Copied independent trait
   definitions would require duplicate implementations and adapters.
 - Account for guest/FFI consumers and EQL target implementations, not just
   Rust application imports. The no-HTTP/WASM path must remain usable.
@@ -682,3 +716,408 @@ for the proposed selectors and input requirements.
 
 **Source:** [convenience methods](../../packages/stack-encrypt/src/target/operations.rs)
 (`EncryptInto::encrypt_into`, `DecryptFrom::decrypt_from`).
+
+## 13. JSON layouts and encrypted-output adaptation
+
+**Status:** Open; initial assessment of the JSON tree implementation on
+`next` at `b1049824b`. No replacement API selected.
+
+**Agreed follow-up:** investigate replacing the EQL JSON adapter's
+serialization round trips with direct typed conversions. This does not yet
+select an extended visitor protocol or authorize a particular replacement
+API.
+
+`Layout<S>` describes a target selected by a value carrying runtime options.
+It associates a `Target: EncryptFrom<S>` and an `Index`, and supplies an
+`encryption(&self)` description plus the configured index for queries.
+`EncryptFrom<S>::encryption()` instead selects a description by output type.
+For JSON, both routes can produce `JsonDocument`: selecting that type uses
+default options, while `Json::new(options)` can specify ordered paths and
+whether the root is sealed. A plan retains those options for its queries.
+
+This is broader than choosing a Rust record's field layout. JSON options
+affect cryptographic structure, query capability, and information exposed
+to the server. The same output type can represent different configurations;
+the type alone does not identify them. The JSON tree belongs to the
+searchable-layout workflow, rather than being an opaque serialized blob.
+
+The existing `target::transcode` protocol serves a different stage: a
+`Reader` hands completed ciphertext, structural markers, metadata, and terms
+to a destination `Visitor`. `Encryption::transcode()` uses it to adapt
+encrypted output without an intermediate serialization tree. It does not
+choose JSON indexing options or generate missing search terms.
+
+The new EQL adapter currently takes another route. `JsonTree` implements
+`Layout<Value, Target = JsonTreeDocument>`, delegates encryption to the
+engine's `Json` layout, and wraps its completed `JsonDocument` with EQL
+version and column metadata. Its envelope conversion uses a
+`serde_json::Value` intermediate; a private helper also named `transcode`
+converts query/extraction types through `to_value`/`from_value`. Neither is
+the existing `target::transcode` protocol. That protocol currently has no
+JSON-document reader or visitor event. The conversion processes encrypted
+output and query metadata; it is not a plaintext serialization bypass.
+
+On decrypt, the EQL target validates its stored column against any supplied
+expectation, reconstructs the engine document through the wire form, and
+delegates opening to the engine. Its layout object is not required to
+perform that conversion.
+
+### Questions to resolve
+
+- Keep encryption configuration distinct from encrypted-output adaptation.
+  Decide whether `Layout` is the clearest public name for a configured
+  target, especially alongside the earlier use of "layout" for output
+  records.
+- Decide how runtime target options fit the retained `EncryptInto` API;
+  currently type-directed conversion selects the target's defaults, while
+  plans accept a configured layout via `encrypt_with_layout`.
+- Evaluate a direct typed JSON-document adapter versus extending the
+  encrypted-output visitor. Avoid forcing the JSON protocol into generic
+  map/sequence events that lose its header, shared document key, projection,
+  and extraction semantics. A shared architectural boundary does not
+  necessarily require one universal visitor.
+- Consider whether a general configured-target abstraction should require
+  an index: today's `Layout` requires one even though encryption-only
+  targets can also need options.
+- Preserve the link between write configuration and query configuration;
+  a plan's reuse of the configured index is useful independently of naming.
+
+**Sources:** [layout and operation descriptions](../../packages/stack-encrypt/src/target/operations.rs)
+(`Layout`, `json_document`, `EncryptFrom<Value> for JsonDocument`),
+[encrypted-output protocol](../../packages/stack-encrypt/src/target/transcode.rs),
+[JSON options and document](../../packages/stack-encrypt/src/json/mod.rs),
+and [EQL JSON adapter](../../packages/eql/crates/eql-bindings/src/v4/json_tree.rs)
+(`JsonTree`, `JsonTreeDocument::envelope`, `transcode`, `DecryptInto`).
+
+### Static Rust surface versus runtime configuration
+
+The intended public Rust experience is traits and derives. Treat plans as
+the lower-level composition interface supporting those APIs and the dynamic
+FFI interface, rather than requiring Rust callers to write a plan for JSON.
+The derive already emits plans; its implementation can retain that shared
+execution path without making the plan builder the primary user example.
+
+JSON already has a type-directed path. Given an initialized `cipher` and
+its `keyset`, this uses existing methods and default JSON options:
+
+```rust
+use eql_bindings::v4::json_tree::JsonTreeDocument;
+use eql_bindings::Identifier;
+use serde_json::{json, Value};
+use stack_encrypt::{DecryptFrom, EncryptInto};
+
+let profile = json!({"name": "Alice", "age": 34});
+let column = Identifier::for_column("users", "profile")?;
+
+let encrypted: JsonTreeDocument = profile
+    .encrypt_into_with_context(&keyset, column.clone())
+    .await?;
+
+let restored: Value = encrypted.decrypt_into(&keyset, column).await?;
+assert_eq!(restored, profile);
+```
+
+This produces searchable JSON with a sealed root and no ordered paths.
+The explicit decrypt context checks the expected column against the stored
+identifier. The snippet is source-checked, not compiled here.
+
+The earlier `SearchableEmail` example fixes its recipe in the target type:
+ciphertext plus an equality term. `EncryptFrom::encryption()` takes no
+configuration value. JSON's default target also fixes a recipe in its type.
+What `Layout::encryption(&self)` adds is access to instance configuration:
+one `JsonTreeDocument` output type can be produced with `$.age` ordered,
+with `$.salary` ordered, or with different root settings, selected at
+runtime. Its configured index also supplies the matching query behavior.
+
+Search metadata itself does not require `Layout`. A custom target could
+fix ordered JSON paths in a manual `EncryptFrom` implementation using the
+existing JSON operation. A derive could eventually generate such a fixed
+policy. Runtime-configured targets need an additional configuration input;
+today `encrypt_into_with_context` accepts context but no layout/options,
+and custom JSON configurations use the lower-level plan or `keyset.run`
+path. Keep those options separate from cryptographic context.
+
+The cryptographic distinction is separate from the API distinction: JSON
+uses a specialized document operation with a shared document data key and
+node/extraction semantics. It cannot be implemented merely by adding a
+generic equality-term field to the ordinary ciphertext tree. That explains
+the JSON operation, but does not by itself require a public `Layout` trait.
+
+### Naming obscures roles
+
+| Current type | Role |
+| --- | --- |
+| `serde_json::Value` | Plaintext input and recovered plaintext |
+| `stack_encrypt::json::JsonOptions` | Runtime configuration |
+| `stack_encrypt::target::Json` | Configured index; also implements `Layout` |
+| `stack_encrypt::json::JsonDocument` | Encrypted engine document, including search metadata |
+| `eql_bindings::v4::json_tree::JsonTree` | Configured EQL target/layout |
+| `eql_bindings::v4::json_tree::JsonTreeDocument` | Encrypted EQL storage envelope |
+
+Review names that state these roles, using `Encrypted` for ciphertext-bearing
+documents, `Index` for index descriptions, and `Target` or `Config` for
+configuration, with module paths distinguishing EQL from engine types.
+No replacement names are selected. `Json`'s dual index/layout role should
+be considered before simply renaming it.
+
+### Candidate: a fixed-policy wrapper around the EQL output
+
+**Proposal, not implemented or agreed syntax.** Attach the fixed policy to
+an output newtype, while the inner library type owns the database format.
+The alias below only clarifies the existing type's role; it is not a
+library rename.
+
+The later [implementation plan](2026-10-24-stack-encrypt-api-plan.md)
+recommends a general typed-options factory, `target(options = factory)`,
+instead of the JSON-specific attribute below. Dynamic callers deserialize
+options into the same concrete type; Rust and Go support ship together.
+This sketch is retained to explain the earlier alternative.
+
+```rust
+use eql_bindings::v4::json_tree::JsonTreeDocument as EqlEncryptedJsonTree;
+use eql_bindings::Identifier;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use stack_encrypt::{DecryptFrom, DecryptInto, EncryptFrom, EncryptInto};
+
+#[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
+#[serde(transparent)]
+#[stash(
+    plaintext = Value,
+    transparent,
+    json_tree(ordering_paths = ["$.salary"])
+)]
+struct EncryptedPayroll(EqlEncryptedJsonTree);
+
+// Given a keyset:
+let payroll = json!({"name": "Alice", "salary": 120_000});
+let column = Identifier::for_column("employees", "payroll")?;
+
+let encrypted: EncryptedPayroll = payroll
+    .encrypt_into_with_context(&keyset, column.clone())
+    .await?;
+
+// The wire representation is the inner EQL envelope, with no extra field.
+let wire = serde_json::to_vec(&encrypted)?;
+let loaded: EncryptedPayroll = serde_json::from_slice(&wire)?;
+let restored: Value = loaded.decrypt_into(&keyset, column).await?;
+assert_eq!(restored, payroll);
+```
+
+The proposed `stash(transparent, json_tree(...))` selects the configured
+JSON operation for the inner target and wraps its completed output. It must
+not invoke the ordinary scalar/record derivation on the wrapper, nor invoke
+the inner target's default encryption and then try to add ordering terms.
+It inherits the EQL target's caller-context and decrypt behavior. Serde's
+existing `transparent` attribute preserves the EQL envelope; it does not
+provide database-driver trait implementations, which remain a separate
+integration concern. The root stays sealed under this candidate's defaults.
+
+The generated declaration must also expose the configured index metadata
+for future typed queries, so queries can reuse the policy instead of
+repeating paths. The query-facing syntax remains undesigned. The core derive
+must delegate configured output construction to a capability of the inner
+target, rather than depending directly on the EQL crate. Whether to express
+that capability through `Layout` or another trait remains open.
+
+### Alternative: configuration on a plaintext wrapper
+
+The user's proposed `JsonPlaintext::new(value).with_ordering_path(path)` can
+still yield the exact EQL wire format. Configuration source and output
+representation are independent: an explicit `EqlEncryptedJsonTree` target
+can accept that input and execute the same configured JSON operation. The
+wrapper must be treated as an encryption request, not serialized as part of
+the plaintext. The current API does not provide this wrapper.
+
+This is attractive when paths come from runtime configuration, but repeats
+fixed policy at call sites and needs a way to reuse that policy for queries.
+Prefer the output newtype for the fixed-policy example. If the runtime
+wrapper is added, initially do not implement conversion from it into
+fixed-policy targets: avoid silently overriding or merging conflicting
+policies. Neither syntax permits callers to redefine EQL's required fields
+or its cryptographic wire protocol.
+
+A fixed Rust type describes the policy for new writes; transparent Serde
+deserialization alone does not prove a stored document was produced with
+that policy. Ordered paths are not all recorded in the document header.
+Policy changes and heterogeneous existing rows need explicit compatibility
+and migration semantics before claiming stronger read-time guarantees.
+
+## 14. Decrypt convenience methods need explicit context variants
+
+**Required direction:** provide a no-context method and a separate
+`_with_context` method, mirroring the encrypt-side distinction. The user
+prefers the name `decrypt_from`.
+
+Today `ciphertext.decrypt_into(cipher, context)` exists on the blanket
+`DecryptFrom` extension trait. `Plaintext::decrypt_from(ciphertext, cipher)`
+and `Plaintext::decrypt_from_with_context(ciphertext, cipher, context)` also
+exist on that trait. `DecryptInto<P>` separately declares the opening
+operation. These method/trait names are easy to confuse.
+
+**Recommendation:** use the destination-directed pair in the preferred
+public examples. `User::decrypt_from(encrypted, &keyset)` follows Rust's
+From convention; `encrypted.decrypt_from(...)` would reverse it. The
+receiver and migration of the competing method remain recommendations to
+confirm, not settled user decisions. Do not change the declaration trait
+merely because its convenience spelling changes. Address trait discoverability
+with issue 5 and optional-context capability with issue 12.
+
+## 15. Coordinate the Go JSON work with the shared API redesign
+
+The user identified [PR #1353](https://github.com/cipherstash/stack/pull/1353)
+as parallel agent work. The PR is currently a Go JSON design document with
+implementation tasks #1348 through #1352, tracked by #1347. Its dynamic
+JSON/options path, public names, context behavior, and staged extraction
+support must be reconciled with the configured-target and trait/context
+contracts developed here. Preserve compatible catalog, transport, engine,
+and testing work rather than designing or implementing it twice.
+
+The [implementation plan](2026-10-24-stack-encrypt-api-plan.md) records
+the concrete reconciliation points after reading the PR write-up. This is
+a local coordination item; no message or review was posted to that agent
+or PR.
+
+## 16. Integrate the prior query design rather than reopening it
+
+The user supplied **Stack Encrypt query design** (2026-10-21), read in full
+on 2026-10-25 from `/Users/dan/Downloads/Stack Encrypt query design.md`.
+It proposes field-owned index selection, one answering index per operator,
+typed field handles, a single capability declaration, and shared query
+derivation/refusals. It is explicitly a discussion draft with open questions.
+
+The [implementation plan](2026-10-24-stack-encrypt-api-plan.md) now uses that
+draft as the baseline and records concrete reconciliation points: our
+output-side derives and configured options factories, JSON operators and
+extraction, context inputs, static/dynamic portability, and validation
+timing. Older compatibility requirements are superseded by the user's
+prototype clarification. The source document was left unchanged.
+
+## 17. Use consistent definition-selection names for encrypt and query
+
+The user finds `.using(...)` for encryption and `.on(...)` for queries
+confusing and asks to consider one name for both. Recommend `.using(...)`:
+the selected definition or field supplies the operation's policy. Final
+spelling is not yet accepted. Retain the operation-specific bounds:
+encryption selects the output target's associated definition; queries
+require a field or single-value target implementing `QueryTarget<Op, Input>`.
+This is a naming change, not a merger of those capabilities.
+
+The user also prefers `cipher.using(&field).query(op, input)` and explicitly
+requires strict typestate. Supporting both orders is acceptable to them.
+The plan recommends definition-first as canonical, with operator-first
+converging to the same typed request. Missing definition/required context
+must prevent awaiting on the static path; repeated selection must not
+silently overwrite a request's definition. The current `.query(...).on(...)`
+implementation is not claimed to already provide this API.
+
+## 18. Single-ciphertext representation needs consuming, cleanup-aware inputs
+
+**Decision, 2026-10-25:** use `OpaqueEncode` / `OpaqueDecode` for single-value
+encoding/decoding, distinguishing one opaque ciphertext from target layouts.
+Both direct `encrypt` and target-directed `encrypt_into` consume input and
+are responsible for cleanup of owned plaintext artifacts, including the
+context-taking variants. Explicit passthrough fields move to the output.
+The plan records source cleanup capabilities,
+immediate guarding before returning an unpolled request, cleanup of encoded
+buffers/scratch on all ordinary exit paths, and boundaries for caller copies,
+custom serialization, passthrough output, and Go host/guest ownership.
+`Serialize` alone cannot establish cleanup of an `OpaqueBlob<T>` source.
+Consumption and zeroization are distinct; no completed audit is claimed.
+
+**Follow-up decision:** plaintext types must implement the existing
+`Zeroize` trait; do not introduce our own cleanup trait for now. For the
+proposed Serde blob, this means `Serialize + Zeroize` on input and
+`DeserializeOwned + Zeroize` on owned decode. Library guards must actually
+invoke cleanup; partially constructed Serde values need separate treatment.
+
+**Decrypt decision:** retain `keyset.decrypt` / `decrypt_with_context` for
+ordinary opaque ciphertext and `T::decrypt_from` /
+`decrypt_from_with_context` for declared targets. Return an ordinary owned
+`T: Zeroize` on success, transferring cleanup responsibility to the caller.
+Stack guards plaintext intermediates while it owns them. Explicit
+drop-guarded results should be supported without becoming the default;
+`Zeroize` alone does not imply cleanup on drop. This does not resolve the
+separate partial-deserialization cleanup requirement.
+
+**Codec recommendation:** reuse Vitamin C frame machinery with a blob
+mapping. The 0.8.0 transport Serde implementation already exists and guards
+serialization buffers, and its frame writer wipes allocations on growth.
+Do not reuse that mapping unchanged: option presence can be lost
+(`Some(())` and `None` both encode as null), maps require text keys, and
+successful `to_vec` returns an unguarded vector. See the
+[codec assessment](2026-10-24-stack-encrypt-api-plan.md#blob-codec-assessment-vitamin-c-frames)
+for the required work and Borsh fallback. Neither codec choice nor the
+`Zeroize` bound establishes constant-time behavior or partial-decode cleanup.
+
+**Priority update:** first specify stable, versioned storage bytes; the
+existing frame codec was ephemeral transport. Further zeroization and timing
+implementation improvements may follow without changing stored format.
+The upstream action is
+[Vitamin C #519](https://github.com/cipherstash/vitaminc/issues/519).
+
+## 19. First-release completeness and remaining review decisions
+
+**Accepted, 2026-10-25:** encoded ciphertext wrappers are first-class field
+targets; final wrapper names/package placement come last. ORE does not
+answer equality initially, even for integers. Preserve a future explicit
+capability for equality-preserving encodings; never infer exact equality
+from ordering support for text or other lossy encodings. Keep operator
+provider overlap validation and avoid silently changing existing definitions.
+
+The JSON first version must be comprehensive across Rust and dynamic/Go,
+including extraction, opening entries, children/counts and subtree walks.
+Claude's earlier Go plan deferred walks; the new scope supersedes that
+deferral. The [operation contract and examples](2026-10-25-stack-encrypt-json-operations.md)
+lists required operations, current evidence, proposed Rust/dynamic surfaces,
+SQL use, missing-path/null semantics and implementation acceptance gates.
+Names and packaging are explicitly the last design activity.
+
+**Further accepted decisions:** custom Rust stages can remain explicitly
+Rust-only with `NotPortable` for unsupported dynamic export; built-ins retain
+Rust/Go parity. All key-independent checks precede key resolution/loading.
+The detailed JSON operation contract is still under user review.
+
+## 20. Plaintext-derived keysets and optional provider policies
+
+The user requested routing a plaintext record to a keyset by ID/name from
+one of its fields; assessment of Vitamin C's unused `AsyncCipher`; and
+ZeroKMS lock context including principal JWT claim selectors. Keyset and
+lock-context capabilities must remain optional for future AWS KMS/Vault
+backends. See the [provider-capabilities assessment](2026-10-25-stack-encrypt-provider-capabilities.md)
+for current source evidence, proposed static/dynamic declarations and
+acceptance work.
+
+Current facts: Stack resolves keysets by ID/name but generation batches use
+one preselected keyset. Stack deliberately orchestrates provider requests
+outside Vitamin C's leaf walk and already implements synchronous `Cipher`.
+Its provider payload layer supports lock context but Stack Encrypt sends
+empty lock context. The existing data/index key abstractions still embed
+ZeroKMS protocol types; future providers need a neutral base plus optional
+capabilities, not no-op implementations of mandatory ZeroKMS features.
+
+Recommendations, not yet accepted: derive key routing as an explicit target
+selector and resolve it in the client executor; partition batches by resolved
+key/provider/principal requirements; carry lock context as a separate typed
+provider policy on both generation and retrieval; reject unsupported required
+features before I/O. Keep key routing, ciphertext context, search scope and
+principal policy separate. Revisit cipher adapter cleanup during packaging
+without discarding cross-record batching or native/WASM support.
+
+## 21. Packaging, naming and retirement of AsyncCipher
+
+The user favors removing Vitamin C `AsyncCipher` and moving application
+encryption behavior into Stack Encrypt. The
+[packaging recommendation](2026-10-25-stack-encrypt-packaging.md) proposes
+Stack ownership of value traversal, declarations, target/index adapters and
+execution; a small shared `stack-encrypt-format` crate for codecs and typed
+encodings; a ZeroKMS-specific client crate; and reusable primitives remaining
+in Vitamin C. It includes an acyclic dependency map and public name glossary.
+
+Stack does not use `AsyncCipher`, but Vitamin C's async helpers and tests do.
+Retire that execution path with its consumers and move relevant coverage;
+do not treat deletion of the trait alone as complete. Normalization/PRF/ORE
+adapters also depend on the existing value model and need separation from
+their primitives. Moving the frame implementation refines the earlier codec
+ownership recommendation; coordinate stable storage work under Vitamin C
+#519. Names and package moves remain proposals, not implementation changes.
