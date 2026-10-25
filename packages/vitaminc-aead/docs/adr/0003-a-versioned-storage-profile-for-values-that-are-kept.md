@@ -132,6 +132,28 @@ properties that are fine in flight and wrong at rest:
   objects, but serde names neither the key types nor whether a map is
   coming before the first key, so the writer would have to go back and
   rewrite the tag, and a map whose keys mix kinds has no good form.
+- **MessagePack** (`rmp-serde`). Self-describing and widely implemented,
+  but it has no version and one `nil`, so `Some(None)` reads as `None`.
+  How a struct, an enum or an option is written is each library's choice:
+  `rmp-serde` writes a struct as an array, while Go's common libraries
+  write a map. The specification leaves repeated keys undefined, and lets
+  an integer be written at any width. The writer leaves unwiped copies as
+  its buffer grows, and its errors quote values. *Why not MessagePack or
+  Borsh* in STORAGE.md has the detail.
+- **Borsh.** Strict and canonical, but not self-describing: a blob reads
+  only into the exact type that wrote it. A field that is added, removed,
+  renamed or made optional leaves the existing blobs unreadable, and two
+  swapped fields of one type read back swapped, with no error. It does not
+  use serde, so every sealed type, and every foreign type inside one, would
+  need its derives. Canonical bytes are worth that cost for values that
+  are hashed or signed. A sealed value is compared after it is opened, so
+  it is not worth that cost here.
+- **CBOR** (`ciborium`). The closest fit: self-describing, keys of any
+  kind, and a deterministic encoding defined in RFC 8949. Its serde
+  mapping still writes `Some(x)` as `x`, so options collapse as they do in
+  MessagePack. It has no version unless a tag is added, and it would bring
+  a second grammar and a dependency to review in Rust and Go, where the
+  frame's grammar is already implemented in both.
 - **Versioning the transport instead.** Would put a compatibility promise
   on a format whose peers ship together, and on paths (the ciphertext
   codec, the control plane) that do not need it.
