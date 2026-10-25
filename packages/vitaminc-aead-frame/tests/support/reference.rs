@@ -5,15 +5,42 @@
 
 use super::Model;
 
-/// Why the reference refuses a blob: the specification's three classes.
+/// Why the reference refuses a blob: the specification's three classes,
+/// and for a malformed blob, the rule it breaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
     NotABlob,
     UnsupportedVersion,
-    Malformed,
+    Malformed(Broken),
+}
+
+/// Which of the rules numbered 3 to 9 in STORAGE.md's *Reading* a
+/// malformed blob breaks: the first the reader meets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Broken {
+    /// 3: the body is truncated, or bytes follow its node.
+    NotOneNode,
+    /// 4: a byte the grammar does not allow where it is, as a node or as a
+    /// map's key.
+    Tag { byte: u8, as_key: bool },
+    /// 5: a length or a count runs past the end of the blob.
+    PastTheEnd,
+    /// 6: an object's key or a text scalar is not UTF-8.
+    NotUtf8,
+    /// 7: one object has two entries with the same key.
+    RepeatedField,
+    /// 8: one map has two equal keys.
+    RepeatedKey,
+    /// 9: a node is deeper than 128.
+    TooDeep,
 }
 
 const MAX_DEPTH: usize = 128;
+
+/// The tags a map's key may start with: every integer width, text, bytes.
+const KEY_TAGS: [u8; 12] = [
+    0x0C, 0x0E, 0x04, 0x05, 0x10, 0x0D, 0x0F, 0x06, 0x07, 0x11, 0x0A, 0x0B,
+];
 
 /// Read a whole blob as the node it holds.
 pub fn decode(bytes: &[u8]) -> Result<Model, Refusal> {
@@ -27,9 +54,9 @@ pub fn decode(bytes: &[u8]) -> Result<Model, Refusal> {
         bytes: &bytes[4..],
         at: 0,
     };
-    let node = reader.node(0).ok_or(Refusal::Malformed)?;
+    let node = reader.node(0).map_err(Refusal::Malformed)?;
     if reader.at != reader.bytes.len() {
-        return Err(Refusal::Malformed);
+        return Err(Refusal::Malformed(Broken::NotOneNode));
     }
     Ok(node)
 }
@@ -40,34 +67,66 @@ struct Reader<'a> {
 }
 
 impl Reader<'_> {
-    fn bytes(&mut self, n: usize) -> Option<&[u8]> {
-        if self.bytes.len() - self.at < n {
-            return None;
+    fn left(&self) -> usize {
+        self.bytes.len() - self.at
+    }
+
+    /// The next `n` bytes, or `short` if the blob ends first.
+    fn take(&mut self, n: usize, short: Broken) -> Result<&[u8], Broken> {
+        if self.left() < n {
+            return Err(short);
         }
         let taken = &self.bytes[self.at..self.at + n];
         self.at += n;
-        Some(taken)
+        Ok(taken)
     }
 
-    fn array<const N: usize>(&mut self) -> Option<[u8; N]> {
-        self.bytes(N).map(|b| b.try_into().expect("N bytes"))
+    /// A fixed-width field: a blob that ends inside one is truncated.
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], Broken> {
+        self.take(N, Broken::NotOneNode)
+            .map(|b| b.try_into().expect("N bytes"))
     }
 
-    fn u32(&mut self) -> Option<usize> {
-        Some(u32::from_le_bytes(self.array()?) as usize)
+    fn u32(&mut self) -> Result<usize, Broken> {
+        Ok(u32::from_le_bytes(self.array()?) as usize)
     }
 
-    fn text(&mut self) -> Option<String> {
+    /// The bytes a length counts: a length the blob cannot hold runs past
+    /// its end.
+    fn counted(&mut self) -> Result<&[u8], Broken> {
         let len = self.u32()?;
-        String::from_utf8(self.bytes(len)?.to_vec()).ok()
+        self.take(len, Broken::PastTheEnd)
     }
 
-    fn node(&mut self, depth: usize) -> Option<Model> {
+    /// A count of children: more than the bytes left runs past the end of
+    /// the blob, since a child is at least one byte.
+    fn count(&mut self) -> Result<usize, Broken> {
+        let count = self.u32()?;
+        if count > self.left() {
+            return Err(Broken::PastTheEnd);
+        }
+        Ok(count)
+    }
+
+    /// Before each child a count promised: a blob that ends there ran out
+    /// before its count did. One that ends inside a child is truncated.
+    fn next_child(&self) -> Result<(), Broken> {
+        if self.left() == 0 {
+            return Err(Broken::PastTheEnd);
+        }
+        Ok(())
+    }
+
+    fn text(&mut self) -> Result<String, Broken> {
+        String::from_utf8(self.counted()?.to_vec()).map_err(|_| Broken::NotUtf8)
+    }
+
+    fn node(&mut self, depth: usize) -> Result<Model, Broken> {
         if depth > MAX_DEPTH {
-            return None;
+            return Err(Broken::TooDeep);
         }
         let tag = self.array::<1>()?[0];
-        Some(match tag {
+        Ok(match tag {
             0x00 => Model::Null,
             0x02 => Model::Bool(false),
             0x03 => Model::Bool(true),
@@ -84,48 +143,57 @@ impl Reader<'_> {
             0x08 => Model::F32(u32::from_le_bytes(self.array()?)),
             0x09 => Model::F64(u64::from_le_bytes(self.array()?)),
             0x0A => Model::Text(self.text()?),
-            0x0B => {
-                let len = self.u32()?;
-                Model::Bytes(self.bytes(len)?.to_vec())
-            }
+            0x0B => Model::Bytes(self.counted()?.to_vec()),
             0xF5 => Model::Some(Box::new(self.node(depth + 1)?)),
             0xF0 => {
-                let count = self.u32()?;
+                let count = self.count()?;
                 let mut items = Vec::new();
                 for _ in 0..count {
+                    self.next_child()?;
                     items.push(self.node(depth + 1)?);
                 }
                 Model::Array(items)
             }
             0xF1 => {
-                let count = self.u32()?;
+                let count = self.count()?;
                 let mut entries: Vec<(String, Model)> = Vec::new();
                 for _ in 0..count {
+                    self.next_child()?;
                     let key = self.text()?;
                     if entries.iter().any(|(k, _)| *k == key) {
-                        return None;
+                        return Err(Broken::RepeatedField);
                     }
                     entries.push((key, self.node(depth + 1)?));
                 }
                 Model::Object(entries)
             }
             0xF6 => {
-                let count = self.u32()?;
+                let count = self.count()?;
                 let mut entries: Vec<(Model, Model)> = Vec::new();
                 for _ in 0..count {
+                    self.next_child()?;
+                    let byte = self.bytes[self.at];
+                    if !KEY_TAGS.contains(&byte) {
+                        return Err(Broken::Tag { byte, as_key: true });
+                    }
                     let key = self.node(depth + 1)?;
-                    let same = key_value(&key)?;
+                    let same = key_value(&key).expect("a key tag reads as a key");
                     if entries
                         .iter()
                         .any(|(k, _)| key_value(k) == Some(same.clone()))
                     {
-                        return None;
+                        return Err(Broken::RepeatedKey);
                     }
                     entries.push((key, self.node(depth + 1)?));
                 }
                 Model::Map(entries)
             }
-            _ => return None,
+            byte => {
+                return Err(Broken::Tag {
+                    byte,
+                    as_key: false,
+                })
+            }
         })
     }
 }
