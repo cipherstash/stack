@@ -1,8 +1,8 @@
 //! Writing a blob must not free a block with the value still in it.
 //!
-//! The writer grows its buffer, copies map keys to refuse a repeat, and
-//! holds a map's key until its value is written. Each of those leaves a
-//! freed block behind. This test installs a global allocator that, while
+//! The writer grows its buffer, formats a `Display` value, and hands back
+//! a blob the caller drops. Each of those frees a block that held the
+//! value. This test installs a global allocator that, while
 //! armed, counts how many times a marker is still in a block as it is
 //! freed. It lives in its own test binary so the allocator sees nothing but
 //! these writes.
@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use vitaminc_aead_frame::storage::to_vec;
+use vitaminc_protected::Controlled;
 
 const MARKER: &[u8; 16] = b"S3CR3T-M4RK3R-01";
 
@@ -64,9 +65,46 @@ fn writing_frees_no_block_with_the_value_in_it() {
     // buffer grows many times over.
     let map: BTreeMap<String, Option<String>> =
         (0..64).map(|i| (marked(i), Some(marked(i + 64)))).collect();
-    let (left, blob) = left_behind(|| to_vec(&map).expect("writes"));
+    let (left, blob) = left_behind(|| to_vec(&map).expect("writes").risky_unwrap());
     assert!(blob.windows(MARKER.len()).any(|w| w == MARKER));
     assert_eq!(left, 0, "a freed block still held the value");
+
+    // A value and a key written through `Display` are formatted straight
+    // into the blob. The pairs are built before arming, so only the
+    // writer's own blocks are inspected.
+    struct Shown(String);
+    impl serde::Serialize for Shown {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.collect_str(&format_args!("{}", self.0))
+        }
+    }
+    struct Entries(Vec<(Shown, Shown)>);
+    impl serde::Serialize for Entries {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeMap;
+            let mut map = s.serialize_map(Some(self.0.len()))?;
+            for (key, value) in &self.0 {
+                map.serialize_entry(key, value)?;
+            }
+            map.end()
+        }
+    }
+    let shown = Entries(
+        (0..64)
+            .map(|i| (Shown(marked(i)), Shown(marked(i + 64))))
+            .collect(),
+    );
+    let (left, blob) = left_behind(|| to_vec(&shown).expect("writes").risky_unwrap());
+    assert!(blob.windows(MARKER.len()).any(|w| w == MARKER));
+    assert_eq!(left, 0, "a displayed value was left in a freed block");
+
+    // The blob is wiped when it is dropped.
+    let blob = to_vec(&map).expect("writes");
+    let (left, _) = left_behind(|| {
+        drop(blob);
+        Vec::new()
+    });
+    assert_eq!(left, 0, "a dropped blob still held the value");
 
     // A write that fails part way wipes what it had written.
     struct Fails<'a>(&'a BTreeMap<String, Option<String>>);

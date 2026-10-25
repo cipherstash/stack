@@ -11,12 +11,16 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
+# The corpus check runs in CI against git history; it is no part of the
+# crate a dependent builds.
+exclude = ["scripts/"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
 vitaminc-aead = { version = "0.8.0", path = "../aead" }
+vitaminc-protected = { version = "0.8.0", path = "../protected", optional = true }
 serde = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 
@@ -28,7 +32,7 @@ default = []
 # Also the storage profile (`vitaminc_aead_frame::storage`): the same
 # mapping as a versioned blob whose format is frozen, for bytes that are
 # kept (STORAGE.md).
-serde = ["dep:serde", "dep:zeroize"]
+serde = ["dep:serde", "dep:vitaminc-protected", "dep:zeroize"]
 
 [dev-dependencies]
 serde_bytes = { workspace = true }

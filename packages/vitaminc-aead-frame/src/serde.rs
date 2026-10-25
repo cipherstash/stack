@@ -21,7 +21,7 @@
 //! | bool | bool |
 //! | null, and JavaScript's `undefined` | unit, and `None` |
 //!
-//! A typed null ([`tags::TYPED_NULL`](vitaminc_aead::tags::TYPED_NULL)) is
+//! A typed null ([`tags::TYPED_NULL`]) is
 //! refused as malformed. It is how plaintext marks an absent fixed-width
 //! value so its sealed length matches a present one, which is no concern of
 //! data that is not sealed, and this format never writes one.
@@ -116,7 +116,7 @@ use ::serde::Deserialize;
 use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT, PASSTHROUGH};
 use vitaminc_aead::leaf::{self, Form};
 use vitaminc_aead::plaintext::{Float, Int, Logical, MapSink, Physical, SeqSink, Sink};
-use vitaminc_aead::{Encrypt, Frame, FrameWriter};
+use vitaminc_aead::{tags, Encrypt, Frame, FrameWriter};
 use zeroize::Zeroizing;
 
 // =============================================================================
@@ -306,7 +306,7 @@ impl ser::Error for Error {
 ///
 /// A malformed frame, or a value `T` does not accept.
 pub fn from_slice<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
-    let frame = Frame::parse(bytes).map_err(|_| Error::new("malformed frame"))?;
+    let frame = Frame::parse(bytes).map_err(|_| Error::new(MALFORMED))?;
     from_frame(frame)
 }
 
@@ -329,17 +329,29 @@ pub(crate) fn from_validated<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Resu
     // `Deserialize` that stopped early (a unit variant that left its payload
     // unread, say) would otherwise pass with data ignored.
     if de.pos != de.buf.len() {
-        return Err(Error::new("the value did not read the whole frame"));
+        return Err(Error::new(UNREAD_REST));
     }
     Ok(value)
 }
+
+/// The message of a read that found bytes no validator should have passed.
+/// The storage profile gives it its own words.
+pub(crate) const MALFORMED: &str = "malformed frame";
+
+/// The message of a value that left part of its node unread. The storage
+/// profile gives it its own words.
+pub(crate) const UNREAD_REST: &str = "the value did not read the whole frame";
 
 /// The storage profile's presence marker: `SOME`, then the node an
 /// `Option`'s `Some` holds. It is not in the transport frame's grammar, so
 /// [`Frame::parse`] refuses it, and the reader below meets it only in a
 /// storage blob, whose own validator admits it. See
 /// [`storage`](crate::storage).
-pub(crate) const SOME: u8 = 0xF5;
+pub(crate) const SOME: u8 = tags::STORAGE_SOME;
+
+/// The storage profile's map: `MAP`, a `u32` count, then a key node and a
+/// value node for each entry. Like [`SOME`], only a storage blob holds one.
+pub(crate) const MAP: u8 = tags::STORAGE_MAP;
 
 /// Reads one validated node. Every read below runs on bytes a validator
 /// accepted ([`Frame::parse`], or the storage profile's), so a read failing
@@ -350,7 +362,7 @@ struct Deserializer<'de> {
 }
 
 fn malformed() -> Error {
-    Error::new("malformed frame")
+    Error::new(MALFORMED)
 }
 
 /// Every read that takes anything from a node takes all of it, so a child
@@ -406,6 +418,13 @@ impl<'de> Deserializer<'de> {
                     self.skip()?;
                 }
             }
+            MAP => {
+                self.pos += 1;
+                for _ in 0..self.count()? {
+                    self.skip()?;
+                    self.skip()?;
+                }
+            }
             PASSTHROUGH | SOME => {
                 self.pos += 1;
                 self.skip()?;
@@ -419,7 +438,7 @@ impl<'de> Deserializer<'de> {
 
     /// Whether the next node is a null scalar.
     fn next_is_null(&self) -> Result<bool, Error> {
-        if matches!(self.peek()?, ARRAY | OBJECT | PASSTHROUGH | SOME) {
+        if matches!(self.peek()?, ARRAY | OBJECT | MAP | PASSTHROUGH | SOME) {
             return Ok(false);
         }
         let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
@@ -427,12 +446,26 @@ impl<'de> Deserializer<'de> {
         Ok(is_plain(ty) && matches!(value, Physical::Null))
     }
 
+    /// A storage map's next key, consumed, if it is text; otherwise
+    /// nothing, with the key left where it is. A map's key is always a
+    /// scalar: the storage validator admits nothing else.
+    fn text_node(&mut self) -> Result<Option<&'de str>, Error> {
+        let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
+        match leaf::read(rest, Form::Frame).map_err(|_| malformed())? {
+            ((None, Physical::Text(text)), used) => {
+                self.pos += used;
+                Ok(Some(text))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// The kind of the next node, for a refusal. It carries no value, so a
     /// message built from it cannot repeat one.
     fn found(&self) -> Result<Unexpected<'static>, Error> {
         Ok(match self.peek()? {
             ARRAY => Unexpected::Seq,
-            OBJECT => Unexpected::Map,
+            OBJECT | MAP => Unexpected::Map,
             PASSTHROUGH => Unexpected::Other("a passthrough"),
             SOME => Unexpected::Option,
             _ => {
@@ -491,12 +524,14 @@ impl<'de> Deserializer<'de> {
         Ok(value)
     }
 
-    /// Visit the object whose tag is next, which must be read to its end,
-    /// as an array must. `names` are the fields the type declares, if it is
-    /// a struct: only those keys are put on an error's path.
-    fn object<V: Visitor<'de>>(
+    /// Visit the object or map whose tag is next, which must be read to its
+    /// end, as an array must. `names` are the fields the type declares, if
+    /// it is a struct: only those keys are put on an error's path. `keys`
+    /// says how its keys are held, and which a struct reads.
+    fn entries<V: Visitor<'de>>(
         &mut self,
         names: &'static [&'static str],
+        keys: Keys,
         visitor: V,
     ) -> Result<V::Value, Error> {
         self.pos += 1;
@@ -504,6 +539,7 @@ impl<'de> Deserializer<'de> {
         let mut map = Map {
             de: self,
             names,
+            keys,
             left: len,
             index: 0,
             at: None,
@@ -578,7 +614,8 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
             ARRAY => self.array(visitor),
-            OBJECT => self.object(&[], visitor),
+            OBJECT => self.entries(&[], Keys::Text, visitor),
+            MAP => self.entries(&[], Keys::Nodes, visitor),
             PASSTHROUGH => Err(Error::new("a passthrough is not supported")),
             SOME => {
                 self.pos += 1;
@@ -623,7 +660,8 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         visitor: V,
     ) -> Result<V::Value, Error> {
         match self.peek()? {
-            OBJECT => self.object(fields, visitor),
+            OBJECT => self.entries(fields, Keys::Text, visitor),
+            MAP => self.entries(fields, Keys::Names, visitor),
             _ => self.only(|found| matches!(found, Unexpected::Map), visitor),
         }
     }
@@ -654,7 +692,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
                 }
                 Ok(value)
             }
-            ARRAY | PASSTHROUGH | SOME => Err(Error::new(
+            ARRAY | MAP | PASSTHROUGH | SOME => Err(Error::new(
                 "expected an enum: a variant name, or an object of one entry",
             )),
             _ => match self.scalar()? {
@@ -742,10 +780,23 @@ impl<'de> SeqAccess<'de> for Seq<'_, 'de> {
     }
 }
 
+/// How an object's or a map's keys are held, and read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Keys {
+    /// An object's: a length and UTF-8, read as a string.
+    Text,
+    /// A storage map's: each a node, read as the key type reads a value.
+    Nodes,
+    /// A storage map's, read by a struct, which names its fields in text:
+    /// a key that is not text is refused.
+    Names,
+}
+
 struct Map<'a, 'de> {
     de: &'a mut Deserializer<'de>,
     /// The fields the type declares, if it is a struct.
     names: &'static [&'static str],
+    keys: Keys,
     left: usize,
     /// The position of the next entry.
     index: usize,
@@ -769,13 +820,29 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
             return Ok(None);
         }
         self.left -= 1;
-        let key = self.de.key()?;
-        self.at = Some(entry_at(self.names, key, self.index));
+        let index = self.index;
         self.index += 1;
         // An error about the key itself (an unknown key) stays at the
         // object's path: putting the key on the path would print it, and a
         // message never repeats what a host sent.
-        seed.deserialize(KeyDeserializer(key)).map(Some)
+        let text = match self.keys {
+            Keys::Text => Some(self.de.key()?),
+            Keys::Nodes | Keys::Names => self.de.text_node()?,
+        };
+        if let Some(key) = text {
+            self.at = Some(entry_at(self.names, key, index));
+            return seed.deserialize(KeyDeserializer(key)).map(Some);
+        }
+        if self.keys == Keys::Names {
+            return Err(de::Error::invalid_type(self.de.found()?, &"a field name"));
+        }
+        self.at = Some(PathSegment::Entry(index));
+        let start = self.de.pos;
+        let key = seed.deserialize(&mut *self.de)?;
+        if self.de.pos == start {
+            return Err(unread());
+        }
+        Ok(Some(key))
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
@@ -1380,7 +1447,7 @@ impl ser::SerializeStructVariant for SerVariant<'_> {
 }
 
 /// Serializes a map key, which a frame holds as text.
-pub(crate) struct KeySerializer;
+struct KeySerializer;
 
 fn key_not_text() -> Error {
     Error::new("a map key must be a string")

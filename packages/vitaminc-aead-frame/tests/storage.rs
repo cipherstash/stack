@@ -1,234 +1,51 @@
 //! The storage profile: the golden corpus, which pins version 1 byte for
-//! byte, and what the serde mapping writes, reads and refuses.
+//! byte, an independent reader that the crate must agree with, and what the
+//! serde mapping writes, reads and refuses.
 #![cfg(feature = "serde")]
+
+mod support;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
+use quickcheck::{Arbitrary, Gen};
 use quickcheck_macros::quickcheck;
-use serde::de::{self, Visitor};
-use serde::ser::{SerializeMap, SerializeSeq};
+use serde::de;
+use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use vitaminc_aead_frame::serde::{Error, PathSegment};
-use vitaminc_aead_frame::storage::{from_slice, to_vec, HEADER, SOME};
+use vitaminc_aead_frame::serde::PathSegment;
+use vitaminc_aead_frame::storage::{self, from_slice, Error, ErrorKind, HEADER, MAP, SOME};
+use vitaminc_protected::Controlled;
 
-fn unhex(text: &str) -> Vec<u8> {
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex"))
-        .collect()
+use support::reference::{decode, key_value, Refusal};
+use support::typed::{read_as, schema, Typed};
+use support::{blob, erase, model, unhex, Model};
+
+/// Write `value`, and take the blob out of its `Protected`.
+fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
+    storage::to_vec(value).map(Controlled::risky_unwrap)
 }
 
-fn blob(body: &[u8]) -> Vec<u8> {
-    [&HEADER[..], body].concat()
-}
-
-// =============================================================================
-// The model: one value of the storage data model, whatever type wrote it
-// =============================================================================
-
-/// A node as the corpus describes it. It reads through `deserialize_any`,
-/// so it sees exactly what a blob holds, and writes it back the same way.
-#[derive(Debug, Clone, PartialEq)]
-enum Model {
-    Null,
-    Bool(bool),
-    I8(i8),
-    I16(i16),
-    I32(i32),
-    I64(i64),
-    I128(i128),
-    U8(u8),
-    U16(u16),
-    U32(u32),
-    U64(u64),
-    U128(u128),
-    /// The bits, so a NaN's payload compares.
-    F32(u32),
-    F64(u64),
-    Text(String),
-    Bytes(Vec<u8>),
-    Some(Box<Model>),
-    Array(Vec<Model>),
-    Object(Vec<(String, Model)>),
-}
-
-impl Serialize for Model {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Model::Null => s.serialize_unit(),
-            Model::Bool(v) => s.serialize_bool(*v),
-            Model::I8(v) => s.serialize_i8(*v),
-            Model::I16(v) => s.serialize_i16(*v),
-            Model::I32(v) => s.serialize_i32(*v),
-            Model::I64(v) => s.serialize_i64(*v),
-            Model::I128(v) => s.serialize_i128(*v),
-            Model::U8(v) => s.serialize_u8(*v),
-            Model::U16(v) => s.serialize_u16(*v),
-            Model::U32(v) => s.serialize_u32(*v),
-            Model::U64(v) => s.serialize_u64(*v),
-            Model::U128(v) => s.serialize_u128(*v),
-            Model::F32(bits) => s.serialize_f32(f32::from_bits(*bits)),
-            Model::F64(bits) => s.serialize_f64(f64::from_bits(*bits)),
-            Model::Text(v) => s.serialize_str(v),
-            Model::Bytes(v) => s.serialize_bytes(v),
-            Model::Some(v) => s.serialize_some(v.as_ref()),
-            Model::Array(items) => {
-                let mut seq = s.serialize_seq(Some(items.len()))?;
-                for item in items {
-                    seq.serialize_element(item)?;
-                }
-                seq.end()
-            }
-            Model::Object(entries) => {
-                let mut map = s.serialize_map(Some(entries.len()))?;
-                for (key, value) in entries {
-                    map.serialize_entry(key, value)?;
-                }
-                map.end()
-            }
-        }
+/// The class the reference gives a refusal, as the crate names it.
+fn kind(refusal: Refusal) -> ErrorKind {
+    match refusal {
+        Refusal::NotABlob => ErrorKind::NotABlob,
+        Refusal::UnsupportedVersion => ErrorKind::UnsupportedVersion,
+        Refusal::Malformed => ErrorKind::Malformed,
     }
 }
 
-impl<'de> Deserialize<'de> for Model {
-    fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = Model;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("any node")
-            }
-            fn visit_unit<E>(self) -> Result<Model, E> {
-                Ok(Model::Null)
-            }
-            fn visit_some<D: de::Deserializer<'de>>(self, d: D) -> Result<Model, D::Error> {
-                Ok(Model::Some(Box::new(Model::deserialize(d)?)))
-            }
-            fn visit_bool<E>(self, v: bool) -> Result<Model, E> {
-                Ok(Model::Bool(v))
-            }
-            fn visit_i8<E>(self, v: i8) -> Result<Model, E> {
-                Ok(Model::I8(v))
-            }
-            fn visit_i16<E>(self, v: i16) -> Result<Model, E> {
-                Ok(Model::I16(v))
-            }
-            fn visit_i32<E>(self, v: i32) -> Result<Model, E> {
-                Ok(Model::I32(v))
-            }
-            fn visit_i64<E>(self, v: i64) -> Result<Model, E> {
-                Ok(Model::I64(v))
-            }
-            fn visit_i128<E>(self, v: i128) -> Result<Model, E> {
-                Ok(Model::I128(v))
-            }
-            fn visit_u8<E>(self, v: u8) -> Result<Model, E> {
-                Ok(Model::U8(v))
-            }
-            fn visit_u16<E>(self, v: u16) -> Result<Model, E> {
-                Ok(Model::U16(v))
-            }
-            fn visit_u32<E>(self, v: u32) -> Result<Model, E> {
-                Ok(Model::U32(v))
-            }
-            fn visit_u64<E>(self, v: u64) -> Result<Model, E> {
-                Ok(Model::U64(v))
-            }
-            fn visit_u128<E>(self, v: u128) -> Result<Model, E> {
-                Ok(Model::U128(v))
-            }
-            fn visit_f32<E>(self, v: f32) -> Result<Model, E> {
-                Ok(Model::F32(v.to_bits()))
-            }
-            fn visit_f64<E>(self, v: f64) -> Result<Model, E> {
-                Ok(Model::F64(v.to_bits()))
-            }
-            fn visit_str<E>(self, v: &str) -> Result<Model, E> {
-                Ok(Model::Text(v.to_owned()))
-            }
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Model, E> {
-                Ok(Model::Bytes(v.to_vec()))
-            }
-            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Model, A::Error> {
-                let mut items = Vec::new();
-                while let Some(item) = seq.next_element()? {
-                    items.push(item);
-                }
-                Ok(Model::Array(items))
-            }
-            fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Model, A::Error> {
-                let mut entries = Vec::new();
-                while let Some(entry) = map.next_entry()? {
-                    entries.push(entry);
-                }
-                Ok(Model::Object(entries))
-            }
+/// The crate and the reference agree on `bytes`: both refuse it, by the
+/// same class, or both read it, as the same value, which writes back as
+/// exactly `bytes`.
+fn agree(bytes: &[u8]) -> bool {
+    match (decode(bytes), from_slice::<Model>(bytes)) {
+        (Ok(reference), Ok(ours)) => {
+            ours == erase(&reference) && to_vec(&reference).expect("what reads, writes") == bytes
         }
-        d.deserialize_any(V)
-    }
-}
-
-/// A corpus value: `null`, or an object of one entry naming the kind.
-fn model(json: &Json) -> Model {
-    let Some(object) = json.as_object() else {
-        assert!(json.is_null(), "a value is null or a kind: {json}");
-        return Model::Null;
-    };
-    assert_eq!(object.len(), 1, "a value names one kind: {json}");
-    let (kind, value) = object.iter().next().expect("one entry");
-    let text = || value.as_str().expect("a string");
-    let hex64 = || u64::from_str_radix(text(), 16).expect("hex bits");
-    match kind.as_str() {
-        "bool" => Model::Bool(value.as_bool().expect("a bool")),
-        "i8" => Model::I8(text().parse().expect("i8")),
-        "i16" => Model::I16(text().parse().expect("i16")),
-        "i32" => Model::I32(text().parse().expect("i32")),
-        "i64" => Model::I64(text().parse().expect("i64")),
-        "i128" => Model::I128(text().parse().expect("i128")),
-        "u8" => Model::U8(text().parse().expect("u8")),
-        "u16" => Model::U16(text().parse().expect("u16")),
-        "u32" => Model::U32(text().parse().expect("u32")),
-        "u64" => Model::U64(text().parse().expect("u64")),
-        "u128" => Model::U128(text().parse().expect("u128")),
-        "f32_bits" => Model::F32(u32::try_from(hex64()).expect("32 bits")),
-        "f64_bits" => Model::F64(hex64()),
-        "text" => Model::Text(text().to_owned()),
-        "bytes" => Model::Bytes(unhex(text())),
-        "some" => Model::Some(Box::new(model(value))),
-        "array" => Model::Array(
-            value
-                .as_array()
-                .expect("an array")
-                .iter()
-                .map(model)
-                .collect(),
-        ),
-        "object" => Model::Object(
-            value
-                .as_array()
-                .expect("an array of entries")
-                .iter()
-                .map(|entry| {
-                    let pair = entry.as_array().expect("a [key, value] pair");
-                    (pair[0].as_str().expect("a key").to_owned(), model(&pair[1]))
-                })
-                .collect(),
-        ),
-        // A deep value, spelled short: its leaf wrapped `depth` times.
-        "nest" => {
-            let depth = value["depth"].as_u64().expect("a depth");
-            (0..depth).fold(model(&value["leaf"]), |inner, _| {
-                match value["kind"].as_str().expect("a kind") {
-                    "array" => Model::Array(vec![inner]),
-                    "object" => Model::Object(vec![("k".into(), inner)]),
-                    "some" => Model::Some(Box::new(inner)),
-                    other => panic!("unknown nest kind {other}"),
-                }
-            })
-        }
-        other => panic!("unknown kind {other}"),
+        (Err(refusal), Err(error)) => error.kind() == kind(refusal),
+        _ => false,
     }
 }
 
@@ -250,6 +67,16 @@ fn field<'a>(row: &'a Json, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{name} in {row}"))
 }
 
+fn refusal(name: &str, class: &str) -> ErrorKind {
+    match class {
+        "not_a_blob" => ErrorKind::NotABlob,
+        "unsupported_version" => ErrorKind::UnsupportedVersion,
+        "malformed" => ErrorKind::Malformed,
+        "mismatch" => ErrorKind::Mismatch,
+        other => panic!("{name}: unknown refusal {other}"),
+    }
+}
+
 #[test]
 fn the_corpus_header_is_the_one_written() {
     let corpus = corpus();
@@ -257,7 +84,8 @@ fn the_corpus_header_is_the_one_written() {
     assert_eq!(unhex(field(&corpus, "header")), HEADER);
 }
 
-/// Every vector reads as its value, and its value writes as its bytes.
+/// Every vector reads as its value, through the reference exactly and
+/// through serde as serde sees it, and its value writes as its bytes.
 #[test]
 fn every_vector_reads_and_writes_byte_for_byte() {
     let corpus = corpus();
@@ -267,15 +95,16 @@ fn every_vector_reads_and_writes_byte_for_byte() {
         let name = field(row, "name");
         let bytes = unhex(field(row, "blob"));
         let value = model(&row["value"]);
+        assert_eq!(decode(&bytes), Ok(value.clone()), "{name}: the reference");
         let read: Model = from_slice(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(read, value, "{name} reads as its value");
+        assert_eq!(read, erase(&value), "{name} reads as its value");
+        assert!(from_slice::<de::IgnoredAny>(&bytes).is_ok(), "{name} skips");
         let written = to_vec(&value).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(written, bytes, "{name} writes as its bytes");
     }
 }
 
-/// Every refused row is refused, with the error of its class, whatever
-/// type reads it.
+/// Every refused row is refused, by its class, whatever type reads it.
 #[test]
 fn every_refused_row_is_refused_by_its_class() {
     let corpus = corpus();
@@ -284,19 +113,49 @@ fn every_refused_row_is_refused_by_its_class() {
     for row in refused {
         let name = field(row, "name");
         let bytes = unhex(field(row, "blob"));
-        let message = match field(row, "refusal") {
-            "not_a_blob" => "not a storage blob",
-            "unsupported_version" => "an unsupported storage version",
-            "malformed" => "malformed storage blob",
-            other => panic!("{name}: unknown refusal {other}"),
-        };
+        let class = refusal(name, field(row, "refusal"));
+        assert_eq!(
+            decode(&bytes).map_err(kind),
+            Err(class),
+            "{name}: the reference"
+        );
         let error = from_slice::<Model>(&bytes).expect_err(name);
-        assert_eq!(error.message(), message, "{name}");
+        assert_eq!(error.kind(), class, "{name}");
         assert!(error.path().is_empty(), "{name}: refused before any value");
         // Checked before the type sees anything: even a type that reads
         // nothing is refused the same way.
         let error = from_slice::<de::IgnoredAny>(&bytes).expect_err(name);
-        assert_eq!(error.message(), message, "{name}");
+        assert_eq!(error.kind(), class, "{name}");
+    }
+}
+
+/// Every reads row reads as its type says, or is refused as a mismatch.
+/// What it reads as writes back as a blob the same type reads the same way.
+#[test]
+fn every_typed_read_reads_as_its_type() {
+    let corpus = corpus();
+    let reads = rows(&corpus, "reads");
+    assert!(!reads.is_empty());
+    for row in reads {
+        let name = field(row, "name");
+        let bytes = unhex(field(row, "blob"));
+        assert!(decode(&bytes).is_ok(), "{name}: a well-formed blob");
+        read_as(schema(&row["type"]));
+        match row.get("reads_as") {
+            Some(expected) => {
+                let expected = model(expected);
+                let Typed(read) = from_slice(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+                assert_eq!(read, expected, "{name}");
+                let canonical = to_vec(&expected).expect("writes");
+                let Typed(again) = from_slice(&canonical).expect("reads");
+                assert_eq!(again, expected, "{name}: canonical");
+            }
+            None => {
+                let class = refusal(name, field(row, "refusal"));
+                let error = from_slice::<Typed>(&bytes).expect_err(name);
+                assert_eq!(error.kind(), class, "{name}");
+            }
+        }
     }
 }
 
@@ -304,7 +163,7 @@ fn every_refused_row_is_refused_by_its_class() {
 fn corpus_names_are_unique() {
     let corpus = corpus();
     let mut seen = std::collections::HashSet::new();
-    for section in ["vectors", "refused"] {
+    for section in ["vectors", "refused", "reads"] {
         for row in rows(&corpus, section) {
             assert!(seen.insert(field(row, "name").to_owned()), "{row}");
         }
@@ -337,7 +196,7 @@ fn none_some_unit_and_some_none_are_three_blobs() {
 
 /// serde reads an untagged, internally tagged or flattened type from a
 /// buffer it fills through `deserialize_any`. The marker is a node of its
-/// own there too, so the option survives.
+/// own there too, so an option inside such a type survives.
 #[test]
 fn an_option_survives_serde_buffering() {
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -395,6 +254,48 @@ fn an_option_survives_serde_buffering() {
     }
 }
 
+/// The documented limit: serde writes a flattened `Option` field's `Some`
+/// without telling the format, so no marker is written for it, and reads
+/// it back as `Some` whenever its type reads from the entries left over.
+/// A struct of only optional fields always does. It is serde's doing, and
+/// JSON does the same.
+#[test]
+fn a_flattened_option_field_is_serdes_to_decide() {
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct AllOptional {
+        z: Option<()>,
+    }
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct Required {
+        z: u8,
+    }
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct Flat<T> {
+        id: u8,
+        #[serde(flatten)]
+        extra: Option<T>,
+    }
+    let none = Flat::<AllOptional> { id: 1, extra: None };
+    let bytes = to_vec(&none).expect("writes");
+    assert!(!bytes.contains(&SOME), "no marker is written");
+    assert_eq!(
+        from_slice::<Flat<AllOptional>>(&bytes),
+        Ok(Flat {
+            id: 1,
+            extra: Some(AllOptional { z: None }),
+        })
+    );
+    let json: Flat<AllOptional> =
+        serde_json::from_str(&serde_json::to_string(&none).expect("writes")).expect("reads");
+    assert_eq!(json.extra, Some(AllOptional { z: None }), "JSON alike");
+    // A type that cannot read from nothing reads back `None`.
+    let none = Flat::<Required> { id: 1, extra: None };
+    assert_eq!(
+        from_slice::<Flat<Required>>(&to_vec(&none).expect("writes")),
+        Ok(none)
+    );
+}
+
 /// A self-describing value under an option keeps its shape: a `Some`
 /// holding an array is not read as an array.
 #[test]
@@ -445,17 +346,13 @@ fn a_marked_option_is_not_read_as_its_payload() {
     let bytes = to_vec(&Some(5u8)).expect("writes");
     assert_eq!(bytes, blob(&[SOME, 0x0D, 5]));
     let error = from_slice::<u8>(&bytes).expect_err("an option is not a u8");
+    assert_eq!(error.kind(), ErrorKind::Mismatch);
     assert_eq!(error.message(), "expected u8, found an optional value");
     let error = from_slice::<String>(&blob(&[SOME, 0x0A, 1, 0, 0, 0, b'x'])).expect_err("refused");
     assert_eq!(
         error.message(),
         "expected a string, found an optional value"
     );
-    #[derive(Deserialize, Debug)]
-    enum E {
-        A,
-    }
-    assert!(from_slice::<E>(&blob(&[SOME, 0x0A, 1, 0, 0, 0, b'A'])).is_err());
 }
 
 // =============================================================================
@@ -499,7 +396,7 @@ fn every_variant_form_is_pinned() {
 
 /// Written in its compact form when the format is not human readable, as
 /// a `uuid::Uuid` is.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 struct Compact(u16);
 
 impl Serialize for Compact {
@@ -541,6 +438,7 @@ fn a_struct_writes_its_fields_in_order_and_skips_what_it_skips() {
         meters: Meters,
         tuple: Pair,
         compact: Compact,
+        scores: BTreeMap<u8, u8>,
     }
     let record = Record {
         b: 1,
@@ -553,12 +451,12 @@ fn a_struct_writes_its_fields_in_order_and_skips_what_it_skips() {
         meters: Meters(7),
         tuple: Pair(1, -1),
         compact: Compact(9),
+        scores: BTreeMap::from([(2, 3)]),
     };
     let bytes = to_vec(&record).expect("writes");
-    let read: Model = from_slice(&bytes).expect("reads");
     assert_eq!(
-        read,
-        Model::Object(vec![
+        decode(&bytes),
+        Ok(Model::Object(vec![
             ("b".into(), Model::U8(1)),
             ("a".into(), Model::Text("é".into())),
             ("raw".into(), Model::Bytes(vec![1, 2])),
@@ -574,7 +472,11 @@ fn a_struct_writes_its_fields_in_order_and_skips_what_it_skips() {
                 Model::Array(vec![Model::U8(1), Model::I8(-1)])
             ),
             ("compact".into(), Model::U16(9)),
-        ])
+            (
+                "scores".into(),
+                Model::Map(vec![(Model::U8(2), Model::U8(3))])
+            ),
+        ]))
     );
     assert_eq!(from_slice::<Record>(&bytes), Ok(record));
 }
@@ -583,6 +485,7 @@ fn a_struct_writes_its_fields_in_order_and_skips_what_it_skips() {
 fn an_ordered_map_writes_the_same_bytes_every_time() {
     let map: BTreeMap<String, u16> = (0..50).map(|i| (format!("k{i}"), i)).collect();
     let first = to_vec(&map).expect("writes");
+    assert_eq!(first[HEADER.len()], MAP);
     assert_eq!(to_vec(&map.clone()).expect("writes"), first);
     assert_eq!(from_slice::<BTreeMap<String, u16>>(&first), Ok(map.clone()));
     // A hash map reads back as the same entries, in whatever order.
@@ -601,37 +504,208 @@ fn integers_read_at_any_width_that_fits() {
     assert_eq!(from_slice::<u128>(&bytes), Ok(u128::MAX));
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
+enum Color {
+    Red,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+struct Id(String);
+
+/// Round trip one map, and check its key node's bytes.
+fn key_round_trip<K>(key: K, node: &[u8])
+where
+    K: Serialize + for<'de> Deserialize<'de> + Ord + fmt::Debug + Clone,
+{
+    let map = BTreeMap::from([(key, 0u8)]);
+    let bytes = to_vec(&map).expect("writes");
+    let mut expected = vec![MAP, 1, 0, 0, 0];
+    expected.extend_from_slice(node);
+    expected.extend_from_slice(&[0x0D, 0]);
+    assert_eq!(bytes, blob(&expected), "{map:?}");
+    assert_eq!(from_slice::<BTreeMap<K, u8>>(&bytes), Ok(map));
+}
+
 #[test]
-fn a_map_key_must_be_text() {
-    #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug)]
-    enum Color {
-        Red,
+fn a_map_key_is_an_integer_text_or_bytes() {
+    key_round_trip(-1i8, &[0x0C, 0xFF]);
+    key_round_trip(-2i16, &[0x0E, 0xFE, 0xFF]);
+    key_round_trip(3i32, &[0x04, 3, 0, 0, 0]);
+    key_round_trip(4i64, &[0x05, 4, 0, 0, 0, 0, 0, 0, 0]);
+    key_round_trip(5i128, &[[0x10, 5].as_slice(), &[0; 15]].concat());
+    key_round_trip(6u8, &[0x0D, 6]);
+    key_round_trip(7u16, &[0x0F, 7, 0]);
+    key_round_trip(8u32, &[0x06, 8, 0, 0, 0]);
+    key_round_trip(9u64, &[0x07, 9, 0, 0, 0, 0, 0, 0, 0]);
+    key_round_trip(10u128, &[[0x11, 10].as_slice(), &[0; 15]].concat());
+    key_round_trip("k".to_owned(), &[0x0A, 1, 0, 0, 0, b'k']);
+    key_round_trip('c', &[0x0A, 1, 0, 0, 0, b'c']);
+    key_round_trip(Color::Red, &[0x0A, 3, 0, 0, 0, b'R', b'e', b'd']);
+    key_round_trip(Id("i".into()), &[0x0A, 1, 0, 0, 0, b'i']);
+    key_round_trip(Compact(1), &[0x0F, 1, 0]);
+    key_round_trip(
+        serde_bytes::ByteBuf::from(vec![1, 2]),
+        &[0x0B, 2, 0, 0, 0, 1, 2],
+    );
+    // Equal values of two widths are one key, refused as a repeat.
+    struct TwoWidths;
+    impl Serialize for TwoWidths {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(None)?;
+            map.serialize_entry(&1u8, &())?;
+            map.serialize_entry(&1u64, &())?;
+            map.end()
+        }
     }
-    #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug)]
-    struct Id(String);
-    // Text keys, in every form a key may take.
-    let by_color = BTreeMap::from([(Color::Red, 1u8)]);
+    let error = to_vec(&TwoWidths).expect_err("a repeated key");
+    assert_eq!(error.kind(), ErrorKind::Unwritable);
+    assert_eq!(error.message(), "duplicate key");
+}
+
+/// A key written in its `Display` form is the text it formats to.
+#[test]
+fn a_displayed_key_or_value_is_its_text() {
+    struct Shown(&'static str);
+    impl Serialize for Shown {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.collect_str(&format_args!("<{}>", self.0))
+        }
+    }
+    impl PartialEq for Shown {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+    impl Eq for Shown {}
+    impl PartialOrd for Shown {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    impl Ord for Shown {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.0.cmp(other.0)
+        }
+    }
     assert_eq!(
-        from_slice::<BTreeMap<Color, u8>>(&to_vec(&by_color).expect("writes")),
-        Ok(by_color)
+        to_vec(&Shown("a")).expect("writes"),
+        to_vec("<a>").expect("writes")
     );
-    let by_char = BTreeMap::from([('x', 1u8)]);
     assert_eq!(
-        from_slice::<BTreeMap<char, u8>>(&to_vec(&by_char).expect("writes")),
-        Ok(by_char)
+        to_vec(&BTreeMap::from([(Shown("k"), Shown("v"))])).expect("writes"),
+        to_vec(&BTreeMap::from([("<k>", "<v>")])).expect("writes")
     );
-    let by_id = BTreeMap::from([(Id("a".into()), 1u8)]);
-    assert_eq!(
-        from_slice::<BTreeMap<Id, u8>>(&to_vec(&by_id).expect("writes")),
-        Ok(by_id)
-    );
-    // Anything else is refused on the way out, without the key.
-    let error = to_vec(&BTreeMap::from([(41u32, 1u8)])).expect_err("an integer key");
-    assert_eq!(error.message(), "a map key must be a string");
-    assert!(!error.to_string().contains("41"));
-    // And a key type that reads only integers is refused on the way in.
+    // Nested too deep, a displayed value is refused as any other.
+    let error = to_vec(&nested(arrays(129), Nest::Shown)).expect_err("too deep");
+    assert_eq!(error.message(), "value nests deeper than 128 levels");
+    // A `Display` that fails is the type's refusal, and says nothing of it.
+    struct Fails;
+    impl fmt::Display for Fails {
+        fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+            Err(fmt::Error)
+        }
+    }
+    struct Failing;
+    impl Serialize for Failing {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.collect_str(&Fails)
+        }
+    }
+    let error = to_vec(&Failing).expect_err("refused");
+    assert_eq!(error.message(), "a value its type could not write");
+}
+
+/// Each kind of key that is not an integer, text or bytes is refused on the
+/// way out, without the key.
+#[test]
+fn any_other_key_is_refused() {
+    fn refused<K: Serialize>(key: K) {
+        struct One<K>(K);
+        impl<K: Serialize> Serialize for One<K> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                let mut map = s.serialize_map(Some(1))?;
+                map.serialize_entry(&self.0, &0u8)?;
+                map.end()
+            }
+        }
+        let error = to_vec(&One(key)).expect_err("refused");
+        assert_eq!(error.kind(), ErrorKind::Unwritable);
+        assert_eq!(
+            error.message(),
+            "a map key must be an integer, text or bytes"
+        );
+        assert_eq!(error.path(), [PathSegment::Entry(0)]);
+    }
+    #[derive(Serialize)]
+    struct Unit;
+    #[derive(Serialize)]
+    struct Tuple(u8, u8);
+    #[derive(Serialize)]
+    struct Fields {
+        a: u8,
+    }
+    #[derive(Serialize)]
+    enum Variants {
+        N(u8),
+        T(u8, u8),
+        S { a: u8 },
+    }
+    refused(true);
+    refused(1.5f32);
+    refused(2.5f64);
+    refused(None::<u8>);
+    refused(Some(1u8));
+    refused(());
+    refused(Unit);
+    refused(Variants::N(1));
+    refused(vec![1u8]);
+    refused((1u8, 2u8));
+    refused(Tuple(1, 2));
+    refused(Variants::T(1, 2));
+    refused(BTreeMap::from([(1u8, 1u8)]));
+    refused(Fields { a: 1 });
+    refused(Variants::S { a: 1 });
+}
+
+/// A key type that reads only integers does not read text, nor a string
+/// type an integer; a struct reads only text keys.
+#[test]
+fn a_key_reads_only_as_its_kind() {
     let bytes = to_vec(&BTreeMap::from([("41", 1u8)])).expect("writes");
     assert!(from_slice::<BTreeMap<u32, u8>>(&bytes).is_err());
+    let bytes = to_vec(&BTreeMap::from([(41u32, 1u8)])).expect("writes");
+    let error = from_slice::<BTreeMap<String, u8>>(&bytes).expect_err("refused");
+    assert_eq!(error.message(), "expected a string, found an integer");
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct S {
+        a: u8,
+    }
+    let error = from_slice::<S>(&bytes).expect_err("refused");
+    assert_eq!(error.kind(), ErrorKind::Mismatch);
+    assert_eq!(error.message(), "expected a field name, found an integer");
+    // A map is an object to a type that reads a scalar.
+    let error = from_slice::<u8>(&bytes).expect_err("refused");
+    assert_eq!(error.message(), "expected u8, found an object");
+}
+
+/// A key type whose read takes nothing would leave its node for the value.
+#[test]
+fn a_key_that_reads_nothing_is_refused() {
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+    struct Lazy;
+    impl<'de> Deserialize<'de> for Lazy {
+        fn deserialize<D: de::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+            Ok(Lazy)
+        }
+    }
+    let bytes = to_vec(&BTreeMap::from([(1u8, 2u8)])).expect("writes");
+    let error = from_slice::<BTreeMap<Lazy, u8>>(&bytes).expect_err("refused");
+    assert_eq!(error.message(), "a value its type did not read");
+    // Nor may a whole value read nothing.
+    let error = from_slice::<Lazy>(&bytes).expect_err("refused");
+    assert_eq!(error.kind(), ErrorKind::Mismatch);
+    assert_eq!(error.message(), "the value did not read the whole blob");
 }
 
 #[test]
@@ -639,18 +713,17 @@ fn a_transport_frame_and_a_blob_never_read_as_each_other() {
     let value = BTreeMap::from([("a", Some(1u8))]);
     let frame = vitaminc_aead_frame::serde::to_vec(&value).expect("writes");
     let stored = to_vec(&value).expect("writes");
-    assert_eq!(
-        from_slice::<BTreeMap<String, Option<u8>>>(&frame)
-            .expect_err("a frame is not a blob")
-            .message(),
-        "not a storage blob"
-    );
+    let error = from_slice::<BTreeMap<String, Option<u8>>>(&frame).expect_err("not a blob");
+    assert_eq!(error.kind(), ErrorKind::NotABlob);
     assert!(
         vitaminc_aead_frame::serde::from_slice::<BTreeMap<String, Option<u8>>>(&stored).is_err()
     );
-    // Nor does a frame behind a blob's header: the marker is not in the
-    // frame's grammar.
+    // Nor does a frame behind a blob's header: the marker and the map are
+    // not in the frame's grammar.
     assert!(vitaminc_aead_frame::serde::from_slice::<Option<u8>>(&[SOME, 0x0D, 1]).is_err());
+    assert!(
+        vitaminc_aead_frame::serde::from_slice::<BTreeMap<u8, u8>>(&[MAP, 0, 0, 0, 0]).is_err()
+    );
 }
 
 // =============================================================================
@@ -661,8 +734,30 @@ fn a_transport_frame_and_a_blob_never_read_as_each_other() {
 #[serde(untagged)]
 enum Nest {
     Leaf,
+    #[serde(serialize_with = "Nest::shown")]
+    Shown,
     Array(Vec<Nest>),
     Some(Option<Box<Nest>>),
+    Map(BTreeMap<u8, Nest>),
+}
+
+/// `outer` with its innermost leaf replaced by `leaf`.
+fn nested(outer: Nest, leaf: Nest) -> Nest {
+    match outer {
+        Nest::Array(mut items) => Nest::Array(vec![nested(items.remove(0), leaf)]),
+        Nest::Some(Some(inner)) => Nest::Some(Some(Box::new(nested(*inner, leaf)))),
+        Nest::Map(mut map) => {
+            let inner = map.remove(&0).expect("one entry");
+            Nest::Map(BTreeMap::from([(0, nested(inner, leaf))]))
+        }
+        _ => leaf,
+    }
+}
+
+impl Nest {
+    fn shown<S: serde::Serializer>(s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str("shown")
+    }
 }
 
 fn arrays(n: usize) -> Nest {
@@ -673,9 +768,15 @@ fn somes(n: usize) -> Nest {
     (0..n).fold(Nest::Leaf, |inner, _| Nest::Some(Some(Box::new(inner))))
 }
 
+fn maps(n: usize) -> Nest {
+    (0..n).fold(Nest::Leaf, |inner, _| {
+        Nest::Map(BTreeMap::from([(0, inner)]))
+    })
+}
+
 #[test]
 fn depth_is_bounded_on_the_way_out_as_on_the_way_in() {
-    for nest in [arrays, somes] {
+    for nest in [arrays, somes, maps] {
         let ok = to_vec(&nest(128)).expect("128 levels below the root");
         assert!(from_slice::<de::IgnoredAny>(&ok).is_ok());
         let error = to_vec(&nest(129)).expect_err("129 levels");
@@ -709,8 +810,22 @@ fn a_repeated_key_is_refused() {
             map.end()
         }
     }
-    let error = to_vec(&Twice).expect_err("a repeated key");
-    assert_eq!(error.message(), "duplicate key");
+    struct FieldTwice;
+    impl Serialize for FieldTwice {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut object = s.serialize_struct("FieldTwice", 2)?;
+            object.serialize_field("k", &1u8)?;
+            object.serialize_field("k", &2u8)?;
+            object.end()
+        }
+    }
+    for error in [
+        to_vec(&Twice).expect_err("a repeated key"),
+        to_vec(&FieldTwice).expect_err("a repeated field"),
+    ] {
+        assert_eq!(error.kind(), ErrorKind::Unwritable);
+        assert_eq!(error.message(), "duplicate key");
+    }
 }
 
 #[test]
@@ -817,6 +932,8 @@ fn an_error_carries_its_path_and_no_value() {
         ]
     );
     assert!(!format!("{error} {error:?}").contains("s3cr3t"));
+    let error = to_vec(&BTreeMap::from([(1u8, Bad)])).expect_err("refused");
+    assert_eq!(error.path(), [PathSegment::Entry(0)]);
 
     let bytes = to_vec(&BTreeMap::from([("secret_looking_key", "x")])).expect("writes");
     let error = from_slice::<BTreeMap<String, u8>>(&bytes).expect_err("refused");
@@ -826,36 +943,41 @@ fn an_error_carries_its_path_and_no_value() {
 
 #[test]
 fn the_header_errors_say_which_they_are() {
-    let error: Error = from_slice::<()>(&[]).expect_err("empty");
+    let error = from_slice::<()>(&[]).expect_err("empty");
+    assert_eq!(error.kind(), ErrorKind::NotABlob);
     assert_eq!(error.to_string(), "not a storage blob");
     let error = from_slice::<()>(&[b'V', b'C', b'S', 2, 0]).expect_err("version 2");
+    assert_eq!(error.kind(), ErrorKind::UnsupportedVersion);
     assert_eq!(error.to_string(), "an unsupported storage version");
     let error = from_slice::<()>(&blob(&[0x00, 0x00])).expect_err("trailing");
+    assert_eq!(error.kind(), ErrorKind::Malformed);
     assert_eq!(error.to_string(), "malformed storage blob");
+    assert_eq!(
+        format!("{error:?}"),
+        "Error(Malformed, malformed storage blob)"
+    );
+}
+
+#[test]
+fn a_blob_is_protected_and_redacted() {
+    let blob = storage::to_vec("s3cr3t").expect("writes");
+    assert!(!format!("{blob:?}").contains("s3cr3t"));
+    assert_eq!(from_slice::<&str>(blob.risky_ref()), Ok("s3cr3t"));
 }
 
 // =============================================================================
 // Properties
 // =============================================================================
 
-/// Refused, or read and written back as the same bytes: the reader accepts
-/// one node per meaning, and the model writes it as it read it.
-fn refused_or_canonical(bytes: &[u8]) -> bool {
-    match from_slice::<Model>(bytes) {
-        Ok(model) => to_vec(&model).expect("what reads, writes") == bytes,
-        Err(_) => true,
-    }
-}
-
 #[quickcheck]
-fn accepted_bytes_write_back_exactly(body: Vec<u8>) -> bool {
-    refused_or_canonical(&blob(&body))
+fn any_bytes_are_read_alike(body: Vec<u8>) -> bool {
+    agree(&blob(&body))
 }
 
 /// Random bytes rarely get past the first tag, so start from a blob with
 /// every kind of node in it and overwrite one byte.
 #[quickcheck]
-fn a_corrupted_blob_is_refused_or_canonical(at: usize, byte: u8) -> bool {
+fn a_corrupted_blob_is_read_alike(at: usize, byte: u8) -> bool {
     let mut bytes = to_vec(&Model::Object(vec![
         ("a".into(), Model::Some(Box::new(Model::Null))),
         (
@@ -868,11 +990,102 @@ fn a_corrupted_blob_is_refused_or_canonical(at: usize, byte: u8) -> bool {
                 Model::Text("xy".into()),
                 Model::Bytes(vec![1]),
                 Model::Object(vec![]),
+                Model::Map(vec![
+                    (Model::U8(1), Model::Null),
+                    (Model::I64(-1), Model::Bool(false)),
+                    (Model::Text("k".into()), Model::Map(vec![])),
+                    (Model::Bytes(vec![2]), Model::U32(3)),
+                ]),
             ]),
         ),
     ]))
     .expect("writes");
     let at = at % bytes.len();
     bytes[at] = byte;
-    refused_or_canonical(&bytes)
+    agree(&bytes)
+}
+
+/// A value of the model, at most `depth` containers deep, whose maps never
+/// repeat a key.
+#[derive(Debug, Clone)]
+struct Value(Model);
+
+fn arbitrary_model(g: &mut Gen, depth: usize) -> Model {
+    let choices = if depth == 0 { 18 } else { 22 };
+    let small = |g: &mut Gen| usize::arbitrary(g) % 4;
+    match u8::arbitrary(g) % choices {
+        0 => Model::Null,
+        1 => Model::Bool(bool::arbitrary(g)),
+        2 => Model::I8(i8::arbitrary(g)),
+        3 => Model::I16(i16::arbitrary(g)),
+        4 => Model::I32(i32::arbitrary(g)),
+        5 => Model::I64(i64::arbitrary(g)),
+        6 => Model::I128(i128::arbitrary(g)),
+        7 => Model::U8(u8::arbitrary(g)),
+        8 => Model::U16(u16::arbitrary(g)),
+        9 => Model::U32(u32::arbitrary(g)),
+        10 => Model::U64(u64::arbitrary(g)),
+        11 => Model::U128(u128::arbitrary(g)),
+        12 => Model::F32(u32::arbitrary(g)),
+        13 => Model::F64(u64::arbitrary(g)),
+        14 => Model::Text(String::arbitrary(g)),
+        15 => Model::Bytes(Vec::arbitrary(g)),
+        16 | 17 => Model::Null,
+        18 => Model::Some(Box::new(arbitrary_model(g, depth - 1))),
+        19 => Model::Array(
+            (0..small(g))
+                .map(|_| arbitrary_model(g, depth - 1))
+                .collect(),
+        ),
+        20 => {
+            let mut entries: Vec<(String, Model)> = Vec::new();
+            for _ in 0..small(g) {
+                let key = String::arbitrary(g);
+                if entries.iter().all(|(k, _)| *k != key) {
+                    entries.push((key, arbitrary_model(g, depth - 1)));
+                }
+            }
+            Model::Object(entries)
+        }
+        _ => {
+            let mut entries: Vec<(Model, Model)> = Vec::new();
+            for _ in 0..small(g) {
+                let key = arbitrary_key(g);
+                let same = key_value(&key);
+                if entries.iter().all(|(k, _)| key_value(k) != same) {
+                    entries.push((key, arbitrary_model(g, depth - 1)));
+                }
+            }
+            Model::Map(entries)
+        }
+    }
+}
+
+/// A map key, with small integers often enough that two widths of one
+/// value meet.
+fn arbitrary_key(g: &mut Gen) -> Model {
+    let small = i8::arbitrary(g) % 3;
+    match u8::arbitrary(g) % 8 {
+        0 => Model::I8(small),
+        1 => Model::I64(small.into()),
+        2 => Model::U16(small.unsigned_abs().into()),
+        3 => Model::U128(u128::arbitrary(g)),
+        4 => Model::I128(i128::arbitrary(g)),
+        5 => Model::Text(String::arbitrary(g)),
+        6 => Model::Bytes(Vec::arbitrary(g)),
+        _ => Model::U8(small.unsigned_abs()),
+    }
+}
+
+impl Arbitrary for Value {
+    fn arbitrary(g: &mut Gen) -> Self {
+        Value(arbitrary_model(g, 4))
+    }
+}
+
+/// Any value writes, and the reference reads it back exactly.
+#[quickcheck]
+fn any_value_writes_and_reads_back(Value(value): Value) -> bool {
+    let bytes = to_vec(&value).expect("a value without repeated keys writes");
+    decode(&bytes) == Ok(value.clone()) && from_slice::<Model>(&bytes) == Ok(erase(&value))
 }

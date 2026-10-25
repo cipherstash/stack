@@ -2,10 +2,10 @@
 
 A blob is one value as bytes that are kept: written once, read back by
 later releases, possibly in another language. It reuses the transport
-frame's container layout and the sealed leaf's scalar table, and adds
-three things the transport does not have: a header naming the profile and
-its version, a marker for a present optional value, and a promise that the
-bytes keep their meaning.
+frame's container layout and the sealed leaf's scalar table, and adds four
+things the transport does not have: a header naming the profile and its
+version, a marker for a present optional value, a map whose keys keep
+their kind, and a promise that the bytes keep their meaning.
 
 The words MUST, MUST NOT and MAY are used as in RFC 2119.
 
@@ -13,10 +13,11 @@ The words MUST, MUST NOT and MAY are used as in RFC 2119.
 
 Stable, and covered by this specification:
 
-- the bytes of a blob, as laid out below;
+- the bytes of a blob, as laid out below, and what each reads as;
 - `storage::to_vec` and `storage::from_slice`, which write and read them;
-- `storage::HEADER`, `storage::MAGIC`, `storage::VERSION` and
-  `storage::SOME`.
+- `storage::HEADER`, `storage::MAGIC`, `storage::VERSION`, `storage::SOME`
+  and `storage::MAP`;
+- `storage::ErrorKind`, the class of a refusal.
 
 Not stable, and not covered: everything else in `vitaminc-aead-frame`.
 The transport frame (`Frame`, `FrameWriter`, `to_frame`), the transport
@@ -26,7 +27,8 @@ and MAY change in any release. A transport frame is not a blob, and a blob
 is not a transport frame: neither reads as the other.
 
 Error messages are not part of the format. They are fixed text, and never
-contain a value or a key from the blob.
+contain a value or a key from the blob. A caller that acts on a refusal
+matches its `ErrorKind`, never its message.
 
 ## Layout
 
@@ -37,12 +39,18 @@ blob    = header node
 header  = 0x56 0x43 0x53 version      ; "VCS", then the version
 version = 0x01
 
-node    = scalar / array / object / some
+node    = scalar / array / object / map / some
 array   = 0xF0 count node{count}
 object  = 0xF1 count entry{count}
 entry   = length utf8{length} node     ; the key, then its value
+map     = 0xF6 count (key node){count} ; each key, then its value
+key     = integer / text / bytes       ; a scalar of one of those kinds
 some    = 0xF5 node
 ```
+
+An object is a struct, or the one entry that names an enum variant: its
+keys are names, and always text. A map is a serde map: its keys are data,
+and each is a scalar node of its own, so it keeps its kind.
 
 A scalar is one tag byte and its payload:
 
@@ -72,38 +80,48 @@ starts a node. In particular the tags the frame and the sealed leaf know
 but this profile does not are refused: `0x01` (JavaScript `undefined`),
 `0x12` to `0x15` (date, timestamp, decimal, typed null), `0xF2`
 (passthrough), `0xF3` and `0xF4` (logical-type envelopes). Floats are
-their raw bits, so a NaN's payload and the sign of zero are kept.
+their raw bits, so a NaN's payload and the sign of zero are kept. `0xF5`
+and `0xF6` are reserved in `vitaminc_aead::tags` (`STORAGE_SOME`,
+`STORAGE_MAP`), so no leaf or transport tag will take them.
 
 ### Depth
 
 The root node is at depth 0. An element of an array, the value of an
-object's entry, and the node after `some` are one level deeper than the
-node that holds them. A node deeper than 128 is refused.
+object's or a map's entry, and the node after `some` are one level deeper
+than the node that holds them. A node deeper than 128 is refused.
 
 ## Reading
 
 A reader MUST refuse a blob, and produce no value, if:
 
 1. it is shorter than four bytes, or does not start with `"VCS"`: it is not
-   a blob;
-2. its version is one the reader does not read: this is reported apart from
-   every other refusal, so a caller can tell a reader that needs upgrading
-   from a corrupt blob;
+   a blob (`ErrorKind::NotABlob`);
+2. its version is one the reader does not read
+   (`ErrorKind::UnsupportedVersion`): this is reported apart from every
+   other refusal, so a caller can tell a reader that needs upgrading from a
+   corrupt blob;
 3. the body after the header is not exactly one node: it is truncated, or
    bytes follow the node;
-4. a node starts with a byte that is not in the grammar above;
+4. a node, or a map's key, starts with a byte the grammar above does not
+   allow there;
 5. a length or count runs past the end of the blob;
-6. a key or a text scalar is not valid UTF-8;
+6. an object's key or a text scalar is not valid UTF-8;
 7. one object has two entries whose keys are the same bytes;
-8. a node is deeper than 128.
+8. one map has two equal keys: two integers of the same value, whatever
+   their widths (`1u8` and `1u64`, `5i8` and `5u128`), or two text keys, or
+   two bytes keys, with the same bytes. Text and bytes never equal each
+   other or an integer;
+9. a node is deeper than 128.
 
-`from_slice` checks the whole blob against these rules before any value is
-built.
+Rules 3 to 9 are `ErrorKind::Malformed`. `from_slice` checks the whole
+blob against these rules before any value is built. A blob that passes, but
+holds a value the type does not read, is `ErrorKind::Mismatch`.
 
 A writer MUST NOT write a blob that a reader of its version refuses.
 `to_vec` refuses a value that would break a rule above (one nested too
-deep, a repeated key, text or bytes longer than a `u32` length), and
-checks what it wrote as a reader would before returning it.
+deep, a repeated key, text or bytes longer than a `u32` length) as
+`ErrorKind::Unwritable`, and checks what it wrote as a reader would before
+returning it.
 
 ## The serde mapping
 
@@ -119,7 +137,7 @@ checks what it wrote as a reader would before returning it.
 | unit, unit struct                    | null                                                        |
 | newtype struct                       | its value                                                   |
 | sequence, tuple, tuple struct        | array                                                       |
-| map                                  | object, entries in the order the map gives them             |
+| map                                  | map, entries in the order the map gives them                |
 | struct                               | object, fields in the order the type writes them            |
 | unit variant                         | text: the variant's name                                    |
 | newtype variant                      | object of one entry: the name, then the value               |
@@ -128,20 +146,31 @@ checks what it wrote as a reader would before returning it.
 
 A field skipped with `skip_serializing_if` is not written. A `Vec<u8>` is a
 sequence of `u8` in serde, so it is an array; `serde_bytes` makes it bytes.
+serde writes a struct with a `#[serde(flatten)]` field as a map, so it is a
+map node whose keys are text. A value serialized through `Display`
+(`collect_str`) is text.
 
 `Some` is marked, so an option never reads back as another: `None` is `00`
 and `Some(())` is `F5 00`, and in an `Option<Option<()>>`, `Some(None)` is
-`F5 00` and `Some(Some(()))` is `F5 F5 00`. The marker is a node of its own, so a type read
-through serde's buffering (`#[serde(untagged)]`, `#[serde(tag = "…")]`,
-`#[serde(flatten)]`) still sees `Some`.
+`F5 00` and `Some(Some(()))` is `F5 F5 00`. The marker is a node of its
+own, so an option inside a type read through serde's buffering
+(`#[serde(untagged)]`, `#[serde(tag = "…")]`, a struct with
+`#[serde(flatten)]`) still reads as `Some`. An `Option` field that is
+itself flattened is the exception: see [Not supported](#not-supported).
 
 ### Map keys
 
-A key is text. A map key MUST serialize as a string, a `char`, a unit
-variant (its name) or a newtype struct around one of those; any other key
-is refused when written. When read, a key is handed to the key type as a
-string, so a key type that reads only an integer (`HashMap<u32, _>`) is
-refused. Integer keys are not part of version 1.
+A map key MUST serialize as an integer of any width, a string, bytes, a
+`char` or a unit variant (both text), a value written through `Display`
+(text), or a newtype struct around one of those. Any other key (a bool, a
+float, `None` or `Some`, unit, a sequence, a map, a struct, a variant with
+a payload) is refused when written. A key type with a compact form uses it,
+as a value does: a `uuid::Uuid` key is its 16 bytes.
+
+When read, a key node is handed to the key type as a value of its kind
+would be: an integer to an integer type that it fits, text to a string type
+or an enum, bytes to a bytes type. A text key is never parsed as a number,
+nor an integer formatted as text.
 
 ### Reading by type
 
@@ -150,20 +179,34 @@ Reading is directed by the type, and accepts these forms beside the ones
 writing that value back gives the form in the table above.
 
 - An integer reads as any integer type it fits; a type that reads through
-  `deserialize_any` sees it at its written width.
+  `deserialize_any` sees it at its written width. A float type reads a
+  float or an integer, as serde's float types do; an integer type never
+  reads a float.
 - An `Option` reads null as `None`, `some` as `Some`, and any other node as
   `Some` holding that node, so a blob written before a field became
   optional reads. A type whose own value is written as null (unit, a unit
   struct, an `Option`) reads its old null as `None` instead.
 - An enum reads a variant's name as a unit variant, or as a newtype variant
   whose value is read from null; and an object of one entry whose value is
-  null as a unit variant.
-- A struct or map reads only an object, a string only text, and bytes only
-  bytes. Unknown keys of a struct are ignored unless it denies them, as in
-  every serde format.
+  null as a unit variant. A map of one entry is not a variant.
+- A struct reads an object, or a map whose keys are all text. A map reads
+  a map or an object. A sequence reads only an array, a string only text,
+  and bytes only bytes. A struct ignores unknown keys unless it denies
+  them, and reads a missing `Option` field as `None`, as serde's derive
+  does.
+
+The corpus's `reads` rows pin these: each is a blob, a type described in
+the corpus's own terms, and what that type reads it as, or that it refuses
+it. They are frozen with the rest of version 1.
 
 ### Not supported
 
+- A `#[serde(flatten)]` field of type `Option<T>`. serde writes its `Some`
+  without telling the format, so no marker is written, and reads it back
+  as `Some` whenever `T` can be read from the entries left over, which a
+  `T` whose fields are all optional always can: `None` reads back as
+  `Some(T { .. })`. serde does this in every format, JSON included. Put the
+  `Option` inside the flattened type, or do not flatten it.
 - 128-bit integers in a type serde buffers (untagged, internally tagged,
   flatten): serde's buffer has no 128-bit integers.
 - A type that serializes differently when the format is human readable gets
@@ -199,8 +242,14 @@ A change to either is a new version, introduced in two steps:
 A reader keeps reading every version it ever read. Version numbers are never
 reused.
 
-The golden corpus in `testdata/storage-v1.json` pins version 1. Its rows
-are never edited or removed, and CI checks that; rows MAY be added.
+The golden corpus in `testdata/storage-v1.json` pins version 1: values
+and their bytes (`vectors`), blobs and their refusal classes (`refused`),
+and blobs read by types (`reads`). Its rows are never edited or removed,
+and CI checks that with `scripts/storage_corpus_append_only.py`; rows MAY
+be added. A reader in another language passes
+when it reads every vector as its value and refuses every refused row by
+its class; one that maps blobs onto types also reads every `reads` row as
+it says.
 
 ## The format's version and the application's schema
 
@@ -215,9 +264,11 @@ and serde's attributes govern it:
 | Remove a field                                  | reads, unless the type denies unknown fields     |
 | Rename a field                                  | reads with `#[serde(alias = "…")]`               |
 | `T` to `Option<T>`                              | reads as `Some`, unless `T` is written as null   |
-| `Option<T>` to `T`                              | is refused if it held `Some` or `None`           |
+| `Option<T>` to `T`                              | is refused if it held `Some`; `None` is refused unless `T` reads null |
 | Add an enum variant                             | reads; an older reader refuses the new variant   |
 | Widen an integer                                | reads; narrowing reads only values that fit      |
+| `HashMap<String, V>` to a struct                | reads, if every key is a field or ignored        |
+| A struct to `HashMap<String, V>`                | reads                                            |
 
 An application that needs to tell its own schema versions apart carries
 that in the value, as an enum of versions say. The blob header is not for
@@ -225,19 +276,31 @@ that, and never changes because the type did.
 
 ## The blob inside an outer envelope
 
-A blob is plaintext. The caller seals it whole, under an envelope of its
-own (Stack Encrypt's ciphertext), so the header is authenticated with the
-value. The envelope and the blob are two formats with two versions: a new
+A blob is plaintext, and `to_vec` returns it `Protected`. The caller seals
+it whole, header included, under an envelope of its own (Stack Encrypt's
+ciphertext). The header is therefore encrypted with the value: nothing
+about the blob, its version included, can be seen before decryption, and
+the envelope's authentication covers the header as it covers the value.
+
+The envelope and the blob are two formats with two versions: a new
 envelope version does not change a blob's bytes, and a new blob version
-does not change the envelope. A caller that wants to refuse an unexpected
-blob version before it decrypts binds `HEADER` into its envelope's
-associated data, and checks it there.
+does not change the envelope. A reader that meets a blob version it does
+not read decrypts, and gets `ErrorKind::UnsupportedVersion`.
+
+An envelope that wants the blob's version visible before decryption, to
+refuse it without a decryption or a key lookup, records the version in its
+own clear metadata, and passes it as associated data when it seals and
+opens, so a changed version fails authentication. That is the envelope's
+choice, and needs nothing from this profile.
 
 ## Memory and timing
 
 The writer grows its buffer into a fresh allocation and wipes the old one,
-and wipes everything if writing fails. The reader borrows text and bytes
-from the blob rather than copying them. None of it is constant time, and
+formats a `Display` value straight into the blob, keeps no copy of a key,
+and wipes everything if writing fails. The blob it returns is `Protected`,
+and wiped when dropped. The reader borrows text and bytes from the blob
+rather than copying them, and finds a repeated map key by comparing keys
+where they lie in the blob. None of it is constant time, and
 serde's own impls are not. A `T: Zeroize` does not wipe fields it read
 before a later field failed. Improvements to any of this MUST keep the
 bytes, which the corpus checks.

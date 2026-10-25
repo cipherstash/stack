@@ -1,5 +1,5 @@
 {
-  "description": "Golden corpus for the vitaminc-aead-frame storage profile, version 1 (STORAGE.md). Rows are never edited or removed; new rows may be added.",
+  "description": "Golden corpus for the vitaminc-aead-frame storage profile, version 1 (STORAGE.md). Rows are never edited or removed; new rows may be added. A reads row is a blob read by a type, and the value it reads as, in the form that type writes.",
   "version": 1,
   "header": "56435301",
   "vectors": [
@@ -456,6 +456,271 @@
       "blob": "56435301f1020000000400000074616773f0010000000a0100000078040000006d657461f101000000010000006e05feffffffffffffff"
     },
     {
+      "name": "map_empty",
+      "rule": "a map is 0xF6, a u32 little-endian count, then each key node and value node; a struct and a variant payload are objects, a map is a map",
+      "value": {
+        "map": []
+      },
+      "blob": "56435301f600000000"
+    },
+    {
+      "name": "map_text_keys",
+      "rule": "entries keep the order they were written in",
+      "value": {
+        "map": [
+          [
+            {
+              "text": "b"
+            },
+            {
+              "u8": "1"
+            }
+          ],
+          [
+            {
+              "text": "a"
+            },
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f6020000000a01000000620d010a010000006100"
+    },
+    {
+      "name": "map_u32_keys",
+      "rule": "a key is an integer of any width, text, or bytes",
+      "value": {
+        "map": [
+          [
+            {
+              "u32": "7"
+            },
+            {
+              "text": "x"
+            }
+          ],
+          [
+            {
+              "u32": "0"
+            },
+            {
+              "bool": true
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f60200000006070000000a0100000078060000000003"
+    },
+    {
+      "name": "map_every_integer_key_width",
+      "value": {
+        "map": [
+          [
+            {
+              "i8": "-1"
+            },
+            null
+          ],
+          [
+            {
+              "i16": "-2"
+            },
+            null
+          ],
+          [
+            {
+              "i32": "-3"
+            },
+            null
+          ],
+          [
+            {
+              "i64": "-4"
+            },
+            null
+          ],
+          [
+            {
+              "i128": "-5"
+            },
+            null
+          ],
+          [
+            {
+              "u8": "6"
+            },
+            null
+          ],
+          [
+            {
+              "u16": "7"
+            },
+            null
+          ],
+          [
+            {
+              "u32": "8"
+            },
+            null
+          ],
+          [
+            {
+              "u64": "9"
+            },
+            null
+          ],
+          [
+            {
+              "u128": "10"
+            },
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f60a0000000cff000efeff0004fdffffff0005fcffffffffffffff0010fbffffffffffffffffffffffffffffff000d06000f07000006080000000007090000000000000000110a00000000000000000000000000000000"
+    },
+    {
+      "name": "map_bytes_keys",
+      "value": {
+        "map": [
+          [
+            {
+              "bytes": "0102"
+            },
+            {
+              "u8": "1"
+            }
+          ],
+          [
+            {
+              "bytes": ""
+            },
+            {
+              "u8": "2"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f6020000000b0200000001020d010b000000000d02"
+    },
+    {
+      "name": "map_mixed_keys",
+      "rule": "keys of different kinds differ: 1, \"1\" and the byte 0x31 are three keys",
+      "value": {
+        "map": [
+          [
+            {
+              "u8": "1"
+            },
+            null
+          ],
+          [
+            {
+              "text": "1"
+            },
+            null
+          ],
+          [
+            {
+              "bytes": "31"
+            },
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f6030000000d01000a0100000031000b010000003100"
+    },
+    {
+      "name": "map_text_and_bytes_keys_differ",
+      "value": {
+        "map": [
+          [
+            {
+              "text": "a"
+            },
+            null
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f6020000000a0100000061000b010000006100"
+    },
+    {
+      "name": "map_u8_and_i8_keys_of_different_values",
+      "value": {
+        "map": [
+          [
+            {
+              "u8": "255"
+            },
+            null
+          ],
+          [
+            {
+              "i8": "-1"
+            },
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f6020000000dff000cff00"
+    },
+    {
+      "name": "map_of_maps",
+      "value": {
+        "map": [
+          [
+            {
+              "u64": "1"
+            },
+            {
+              "map": [
+                [
+                  {
+                    "text": "k"
+                  },
+                  {
+                    "some": {
+                      "u8": "2"
+                    }
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f601000000070100000000000000f6010000000a010000006bf50d02"
+    },
+    {
+      "name": "object_holding_a_map",
+      "value": {
+        "object": [
+          [
+            "scores",
+            {
+              "map": [
+                [
+                  {
+                    "u16": "2024"
+                  },
+                  {
+                    "f64_bits": "3ff0000000000000"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f1010000000600000073636f726573f6010000000fe80709000000000000f03f"
+    },
+    {
       "name": "variant_unit",
       "rule": "a unit variant is its name, as text",
       "value": {
@@ -554,7 +819,7 @@
     },
     {
       "name": "depth_128_arrays",
-      "rule": "the root is depth 0; a node deeper than 128 is refused. A nest value is its leaf wrapped depth times: in a one-element array, a one-entry object under the key \"k\", or a some",
+      "rule": "the root is depth 0; a node deeper than 128 is refused. A nest value is its leaf wrapped depth times: in a one-element array, a one-entry object under the key \"k\", a some, or a one-entry map under the key u8 0",
       "value": {
         "nest": {
           "kind": "array",
@@ -586,6 +851,18 @@
         }
       },
       "blob": "56435301f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
+    },
+    {
+      "name": "depth_128_maps",
+      "rule": "a map nests as its key 0u8 and the nested value",
+      "value": {
+        "nest": {
+          "kind": "map",
+          "depth": 128,
+          "leaf": null
+        }
+      },
+      "blob": "56435301f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d0000"
     },
     {
       "name": "depth_128_mixed",
@@ -727,9 +1004,9 @@
       "blob": "56435301ef"
     },
     {
-      "name": "unknown_tag_f6",
+      "name": "unknown_tag_f7",
       "refusal": "malformed",
-      "blob": "56435301f6"
+      "blob": "56435301f7"
     },
     {
       "name": "unknown_tag_ff",
@@ -799,6 +1076,12 @@
       "blob": "564353010a03000000eda080"
     },
     {
+      "name": "object_key_not_text",
+      "refusal": "malformed",
+      "rule": "an object key is a u32 length and UTF-8, never a node",
+      "blob": "56435301f1010000000d0100"
+    },
+    {
       "name": "key_not_utf8",
       "refusal": "malformed",
       "blob": "56435301f10100000001000000ff00"
@@ -813,6 +1096,124 @@
       "name": "duplicate_key_apart",
       "refusal": "malformed",
       "blob": "56435301f103000000010000006100010000006200010000006103"
+    },
+    {
+      "name": "map_key_null",
+      "refusal": "malformed",
+      "rule": "a map key is an integer, text or bytes, and nothing else",
+      "blob": "56435301f6010000000000"
+    },
+    {
+      "name": "map_key_false",
+      "refusal": "malformed",
+      "blob": "56435301f6010000000200"
+    },
+    {
+      "name": "map_key_f32",
+      "refusal": "malformed",
+      "blob": "56435301f601000000080000000000"
+    },
+    {
+      "name": "map_key_f64",
+      "refusal": "malformed",
+      "blob": "56435301f60100000009000000000000000000"
+    },
+    {
+      "name": "map_key_some",
+      "refusal": "malformed",
+      "blob": "56435301f601000000f50d0100"
+    },
+    {
+      "name": "map_key_array",
+      "refusal": "malformed",
+      "blob": "56435301f601000000f00000000000"
+    },
+    {
+      "name": "map_key_object",
+      "refusal": "malformed",
+      "blob": "56435301f601000000f10000000000"
+    },
+    {
+      "name": "map_key_map",
+      "refusal": "malformed",
+      "blob": "56435301f601000000f60000000000"
+    },
+    {
+      "name": "map_key_undefined",
+      "refusal": "malformed",
+      "blob": "56435301f6010000000100"
+    },
+    {
+      "name": "map_key_date",
+      "refusal": "malformed",
+      "blob": "56435301f601000000120000000000"
+    },
+    {
+      "name": "map_key_text_not_utf8",
+      "refusal": "malformed",
+      "blob": "56435301f6010000000a01000000ff00"
+    },
+    {
+      "name": "map_value_missing",
+      "refusal": "malformed",
+      "rule": "a length, a count or a payload past the end is refused",
+      "blob": "56435301f6010000000d01"
+    },
+    {
+      "name": "map_key_missing",
+      "refusal": "malformed",
+      "blob": "56435301f601000000"
+    },
+    {
+      "name": "map_count_past_the_end",
+      "refusal": "malformed",
+      "blob": "56435301f6020000000d0100"
+    },
+    {
+      "name": "map_count_huge",
+      "refusal": "malformed",
+      "blob": "56435301f6ffffffff0d0100"
+    },
+    {
+      "name": "map_duplicate_text_key",
+      "refusal": "malformed",
+      "rule": "one map never has two equal keys: text or bytes with the same bytes, or integers of the same value, whatever their widths",
+      "blob": "56435301f6020000000a010000006b000a010000006b00"
+    },
+    {
+      "name": "map_duplicate_bytes_key",
+      "refusal": "malformed",
+      "blob": "56435301f6020000000b010000006b000b010000006b00"
+    },
+    {
+      "name": "map_duplicate_u32_key",
+      "refusal": "malformed",
+      "blob": "56435301f602000000060700000000060700000000"
+    },
+    {
+      "name": "map_duplicate_key_apart",
+      "refusal": "malformed",
+      "blob": "56435301f6030000000d01000d02000d0103"
+    },
+    {
+      "name": "map_duplicate_key_across_widths",
+      "refusal": "malformed",
+      "blob": "56435301f6020000000d010007010000000000000000"
+    },
+    {
+      "name": "map_duplicate_key_across_signedness",
+      "refusal": "malformed",
+      "blob": "56435301f6020000000c0500110500000000000000000000000000000000"
+    },
+    {
+      "name": "map_duplicate_negative_key_across_widths",
+      "refusal": "malformed",
+      "blob": "56435301f6020000000cff0005ffffffffffffffff00"
+    },
+    {
+      "name": "map_duplicate_zero_key_across_signedness",
+      "refusal": "malformed",
+      "blob": "56435301f6020000000d0000100000000000000000000000000000000000"
     },
     {
       "name": "depth_129_arrays",
@@ -831,9 +1232,1587 @@
       "blob": "56435301f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
     },
     {
+      "name": "depth_129_maps",
+      "refusal": "malformed",
+      "blob": "56435301f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d00f6010000000d0000"
+    },
+    {
       "name": "depth_129_mixed",
       "refusal": "malformed",
       "blob": "56435301f001000000f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
+    }
+  ],
+  "reads": [
+    {
+      "name": "u8_as_u8",
+      "rule": "an integer reads as any integer type it fits",
+      "type": "u8",
+      "blob": "564353010dc8",
+      "reads_as": {
+        "u8": "200"
+      }
+    },
+    {
+      "name": "u8_as_u64",
+      "type": "u64",
+      "blob": "564353010dc8",
+      "reads_as": {
+        "u64": "200"
+      }
+    },
+    {
+      "name": "u8_as_i16",
+      "type": "i16",
+      "blob": "564353010dc8",
+      "reads_as": {
+        "i16": "200"
+      }
+    },
+    {
+      "name": "u8_as_i8",
+      "type": "i8",
+      "blob": "564353010dc8",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "i32_minus_one_as_i64",
+      "type": "i64",
+      "blob": "5643530104ffffffff",
+      "reads_as": {
+        "i64": "-1"
+      }
+    },
+    {
+      "name": "i32_minus_one_as_u32",
+      "type": "u32",
+      "blob": "5643530104ffffffff",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "u128_max_as_u128",
+      "type": "u128",
+      "blob": "5643530111ffffffffffffffffffffffffffffffff",
+      "reads_as": {
+        "u128": "340282366920938463463374607431768211455"
+      }
+    },
+    {
+      "name": "u64_as_u128",
+      "type": "u128",
+      "blob": "56435301070500000000000000",
+      "reads_as": {
+        "u128": "5"
+      }
+    },
+    {
+      "name": "i8_as_i128",
+      "type": "i128",
+      "blob": "564353010cfb",
+      "reads_as": {
+        "i128": "-5"
+      }
+    },
+    {
+      "name": "f32_as_f64",
+      "rule": "an f32 reads as an f64",
+      "type": "f64",
+      "blob": "56435301080000c03f",
+      "reads_as": {
+        "f64_bits": "3ff8000000000000"
+      }
+    },
+    {
+      "name": "integer_as_f64",
+      "rule": "a float type reads an integer too, as serde's float types do; an integer type never reads a float",
+      "type": "f64",
+      "blob": "564353010d01",
+      "reads_as": {
+        "f64_bits": "3ff0000000000000"
+      }
+    },
+    {
+      "name": "f64_as_u64",
+      "type": "u64",
+      "blob": "5643530109000000000000f03f",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "integer_as_bool",
+      "type": "bool",
+      "blob": "564353010d01",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "text_as_text",
+      "rule": "text reads only as text, and bytes only as bytes",
+      "type": "text",
+      "blob": "564353010a020000006869",
+      "reads_as": {
+        "text": "hi"
+      }
+    },
+    {
+      "name": "bytes_as_text",
+      "type": "text",
+      "blob": "564353010b020000006869",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "text_as_bytes",
+      "type": "bytes",
+      "blob": "564353010a020000006869",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "bytes_as_bytes",
+      "type": "bytes",
+      "blob": "564353010b0200000000ff",
+      "reads_as": {
+        "bytes": "00ff"
+      }
+    },
+    {
+      "name": "null_as_unit",
+      "type": "unit",
+      "blob": "5643530100",
+      "reads_as": null
+    },
+    {
+      "name": "some_as_unit",
+      "type": "unit",
+      "blob": "56435301f500",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "option_reads_null_as_none",
+      "rule": "an Option reads null as None, some as Some, and any other node as Some holding it",
+      "type": {
+        "option": "u8"
+      },
+      "blob": "5643530100",
+      "reads_as": null
+    },
+    {
+      "name": "option_reads_some",
+      "type": {
+        "option": "u8"
+      },
+      "blob": "56435301f50d05",
+      "reads_as": {
+        "some": {
+          "u8": "5"
+        }
+      }
+    },
+    {
+      "name": "option_reads_a_bare_value_as_some",
+      "type": {
+        "option": "u8"
+      },
+      "blob": "564353010d05",
+      "reads_as": {
+        "some": {
+          "u8": "5"
+        }
+      }
+    },
+    {
+      "name": "option_reads_a_bare_array_as_some",
+      "type": {
+        "option": {
+          "seq": "u8"
+        }
+      },
+      "blob": "56435301f000000000",
+      "reads_as": {
+        "some": {
+          "array": []
+        }
+      }
+    },
+    {
+      "name": "option_reads_a_bare_map_as_some",
+      "type": {
+        "option": {
+          "map": [
+            "u8",
+            "u8"
+          ]
+        }
+      },
+      "blob": "56435301f600000000",
+      "reads_as": {
+        "some": {
+          "map": []
+        }
+      }
+    },
+    {
+      "name": "option_reads_a_bare_object_as_some",
+      "type": {
+        "option": {
+          "struct": [
+            [
+              "x",
+              "i32"
+            ]
+          ]
+        }
+      },
+      "blob": "56435301f10100000001000000780401000000",
+      "reads_as": {
+        "some": {
+          "object": [
+            [
+              "x",
+              {
+                "i32": "1"
+              }
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "name": "option_of_unit_reads_null_as_none",
+      "rule": "a type whose own value is written as null reads its old null as None",
+      "type": {
+        "option": "unit"
+      },
+      "blob": "5643530100",
+      "reads_as": null
+    },
+    {
+      "name": "option_of_unit_reads_some_null",
+      "type": {
+        "option": "unit"
+      },
+      "blob": "56435301f500",
+      "reads_as": {
+        "some": null
+      }
+    },
+    {
+      "name": "option_of_option_reads_some_null",
+      "type": {
+        "option": {
+          "option": "u8"
+        }
+      },
+      "blob": "56435301f500",
+      "reads_as": {
+        "some": null
+      }
+    },
+    {
+      "name": "option_of_option_reads_a_bare_value",
+      "type": {
+        "option": {
+          "option": "u8"
+        }
+      },
+      "blob": "564353010d05",
+      "reads_as": {
+        "some": {
+          "some": {
+            "u8": "5"
+          }
+        }
+      }
+    },
+    {
+      "name": "option_of_option_reads_some_bare_value",
+      "type": {
+        "option": {
+          "option": "u8"
+        }
+      },
+      "blob": "56435301f50d05",
+      "reads_as": {
+        "some": {
+          "some": {
+            "u8": "5"
+          }
+        }
+      }
+    },
+    {
+      "name": "a_some_is_not_its_payload",
+      "rule": "a some reads only as an Option",
+      "type": "u8",
+      "blob": "56435301f50d05",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "a_some_is_not_text",
+      "type": "text",
+      "blob": "56435301f50a0100000078",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "seq_reads_an_array",
+      "rule": "a sequence reads only an array",
+      "type": {
+        "seq": "u8"
+      },
+      "blob": "56435301f0020000000d010d02",
+      "reads_as": {
+        "array": [
+          {
+            "u8": "1"
+          },
+          {
+            "u8": "2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "seq_widens_its_elements",
+      "type": {
+        "seq": "u32"
+      },
+      "blob": "56435301f0010000000d01",
+      "reads_as": {
+        "array": [
+          {
+            "u32": "1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "seq_does_not_read_an_object",
+      "type": {
+        "seq": "u8"
+      },
+      "blob": "56435301f100000000",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "seq_does_not_read_bytes",
+      "type": {
+        "seq": "u8"
+      },
+      "blob": "564353010b0100000001",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "struct_reads_an_object",
+      "rule": "a struct reads an object, or a map whose keys are all text, and nothing else; its fields may come in any order, and unknown keys are ignored",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f102000000010000007804010000000100000079f50d02",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ],
+          [
+            "y",
+            {
+              "some": {
+                "u8": "2"
+              }
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "struct_reads_fields_in_any_order",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f10200000001000000790001000000780401000000",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ],
+          [
+            "y",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "name": "struct_ignores_an_unknown_key",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f10300000001000000780401000000010000007a0a010000003f010000007900",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ],
+          [
+            "y",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "name": "struct_reads_a_text_keyed_map",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f6020000000a010000007804010000000a010000007900",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ],
+          [
+            "y",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "name": "struct_refuses_a_map_with_an_integer_key",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f6010000000700000000000000000401000000",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "struct_refuses_a_missing_field",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f101000000010000007900",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "struct_refuses_an_array",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f002000000040100000000",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "struct_reads_a_missing_option_field_as_none",
+      "rule": "a missing Option field reads as None, as serde's derive reads it; any other missing field is refused",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f10100000001000000780401000000",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ],
+          [
+            "y",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "name": "struct_ignores_an_unknown_key_holding_a_map",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f102000000010000006df6010000000d01f0010000000001000000780401000000",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ],
+          [
+            "y",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "name": "map_reads_a_map",
+      "rule": "a map reads a map or an object; each key reads as the key type, as a value does",
+      "type": {
+        "map": [
+          "u32",
+          "text"
+        ]
+      },
+      "blob": "56435301f60100000006070000000a0100000078",
+      "reads_as": {
+        "map": [
+          [
+            {
+              "u32": "7"
+            },
+            {
+              "text": "x"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "map_widens_its_keys",
+      "type": {
+        "map": [
+          "u64",
+          "u8"
+        ]
+      },
+      "blob": "56435301f6010000000d010d02",
+      "reads_as": {
+        "map": [
+          [
+            {
+              "u64": "1"
+            },
+            {
+              "u8": "2"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "map_reads_an_object",
+      "type": {
+        "map": [
+          "text",
+          "u8"
+        ]
+      },
+      "blob": "56435301f10100000001000000610d01",
+      "reads_as": {
+        "map": [
+          [
+            {
+              "text": "a"
+            },
+            {
+              "u8": "1"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "map_reads_bytes_keys",
+      "type": {
+        "map": [
+          "bytes",
+          "u8"
+        ]
+      },
+      "blob": "56435301f6010000000b01000000010d01",
+      "reads_as": {
+        "map": [
+          [
+            {
+              "bytes": "01"
+            },
+            {
+              "u8": "1"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "map_reads_variant_names_as_keys",
+      "type": {
+        "map": [
+          {
+            "enum": [
+              [
+                "Red",
+                "unit"
+              ],
+              [
+                "Name",
+                "newtype",
+                "text"
+              ],
+              [
+                "Match",
+                "newtype",
+                {
+                  "option": "u8"
+                }
+              ],
+              [
+                "Pair",
+                "tuple",
+                [
+                  "u8",
+                  "u8"
+                ]
+              ],
+              [
+                "Point",
+                "struct",
+                [
+                  [
+                    "x",
+                    "i32"
+                  ],
+                  [
+                    "y",
+                    "i32"
+                  ]
+                ]
+              ]
+            ]
+          },
+          "u8"
+        ]
+      },
+      "blob": "56435301f6010000000a030000005265640d01",
+      "reads_as": {
+        "map": [
+          [
+            {
+              "text": "Red"
+            },
+            {
+              "u8": "1"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "map_does_not_read_text_as_an_integer_key",
+      "type": {
+        "map": [
+          "u32",
+          "u8"
+        ]
+      },
+      "blob": "56435301f10100000001000000310d01",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "map_does_not_read_an_integer_as_a_text_key",
+      "type": {
+        "map": [
+          "text",
+          "u8"
+        ]
+      },
+      "blob": "56435301f6010000000d010d01",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "map_does_not_read_an_array",
+      "type": {
+        "map": [
+          "u8",
+          "u8"
+        ]
+      },
+      "blob": "56435301f000000000",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_reads_a_unit_variant_name",
+      "rule": "an enum reads a variant name as a unit variant, or as a newtype variant whose value is read from null; and an object of one entry whose value is null as a unit variant",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "564353010a03000000526564",
+      "reads_as": {
+        "text": "Red"
+      }
+    },
+    {
+      "name": "enum_reads_a_unit_variant_with_a_null_payload",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f1010000000300000052656400",
+      "reads_as": {
+        "text": "Red"
+      }
+    },
+    {
+      "name": "enum_reads_a_bare_name_as_a_newtype_of_null",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "564353010a050000004d61746368",
+      "reads_as": {
+        "object": [
+          [
+            "Match",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "name": "enum_reads_a_newtype_variant",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f101000000050000004d61746368f50d03",
+      "reads_as": {
+        "object": [
+          [
+            "Match",
+            {
+              "some": {
+                "u8": "3"
+              }
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "enum_reads_a_newtype_variant_bare_payload",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f101000000050000004d617463680d03",
+      "reads_as": {
+        "object": [
+          [
+            "Match",
+            {
+              "some": {
+                "u8": "3"
+              }
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "enum_reads_a_tuple_variant",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f1010000000400000050616972f0020000000d010d02",
+      "reads_as": {
+        "object": [
+          [
+            "Pair",
+            {
+              "array": [
+                {
+                  "u8": "1"
+                },
+                {
+                  "u8": "2"
+                }
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "enum_reads_a_struct_variant",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f10100000005000000506f696e74f1020000000100000079040200000001000000780401000000",
+      "reads_as": {
+        "object": [
+          [
+            "Point",
+            {
+              "object": [
+                [
+                  "x",
+                  {
+                    "i32": "1"
+                  }
+                ],
+                [
+                  "y",
+                  {
+                    "i32": "2"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "enum_refuses_a_bare_name_for_a_newtype_of_text",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "564353010a040000004e616d65",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_refuses_a_bare_name_for_a_tuple_variant",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "564353010a0400000050616972",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_refuses_an_unknown_variant",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "564353010a04000000426c7565",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_refuses_an_object_of_two_entries",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f1020000000300000052656400040000004e616d650a0100000078",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_refuses_a_map_of_one_entry",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f6010000000a0300000052656400",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_refuses_an_array",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f0010000000a03000000526564",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_refuses_a_some",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "56435301f50a03000000526564",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "enum_refuses_bytes",
+      "type": {
+        "enum": [
+          [
+            "Red",
+            "unit"
+          ],
+          [
+            "Name",
+            "newtype",
+            "text"
+          ],
+          [
+            "Match",
+            "newtype",
+            {
+              "option": "u8"
+            }
+          ],
+          [
+            "Pair",
+            "tuple",
+            [
+              "u8",
+              "u8"
+            ]
+          ],
+          [
+            "Point",
+            "struct",
+            [
+              [
+                "x",
+                "i32"
+              ],
+              [
+                "y",
+                "i32"
+              ]
+            ]
+          ]
+        ]
+      },
+      "blob": "564353010b03000000526564",
+      "refusal": "mismatch"
     }
   ]
 }

@@ -89,22 +89,26 @@ position.
 ## Storage profile (feature `serde`)
 
 `storage::to_vec` writes any `Serialize` type as a blob: the header
-`"VCS"` and a version byte, then the value as a frame node. It differs from
-the transport format in three ways. A `Some` is marked (`0xF5`, then its
+`"VCS"` and a version byte, then the value as a node. It differs from the
+transport format in four ways. A `Some` is marked (`0xF5`, then its
 value), so `None`, `Some(())` and `Some(None)` are three blobs, and an
-option survives serde's untagged, internally tagged and flattened reads.
-Only the plain scalars are admitted: no logical types, no `undefined`, no
-passthrough. And a reader refuses a version it does not read with an error
-of its own, so a caller can tell an old reader from a corrupt blob.
+option inside an untagged, internally tagged or flattened type survives
+serde's buffering. A serde map is a node of its own (`0xF6`) whose keys
+are nodes, so an integer, text or bytes key keeps its kind. Only the plain
+scalars are admitted: no logical types, no `undefined`, no passthrough.
+And every refusal has a stable `ErrorKind`, so a caller can tell a reader
+that needs upgrading from a corrupt blob. The blob is plaintext, so it
+comes back `Protected`, and is wiped when dropped.
 
 ```rust
 # #[cfg(feature = "serde")]
 # {
 use vitaminc_aead_frame::storage;
+use vitaminc_protected::Controlled;
 
 let blob = storage::to_vec(&Some(Option::<u8>::None)).expect("writes");
-assert_eq!(blob, [0x56, 0x43, 0x53, 0x01, 0xF5, 0x00]);
-let back: Option<Option<u8>> = storage::from_slice(&blob).expect("reads");
+assert_eq!(blob.risky_ref(), &[0x56, 0x43, 0x53, 0x01, 0xF5, 0x00]);
+let back: Option<Option<u8>> = storage::from_slice(blob.risky_ref()).expect("reads");
 assert_eq!(back, Some(None));
 # }
 ```
@@ -129,8 +133,12 @@ own walk and from a scalar built independently with std, chrono and
 rust_decimal, and every malformed vector is refused.
 `tests/storage.rs` reads and writes every row of the storage corpus,
 `testdata/storage-v1.json`, which describes each value in a model any
-language can build, and refuses every malformed row with the error of its
-class. CI checks that no row the corpus had is changed or removed.
+language can build, refuses every malformed row with the error of its
+class, and reads every typed row as its type says. A second reader,
+written from STORAGE.md alone in `tests/support/reference.rs`, must agree
+with the crate on every row and on random and corrupted blobs. CI checks
+that no row the corpus had is changed or removed, with
+`scripts/storage_corpus_append_only.py` (`mise run storage:corpus:check`).
 `tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
 the new path and gets the frame it was sealed from, so the leaf format,
 the AAD derivations and the container rules stay what shipped.
