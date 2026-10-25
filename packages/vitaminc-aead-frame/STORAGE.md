@@ -9,6 +9,102 @@ their kind, and a promise that the bytes keep their meaning.
 
 The words MUST, MUST NOT and MAY are used as in RFC 2119.
 
+## Why this format
+
+A blob is the plaintext of a ciphertext that is kept. That asks more of a
+format than a compact encoding, and the profile is built for it:
+
+- **The plaintext is handled as a secret.** `to_vec` returns the blob
+  `Protected`. It grows its buffer into a fresh allocation and wipes the
+  old one, writes a `Display` value straight into the blob, keeps no copy
+  of a key, and wipes what it wrote if writing fails. The reader borrows
+  text and bytes from the blob rather than copying them. See
+  [Memory and timing](#memory-and-timing).
+- **A refusal never repeats the plaintext.** Error messages are fixed text.
+  serde's own messages quote the value they did not expect
+  (`invalid type: string "…"`); the profile replaces them with the value's
+  kind, so a refusal that is logged after decryption shows nothing of the
+  value.
+- **The whole blob is checked before any value is built.** Every length is
+  checked against the end of the blob, so a forged length cannot cause a
+  large allocation. Nesting stops at 128 levels, text must be UTF-8, and a
+  repeated key is refused. A type's `Deserialize` impl never sees a blob
+  that breaks these rules, so it never builds part of a value from one.
+- **Every reader reads the same value.** The envelope's authentication
+  shows who sealed a blob, not that every reader agrees on what it says.
+  Readers that differ on a repeated key, or that accept several spellings
+  of one value, can read one authenticated blob as two different values.
+  Here a repeated key is refused, and each tag has one payload layout:
+  there are no variable-length integers and no choice of length width. The
+  corpus pins the bytes and the refusals that every implementation (this
+  crate, and `vcffi` in Go) must match.
+- **A value reads back as it was written.** `None`, `Some(None)` and
+  `Some(())` are three different blobs. An integer keeps its width, a
+  float keeps its bits, and a map key keeps its kind.
+- **The version is sealed with the value.** The header names the profile
+  and its version, and a reader reports a version it does not read apart
+  from a corrupt blob. The header is part of the plaintext, so it is
+  encrypted and authenticated with the value.
+- **It is self-describing, so the application's types can change.** Each
+  node says what kind it is, and objects carry field names. A blob still
+  reads after a field is added with a default, removed, renamed with an
+  alias, or made optional. A reader without the Rust type, such as one in
+  another language or a migration, can still walk it.
+- **There is little new code to trust.** The scalar tags are the sealed
+  leaf's (`vitaminc_aead::tags`), and the containers are the transport
+  frame's, which this workspace already implements in Rust and Go. The
+  profile adds no dependency.
+
+It does not give canonical bytes, or constant-time code: see
+[Determinism](#determinism) and [Memory and timing](#memory-and-timing).
+
+### Why not MessagePack or Borsh
+
+Both are mature, compact binary formats, with implementations in Rust and
+Go. Neither has the properties above without a layer of rules on top, and
+that layer would be a format of its own, built on a dependency whose serde
+mapping this crate does not control.
+
+**MessagePack** is self-describing and compact, but:
+
+- It has no header or version.
+- It has one `nil`, so options collapse as they do in JSON: with
+  `rmp-serde`, `Some(None)` reads back as `None`.
+- Its specification covers scalars, arrays and maps only. How a struct, an
+  enum or an option is written is up to each library. `rmp-serde`'s
+  `to_vec` writes a struct as an array of its values, while Go's common
+  libraries write a map of field names. A Rust reader and a Go reader agree
+  only when both are set up to, and nothing pins that agreement.
+- The specification does not say what a repeated map key means. It lets an
+  integer be written at any width that holds it, and only recommends the
+  smallest. Readers can disagree about a repeated key, and they accept
+  several spellings of one value.
+- `rmp-serde` writes into a plain `Vec`, which leaves copies of the
+  plaintext in memory each time it grows. Its errors carry serde's
+  messages, which quote the value.
+
+**Borsh** is strict and canonical: each value has exactly one encoding,
+hash maps are sorted, and an option is tagged `0` or `1`. That suits bytes
+that are hashed or signed. But:
+
+- It is not self-describing. A blob is the fields' values in declaration
+  order, with no names or kinds, so it reads only into the exact type that
+  wrote it. Adding, removing or renaming a field, or making one optional,
+  leaves the existing blobs unreadable. Swapping two fields of the same
+  type is worse: they read back swapped, with no error. A value is kept for
+  as long as the customer keeps the row, and over that time its type will
+  change.
+- It does not use serde. Every sealed type would need Borsh derives,
+  including types from other crates (`uuid`, `chrono`), and the serde
+  attributes that govern schema evolution here (`default`, `alias`) do not
+  apply.
+- A reader in another language needs the layout of the Rust type to read
+  anything. There is no generic walk.
+- It has no header or version.
+
+Canonical bytes are what this profile gives up. A sealed value is compared
+after it is opened, not as bytes, so the profile takes evolution instead.
+
 ## Stability boundary
 
 Stable, and covered by this specification:
