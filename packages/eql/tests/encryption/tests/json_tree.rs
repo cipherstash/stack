@@ -1906,9 +1906,12 @@ fn postgres_hostile_answers_are_refused_by_the_client() {
             cipher.decrypt_as(JsonTreeSubtree::from_key(key, rows), column()),
         )
     };
+    // Refused: as the wrong entry, or at the cipher. Under the cascading
+    // tags (spike) a row the chain misplaces fails to authenticate, since
+    // its parent's AAD covers its tag.
     let wrong = |result: Result<Value, Error>, what: &str| {
         assert!(
-            matches!(result, Err(Error::JsonWrongEntry { .. })),
+            matches!(result, Err(Error::JsonWrongEntry { .. }) | Err(Error::Aead)),
             "{what}: {result:?}"
         );
     };

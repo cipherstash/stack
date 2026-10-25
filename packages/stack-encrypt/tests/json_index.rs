@@ -915,9 +915,11 @@ mod given_an_extracted_node {
             fixture(),
             "the sealed root is the document"
         );
-        assertions::refused_as_opened_type(
+        // Under the cascading tags (spike) a container's entry alone does
+        // not open: its AAD covers its children's tags, which `->` does not
+        // return. It was refused by kind after opening before.
+        assertions::refused_as_tampered(
             &scalar("$.nested", 2).await,
-            None,
             "a container node holds no value of its own",
         );
 
@@ -1442,7 +1444,9 @@ mod given_a_tampered_document {
         let truncated = tamper(wire.clone(), &|sv| {
             let _ = sv.pop();
         });
-        assertions::refused_as_opened_type(&open(&cipher, truncated).await, None, "truncated");
+        // Under the cascading tags (spike) a document missing entries fails at
+        // its root's cipher, whose AAD covers its children's tags.
+        assertions::refused_as_tampered(&open(&cipher, truncated).await, "truncated");
 
         let flipped = tamper(wire.clone(), &|sv| {
             let c = sv[1]["c"].as_str().unwrap().to_owned();
@@ -2887,8 +2891,10 @@ mod assertions {
     /// `result` is the refusal of an entry that is genuine but is not the
     /// one asked for: another path's, or a row the walk did not reach.
     pub(super) fn refused_as_wrong_entry<T: Debug>(result: &Result<T, Error>, what: &str) {
+        // Under the cascading tags (spike) a row the chain misplaces fails
+        // at the cipher, since its parent's AAD covers its tag.
         assert!(
-            matches!(result, Err(Error::JsonWrongEntry { .. })),
+            matches!(result, Err(Error::JsonWrongEntry { .. }) | Err(Error::Aead)),
             "{what}: should be refused as the wrong entry, got {result:?}"
         );
     }
