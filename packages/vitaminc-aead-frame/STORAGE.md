@@ -353,7 +353,10 @@ The golden corpus in `testdata/storage-v1.json` pins version 1: values
 and their bytes (`vectors`), blobs and their refusal classes (`refused`),
 and blobs read by types (`reads`). Its rows are never edited or removed,
 and CI checks that with `scripts/storage_corpus_append_only.py`; rows MAY
-be added. A reader in another language passes
+be added. `tests/storage_coverage.rs` fails if a tag, a map key kind, a
+numbered rule in [Reading](#reading) or a clause of
+[Reading by type](#reading-by-type) has no row that shows it. A rule added
+here therefore needs a row before it ships. A reader in another language passes
 when it reads every vector as its value and refuses every refused row by
 its class; one that maps blobs onto types also reads every `reads` row as
 it says.

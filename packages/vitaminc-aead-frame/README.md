@@ -139,6 +139,11 @@ written from STORAGE.md alone in `tests/support/reference.rs`, must agree
 with the crate on every row and on random and corrupted blobs. CI checks
 that no row the corpus had is changed or removed, with
 `scripts/storage_corpus_append_only.py` (`mise run storage:corpus:check`).
+`tests/storage_coverage.rs` checks that the corpus covers the
+specification. Every tag and map key kind is in a vector. Every numbered
+reading rule has a refused row that breaks it, and the reference reader
+says which rule that is. Every clause of *Reading by type* has a `reads`
+row of the right shape.
 `tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
 the new path and gets the frame it was sealed from, so the leaf format,
 the AAD derivations and the container rules stay what shipped.
