@@ -151,7 +151,7 @@ pub enum PathSegment {
 }
 
 impl Error {
-    fn new(message: impl fmt::Display) -> Self {
+    pub(crate) fn new(message: impl fmt::Display) -> Self {
         Self {
             message: message.to_string(),
             path: Vec::new(),
@@ -178,7 +178,7 @@ impl Error {
         })
     }
 
-    fn at(mut self, segment: PathSegment) -> Self {
+    pub(crate) fn at(mut self, segment: PathSegment) -> Self {
         self.path.insert(0, segment);
         self
     }
@@ -316,10 +316,14 @@ pub fn from_slice<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error
 ///
 /// A value `T` does not accept.
 pub fn from_frame<'de, T: Deserialize<'de>>(frame: Frame<'de>) -> Result<T, Error> {
-    let mut de = Deserializer {
-        buf: frame.as_bytes(),
-        pos: 0,
-    };
+    from_validated(frame.as_bytes())
+}
+
+/// Read `T` from one node that has already been validated: a frame
+/// [`Frame::parse`] accepted, or the body of a storage blob its own
+/// validator accepted.
+pub(crate) fn from_validated<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
+    let mut de = Deserializer { buf: bytes, pos: 0 };
     let value = T::deserialize(&mut de)?;
     // The frame is one node, and `T` must have read all of it: a
     // `Deserialize` that stopped early (a unit variant that left its payload
@@ -330,9 +334,16 @@ pub fn from_frame<'de, T: Deserialize<'de>>(frame: Frame<'de>) -> Result<T, Erro
     Ok(value)
 }
 
-/// Reads one validated frame. Every read below runs on bytes
-/// [`Frame::parse`] accepted, so a read failing is a bug, and is reported
-/// as a malformed frame rather than a panic.
+/// The storage profile's presence marker: `SOME`, then the node an
+/// `Option`'s `Some` holds. It is not in the transport frame's grammar, so
+/// [`Frame::parse`] refuses it, and the reader below meets it only in a
+/// storage blob, whose own validator admits it. See
+/// [`storage`](crate::storage).
+pub(crate) const SOME: u8 = 0xF5;
+
+/// Reads one validated node. Every read below runs on bytes a validator
+/// accepted ([`Frame::parse`], or the storage profile's), so a read failing
+/// is a bug, and is reported as a malformed frame rather than a panic.
 struct Deserializer<'de> {
     buf: &'de [u8],
     pos: usize,
@@ -395,7 +406,7 @@ impl<'de> Deserializer<'de> {
                     self.skip()?;
                 }
             }
-            PASSTHROUGH => {
+            PASSTHROUGH | SOME => {
                 self.pos += 1;
                 self.skip()?;
             }
@@ -408,7 +419,7 @@ impl<'de> Deserializer<'de> {
 
     /// Whether the next node is a null scalar.
     fn next_is_null(&self) -> Result<bool, Error> {
-        if matches!(self.peek()?, ARRAY | OBJECT | PASSTHROUGH) {
+        if matches!(self.peek()?, ARRAY | OBJECT | PASSTHROUGH | SOME) {
             return Ok(false);
         }
         let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
@@ -423,6 +434,7 @@ impl<'de> Deserializer<'de> {
             ARRAY => Unexpected::Seq,
             OBJECT => Unexpected::Map,
             PASSTHROUGH => Unexpected::Other("a passthrough"),
+            SOME => Unexpected::Option,
             _ => {
                 let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
                 let ((ty, value), _) = leaf::read(rest, Form::Frame).map_err(|_| malformed())?;
@@ -568,6 +580,10 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
             ARRAY => self.array(visitor),
             OBJECT => self.object(&[], visitor),
             PASSTHROUGH => Err(Error::new("a passthrough is not supported")),
+            SOME => {
+                self.pos += 1;
+                visitor.visit_some(self)
+            }
             _ => {
                 let (ty, value) = self.scalar()?;
                 visit_scalar(ty, value, visitor)
@@ -575,7 +591,15 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         }
     }
 
+    /// Null is `None`. A storage blob marks a `Some` with [`SOME`], so a
+    /// `Some(())` or a `Some(None)` is not read as `None`. Any other node is
+    /// a `Some` holding it: the transport has no marker, and a storage blob
+    /// written before a field became optional has none either.
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        if self.peek()? == SOME {
+            self.pos += 1;
+            return visitor.visit_some(self);
+        }
         if self.next_is_null()? {
             self.scalar()?;
             visitor.visit_none()
@@ -630,7 +654,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
                 }
                 Ok(value)
             }
-            ARRAY | PASSTHROUGH => Err(Error::new(
+            ARRAY | PASSTHROUGH | SOME => Err(Error::new(
                 "expected an enum: a variant name, or an object of one entry",
             )),
             _ => match self.scalar()? {
@@ -957,7 +981,7 @@ fn to_part<T: Serialize + ?Sized>(value: &T, depth: usize) -> Result<Zeroizing<V
     Ok(out)
 }
 
-fn written(error: FrameWriteError) -> Error {
+pub(crate) fn written(error: FrameWriteError) -> Error {
     Error::new(error)
 }
 
@@ -1356,7 +1380,7 @@ impl ser::SerializeStructVariant for SerVariant<'_> {
 }
 
 /// Serializes a map key, which a frame holds as text.
-struct KeySerializer;
+pub(crate) struct KeySerializer;
 
 fn key_not_text() -> Error {
     Error::new("a map key must be a string")

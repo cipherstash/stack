@@ -39,13 +39,19 @@ encode_ciphertext(&back, &mut again).expect("encodes");
 assert_eq!(again, bytes);
 ```
 
-## Transport, not storage
+## Transport, and one storage profile
 
-Nothing here is a compatibility commitment. The only frozen byte format
-in the stack is the sealed leaf payload (`[tag] ++ payload`, the tag table
-in [`tags`]), which lives inside the AEAD envelope and never touches this
-codec. Durable cross-language storage is the EQL layer's job. Hosts and
-guests ship together.
+The frame, the ciphertext codec and the serde format in `serde` are
+transport: nothing about them is a compatibility commitment, since hosts
+and guests ship together. The one exception is the storage profile,
+`storage::to_vec` and `storage::from_slice` (feature `serde`), which
+write and read a value as a versioned blob for bytes that are kept. Its
+format is specified in `STORAGE.md`, frozen at version 1, and pinned by the
+golden corpus in `testdata/storage-v1.json`. Use it, and only it, for bytes
+that outlive the process that wrote them. The other frozen format in the
+stack is the sealed leaf payload (`[tag] ++ payload`, the tag table in
+[`tags`]), which lives inside the AEAD envelope and never touches this
+codec.
 
 A value frame is one node: a scalar in its leaf encoding, with text and
 bytes carrying a `u32` length, or a container. The framing tags `0xF0`
@@ -80,6 +86,29 @@ must not include a value. The path names only the fields and variants a type
 declares; an entry whose key is data, such as a map's, is placed by
 position.
 
+## Storage profile (feature `serde`)
+
+`storage::to_vec` writes any `Serialize` type as a blob: the header
+`"VCS"` and a version byte, then the value as a frame node. It differs from
+the transport format in three ways. A `Some` is marked (`0xF5`, then its
+value), so `None`, `Some(())` and `Some(None)` are three blobs, and an
+option survives serde's untagged, internally tagged and flattened reads.
+Only the plain scalars are admitted: no logical types, no `undefined`, no
+passthrough. And a reader refuses a version it does not read with an error
+of its own, so a caller can tell an old reader from a corrupt blob.
+
+```rust
+# #[cfg(feature = "serde")]
+# {
+use vitaminc_aead_frame::storage;
+
+let blob = storage::to_vec(&Some(Option::<u8>::None)).expect("writes");
+assert_eq!(blob, [0x56, 0x43, 0x53, 0x01, 0xF5, 0x00]);
+let back: Option<Option<u8>> = storage::from_slice(&blob).expect("reads");
+assert_eq!(back, Some(None));
+# }
+```
+
 ## Hardening
 
 Both directions are attacker-reachable input. Nesting is bounded at
@@ -98,6 +127,10 @@ carry no detail about the bytes.
 every vector parses as one frame and writes back byte for byte, from its
 own walk and from a scalar built independently with std, chrono and
 rust_decimal, and every malformed vector is refused.
+`tests/storage.rs` reads and writes every row of the storage corpus,
+`testdata/storage-v1.json`, which describes each value in a model any
+language can build, and refuses every malformed row with the error of its
+class. CI checks that no row the corpus had is changed or removed.
 `tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
 the new path and gets the frame it was sealed from, so the leaf format,
 the AAD derivations and the container rules stay what shipped.

@@ -1,6 +1,6 @@
 [package]
 name = "vitaminc-aead-frame"
-description = "Transport frame and ciphertext codec for carrying Vitamin-C AEAD values and ciphertexts across an FFI boundary. Part of the Vitamin-C cryptographic suite."
+description = "Transport frame and ciphertext codec for carrying Vitamin-C AEAD values and ciphertexts across an FFI boundary, and a versioned storage profile for values that are kept. Part of the Vitamin-C cryptographic suite."
 documentation = "https://docs.rs/vitaminc-aead-frame"
 version.workspace = true
 repository.workspace = true
@@ -25,6 +25,9 @@ default = []
 # serde over the transport frame (`vitaminc_aead_frame::serde`): read any
 # `Deserialize` type from frame bytes and write any `Serialize` type as
 # frame bytes, for data a host exchanges with Rust that is not plaintext.
+# Also the storage profile (`vitaminc_aead_frame::storage`): the same
+# mapping as a versioned blob whose format is frozen, for bytes that are
+# kept (STORAGE.md).
 serde = ["dep:serde", "dep:zeroize"]
 
 [dev-dependencies]

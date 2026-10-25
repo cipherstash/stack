@@ -1,0 +1,839 @@
+{
+  "description": "Golden corpus for the vitaminc-aead-frame storage profile, version 1 (STORAGE.md). Rows are never edited or removed; new rows may be added.",
+  "version": 1,
+  "header": "56435301",
+  "vectors": [
+    {
+      "name": "null",
+      "rule": "null is 0x00; it is None, unit and a unit struct",
+      "value": null,
+      "blob": "5643530100"
+    },
+    {
+      "name": "false",
+      "value": {
+        "bool": false
+      },
+      "blob": "5643530102"
+    },
+    {
+      "name": "true",
+      "value": {
+        "bool": true
+      },
+      "blob": "5643530103"
+    },
+    {
+      "name": "i8_min",
+      "rule": "an integer keeps its width: one tag per width, little-endian",
+      "value": {
+        "i8": "-128"
+      },
+      "blob": "564353010c80"
+    },
+    {
+      "name": "i8_max",
+      "value": {
+        "i8": "127"
+      },
+      "blob": "564353010c7f"
+    },
+    {
+      "name": "i16_min",
+      "value": {
+        "i16": "-32768"
+      },
+      "blob": "564353010e0080"
+    },
+    {
+      "name": "i16_max",
+      "value": {
+        "i16": "32767"
+      },
+      "blob": "564353010eff7f"
+    },
+    {
+      "name": "i32_min",
+      "value": {
+        "i32": "-2147483648"
+      },
+      "blob": "564353010400000080"
+    },
+    {
+      "name": "i32_max",
+      "value": {
+        "i32": "2147483647"
+      },
+      "blob": "5643530104ffffff7f"
+    },
+    {
+      "name": "i64_min",
+      "value": {
+        "i64": "-9223372036854775808"
+      },
+      "blob": "56435301050000000000000080"
+    },
+    {
+      "name": "i64_max",
+      "value": {
+        "i64": "9223372036854775807"
+      },
+      "blob": "5643530105ffffffffffffff7f"
+    },
+    {
+      "name": "i128_min",
+      "value": {
+        "i128": "-170141183460469231731687303715884105728"
+      },
+      "blob": "564353011000000000000000000000000000000080"
+    },
+    {
+      "name": "i128_max",
+      "value": {
+        "i128": "170141183460469231731687303715884105727"
+      },
+      "blob": "5643530110ffffffffffffffffffffffffffffff7f"
+    },
+    {
+      "name": "u8_min",
+      "value": {
+        "u8": "0"
+      },
+      "blob": "564353010d00"
+    },
+    {
+      "name": "u8_max",
+      "value": {
+        "u8": "255"
+      },
+      "blob": "564353010dff"
+    },
+    {
+      "name": "u16_min",
+      "value": {
+        "u16": "0"
+      },
+      "blob": "564353010f0000"
+    },
+    {
+      "name": "u16_max",
+      "value": {
+        "u16": "65535"
+      },
+      "blob": "564353010fffff"
+    },
+    {
+      "name": "u32_min",
+      "value": {
+        "u32": "0"
+      },
+      "blob": "564353010600000000"
+    },
+    {
+      "name": "u32_max",
+      "value": {
+        "u32": "4294967295"
+      },
+      "blob": "5643530106ffffffff"
+    },
+    {
+      "name": "u64_min",
+      "value": {
+        "u64": "0"
+      },
+      "blob": "56435301070000000000000000"
+    },
+    {
+      "name": "u64_max",
+      "value": {
+        "u64": "18446744073709551615"
+      },
+      "blob": "5643530107ffffffffffffffff"
+    },
+    {
+      "name": "u128_min",
+      "value": {
+        "u128": "0"
+      },
+      "blob": "564353011100000000000000000000000000000000"
+    },
+    {
+      "name": "u128_max",
+      "value": {
+        "u128": "340282366920938463463374607431768211455"
+      },
+      "blob": "5643530111ffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "i32_minus_one",
+      "value": {
+        "i32": "-1"
+      },
+      "blob": "5643530104ffffffff"
+    },
+    {
+      "name": "u64_one",
+      "rule": "equal values of different widths are different blobs",
+      "value": {
+        "u64": "1"
+      },
+      "blob": "56435301070100000000000000"
+    },
+    {
+      "name": "u8_one",
+      "value": {
+        "u8": "1"
+      },
+      "blob": "564353010d01"
+    },
+    {
+      "name": "f32_one_and_a_half",
+      "rule": "a float is its IEEE 754 bits, little-endian",
+      "value": {
+        "f32_bits": "3fc00000"
+      },
+      "blob": "56435301080000c03f"
+    },
+    {
+      "name": "f32_negative_zero",
+      "rule": "the sign of zero is kept",
+      "value": {
+        "f32_bits": "80000000"
+      },
+      "blob": "564353010800000080"
+    },
+    {
+      "name": "f32_nan_payload",
+      "rule": "a NaN's payload is kept",
+      "value": {
+        "f32_bits": "7fc00001"
+      },
+      "blob": "56435301080100c07f"
+    },
+    {
+      "name": "f64_one",
+      "value": {
+        "f64_bits": "3ff0000000000000"
+      },
+      "blob": "5643530109000000000000f03f"
+    },
+    {
+      "name": "f64_negative_infinity",
+      "value": {
+        "f64_bits": "fff0000000000000"
+      },
+      "blob": "5643530109000000000000f0ff"
+    },
+    {
+      "name": "f64_nan_payload",
+      "value": {
+        "f64_bits": "7ff8000000000001"
+      },
+      "blob": "5643530109010000000000f87f"
+    },
+    {
+      "name": "text_empty",
+      "rule": "text is a u32 little-endian byte length, then UTF-8",
+      "value": {
+        "text": ""
+      },
+      "blob": "564353010a00000000"
+    },
+    {
+      "name": "text_ascii",
+      "value": {
+        "text": "hello"
+      },
+      "blob": "564353010a0500000068656c6c6f"
+    },
+    {
+      "name": "text_multibyte",
+      "value": {
+        "text": "héllo ☃ 😀"
+      },
+      "blob": "564353010a0f00000068c3a96c6c6f20e2988320f09f9880"
+    },
+    {
+      "name": "text_nul",
+      "rule": "text may hold NUL",
+      "value": {
+        "text": "a\u0000b"
+      },
+      "blob": "564353010a03000000610062"
+    },
+    {
+      "name": "bytes_empty",
+      "rule": "bytes are a u32 little-endian length, then the bytes",
+      "value": {
+        "bytes": ""
+      },
+      "blob": "564353010b00000000"
+    },
+    {
+      "name": "bytes",
+      "value": {
+        "bytes": "00ff7f80"
+      },
+      "blob": "564353010b0400000000ff7f80"
+    },
+    {
+      "name": "bytes_utf8_is_still_bytes",
+      "rule": "bytes that happen to be UTF-8 stay bytes",
+      "value": {
+        "bytes": "6869"
+      },
+      "blob": "564353010b020000006869"
+    },
+    {
+      "name": "some_null",
+      "rule": "Some(x) is 0xF5 then x: Some(()) is not None",
+      "value": {
+        "some": null
+      },
+      "blob": "56435301f500"
+    },
+    {
+      "name": "some_some_null",
+      "rule": "Some(Some(())) and Some(None) keep their nesting",
+      "value": {
+        "some": {
+          "some": null
+        }
+      },
+      "blob": "56435301f5f500"
+    },
+    {
+      "name": "some_u8",
+      "value": {
+        "some": {
+          "u8": "5"
+        }
+      },
+      "blob": "56435301f50d05"
+    },
+    {
+      "name": "some_text",
+      "value": {
+        "some": {
+          "text": "x"
+        }
+      },
+      "blob": "56435301f50a0100000078"
+    },
+    {
+      "name": "some_array",
+      "value": {
+        "some": {
+          "array": []
+        }
+      },
+      "blob": "56435301f5f000000000"
+    },
+    {
+      "name": "array_empty",
+      "rule": "an array is 0xF0, a u32 little-endian count, then the elements",
+      "value": {
+        "array": []
+      },
+      "blob": "56435301f000000000"
+    },
+    {
+      "name": "array_null_and_some_null",
+      "value": {
+        "array": [
+          null,
+          {
+            "some": null
+          }
+        ]
+      },
+      "blob": "56435301f00200000000f500"
+    },
+    {
+      "name": "array_mixed",
+      "value": {
+        "array": [
+          {
+            "bool": true
+          },
+          {
+            "u16": "513"
+          },
+          {
+            "text": "a"
+          },
+          {
+            "array": []
+          }
+        ]
+      },
+      "blob": "56435301f004000000030f01020a0100000061f000000000"
+    },
+    {
+      "name": "object_empty",
+      "rule": "an object is 0xF1, a u32 count, then each key (u32 length, UTF-8) and value",
+      "value": {
+        "object": []
+      },
+      "blob": "56435301f100000000"
+    },
+    {
+      "name": "object_entries_keep_their_order",
+      "rule": "entries keep the order they were written in",
+      "value": {
+        "object": [
+          [
+            "b",
+            {
+              "u8": "1"
+            }
+          ],
+          [
+            "a",
+            {
+              "some": null
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f10200000001000000620d010100000061f500"
+    },
+    {
+      "name": "object_empty_key",
+      "value": {
+        "object": [
+          [
+            "",
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f1010000000000000000"
+    },
+    {
+      "name": "object_multibyte_key",
+      "value": {
+        "object": [
+          [
+            "clé",
+            {
+              "bool": false
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f10100000004000000636cc3a902"
+    },
+    {
+      "name": "object_nested",
+      "value": {
+        "object": [
+          [
+            "tags",
+            {
+              "array": [
+                {
+                  "text": "x"
+                }
+              ]
+            }
+          ],
+          [
+            "meta",
+            {
+              "object": [
+                [
+                  "n",
+                  {
+                    "i64": "-2"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f1020000000400000074616773f0010000000a0100000078040000006d657461f101000000010000006e05feffffffffffffff"
+    },
+    {
+      "name": "variant_unit",
+      "rule": "a unit variant is its name, as text",
+      "value": {
+        "text": "Red"
+      },
+      "blob": "564353010a03000000526564"
+    },
+    {
+      "name": "variant_newtype",
+      "rule": "any other variant is an object of one entry: its name, then its payload",
+      "value": {
+        "object": [
+          [
+            "Name",
+            {
+              "text": "acme"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f101000000040000004e616d650a0400000061636d65"
+    },
+    {
+      "name": "variant_newtype_none",
+      "value": {
+        "object": [
+          [
+            "Match",
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f101000000050000004d6174636800"
+    },
+    {
+      "name": "variant_newtype_some_unit",
+      "value": {
+        "object": [
+          [
+            "Match",
+            {
+              "some": null
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f101000000050000004d61746368f500"
+    },
+    {
+      "name": "variant_tuple",
+      "value": {
+        "object": [
+          [
+            "Pair",
+            {
+              "array": [
+                {
+                  "u8": "1"
+                },
+                {
+                  "u8": "2"
+                }
+              ]
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f1010000000400000050616972f0020000000d010d02"
+    },
+    {
+      "name": "variant_struct",
+      "value": {
+        "object": [
+          [
+            "Point",
+            {
+              "object": [
+                [
+                  "x",
+                  {
+                    "i32": "1"
+                  }
+                ],
+                [
+                  "y",
+                  {
+                    "i32": "-1"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f10100000005000000506f696e74f10200000001000000780401000000010000007904ffffffff"
+    },
+    {
+      "name": "depth_128_arrays",
+      "rule": "the root is depth 0; a node deeper than 128 is refused. A nest value is its leaf wrapped depth times: in a one-element array, a one-entry object under the key \"k\", or a some",
+      "value": {
+        "nest": {
+          "kind": "array",
+          "depth": 128,
+          "leaf": null
+        }
+      },
+      "blob": "56435301f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f00100000000"
+    },
+    {
+      "name": "depth_128_objects",
+      "value": {
+        "nest": {
+          "kind": "object",
+          "depth": 128,
+          "leaf": null
+        }
+      },
+      "blob": "56435301f101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006b00"
+    },
+    {
+      "name": "depth_128_some",
+      "rule": "the node after 0xF5 is one level deeper",
+      "value": {
+        "nest": {
+          "kind": "some",
+          "depth": 128,
+          "leaf": null
+        }
+      },
+      "blob": "56435301f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
+    },
+    {
+      "name": "depth_128_mixed",
+      "value": {
+        "array": [
+          {
+            "nest": {
+              "kind": "some",
+              "depth": 126,
+              "leaf": {
+                "array": []
+              }
+            }
+          }
+        ]
+      },
+      "blob": "56435301f001000000f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f000000000"
+    }
+  ],
+  "refused": [
+    {
+      "name": "empty",
+      "refusal": "not_a_blob",
+      "rule": "a blob starts with \"VCS\" and a version",
+      "blob": ""
+    },
+    {
+      "name": "magic_only",
+      "refusal": "not_a_blob",
+      "blob": "564353"
+    },
+    {
+      "name": "wrong_magic",
+      "refusal": "not_a_blob",
+      "blob": "5643540100"
+    },
+    {
+      "name": "lowercase_magic",
+      "refusal": "not_a_blob",
+      "blob": "7663730100"
+    },
+    {
+      "name": "a_transport_frame",
+      "refusal": "not_a_blob",
+      "rule": "a transport frame is not a blob",
+      "blob": "00"
+    },
+    {
+      "name": "a_transport_object",
+      "refusal": "not_a_blob",
+      "blob": "f100000000"
+    },
+    {
+      "name": "version_0",
+      "refusal": "unsupported_version",
+      "rule": "a version the reader does not read is refused apart from malformed bytes",
+      "blob": "5643530000"
+    },
+    {
+      "name": "version_2",
+      "refusal": "unsupported_version",
+      "blob": "5643530200"
+    },
+    {
+      "name": "version_255",
+      "refusal": "unsupported_version",
+      "blob": "564353ff"
+    },
+    {
+      "name": "header_only",
+      "refusal": "malformed",
+      "rule": "the body is exactly one node",
+      "blob": "56435301"
+    },
+    {
+      "name": "trailing_byte",
+      "refusal": "malformed",
+      "blob": "564353010000"
+    },
+    {
+      "name": "two_nodes",
+      "refusal": "malformed",
+      "blob": "564353010302"
+    },
+    {
+      "name": "undefined",
+      "refusal": "malformed",
+      "rule": "only the scalar tags in the table start a node",
+      "blob": "5643530101"
+    },
+    {
+      "name": "date",
+      "refusal": "malformed",
+      "blob": "564353011200000000"
+    },
+    {
+      "name": "timestamp",
+      "refusal": "malformed",
+      "blob": "5643530113000000000000000000000000"
+    },
+    {
+      "name": "decimal",
+      "refusal": "malformed",
+      "blob": "564353011400000000000000000000000000000000"
+    },
+    {
+      "name": "typed_null",
+      "refusal": "malformed",
+      "blob": "564353011506000000"
+    },
+    {
+      "name": "passthrough",
+      "refusal": "malformed",
+      "blob": "56435301f200"
+    },
+    {
+      "name": "logical_envelope",
+      "refusal": "malformed",
+      "blob": "56435301f305000b1000000000000000000000000000000000000000"
+    },
+    {
+      "name": "logical_long_envelope",
+      "refusal": "malformed",
+      "blob": "56435301f4"
+    },
+    {
+      "name": "unknown_tag_16",
+      "refusal": "malformed",
+      "blob": "5643530116"
+    },
+    {
+      "name": "unknown_tag_7f",
+      "refusal": "malformed",
+      "blob": "564353017f"
+    },
+    {
+      "name": "unknown_tag_ef",
+      "refusal": "malformed",
+      "blob": "56435301ef"
+    },
+    {
+      "name": "unknown_tag_f6",
+      "refusal": "malformed",
+      "blob": "56435301f6"
+    },
+    {
+      "name": "unknown_tag_ff",
+      "refusal": "malformed",
+      "blob": "56435301ff"
+    },
+    {
+      "name": "some_with_nothing",
+      "refusal": "malformed",
+      "rule": "a length, a count or a payload past the end is refused",
+      "blob": "56435301f5"
+    },
+    {
+      "name": "i32_truncated",
+      "refusal": "malformed",
+      "blob": "56435301040000"
+    },
+    {
+      "name": "u128_truncated",
+      "refusal": "malformed",
+      "blob": "5643530111000000000000000000000000000000"
+    },
+    {
+      "name": "text_length_past_the_end",
+      "refusal": "malformed",
+      "blob": "564353010a050000006869"
+    },
+    {
+      "name": "bytes_length_past_the_end",
+      "refusal": "malformed",
+      "blob": "564353010b01000000"
+    },
+    {
+      "name": "text_length_truncated",
+      "refusal": "malformed",
+      "blob": "564353010a0100"
+    },
+    {
+      "name": "array_count_past_the_end",
+      "refusal": "malformed",
+      "blob": "56435301f00200000000"
+    },
+    {
+      "name": "array_count_huge",
+      "refusal": "malformed",
+      "blob": "56435301f0ffffffff00"
+    },
+    {
+      "name": "object_key_past_the_end",
+      "refusal": "malformed",
+      "blob": "56435301f101000000040000006b"
+    },
+    {
+      "name": "object_value_missing",
+      "refusal": "malformed",
+      "blob": "56435301f101000000010000006b"
+    },
+    {
+      "name": "text_not_utf8",
+      "refusal": "malformed",
+      "rule": "text and keys are valid UTF-8",
+      "blob": "564353010a01000000ff"
+    },
+    {
+      "name": "text_surrogate",
+      "refusal": "malformed",
+      "blob": "564353010a03000000eda080"
+    },
+    {
+      "name": "key_not_utf8",
+      "refusal": "malformed",
+      "blob": "56435301f10100000001000000ff00"
+    },
+    {
+      "name": "duplicate_key",
+      "refusal": "malformed",
+      "rule": "one object never has two entries with the same key",
+      "blob": "56435301f102000000010000006b00010000006b00"
+    },
+    {
+      "name": "duplicate_key_apart",
+      "refusal": "malformed",
+      "blob": "56435301f103000000010000006100010000006200010000006103"
+    },
+    {
+      "name": "depth_129_arrays",
+      "refusal": "malformed",
+      "rule": "a node deeper than 128 is refused",
+      "blob": "56435301f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f001000000f00100000000"
+    },
+    {
+      "name": "depth_129_objects",
+      "refusal": "malformed",
+      "blob": "56435301f101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006bf101000000010000006b00"
+    },
+    {
+      "name": "depth_129_some",
+      "refusal": "malformed",
+      "blob": "56435301f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
+    },
+    {
+      "name": "depth_129_mixed",
+      "refusal": "malformed",
+      "blob": "56435301f001000000f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
+    }
+  ]
+}
