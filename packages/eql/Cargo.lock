@@ -4279,6 +4279,7 @@ dependencies = [
  "stack-kms",
  "thiserror 1.0.69",
  "uuid",
+ "vitaminc 0.8.0",
  "vitaminc-aead 0.8.0",
  "vitaminc-aead-frame",
  "vitaminc-encrypt 0.8.0",

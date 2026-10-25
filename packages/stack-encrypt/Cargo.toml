@@ -42,6 +42,8 @@ vitaminc-normalize = { workspace = true }
 vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
+# Spike (#1357): the CSPRNG that shuffles a document's stored entry order.
+vitaminc = { workspace = true }
 # `dynamic` only: serde over the transport frame, which reads a binding's
 # control data (statistics, options, a plan) into typed messages.
 vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }

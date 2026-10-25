@@ -939,6 +939,29 @@ fn sealed_root_plaintext(value: &Value) -> Result<Protected<Vec<u8>>, serde_json
     })
 }
 
+/// Spike (#1357): whether documents are sealed with their entries in a
+/// random stored order, `STACK_ENCRYPT_JSON_SHUFFLE=1`. A process-wide
+/// switch so every existing test and the PostgreSQL oracle run under it
+/// unchanged; a real change would be a layout option recorded like
+/// `sealed_root`, or simply the format.
+pub(crate) fn shuffled() -> bool {
+    static SHUFFLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SHUFFLED
+        .get_or_init(|| std::env::var_os("STACK_ENCRYPT_JSON_SHUFFLE").is_some_and(|v| v == "1"))
+}
+
+/// The stored slot of each of `n` nodes, by walk index: the identity, or
+/// under `rng` a uniform permutation of the slots `1..n` with the root
+/// kept at `0`, where the sealed-root fallback and a whole-document open
+/// look for it (every document has a root, so its slot says nothing).
+fn slots(n: usize, rng: Option<&mut vitaminc::random::SafeRand>) -> Vec<usize> {
+    let mut slots: Vec<usize> = (0..n).collect();
+    if let Some(rng) = rng {
+        super::query::fisher_yates(&mut slots[1..], &mut |m| rng.next_below(m));
+    }
+    slots
+}
+
 fn seal(
     walked: Walked,
     mut whole: Option<Protected<Vec<u8>>>,
@@ -976,6 +999,13 @@ fn seal(
     // children before parents.
     let mut plain: Vec<Option<Protected<Vec<u8>>>> = plain.into_iter().map(Some).collect();
     let mut ciphertexts: Vec<Option<Vec<u8>>> = vec![None; nodes.len()];
+    // Where each node is stored: its walk index, or (spike, #1357) a random
+    // slot, the root staying at 0. The AAD binds the slot.
+    let mut rng = shuffled()
+        .then(|| vitaminc::random::SafeRand::from_entropy())
+        .transpose()
+        .map_err(|_| Error::Other("no entropy for the stored order".into()))?;
+    let slots = slots(nodes.len(), rng.as_mut());
     for j in (0..nodes.len()).rev() {
         let node = &nodes[j];
         let plaintext = plain[j].take().ok_or(Error::Aead)?;
@@ -996,19 +1026,19 @@ fn seal(
         let c = cipher
             .seal(
                 plaintext,
-                &entry_aad(keyset_id, aad, &tag, &node.s, j as u64, &digest),
+                &entry_aad(keyset_id, aad, &tag, &node.s, slots[j] as u64, &digest),
             )
             .map_err(|_| Error::Aead)?;
         ciphertexts[j] = Some(c.as_ref().to_vec());
     }
-    let mut entries = Vec::with_capacity(nodes.len());
+    let mut entries: Vec<Option<JsonEntry>> = vec![None; nodes.len()];
     for (j, node) in nodes.iter().enumerate() {
         let c = ciphertexts[j].take().ok_or(Error::Aead)?;
         let p = node
             .parent
             .zip(node.ordinal)
             .map(|(parent, o)| parent_tag(&iv, &nodes[parent].token, o));
-        entries.push(JsonEntry {
+        entries[slots[j]] = Some(JsonEntry {
             s: node.s,
             c,
             x: self_tag(&iv, &node.token),
@@ -1016,7 +1046,14 @@ fn seal(
             op: node.op.clone(),
         });
     }
-    let projection = super::query::group_of(nodes, None);
+    let entries = entries
+        .into_iter()
+        .map(|entry| entry.ok_or(Error::Aead))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut projection = super::query::group_of(nodes, None);
+    if let Some(rng) = rng.as_mut() {
+        projection.shuffle(&mut |n| rng.next_below(n));
+    }
     Ok(JsonDocument::new(
         JsonHeader::new(keyset_id, iv, tag, sealed_root),
         entries,

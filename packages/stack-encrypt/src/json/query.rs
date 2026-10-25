@@ -42,6 +42,19 @@ pub struct JsonProjection {
 }
 
 impl JsonProjection {
+    /// Spike (#1357): put the pairs of every group, and the groups of every
+    /// element list, in a random order, `below(n)` drawing a uniform index
+    /// under `n`. Containment is `jsonb @>` over the projection, which reads
+    /// `sv` and `el` as sets, so the order changes no answer; it stops the
+    /// projection restating the document's depth-first order.
+    pub(crate) fn shuffle(&mut self, below: &mut impl FnMut(u32) -> u32) {
+        fisher_yates(&mut self.sv, below);
+        fisher_yates(&mut self.el, below);
+        for group in &mut self.el {
+            group.shuffle(below);
+        }
+    }
+
     /// `jsonb @>` over two projections: every needle pair is some pair of
     /// this projection, and every needle element fits inside some element
     /// of it, recursively. What the server computes natively over the two
@@ -962,5 +975,14 @@ mod tests {
             sv: vec![pair(9)],
             el: vec![],
         }));
+    }
+}
+
+/// A uniform shuffle of `items`, `below(n)` drawing a uniform index under
+/// `n` (spike, #1357).
+pub(crate) fn fisher_yates<T>(items: &mut [T], below: &mut impl FnMut(u32) -> u32) {
+    for i in (1..items.len()).rev() {
+        let j = below(u32::try_from(i + 1).unwrap_or(u32::MAX)) as usize;
+        items.swap(i, j.min(i));
     }
 }

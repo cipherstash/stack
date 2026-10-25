@@ -3419,6 +3419,7 @@ dependencies = [
  "tokio",
  "trybuild",
  "uuid",
+ "vitaminc 0.8.0",
  "vitaminc-aead 0.8.0",
  "vitaminc-aead-frame",
  "vitaminc-encrypt 0.8.0",
