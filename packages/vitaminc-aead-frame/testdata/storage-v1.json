@@ -1240,6 +1240,11 @@
       "name": "depth_129_mixed",
       "refusal": "malformed",
       "blob": "56435301f001000000f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
+    },
+    {
+      "name": "map_key_true",
+      "refusal": "malformed",
+      "blob": "56435301f6010000000300"
     }
   ],
   "reads": [
@@ -2812,6 +2817,42 @@
         ]
       },
       "blob": "564353010b03000000526564",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "struct_denying_unknown_keys_reads_its_own",
+      "rule": "a struct ignores unknown keys unless it denies them",
+      "type": {
+        "struct_deny_unknown": [
+          [
+            "x",
+            "i32"
+          ]
+        ]
+      },
+      "blob": "56435301f10100000001000000780401000000",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "struct_denying_unknown_keys_refuses_one",
+      "type": {
+        "struct_deny_unknown": [
+          [
+            "x",
+            "i32"
+          ]
+        ]
+      },
+      "blob": "56435301f10200000001000000780401000000010000007a00",
       "refusal": "mismatch"
     }
   ]
