@@ -2854,6 +2854,25 @@
       },
       "blob": "56435301f10200000001000000780401000000010000007a00",
       "refusal": "mismatch"
+    },
+    {
+      "name": "struct_refuses_an_integer_key_beside_its_fields",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f6020000000a0100000078040100000007070000000000000000",
+      "refusal": "mismatch"
     }
   ]
 }
