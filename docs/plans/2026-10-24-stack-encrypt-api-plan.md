@@ -10,6 +10,15 @@ criteria. User requirements are distinguished from recommendations that
 have not yet been accepted. Examples below are proposed APIs, not working
 code for the current release.
 
+**Customer delivery priority, 2026-10-25:** the JSON-tree stack
+headed by #1363 has merged; next deliver Go JSON and configurable Bloom search, including
+the short-input requirement under investigation. Stabilize the Go contract
+and persisted encoding/search semantics before customer release. Adopt the
+Vitamin C codec in its existing repository now; defer crate moves and the
+standalone Rust facade. The customer-first sequence below supersedes
+earlier implementation ordering where they conflict. The short-gram design is
+a release dependency, not a feature silently deferred to a later version.
+
 **Latest delivery decisions, 2026-10-25:** encoded ciphertext field targets
 are accepted. The comprehensive JSON first-release contract and Rust/dynamic
 examples are in [JSON operations](2026-10-25-stack-encrypt-json-operations.md),
@@ -43,6 +52,9 @@ aliases, deprecation period, or data migration is required. Choose the
 coherent new design and update its Rust, Go, guest, and EQL consumers
 together. Engine output must still agree with the SQL that consumes it;
 that is current interoperability, not a legacy-format requirement.
+This exemption ends for the customer profiles when released: subsequent
+Rust API/package refactors must preserve the Go interface and stored
+data/search compatibility.
 
 ## Requirements established in the review
 
@@ -59,8 +71,10 @@ that is current interoperability, not a legacy-format requirement.
   prototype-compatibility reason to add a raw-byte exception.
 - Rust traits and derives are the primary static interface. Plans support
   those declarations and dynamic/FFI lowering.
-- Design and deliver static and dynamic support together. Go support is an
-  acceptance criterion, not a later follow-up.
+- Design static and dynamic support against the same engine/definition
+  contract. Deliver the customer Go interface first; polished public Rust
+  traits/derives may follow. Engine-level Rust interoperability tests remain
+  required, so this does not introduce a second Go encryption implementation.
 - Provide decrypt entry points with and without explicit context. The
   no-context variant must not invent a default required application value.
 - `OpaqueEncode` / `OpaqueDecode` name the single-ciphertext representation
@@ -881,38 +895,32 @@ this design discussion.
 
 ## Configured-target implementation sequence and completion criteria
 
-1. **Normalize the general contract.** Specify typed options, Rust factory
-   signatures, validated dynamic deserialization, defaults, context
-   inputs, capability discovery, errors, and the target
-   object grammar. Create the versioned interoperability specification,
-   schemas and initial conformance fixtures described below alongside this
-   work. Build one target-owned validator and lowering path.
-2. **Deliver JSON as a complete first implementation.** Add configured EQL
-   JSON targets, direct typed output/input conversion, catalog/guest
-   registration, and JSON transport. Keep engine and database encodings aligned.
-3. **Expose both declarative front ends.** Add the generic Rust derive
-   factory hook and Go generator/policy support, including field targets and
-   standalone Rust wrappers. Neither front end reimplements encryption.
-4. **Complete queries and reads in both languages.** Carry the configured
-   target into query construction, expose extraction results, and standardize
-   Rust's paired decrypt convenience methods. Settle the role-based JSON
-   names as part of this public API work.
-5. **Verify the complete slice before calling it supported.** Rust-written
-   EQL JSON must open and query from Go, and vice versa, against PostgreSQL.
-   Test defaults, ordered paths, both root settings, arrays/scalar roots/null,
-   numeric boundaries, missing paths, context mismatch, and invalid options.
-   Assert logical batching and verify fixtures for the chosen format. Compare
-   semantics rather than ciphertext equality, since encryption is randomized.
-   Run the shared interoperability conformance suite and gate schema/runtime
-   drift in CI. Each implemented contract change updates its specification
-   and fixtures in the same change.
+Customer commitments supersede the earlier Rust/Go front-end lockstep sequence:
 
-These are implementation steps, not permission to ship a Rust-only phase.
-The Go examples and cross-language acceptance tests are part of the feature.
-Do not add the plaintext-configuration wrapper in this first change: the
-dynamic target declaration already handles runtime options without adding
-another policy location. Reconsider that convenience after both front ends
-use the shared contract.
+1. **JSON engine baseline is landed:** #1345, #1358, #1361 and #1363 have
+   merged. Build Go support against that baseline; revise the older #1353 plan.
+2. **Settle Go/dynamic contracts and storage profiles:** target options,
+   context/scope, errors, query composition and stable Vitamin C encodings.
+   Vitamin C #520 and #526 implement the Rust/Go storage profiles and await
+   colleague review and release; adoption remains a Stack integration task. Start short-gram research immediately;
+   its storage/query implications must resolve before that feature freezes.
+3. **Deliver Go JSON and configurable match search:** use the landed engine
+   and SQL contract, implement analyzer/filter definitions and supported
+   two-character behavior, and preserve the comprehensive JSON operation
+   inventory. Carry through the numeric round-trip fix from #1366 (#1364).
+4. **Freeze and release the customer surface:** Go generation/runtime tests,
+   Rust-engine/Go cross-opening, PostgreSQL queries, schema/semantic
+   conformance, and stable storage/search vectors are release gates.
+   The final Rust derive facade is not.
+5. **Complete Rust ergonomics and packaging:** implement public traits,
+   derives and examples and move crates behind the frozen Go and data
+   contracts. Internal plans may change; customer data must remain usable.
+
+Keep shared validation and one execution engine throughout. Final static
+Rust examples become executable acceptance tests in step 5; they need not
+delay step 4. Each delivered contract change updates its specification and
+fixtures in the same change. Do not add a second policy location through
+an ad hoc plaintext-configuration wrapper.
 
 ### Required deliverable: dynamic interoperability specification
 
@@ -990,7 +998,12 @@ deliverable; recommendations do not silently settle the open decisions.
 | Consistent definition selector | 17 | Choose one method name for encrypt and query; recommend `using` with operation-specific bounds |
 | Single-ciphertext encoding and cleanup | 18 | `OpaqueEncode`/`OpaqueDecode`, consuming encrypt and encrypt_into, guarded source/buffer lifetimes, and explicit cleanup scope |
 
-### A. Settle the public method and trait structure first
+### A. Consolidate the public Rust method and trait structure
+
+This is the Rust-facade workstream. Under the latest customer ordering, do
+only the engine/contract changes needed by Go before its release; defer
+standalone Rust ergonomics and trait relocation. The sections below organize
+the full review scope, not the customer critical path.
 
 Keep the agreed ordinary keyset receiver and `EncryptInto` conversion forms.
 Use the accepted destination-directed decrypt pair. Write
@@ -1462,6 +1475,8 @@ Completion: all public examples are executable tests, static/dynamic
 cross-opening and querying pass against the selected storage format, batching
 checks pass, and the guest builds remain supported. No new API is described
 as implemented until its Rust and Go acceptance criteria are met.
+These are full redesign completion criteria. The earlier Go release uses
+the facade-independent Go, engine and storage gates listed above.
 
 ## Recommended order for the remaining design decisions
 
@@ -1492,15 +1507,14 @@ specification and implementation obligations:
 | --- | --- |
 | JSON contract review | User review is in progress. Review concrete operation recipes against the comprehensive required inventory, including stricter path validation and request-bound extraction. Custom-stage portability, validation timing and initial ORE equality policy are now accepted. |
 | Key selection and optional provider policy | Review plaintext-derived keyset selection, client-scoped routed execution, and ZeroKMS lock context as optional provider capabilities. Assess the neutral data/index-key boundary and the intentional non-use of Vitamin C AsyncCipher in the provider-capabilities companion. |
-| Stable blob profile | Specify supported Serde shapes, lossless options/enums/maps, authenticated codec versions and compatibility fixtures under Vitamin C #519. This is the immediate priority; format-preserving cleanup/timing improvements are follow-up work, with limitations documented honestly. |
+| Customer storage profiles | Stabilize the Vitamin C encodings and semantics used by Go/JSON/search before release, coordinating #519 upstream. Full Rust blob conveniences can follow; unsupported shapes must remain explicitly unsupported. Crate relocation is deferred. |
+| Configurable match and short input | Whole-word semantics are confirmed. Define the analyzer/token-filter catalog and named indexes/Boolean composition; choose the short-word mechanism only after leakage/performance assessment. Select the storage/query scheme before release. |
 | Packaging and names — review in progress | Review the packaging companion's shared format crate, Stack-owned value execution, primitive-only Vitamin C boundary, AsyncCipher retirement, ZeroKMS client rename and role-based JSON names. Encoded ciphertext field targets themselves are accepted. The accepted trait names, `ScopeKey`, and receiver choices are not open again. |
 
-Next review the JSON operation document and its static/dynamic examples,
-then turn the required inventory into implementation phases and formal
-interoperability fixtures. Stable storage-format work is tracked upstream.
-Finish remaining query integration details without reopening ORE equality.
-The user has now requested the naming/package pass while JSON review
-continues; that proposal is ready for review in the packaging companion.
+Next reconcile the operation document and #1353 with the merged JSON
+stack. Settle the Go contract and adopt the upcoming Vitamin C storage
+release. Use the customer-facing conformance gates above for release. Packaging remains a proposed destination after Go
+delivery; finish query integration without reopening ORE equality.
 
 Specification/implementation work still includes exact context/scope grouping
 and encoding, dynamic grammar and version identifiers, error codes, binary
@@ -1525,4 +1539,5 @@ reason to reopen the question of whether writes and queries share a policy.
 Passthrough implementation, transcoder adapters, collection composition,
 trait relocation, documentation updates, and acceptance tests remain work
 items. They are not reasons to characterize the agreed API direction as
-undecided. No backward-compatibility phase is needed for the prototype.
+undecided. No backward-compatibility phase is needed for the prototype;
+the customer release establishes a new Go and persisted-data commitment.

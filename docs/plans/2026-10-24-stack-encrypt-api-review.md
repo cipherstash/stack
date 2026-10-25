@@ -1121,3 +1121,26 @@ adapters also depend on the existing value model and need separation from
 their primitives. Moving the frame implementation refines the earlier codec
 ownership recommendation; coordinate stable storage work under Vitamin C
 #519. Names and package moves remain proposals, not implementation changes.
+
+## 22. Customer-driven sequencing: Go JSON and match search first
+
+The customer needs Go JSON support and robust Bloom-filter handling with
+tokenizers/token filters, including two-character input. Standalone Rust
+release quality is secondary. Claude's JSON-tree PR stack headed by #1363 has now merged. Revise the
+older Go plan in #1353 against it and the agreed API direction. Vitamin C
+#520 and #526 implement the storage profiles; colleague review and release
+are pending. Stack still needs to adopt that release.
+
+Freeze the public Go contract and stored binary/search semantics before the
+customer release. Internal plans may change behind that interface. Adopt and
+stabilize the Vitamin C codec in its current repository now; defer physical
+crate moves, AsyncCipher retirement and final Rust derives. The earlier
+prototype compatibility exemption does not permit breaking customer data
+after this release.
+
+The supplied `Short-ngrams.md` explores short whole-word filters and variant
+queries, which must be distinguished from arbitrary two-character substring
+search. The current tokenizer permits length 2, but the current one-match
+output and one/range-query-term shapes need expansion for named filters and
+Boolean alternatives. Resolve the scheme's leakage, SQL representation and
+performance before release; do not silently defer the customer requirement.

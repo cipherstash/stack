@@ -13,6 +13,16 @@ they are not a post-release phase. Internal implementation can still be
 split into PRs. The feature is complete only when every required row below
 has Rust, dynamic/Go, and applicable PostgreSQL coverage.
 
+**Customer sequencing update:** the PR stack headed by
+[#1363](https://github.com/cipherstash/stack/pull/1363) has merged. Deliver Go
+against that baseline. Its token lists, self tags, wildcard probes and result semantics
+supersede the older gated-walk baseline used in parts of this document.
+Reconcile those recipes before implementation and format freeze; the
+operation inventory remains required. Engine-level Rust interoperability
+coverage is a release gate; the final public Rust facade may follow
+customer delivery. Retain regression coverage for the numeric round-trip
+fix now merged in #1366 (closing #1364).
+
 This is a target API contract, not a claim that these public signatures
 already exist. Rust and JSON examples below propose the redesigned surface.
 Final names/package paths are deliberately left to the last naming pass.

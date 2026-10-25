@@ -7,6 +7,12 @@ renames. Existing companion examples retain their working names until this
 proposal is accepted. The detailed JSON operation contract remains under
 separate user review.
 
+**Sequencing update:** customer Go delivery supersedes the original
+move-first sequence. The JSON stack headed by #1363 has merged. Vitamin C
+#520 and #526 address storage and await review/release. Adopt those encodings
+and deliver Go JSON/match search first. The package map below is the intended destination; neither a new
+format crate nor public Rust facade completion is a customer release gate.
+
 Source baseline: the current documentation branch and inspected local Vitamin
 C 0.8.0 sources. Stack's
 [cipher implementation notes](../../packages/stack-encrypt/src/cipher.rs)
@@ -229,20 +235,22 @@ or dynamic discriminants.
 
 ## Implementation order and acceptance
 
-1. Approve this glossary and ownership map; update all public example imports
-   and type names together without implying the examples already compile.
-2. Specify the stable format profiles and conformance fixtures, coordinating
-   #519. Establish the small format crate and move the encoding wrappers and
-   frame foundation; preserve distinct transport/storage semantics.
-3. Move the value model, traversal and dependent normalization/index adapters
-   into Stack, separating primitive inputs so the dependency graph stays
-   acyclic. Move relevant tests with their implementations.
-4. Introduce neutral provider capabilities and the ZeroKMS adapter, rename
-   the protocol crate, then retire Vitamin C's async application execution
-   surface. Keep mixed-keyset/auth-policy batching and request isolation.
-5. Apply the agreed method/derive/JSON names across Rust, EQL, dynamic catalog,
-   guest ABI adapters, Go generation and examples. Preserve the comprehensive
-   first-release JSON inventory rather than treating packaging as a scope cut.
+1. Use the merged JSON stack and specify Go-visible names/contracts and stable
+   profiles needed by the customer. Keep codec work in Vitamin C, coordinating
+   #519. Preserve distinct transport/storage semantics and freeze search
+   semantics as well as byte layouts.
+2. Deliver and validate Go JSON, configurable match search and the selected
+   short-input solution under the customer-first sequence. Record frozen Go/data
+   fixtures; leave internal Rust plan ergonomics free to change.
+3. After delivery, establish the shared format crate and move the value model,
+   traversal and dependent normalization/index adapters into Stack. Preserve
+   frozen encodings and an acyclic graph; move tests with their code.
+4. Complete neutral provider extraction and protocol-package renaming, then
+   retire Vitamin C's async application execution surface. Required Go-facing
+   policy and routing contracts must already have been handled before release.
+5. Complete public Rust trait/derive names, imports and executable examples.
+   These changes must not rename the shipped Go API, reinterpret stored
+   profiles or require customer re-encryption/reindexing.
 
 Acceptance includes an acyclic Cargo graph; an EQL wire-only build without
 the engine; engine builds without ZeroKMS and without HTTP; native/guest
