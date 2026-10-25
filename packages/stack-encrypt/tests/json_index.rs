@@ -2157,7 +2157,7 @@ mod given_a_float_at_full_precision {
         let key = subtree_key(cipher, "$.list", JsonOptions::default())
             .await
             .unwrap();
-        let rows = subtree_nodes(&sealed, key.token_bytes());
+        let rows = read_rows(&sealed, &key);
         let element = sealed.node(2).unwrap();
         vec![
             (
@@ -2171,7 +2171,10 @@ mod given_a_float_at_full_precision {
             (
                 "the extracted element, as `->` returns it",
                 cipher
-                    .decrypt_as::<Value, JsonNode>(element, aead())
+                    .decrypt_as::<Value, JsonExtracted>(
+                        extracted(cipher, "$.list[*]", element).await,
+                        aead(),
+                    )
                     .await
                     .unwrap(),
             ),
