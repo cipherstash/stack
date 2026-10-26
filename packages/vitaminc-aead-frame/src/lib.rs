@@ -1,11 +1,14 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(clippy::unwrap_used, clippy::todo, unsafe_code, unused_imports)]
 #![doc = include_str!("../README.md")]
 pub mod transport;
 
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub mod serde;
 
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub mod storage;
 
 pub use transport::{decode_ciphertext, encode_ciphertext, CodecError};

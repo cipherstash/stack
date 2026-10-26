@@ -7,6 +7,12 @@ Authenticated Encryption with Associated Data (AEAD) primitives for building sec
 
 This crate is part of the [Vitamin C](https://github.com/cipherstash/vitaminc) framework to make cryptography code healthy.
 
+## Installation
+
+```sh
+cargo add vitaminc-aead
+```
+
 ## What is AEAD?
 
 AEAD (Authenticated Encryption with Associated Data) is a form of encryption that provides both confidentiality and authenticity. It ensures that:
@@ -418,6 +424,24 @@ let nonce = generator.generate()?;
 - When decrypting, always verify authentication before processing the plaintext: the walk opens every leaf before a typed target sees any of them
 - Map keys and passthrough subtrees travel in the clear; keys are bound into the AAD of their values, passthrough is not bound at all
 - A sequence's order and length are not authenticated: each element is bound to its sequence, not to its index, so elements can be reordered or dropped without a cipher failure. A caller who needs them should put them in a map or in the AAD
+
+## Cargo features
+
+No optional features are enabled by default.
+
+| Feature | Effect |
+| --- | --- |
+| `chrono` | Adds date and UTC timestamp conversions, including `Timestamp` and its leap-second checks. |
+| `rust_decimal` | Adds `rust_decimal::Decimal` encoding and decoding. |
+| `uuid` | Adds `uuid::Uuid` encoding and decoding. |
+| `hlist` | Exposes the static heterogeneous-list API in `hlist`. |
+| `test-support` | Internal test helpers; not a supported application API. |
+
+## Compatibility
+
+Requires Rust **1.88.0** and the Rust standard library (`std`).
+MSRV increases require a minor release; patch releases retain the existing
+floor. See the [workspace compatibility policy](https://github.com/cipherstash/vitaminc#compatibility).
 
 ## CipherStash
 

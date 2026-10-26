@@ -39,6 +39,12 @@ encode_ciphertext(&back, &mut again).expect("encodes");
 assert_eq!(again, bytes);
 ```
 
+## Installation
+
+```sh
+cargo add vitaminc-aead-frame
+```
+
 ## Transport, and one storage profile
 
 The frame, the ciphertext codec and the serde format in `serde` are
@@ -156,3 +162,19 @@ the AAD derivations and the container rules stay what shipped.
 [`MAX_DEPTH`]: crate::MAX_DEPTH
 [`CodecError`]: crate::CodecError
 [`FrameError`]: crate::FrameError
+
+## Cargo features
+
+No optional features are enabled by default.
+
+| Feature | Effect |
+| --- | --- |
+| `serde` | Exposes `serde` transport conversion and the versioned `storage` profile; adds Serde and protected-buffer dependencies. |
+
+## Compatibility
+
+Requires Rust **1.88.0** and the Rust standard library (`std`).
+MSRV increases require a minor release; patch releases retain the existing
+floor. See the [workspace compatibility policy](https://github.com/cipherstash/vitaminc#compatibility).
+
+License: MIT.

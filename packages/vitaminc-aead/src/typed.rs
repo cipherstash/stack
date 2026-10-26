@@ -440,6 +440,7 @@ impl<const N: usize> FromScalar for [u8; N] {
 }
 
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 mod chrono_targets {
     use super::*;
     use crate::plaintext::kinds::chrono as conv;
@@ -471,6 +472,7 @@ mod chrono_targets {
 }
 
 #[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
 impl FromScalar for rust_decimal::Decimal {
     const EXPECTED: &'static str = "decimal";
     fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
@@ -484,6 +486,7 @@ impl FromScalar for rust_decimal::Decimal {
 }
 
 #[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
 impl FromScalar for uuid::Uuid {
     const EXPECTED: &'static str = "uuid";
     fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {

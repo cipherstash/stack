@@ -21,6 +21,16 @@
 //! entry per field. `#[derive(Decrypt)]` generates the map sink that builds
 //! the struct back, routing each entry to the field's own sink.
 //!
+//! # Installation and compatibility
+//!
+//! Install the parent crate with `cargo add vitaminc-aead`. This macro crate
+//! has no Cargo feature flags and requires Rust **1.88.0**. The macros run on
+//! the compiler host; the parent crate requires `std`.
+//! MSRV increases require a minor release; patch releases retain the existing
+//! floor. See the [workspace policy](https://github.com/cipherstash/vitaminc#compatibility).
+//!
+//! License: MIT.
+//!
 //! # Wire shape
 //!
 //! A struct is encrypted as a **map**, keyed by field name. This is the

@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(clippy::unwrap_used, clippy::todo, unsafe_code, unused_imports)]
 #![doc = include_str!("../README.md")]
 mod aad;
@@ -7,6 +8,7 @@ mod context;
 mod encrypt_sink;
 pub mod frame;
 #[cfg(feature = "hlist")]
+#[cfg_attr(docsrs, doc(cfg(feature = "hlist")))]
 pub mod hlist;
 pub mod leaf;
 mod nonce;
@@ -15,6 +17,7 @@ pub mod seal;
 pub mod shape;
 pub mod tags;
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 mod timestamp;
 pub mod typed;
 mod unspecified;
@@ -49,6 +52,7 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 // A UTC instant that always encrypts.
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 #[doc(inline)]
 pub use timestamp::{LeapSecond, Timestamp};
 

@@ -754,6 +754,7 @@ fn decimal_in_range(scale: u8, mantissa: Int) -> bool {
 
 /// Conversions between the chrono types and the ints they are stored as.
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 pub mod chrono {
     use super::{Int, TimeUnit};
     use ::chrono::{DateTime, Datelike, NaiveDate, Utc};
@@ -882,6 +883,7 @@ pub mod chrono {
 
 /// Conversions between `rust_decimal::Decimal` and its scale and mantissa.
 #[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
 pub mod decimal {
     use super::Int;
     use rust_decimal::Decimal;

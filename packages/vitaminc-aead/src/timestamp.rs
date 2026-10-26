@@ -45,6 +45,7 @@ use crate::typed::FromScalar;
 /// `DateTime<Utc>`, so a `#[aead(skip)]` or `#[aead(take)]` field can
 /// change from one to the other.
 #[derive(Default, OpaqueDebug, TimingSafeEq, Zeroize, ZeroizeOnDrop)]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 pub struct Timestamp {
     /// Whole seconds since the Unix epoch.
     secs: i64,
@@ -55,6 +56,7 @@ pub struct Timestamp {
 /// A leap second, which a [`Timestamp`] cannot hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("a leap second has no encoding")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 pub struct LeapSecond;
 
 impl Timestamp {
