@@ -304,6 +304,20 @@ func TestTargetLimitIsTheRustFixtures(t *testing.T) {
 	}
 }
 
+// An unbounded limit pages, and a page past the largest LIMIT PostgreSQL
+// takes is cut to it rather than bound as a value database/sql refuses.
+func TestAnUnboundedLimitCutsThePageToTheLargestSQLLimit(t *testing.T) {
+	var unbounded encrypt.Limit
+	if got := unbounded.FetchOr(50); got != 50 {
+		t.Fatalf("FetchOr(50) = %d, want 50", got)
+	}
+	for _, page := range []uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
+		if got := unbounded.FetchOr(page); got != math.MaxInt64 {
+			t.Fatalf("FetchOr(%d) = %d, want %d", page, got, uint64(math.MaxInt64))
+		}
+	}
+}
+
 // A query the field does not answer is refused as a mistyped value is: an
 // encoding error that names the field and the rule. The typed path's own
 // refusals are term errors.
