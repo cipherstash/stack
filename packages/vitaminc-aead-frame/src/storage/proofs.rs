@@ -16,7 +16,10 @@
 
 use vitaminc_aead::tags;
 
-use super::{body, node, Cursor, ErrorKind, Invalid, MapKey, MAGIC, MAX_DEPTH, VERSION};
+use super::{
+    body, node, Cursor, ErrorKind, Invalid, MapKey, ARRAY, HEADER, MAGIC, MAP, MAX_DEPTH, SOME,
+    VERSION,
+};
 
 /// Any `N` bytes, and a length up to `N`: every input of at most `N` bytes.
 fn any_bytes<const N: usize>() -> ([u8; N], usize) {
@@ -36,16 +39,17 @@ fn the_header_is_refused_exactly_as_its_rules_say() {
     let (bytes, len) = any_bytes::<6>();
     let input = &bytes[..len];
     let magic = len >= 3 && bytes[0] == MAGIC[0] && bytes[1] == MAGIC[1] && bytes[2] == MAGIC[2];
+    let whole = len >= HEADER.len();
     match body(input) {
         Ok(rest) => {
-            assert!(len >= 4 && magic && bytes[3] == VERSION);
+            assert!(whole && magic && bytes[3] == VERSION);
             // The rest of the input itself, not a copy.
-            assert!(core::ptr::eq(rest, &input[4..]));
+            assert!(core::ptr::eq(rest, &input[HEADER.len()..]));
         }
-        Err(e) if e.kind() == ErrorKind::NotABlob => assert!(len < 4 || !magic),
+        Err(e) if e.kind() == ErrorKind::NotABlob => assert!(!whole || !magic),
         Err(e) => {
             assert!(e.kind() == ErrorKind::UnsupportedVersion);
-            assert!(len >= 4 && magic && bytes[3] != VERSION);
+            assert!(whole && magic && bytes[3] != VERSION);
         }
     }
 }
@@ -92,49 +96,137 @@ fn any_cursor(bytes: &[u8; INPUT]) -> Cursor<'_> {
     }
 }
 
+/// A null or a `u8` at the cursor, whole: a scalar the reader must accept,
+/// and how many bytes it takes. So a reader that refused everything would
+/// fail the harnesses below, which also show what it accepts is in bounds.
+fn plainly_valid(buf: &[u8], pos: usize) -> Option<usize> {
+    match buf.get(pos) {
+        Some(&tags::NULL) => Some(1),
+        Some(&tags::UINT8) if buf.len() - pos >= 2 => Some(2),
+        _ => None,
+    }
+}
+
 /// Reading a scalar never panics. It reads the bytes at the cursor and
 /// moves past them, at least one, or refuses and leaves the cursor where
-/// it was.
+/// it was; it accepts a plainly valid one.
 #[kani::proof]
 #[kani::unwind(8)]
 fn reading_a_scalar_stays_in_bounds() {
     let bytes: [u8; INPUT] = kani::any();
     let mut cursor = any_cursor(&bytes);
     let (buf, pos) = (cursor.buf, cursor.pos);
+    let valid = plainly_valid(buf, pos);
     match cursor.scalar() {
         Ok(scalar) => {
             assert!(cursor.pos > pos);
             assert!(core::ptr::eq(scalar, &buf[pos..cursor.pos]));
+            assert!(valid.is_none_or(|n| scalar.len() == n));
         }
-        Err(_) => assert!(cursor.pos == pos),
+        Err(_) => {
+            assert!(valid.is_none());
+            assert!(cursor.pos == pos);
+        }
     }
 }
 
-/// Reading an object's key never panics, and gives the UTF-8 after the
-/// key's length, at the cursor.
+/// Reading an object's key never panics, and is read exactly when the
+/// cursor holds a `u32` length that the bytes left hold, then that many
+/// bytes of UTF-8: those bytes are the key.
 #[kani::proof]
 #[kani::unwind(8)]
 fn reading_an_object_key_stays_in_bounds() {
     let bytes: [u8; INPUT] = kani::any();
     let mut cursor = any_cursor(&bytes);
     let (buf, pos) = (cursor.buf, cursor.pos);
-    if let Ok(key) = cursor.key() {
-        assert!(core::ptr::eq(key.as_bytes(), &buf[pos + 4..cursor.pos]));
+    let left = buf.len() - pos;
+    let expected = (left >= 4)
+        .then(|| u32::from_le_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]) as usize)
+        .filter(|&n| n <= left - 4)
+        .filter(|&n| utf8(&buf[pos + 4..pos + 4 + n]));
+    match cursor.key() {
+        Ok(key) => {
+            assert!(expected == Some(key.len()));
+            assert!(core::ptr::eq(key.as_bytes(), &buf[pos + 4..cursor.pos]));
+        }
+        Err(_) => assert!(expected.is_none()),
     }
 }
 
+/// The harness above reads a key of at most two bytes, too few for a
+/// three- or four-byte UTF-8 sequence. So a key of four bytes, any four, is
+/// read here: it is read exactly when they are UTF-8.
+#[kani::proof]
+#[kani::unwind(8)]
+fn a_four_byte_object_key_is_read_exactly_when_it_is_utf8() {
+    let text: [u8; 4] = kani::any();
+    let mut buf = [4, 0, 0, 0, 0, 0, 0, 0];
+    buf[4..].copy_from_slice(&text);
+    let mut cursor = Cursor { buf: &buf, pos: 0 };
+    assert!(cursor.key().is_ok() == utf8(&text));
+}
+
+/// Whether `bytes` are UTF-8, by RFC 3629's table, written apart from the
+/// standard library's check that the reader uses.
+fn utf8(bytes: &[u8]) -> bool {
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        // The sequence's length, and the range its second byte must be in.
+        let (n, low, high) = match b {
+            0x00..=0x7F => (1, 0, 0),
+            0xC2..=0xDF => (2, 0x80, 0xBF),
+            0xE0 => (3, 0xA0, 0xBF),
+            0xE1..=0xEC | 0xEE..=0xEF => (3, 0x80, 0xBF),
+            0xED => (3, 0x80, 0x9F),
+            0xF0 => (4, 0x90, 0xBF),
+            0xF1..=0xF3 => (4, 0x80, 0xBF),
+            0xF4 => (4, 0x80, 0x8F),
+            _ => return false,
+        };
+        if i + n > bytes.len() {
+            return false;
+        }
+        if n > 1 && !(low..=high).contains(&bytes[i + 1]) {
+            return false;
+        }
+        if bytes[i + 2.min(n)..i + n]
+            .iter()
+            .any(|&c| !(0x80..=0xBF).contains(&c))
+        {
+            return false;
+        }
+        i += n;
+    }
+    true
+}
+
+/// The tags STORAGE.md's grammar lets a map's key start with (`key =
+/// integer / text / bytes`), written out from its scalar table rather than
+/// taken from the reader's own list.
+fn a_key_tag(tag: u8) -> bool {
+    matches!(
+        tag,
+        0x0C | 0x0E | 0x04 | 0x05 | 0x10 | 0x0D | 0x0F | 0x06 | 0x07 | 0x11 | 0x0A | 0x0B
+    )
+}
+
 /// Reading a map's key never panics, and accepts only an integer, text or
-/// bytes scalar, at the cursor.
+/// bytes scalar, at the cursor; it accepts a whole `u8` key.
 #[kani::proof]
 #[kani::unwind(14)]
 fn reading_a_map_key_admits_only_its_kinds() {
     let bytes: [u8; INPUT] = kani::any();
     let mut cursor = any_cursor(&bytes);
     let (buf, pos) = (cursor.buf, cursor.pos);
-    if let Ok(MapKey(key)) = cursor.map_key() {
-        assert!(cursor.pos > pos);
-        assert!(core::ptr::eq(key, &buf[pos..cursor.pos]));
-        assert!(super::KEYS.contains(&buf[pos]));
+    let a_u8 = buf.get(pos) == Some(&tags::UINT8) && buf.len() - pos >= 2;
+    match cursor.map_key() {
+        Ok(MapKey(key)) => {
+            assert!(cursor.pos > pos);
+            assert!(core::ptr::eq(key, &buf[pos..cursor.pos]));
+            assert!(a_key_tag(buf[pos]));
+        }
+        Err(_) => assert!(!a_u8),
     }
 }
 
@@ -164,20 +256,19 @@ fn reading_a_wide_scalar_takes_exactly_its_width() {
                 Ok(scalar) => assert!(whole && core::ptr::eq(scalar, &buf[..1 + width])),
                 Err(_) => assert!(!whole && cursor.pos == 0),
             }
-            if tag != tags::FLOAT64 {
-                let mut cursor = Cursor { buf, pos: 0 };
-                assert!(cursor.map_key().is_ok() == whole);
-            }
+            // An integer is a key; a float never is.
+            let mut cursor = Cursor { buf, pos: 0 };
+            assert!(cursor.map_key().is_ok() == (whole && tag != tags::FLOAT64));
         }
     }
 }
 
 /// A node past the depth bound is refused before a byte of it is read, so
 /// no call checks a node deeper than 128, and recursion stops there; a
-/// node at 128 is still read. The check is one comparison, proved at the
-/// depths on either side of the bound and at the largest: a symbolic
-/// depth keeps the whole reader in the formula, and did not solve in
-/// fifteen minutes.
+/// node at 128 is still read. The check is one comparison,
+/// proved at the depths on either side of the bound and at the largest: a
+/// symbolic depth keeps the whole reader in the formula, and did not solve
+/// in fifteen minutes.
 #[kani::proof]
 #[kani::unwind(4)]
 fn the_depth_bound_is_128() {
@@ -190,15 +281,65 @@ fn the_depth_bound_is_128() {
         assert!(node(&mut cursor, depth) == Err(Invalid::Malformed));
         assert!(cursor.pos == 0);
     }
-    // A null at 128 reads, and so does one inside a `some` at 127; a
-    // `some` at 128 is refused, since what it holds is at 129.
-    let null = [tags::NULL];
-    let some_null = [super::SOME, tags::NULL];
-    let at = |buf: &[u8], depth| node(&mut Cursor { buf, pos: 0 }, depth);
-    assert!(at(&null, MAX_DEPTH) == Ok(()));
-    assert!(at(&some_null, MAX_DEPTH - 1) == Ok(()));
-    assert!(at(&some_null, MAX_DEPTH) == Err(Invalid::Malformed));
+    assert!(MAX_DEPTH == 128);
+    // A null at 128 reads.
+    assert!(
+        node(
+            &mut Cursor {
+                buf: &[tags::NULL],
+                pos: 0
+            },
+            MAX_DEPTH
+        ) == Ok(())
+    );
 }
+
+/// A container holding a null reads at 127, and is refused at 128, since
+/// what it holds is at 129: each container passes its children down a
+/// level, so recursion stops at the bound. One harness for each, as one
+/// harness over them all did not solve in ten minutes.
+fn passes_children_down_a_level(container: &[u8]) {
+    let at = |depth| {
+        node(
+            &mut Cursor {
+                buf: container,
+                pos: 0,
+            },
+            depth,
+        )
+    };
+    assert!(at(MAX_DEPTH - 1) == Ok(()));
+    assert!(at(MAX_DEPTH) == Err(Invalid::Malformed));
+}
+
+#[kani::proof]
+#[kani::unwind(4)]
+fn a_some_passes_its_value_down_a_level() {
+    passes_children_down_a_level(&[SOME, tags::NULL]);
+}
+
+#[kani::proof]
+#[kani::unwind(4)]
+fn an_array_passes_its_elements_down_a_level() {
+    passes_children_down_a_level(&[ARRAY, 1, 0, 0, 0, tags::NULL]);
+}
+
+/// A map at 128 holding a null is refused, so it passes its values down a
+/// level. That it reads at 127 is left to the corpus's `depth_128_maps`
+/// row: once its value reads, a map checks its keys for a repeat, and that
+/// did not solve in ten minutes.
+#[kani::proof]
+// The key's tag is looked up in a list of twelve.
+#[kani::unwind(14)]
+fn a_map_passes_its_values_down_a_level() {
+    let map = [MAP, 1, 0, 0, 0, tags::UINT8, 1, tags::NULL];
+    let mut cursor = Cursor { buf: &map, pos: 0 };
+    assert!(node(&mut cursor, MAX_DEPTH) == Err(Invalid::Malformed));
+}
+
+// An object is not proved here: it finds a repeated key with a `HashSet`,
+// whose hasher asks the OS for random bytes, which Kani cannot model. The
+// corpus's `depth_128_objects` and `depth_129_objects` rows pin its depth.
 
 /// The integer tags, and the width of each one's payload.
 const INTEGERS: [(u8, usize); 10] = [

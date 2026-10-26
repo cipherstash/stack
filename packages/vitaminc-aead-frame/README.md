@@ -157,12 +157,17 @@ every input within their bounds:
 - the header is refused exactly as rules 1 and 2 say (up to 6 bytes);
 - a count is the four bytes at the cursor, and never more than the bytes
   left (up to 8 bytes, from any position);
-- reading a scalar, an object's key or a map's key never panics, and reads
-  the bytes at the cursor (up to 6 bytes, from any position); a map's key
-  is only an integer, text or bytes; a wide scalar is read whole when the
-  input holds it, and refused otherwise (up to 17 bytes);
+- reading a scalar, an object's key or a map's key never panics, reads
+  the bytes at the cursor, and accepts a plainly valid one (up to 6 bytes,
+  from any position); an object's key is read exactly when its length and
+  UTF-8 are good, and a four-byte key exactly when it is UTF-8, checked
+  against RFC 3629's table; a map's key starts only with a tag STORAGE.md
+  allows; a wide scalar is read whole when the input holds it, and refused
+  otherwise, and a float is never a key (up to 17 bytes);
 - the depth bound is 128: a node past it is refused before any of it is
-  read, and a node at it is still read;
+  read, a node at it is still read, and a `some`, an array and a map pass
+  their children down a level (an object's hash set asks the OS for random
+  bytes, which Kani cannot model, so the corpus pins its depth);
 - two integer map keys are one key exactly when their values are equal,
   across every pair of widths and every value;
 - two text keys, or two bytes keys, are one key exactly when their bytes
