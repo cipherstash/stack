@@ -9,8 +9,8 @@
 --!       `{"v": {{eql_version}}, "i": {...}, "lo": <term>, "hi": <term>}`. Each bound is the
 --!       single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a
 --!       `{v, i, lo, hi}` envelope. Both bounds are included. There is one
---!       range domain per ordering term the family stores (ADR-0009,
---!       decisions 7 and 8).
+--!       range domain per ordering term the family stores (Stack Encrypt
+--!       ADR-0009, decisions 7 and 8).
 --! @note Cast the range parameter to its exact range domain
 --!       (`$1::{{prefix}}.query_smallint_range_ore`). An uncast `$1`, a `jsonb`
 --!       parameter, or a range of another term or family fails with 42725

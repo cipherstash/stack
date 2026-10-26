@@ -87,7 +87,7 @@ AS $$ SELECT {{prefix}}_internal.ope_cllw(jsonb_build_object('op', r::jsonb -> '
 --!
 --! True when `{{prefix}}_internal.lo(r) <= {{prefix}}.ord_term_ore(a) <= {{prefix}}_internal.hi(r)`.
 --! The range is one operand, so a statement cannot pair the low bound of one
---! query with the high bound of another (ADR-0009, decision 7):
+--! query with the high bound of another (Stack Encrypt ADR-0009, decision 7):
 --! `WHERE {{prefix}}.between(col, $1::{{prefix}}.query_text_range_ore)`.
 --!
 --! @param a public.{{prefix}}_text_ord_ore Encrypted column value
@@ -122,7 +122,7 @@ AS $$ SELECT {{prefix}}.ord_term_ore(a) >= {{prefix}}_internal.lo(r) AND {{prefi
 --!
 --! True when `{{prefix}}_internal.lo(r) <= {{prefix}}.ord_term_ore(a) <= {{prefix}}_internal.hi(r)`.
 --! The range is one operand, so a statement cannot pair the low bound of one
---! query with the high bound of another (ADR-0009, decision 7):
+--! query with the high bound of another (Stack Encrypt ADR-0009, decision 7):
 --! `WHERE {{prefix}}.between(col, $1::{{prefix}}.query_text_range_ore)`.
 --!
 --! @param a public.{{prefix}}_text_search_ore Encrypted column value
@@ -157,7 +157,7 @@ AS $$ SELECT {{prefix}}.ord_term_ore(a) >= {{prefix}}_internal.lo(r) AND {{prefi
 --!
 --! True when `{{prefix}}_internal.lo(r) <= {{prefix}}.ord_term(a) <= {{prefix}}_internal.hi(r)`.
 --! The range is one operand, so a statement cannot pair the low bound of one
---! query with the high bound of another (ADR-0009, decision 7):
+--! query with the high bound of another (Stack Encrypt ADR-0009, decision 7):
 --! `WHERE {{prefix}}.between(col, $1::{{prefix}}.query_text_range_ope)`.
 --!
 --! @param a public.{{prefix}}_text_ord Encrypted column value
@@ -187,7 +187,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}_internal.lo(r) AND {{prefix}}.
 --!
 --! True when `{{prefix}}_internal.lo(r) <= {{prefix}}.ord_term(a) <= {{prefix}}_internal.hi(r)`.
 --! The range is one operand, so a statement cannot pair the low bound of one
---! query with the high bound of another (ADR-0009, decision 7):
+--! query with the high bound of another (Stack Encrypt ADR-0009, decision 7):
 --! `WHERE {{prefix}}.between(col, $1::{{prefix}}.query_text_range_ope)`.
 --!
 --! @param a public.{{prefix}}_text_ord_ope Encrypted column value
@@ -217,7 +217,7 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}_internal.lo(r) AND {{prefix}}.
 --!
 --! True when `{{prefix}}_internal.lo(r) <= {{prefix}}.ord_term(a) <= {{prefix}}_internal.hi(r)`.
 --! The range is one operand, so a statement cannot pair the low bound of one
---! query with the high bound of another (ADR-0009, decision 7):
+--! query with the high bound of another (Stack Encrypt ADR-0009, decision 7):
 --! `WHERE {{prefix}}.between(col, $1::{{prefix}}.query_text_range_ope)`.
 --!
 --! @param a public.{{prefix}}_text_search Encrypted column value
