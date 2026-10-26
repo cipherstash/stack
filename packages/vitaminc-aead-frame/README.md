@@ -126,30 +126,57 @@ carry no detail about the bytes.
 
 ## Performance
 
-`benches/storage.rs` writes and reads five values with the storage profile, with the transport serde format and with `serde_json`, using Criterion:
+`benches/storage.rs` writes and reads five values with the storage profile, with the transport serde format, and, for comparison, with `serde_json`, MessagePack (`rmp_serde`) and Borsh, using Criterion:
 
 ```sh
 cargo bench -p vitaminc-aead-frame --features serde --bench storage
 ```
 
-These results are from an Apple M4 (4 performance and 6 efficiency cores, 24 GB) on macOS 26.5 with rustc 1.98.1, on 2026-10-26, using Criterion's default settings. Each time is the median of 100 samples. A write includes dropping the result, which wipes it.
+MessagePack is written with field names (`rmp_serde::to_vec_named`), since the storage profile, the transport format and JSON all carry them. Borsh carries no field names and no kinds, only the values in order, so it shows what a format costs that carries nothing else. The storage profile and the transport format wipe their buffers as they grow and when they are dropped; the other three wipe nothing.
 
-| Value | Size (storage / transport / JSON) | Storage write | Storage read | Transport write | Transport read | JSON write | JSON read |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| One record of 7 fields | 164 / 159 / 126 B | 991 ns | 1.33 µs | 1.12 µs | 1.40 µs | 196 ns | 413 ns |
-| 1,000 records | 160 / 159 / 132 KB | 915 µs | 1.44 ms | 776 µs | 1.50 ms | 223 µs | 495 µs |
-| Map of 1,000 text keys | 22.0 / 21.0 / 14.9 KB | 114 µs | 270 µs | 80 µs | 276 µs | 18 µs | 181 µs |
-| 64 KiB of text | 65.5 / 65.5 / 65.5 KB | 36.8 µs | 8.8 µs | 33.9 µs | 13.5 µs | 34.4 µs | 11.2 µs |
-| 64 KiB of bytes | 65.5 / 65.5 / 234 KB | 33.7 µs | 1.86 µs | 33.7 µs | 2.02 µs | 281 µs | 829 µs |
+These results are from an Apple M4 (4 performance and 6 efficiency cores, 24 GB) on macOS 26.5 with rustc 1.98.1, on 2026-10-26, using Criterion's default settings. Each time is the median of 100 samples. A write includes dropping the result.
 
 The record is an integer id, a name, an email, a flag, a float, a list of two tags and an optional integer.
 
+Size of the bytes written:
+
+| Value | Storage | Transport | JSON | MessagePack | Borsh |
+| --- | --- | --- | --- | --- | --- |
+| One record of 7 fields | 164 B | 159 B | 126 B | 98 B | 86 B |
+| 1,000 records | 160 KB | 159 KB | 132 KB | 102 KB | 86 KB |
+| Map of 1,000 text keys | 22.0 KB | 21.0 KB | 14.9 KB | 11.6 KB | 20.0 KB |
+| 64 KiB of text | 65.5 KB | 65.5 KB | 65.5 KB | 65.5 KB | 65.5 KB |
+| 64 KiB of bytes | 65.5 KB | 65.5 KB | 234 KB | 65.5 KB | 65.5 KB |
+
+Time to write:
+
+| Value | Storage | Transport | JSON | MessagePack | Borsh |
+| --- | --- | --- | --- | --- | --- |
+| One record of 7 fields | 986 ns | 1.09 µs | 198 ns | 337 ns | 72 ns |
+| 1,000 records | 937 µs | 741 µs | 217 µs | 139 µs | 30.3 µs |
+| Map of 1,000 text keys | 115 µs | 80.0 µs | 18.0 µs | 13.6 µs | 6.21 µs |
+| 64 KiB of text | 35.5 µs | 33.8 µs | 33.8 µs | 1.93 µs | 2.03 µs |
+| 64 KiB of bytes | 33.7 µs | 33.7 µs | 280 µs | 1.87 µs | 1.99 µs |
+
+Time to read:
+
+| Value | Storage | Transport | JSON | MessagePack | Borsh |
+| --- | --- | --- | --- | --- | --- |
+| One record of 7 fields | 1.35 µs | 1.41 µs | 440 ns | 313 ns | 196 ns |
+| 1,000 records | 1.48 ms | 1.47 ms | 489 µs | 467 µs | 230 µs |
+| Map of 1,000 text keys | 268 µs | 303 µs | 216 µs | 202 µs | 85.4 µs |
+| 64 KiB of text | 8.48 µs | 8.49 µs | 11.6 µs | 4.14 µs | 6.16 µs |
+| 64 KiB of bytes | 1.91 µs | 1.99 µs | 881 µs | 1.88 µs | 2.85 µs |
+
+Most results held within a few percent of their median. Two did not: the MessagePack read of 1,000 records ranged from 387 to 567 µs, and the transport write of 1,000 records from 724 to 773 µs.
+
 What the numbers show:
 
-- Reading text or bytes costs little more than copying them out: 64 KiB of bytes reads at about 33 GiB/s.
-- Writing a large value is limited by the wipe, not by the format. Wiping a 64 KiB buffer takes 31.5 µs of the 33.7 µs a 64 KiB write takes, because `zeroize` wipes one byte at a time with volatile stores, so the compiler cannot remove the wipe. The transport format has the same cost. JSON writes no wipe, but writes bytes as a list of numbers, 3.6 times as large and 8 times as slow.
-- On values with many small parts, both binary formats take about three to five times as long as JSON. Each element or field costs about 40 to 90 ns.
-- A storage write costs more than a transport write on values with many parts, 18% more for 1,000 records and 41% more for the map, because it reads the blob back to find a repeated key before it returns it. Storage and transport reads cost about the same.
+- Writing a large value is limited by the wipe, not by the format. MessagePack and Borsh write 64 KiB in about 2 µs; the storage profile takes 33.7 µs, and wiping the 64 KiB buffer is 31.5 µs of that, because `zeroize` wipes one byte at a time with volatile stores, so the compiler cannot remove the wipe. The transport format has the same cost. JSON writes no wipe, but writes bytes as a list of numbers, 3.6 times as large and 8 times as slow.
+- Reading text or bytes costs little more than copying them out: 64 KiB of bytes reads at about 32 GiB/s, as fast as MessagePack.
+- On values with many small parts, the storage profile is the slowest of the five. It writes 1,000 records 6.7 times as slowly as MessagePack and 31 times as slowly as Borsh, and reads them 3.2 and 6.4 times as slowly. MessagePack carries the same field names, so the names are not the cost; each element or field costs the storage writer about 40 to 90 ns more. This is the clearest place to look for a speedup.
+- The storage profile is also the largest: 1,000 records take 57% more bytes than in MessagePack, and the map 89% more. Every length and count is a fixed four bytes and every value has a kind byte, where MessagePack packs small lengths and integers into one byte. Borsh is the smallest for records, but writes an integer at its full width, so the map of `u64` values is nearly as large as in the storage profile.
+- A storage write costs more than a transport write on values with many parts, 26% more for 1,000 records and 43% more for the map, because it reads the blob back to find a repeated key before it returns it. Storage and transport reads are within about 12% of each other.
 
 ## Tests
 

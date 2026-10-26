@@ -1,22 +1,26 @@
 //! How fast the storage profile writes and reads, next to the transport
 //! serde format and JSON.
 //!
-//! Each workload is written and read by three formats: `storage`
+//! Each workload is written and read by five formats: `storage`
 //! (`storage::to_vec` and `storage::from_slice`), `transport`
-//! (`serde::to_vec` and `serde::from_slice`) and `json` (`serde_json`).
-//! Throughput is the size of the bytes each format writes, so the rates
-//! compare work per byte and the times compare work per value.
+//! (`serde::to_vec` and `serde::from_slice`), `json` (`serde_json`),
+//! `msgpack` (`rmp_serde`, with field names, as the others carry them) and
+//! `borsh`. Borsh writes no field names and no kinds, so it shows what a
+//! format costs that carries nothing but the values. Throughput is the size
+//! of the bytes each format writes, so the rates compare work per byte and
+//! the times compare work per value.
 //!
 //! A storage write reads the blob back before it returns it, to find a
 //! repeated key as a reader would. A write and both `to_vec`s wipe their
 //! buffers as they grow and when they are dropped. Both costs are part of
-//! what is measured.
+//! what is measured. MessagePack, Borsh and JSON wipe nothing.
 //!
 //! Run with `cargo bench -p vitaminc-aead-frame --features serde`.
 
 use std::collections::BTreeMap;
 use std::hint::black_box;
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion, Throughput};
 use serde::de::DeserializeOwned;
@@ -26,7 +30,7 @@ use vitaminc_protected::Controlled;
 
 /// A row of the kind an application keeps: integers, text, a flag, a
 /// float, a list and an option.
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 struct Record {
     id: u64,
     name: String,
@@ -50,17 +54,24 @@ fn record(i: u64) -> Record {
 }
 
 /// Bytes, written as bytes rather than as a list of numbers.
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 struct Blob(#[serde(with = "serde_bytes")] Vec<u8>);
 
-/// Writes and reads `value` in all three formats, in one group.
+/// Writes and reads `value` in all five formats, in one group.
 fn formats<T>(c: &mut Criterion, name: &str, value: &T)
 where
-    T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
+    T: Serialize
+        + DeserializeOwned
+        + BorshSerialize
+        + BorshDeserialize
+        + PartialEq
+        + std::fmt::Debug,
 {
     let stored = storage::to_vec(value).expect("storage writes");
     let carried = transport::to_vec(value).expect("transport writes");
     let json = serde_json::to_vec(value).expect("json writes");
+    let msgpack = rmp_serde::to_vec_named(value).expect("msgpack writes");
+    let borsh = borsh::to_vec(value).expect("borsh writes");
 
     // A bench is only worth reading if the format gives the value back.
     assert_eq!(
@@ -75,6 +86,11 @@ where
         &serde_json::from_slice::<T>(&json).expect("json reads"),
         value
     );
+    assert_eq!(
+        &rmp_serde::from_slice::<T>(&msgpack).expect("msgpack reads"),
+        value
+    );
+    assert_eq!(&borsh::from_slice::<T>(&borsh).expect("borsh reads"), value);
 
     let mut group = c.benchmark_group(name);
     pair(
@@ -97,6 +113,20 @@ where
         &json,
         || serde_json::to_vec(black_box(value)).expect("json writes"),
         |bytes| serde_json::from_slice::<T>(black_box(bytes)).expect("json reads"),
+    );
+    pair(
+        &mut group,
+        "msgpack",
+        &msgpack,
+        || rmp_serde::to_vec_named(black_box(value)).expect("msgpack writes"),
+        |bytes| rmp_serde::from_slice::<T>(black_box(bytes)).expect("msgpack reads"),
+    );
+    pair(
+        &mut group,
+        "borsh",
+        &borsh,
+        || borsh::to_vec(black_box(value)).expect("borsh writes"),
+        |bytes| borsh::from_slice::<T>(black_box(bytes)).expect("borsh reads"),
     );
     group.finish();
 }
