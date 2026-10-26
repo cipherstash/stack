@@ -12,6 +12,7 @@
 //! [`to_frame`]: crate::to_frame
 //!
 // Workspace crates release together; keep cross-crate links on that version.
+#![deny(missing_docs)]
 #![doc = concat!(
     "\n[`CipherText`]: https://docs.rs/vitaminc-aead/", env!("CARGO_PKG_VERSION"),
     "/vitaminc_aead/enum.CipherText.html\n",

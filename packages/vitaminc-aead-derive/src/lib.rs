@@ -77,6 +77,7 @@
 //!
 // The derive and parent crates release together. Keep parent API links on the
 // version being documented without adding a normal dependency cycle.
+#![deny(missing_docs)]
 #![doc = concat!(
     "\n[`Encrypt`]: https://docs.rs/vitaminc-aead/", env!("CARGO_PKG_VERSION"),
     "/vitaminc_aead/trait.Encrypt.html\n",
