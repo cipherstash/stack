@@ -1,15 +1,13 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # A versioned storage profile for values that are kept
 
-> **Proposed.** Implements
+> **Accepted**, and implemented in #520, which closes
 > [cipherstash/vitaminc#519](https://github.com/cipherstash/vitaminc/issues/519).
-> Version 1 is frozen when this record is accepted, which is the last step
-> before the pull request that adds it merges: from then on CI refuses any
-> change to a corpus row. Review `packages/aead-frame/STORAGE.md` with this
-> record.
+> First released in 0.8.1. Version 1 is frozen: CI refuses any change to a
+> corpus row. The format is specified in `packages/aead-frame/STORAGE.md`.
 
 Stack Encrypt will seal an `OpaqueBlob<T>` as one ciphertext whose plaintext
 is `T` serialized with Vitamin C's frame machinery. That plaintext is kept,
