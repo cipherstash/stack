@@ -17,6 +17,7 @@
 //! passthrough subtree.
 
 use std::collections::HashSet;
+use std::ops::Range;
 
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
 use zeroize::Zeroize;
@@ -478,7 +479,7 @@ impl<'o> Sink for FrameWriter<'o> {
         Ok(FrameMap {
             count: self.container(OBJECT)?,
             expected: len,
-            seen: HashSet::new(),
+            keys: Vec::new(),
         })
     }
 
@@ -518,7 +519,10 @@ impl SeqSink for FrameSeq<'_> {
 pub struct FrameMap<'o> {
     count: Count<'o>,
     expected: Option<usize>,
-    seen: HashSet<String>,
+    /// Where each key's bytes lie in the frame. A repeat is found among
+    /// them at the end, so no key is copied out of the frame, where it
+    /// would be freed unwiped.
+    keys: Vec<Range<usize>>,
 }
 
 impl MapSink for FrameMap<'_> {
@@ -531,16 +535,27 @@ impl MapSink for FrameMap<'_> {
 
     fn entry(&mut self, key: &str) -> Result<FrameWriter<'_>, FrameWriteError> {
         self.count.settle()?;
-        if !self.seen.insert(key.to_owned()) {
-            return Err(FrameWriteError::DuplicateKey);
-        }
         reserve(self.count.out, key.len().saturating_add(4));
         write_len(self.count.out, key.len())?;
+        let start = self.count.out.len();
         self.count.out.extend_from_slice(key.as_bytes());
+        self.keys.push(start..self.count.out.len());
         Ok(self.count.child())
     }
 
-    fn end(self) -> Result<(), FrameWriteError> {
+    fn end(mut self) -> Result<(), FrameWriteError> {
+        // The frame only grows while the map is written, so every range
+        // still holds its key.
+        let out: &[u8] = self.count.out;
+        self.keys
+            .sort_unstable_by(|a, b| out[a.clone()].cmp(&out[b.clone()]));
+        if self
+            .keys
+            .windows(2)
+            .any(|pair| out[pair[0].clone()] == out[pair[1].clone()])
+        {
+            return Err(FrameWriteError::DuplicateKey);
+        }
         self.count.end(self.expected)
     }
 }
@@ -738,6 +753,30 @@ mod tests {
             OBJECT, 2, 0, 0, 0, 1, 0, 0, 0, b'k', 0x00, 1, 0, 0, 0, b'k', 0x00,
         ];
         assert_eq!(Frame::parse(&bytes), Err(FrameError));
+    }
+
+    /// A repeat is found among the keys a map wrote, wherever it falls, and
+    /// only in the same map: a key that starts another, or the same key in
+    /// a nested map, is not one.
+    #[test]
+    fn a_repeated_key_is_found_apart_and_only_in_its_own_map() {
+        struct Keys(&'static [&'static str]);
+        impl Encrypt for Keys {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut map = sink.map(None)?;
+                for key in self.0 {
+                    let mut inner = map.entry(key)?.map(None)?;
+                    1u32.visit(inner.entry(key)?)?;
+                    inner.end()?;
+                }
+                map.end()
+            }
+        }
+        assert!(matches!(
+            to_frame(Keys(&["b", "a", "c", "b"])),
+            Err(FrameWriteError::DuplicateKey)
+        ));
+        assert!(to_frame(Keys(&["k", "kk", "", "a"])).is_ok());
     }
 
     #[test]
