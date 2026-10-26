@@ -412,7 +412,21 @@ formats a `Display` value straight into the blob, keeps no copy of a key,
 and wipes everything if writing fails. The blob it returns is `Protected`,
 and wiped when dropped. The reader borrows text and bytes from the blob
 rather than copying them, and finds a repeated map key by comparing keys
-where they lie in the blob. None of it is constant time, and
-serde's own impls are not. A `T: Zeroize` does not wipe fields it read
-before a later field failed. Improvements to any of this MUST keep the
-bytes, which the corpus checks.
+where they lie in the blob. `tests/storage_wipe.rs` checks that no block
+the writer frees still holds the value, and the zeroize audit (#523)
+checked in LLVM IR and assembly that every wipe survives optimization.
+
+Copies on the stack and in registers are not wiped:
+
+- a `char`'s UTF-8 while it is written;
+- a scalar while it is encoded or decoded;
+- an integer map key, decoded each time it is compared with another;
+- `core::fmt`'s own buffers while a `Display` value is written;
+- the digits serde's default `visit_i128` and `visit_u128` format a 128-bit
+  integer into when a type does not take one.
+
+Rust has no way to reach every copy the compiler makes, and wiping the one
+copy the source names would claim more than it gives. The heap holds no
+such copy. None of it is constant time, and serde's own impls are not. A
+`T: Zeroize` does not wipe fields it read before a later field failed.
+Improvements to any of this MUST keep the bytes, which the corpus checks.
