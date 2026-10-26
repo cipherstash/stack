@@ -117,3 +117,60 @@ pub const LOGICAL: u8 = 0xF3;
 /// should a logical type ever need more than one byte of parameter. Not
 /// written, and refused on read.
 pub const LOGICAL_LONG: u8 = 0xF4;
+
+/// Reserved for the storage profile of `vitaminc-aead-frame`, which marks
+/// an `Option`'s `Some` with it: `STORAGE_SOME`, then the node the `Some`
+/// holds. Never a leaf tag or a transport frame tag, so a frame never holds
+/// one and [`Frame::parse`](crate::Frame::parse) refuses it.
+pub const STORAGE_SOME: u8 = 0xF5;
+/// Reserved for the storage profile of `vitaminc-aead-frame`, which writes
+/// a serde map with it: `STORAGE_MAP`, a `u32` count, then a key node and a
+/// value node for each entry. Never a leaf tag or a transport frame tag.
+pub const STORAGE_MAP: u8 = 0xF6;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::{ARRAY, OBJECT, PASSTHROUGH};
+
+    /// Every byte that starts a leaf, a frame node or a storage node means
+    /// one thing: a new tag must take a byte no other tag holds.
+    #[test]
+    fn every_tag_is_its_own_byte() {
+        let all = [
+            NULL,
+            UNDEFINED,
+            BOOL_FALSE,
+            BOOL_TRUE,
+            INT32,
+            INT64,
+            UINT32,
+            UINT64,
+            FLOAT32,
+            FLOAT64,
+            STRING,
+            BYTES,
+            INT8,
+            UINT8,
+            INT16,
+            UINT16,
+            INT128,
+            UINT128,
+            DATE,
+            TIMESTAMP,
+            DECIMAL,
+            TYPED_NULL,
+            ARRAY,
+            OBJECT,
+            PASSTHROUGH,
+            LOGICAL,
+            LOGICAL_LONG,
+            STORAGE_SOME,
+            STORAGE_MAP,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for tag in all {
+            assert!(seen.insert(tag), "{tag:#04x} is taken twice");
+        }
+    }
+}

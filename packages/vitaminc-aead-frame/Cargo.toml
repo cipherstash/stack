@@ -1,6 +1,6 @@
 [package]
 name = "vitaminc-aead-frame"
-description = "Transport frame and ciphertext codec for carrying Vitamin-C AEAD values and ciphertexts across an FFI boundary. Part of the Vitamin-C cryptographic suite."
+description = "Transport frame and ciphertext codec for carrying Vitamin-C AEAD values and ciphertexts across an FFI boundary, and a versioned storage profile for values that are kept. Part of the Vitamin-C cryptographic suite."
 documentation = "https://docs.rs/vitaminc-aead-frame"
 version.workspace = true
 repository.workspace = true
@@ -11,12 +11,16 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
+# The corpus check runs in CI against git history; it is no part of the
+# crate a dependent builds.
+exclude = ["scripts/"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
 vitaminc-aead = { version = "0.8.0", path = "../aead" }
+vitaminc-protected = { version = "0.8.0", path = "../protected", optional = true }
 serde = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 
@@ -25,7 +29,10 @@ default = []
 # serde over the transport frame (`vitaminc_aead_frame::serde`): read any
 # `Deserialize` type from frame bytes and write any `Serialize` type as
 # frame bytes, for data a host exchanges with Rust that is not plaintext.
-serde = ["dep:serde", "dep:zeroize"]
+# Also the storage profile (`vitaminc_aead_frame::storage`): the same
+# mapping as a versioned blob whose format is frozen, for bytes that are
+# kept (STORAGE.md).
+serde = ["dep:serde", "dep:vitaminc-protected", "dep:zeroize"]
 
 [dev-dependencies]
 serde_bytes = { workspace = true }
