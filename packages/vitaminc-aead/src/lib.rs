@@ -1,3 +1,27 @@
+// These definitions precede the README so rustdoc links to the version being built.
+// The README supplies published-API URLs for GitHub. See docs/documentation.md.
+//! [`AsyncCipher`]: crate::AsyncCipher
+//! [`CipherText`]: crate::CipherText
+//! [`Cipher`]: crate::Cipher
+//! [`ContextTag`]: crate::ContextTag
+//! [`Decrypt`]: trait@crate::Decrypt
+//! [`Encrypt`]: trait@crate::Encrypt
+//! [`FrameWriter`]: crate::FrameWriter
+//! [`Frame`]: crate::Frame
+//! [`IntoAad`]: crate::IntoAad
+//! [`LeafTypeAad`]: crate::LeafTypeAad
+//! [`PassthroughFrame`]: crate::PassthroughFrame
+//! [`Sink::passthrough`]: crate::Sink::passthrough
+//! [`Sink`]: crate::Sink
+//! [`Tee`]: crate::Tee
+//! [`Unspecified`]: crate::Unspecified
+//! [`decrypt_async`]: crate::decrypt_async
+//! [`decrypt_into`]: crate::decrypt_into
+//! [`decrypt`]: crate::decrypt
+//! [`encrypt_async`]: crate::encrypt_async
+//! [`encrypt`]: crate::encrypt
+//! [`to_frame`]: crate::to_frame
+//!
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(clippy::unwrap_used, clippy::todo, unsafe_code, unused_imports)]
 #![doc = include_str!("../README.md")]

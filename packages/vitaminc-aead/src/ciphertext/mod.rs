@@ -9,9 +9,8 @@ pub use write_monads::CipherTextBuilder;
 ///
 /// The leaf is the only byte-format commitment the crate makes (the
 /// container tree has no canonical encoding), so the version discriminator
-/// lives here and rides inside every persisted leaf for free. Bump it on
-/// any break to the leaf layout *or* to the AAD derivation rules; decrypt
-/// rejects versions it does not know how to parse.
+/// lives inside every persisted leaf. The version covers both the leaf
+/// layout and the AAD derivation rules; decryption rejects unknown versions.
 ///
 /// The byte is authenticated, not merely parsed: every leaf's effective
 /// AAD binds it via [`Context::for_leaf`](crate::Context::for_leaf), so relabeling
@@ -19,9 +18,9 @@ pub use write_monads::CipherTextBuilder;
 /// different (perhaps weaker) set of derivation rules — a downgrade is
 /// foreclosed by construction, not by parser luck.
 ///
-/// Version 2 is the tagged leaf of ADR 0001: the plaintext is a type tag
+/// In version 2, the plaintext is a type tag
 /// followed by the scalar's bytes. Version 1 leaves have the same layout,
-/// but what they hold depends on who sealed them: the pre-ADR 0001 `Value`
+/// but what they hold depends on who sealed them: the legacy `Value`
 /// path (`vitaminc-aead-value` 0.5 and the Go binding) sealed tagged
 /// scalars, while `vitaminc-encrypt` 0.5's `Encrypt` path sealed raw,
 /// untagged bytes. Nothing in a version 1 leaf tells the two apart, so a

@@ -35,9 +35,8 @@ format than a compact encoding, and the profile is built for it:
   Readers that differ on a repeated key, or that accept several spellings
   of one value, can read one authenticated blob as two different values.
   Here a repeated key is refused, and each tag has one payload layout:
-  there are no variable-length integers and no choice of length width. The
-  corpus pins the bytes and the refusals that every implementation (this
-  crate, and `vcffi` in Go) must match.
+  there are no variable-length integers and no choice of length width.
+  Every implementation must use the encodings and validation rules below.
 - **A value reads back as it was written.** `None`, `Some(None)` and
   `Some(())` are three different blobs. An integer keeps its width, a
   float keeps its bits, and a map key keeps its kind.
@@ -291,9 +290,7 @@ writing that value back gives the form in the table above.
   them, and reads a missing `Option` field as `None`, as serde's derive
   does.
 
-The corpus's `reads` rows pin these: each is a blob, a type described in
-the corpus's own terms, and what that type reads it as, or that it refuses
-it. They are frozen with the rest of version 1.
+These conversion rules are part of the version 1 compatibility contract.
 
 ### Not supported
 
@@ -337,15 +334,6 @@ A change to either is a new version, introduced in two steps:
 
 A reader keeps reading every version it ever read. Version numbers are never
 reused.
-
-The golden corpus in `testdata/storage-v1.json` pins version 1: values
-and their bytes (`vectors`), blobs and their refusal classes (`refused`),
-and blobs read by types (`reads`). Its rows are never edited or removed,
-and CI checks that with `scripts/storage_corpus_append_only.py`; rows MAY
-be added. A reader in another language passes
-when it reads every vector as its value and refuses every refused row by
-its class; one that maps blobs onto types also reads every `reads` row as
-it says.
 
 ## The format's version and the application's schema
 
@@ -398,5 +386,4 @@ and wiped when dropped. The reader borrows text and bytes from the blob
 rather than copying them, and finds a repeated map key by comparing keys
 where they lie in the blob. None of it is constant time, and
 serde's own impls are not. A `T: Zeroize` does not wipe fields it read
-before a later field failed. Improvements to any of this MUST keep the
-bytes, which the corpus checks.
+before a later field failed.

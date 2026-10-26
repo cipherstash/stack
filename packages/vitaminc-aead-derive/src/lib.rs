@@ -75,8 +75,14 @@
 //! explicitly, as a struct with a fieldless discriminant and `Option`
 //! fields.
 //!
-//! [`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
-//! [`Decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html
+// The derive and parent crates release together. Keep parent API links on the
+// version being documented without adding a normal dependency cycle.
+#![doc = concat!(
+    "\n[`Encrypt`]: https://docs.rs/vitaminc-aead/", env!("CARGO_PKG_VERSION"),
+    "/vitaminc_aead/trait.Encrypt.html\n",
+    "[`Decrypt`]: https://docs.rs/vitaminc-aead/", env!("CARGO_PKG_VERSION"),
+    "/vitaminc_aead/trait.Decrypt.html\n"
+)]
 #![doc = include_str!("../docs/attributes.md")]
 #![deny(unsafe_code)]
 
@@ -90,7 +96,8 @@ mod shape;
 mod test_support;
 mod typed_decrypt;
 
-/// Derive [`Encrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html)
+#[doc = concat!("Derive [`Encrypt`](https://docs.rs/vitaminc-aead/",
+    env!("CARGO_PKG_VERSION"), "/vitaminc_aead/trait.Encrypt.html)")]
 /// for a struct or a fieldless enum. See the [crate documentation](crate) for
 /// the wire shape this produces; the attributes it accepts are reproduced
 /// below.
@@ -103,7 +110,8 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derive [`Decrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html)
+#[doc = concat!("Derive [`Decrypt`](https://docs.rs/vitaminc-aead/",
+    env!("CARGO_PKG_VERSION"), "/vitaminc_aead/trait.Decrypt.html)")]
 /// for a struct or a fieldless enum: the sink that builds it. See the
 /// [crate documentation](crate) for the wire shape this consumes; the
 /// attributes it accepts are reproduced below.

@@ -6,7 +6,7 @@ ciphertext codec for the trees `encrypt` produces.
 
 A host binding does not convert its values into a Rust value tree. It
 implements [`Encrypt`] for values coming in and [`Sink`] for values going
-out (ADR 0001). The frame is the one binding-neutral shape of a value:
+out. A frame represents a value independently of the host language:
 
 - [`Frame`] is a validated, borrowed frame. `Frame::parse` checks the
   whole buffer up front, and the frame then implements `Encrypt` by
@@ -52,8 +52,7 @@ transport: nothing about them is a compatibility commitment, since hosts
 and guests ship together. The one exception is the storage profile,
 `storage::to_vec` and `storage::from_slice` (feature `serde`), which
 write and read a value as a versioned blob for bytes that are kept. Its
-format is specified in `STORAGE.md`, frozen at version 1, and pinned by the
-golden corpus in `testdata/storage-v1.json`. Use it, and only it, for bytes
+format is specified in [STORAGE.md](https://github.com/cipherstash/vitaminc/blob/main/packages/aead-frame/STORAGE.md) and frozen at version 1. Use this storage profile for bytes
 that outlive the process that wrote them. The other frozen format in the
 stack is the sealed leaf payload (`[tag] ++ payload`, the tag table in
 [`tags`]), which lives inside the AEAD envelope and never touches this
@@ -67,9 +66,8 @@ A ciphertext node is one byte of kind (`CT_SINGLE`, `CT_SEQ`, `CT_MAP`,
 `CT_PASSTHROUGH`, `CT_EMPTY_SEQ`, `CT_EMPTY_MAP`), then a sealed leaf as
 length and bytes, a container as count and children, or a passthrough as
 the frame of its subtree. All lengths and counts are `u32` little-endian;
-map keys are UTF-8. The kind `0x02` was the `CT_NONE` absence marker,
-which ADR 0001 retires: a `None` is a null leaf now, so the marker is
-never written and refused when read.
+map keys are UTF-8. The retired absence marker `0x02` (`CT_NONE`) is
+never written and is rejected when read. `None` is encoded as a null leaf.
 
 ## serde (feature `serde`)
 
@@ -130,39 +128,6 @@ cannot pin gigabytes. Duplicate map keys are refused, as the frame
 refuses them. Errors are opaque ([`CodecError`], [`FrameError`]): they
 carry no detail about the bytes.
 
-## Tests
-
-`tests/conformance.rs` runs the shared binding corpus,
-`testdata/value-conformance.json`, which Rust, Node and Go all read:
-every vector parses as one frame and writes back byte for byte, from its
-own walk and from a scalar built independently with std, chrono and
-rust_decimal, and every malformed vector is refused.
-`tests/storage.rs` reads and writes every row of the storage corpus,
-`testdata/storage-v1.json`, which describes each value in a model any
-language can build, refuses every malformed row with the error of its
-class, and reads every typed row as its type says. A second reader,
-written from STORAGE.md alone in `tests/support/reference.rs`, must agree
-with the crate on every row and on random and corrupted blobs. CI checks
-that no row the corpus had is changed or removed, with
-`scripts/storage_corpus_append_only.py` (`mise run storage:corpus:check`).
-`tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
-the new path and gets the frame it was sealed from, so the leaf format,
-the AAD derivations and the container rules stay what shipped.
-
-[`Encrypt`]: vitaminc_aead::Encrypt
-[`Sink`]: vitaminc_aead::Sink
-[`CipherText`]: vitaminc_aead::CipherText
-[`Frame`]: crate::Frame
-[`FrameWriter`]: crate::FrameWriter
-[`to_frame`]: crate::to_frame
-[`PassthroughFrame`]: crate::PassthroughFrame
-[`encode_ciphertext`]: crate::encode_ciphertext
-[`decode_ciphertext`]: crate::decode_ciphertext
-[`tags`]: crate::tags
-[`MAX_DEPTH`]: crate::MAX_DEPTH
-[`CodecError`]: crate::CodecError
-[`FrameError`]: crate::FrameError
-
 ## Cargo features
 
 No optional features are enabled by default.
@@ -178,3 +143,18 @@ MSRV increases require a minor release; patch releases retain the existing
 floor. See the [workspace compatibility policy](https://github.com/cipherstash/vitaminc#compatibility).
 
 License: MIT.
+
+<!-- GitHub API links target the latest release; src/lib.rs resolves these for rustdoc. -->
+[`CipherText`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/enum.CipherText.html
+[`CodecError`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/struct.CodecError.html
+[`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
+[`FrameError`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.FrameError.html
+[`FrameWriter`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.FrameWriter.html
+[`Frame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.Frame.html
+[`MAX_DEPTH`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/constant.MAX_DEPTH.html
+[`PassthroughFrame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.PassthroughFrame.html
+[`Sink`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html
+[`decode_ciphertext`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/fn.decode_ciphertext.html
+[`encode_ciphertext`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/fn.encode_ciphertext.html
+[`tags`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/tags/index.html
+[`to_frame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/fn.to_frame.html

@@ -6,18 +6,18 @@
 //!
 //! This is a **transport encoding, not a storage format**: it exists so a
 //! host language and a guest can hand each other a tree in one linear-memory
-//! copy. Nothing here is a compatibility commitment — the only frozen byte
-//! format in the stack is the sealed leaf payload (`[tag] ++ payload`, see
-//! [`tags`](vitaminc_aead::tags)), which lives *inside* the AEAD envelope
-//! and never touches this codec. Durable cross-language storage is the EQL
-//! layer's job.
+//! copy. This encoding has no stability guarantee. For versioned value blobs,
+//! use the storage profile (`storage`, enabled by the `serde` feature).
+//! The sealed leaf payload (`[tag] ++ payload`, see
+//! [`tags`](vitaminc_aead::tags)) is also a stable format; it lives inside
+//! the AEAD envelope and is separate from this codec.
 //!
 //! A ciphertext node is one byte of kind, then its payload: a sealed leaf
 //! as `u32` length and bytes, a container as `u32` count and children, a
 //! map entry as `u32` key length, key bytes and child, and a passthrough as
 //! the frame of its subtree. The kinds use `0x01`–`0x07`; `0x02` was the
-//! `CT_NONE` absence marker, which ADR 0001 retires (`None` is a null leaf
-//! now), so it is never written and refused when read.
+//! retired `CT_NONE` absence marker. It is never written and is rejected
+//! when read; `None` is encoded as a null leaf.
 //!
 //! All lengths and counts are `u32` little-endian. Map keys are UTF-8.
 //!
