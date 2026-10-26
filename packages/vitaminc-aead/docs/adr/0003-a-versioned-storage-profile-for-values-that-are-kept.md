@@ -22,7 +22,7 @@ transport as it is.
 
 ## Context
 
-The transport serde format (`vitaminc_aead_frame::serde`) has three
+The transport serde format (`vitaminc_aead_frame::serde`) has four
 properties that are fine in flight and wrong at rest:
 
 - **No version.** A reader cannot tell a blob written under other rules
