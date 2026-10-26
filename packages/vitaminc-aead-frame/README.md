@@ -124,6 +124,33 @@ cannot pin gigabytes. Duplicate map keys are refused, as the frame
 refuses them. Errors are opaque ([`CodecError`], [`FrameError`]): they
 carry no detail about the bytes.
 
+## Performance
+
+`benches/storage.rs` writes and reads five values with the storage profile, with the transport serde format and with `serde_json`, using Criterion:
+
+```sh
+cargo bench -p vitaminc-aead-frame --features serde --bench storage
+```
+
+These results are from an Apple M4 (4 performance and 6 efficiency cores, 24 GB) on macOS 26.5 with rustc 1.98.1, on 2026-10-26, using Criterion's default settings. Each time is the median of 100 samples. A write includes dropping the result, which wipes it.
+
+| Value | Size (storage / transport / JSON) | Storage write | Storage read | Transport write | Transport read | JSON write | JSON read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| One record of 7 fields | 164 / 159 / 126 B | 991 ns | 1.33 µs | 1.12 µs | 1.40 µs | 196 ns | 413 ns |
+| 1,000 records | 160 / 159 / 132 KB | 915 µs | 1.44 ms | 776 µs | 1.50 ms | 223 µs | 495 µs |
+| Map of 1,000 text keys | 22.0 / 21.0 / 14.9 KB | 114 µs | 270 µs | 80 µs | 276 µs | 18 µs | 181 µs |
+| 64 KiB of text | 65.5 / 65.5 / 65.5 KB | 36.8 µs | 8.8 µs | 33.9 µs | 13.5 µs | 34.4 µs | 11.2 µs |
+| 64 KiB of bytes | 65.5 / 65.5 / 234 KB | 33.7 µs | 1.86 µs | 33.7 µs | 2.02 µs | 281 µs | 829 µs |
+
+The record is an integer id, a name, an email, a flag, a float, a list of two tags and an optional integer.
+
+What the numbers show:
+
+- Reading text or bytes costs little more than copying them out: 64 KiB of bytes reads at about 33 GiB/s.
+- Writing a large value is limited by the wipe, not by the format. Wiping a 64 KiB buffer takes 31.5 µs of the 33.7 µs a 64 KiB write takes, because `zeroize` wipes one byte at a time with volatile stores, so the compiler cannot remove the wipe. The transport format has the same cost. JSON writes no wipe, but writes bytes as a list of numbers, 3.6 times as large and 8 times as slow.
+- On values with many small parts, both binary formats take about three to five times as long as JSON. Each element or field costs about 40 to 90 ns.
+- A storage write costs more than a transport write on values with many parts, 18% more for 1,000 records and 41% more for the map, because it reads the blob back to find a repeated key before it returns it. Storage and transport reads cost about the same.
+
 ## Tests
 
 `tests/conformance.rs` runs the shared binding corpus,
