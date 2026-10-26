@@ -36,10 +36,13 @@ pub const WIRE_VERSION: u8 = 2;
 pub struct LocalCipherText(Bytes);
 
 impl LocalCipherText {
+    /// Consume the leaf and return its stored bytes without validation or authentication.
     pub fn into_inner(self) -> Bytes {
         self.0
     }
 
+    /// Consume the leaf and begin staged version/nonce parsing.
+    /// Authentication remains the cipher implementation's responsibility.
     pub fn into_reader(self) -> CipherTextReader {
         CipherTextReader::new(self.0)
     }

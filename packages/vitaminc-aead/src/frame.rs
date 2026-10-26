@@ -59,6 +59,24 @@ impl<'a> Frame<'a> {
     ///
     /// The whole frame is checked up front, so [`visit`](Encrypt::visit)
     /// never has to report a malformed frame part way through a walk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FrameError`] for malformed scalar/container encodings, invalid
+    /// UTF-8, duplicate map keys, trailing bytes, or nesting beyond [`MAX_DEPTH`].
+    /// Validation is structural; it provides no authentication.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vitaminc_aead::{to_frame, Frame};
+    /// use vitaminc_protected::Controlled;
+    /// let encoded = to_frame(42u32)?;
+    /// let frame = Frame::parse(encoded.risky_ref())?;
+    /// assert_eq!(frame.as_bytes(), encoded.risky_ref().as_slice());
+    /// assert!(Frame::parse(&[]).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn parse(bytes: &'a [u8]) -> Result<Self, FrameError> {
         let (frame, rest) = Self::parse_nested(bytes, 0)?;
         if !rest.is_empty() {
@@ -74,6 +92,11 @@ impl<'a> Frame<'a> {
     /// payload of a ciphertext node. `depth` is how many levels the carrier
     /// already nests the node, so the [`MAX_DEPTH`] bound counts the whole
     /// structure and not the frame alone.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same malformed nodes as [`parse`](Self::parse), but allows
+    /// trailing bytes and returns them separately. Refuses `depth > MAX_DEPTH`.
     pub fn parse_nested(bytes: &'a [u8], depth: usize) -> Result<(Self, &'a [u8]), FrameError> {
         let mut cursor = Cursor { buf: bytes, pos: 0 };
         skip(&mut cursor, depth)?;
@@ -81,6 +104,7 @@ impl<'a> Frame<'a> {
         Ok((Self { bytes: frame }, rest))
     }
 
+    /// Borrow the exact validated bytes, without copying or authenticating them.
     pub fn as_bytes(&self) -> &'a [u8] {
         self.bytes
     }
@@ -325,12 +349,19 @@ pub(crate) fn to_frame_at<P: Encrypt>(
 
 /// A sink that writes one value node onto the end of a buffer. Unknown
 /// container lengths are patched in at `end`.
+///
+/// Writes are immediate: errors or dropping a container before `end` can leave
+/// an incomplete suffix in the borrowed buffer. The writer neither rolls back
+/// nor wipes that suffix. Prefer [`to_frame`] for an owned protected result
+/// returned only after successful writing and validation.
 pub struct FrameWriter<'o> {
     out: &'o mut Vec<u8>,
     depth: usize,
 }
 
 impl<'o> FrameWriter<'o> {
+    /// Append a root-level node to `out`, preserving any existing prefix.
+    /// The caller owns the buffer and its cleanup, including after errors.
     pub fn new(out: &'o mut Vec<u8>) -> Self {
         Self { out, depth: 0 }
     }
@@ -492,6 +523,9 @@ impl<'o> Sink for FrameWriter<'o> {
     }
 }
 
+/// In-progress frame sequence. Each child must write one node, and
+/// [`SeqSink::end`] checks the supplied length and completes the count header.
+/// Dropping it leaves partial bytes in the writer's buffer.
 pub struct FrameSeq<'o> {
     count: Count<'o>,
     expected: Option<usize>,
@@ -515,6 +549,9 @@ impl SeqSink for FrameSeq<'_> {
     }
 }
 
+/// In-progress frame map. Rejects duplicate keys and unfinished children;
+/// [`MapSink::end`] checks the supplied length and completes the count header.
+/// Keys are written as cleartext UTF-8. Errors do not roll back earlier bytes.
 pub struct FrameMap<'o> {
     count: Count<'o>,
     expected: Option<usize>,

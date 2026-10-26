@@ -98,8 +98,11 @@ impl Error for DecodeError {
 
 /// A type that can be decrypted: it names the sink that builds it.
 pub trait Decrypt: Sized {
+    /// Fresh single-use sink that validates and constructs one value of this type.
     type Sink: Sink<Ok = Self, Error = DecodeError>;
 
+    /// Create an empty target. Implementations must refuse unsupported shapes
+    /// and validate all required fields before returning a completed value.
     fn sink() -> Self::Sink;
 
     /// Whether an `Option<Self>` reads a typed null of `ty` as `None`: for
@@ -113,6 +116,16 @@ pub trait Decrypt: Sized {
 }
 
 /// Decrypt into `T`.
+///
+/// Opens all leaves, then builds an owned target through [`Decrypt::sink`].
+/// Use `Protected<T>` for secret output whose partial values must be wiped.
+///
+/// # Errors
+///
+/// Returns authentication/backend failures, malformed-tree/leaf failures, or
+/// [`DecodeError`] when `T` refuses the value. The ciphertext is consumed even
+/// on failure. Partially decoded target values are dropped using their own
+/// drop behavior; ordinary targets do not acquire zeroization automatically.
 pub fn decrypt<'a, T, C, A>(
     cipher: &C,
     node: Node<C::Leaf>,
@@ -128,6 +141,10 @@ where
 
 /// Decrypt into `T` through an async cipher. Gives the same result as
 /// [`decrypt`] for the same ciphertext.
+///
+/// Reports the same categories of errors as [`decrypt`]. All opening awaits
+/// finish before the target receives plaintext. Dropping the future drops its
+/// owned state but does not guarantee cancellation of remote cipher work.
 pub async fn decrypt_async<'a, T, C, A>(
     cipher: &C,
     node: Node<C::Leaf>,
@@ -142,6 +159,33 @@ where
 }
 
 /// A type that decodes from one scalar.
+///
+/// # Examples
+///
+/// A target can accept a narrow domain without accepting every integer.
+/// Implementing `FromScalar` supplies its [`Decrypt`] implementation.
+///
+/// ```
+/// use vitaminc_aead::{Decrypt, Encrypt, FromScalar, Int, Logical, Physical};
+/// #[derive(Debug, PartialEq)]
+/// struct Percent(u8);
+/// impl FromScalar for Percent {
+///     const EXPECTED: &'static str = "percentage from 0 through 100";
+///     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
+///         match (ty, value) {
+///             (None, Physical::Int(n)) => {
+///                 let n = u8::try_from(n.to_u128()?).ok()?;
+///                 (n <= 100).then_some(Percent(n))
+///             }
+///             _ => None,
+///         }
+///     }
+/// }
+/// assert_eq!(42u32.visit(Percent::sink())?, Percent(42));
+/// assert!(101u32.visit(Percent::sink()).is_err());
+/// assert!(Percent::from_scalar(Some(Logical::Date), Physical::Int(Int::I32(42))).is_none());
+/// # Ok::<(), vitaminc_aead::DecodeError>(())
+/// ```
 pub trait FromScalar: Sized {
     /// What the type is called in a refusal.
     const EXPECTED: &'static str;
@@ -156,6 +200,9 @@ pub trait FromScalar: Sized {
     /// fieldless enum with no variant at zero sets it to its
     /// [`Encrypt::FIXED`].
     const FIXED: Option<FixedType> = None;
+    /// Convert a physical value with its logical annotation, or return `None`
+    /// for a wrong kind, unsupported annotation, or out-of-range value.
+    /// The result must own any data copied from the borrowed scalar.
     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self>;
 
     /// Decode straight into `Protected`: the seam `Protected<T>`'s target
@@ -449,6 +496,8 @@ impl FromScalar for uuid::Uuid {
 
 /// Somewhere a finished child goes.
 pub trait Put<T> {
+    /// Consume this output slot and store the completed child.
+    /// This is an immediate write; a later sibling's failure does not undo it.
     fn put(self, value: T);
 }
 
@@ -566,7 +615,9 @@ impl<T, Q: MapSink<Ok = T, Error = DecodeError>, O: Put<T>> MapSink for ForwardE
 /// the `Seq` of an `Either` is an `Either` of the two `Seq`s, and so on
 /// down.
 pub enum Either<L, R> {
+    /// Use the left sink and preserve its result as `Left`.
     Left(L),
+    /// Use the right sink and preserve its result as `Right`.
     Right(R),
 }
 
@@ -667,6 +718,7 @@ impl<L: MapSink, R: MapSink<Error = L::Error>> MapSink for Either<L, R> {
 pub struct Clear<T: Decrypt, O>(O, PhantomData<T>);
 
 impl<T: Decrypt, O: Put<T>> Clear<T, O> {
+    /// Create a passthrough-only target that writes a successfully decoded `T` to `out`.
     pub fn new(out: O) -> Self {
         Self(out, PhantomData)
     }
@@ -705,7 +757,10 @@ impl<T: Decrypt, O: Put<T>> Sink for Clear<T, O> {
 /// refuse a value (a length-checked string, say) is one `Rewrap` impl, with
 /// the refusal reported as a [`DecodeError`].
 pub trait Rewrap<T> {
+    /// Owned value produced after conversion from the inner sink's result.
     type Output;
+    /// Convert the decoded value, returning [`DecodeError`] if its invariants
+    /// are not met. The input is consumed on both success and failure.
     fn rewrap(value: T) -> Result<Self::Output, DecodeError>;
 }
 
@@ -714,6 +769,7 @@ pub trait Rewrap<T> {
 pub struct Wrapped<S, W>(S, PhantomData<W>);
 
 impl<S, W> Wrapped<S, W> {
+    /// Wrap a sink so completed scalar or container output is converted by `W`.
     pub fn new(sink: S) -> Self {
         Self(sink, PhantomData)
     }
@@ -813,6 +869,9 @@ impl<T: Decrypt> Sink for List<T> {
     }
 }
 
+/// In-progress typed sequence produced by [`List`].
+/// Each completed child is appended in order; errors drop collected values
+/// according to their own drop behavior. Use protected targets for secrets.
 pub struct ListSeq<T>(Vec<T>);
 
 impl<T: Decrypt> SeqSink for ListSeq<T> {
@@ -1004,7 +1063,10 @@ impl<T: Decrypt> Decrypt for Option<T> {
 /// wipes what was already decoded. A struct target opts in with its own
 /// impl (the orphan rule lets the crate that defines the struct write it).
 pub trait DecryptProtected: Decrypt + Zeroize {
+    /// Sink that builds inside a protected wrapper and wipes partial values on failure.
     type ProtectedSink: Sink<Ok = Protected<Self>, Error = DecodeError>;
+    /// Create the protected target. Implementations must keep partially decoded
+    /// secrets protected throughout construction, including error paths.
     fn protected_sink() -> Self::ProtectedSink;
 }
 
