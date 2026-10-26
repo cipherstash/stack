@@ -667,6 +667,54 @@ fn any_other_key_is_refused() {
     refused(Variants::S { a: 1 });
 }
 
+/// A key with a text form for people and a compact one, chosen as a type
+/// with both chooses: by `is_human_readable`. It reads back only in the mode
+/// it was written in.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Modal(u8);
+
+impl Serialize for Modal {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mode = if s.is_human_readable() {
+            "human"
+        } else {
+            "compact"
+        };
+        s.collect_str(&format_args!("{mode}-{}", self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for Modal {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mode = if d.is_human_readable() {
+            "human-"
+        } else {
+            "compact-"
+        };
+        let text = <&str>::deserialize(d)?;
+        text.strip_prefix(mode)
+            .and_then(|n| n.parse().ok())
+            .map(Modal)
+            .ok_or_else(|| de::Error::custom("a key in the other mode"))
+    }
+}
+
+/// A text key is read in the mode its profile's key writer wrote it in:
+/// compact in a blob, human readable in a transport frame.
+#[test]
+fn a_text_key_reads_in_the_mode_it_was_written_in() {
+    let map = BTreeMap::from([(Modal(1), 10u8), (Modal(2), 20)]);
+    let blob = to_vec(&map).expect("writes");
+    assert!(blob.windows(9).any(|w| w == b"compact-1"));
+    assert_eq!(from_slice::<BTreeMap<Modal, u8>>(&blob), Ok(map));
+
+    let map = BTreeMap::from([(Modal(1), 10u8)]);
+    let frame = vitaminc_aead_frame::serde::to_vec(&map).expect("writes");
+    assert!(frame.windows(7).any(|w| w == b"human-1"));
+    let back: BTreeMap<Modal, u8> = vitaminc_aead_frame::serde::from_slice(&frame).expect("reads");
+    assert_eq!(back, map);
+}
+
 /// A key type that reads only integers does not read text, nor a string
 /// type an integer; a struct reads only text keys.
 #[test]

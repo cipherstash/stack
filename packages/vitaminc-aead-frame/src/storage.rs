@@ -47,7 +47,7 @@ use vitaminc_aead::tags;
 use vitaminc_protected::Protected;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::serde::{self as transport, from_validated, written, PathSegment};
+use crate::serde::{self as transport, from_validated, written, PathSegment, Profile};
 
 /// The first three bytes of every blob: `"VCS"`.
 pub const MAGIC: [u8; 3] = *b"VCS";
@@ -239,7 +239,7 @@ fn unwritable(error: transport::Error) -> Error {
 pub fn from_slice<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
     let body = body(bytes)?;
     validate(body).map_err(|_| malformed())?;
-    from_validated(body).map_err(mismatch)
+    from_validated(body, Profile::Storage).map_err(mismatch)
 }
 
 /// The body after a version 1 header.

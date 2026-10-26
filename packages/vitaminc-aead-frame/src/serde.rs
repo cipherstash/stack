@@ -316,14 +316,31 @@ pub fn from_slice<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error
 ///
 /// A value `T` does not accept.
 pub fn from_frame<'de, T: Deserialize<'de>>(frame: Frame<'de>) -> Result<T, Error> {
-    from_validated(frame.as_bytes())
+    from_validated(frame.as_bytes(), Profile::Transport)
+}
+
+/// Which format a node is read for. They read alike, but for the mode a
+/// text key is read in: the transport's key writer is human readable, so a
+/// key type reads its text form, and the storage profile's is not, so a
+/// key type reads the compact form it was written in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Profile {
+    Transport,
+    Storage,
 }
 
 /// Read `T` from one node that has already been validated: a frame
 /// [`Frame::parse`] accepted, or the body of a storage blob its own
 /// validator accepted.
-pub(crate) fn from_validated<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
-    let mut de = Deserializer { buf: bytes, pos: 0 };
+pub(crate) fn from_validated<'de, T: Deserialize<'de>>(
+    bytes: &'de [u8],
+    profile: Profile,
+) -> Result<T, Error> {
+    let mut de = Deserializer {
+        buf: bytes,
+        pos: 0,
+        profile,
+    };
     let value = T::deserialize(&mut de)?;
     // The frame is one node, and `T` must have read all of it: a
     // `Deserialize` that stopped early (a unit variant that left its payload
@@ -359,6 +376,7 @@ pub(crate) const MAP: u8 = tags::STORAGE_MAP;
 struct Deserializer<'de> {
     buf: &'de [u8],
     pos: usize,
+    profile: Profile,
 }
 
 fn malformed() -> Error {
@@ -831,7 +849,9 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
         };
         if let Some(key) = text {
             self.at = Some(entry_at(self.names, key, index));
-            return seed.deserialize(KeyDeserializer(key)).map(Some);
+            return seed
+                .deserialize(KeyDeserializer(key, self.de.profile))
+                .map(Some);
         }
         if self.keys == Keys::Names {
             return Err(de::Error::invalid_type(self.de.found()?, &"a field name"));
@@ -869,8 +889,9 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
 /// Reads an object's key, which is text, into the key type. A key written
 /// from a newtype struct around a string reads back into it, as serde's
 /// own string deserializer would refuse; everything else is that
-/// deserializer's.
-struct KeyDeserializer<'de>(&'de str);
+/// deserializer's. It is human readable in the transport and not in the
+/// storage profile, as each profile's key writer is.
+struct KeyDeserializer<'de>(&'de str, Profile);
 
 impl<'de> de::Deserializer<'de> for KeyDeserializer<'de> {
     type Error = Error;
@@ -894,6 +915,10 @@ impl<'de> de::Deserializer<'de> for KeyDeserializer<'de> {
         visitor: V,
     ) -> Result<V::Value, Error> {
         BorrowedStrDeserializer::<Error>::new(self.0).deserialize_enum(name, variants, visitor)
+    }
+
+    fn is_human_readable(&self) -> bool {
+        self.1 == Profile::Transport
     }
 
     ::serde::forward_to_deserialize_any! {
