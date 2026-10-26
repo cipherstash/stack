@@ -132,7 +132,7 @@ carry no detail about the bytes.
 cargo bench -p vitaminc-aead-frame --features serde --bench storage
 ```
 
-MessagePack is written with field names (`rmp_serde::to_vec_named`), since the storage profile, the transport format and JSON all carry them. Borsh carries no field names and no kinds, only the values in order, so it shows what a format costs that carries nothing else. The storage profile and the transport format wipe their buffers as they grow and when they are dropped; the other three wipe nothing.
+MessagePack is written with field names (`rmp_serde::to_vec_named`), since the storage profile, the transport format and JSON all carry them. Borsh carries no field names and no kinds, only the values in order, so it shows what a format costs that carries nothing else. The storage profile and the transport format wipe their buffers as they grow and when they are dropped. The other three wipe nothing: they write into a plain `Vec<u8>`, so each time the buffer grows the old one is freed with its bytes still in it, and the result is freed unwiped when it is dropped. Wrapping their output in `Zeroizing` would cover only the drop, not the copies left as the buffer grows.
 
 These results are from an Apple M4 (4 performance and 6 efficiency cores, 24 GB) on macOS 26.5 with rustc 1.98.1, on 2026-10-26, using Criterion's default settings. Each time is the median of 100 samples. A write includes dropping the result.
 
