@@ -12,7 +12,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use vitaminc_aead_frame::storage::to_vec;
+use vitaminc_aead_frame::storage::{from_slice, to_vec};
 use vitaminc_protected::Controlled;
 
 const MARKER: &[u8; 16] = b"S3CR3T-M4RK3R-01";
@@ -97,6 +97,25 @@ fn writing_frees_no_block_with_the_value_in_it() {
     let (left, blob) = left_behind(|| to_vec(&shown).expect("writes").risky_unwrap());
     assert!(blob.windows(MARKER.len()).any(|w| w == MARKER));
     assert_eq!(left, 0, "a displayed value was left in a freed block");
+
+    // Integer keys are compared by value, a copy of each key, when the
+    // writer checks its own blob and when the reader checks one. Keys whose
+    // bytes are the marker show that copy is wiped.
+    let base = u128::from_le_bytes(*MARKER);
+    let integers: BTreeMap<u128, u8> = (0..64).map(|i| (base + (i << 120), 1)).collect();
+    let (left, blob) = left_behind(|| to_vec(&integers).expect("writes").risky_unwrap());
+    assert_eq!(left, 0, "an integer key's copy was left in a freed block");
+    // What is read is the caller's, and kept past the armed read.
+    let mut read = BTreeMap::<u128, u8>::new();
+    let (left, _) = left_behind(|| {
+        read = from_slice(&blob).expect("reads");
+        Vec::new()
+    });
+    assert_eq!(read, integers);
+    assert_eq!(
+        left, 0,
+        "reading left an integer key's copy in a freed block"
+    );
 
     // The blob is wiped when it is dropped.
     let blob = to_vec(&map).expect("writes");

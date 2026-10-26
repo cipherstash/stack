@@ -369,9 +369,9 @@ fn node(c: &mut Cursor<'_>, depth: usize) -> Result<(), Invalid> {
     Ok(())
 }
 
-/// A map's key node, borrowed from the blob. It is compared by
-/// [`Identity`], worked out each time it is needed, so the keys gathered to
-/// find a repeat hold no copy of a key's value, only where it is.
+/// A map's key node, borrowed from the blob, so the keys gathered to find a
+/// repeat hold no copy of a key's value, only where it is. It is compared
+/// by its [`Identity`].
 #[derive(Clone, Copy)]
 struct MapKey<'a>(&'a [u8]);
 
@@ -397,11 +397,29 @@ impl<'a> MapKey<'a> {
 }
 
 /// Refuse a map whose keys repeat one.
-fn distinct(mut keys: Vec<MapKey<'_>>) -> Result<(), Invalid> {
-    keys.sort_unstable_by(|a, b| a.identity().cmp(&b.identity()));
-    if keys
-        .windows(2)
-        .any(|pair| pair[0].identity() == pair[1].identity())
+///
+/// Each key's identity is worked out once, not at every comparison of a
+/// sort. An integer's identity is its value, a copy of the key, so those
+/// are kept in a buffer sized up front, which never regrows and is wiped
+/// when dropped. Any other key is compared where it lies in the blob.
+fn distinct(keys: Vec<MapKey<'_>>) -> Result<(), Invalid> {
+    let mut integers: Zeroizing<Vec<[u8; 17]>> = Zeroizing::new(Vec::with_capacity(keys.len()));
+    let mut nodes = Vec::new();
+    for key in keys {
+        match key.identity() {
+            Identity::Int(negative, word) => {
+                let mut value = [0; 17];
+                value[0] = u8::from(negative);
+                value[1..].copy_from_slice(&word.to_le_bytes());
+                integers.push(value);
+            }
+            Identity::Node(node) => nodes.push(node),
+        }
+    }
+    integers.sort_unstable();
+    nodes.sort_unstable();
+    if integers.windows(2).any(|pair| pair[0] == pair[1])
+        || nodes.windows(2).any(|pair| pair[0] == pair[1])
     {
         return Err(Invalid::DuplicateKey);
     }
