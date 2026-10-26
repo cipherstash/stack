@@ -4,7 +4,7 @@
 //! Both are re-exported from `vitaminc_aead`, so depend on that crate
 //! rather than this one:
 //!
-//! ```ignore
+//! ```rust
 //! use vitaminc_aead::{Decrypt, Encrypt};
 //!
 //! #[derive(Encrypt, Decrypt)]
@@ -12,6 +12,9 @@
 //!     name: String,
 //!     age: u32,
 //! }
+//! # let user = User { name: "Ada".into(), age: 37 };
+//! # let plan = vitaminc_aead::plan::<_, std::convert::Infallible, _>(user, ()).unwrap();
+//! # assert!(matches!(plan, vitaminc_aead::CipherText::Map(entries) if entries.len() == 2));
 //! ```
 //!
 //! `#[derive(Encrypt)]` walks the struct into a sink as a map with one
