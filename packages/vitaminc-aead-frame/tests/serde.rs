@@ -9,7 +9,13 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 use vitaminc_aead::plaintext::{Int, Logical, MapSink, Physical, Raw, Sink};
 use vitaminc_aead::{Encrypt, FrameWriter};
-use vitaminc_aead_frame::serde::{from_slice, to_vec, Error, PathSegment};
+use vitaminc_aead_frame::serde::{self as transport, from_slice, Error, PathSegment};
+use vitaminc_protected::Controlled;
+
+/// Write `value`, and take the frame out of its `Protected`.
+fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
+    transport::to_vec(value).map(Controlled::risky_unwrap)
+}
 
 fn unhex(text: &str) -> Vec<u8> {
     (0..text.len())

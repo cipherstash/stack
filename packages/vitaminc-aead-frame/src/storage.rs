@@ -45,9 +45,11 @@ use vitaminc_aead::leaf::{self, Form, ScalarError};
 use vitaminc_aead::plaintext::{Float, Int, Physical};
 use vitaminc_aead::tags;
 use vitaminc_protected::Protected;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
-use crate::serde::{self as transport, from_validated, written, PathSegment, Profile};
+use crate::serde::{
+    self as transport, from_validated, reserve, written, Appender, PathSegment, Profile,
+};
 
 /// The first three bytes of every blob: `"VCS"`.
 pub const MAGIC: [u8; 3] = *b"VCS";
@@ -476,27 +478,6 @@ fn refused_own(invalid: Invalid) -> Error {
     }
 }
 
-/// Make room for `additional` more bytes. A `Vec` that regrows frees its
-/// old allocation without wiping it, so grow into a fresh allocation and
-/// wipe the old one instead.
-///
-/// The same as `reserve` in `vitaminc_aead::frame`, which the frame writer
-/// uses; that one is private to its crate. A fix to either belongs in both.
-fn reserve(out: &mut Vec<u8>, additional: usize) {
-    if out.capacity() - out.len() >= additional {
-        return;
-    }
-    let capacity = out
-        .len()
-        .saturating_add(additional)
-        .max(out.len().saturating_mul(2))
-        .max(64);
-    let mut grown = Vec::with_capacity(capacity);
-    grown.extend_from_slice(out);
-    out.zeroize();
-    *out = grown;
-}
-
 fn write_len(out: &mut Vec<u8>, len: usize) -> Result<(), transport::Error> {
     let len = u32::try_from(len).map_err(|_| written(FrameWriteError::TooLong))?;
     out.extend_from_slice(&len.to_le_bytes());
@@ -540,17 +521,6 @@ fn write_display<T: fmt::Display + ?Sized>(
     let len = u32::try_from(len).map_err(|_| written(FrameWriteError::TooLong))?;
     out[at..at + 4].copy_from_slice(&len.to_le_bytes());
     Ok(())
-}
-
-/// Appends formatted text to a blob, growing it as [`reserve`] does.
-struct Appender<'o>(&'o mut Vec<u8>);
-
-impl fmt::Write for Appender<'_> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        reserve(self.0, s.len());
-        self.0.extend_from_slice(s.as_bytes());
-        Ok(())
-    }
 }
 
 /// Writes one node onto the end of a blob, `depth` levels below its root.
