@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from storage_corpus_append_only import CORPUS, corpus_at, problems
+from storage_corpus_append_only import CORPUS, TESTDATA, check, corpora_at, corpus_at, problems
 
 BASE = {
     "description": "corpus",
@@ -116,6 +116,38 @@ class CorpusAtTest(unittest.TestCase):
     def test_a_revision_git_cannot_read_fails_rather_than_passing(self):
         with self.assertRaises(subprocess.CalledProcessError):
             corpus_at("0" * 40, root=self.root)
+
+    def test_every_version_s_corpus_is_found_and_nothing_else(self):
+        (self.root / TESTDATA / "storage-v2.json").write_text(json.dumps(BASE))
+        (self.root / TESTDATA / "value-conformance.json").write_text("{}")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "a second version, and another file")
+        head = self.git("rev-parse", "HEAD").strip()
+        self.assertEqual(
+            corpora_at(head, root=self.root),
+            [CORPUS, f"{TESTDATA}/storage-v2.json"],
+        )
+        self.assertEqual(corpora_at(self.without, root=self.root), [])
+
+    def test_a_later_version_s_corpus_is_held_too(self):
+        v2 = self.root / TESTDATA / "storage-v2.json"
+        v2.write_text(json.dumps(BASE))
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "a second version")
+        base = self.git("rev-parse", "HEAD").strip()
+        self.assertEqual(check(base, root=self.root), [])
+        changed = json.loads(json.dumps(BASE))
+        changed["vectors"][0]["blob"] = "00"
+        v2.write_text(json.dumps(changed))
+        self.assertEqual(
+            [path for path, _ in check(base, root=self.root)],
+            [f"{TESTDATA}/storage-v2.json"],
+        )
+        v2.unlink()
+        self.assertEqual(
+            check(base, root=self.root),
+            [(f"{TESTDATA}/storage-v2.json", "the corpus was removed")],
+        )
 
 
 if __name__ == "__main__":
