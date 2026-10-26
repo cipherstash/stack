@@ -141,10 +141,13 @@ that no row the corpus had is changed or removed, with
 `scripts/storage_corpus_append_only.py` (`mise run storage:corpus:check`).
 `tests/storage_coverage.rs` checks that the corpus covers the
 specification. Every tag is a value in a vector, and every map key kind is
-a key in one. Every part of every numbered reading rule has a refused row
-that breaks it, and the reference reader says which rule and part that
-is. Every clause of *Reading by type* has a `reads` row of the right shape.
-A refused row only counts if it reads once the clause's cause is removed.
+a key in one, and a refused row starts a key with every byte a key may not
+start with. Every part of every numbered reading rule has a row: a refused
+row that breaks it, where the reference reader says which rule and part
+that is, or for what a rule allows or keeps apart, a vector. Every clause
+of *Reading by type* and of *Map keys* on reading has a `reads` row of the
+right shape, that reads as the clause says. A refused row only counts if
+it reads once the clause's cause is removed.
 The test holds STORAGE.md's rules, clauses and key grammar word for word,
 so a change to any of them fails it until the change is covered.
 `tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on

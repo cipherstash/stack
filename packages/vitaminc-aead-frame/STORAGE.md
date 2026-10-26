@@ -354,8 +354,9 @@ and their bytes (`vectors`), blobs and their refusal classes (`refused`),
 and blobs read by types (`reads`). Its rows are never edited or removed,
 and CI checks that with `scripts/storage_corpus_append_only.py`; rows MAY
 be added. `tests/storage_coverage.rs` fails if a tag, a map key kind, a
-part of a numbered rule in [Reading](#reading) or a clause of
-[Reading by type](#reading-by-type) has no row that shows it. It holds
+part of a numbered rule in [Reading](#reading), or a clause of
+[Reading by type](#reading-by-type) or of [Map keys](#map-keys) on reading,
+has no row that shows it. It holds
 those rules and clauses, and the grammar they refer to, word for word, so
 a change to them here fails it until the change has a row. A reader in another language passes
 when it reads every vector as its value and refuses every refused row by

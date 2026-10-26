@@ -20,20 +20,49 @@ pub enum Refusal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Broken {
     /// 3: the body ends before its node does, or bytes follow its node.
-    NotOneNode { trailing: bool },
-    /// 4: a byte the grammar does not allow where it is, as a node or as a
-    /// map's key.
-    Tag { byte: u8, as_key: bool },
+    NotOneNode(Ends),
+    /// 4: a byte the grammar does not allow where it is.
+    Tag { byte: u8, at: Place },
     /// 5: a length, or a count, larger than the bytes left when it is read.
-    PastTheEnd { count: bool },
+    PastTheEnd(Prefix),
     /// 6: an object's key, or a text scalar, is not UTF-8.
-    NotUtf8 { key: bool },
+    NotUtf8(Text),
     /// 7: one object has two entries with the same key.
     RepeatedField,
     /// 8: one map has two equal keys, starting with these tags.
     RepeatedKey { first: u8, second: u8 },
     /// 9: a node is deeper than 128.
     TooDeep,
+}
+
+/// Where a body that is not one node goes wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ends {
+    /// It ends before its node does.
+    Early,
+    /// Bytes follow its node.
+    Late,
+}
+
+/// Where a byte the grammar does not allow starts something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    Node,
+    Key,
+}
+
+/// What runs past the end of the blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prefix {
+    Length,
+    Count,
+}
+
+/// What is not UTF-8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Text {
+    Key,
+    Scalar,
 }
 
 const MAX_DEPTH: usize = 128;
@@ -57,7 +86,7 @@ pub fn decode(bytes: &[u8]) -> Result<Model, Refusal> {
     };
     let node = reader.node(0).map_err(Refusal::Malformed)?;
     if reader.at != reader.bytes.len() {
-        return Err(Refusal::Malformed(Broken::NotOneNode { trailing: true }));
+        return Err(Refusal::Malformed(Broken::NotOneNode(Ends::Late)));
     }
     Ok(node)
 }
@@ -84,7 +113,7 @@ impl Reader<'_> {
 
     /// A fixed-width field: a blob that ends inside one is truncated.
     fn array<const N: usize>(&mut self) -> Result<[u8; N], Broken> {
-        self.take(N, Broken::NotOneNode { trailing: false })
+        self.take(N, Broken::NotOneNode(Ends::Early))
             .map(|b| b.try_into().expect("N bytes"))
     }
 
@@ -96,7 +125,7 @@ impl Reader<'_> {
     /// its end.
     fn counted(&mut self) -> Result<&[u8], Broken> {
         let len = self.u32()?;
-        self.take(len, Broken::PastTheEnd { count: false })
+        self.take(len, Broken::PastTheEnd(Prefix::Length))
     }
 
     /// A count of children: more than the bytes left runs past the end of
@@ -105,14 +134,14 @@ impl Reader<'_> {
     fn count(&mut self) -> Result<usize, Broken> {
         let count = self.u32()?;
         if count > self.left() {
-            return Err(Broken::PastTheEnd { count: true });
+            return Err(Broken::PastTheEnd(Prefix::Count));
         }
         Ok(count)
     }
 
-    /// A text scalar, or an object's key when `key`.
-    fn text(&mut self, key: bool) -> Result<String, Broken> {
-        String::from_utf8(self.counted()?.to_vec()).map_err(|_| Broken::NotUtf8 { key })
+    /// A text scalar, or an object's key.
+    fn text(&mut self, what: Text) -> Result<String, Broken> {
+        String::from_utf8(self.counted()?.to_vec()).map_err(|_| Broken::NotUtf8(what))
     }
 
     fn node(&mut self, depth: usize) -> Result<Model, Broken> {
@@ -136,7 +165,7 @@ impl Reader<'_> {
             0x11 => Model::U128(u128::from_le_bytes(self.array()?)),
             0x08 => Model::F32(u32::from_le_bytes(self.array()?)),
             0x09 => Model::F64(u64::from_le_bytes(self.array()?)),
-            0x0A => Model::Text(self.text(false)?),
+            0x0A => Model::Text(self.text(Text::Scalar)?),
             0x0B => Model::Bytes(self.counted()?.to_vec()),
             0xF5 => Model::Some(Box::new(self.node(depth + 1)?)),
             0xF0 => {
@@ -151,7 +180,7 @@ impl Reader<'_> {
                 let count = self.count()?;
                 let mut entries: Vec<(String, Model)> = Vec::new();
                 for _ in 0..count {
-                    let key = self.text(true)?;
+                    let key = self.text(Text::Key)?;
                     if entries.iter().any(|(k, _)| *k == key) {
                         return Err(Broken::RepeatedField);
                     }
@@ -166,9 +195,12 @@ impl Reader<'_> {
                     let byte = *self
                         .bytes
                         .get(self.at)
-                        .ok_or(Broken::NotOneNode { trailing: false })?;
+                        .ok_or(Broken::NotOneNode(Ends::Early))?;
                     if !KEY_TAGS.contains(&byte) {
-                        return Err(Broken::Tag { byte, as_key: true });
+                        return Err(Broken::Tag {
+                            byte,
+                            at: Place::Key,
+                        });
                     }
                     let key = self.node(depth + 1)?;
                     let same = key_value(&key).expect("a key tag reads as a key");
@@ -188,7 +220,7 @@ impl Reader<'_> {
             byte => {
                 return Err(Broken::Tag {
                     byte,
-                    as_key: false,
+                    at: Place::Node,
                 })
             }
         })

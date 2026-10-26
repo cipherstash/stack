@@ -24,7 +24,7 @@ use serde_json::Value as Json;
 use vitaminc_aead_frame::storage;
 use vitaminc_protected::Controlled;
 
-use support::reference::{decode, tag_of, Broken, Refusal, KEY_TAGS};
+use support::reference::{decode, tag_of, Broken, Ends, Place, Prefix, Refusal, Text, KEY_TAGS};
 use support::typed::{read_as, schema, Typed};
 use support::{unhex, Model};
 
@@ -202,10 +202,10 @@ const RULES: &[Rule] = &[
         text: "the body after the header is not exactly one node: it is truncated, or bytes follow the node;",
         parts: &[
             ("it is truncated", |r| {
-                r.refusal == Refusal::Malformed(Broken::NotOneNode { trailing: false })
+                r.refusal == Refusal::Malformed(Broken::NotOneNode(Ends::Early))
             }),
             ("bytes follow the node", |r| {
-                r.refusal == Refusal::Malformed(Broken::NotOneNode { trailing: true })
+                r.refusal == Refusal::Malformed(Broken::NotOneNode(Ends::Late))
             }),
         ],
     },
@@ -215,13 +215,19 @@ const RULES: &[Rule] = &[
             ("a node", |r| {
                 matches!(
                     r.refusal,
-                    Refusal::Malformed(Broken::Tag { as_key: false, .. })
+                    Refusal::Malformed(Broken::Tag {
+                        at: Place::Node,
+                        ..
+                    })
                 )
             }),
             ("a map's key", |r| {
                 matches!(
                     r.refusal,
-                    Refusal::Malformed(Broken::Tag { as_key: true, .. })
+                    Refusal::Malformed(Broken::Tag {
+                        at: Place::Key,
+                        ..
+                    })
                 )
             }),
         ],
@@ -230,10 +236,10 @@ const RULES: &[Rule] = &[
         text: "a length or count runs past the end of the blob;",
         parts: &[
             ("a length", |r| {
-                r.refusal == Refusal::Malformed(Broken::PastTheEnd { count: false })
+                r.refusal == Refusal::Malformed(Broken::PastTheEnd(Prefix::Length))
             }),
             ("or count", |r| {
-                r.refusal == Refusal::Malformed(Broken::PastTheEnd { count: true })
+                r.refusal == Refusal::Malformed(Broken::PastTheEnd(Prefix::Count))
             }),
         ],
     },
@@ -241,10 +247,10 @@ const RULES: &[Rule] = &[
         text: "an object's key or a text scalar is not valid UTF-8;",
         parts: &[
             ("an object's key", |r| {
-                r.refusal == Refusal::Malformed(Broken::NotUtf8 { key: true })
+                r.refusal == Refusal::Malformed(Broken::NotUtf8(Text::Key))
             }),
             ("a text scalar", |r| {
-                r.refusal == Refusal::Malformed(Broken::NotUtf8 { key: false })
+                r.refusal == Refusal::Malformed(Broken::NotUtf8(Text::Scalar))
             }),
         ],
     },
@@ -284,6 +290,84 @@ const RULES: &[Rule] = &[
         })],
     },
 ];
+
+/// The parts of the reading rules shown by a vector that reads, not by a
+/// refused row: what a rule allows, or keeps apart.
+/// A rule's number, words quoted from it, and what a vector that shows
+/// that part holds.
+type Kept = (usize, &'static str, fn(&Model) -> bool);
+
+const KEPT: &[Kept] = &[
+    (8, "Text and bytes never equal each other", |m| {
+        maps(m).iter().any(|entries| {
+            entries.iter().any(|(t, _)| {
+                matches!(t, Model::Text(_))
+                    && entries
+                        .iter()
+                        .any(|(b, _)| matches!(b, Model::Bytes(_)) && payload(b) == payload(t))
+            })
+        })
+    }),
+    (8, "or an integer", |m| {
+        maps(m).iter().any(|entries| {
+            entries.iter().any(|(i, _)| {
+                integer(i).is_some()
+                    && entries.iter().any(|(k, _)| {
+                        matches!(k, Model::Text(_) | Model::Bytes(_)) && payload(k) == payload(i)
+                    })
+            })
+        })
+    }),
+    (9, "deeper than 128", |m| depth(m) == 128),
+];
+
+/// Every map in `node`, itself included, as its entries.
+fn maps(node: &Model) -> Vec<&[(Model, Model)]> {
+    let (mut values, mut keys) = (Vec::new(), Vec::new());
+    walk(node, &mut values, &mut keys);
+    values
+        .into_iter()
+        .filter_map(|v| match v {
+            Model::Map(entries) => Some(entries.as_slice()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// How deep `node`'s deepest node is, counted as *Depth* counts it.
+fn depth(node: &Model) -> usize {
+    match node {
+        Model::Some(inner) => depth(inner) + 1,
+        Model::Array(items) => items.iter().map(|i| depth(i) + 1).max().unwrap_or(0),
+        Model::Object(entries) => entries.iter().map(|(_, v)| depth(v) + 1).max().unwrap_or(0),
+        Model::Map(entries) => entries
+            .iter()
+            .map(|(k, v)| depth(k).max(depth(v)) + 1)
+            .max()
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// A key's payload: text's or bytes' bytes, an integer's little-endian
+/// bytes at its width.
+fn payload(key: &Model) -> Option<Vec<u8>> {
+    Some(match key {
+        Model::Text(t) => t.as_bytes().to_vec(),
+        Model::Bytes(b) => b.clone(),
+        Model::I8(v) => v.to_le_bytes().to_vec(),
+        Model::I16(v) => v.to_le_bytes().to_vec(),
+        Model::I32(v) => v.to_le_bytes().to_vec(),
+        Model::I64(v) => v.to_le_bytes().to_vec(),
+        Model::I128(v) => v.to_le_bytes().to_vec(),
+        Model::U8(v) => v.to_le_bytes().to_vec(),
+        Model::U16(v) => v.to_le_bytes().to_vec(),
+        Model::U32(v) => v.to_le_bytes().to_vec(),
+        Model::U64(v) => v.to_le_bytes().to_vec(),
+        Model::U128(v) => v.to_le_bytes().to_vec(),
+        _ => return None,
+    })
+}
 
 /// The numbered rules in *Reading*, each as its words: a line that starts
 /// `N. `, and the indented lines that continue it.
@@ -330,7 +414,7 @@ fn refusals(corpus: &Json) -> Vec<Refused> {
 }
 
 #[test]
-fn every_part_of_every_reading_rule_has_a_refused_row() {
+fn every_part_of_every_reading_rule_has_a_row() {
     let texts: Vec<&str> = RULES.iter().map(|rule| rule.text).collect();
     assert_eq!(numbered_rules(), texts, "STORAGE.md's reading rules");
 
@@ -344,7 +428,20 @@ fn every_part_of_every_reading_rule_has_a_refused_row() {
             }
         }
     }
-    assert!(gaps.is_empty(), "no refused row breaks {gaps:#?}");
+    let vectors: Vec<Model> = rows(&corpus(), "vectors")
+        .iter()
+        .map(|row| decode(&blob(row)).expect("a vector reads"))
+        .collect();
+    for (number, quote, shown_by) in KEPT {
+        assert!(
+            RULES[number - 1].text.contains(quote),
+            "{quote:?} is in rule {number}"
+        );
+        if !vectors.iter().any(shown_by) {
+            gaps.push(format!("rule {number}: {quote:?} (in a vector that reads)"));
+        }
+    }
+    assert!(gaps.is_empty(), "no row shows {gaps:#?}");
 }
 
 /// The sentence in *Layout* that names the tags the profile refuses, which
@@ -361,12 +458,11 @@ fn every_refused_tag_and_key_kind_has_a_refused_row() {
     );
     let (mut as_node, mut as_key) = (BTreeSet::new(), BTreeSet::new());
     for refused in refusals(&corpus()) {
-        if let Refusal::Malformed(Broken::Tag { byte, as_key: key }) = refused.refusal {
-            if key {
-                as_key.insert(byte);
-            } else {
-                as_node.insert(byte);
-            }
+        if let Refusal::Malformed(Broken::Tag { byte, at }) = refused.refusal {
+            match at {
+                Place::Key => as_key.insert(byte),
+                Place::Node => as_node.insert(byte),
+            };
         }
     }
 
@@ -385,10 +481,21 @@ fn every_refused_tag_and_key_kind_has_a_refused_row() {
     );
 
     // A key may be an integer, text or bytes, so every other node is
-    // refused as one.
+    // refused as one, as is a tag the profile refuses and a byte that is no
+    // tag at all.
     let refused_keys: BTreeSet<u8> = node_tags.difference(&tags(&KEY_TAGS)).copied().collect();
     let gaps = missing(&refused_keys, &as_key);
     assert!(gaps.is_empty(), "no refused row has a map key of {gaps:?}");
+    assert!(
+        as_key.iter().any(|b| known.contains(b)),
+        "no refused row has a map key starting with a tag the profile refuses"
+    );
+    assert!(
+        as_key
+            .iter()
+            .any(|b| !node_tags.contains(b) && !known.contains(b)),
+        "no refused row has a map key starting with a byte that is no tag"
+    );
 }
 
 // =============================================================================
@@ -400,23 +507,57 @@ fn every_refused_tag_and_key_kind_has_a_refused_row() {
 /// it reads.
 struct Row<'r> {
     ty: Option<&'r Json>,
-    node: Model,
-    reads: bool,
-}
-
-impl Row<'_> {
     /// The kind of the type, and what follows it: `("u8", null)`,
     /// `("option", T)`, `("struct", [[name, T], …])`.
-    fn kind(&self) -> (&str, &Json) {
-        match self.ty {
+    kind: (&'r str, &'r Json),
+    node: Model,
+    reads: bool,
+    /// What a `reads` row reads as, if it reads.
+    value: Option<&'r Json>,
+}
+
+impl<'r> Row<'r> {
+    fn new(ty: Option<&'r Json>, node: Model, value: Option<&'r Json>, reads: bool) -> Self {
+        let kind = match ty {
             None => ("any", &Json::Null),
-            Some(Json::String(name)) => (name, &Json::Null),
+            Some(Json::String(name)) => (name.as_str(), &Json::Null),
             Some(Json::Object(kind)) => {
                 let (kind, inner) = kind.iter().next().expect("a type names its kind");
-                (kind, inner)
+                (kind.as_str(), inner)
             }
             Some(other) => panic!("a type is a name or an object: {other}"),
+        };
+        Row {
+            ty,
+            kind,
+            node,
+            reads,
+            value,
         }
+    }
+
+    fn kind(&self) -> (&str, &Json) {
+        self.kind
+    }
+
+    /// A map type's key type.
+    fn key_type(&self) -> Option<&Json> {
+        self.is("map").then(|| &self.kind().1[0])
+    }
+
+    /// The tags of the node's keys, if it is a map or an object with any.
+    fn key_tags(&self) -> Option<Vec<u8>> {
+        let tags: Vec<u8> = match &self.node {
+            Model::Map(entries) => entries.iter().map(|(k, _)| tag_of(k)).collect(),
+            Model::Object(entries) => entries.iter().map(|_| 0x0A).collect(),
+            _ => return None,
+        };
+        (!tags.is_empty()).then_some(tags)
+    }
+
+    /// The row reads as null.
+    fn reads_null(&self) -> bool {
+        self.value == Some(&Json::Null)
     }
 
     fn is(&self, kind: &str) -> bool {
@@ -605,7 +746,7 @@ const BULLETS: &[Bullet] = &[
         text: "An `Option` reads null as `None`, `some` as `Some`, and any other node as `Some` holding that node, so a blob written before a field became optional reads. A type whose own value is written as null (unit, a unit struct, an `Option`) reads its old null as `None` instead.",
         clauses: &[
             reads("An `Option` reads null as `None`", |r| {
-                r.is("option") && r.node == Model::Null
+                r.is("option") && r.node == Model::Null && r.reads_null()
             }),
             reads("`some` as `Some`", |r| {
                 r.is("option") && matches!(r.node, Model::Some(_))
@@ -613,11 +754,12 @@ const BULLETS: &[Bullet] = &[
             reads("any other node as `Some` holding that node", |r| {
                 r.is("option") && !matches!(r.node, Model::Null | Model::Some(_))
             }),
-            reads("reads its old null as `None` instead", |r| {
-                let inner = r.kind().1;
-                r.is("option")
-                    && r.node == Model::Null
-                    && (inner == "unit" || inner.get("option").is_some())
+            reads("(unit,", |r| old_null(r, |inner| inner == "unit")),
+            reads("a unit struct", |r| {
+                old_null(r, |inner| inner.get("unit_struct").is_some())
+            }),
+            reads("an `Option`) reads its old null as `None` instead", |r| {
+                old_null(r, |inner| inner.get("option").is_some())
             }),
         ],
     },
@@ -717,15 +859,58 @@ const BULLETS: &[Bullet] = &[
             ),
             reads("reads a missing `Option` field as `None`", |r| {
                 let keys = r.text_keys().unwrap_or_default();
+                // What the row reads as holds the field, as null.
+                let read_as_none = |field: &str| {
+                    r.value
+                        .and_then(|v| v["object"].as_array())
+                        .is_some_and(|read| read.iter().any(|e| e[0] == field && e[1].is_null()))
+                };
                 r.is_struct()
                     && r.text_keys().is_some()
                     && r.fields()
                         .iter()
-                        .any(|(f, optional)| *optional && !keys.contains(f))
+                        .any(|(f, optional)| *optional && !keys.contains(f) && read_as_none(f))
             }),
         ],
     },
 ];
+
+/// The row reads an `Option` of a type written as null (`inner`) from null,
+/// as `None`.
+fn old_null(r: &Row, inner: fn(&Json) -> bool) -> bool {
+    r.is("option") && r.node == Model::Null && r.reads_null() && inner(r.kind().1)
+}
+
+/// The paragraph of *Map keys* on reading, word for word, and its clauses.
+const MAP_KEY_READING: Bullet = Bullet {
+    text: "When read, a key node is handed to the key type as a value of its kind would be: an integer to an integer type that it fits, text to a string type or an enum, bytes to a bytes type. A text key is never parsed as a number, nor an integer formatted as text.",
+    clauses: &[
+        reads("an integer to an integer type that it fits", |r| {
+            r.key_type().is_some_and(|k| INTEGERS.contains(&k.as_str().unwrap_or("")))
+                && r.key_tags().is_some_and(|t| t.iter().all(|&t| is_integer(t)))
+        }),
+        reads("text to a string type", |r| {
+            r.key_type().is_some_and(|k| k == "text")
+                && r.key_tags().is_some_and(|t| t.iter().all(|&t| t == 0x0A))
+        }),
+        reads("or an enum", |r| {
+            r.key_type().is_some_and(|k| k.get("enum").is_some())
+                && r.key_tags().is_some_and(|t| t.iter().all(|&t| t == 0x0A))
+        }),
+        reads("bytes to a bytes type", |r| {
+            r.key_type().is_some_and(|k| k == "bytes")
+                && r.key_tags().is_some_and(|t| t.iter().all(|&t| t == 0x0B))
+        }),
+        refuses("A text key is never parsed as a number", |r| {
+            r.key_type().is_some_and(|k| INTEGERS.contains(&k.as_str().unwrap_or("")))
+                && r.key_tags().is_some_and(|t| t.iter().all(|&t| t == 0x0A))
+        }),
+        refuses("nor an integer formatted as text", |r| {
+            r.key_type().is_some_and(|k| k == "text")
+                && r.key_tags().is_some_and(|t| t.iter().all(|&t| is_integer(t)))
+        }),
+    ],
+};
 
 #[test]
 fn every_clause_of_reading_by_type_has_a_row() {
@@ -738,20 +923,29 @@ fn every_clause_of_reading_by_type_has_a_row() {
     assert_eq!(bullets, texts, "the bullets of *Reading by type*");
 
     let corpus = corpus();
-    let vectors = rows(&corpus, "vectors").iter().map(|row| Row {
-        ty: None,
-        node: decode(&blob(row)).expect("a vector reads"),
-        reads: true,
+    let vectors = rows(&corpus, "vectors").iter().map(|row| {
+        let node = decode(&blob(row)).expect("a vector reads");
+        Row::new(None, node, Some(&row["value"]), true)
     });
-    let typed = rows(&corpus, "reads").iter().map(|row| Row {
-        ty: Some(&row["type"]),
-        node: decode(&blob(row)).unwrap_or_else(|e| panic!("{}: {e:?}", name(row))),
-        reads: row.get("reads_as").is_some(),
+    let typed = rows(&corpus, "reads").iter().map(|row| {
+        let node = decode(&blob(row)).unwrap_or_else(|e| panic!("{}: {e:?}", name(row)));
+        let value = row.get("reads_as");
+        Row::new(Some(&row["type"]), node, value, value.is_some())
     });
     let all: Vec<Row> = vectors.chain(typed).collect();
 
+    let reading_keys = section("### Map keys")
+        .split("\n\n")
+        .map(words)
+        .find(|paragraph| paragraph.starts_with("When read,"));
+    assert_eq!(
+        reading_keys.as_deref(),
+        Some(MAP_KEY_READING.text),
+        "the paragraph of *Map keys* on reading"
+    );
+
     let mut gaps = Vec::new();
-    for bullet in BULLETS {
+    for bullet in BULLETS.iter().chain([&MAP_KEY_READING]) {
         for clause in bullet.clauses {
             assert!(
                 bullet.text.contains(clause.quote),
