@@ -328,6 +328,12 @@ write different bytes (`1u8` and `1u32`), NaN payloads are kept, and a
 reader accepts the extra forms listed above. Compare values, not blobs,
 unless the type is one whose bytes are fixed.
 
+Writers in other languages make the same choice. Go's `vcffi` writes a
+non-nil pointer as its value, unmarked, as `encoding/json` does, where Rust
+writes `Some(x)` as `some`, then `x`. So `&int32(5)` in Go and
+`Some(5i32)` in Rust are different blobs. Both readers read both forms, as
+the same value.
+
 ## Versions
 
 The version names both the byte grammar and the serde mapping. Version 1
