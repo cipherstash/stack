@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Features
 
-- reserve 0xF5 and 0xF6 for the storage profile
+- `tags::STORAGE_SOME` (`0xF5`) and `tags::STORAGE_MAP` (`0xF6`) name the two bytes the storage profile in `vitaminc-aead-frame` uses. Neither is a leaf or frame tag: `Frame::parse` refuses both, as it did in 0.8.0, and no sealed leaf or frame changes.
 
 ## [0.8.0] - 2026-10-21
 

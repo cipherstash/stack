@@ -1,23 +1,19 @@
 
 ## [0.8.1] - 2026-10-26
 
-### Documentation
-
-- say why the storage profile suits sealed values, and why not MessagePack or Borsh
+Nothing 0.8.0 wrote or read changes: the transport frame, the transport serde format and the ciphertext codec write the same bytes, and existing ciphertexts are unaffected.
 
 ### Features
 
-- add a versioned storage profile for values that are kept
-- key storage maps by integer, text or bytes, and return blobs Protected
+- A storage profile, `vitaminc_aead_frame::storage` (feature `serde`), for serialized values that are kept, such as the plaintext of a sealed value. `storage::to_vec` writes any `Serialize` type as a versioned blob and `storage::from_slice` reads one back into any `Deserialize` type. Unlike the rest of the crate, its bytes are a compatibility commitment: version 1 is specified in `STORAGE.md`, frozen, and pinned by the golden corpus in `testdata/storage-v1.json`, so a blob this release writes reads the same in every later release. The commitment covers `to_vec`, `from_slice`, `HEADER`, `MAGIC`, `VERSION`, `SOME`, `MAP` and `ErrorKind`; the transport frame, the transport serde format and the ciphertext codec may still change in any release. A blob is not a transport frame, and neither reads as the other. `STORAGE.md` also says why the profile is used for sealed values rather than MessagePack or Borsh.
+- The profile keeps what the transport format loses at rest. A `Some` is marked, so `None`, `Some(())` and `Some(None)` are three blobs, and an option inside an untagged, internally tagged or flattened type survives serde's buffering. A serde map's keys may be integers, text or bytes, and each keeps its kind. Only plain scalars are admitted: a logical type, `undefined` and a passthrough are refused.
+- `storage::to_vec` returns the blob as `Protected<Vec<u8>>`, since it is plaintext: the buffer is wiped as it grows and when it is dropped.
+- Every refusal has a stable class, `storage::Error::kind`: `NotABlob`, `UnsupportedVersion` (the reader needs upgrading; the blob is not corrupt), `Malformed`, `Mismatch` and `Unwritable`. As with the transport format, an error never contains a value.
+- Blobs are not canonical, by design. Equal values of different types write different bytes (`1u8` and `1u32`), NaN payloads are kept, and a reader accepts forms a writer does not produce. Compare values, not blobs.
 
 ### Fixes
 
-- read a newtype map key back into its type
-- read a storage blob's text keys in compact mode, as the storage key writer writes them
-
-### Performance
-
-- work out each storage map key's identity once, not at every comparison
+- The transport serde format reads a map key that is a newtype around a string back into its type. A `BTreeMap<Id, _>` with `struct Id(String)` was written but failed to read, with "expected tuple struct Id, found a string". The bytes written are unchanged.
 
 ## [0.8.0] - 2026-10-21
 
