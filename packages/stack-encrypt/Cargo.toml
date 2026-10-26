@@ -17,7 +17,7 @@ license-file = "LICENSE"
 # `StackCipher::new()` fall back to the client key `stash auth login` writes
 # to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
 # CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
-stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false, features = ["profile"] }
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false, features = ["profile"] }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
