@@ -1,4 +1,24 @@
 
+## [0.8.1] - 2026-10-26
+
+### Documentation
+
+- say why the storage profile suits sealed values, and why not MessagePack or Borsh
+
+### Features
+
+- add a versioned storage profile for values that are kept
+- key storage maps by integer, text or bytes, and return blobs Protected
+
+### Fixes
+
+- read a newtype map key back into its type
+- read a storage blob's text keys in compact mode, as the storage key writer writes them
+
+### Performance
+
+- work out each storage map key's identity once, not at every comparison
+
 ## [0.8.0] - 2026-10-21
 
 The `serde` format refuses a typed null (`vitaminc-aead` 0.8.0) as malformed wherever it appears, an `Option` included, and never writes one. A typed null is how plaintext hides the length of an absent fixed-width value once sealed, which is no concern of data that is not sealed. The frame's bytes are otherwise unchanged.

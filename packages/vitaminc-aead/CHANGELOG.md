@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-26
+
+### Features
+
+- reserve 0xF5 and 0xF6 for the storage profile
+
 ## [0.8.0] - 2026-10-21
 
 Ciphertexts written by 0.7 still decrypt: the one-byte null it wrote for a `None` opens as `None` as before. The reverse does not hold. A `None` of a fixed-width type now seals as a new kind of leaf, which a 0.7 reader refuses, so upgrade readers before writers.
