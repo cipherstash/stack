@@ -48,8 +48,36 @@ export function workflowFiles() {
  * both kinds with the same reader.
  *
  * Note for callers: `on:` parses as the boolean `true` under YAML 1.1 (the
- * "Norway problem"), so read triggers as `wf.on ?? wf[true]`.
+ * "Norway problem"), so read triggers with `triggers(wf)` below.
  */
 export function readWorkflow(relPath) {
   return yaml.load(readFileSync(join(REPO_ROOT, relPath), 'utf8'))
+}
+
+/**
+ * The triggers of a parsed workflow, as an object. `on:` parses as the boolean
+ * `true` under YAML 1.1 (the "Norway problem"), so the key is `true` unless
+ * the file quoted it. A workflow with no usable `on:` gives `{}`, so a caller
+ * can read `.pull_request` or test `'workflow_dispatch' in` without a guard.
+ * `workflow_dispatch:` with no value parses as null, so membership, not
+ * truthiness, is what says a trigger is declared. Before this helper, eight
+ * guards each wrote their own `wf.on ?? wf[true]`.
+ */
+export function triggers(wf) {
+  const on = wf?.on ?? wf?.[true]
+  return on && typeof on === 'object' ? on : {}
+}
+
+/**
+ * The directory a step's `run:` executes in. GitHub takes the step's own
+ * `working-directory`, else the job's `defaults.run.working-directory`, else
+ * the workflow's. The result is `undefined` when none is set, and GitHub then
+ * runs the step at the checkout root.
+ */
+export function runWorkingDirectory(wf, job, step) {
+  return (
+    step?.['working-directory'] ??
+    job?.defaults?.run?.['working-directory'] ??
+    wf?.defaults?.run?.['working-directory']
+  )
 }
