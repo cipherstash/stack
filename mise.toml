@@ -2,8 +2,8 @@
 # workspace in Cargo.toml (the stack-* crates and the three node bindings) and
 # the Go module in languages/golang.
 #
-# EQL (packages/eql) and protect-ffi (languages/typescript/packages/protect-ffi)
-# keep their own mise.toml. A tool they pin there overrides the pin here, in
+# EQL (packages/eql), protect-ffi (languages/typescript/packages/protect-ffi)
+# and the Python SDK (languages/python) keep their own mise.toml. A tool they pin there overrides the pin here, in
 # their folder only.
 
 [task_config]

@@ -2,9 +2,9 @@
 resolver = "2"
 
 # The stack-* crates imported from cipherstash-suite, and the three node
-# bindings that wrap them. The root is one of three Cargo workspaces in this
-# repository: EQL and protect-ffi keep their own, and pin their own vitaminc
-# (see `exclude`).
+# bindings that wrap them. The root is one of four Cargo workspaces in this
+# repository: EQL, protect-ffi and the Python SDK keep their own; the first
+# two pin their own vitaminc (see `exclude`).
 members = [
   "packages/stack-auth",
   "packages/stack-profile",
@@ -29,6 +29,9 @@ exclude = [
   # `wasm:auth-guest:build`.
   "languages/golang/encrypt/guest",
   "languages/golang/auth/guest",
+  # The Python SDK: a pyo3 extension and its core crate, built by maturin
+  # through `mise run build` in that folder.
+  "languages/python",
 ]
 
 [workspace.package]

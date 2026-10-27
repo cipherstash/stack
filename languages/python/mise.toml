@@ -1,0 +1,64 @@
+# The Python SDK (languages/python): a Cargo workspace of its own plus the
+# pure-Python package `stackencrypt`. mise reads this file from this folder
+# and merges the repo-root mise.toml above it, so the Rust version is the root's.
+#
+# Tasks live here and not in the root mise.toml on purpose:
+# scripts/__tests__/crates-ci.test.mjs fails a root task no workflow runs,
+# and the CI ticket (#1383) is what gives these a caller. Run them from this
+# directory: `mise run build`, `mise run test`, `mise run test:cargo`.
+
+[tools]
+# The interpreter the build task links and tests against; the oldest
+# supported (3.9) is covered in CI (#1383). uv makes the virtualenv and
+# installs the package.
+python = "3.14"
+uv = "0.8.24"
+
+[tasks.build]
+description = "Build the stackencrypt wheel with maturin and install it, with pytest, into .venv"
+shell = "bash -c"
+run = """
+set -euo pipefail
+# The interpreter is named: uv prefers its own managed interpreters over the
+# one on PATH, and the one on PATH is the python3 `[tools]` names, the one
+# the Rust tests link. A `.venv` made for another interpreter version is
+# recreated, so a change to `[tools]` cannot leave the tests on the old one. No lockfile is written: `uv pip install` resolves against the
+# index each time. The lockfile, and the Dependabot entry a tracked lockfile
+# needs, come with the CI ticket.
+want="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+have="$([ -x .venv/bin/python ] && .venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])' || true)"
+if [ "$have" != "$want" ]; then
+  rm -rf .venv
+  uv venv --python "$(command -v python3)" .venv
+fi
+# The dev profile for the local loop: the workspace's release profile is fat
+# LTO over the whole stack-encrypt graph, minutes per rebuild, and the CI
+# ticket is where the release wheel is built and timed.
+export MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:---profile dev}"
+# The package itself, built by maturin through the PEP 517 backend, plus the
+# `test` extra. Always reinstall the package so a Rust change is picked up.
+uv pip install --python .venv/bin/python --reinstall-package stackencrypt '.[test]'
+.venv/bin/python -c 'import stackencrypt as s; print("stackencrypt", s.__version__, "engine", s.__engine__)'
+"""
+
+[tasks.test]
+description = "Run the pure-Python test suite against the package `build` installed"
+depends = ["build"]
+run = ".venv/bin/python -m pytest"
+
+[tasks."test:cargo"]
+description = "Run both crates' Rust tests with --locked; puts libpython on the loader path so the engine crate's tests link"
+shell = "bash -c"
+run = """
+set -euo pipefail
+# The engine crate links libpython (no `extension-module` outside a wheel),
+# so the test binary must find it at run time. pyo3 links against the
+# interpreter PYO3_PYTHON names; the same interpreter says where its library
+# is. Both loader variables are set because macOS reads one and Linux the
+# other, and an unused one is harmless.
+export PYO3_PYTHON="${PYO3_PYTHON:-$(command -v python3)}"
+libdir="$("$PYO3_PYTHON" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+export DYLD_FALLBACK_LIBRARY_PATH="${libdir}${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cargo test --locked --workspace
+"""

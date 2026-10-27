@@ -187,9 +187,10 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
     ])
   })
 
-  it('finds the root lock and the five detached stack-* locks', () => {
+  it('finds the root lock and the six detached stack-* locks', () => {
     // The root workspace and the workspaces it excludes: the three cargo-fuzz
-    // crates and the two Go WASI guests, each with its own lock.
+    // crates, the two Go WASI guests and the Python SDK, each with its own
+    // lock.
     expect(LOCKS).toEqual(
       expect.arrayContaining([
         'Cargo.lock',
@@ -198,6 +199,7 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
         'packages/stack-encrypt/fuzz/Cargo.lock',
         'languages/golang/encrypt/guest/Cargo.lock',
         'languages/golang/auth/guest/Cargo.lock',
+        'languages/python/Cargo.lock',
       ]),
     )
   })
