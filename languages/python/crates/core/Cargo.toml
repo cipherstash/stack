@@ -1,0 +1,14 @@
+[package]
+name = "stackencrypt-core"
+description = "The Python SDK's engine-side logic, with no pyo3: what the parity binary and the fuzz target link alone"
+# This crate's version is not the wheel's. The wheel takes its version from
+# crates/engine (see pyproject.toml, `dynamic = ["version"]`).
+version = "0.0.0"
+edition.workspace = true
+# Literal, not inherited: scripts/__tests__/cargo-publish-opt-out.test.mjs
+# greps each member for this exact line.
+publish = false
+repository.workspace = true
+
+[dependencies]
+stack-encrypt = { workspace = true }

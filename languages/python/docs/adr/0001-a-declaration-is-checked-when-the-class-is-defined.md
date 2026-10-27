@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-10-16
 extends: ADR-0007, ADR-0008 (packages/stack-encrypt/docs/adr)
 ticket: the Python SDK discovery ticket, backlog item 1 (its 15 October 2026 amendment)

@@ -249,9 +249,10 @@ updates:
 
   # ── Cargo (the root workspace — the stack-* crates) ─────────────
   # The root workspace (the six stack-* crates and the three node binding
-  # crates) and the five detached workspaces beside it: the three cargo-fuzz
-  # crates and the two Go WASI guests. Each has its own Cargo.lock, and each
-  # is its own workspace root, so each is listed.
+  # crates) and the detached workspaces beside it that share its crates by
+  # path: the three cargo-fuzz crates, the two Go WASI guests and the Python
+  # SDK. Each has its own Cargo.lock, and each is its own workspace root, so
+  # each is listed.
   - package-ecosystem: cargo
     directories:
       - /
@@ -260,9 +261,10 @@ updates:
       - /packages/stack-encrypt/fuzz
       - /languages/golang/encrypt/guest
       - /languages/golang/auth/guest
+      - /languages/python
     # Lockfile only, like the other two cargo entries. Every one of these
-    # workspaces shares crates by path with another: the fuzz crates and both
-    # guests depend on root-workspace crates, the encrypt guest also on
+    # workspaces shares crates by path with another: the fuzz crates, both
+    # guests and the Python SDK depend on root-workspace crates, the encrypt guest also on
     # eql-bindings, and the EQL workspace on stack-encrypt and stack-kms. Those
     # root crates take `{ workspace = true }` requirements from the root
     # Cargo.toml, so a manifest edit made for any one of these lockfiles can

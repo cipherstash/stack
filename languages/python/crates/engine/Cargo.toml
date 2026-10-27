@@ -1,0 +1,31 @@
+[package]
+name = "stackencrypt-engine"
+description = "The pyo3 extension `stackencrypt._engine`, built by maturin into the stackencrypt wheel"
+# THE WHEEL'S VERSION. pyproject.toml declares `dynamic = ["version"]` and
+# maturin reads it from here, so `stackencrypt.__version__` and the
+# distribution metadata have one source. Independent semver from 0.1.0; not
+# the engine's version (the engine is named by its commit, `__engine__`).
+version = "0.1.0"
+edition.workspace = true
+# Literal, not inherited: scripts/__tests__/cargo-publish-opt-out.test.mjs
+# greps each member for this exact line.
+publish = false
+repository.workspace = true
+
+[lib]
+# maturin installs this as `stackencrypt._engine` (pyproject.toml,
+# `module-name`).
+name = "_engine"
+# rlib as well, so the crate's own tests can link the module function.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+stackencrypt-core = { path = "../core" }
+# `abi3-py39`: one wheel per platform for every CPython from 3.9, and a build
+# against an interpreter newer than this pyo3 knows (3.14 here).
+#
+# `extension-module` is deliberately NOT here. It tells pyo3 not to link
+# libpython, which is right for the wheel and wrong for `cargo test`: a test
+# binary has to link it or fails with undefined `_Py*` symbols. maturin turns
+# the feature on through `[tool.maturin].features` in pyproject.toml.
+pyo3 = { version = "0.29", features = ["abi3-py39"] }

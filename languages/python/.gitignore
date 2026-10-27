@@ -1,0 +1,6 @@
+# The virtualenv `mise run build` creates, and the extension an editable
+# install writes next to the package. `target/` is ignored at the repo root.
+.venv/
+*.so
+*.pyd
+.pytest_cache/
