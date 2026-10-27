@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/v2.8.1/configuration-schema.json
+package: cts
+output: client.gen.go
+generate:
+  models: true
+  client: true
+allow-remote-refs-from: []
+output-options:
+  response-type-suffix: HTTPResponse
+  overlay:
+    path: overlay.yaml
+  include-operation-ids:
+    - listAccessKeys
+    - listActors
+    - createActor
+    - deleteActor
+    - listMemberships
+    - createMembership
+    - deleteMembership
+  # The public SDK keeps identifiers opaque; the service validates their syntax.
+  type-mapping:
+    string:
+      formats:
+        uuid:
+          type: string

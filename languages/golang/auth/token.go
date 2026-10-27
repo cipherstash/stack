@@ -13,6 +13,9 @@ import (
 // Token is the stored access token, as auth.json holds it and
 // [ProfileStore.Token] reads it through the Rust crate's own type. The
 // refresh token is not in it: the guest handles refresh through a Strategy.
+// This is unverified profile data for inspection, not an authorization
+// decision. Use [Strategy.Token] to acquire and refresh a bearer string,
+// or [Strategy.ServiceToken] to also read its decoded metadata.
 type Token struct {
 	// AccessToken is the bearer credential.
 	AccessToken string

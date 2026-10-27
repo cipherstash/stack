@@ -93,6 +93,36 @@ discovery for local tests or a custom CTS host; `WithCacheCapacity(n)` sets
 how many users' CTS tokens an OIDC strategy keeps (1024 unless set), sized to
 the users it serves within a CTS token's lifetime.
 
+`AccessKey` takes `auth.NewAccessKey(ownedBytes)`, not a string. It consumes
+and wipes those bytes even if construction fails. Do not retain or reuse
+the slice. The key prints only a redaction.
+
+`strategy.Token(ctx)` returns the bearer string, as before. It does not require
+the extra metadata that administrative clients need.
+
+`strategy.ServiceToken(ctx)` returns an opaque `auth.ServiceToken`.
+Both methods share acquisition, caching and refresh. Call `Bearer()` explicitly
+when constructing an Authorization header from a snapshot.
+`WorkspaceID()`, `WorkspaceCRN()`, `Issuer()` and `ZeroKMSURL()` describe
+the same bearer. This accessor fails if metadata cannot be decoded or the
+ZeroKMS endpoint is absent. The zero value has no bearer. Request a token for
+each operation so the strategy can refresh it when needed.
+
+This follows Rust stack-auth's client contract: metadata is decoded, not
+signature-verified. CTS and ZeroKMS authenticate and authorize requests.
+The SDK does not validate JWT audience, roles or timestamps; refresh uses
+the expiry returned by CTS or saved in the profile.
+Access-key and OIDC strategies check the decoded workspace against their configured workspace.
+The workspace CRN combines that workspace with the configured region; device
+sessions use the profile's saved region and decoded workspace instead.
+
+Trust the CTS configuration and credential store. `WithBaseURL` (or
+`CS_CTS_HOST`) overrides acquisition and refresh endpoints. Otherwise,
+access-key and OIDC strategies discover regional CTS; device refresh uses
+the stored token's issuer as the native strategy does. A snapshot is not
+proof that an arbitrary token or credential store is authentic. No discovery
+or JWKS requests are added to cached-token reads.
+
 ## What the guest is given
 
 Exactly one directory, mounted read-write at a fixed guest path, and no

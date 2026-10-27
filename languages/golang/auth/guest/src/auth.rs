@@ -7,10 +7,10 @@ use std::collections::HashMap;
 
 use cts_common::Crn;
 use futures::executor::block_on;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use stack_auth::{
     AccessKey, AccessKeyStrategy, AuthStrategy, DeviceSessionStrategy, OidcFederationStrategy,
-    Token,
+    ServiceToken, Token,
 };
 use stack_profile::ProfileStore;
 use zeroize::Zeroizing;
@@ -26,7 +26,7 @@ use crate::status::{fail_auth, fail_profile, STATUS_AUTH_REFRESH_REQUIRED};
 enum Config {
     AccessKey {
         crn: String,
-        access_key: String,
+        access_key: Vec<u8>,
         base_url: Option<String>,
     },
     Oidc {
@@ -44,8 +44,8 @@ enum Config {
 }
 
 enum Strategy {
-    AccessKey(AccessKeyStrategy),
-    Oidc(OidcFederationStrategy<HostOidcProvider>),
+    AccessKey(AccessKeyStrategy, Crn),
+    Oidc(OidcFederationStrategy<HostOidcProvider>, Crn),
     // A device session is rebuilt for refresh only after Go has acquired the
     // cross-process lock. A fresh token can be read without the lock; keeping
     // a cached Token here would defeat the post-lock re-read on refresh.
@@ -93,14 +93,16 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
         } => {
             let access_key = Zeroizing::new(access_key);
             let crn: Crn = crn.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
-            let key: AccessKey = access_key
+            let key: AccessKey = std::str::from_utf8(&access_key)
+                .map_err(|_| malformed("access key is not UTF-8"))?
                 .parse()
                 .map_err(|e| fail_auth(&AuthError::from(e)))?;
-            let mut builder = AccessKeyStrategy::builder(crn, key).transport(WasiAuthTransport);
+            let mut builder =
+                AccessKeyStrategy::builder(crn.clone(), key).transport(WasiAuthTransport);
             if let Some(url) = parse_base_url(base_url)? {
                 builder = builder.base_url(url);
             }
-            Strategy::AccessKey(builder.build().map_err(|e| fail_auth(&e))?)
+            Strategy::AccessKey(builder.build().map_err(|e| fail_auth(&e))?, crn)
         }
         Config::Oidc {
             crn,
@@ -109,15 +111,16 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             cache_capacity,
         } => {
             let crn: Crn = crn.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
-            let mut builder = OidcFederationStrategy::builder(crn, HostOidcProvider(provider))
-                .transport(WasiAuthTransport);
+            let mut builder =
+                OidcFederationStrategy::builder(crn.clone(), HostOidcProvider(provider))
+                    .transport(WasiAuthTransport);
             if let Some(url) = parse_base_url(base_url)? {
                 builder = builder.base_url(url);
             }
             if let Some(capacity) = cache_capacity {
                 builder = builder.cache_capacity(capacity);
             }
-            Strategy::Oidc(builder.build().map_err(|e| fail_auth(&e))?)
+            Strategy::Oidc(builder.build().map_err(|e| fail_auth(&e))?, crn)
         }
         Config::DeviceSession {
             workspace_dir,
@@ -149,29 +152,66 @@ fn parse_handle(bytes: &[u8]) -> Result<u32, u32> {
     text.parse::<u32>().map_err(|_| refuse())
 }
 
-pub fn token(handle: &[u8]) -> Result<Vec<u8>, u32> {
+pub fn token(handle: &[u8], include_metadata: bool) -> Result<Vec<u8>, u32> {
     let id = parse_handle(handle)?;
     STRATEGIES.with(|items| {
         let items = items.borrow();
         let strategy = items.get(&id).ok_or_else(no_strategy)?;
         match strategy {
-            Strategy::AccessKey(strategy) => block_on(strategy.get_token())
-                .map(|token| token.as_str().as_bytes().to_vec())
-                .map_err(|e| fail_auth(&e)),
-            Strategy::Oidc(strategy) => block_on(strategy.get_token())
-                .map(|token| token.as_str().as_bytes().to_vec())
-                .map_err(|e| fail_auth(&e)),
+            Strategy::AccessKey(strategy, crn) => {
+                let token = block_on(strategy.get_token()).map_err(|e| fail_auth(&e))?;
+                if include_metadata {
+                    snapshot(&token, crn)
+                } else {
+                    Ok(token.as_str().as_bytes().to_vec())
+                }
+            }
+            Strategy::Oidc(strategy, crn) => {
+                let token = block_on(strategy.get_token()).map_err(|e| fail_auth(&e))?;
+                if include_metadata {
+                    snapshot(&token, crn)
+                } else {
+                    Ok(token.as_str().as_bytes().to_vec())
+                }
+            }
             Strategy::DeviceSession {
                 workspace_dir,
                 base_url,
-            } => cached_device_token(workspace_dir, base_url),
+            } => cached_device_token(workspace_dir, base_url, include_metadata),
         }
     })
 }
 
+// Match stack-auth's client contract: decode metadata from the credential
+// the strategy supplies. This does not verify JWT signatures or authorize
+// operations; CTS and ZeroKMS make those decisions.
+fn snapshot(token: &ServiceToken, crn: &Crn) -> Result<Vec<u8>, u32> {
+    #[derive(Serialize)]
+    struct Snapshot<'a> {
+        bearer: &'a str,
+        workspace_id: String,
+        workspace_crn: String,
+        issuer: &'a url::Url,
+        zerokms_url: url::Url,
+    }
+    let workspace = *token.workspace_id().map_err(|e| fail_auth(&e))?;
+    let snapshot = Snapshot {
+        bearer: token.as_str(),
+        workspace_id: workspace.to_string(),
+        workspace_crn: Crn::new(crn.region, workspace).to_string(),
+        issuer: token.issuer().map_err(|e| fail_auth(&e))?,
+        zerokms_url: token.zerokms_url().map_err(|e| fail_auth(&e))?,
+    };
+    serde_json::to_vec(&snapshot).map_err(|_| malformed("service token did not encode"))
+}
+
 /// A fresh token needs only a profile read. The 90-second refresh window is
 /// decided by stack-auth's Token, so Go does not duplicate that rule.
-fn cached_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Result<Vec<u8>, u32> {
+fn cached_device_token(
+    workspace_dir: &str,
+    base_url: &Option<url::Url>,
+    include_metadata: bool,
+) -> Result<Vec<u8>, u32> {
     let token: Token = ProfileStore::new(workspace_dir)
         .load_profile()
         .map_err(|e| fail_profile(&e))?;
@@ -184,12 +224,16 @@ fn cached_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Resu
     if token.is_expired() {
         return Err(STATUS_AUTH_REFRESH_REQUIRED);
     }
-    Ok(token.access_token().as_str().as_bytes().to_vec())
+    if !include_metadata {
+        return Ok(token.access_token().as_str().as_bytes().to_vec());
+    }
+    let crn = token.workspace_crn().map_err(|e| fail_auth(&e))?;
+    snapshot(&ServiceToken::new(token.access_token().clone()), &crn)
 }
 
 /// Called only after Go acquires the profile lock. Building from the store
 /// here re-reads a token another process may have rotated while Go waited.
-pub fn refresh(handle: &[u8]) -> Result<Vec<u8>, u32> {
+pub fn refresh(handle: &[u8], include_metadata: bool) -> Result<Vec<u8>, u32> {
     let id = parse_handle(handle)?;
     STRATEGIES.with(|items| {
         let items = items.borrow();
@@ -208,7 +252,14 @@ pub fn refresh(handle: &[u8]) -> Result<Vec<u8>, u32> {
         }
         let strategy = builder.build().map_err(|e| fail_auth(&e))?;
         let token = block_on(strategy.get_token()).map_err(|e| fail_auth(&e))?;
-        Ok(token.as_str().as_bytes().to_vec())
+        if !include_metadata {
+            return Ok(token.as_str().as_bytes().to_vec());
+        }
+        let saved: Token = ProfileStore::new(workspace_dir)
+            .load_profile()
+            .map_err(|e| fail_profile(&e))?;
+        let crn = saved.workspace_crn().map_err(|e| fail_auth(&e))?;
+        snapshot(&token, &crn)
     })
 }
 

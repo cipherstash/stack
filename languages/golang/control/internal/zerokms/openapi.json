@@ -1,0 +1,1387 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ZeroKMS API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/create-client": {
+      "post": {
+        "tags": [
+          "Clients"
+        ],
+        "operationId": "create_client",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Client created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateClientResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/create-keyset": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "summary": "Non-generic production entry point for `create`, enabling `routes!()` and\n`#[utoipa::path]` which don't support turbofish on generic functions.",
+        "operationId": "create_keyset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keyset created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateKeysetResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - validation failed"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          },
+          "409": {
+            "description": "Conflict - duplicate keyset or client"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/delete-client": {
+      "post": {
+        "tags": [
+          "Clients"
+        ],
+        "operationId": "delete_client",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Client deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteClientResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/disable-keyset": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "operationId": "disable_keyset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisableKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keyset disabled successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/enable-keyset": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "operationId": "enable_keyset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnableKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keyset enabled successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/generate-data-key": {
+      "post": {
+        "tags": [
+          "DataKeys"
+        ],
+        "operationId": "generate_data_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keys generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerateKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/grant-keyset": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "operationId": "grant_keyset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keyset access granted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Service is healthy"
+          }
+        }
+      }
+    },
+    "/list-clients": {
+      "post": {
+        "tags": [
+          "Clients"
+        ],
+        "operationId": "list_clients",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ListClientRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "List of clients",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KeysetClient"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - malformed request body"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/list-keysets": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "operationId": "list_keysets",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "List of keysets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Keyset"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/load-keyset": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "operationId": "load_keyset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoadKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keyset loaded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoadKeysetResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/modify-keyset": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "operationId": "modify_keyset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModifyKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keyset modified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/retrieve-data-key": {
+      "post": {
+        "tags": [
+          "DataKeys"
+        ],
+        "operationId": "retrieve_data_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetrieveKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keys retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrieveKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/retrieve-data-key-fallible": {
+      "post": {
+        "tags": [
+          "DataKeys"
+        ],
+        "operationId": "retrieve_data_key_fallible",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetrieveKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keys retrieved with per-key error handling",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrieveKeyResponseFallible"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    },
+    "/revoke-keyset": {
+      "post": {
+        "tags": [
+          "Keysets"
+        ],
+        "operationId": "revoke_keyset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeKeysetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Keyset access revoked successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cts_access_token": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ClientKeysetId": {
+        "oneOf": [
+          {
+            "type": "string",
+            "format": "uuid"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Struct representing the keyset ids associated with a client\nwhich could be a single keyset or multiple keysets."
+      },
+      "ClientType": {
+        "type": "string",
+        "description": "The type of client to create.",
+        "enum": [
+          "device"
+        ]
+      },
+      "Context": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A tag that can be used to identify the key.",
+            "required": [
+              "Tag"
+            ],
+            "properties": {
+              "Tag": {
+                "type": "string",
+                "description": "A tag that can be used to identify the key."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A key-value pair that can be used to identify the key.\nFor example, a key-value pair could be `(\"user_id\", \"1234\")`.",
+            "required": [
+              "Value"
+            ],
+            "properties": {
+              "Value": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": "A key-value pair that can be used to identify the key.\nFor example, a key-value pair could be `(\"user_id\", \"1234\")`."
+                },
+                "description": "A key-value pair that can be used to identify the key.\nFor example, a key-value pair could be `(\"user_id\", \"1234\")`.",
+                "maxItems": 2,
+                "minItems": 2
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A claim from the identity of the principal that is requesting the key.\nThe claim value is read from the claims list after token verification and prior to key generation.\n\nFor example, a claim could be `\"sub\"`.",
+            "required": [
+              "IdentityClaim"
+            ],
+            "properties": {
+              "IdentityClaim": {
+                "type": "string",
+                "description": "A claim from the identity of the principal that is requesting the key.\nThe claim value is read from the claims list after token verification and prior to key generation.\n\nFor example, a claim could be `\"sub\"`."
+              }
+            }
+          }
+        ],
+        "description": "Represents a contextual attribute for a data key which is used to \"lock\" the key to a specific context.\nContext attributes are included key tag generation which is in turn used as AAD in the final encryption step in the client.\nContext attributes should _never_ include any sensitive information."
+      },
+      "CreateClientRequest": {
+        "type": "object",
+        "description": "Request message to create a new client with the given name and description.\n\nIf `keyset_id` is omitted, the workspace's default keyset is used (created if necessary).\n\nRequires the `client:create` scope.\nResponse is a [CreateClientResponse].",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "A description of the client."
+          },
+          "keyset_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The keyset to associate the client with. Accepts a UUID or a name string.\nIf omitted, the workspace's default keyset is used.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "name": {
+            "type": "string",
+            "description": "A human-readable name for the client."
+          }
+        }
+      },
+      "CreateClientResponse": {
+        "type": "object",
+        "description": "Response message to a [CreateClientRequest].\n\nContains the `client_id` and the `client_key`, the latter being a base64 encoded 32 byte key.\nThe `client_key` should be considered sensitive and should be stored securely.",
+        "required": [
+          "id",
+          "dataset_id",
+          "name",
+          "description",
+          "client_key"
+        ],
+        "properties": {
+          "client_key": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64-encoded 32-byte key material for the client. Store this securely."
+          },
+          "dataset_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The ID of the keyset this client is associated with."
+          },
+          "description": {
+            "type": "string",
+            "description": "The description of the client."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The unique ID of the newly created client."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the client."
+          }
+        }
+      },
+      "CreateClientSpec": {
+        "type": "object",
+        "description": "Specification for creating a client alongside a keyset.",
+        "required": [
+          "client_type",
+          "name"
+        ],
+        "properties": {
+          "client_type": {
+            "$ref": "#/components/schemas/ClientType"
+          },
+          "name": {
+            "type": "string",
+            "description": "A human-readable name for the client.",
+            "maxLength": 64,
+            "minLength": 1
+          }
+        }
+      },
+      "CreateKeysetRequest": {
+        "type": "object",
+        "description": "Request message to create a new [Keyset] with the given name and description.\n\nRequires the `dataset:create` scope.",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "client": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CreateClientSpec"
+              }
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "A description of the keyset.",
+            "maxLength": 256,
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "description": "A human-readable name for the keyset.\nMust be 1–64 characters using only `A-Z a-z 0-9 _ - /`. The name `default` is reserved.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_\\-/]+$"
+          }
+        }
+      },
+      "CreateKeysetResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Keyset"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "client": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CreatedClient"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Response to a [CreateKeysetRequest].\n\nContains the created keyset and optionally a client if one was requested."
+      },
+      "CreatedClient": {
+        "type": "object",
+        "description": "Details of a client created as part of a [CreateKeysetRequest].",
+        "required": [
+          "id",
+          "client_key"
+        ],
+        "properties": {
+          "client_key": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64-encoded 32-byte key material for the client. Store this securely."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DecryptionPolicy": {
+        "type": "object",
+        "description": "A decryption policy: flat OR of identity claim conditions.\n\nUsed with `tag_version=1`. The policy conditions are included in the tag HMAC,\nso stripping or swapping the policy causes a tag mismatch.\nStored alongside the ciphertext.",
+        "required": [
+          "conditions"
+        ],
+        "properties": {
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyCondition"
+            }
+          }
+        }
+      },
+      "DeleteClientRequest": {
+        "type": "object",
+        "description": "Request message to delete a client and all associated authority keys.\n\nRequires the `client:revoke` scope.\nResponse is an [DeleteClientResponse].",
+        "required": [
+          "client_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DeleteClientResponse": {
+        "type": "object"
+      },
+      "DisableKeysetRequest": {
+        "type": "object",
+        "description": "Request message to disable a keyset.\nRequires the `dataset:disable` scope.\nResponse is an [EmptyResponse].",
+        "required": [
+          "keyset_id"
+        ],
+        "properties": {
+          "keyset_id": {
+            "type": "string",
+            "description": "The keyset to disable. Accepts a UUID or a name string.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+      },
+      "EmptyResponse": {
+        "type": "object",
+        "description": "Represents an empty response for requests that don't return any data."
+      },
+      "EnableKeysetRequest": {
+        "type": "object",
+        "description": "Request message to enable a keyset that has was previously disabled.\nRequires the `dataset:enable` scope.\nResponse is an [EmptyResponse].",
+        "required": [
+          "keyset_id"
+        ],
+        "properties": {
+          "keyset_id": {
+            "type": "string",
+            "description": "The keyset to enable. Accepts a UUID or a name string.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+      },
+      "GenerateKeyRequest": {
+        "type": "object",
+        "description": "A request message to generate a data key made on behalf of a client\nin the given keyset.\n\nRequires the `data_key:generate` scope.\nResponse is a [GenerateKeyResponse].\n\nSee also [GenerateKeySpec].",
+        "required": [
+          "client_id",
+          "keys"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GenerateKeySpec"
+            }
+          },
+          "keyset_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "unverified_context": {
+            "type": "object"
+          }
+        }
+      },
+      "GenerateKeyResponse": {
+        "type": "object",
+        "description": "Response to a [GenerateKeyRequest].",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GeneratedKey"
+            }
+          }
+        }
+      },
+      "GenerateKeySpec": {
+        "type": "object",
+        "description": "A specification for generating a data key used in a [GenerateKeyRequest].",
+        "required": [
+          "iv",
+          "descriptor"
+        ],
+        "properties": {
+          "context": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Context"
+            }
+          },
+          "decryption_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecryptionPolicy",
+                "description": "Optional decryption policy for OR-style lock context.\nWhen present, tag_version=1 is used (context-free base tag + policy MAC)."
+              }
+            ]
+          },
+          "descriptor": {
+            "type": "string"
+          },
+          "iv": {
+            "type": "string",
+            "format": "byte"
+          }
+        }
+      },
+      "GeneratedKey": {
+        "type": "object",
+        "description": "Represents generated data key material which is used by the client to derive data keys with its own key material.\n\nReturned in the response to a [GenerateKeyRequest].",
+        "required": [
+          "key_material",
+          "tag"
+        ],
+        "properties": {
+          "decryption_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecryptionPolicy",
+                "description": "The decryption policy with server-generated MAC (tag_version >= 1 only)."
+              }
+            ]
+          },
+          "key_material": {
+            "type": "string",
+            "format": "byte"
+          },
+          "tag": {
+            "type": "string",
+            "format": "byte"
+          }
+        }
+      },
+      "GrantKeysetRequest": {
+        "type": "object",
+        "description": "Request message to grant a client access to a keyset.\nRequires the `dataset:grant` scope.\n\nResponse is an [EmptyResponse].",
+        "required": [
+          "client_id",
+          "keyset_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keyset_id": {
+            "type": "string",
+            "description": "The keyset to grant access to. Accepts a UUID or a name string.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+      },
+      "IdentifiedBy": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A UUID that uniquely identifies a resource.",
+            "required": [
+              "Uuid"
+            ],
+            "properties": {
+              "Uuid": {
+                "type": "string",
+                "format": "uuid",
+                "description": "A UUID that uniquely identifies a resource."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A name that uniquely identifies a resource within an implied scope, e.g. a workspace.",
+            "required": [
+              "Name"
+            ],
+            "properties": {
+              "Name": {
+                "$ref": "#/components/schemas/Name",
+                "description": "A name that uniquely identifies a resource within an implied scope, e.g. a workspace."
+              }
+            }
+          }
+        ],
+        "description": "A UUID or textual name that can uniquely identify a resource. Whereas a UUID is a global identifier, `name` is not\nimplied to be *globally* unique, but unique within scope implied scope: e.g. a workspace."
+      },
+      "Keyset": {
+        "type": "object",
+        "description": "Struct representing a keyset.\nThis is the response to a [CreateKeysetRequest] and a in a vector in the response to a [ListKeysetRequest].",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "is_disabled"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "is_disabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "KeysetClient": {
+        "type": "object",
+        "description": "Response type for a [ListClientRequest].",
+        "required": [
+          "id",
+          "keyset_id",
+          "name",
+          "description"
+        ],
+        "properties": {
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keyset_id": {
+            "$ref": "#/components/schemas/ClientKeysetId"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ListClientRequest": {
+        "type": "object",
+        "description": "Request message to list clients.\n\nIf `keyset_id` is provided, only clients granted access to that keyset are returned;\notherwise all clients in the workspace are returned.\n\nRequires the `client:list` scope.\nResponse is a vector of [KeysetClient]s.",
+        "properties": {
+          "keyset_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdentifiedBy",
+                "description": "Optional keyset filter — either a keyset UUID or a keyset name (resolved within the\nworkspace). Only clients granted that keyset are returned; if omitted, all clients in the\nworkspace are returned."
+              }
+            ]
+          }
+        }
+      },
+      "ListKeysetRequest": {
+        "type": "object",
+        "description": "Request message to list all [Keyset]s.\n\nRequires the `dataset:list` scope.\nResponse is a vector of [Keyset]s.",
+        "properties": {
+          "show_disabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LoadKeysetRequest": {
+        "type": "object",
+        "description": "Request to load a keyset on behalf of a client.\nThis is used by clients before indexing or querying data and includes\nkey material which can be derived by the client to generate encrypted index terms.\n\nIf a keyset_id is not provided the client's default keyset will be loaded.\n\nRequires the `data_key:retrieve` scope (though this may change in the future).\nResponse is a [LoadKeysetResponse].",
+        "required": [
+          "client_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keyset_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The keyset to load. Accepts a UUID or a name string. If omitted, the client's default keyset is used.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+      },
+      "LoadKeysetResponse": {
+        "type": "object",
+        "description": "Response to a [LoadKeysetRequest].\nThe response includes the key material required to derive data keys.\nIt is analogous to a [RetrieveKeyResponse] but where the server generated the key.",
+        "required": [
+          "partial_index_key",
+          "dataset"
+        ],
+        "properties": {
+          "dataset": {
+            "$ref": "#/components/schemas/Keyset"
+          },
+          "partial_index_key": {
+            "$ref": "#/components/schemas/RetrievedKey"
+          }
+        }
+      },
+      "ModifyKeysetRequest": {
+        "type": "object",
+        "description": "Request message to modify a keyset with the given keyset_id.\n`name` and `description` are optional and will be updated if provided.\n\nRequires the `dataset:modify` scope.\nResponse is an [EmptyResponse].",
+        "required": [
+          "keyset_id"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional new description for the keyset."
+          },
+          "keyset_id": {
+            "type": "string",
+            "description": "The keyset to modify. Accepts a UUID or a name string.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional new name for the keyset."
+          }
+        }
+      },
+      "Name": {
+        "type": "string"
+      },
+      "PolicyCondition": {
+        "type": "object",
+        "description": "An identity claim condition in a decryption policy.\n\nWhen `value` is `None`, the server resolves the claim value from the caller's JWT\nat key generation time (secure default). When `value` is `Some`, the provided value\nis used as-is (for cross-identity use cases like admin encrypting for a user).\n\nThe resolved policy (with all values filled in) is returned in the `GeneratedKey`\nresponse and stored alongside the ciphertext.",
+        "required": [
+          "claim"
+        ],
+        "properties": {
+          "claim": {
+            "type": "string",
+            "description": "The JWT claim name (e.g., \"sub\", \"actor_id\")."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The expected claim value. When `None`, resolved from the caller's JWT at generation time."
+          }
+        }
+      },
+      "RetrieveKeyRequest": {
+        "type": "object",
+        "description": "Request to retrieve a data key on behalf of a client in the given keyset.\nRequires the `data_key:retrieve` scope.\nResponse is a [RetrieveKeyResponse].\n\nSee also [RetrieveKeySpec].",
+        "required": [
+          "client_id",
+          "keys"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetrieveKeySpec"
+            }
+          },
+          "keyset_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "unverified_context": {
+            "type": "object"
+          }
+        }
+      },
+      "RetrieveKeyResponse": {
+        "type": "object",
+        "description": "Response to a [RetrieveKeyRequest].\nContains a list of [RetrievedKey]s.",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetrievedKey"
+            }
+          }
+        }
+      },
+      "RetrieveKeyResponseFallible": {
+        "type": "object",
+        "description": "Response to a [RetrieveKeyRequest] with per-key error handling",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {}
+          }
+        }
+      },
+      "RetrieveKeySpec": {
+        "type": "object",
+        "description": "A specification for retrieving a data key used in a [RetrieveKeyRequest].",
+        "required": [
+          "iv",
+          "descriptor",
+          "tag"
+        ],
+        "properties": {
+          "context": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Context"
+            }
+          },
+          "decryption_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecryptionPolicy",
+                "description": "The decryption policy with MAC (only for tag_version >= 1).\nServer verifies the caller's claims satisfy at least one condition."
+              }
+            ]
+          },
+          "descriptor": {
+            "type": "string"
+          },
+          "iv": {
+            "type": "string",
+            "format": "byte"
+          },
+          "tag": {
+            "type": "string",
+            "format": "byte"
+          },
+          "tag_version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "RetrievedKey": {
+        "type": "object",
+        "description": "Returned type from a [RetrieveKeyRequest].",
+        "required": [
+          "key_material"
+        ],
+        "properties": {
+          "key_material": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64-encoded key material."
+          }
+        }
+      },
+      "RevokeKeysetRequest": {
+        "type": "object",
+        "description": "Request message to revoke a client's access to a keyset.\nRequires the `dataset:revoke` scope.\nResponse is an [EmptyResponse].",
+        "required": [
+          "client_id",
+          "keyset_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keyset_id": {
+            "type": "string",
+            "description": "The keyset to revoke access from. Accepts a UUID or a name string.",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "cts_access_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

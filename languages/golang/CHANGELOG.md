@@ -12,6 +12,16 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- `Strategy.ServiceToken` returns an opaque `auth.ServiceToken` with the bearer
+  and decoded workspace/service metadata. It shares acquisition, caching and
+  refresh with `Strategy.Token`, which still returns a string without requiring
+  that extra metadata. Neither method verifies JWT signatures locally.
+
+- Workspace administration through `control`: CTS actors, access-key metadata
+  and memberships, and ZeroKMS keysets, clients and grants. Creation secrets
+  support one-shot typed transfer or byte export. Administrative writes are
+  not retried, redirects are refused, and malformed inventories fail closed.
+
 - **A two-letter word is searchable in `TextMatch`, `TextSearch` and
   `TextSearchOre` (#1309).** The EQL v4 match types index each two-letter
   word whole, beside the 3-grams of the text, so a two-letter surname such
@@ -124,6 +134,10 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   map a `null=sql` field yet.
 
 ### Breaking
+
+- `ProfileStore.AccessKey` now consumes `*auth.AccessKey`, constructed with
+  `auth.NewAccessKey(ownedBytes)`, instead of a string. It wipes the owned
+  bytes on success and failure.
 
 - **`eql.SteVecDocument` and `eql.SteVecQuery` are gone.** They named
   EQL v4's SteVec domains, which the engine never produced and the v4

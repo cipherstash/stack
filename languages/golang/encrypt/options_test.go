@@ -183,7 +183,7 @@ func TestOIDCFederationThroughTheClientTransport(t *testing.T) {
 
 func TestOIDCFederationResolvesTheKeyLikeAuto(t *testing.T) {
 	authGuestOrSkip(t)
-	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+	loggedInEnv(t)
 	provider := auth.OIDCProviderFunc(func(context.Context) (string, error) { return "idp-token", nil })
 	resolved, err := OIDCFederation(testCRN, provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
 	if err != nil {

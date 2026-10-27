@@ -75,7 +75,7 @@ func TestATokenFetchCancelledFailsOnlyItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,27 +98,46 @@ func TestATokenFetchCancelledFailsOnlyItself(t *testing.T) {
 }
 
 // An access-key exchange rotates nothing, so it ends with its caller: the
-// held request is cancelled at the caller's deadline, not run on for the
+// held request is cancelled with the caller, not run on for the
 // refresh grace, and Close does not wait for it.
 func TestAnAccessKeyExchangeEndsWithItsCaller(t *testing.T) {
 	guestOrSkip(t)
-	var hold atomic.Bool
-	server := tokenServer(t, &hold)
+	started, cancelled := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		select {
+		case <-r.Context().Done():
+			close(cancelled)
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer server.Close()
 	profile, err := Open(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	hold.Store(true)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("cancelled Token: %v, want the deadline", err)
+	result := make(chan error, 1)
+	go func() {
+		_, err := strategy.ServiceToken(ctx)
+		result <- err
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("exchange did not reach the server")
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled ServiceToken: %v, want context.Canceled", err)
 	}
 	// The grace is 10 seconds; a Close that waited for it would take that.
 	start := time.Now()
@@ -127,6 +146,11 @@ func TestAnAccessKeyExchangeEndsWithItsCaller(t *testing.T) {
 	}
 	if waited := time.Since(start); waited > 2*time.Second {
 		t.Fatalf("Close took %v: the exchange ran on past its caller", waited)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the HTTP request was not cancelled")
 	}
 }
 
@@ -137,63 +161,81 @@ func TestAnAccessKeyExchangeEndsWithItsCaller(t *testing.T) {
 // request, and the profile on disk holds the rotated refresh token.
 func TestARefreshAnsweredAfterItsCallerGaveUpIsKept(t *testing.T) {
 	guestOrSkip(t)
-	dir, _ := expiredDeviceProfile(t)
-	var requests atomic.Int32
-	answered := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) > 1 {
-			// The old refresh token is retired once the service answers.
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, `{"error":"invalid_grant"}`)
-			return
-		}
-		_, _ = io.Copy(io.Discard, r.Body)
-		time.Sleep(150 * time.Millisecond)
-		fmt.Fprint(w, `{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
-		close(answered)
-	}))
-	t.Cleanup(server.Close)
-	profile, err := Open(context.Background(), dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer profile.Close()
-	ws, err := profile.WorkspaceStore(context.Background(), wsA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	strategy, err := ws.DeviceSession(context.Background(), WithBaseURL(server.URL))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer strategy.Close()
+	for _, kind := range []string{"bearer", "snapshot"} {
+		t.Run(kind, func(t *testing.T) {
+			dir, _ := expiredDeviceProfile(t)
+			var requests atomic.Int32
+			answered := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if requests.Add(1) > 1 {
+					// The old refresh token is retired once the service answers.
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprint(w, `{"error":"invalid_grant"}`)
+					return
+				}
+				_, _ = io.Copy(io.Discard, r.Body)
+				time.Sleep(150 * time.Millisecond)
+				fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`, deviceJWT(t, "http://"+r.Host, "fresh"))
+				close(answered)
+			}))
+			t.Cleanup(server.Close)
+			profile, err := Open(context.Background(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer profile.Close()
+			ws, err := profile.WorkspaceStore(context.Background(), wsA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			strategy, err := ws.DeviceSession(context.Background(), WithBaseURL(server.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer strategy.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if _, err := strategy.Token(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("cancelled Token: %v, want the deadline", err)
-	}
-	select {
-	case <-answered:
-		t.Fatal("the cancelled Token waited for the service's answer")
-	default:
-	}
-	if token, err := strategy.Token(context.Background()); err != nil || token != "fresh" {
-		t.Fatalf("the next Token: %q, %v, want the refreshed token", token, err)
-	}
-	if n := requests.Load(); n != 1 {
-		t.Fatalf("%d refresh requests, want 1: the late answer was dropped", n)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "workspaces", wsA, "auth.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stored map[string]any
-	if err := json.Unmarshal(data, &stored); err != nil {
-		t.Fatal(err)
-	}
-	if stored["refresh_token"] != "refresh-2" {
-		t.Fatalf("stored refresh token = %v, want the rotated one", stored["refresh_token"])
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			if kind == "snapshot" {
+				_, err = strategy.ServiceToken(ctx)
+			} else {
+				_, err = strategy.Token(ctx)
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("cancelled Token: %v, want the deadline", err)
+			}
+			select {
+			case <-answered:
+				t.Fatal("the cancelled Token waited for the service's answer")
+			default:
+			}
+			if token, err := strategy.Token(context.Background()); err != nil || token != deviceJWT(t, server.URL, "fresh") {
+				t.Fatalf("the next Token: %q, %v, want the refreshed token", token, err)
+			}
+			if token, err := strategy.ServiceToken(context.Background()); err != nil || token.Bearer() != deviceJWT(t, server.URL, "fresh") || token.WorkspaceCRN() != "crn:ap-southeast-2.aws:"+wsA {
+				t.Fatalf("the next ServiceToken did not read the refreshed metadata: %v", err)
+			}
+			if n := requests.Load(); n != 1 {
+				t.Fatalf("%d refresh requests, want 1: the late answer was dropped", n)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "workspaces", wsA, "auth.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stored map[string]any
+			if err := json.Unmarshal(data, &stored); err != nil {
+				t.Fatal(err)
+			}
+			if stored["refresh_token"] != "refresh-2" {
+				t.Fatalf("stored refresh token = %v, want the rotated one", stored["refresh_token"])
+			}
+			if err := strategy.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := strategy.ServiceToken(context.Background()); !errors.Is(err, ErrState) {
+				t.Fatalf("ServiceToken after Close: %v, want ErrState", err)
+			}
+		})
 	}
 }
 
@@ -208,7 +250,7 @@ func TestARefreshThatSucceedsAfterItsContextEndsFailsWithIt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		cancel()
-		fmt.Fprint(w, `{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
+		fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`, deviceJWT(t, "http://"+r.Host, "fresh"))
 	}))
 	t.Cleanup(server.Close)
 	profile, err := Open(context.Background(), dir)
@@ -230,7 +272,7 @@ func TestARefreshThatSucceedsAfterItsContextEndsFailsWithIt(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || out != nil {
 		t.Fatalf("refresh: %q, %v, want no token and context.Canceled", out, err)
 	}
-	if token, err := strategy.Token(context.Background()); err != nil || token != "fresh" {
+	if token, err := strategy.Token(context.Background()); err != nil || token != deviceJWT(t, server.URL, "fresh") {
 		t.Fatalf("the next Token: %q, %v, want the refreshed token", token, err)
 	}
 }
@@ -244,7 +286,7 @@ func TestATokenRequestWhoseContextEndsInTheQueueNeverReachesTheGuest(t *testing.
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +328,7 @@ func TestATokenFetchThatRunsOnAfterItsContextEndsClosesTheProfile(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.example.com"))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, NewAccessKey([]byte("CSAKtestKeyId.testKeySecret")), WithBaseURL("https://cts.example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}

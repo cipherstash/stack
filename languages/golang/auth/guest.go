@@ -73,6 +73,7 @@ type instance struct {
 	listWorkspaces, workspaceDir, lockPath                       api.Function
 	secretKey, token, hasToken, deviceIdentity                   api.Function
 	authNew, authValidateCRN, authToken, authRefresh, authFree   api.Function
+	authServiceToken, authRefreshServiceToken                    api.Function
 }
 
 // guestModuleConfig is the module configuration every guest instance runs
@@ -154,24 +155,26 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 	}
 	inst := &instance{runtime: runtime, module: module, mem: mem, mount: mount, transport: transport}
 	exports := map[string]*api.Function{
-		"se_alloc":                   &inst.exports.Alloc,
-		"se_dealloc":                 &inst.exports.Dealloc,
-		"sa_shutdown":                &inst.shutdown,
-		"sa_current_workspace":       &inst.currentWorkspace,
-		"sa_set_current_workspace":   &inst.setCurrentWorkspace,
-		"sa_clear_current_workspace": &inst.clearCurrentWorkspace,
-		"sa_list_workspaces":         &inst.listWorkspaces,
-		"sa_workspace_dir":           &inst.workspaceDir,
-		"sa_lock_path":               &inst.lockPath,
-		"sa_secret_key":              &inst.secretKey,
-		"sa_token":                   &inst.token,
-		"sa_has_token":               &inst.hasToken,
-		"sa_device_identity":         &inst.deviceIdentity,
-		"sa_auth_new":                &inst.authNew,
-		"sa_auth_validate_crn":       &inst.authValidateCRN,
-		"sa_auth_token":              &inst.authToken,
-		"sa_auth_refresh":            &inst.authRefresh,
-		"sa_auth_free":               &inst.authFree,
+		"se_alloc":                      &inst.exports.Alloc,
+		"se_dealloc":                    &inst.exports.Dealloc,
+		"sa_shutdown":                   &inst.shutdown,
+		"sa_current_workspace":          &inst.currentWorkspace,
+		"sa_set_current_workspace":      &inst.setCurrentWorkspace,
+		"sa_clear_current_workspace":    &inst.clearCurrentWorkspace,
+		"sa_list_workspaces":            &inst.listWorkspaces,
+		"sa_workspace_dir":              &inst.workspaceDir,
+		"sa_lock_path":                  &inst.lockPath,
+		"sa_secret_key":                 &inst.secretKey,
+		"sa_token":                      &inst.token,
+		"sa_has_token":                  &inst.hasToken,
+		"sa_device_identity":            &inst.deviceIdentity,
+		"sa_auth_new":                   &inst.authNew,
+		"sa_auth_validate_crn":          &inst.authValidateCRN,
+		"sa_auth_token":                 &inst.authToken,
+		"sa_auth_refresh":               &inst.authRefresh,
+		"sa_auth_service_token":         &inst.authServiceToken,
+		"sa_auth_refresh_service_token": &inst.authRefreshServiceToken,
+		"sa_auth_free":                  &inst.authFree,
 	}
 	for name, slot := range exports {
 		if *slot = module.ExportedFunction(name); *slot == nil {

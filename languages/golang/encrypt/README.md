@@ -165,6 +165,14 @@ id, a client key and an `auth` strategy explicitly; `OIDCFederation` mints the
 token from an identity provider's. No credentials take a raw token. The client
 key is consumed by `NewClient` and wiped, whatever the outcome.
 
+An access-key strategy takes `auth.NewAccessKey(ownedBytes)`; creating the
+strategy consumes and wipes those bytes on success or failure.
+`strategy.Token(ctx)` returns a bearer string. Pass the strategy to
+`NewCredentials`; the encryption client uses it directly, without requiring
+the metadata returned by `strategy.ServiceToken(ctx)`. Token signatures and
+permissions are checked by the service, not by the SDK.
+The caller owns that strategy and its store, and closes both after the client.
+
 ## The cipher
 
 A `Cipher` is the client bound to one keyset, and to any extension of the

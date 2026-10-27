@@ -1,0 +1,36 @@
+overlay: 1.0.0
+info:
+  title: CTS administration names and Go representations
+  version: 1.0.0
+actions:
+  - target: '$'
+    description: Disambiguate the repeated list, create and delete operation IDs.
+    update:
+      paths:
+        /api/access-keys:
+          get:
+            operationId: listAccessKeys
+        /api/actors:
+          get:
+            operationId: listActors
+          post:
+            operationId: createActor
+        /api/actors/{actor_identifier}:
+          delete:
+            operationId: deleteActor
+        /api/memberships:
+          get:
+            operationId: listMemberships
+          post:
+            operationId: createMembership
+        /api/memberships/{membership_id}:
+          delete:
+            operationId: deleteMembership
+  - target: '$.components.schemas.CreateActorRequest.properties.tokenExpiry'
+    description: Preserve the SDK's int64 input without narrowing before server validation.
+    update:
+      x-go-type: int64
+  - target: '$.paths["/api/actors"].get.parameters[?(@.name == "limit")].schema'
+    description: Preserve the SDK's int input without narrowing before server validation.
+    update:
+      x-go-type: int

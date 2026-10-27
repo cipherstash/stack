@@ -54,7 +54,7 @@ func liveClient(t *testing.T) *Client {
 	if cts := os.Getenv("STACK_ENCRYPT_TEST_CTS_HOST"); cts != "" {
 		strategyOpts = append(strategyOpts, auth.WithBaseURL(cts))
 	}
-	strategy, err := store.AccessKey(t.Context(), crn, accessKey, strategyOpts...)
+	strategy, err := store.AccessKey(t.Context(), crn, auth.NewAccessKey([]byte(accessKey)), strategyOpts...)
 	if err != nil {
 		t.Fatalf("auth access-key strategy: %v", err)
 	}

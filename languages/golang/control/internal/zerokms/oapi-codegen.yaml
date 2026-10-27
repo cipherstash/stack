@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/v2.8.1/configuration-schema.json
+package: zerokms
+output: client.gen.go
+generate:
+  models: true
+  client: true
+allow-remote-refs-from: []
+output-options:
+  response-type-suffix: HTTPResponse
+  overlay:
+    path: overlay.yaml
+  include-operation-ids:
+    - create_client
+    - create_keyset
+    - delete_client
+    - disable_keyset
+    - enable_keyset
+    - grant_keyset
+    - list_clients
+    - list_keysets
+    - modify_keyset
+    - revoke_keyset
+  # The public SDK keeps identifiers opaque; the service validates their syntax.
+  type-mapping:
+    string:
+      formats:
+        uuid:
+          type: string

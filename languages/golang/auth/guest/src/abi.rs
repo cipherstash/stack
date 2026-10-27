@@ -205,23 +205,41 @@ pub unsafe extern "C" fn sa_auth_validate_crn(ptr: *const u8, len: u32) -> u64 {
     export1(ptr, len, auth::validate_crn)
 }
 
-/// Get a service token from a strategy. A device session returns
+/// Get raw bearer bytes from a strategy. A device session returns
 /// `STATUS_AUTH_REFRESH_REQUIRED` when it enters the refresh window;
 /// this export never refreshes a device session or needs its file lock.
 /// # Safety
 /// The input pair is validated against guest linear memory.
 #[no_mangle]
 pub unsafe extern "C" fn sa_auth_token(ptr: *const u8, len: u32) -> u64 {
-    export1(ptr, len, auth::token)
+    export1(ptr, len, |handle| auth::token(handle, false))
 }
 
-/// Refresh a device session. The Go host must hold the workspace's
+/// Get a bearer and its decoded metadata as a JSON snapshot.
+/// Device sessions have the same refresh requirement as [`sa_auth_token`].
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_service_token(ptr: *const u8, len: u32) -> u64 {
+    export1(ptr, len, |handle| auth::token(handle, true))
+}
+
+/// Refresh a device session and return raw bearer bytes. The Go host must hold the workspace's
 /// auth.json lock across this whole call, including the disk re-read and save.
 /// # Safety
 /// The input pair is validated against guest linear memory.
 #[no_mangle]
 pub unsafe extern "C" fn sa_auth_refresh(ptr: *const u8, len: u32) -> u64 {
-    export1(ptr, len, auth::refresh)
+    export1(ptr, len, |handle| auth::refresh(handle, false))
+}
+
+/// Refresh a device session and return a JSON snapshot.
+/// The Go host must hold the same lock as for [`sa_auth_refresh`].
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_refresh_service_token(ptr: *const u8, len: u32) -> u64 {
+    export1(ptr, len, |handle| auth::refresh(handle, true))
 }
 
 /// Drop one strategy and its cached credential.

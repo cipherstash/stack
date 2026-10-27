@@ -1,0 +1,1777 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CipherStash CTS API",
+    "description": "CipherStash Token Service API",
+    "termsOfService": "https://cipherstash.com/terms",
+    "contact": {
+      "name": "CipherStash Support",
+      "url": "https://cipherstash.com/support",
+      "email": "support@cipherstash.com"
+    },
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://eu-central-1.aws.cts.cipherstashmanaged.net/"
+    }
+  ],
+  "paths": {
+    "/.well-known/jwks.json": {
+      "get": {
+        "tags": [
+          ".well-known"
+        ],
+        "summary": "Get JSON Web Key Set",
+        "description": "Returns the public JSON Web Key Set (JWKS) used to verify JWTs issued by this service.",
+        "operationId": "get_jwks_handler",
+        "responses": {
+          "200": {
+            "description": "JSON Web Key Set",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/.well-known/openid-configuration": {
+      "get": {
+        "tags": [
+          ".well-known"
+        ],
+        "summary": "Get OpenID Connect Configuration",
+        "description": "Returns the OpenID Connect discovery document for this service.",
+        "operationId": "get_openid_config_handler",
+        "responses": {
+          "200": {
+            "description": "OpenID Connect configuration",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/access-key": {
+      "delete": {
+        "tags": [
+          "Access Keys"
+        ],
+        "summary": "Delete Access Key",
+        "description": "Deletes (revokes) an access key by name.\nThe authenticated user must be able to delete access keys in this workspace.\n\nOnce deleted, the access key can no longer be used for authentication.",
+        "operationId": "delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccessKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Access key deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Access Keys"
+        ],
+        "summary": "Update Access Key",
+        "description": "Updates the metadata of an existing access key without rotating its secret.\nThe authenticated user must have the `access_key:update` permission in the\nworkspace.\n\nOnly `keyName` and `tokenExpiry` can be changed. The access key secret\ncontinues to authenticate after the update.\n\nAccess-key principals are forbidden from calling this endpoint —\ncredential lifecycle operations must come from a human-authenticated\nsession, so a leaked access key cannot silently extend its own TTL or\nrename itself. The check uses [`PrincipalKind::AccessKey`] (not\n`is_cts_minted_token`) because dashboard humans also hold CTS-minted\ntokens and must remain allowed.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAccessKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Access key updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessKey"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters or duplicate name"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          },
+          "404": {
+            "description": "Access key not found"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/access-keys": {
+      "get": {
+        "tags": [
+          "Access Keys"
+        ],
+        "summary": "List Access Keys",
+        "description": "Retrieves all access keys for the authenticated user in the specified workspace.\nThe user must have list access key permissions.\n\nReturns an array of access keys with metadata including creation date and last usage.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of access keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccessKey"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Access Keys"
+        ],
+        "summary": "Create Access Key",
+        "description": "Creates a new access key for the workspace.\nThe authenticated user must have admin privileges in the workspace.\n\nThe returned access key can only be retrieved once at creation time.\nStore it securely as it cannot be recovered later.\n\nAccess keys can be assigned different roles (Admin, Member, Control) to control permissions.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAccessKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Access key created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateAccessKeyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters or duplicate name"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid token"
+          },
+          "403": {
+            "description": "Forbidden - insufficient permissions (requires admin)"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/actors": {
+      "get": {
+        "tags": [
+          "Actors"
+        ],
+        "summary": "List Actors",
+        "description": "Retrieves a page of actors for the specified workspace, newest first.\nPass `nextCursor` from the response as `?cursor=` to fetch the next page.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum actors to return. Clamped to `[1, 200]`; defaults to 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned as `nextCursor` from a previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of actors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListActorsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor or limit"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Actors"
+        ],
+        "summary": "Create Actor",
+        "description": "Creates a new actor (app or agent) with an associated access key.\nThe access key is returned once and cannot be retrieved again.\nRequires admin role in the workspace.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateActorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Actor created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateActorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - requires admin role"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/actors/{actor_identifier}": {
+      "delete": {
+        "tags": [
+          "Actors"
+        ],
+        "summary": "Delete Actor",
+        "description": "Deletes an actor by its identifier. The associated access key is also deleted.",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          },
+          {
+            "name": "actor_identifier",
+            "in": "path",
+            "description": "The actor identifier (e.g. app-JBSWY3DPEHPK3PXP)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actor deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteActorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Actor not found"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/authorise": {
+      "post": {
+        "tags": [
+          "Authorization"
+        ],
+        "summary": "Authorize",
+        "description": "Exchange a credential for a CipherStash access token.\n\n## Credential Types\n\nThis endpoint accepts two types of credentials:\n\n### OIDC Token\nExchange an OIDC JWT from a configured provider for a CipherStash token.\nRequires:\n- `oidcToken`: A valid JWT from an OIDC provider configured for the workspace\n- `workspaceId`: The workspace to authorize against\n\n### Access Key\nExchange a CipherStash access key for a token.\nRequires:\n- `accessKey`: A valid CipherStash access key (format: `CSAKT...`)\n\n## Response\n\nReturns a signed JWT (`accessToken`) and an `expiry` timestamp.",
+        "operationId": "authorize",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Authorization successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired credentials"
+          }
+        }
+      }
+    },
+    "/api/federate": {
+      "post": {
+        "tags": [
+          "Authorization"
+        ],
+        "summary": "Federate",
+        "description": "Deprecated: use the `/api/authorize` endpoint instead.",
+        "operationId": "federate",
+        "responses": {
+          "200": {
+            "description": "CipherStash JWT credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/memberships": {
+      "get": {
+        "tags": [
+          "Memberships"
+        ],
+        "summary": "List memberships",
+        "description": "Lists all memberships for the workspace.\n\n## Authentication\n\nValid authentication credential must be provided using the `Authorization` header.\n\n* **Access Key** - Requires an access key with the `admin` role.\n* **CipherStash ServiceToken** - Requires a ServiceToken (CTS-minted JWT) for a user who is an admin of the workspace.\n\n*NOTE: CipherStash ServiceTokens for human callers are only issued via the CipherStash Dashboard's OIDC exchange flow.*",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of memberships",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMembershipsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Memberships"
+        ],
+        "summary": "Create a membership",
+        "description": "Creates a new membership for a user in the workspace.\n\n## Authentication\n\nValid authentication credential must be provided using the `Authorization` header.\n\n* **Access Key** - Requires an access key with the `admin` role.\n* **CipherStash User JWT** - Requires a JWT for a user who is an admin of the workspace.\n\n*NOTE: CipherStash User JWTs are only used by the CipherStash Dashboard.*",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMembershipRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateMembershipResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": "Membership already exists"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/memberships/{membership_id}": {
+      "delete": {
+        "tags": [
+          "Memberships"
+        ],
+        "summary": "Delete a membership",
+        "description": "Deletes the specified membership from the workspace.\n\n## Authentication\n\nValid authentication credential must be provided using the `Authorization` header.\n\n* **Access Key** - Requires an access key with the `admin` role.\n* **CipherStash ServiceToken** - Requires a ServiceToken (CTS-minted JWT) for a user who is an admin of the workspace.\n\n*NOTE: CipherStash ServiceTokens for human callers are only issued via the CipherStash Dashboard's OIDC exchange flow.*",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "membership_id",
+            "in": "path",
+            "description": "Membership ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Membership deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMembershipResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": "Membership not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/oidc/providers": {
+      "get": {
+        "tags": [
+          "OIDC Providers"
+        ],
+        "summary": "List providers",
+        "description": "Retrieves all OIDC providers associated with the workspace.\n\n## Authentication\n\nValid authentication credential must be provided using the `Authorization` header.\n\n* **Access Key** - Requires an access key with the `admin` role.\n* **CipherStash User JWT** - Requires a JWT for a user who is an admin of the workspace.\n\n*NOTE: CipherStash User JWTs are only used by the CipherStash Dashboard.*",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvidersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "OIDC Providers"
+        ],
+        "summary": "Create an OIDC provider",
+        "description": "Creates a new OIDC provider for the workspace.\n\n## Authentication\n\nValid authentication credential must be provided using the `Authorization` header.\n\n* **Access Key** - Requires an access key with the `admin` role.\n* **CipherStash User JWT** - Requires a JWT for a user who is an admin of the workspace.\n\n*NOTE: CipherStash User JWTs are only used by the CipherStash Dashboard.*",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOidcProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcProvider"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "412": {
+            "description": "Precondition failed (issuer already exists)"
+          },
+          "422": {
+            "description": "Root issuer conflict"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/oidc/providers/{id}": {
+      "delete": {
+        "tags": [
+          "OIDC Providers"
+        ],
+        "summary": "Delete an OIDC provider",
+        "description": "Deletes the specified OIDC provider from the workspace.\n\n## Authentication\n\nValid authentication credential must be provided using the `Authorization` header.\n\n* **Access Key** - Requires an access key with the `admin` role.\n* **CipherStash User JWT** - Requires a JWT for a user who is an admin of the workspace.\n\n*NOTE: CipherStash User JWTs are only used by the CipherStash Dashboard.*",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "OIDC provider ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "x-cs-workspace-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteProviderResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/regions": {
+      "get": {
+        "tags": [
+          "Regions"
+        ],
+        "summary": "Regions",
+        "description": "List all regions where CipherStash services are available.",
+        "operationId": "list_regions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListRegionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces": {
+      "post": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Create a workspace",
+        "description": "Creates a new workspace for the currently authenticated user.\nThe user will immediately be granted the admin role.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Workspace created"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": ""
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/workspaces/import": {
+      "put": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Import Workspace",
+        "description": "Import a workspace for cross-region migration. Uses replace semantics: if the workspace\nalready exists, all associated data (access keys, memberships, OIDC providers) is deleted\nand recreated from the import payload.\n\nRequires service principal authentication with admin role. The caller's organization must\nmatch the import organization ID.",
+        "operationId": "import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace imported successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportWorkspaceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - validation error, invalid region, or duplicate data"
+          },
+          "403": {
+            "description": "Forbidden - not a service principal, not admin, or org mismatch"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/api/workspaces/{workspace_id}": {
+      "patch": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Update a workspace",
+        "description": "Updates the name of the specified workspace.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "description": "Workspace ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WorkspaceId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace updated"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          },
+          "404": {
+            "description": "Workspace not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "cipherstash_jwt": []
+          },
+          {
+            "access_key": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Shallow check used by the Application Load Balancer to confirm the application is ready to serve requests.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Service is healthy"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccessKey": {
+        "type": "object",
+        "required": [
+          "keyName",
+          "workspaceId",
+          "keyId",
+          "role",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the key was created"
+          },
+          "keyId": {
+            "type": "string",
+            "description": "The unique identifier for this access key"
+          },
+          "keyName": {
+            "type": "string",
+            "description": "The name of the access key"
+          },
+          "lastUsedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 timestamp of the last time this key was used"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "The role assigned to this access key"
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/WorkspaceId",
+            "description": "The workspace ID this key belongs to"
+          }
+        }
+      },
+      "AccessKeyUpdates": {
+        "type": "object",
+        "description": "Fields that can be changed on an access key.\n\nOmitted or `null` fields are left unchanged. At least one field must be\npresent.\n\n`role` is intentionally **not** included — changing an access key's role\npost-creation is a privilege-management operation that must go through\ndelete + recreate, so role changes are always paired with secret rotation.\n`deny_unknown_fields` is set so a client trying to send `role` (or any\nother unknown field) gets a 400 instead of having the field silently\ndropped, which would mask client/server protocol drift or active probing.",
+        "properties": {
+          "keyName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New name for the access key"
+          },
+          "tokenExpiry": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "New token expiry in seconds (max 86400)",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActorKind": {
+        "type": "string",
+        "description": "The kind of actor — determines the prefix in the serialized `ActorIdentifier`.",
+        "enum": [
+          "app",
+          "agent"
+        ]
+      },
+      "ActorSummary": {
+        "type": "object",
+        "required": [
+          "actorId",
+          "name",
+          "kind",
+          "createdAt"
+        ],
+        "properties": {
+          "actorId": {
+            "type": "string",
+            "example": "agent-JBSWY3DPEHPK3PXP"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthorizeRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Credential"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "audience": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional audience for the generated token. If not provided, defaults to the workspace's host FQDN."
+              }
+            }
+          }
+        ],
+        "description": "An authorize request containing a [`Credential`]\nand optional audience"
+      },
+      "AuthorizeResponse": {
+        "$ref": "#/components/schemas/SignedToken",
+        "description": "Response to an authorization request. Contains a signed JWT token that can be used to authenticate with CipherStash services.\nAlso used for the deprecated federate endpoint."
+      },
+      "CreateAccessKeyRequest": {
+        "type": "object",
+        "description": "Request to create a new access key",
+        "required": [
+          "keyName",
+          "workspaceId"
+        ],
+        "properties": {
+          "keyName": {
+            "type": "string",
+            "description": "Name for the new access key"
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "Optional role for the access key. Defaults to Member if not provided"
+              }
+            ]
+          },
+          "tokenExpiry": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Optional token expiry time in seconds (defaults to 15 minutes when `None`)",
+            "minimum": 0
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/WorkspaceId",
+            "description": "The workspace ID where this key should be created"
+          }
+        }
+      },
+      "CreateAccessKeyResponse": {
+        "type": "object",
+        "description": "Response containing the newly created access key",
+        "required": [
+          "accessKey",
+          "role"
+        ],
+        "properties": {
+          "accessKey": {
+            "$ref": "#/components/schemas/RawAccessKey",
+            "description": "The newly created access key in format CSAKT..."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "The role assigned to this access key"
+          }
+        }
+      },
+      "CreateActorRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind",
+            "description": "The type of actor: `app` or `agent`."
+          },
+          "name": {
+            "type": "string",
+            "description": "A human-readable name for the actor, unique within the workspace."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "The role to assign to the actor's access key. Defaults to `member`."
+              }
+            ]
+          },
+          "tokenExpiry": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Optional TTL in seconds for tokens issued with this actor's access key.",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateActorResponse": {
+        "type": "object",
+        "required": [
+          "actorId",
+          "name",
+          "kind",
+          "accessKey",
+          "role"
+        ],
+        "properties": {
+          "accessKey": {
+            "$ref": "#/components/schemas/RawAccessKey"
+          },
+          "actorId": {
+            "type": "string",
+            "example": "agent-JBSWY3DPEHPK3PXP"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "CreateMembershipRequest": {
+        "type": "object",
+        "required": [
+          "userId"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "userId": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateMembershipResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "sub",
+          "workspaceId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sub": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        }
+      },
+      "CreateOidcProviderRequest": {
+        "type": "object",
+        "required": [
+          "issuer",
+          "vendor"
+        ],
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "format": "uri"
+          },
+          "vendor": {
+            "$ref": "#/components/schemas/OidcVendor"
+          }
+        }
+      },
+      "CreateWorkspaceRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "region"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          }
+        }
+      },
+      "Credential": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A CipherStash access key in the format `CSAKT...`",
+            "required": [
+              "accessKey"
+            ],
+            "properties": {
+              "accessKey": {
+                "$ref": "#/components/schemas/RawAccessKey"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "oidcToken",
+              "workspaceId"
+            ],
+            "properties": {
+              "oidcToken": {
+                "type": "string",
+                "format": "jwt",
+                "description": "A JWT from an OIDC provider"
+              },
+              "workspaceId": {
+                "$ref": "#/components/schemas/WorkspaceId",
+                "description": "The workspace ID to authorize against"
+              }
+            }
+          }
+        ],
+        "description": "A credential for authorizing a request.\nCan be an access key or an OIDC token.\n\nSee [`cts_domain::Authorization`] for more information.\n"
+      },
+      "DeleteAccessKeyRequest": {
+        "type": "object",
+        "description": "Request to delete an access key",
+        "required": [
+          "keyName",
+          "workspaceId"
+        ],
+        "properties": {
+          "keyName": {
+            "type": "string",
+            "description": "The name of the access key to delete"
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/WorkspaceId",
+            "description": "The workspace ID containing the access key"
+          }
+        }
+      },
+      "DeleteActorResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "DeleteMembershipResponse": {
+        "type": "object",
+        "required": [
+          "membership"
+        ],
+        "properties": {
+          "membership": {
+            "$ref": "#/components/schemas/DeletedMembership"
+          }
+        }
+      },
+      "DeleteProviderResponse": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DeleteResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Confirmation message"
+          }
+        }
+      },
+      "DeletedMembership": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "role",
+          "sub"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sub": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        }
+      },
+      "ImportMembership": {
+        "type": "object",
+        "required": [
+          "sub",
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "The role to assign (e.g. \"admin\", \"member\")"
+          },
+          "sub": {
+            "type": "string",
+            "description": "The subject identifier for the membership"
+          }
+        }
+      },
+      "ImportOidcProvider": {
+        "type": "object",
+        "required": [
+          "issuer",
+          "vendor"
+        ],
+        "properties": {
+          "issuer": {
+            "type": "string",
+            "description": "The OIDC issuer URL"
+          },
+          "vendor": {
+            "type": "string",
+            "description": "The OIDC vendor identifier"
+          }
+        }
+      },
+      "ImportWorkspaceRequest": {
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "orgId",
+          "region"
+        ],
+        "properties": {
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportMembership"
+            },
+            "description": "Memberships to import for this workspace"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional display name for the workspace"
+          },
+          "oidcProviders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportOidcProvider"
+            },
+            "description": "OIDC providers to import for this workspace"
+          },
+          "orgId": {
+            "type": "string",
+            "description": "The organization ID that owns this workspace"
+          },
+          "region": {
+            "type": "string",
+            "description": "The region this workspace belongs to (must be a valid region identifier)",
+            "example": "ap-southeast-2"
+          },
+          "workspaceId": {
+            "type": "string",
+            "description": "The workspace ID to import"
+          }
+        }
+      },
+      "ImportWorkspaceResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "membershipCount",
+          "oidcProviderCount",
+          "replaced"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/WorkspaceId",
+            "description": "The ID of the imported workspace"
+          },
+          "membershipCount": {
+            "type": "integer",
+            "description": "Number of memberships imported",
+            "minimum": 0
+          },
+          "oidcProviderCount": {
+            "type": "integer",
+            "description": "Number of OIDC providers imported",
+            "minimum": 0
+          },
+          "replaced": {
+            "type": "boolean",
+            "description": "Whether an existing workspace was replaced"
+          }
+        }
+      },
+      "ListActorsResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActorSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor to pass as `?cursor=` on the next request. Absent on the final page."
+          }
+        }
+      },
+      "ListMembershipsResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/MembershipItem"
+        }
+      },
+      "ListRegionsResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/RegionWithEndpoint"
+        },
+        "description": "This is the response type for the `list_regions` API."
+      },
+      "MembershipItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "role",
+          "sub"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sub": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        }
+      },
+      "OidcProvider": {
+        "type": "object",
+        "description": "An OIDC provider for a specific vendor.",
+        "required": [
+          "id",
+          "issuer",
+          "vendor"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "vendor": {
+            "$ref": "#/components/schemas/OidcVendor"
+          }
+        }
+      },
+      "OidcVendor": {
+        "type": "string",
+        "description": "OIDC vendors that we support.\n\nThe major difference between `CipherStash` and `Auth0`|`Okta`|`Clerk` is in how we determine workspace membership.\nTo validate `CipherStash` issued JWTs, we must check the `sub` claim against our membership table.  This is because\nthe issuer is shared among all workspaces.  In contrast, `Auth0` and all other OIDC vendors are associated with\nspecific workspaces.\n\n## Issuers associated with multiple workspaces\n\nNote that it is valid for a 3rd party issuer to be associated with more than one workspace.  In this case, users\nwithin the issuer's domain can be members of multiple workspaces.\n\nConstrast this to the `CipherStash` issuer which does not assume that a user is a member of a workspace, simply\nbecause they have a valid JWT.  The membership is determined by the `sub` claim and the workspace ID (by checking\n`memberships`).\n",
+        "enum": [
+          "auth0",
+          "okta",
+          "clerk",
+          "supabase"
+        ]
+      },
+      "ProvidersResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/OidcProvider"
+        }
+      },
+      "RawAccessKey": {
+        "type": "string",
+        "description": "A raw access key that has not yet been verified.\nThe wrapper ensures safe handling of the key.\nThis is useful for deserialization from JSON or other formats.\n\nThe inner string is zeroized on drop so a full access-key credential does\nnot linger in freed memory once the `RawAccessKey` goes out of scope.\n\nEquality is `TimingSafeEq` (constant-time), not a plain `derive(PartialEq)`:\nthis type holds a full credential, so `==` must not leak length/prefix via\ntiming. Same choice as [`SecretToken`].",
+        "example": "CSAKT4ZMT2AUPXI7TCD2.ZAQRW2BWXP3Z6SHR4YG2TP3N35LLU46ZAWLR3BL5WUR4IIGA"
+      },
+      "Region": {
+        "type": "string",
+        "enum": [
+          "ap-southeast-2.aws",
+          "ca-central-1.aws",
+          "eu-central-1.aws",
+          "eu-west-1.aws",
+          "us-east-1.aws",
+          "us-east-2.aws",
+          "us-west-1.aws",
+          "us-west-2.aws"
+        ]
+      },
+      "RegionWithEndpoint": {
+        "type": "object",
+        "required": [
+          "region",
+          "endpoint"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "format": "uri",
+            "examples": [
+              "https://us-east-1.aws.viturhosted.net/"
+            ]
+          },
+          "region": {
+            "$ref": "#/components/schemas/Region"
+          }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "description": "Defines a role in the system.",
+        "enum": [
+          "admin",
+          "control",
+          "member"
+        ]
+      },
+      "SignedToken": {
+        "type": "object",
+        "required": [
+          "accessToken",
+          "expiry"
+        ],
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "example": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+          },
+          "expiry": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1736392440,
+            "minimum": 0
+          }
+        }
+      },
+      "UpdateAccessKeyRequest": {
+        "type": "object",
+        "description": "Request to update an existing access key",
+        "required": [
+          "keyName",
+          "updates"
+        ],
+        "properties": {
+          "keyName": {
+            "type": "string",
+            "description": "The current name of the access key to update"
+          },
+          "updates": {
+            "$ref": "#/components/schemas/AccessKeyUpdates",
+            "description": "The fields to update. At least one must be present."
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateWorkspaceRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceId": {
+        "type": "string",
+        "description": "A unique identifier for a workspace.\nWorkspace IDs are 10-byte random strings formatted in base32.\n\nInternally, the workspace ID is stored as an [ArrayString] with a maximum length of 20 characters.\nThis means that values work entirely on the stack and implement the `Copy` trait.\n\n# Example\n\n```\nuse cts_common::WorkspaceId;\n\nlet workspace_id = WorkspaceId::generate().unwrap();\nprintln!(\"Workspace ID: {}\", workspace_id);\n```\n\nA [WorkspaceId] can be converted from a string but will fail if the string is not a valid workspace ID.\n\n```\nuse cts_common::WorkspaceId;\nlet workspace_id = WorkspaceId::try_from(\"JBSWY3DPEHPK3PXP\").unwrap();\n\n// This will fail because the string is not a valid workspace ID\nlet workspace_id = WorkspaceId::try_from(\"invalid-id\").unwrap_err();\n```\n\n## Comparison\n\nWorkspace IDs can be compared to strings.\n\n```\nuse cts_common::WorkspaceId;\nlet workspace_id = WorkspaceId::try_from(\"E4UMRN47WJNSMAKR\").unwrap();\nassert_eq!(workspace_id, \"E4UMRN47WJNSMAKR\");\n```\n\n## Use with Diesel\n\nWhen the `server` feature is enabled, [WorkspaceId] can be used with Diesel in models and queries.\nThe underlying data type is a `Text` column in the database.\n",
+        "example": "JBSWY3DPEHPK3PXP"
+      }
+    },
+    "securitySchemes": {
+      "access_key": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Access Key"
+      },
+      "cipherstash_jwt": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "externalDocs": {
+    "url": "https://docs.cipherstash.com/",
+    "description": "CipherStash Documentation"
+  }
+}

@@ -20,7 +20,8 @@ type strategyOptions struct {
 	cacheCapacity *uint32
 }
 
-// WithBaseURL overrides CTS service discovery for one strategy.
+// WithBaseURL overrides the CTS acquisition and refresh endpoint for one
+// strategy. The endpoint is trusted configuration.
 func WithBaseURL(url string) StrategyOption {
 	return func(o *strategyOptions) { o.baseURL = url }
 }
@@ -77,19 +78,22 @@ func (s *ProfileStore) newStrategy(ctx context.Context, config any, device bool)
 	return &Strategy{store: s, handle: string(out), device: device}, nil
 }
 
-// AccessKey constructs stack-auth's access-key strategy for crn. The key
-// stays in the guest after construction; it is not sent on each Token call.
-func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...StrategyOption) (*Strategy, error) {
-	if crn == "" || key == "" {
+// AccessKey consumes key, including on failure. The key stays in the guest
+// after construction; it is not sent on each Token call.
+func (s *ProfileStore) AccessKey(ctx context.Context, crn string, key *AccessKey, opts ...StrategyOption) (*Strategy, error) {
+	defer key.Wipe()
+	if crn == "" || key.IsZero() {
 		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
+	encoded := encodeAccessKey(guest.AccessKeyBytes(key))
+	defer guest.Wipe(encoded)
 	return s.newStrategy(ctx, struct {
-		Kind    string `json:"kind"`
-		CRN     string `json:"crn"`
-		Key     string `json:"access_key"`
-		BaseURL string `json:"base_url,omitempty"`
-	}{"access_key", crn, key, o.baseURL}, false)
+		Kind    string          `json:"kind"`
+		CRN     string          `json:"crn"`
+		Key     json.RawMessage `json:"access_key"`
+		BaseURL string          `json:"base_url,omitempty"`
+	}{"access_key", crn, encoded, o.baseURL}, false)
 }
 
 // OIDC constructs stack-auth's federation strategy. provider is called on
@@ -148,7 +152,7 @@ func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strat
 		if !crnSet {
 			return nil, ErrConfig
 		}
-		return s.AccessKey(ctx, crn, key, opts...)
+		return s.AccessKey(ctx, crn, NewAccessKey([]byte(key)), opts...)
 	}
 	workspace, err := s.CurrentWorkspaceStore(ctx)
 	if err != nil {
@@ -180,15 +184,28 @@ func (s *ProfileStore) hasToken(ctx context.Context) (bool, error) {
 
 // Token gets the current CTS bearer credential. Device sessions read a fresh
 // token without a file lock; only a refresh call takes the cross-process lock.
+// It does not require the metadata returned by [Strategy.ServiceToken].
 func (s *Strategy) Token(ctx context.Context) (string, error) {
+	token, err := s.getToken(ctx, false)
+	return token.bearer, err
+}
+
+// ServiceToken gets a bearer and its decoded workspace and service metadata.
+// It shares Token's cache and refresh handling, but fails when the metadata
+// cannot be decoded or has no ZeroKMS endpoint. It does not verify signatures.
+func (s *Strategy) ServiceToken(ctx context.Context) (ServiceToken, error) {
+	return s.getToken(ctx, true)
+}
+
+func (s *Strategy) getToken(ctx context.Context, includeMetadata bool) (ServiceToken, error) {
 	// A request queued behind another's refresh leaves when its context
 	// ends, as at the profile's own lock.
 	if err := s.mu.Acquire(ctx); err != nil {
-		return "", err
+		return ServiceToken{}, err
 	}
 	if s.closed {
 		s.mu.Unlock()
-		return "", ErrState
+		return ServiceToken{}, ErrState
 	}
 	// The work runs on its own goroutine, which holds the lock until it is
 	// done, so a caller that gives up returns at once. A device session's
@@ -197,14 +214,14 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 	// lost. The token it brings is dropped; the next Token reads it. Any
 	// other request ends with the caller.
 	type result struct {
-		token string
+		token ServiceToken
 		err   error
 	}
 	done := make(chan result, 1)
 	go func() {
 		defer s.mu.Unlock()
 		ctx, status := withAuthHTTPStatus(ctx)
-		token, err := s.token(ctx)
+		token, err := s.token(ctx, includeMetadata)
 		done <- result{token, status.wrap(err)}
 	}()
 	select {
@@ -216,40 +233,53 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 		case r := <-done:
 			return r.token, r.err
 		default:
-			return "", ctx.Err()
+			return ServiceToken{}, ctx.Err()
 		}
 	}
 }
 
-// token is Token under the strategy's lock: a read, then a locked refresh
-// for a device session that needs one.
-func (s *Strategy) token(ctx context.Context) (string, error) {
-	call := func(ctx context.Context, export func(*instance) api.Function) (string, error) {
+// token runs under the strategy's lock: a read, then a locked refresh
+// for a device session that needs one, with either response format.
+func (s *Strategy) token(ctx context.Context, includeMetadata bool) (ServiceToken, error) {
+	call := func(ctx context.Context, export func(*instance) api.Function) (ServiceToken, error) {
 		out, err := s.store.callArgs(ctx, export, guest.BufArg([]byte(s.handle)))
 		if err != nil {
-			return "", err
+			return ServiceToken{}, err
 		}
 		defer guest.Wipe(out)
 		// A caller that has left gets no copy: a string cannot be wiped,
 		// and the next Token reads the guest's.
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return ServiceToken{}, err
 		}
-		return string(out), nil
+		if includeMetadata {
+			return decodeServiceToken(out)
+		}
+		return ServiceToken{bearer: string(out)}, nil
 	}
-	token, err := call(ctx, func(i *instance) api.Function { return i.authToken })
+	token, err := call(ctx, func(i *instance) api.Function {
+		if includeMetadata {
+			return i.authServiceToken
+		}
+		return i.authToken
+	})
 	if !s.device || !errors.Is(err, guest.ErrAuthRefreshRequired) {
 		return token, err
 	}
 	path, err := s.store.LockPath(ctx, "auth.json")
 	if err != nil {
-		return "", err
+		return ServiceToken{}, err
 	}
 	err = withRefreshLock(ctx, path, func() error {
 		var err error
 		// The one request that rotates a credential: it runs on after its
 		// caller leaves (see refreshGrace).
-		token, err = call(withRefresh(ctx), func(i *instance) api.Function { return i.authRefresh })
+		token, err = call(withRefresh(ctx), func(i *instance) api.Function {
+			if includeMetadata {
+				return i.authRefreshServiceToken
+			}
+			return i.authRefresh
+		})
 		return err
 	})
 	return token, err

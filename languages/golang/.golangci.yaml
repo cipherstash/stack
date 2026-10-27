@@ -10,6 +10,15 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    - wsl_v5
+  settings:
+    wsl_v5:
+      default: none
+      enable:
+        - after-defer
+        - after-block
+        - return
+      branch-max-lines: 2
   exclusions:
     presets:
       # Unchecked Close, Flush, fmt.Fprint* and friends.
@@ -20,6 +29,10 @@ linters:
       - path: (_test\.go|internal/guesttest/)
         linters:
           - gosec
+      # Layout policy for control only; keep other packages' existing policy.
+      - path-except: '^control/[^/]+\.go$'
+        linters:
+          - wsl_v5
 
 formatters:
   enable:

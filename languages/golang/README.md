@@ -10,7 +10,9 @@ generation and PostgreSQL storage. The [stashgen reference](cmd/stashgen/README.
 explains tags, supported field types and generated methods. The
 [typed JSON document example](encrypt/example/json/README.md) walks through
 an EQL v4 table, queries and partial reads. The [credential guide](auth/README.md)
-covers profile, access key and federation strategies. See the
+covers profile, access key and federation strategies. The
+[administration guide](control/README.md) covers actors, memberships, keysets,
+clients and grants using those same strategies. See the
 [Go changelog](CHANGELOG.md) for release and compatibility notes.
 
 ## Using a released module

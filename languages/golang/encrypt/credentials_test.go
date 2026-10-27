@@ -74,9 +74,8 @@ func cleanEnv(t *testing.T, dir string) {
 		}
 	}
 	t.Setenv("CS_CONFIG_PATH", dir)
-	// The stored test tokens are not JWTs, so the device session cannot
-	// discover CTS from one; name it. Nothing is sent there while a token
-	// is fresh. newAuthServer points it at itself.
+	// Keep incomplete profiles off real CTS. Exchange tests replace this
+	// with their local server.
 	t.Setenv("CS_CTS_HOST", "https://cts.example.com")
 }
 
@@ -96,6 +95,15 @@ func loggedIn(token string) profileFiles {
 		auth: fmt.Sprintf(`{"access_token":%q,"refresh_token":"refresh","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"cli"}`,
 			token, time.Now().Add(time.Hour).Unix()),
 	}
+}
+
+func loggedInEnv(t *testing.T) string {
+	t.Helper()
+	cleanEnv(t, filepath.Join(t.TempDir(), "absent"))
+	cts := newAuthServer(t)
+	jwt := authJWT(t, cts.URL, testWorkspace)
+	t.Setenv("CS_CONFIG_PATH", newProfile(t, loggedIn(jwt)))
+	return jwt
 }
 
 // newProfile writes a profile directory with testWorkspace current and
@@ -146,16 +154,22 @@ func newAuthServer(t *testing.T) *authServer {
 		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, s.jwt, time.Now().Add(time.Hour).Unix())
 	}))
 	t.Cleanup(s.Close)
+	s.jwt = authJWT(t, s.URL, "ZVATKW3VHMFG27DY")
+	t.Setenv("CS_CTS_HOST", s.URL)
+	return s
+}
+
+func authJWT(t *testing.T, issuer, workspace string) string {
+	t.Helper()
 	payload, err := json.Marshal(map[string]any{
-		"iss": s.URL, "sub": "CS|test", "workspace": "ZVATKW3VHMFG27DY",
-		"exp": time.Now().Add(time.Hour).Unix(),
+		"iss": issuer + "/", "sub": "CS|test", "workspace": workspace,
+		"services": map[string]string{"zerokms": "https://ap-southeast-2.aws.viturhosted.net/"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.jwt = "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".c2ln"
-	t.Setenv("CS_CTS_HOST", s.URL)
-	return s
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
 }
 
 // resolve runs AutoCredentials and releases what it holds at the end of
@@ -180,7 +194,7 @@ func token(t *testing.T, resolved *resolvedCredentials) string {
 
 func TestAutoCredentialsFromTheProfile(t *testing.T) {
 	authGuestOrSkip(t)
-	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+	jwt := loggedInEnv(t)
 	resolved, err := resolve(t)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +205,7 @@ func TestAutoCredentialsFromTheProfile(t *testing.T) {
 	if got := string(guest.KeyBytes(resolved.ClientKey)); got != base64.StdEncoding.EncodeToString(mustHex(testClientKey)) {
 		t.Error("ClientKey is not the profile's secretkey.json")
 	}
-	if got := token(t, resolved); got != "profile-token" {
+	if got := token(t, resolved); got != jwt {
 		t.Errorf("Token = %q, want the stored device session's", got)
 	}
 	// The credential guest's lock state travels with the credentials, so
@@ -228,7 +242,7 @@ func TestAutoCredentialsFromTheEnvironmentWithNoProfile(t *testing.T) {
 func TestAutoCredentialsPrecedence(t *testing.T) {
 	authGuestOrSkip(t)
 	t.Run("the environment's client key wins over the profile's", func(t *testing.T) {
-		cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+		jwt := loggedInEnv(t)
 		t.Setenv(envClientID, testClientID)
 		t.Setenv(envClientKey, testClientKey)
 		resolved, err := resolve(t)
@@ -239,13 +253,13 @@ func TestAutoCredentialsPrecedence(t *testing.T) {
 			t.Error("the client key is not the environment's")
 		}
 		// The token still comes from the profile: the halves resolve apart.
-		if got := token(t, resolved); got != "profile-token" {
+		if got := token(t, resolved); got != jwt {
 			t.Errorf("Token = %q, want the profile's", got)
 		}
 	})
 	t.Run("one of the two key variables is the same as neither", func(t *testing.T) {
 		for _, name := range []string{envClientID, envClientKey} {
-			cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+			loggedInEnv(t)
 			value := testClientID
 			if name == envClientKey {
 				value = testClientKey
@@ -261,7 +275,7 @@ func TestAutoCredentialsPrecedence(t *testing.T) {
 		}
 	})
 	t.Run("the environment's access key wins over the stored session", func(t *testing.T) {
-		cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+		loggedInEnv(t)
 		cts := newAuthServer(t)
 		t.Setenv(envAccessKey, testAccessKey)
 		t.Setenv(envWorkspaceCRN, testCRN)
@@ -385,7 +399,7 @@ func TestAutoCredentialsNamesWhyTheProfileCouldNotBeOpened(t *testing.T) {
 // material of a key the environment or the profile held.
 func TestAutoCredentialsRefusesAnEmptyKeyVariableWithoutPrintingKeys(t *testing.T) {
 	authGuestOrSkip(t)
-	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+	loggedInEnv(t)
 	t.Setenv(envClientID, "")
 	t.Setenv(envClientKey, testClientKey)
 	_, err := resolve(t)
@@ -406,7 +420,7 @@ func TestAutoCredentialsRefusesAnEmptyKeyVariableWithoutPrintingKeys(t *testing.
 func TestNewClientWithAutoCredentials(t *testing.T) {
 	guestOrSkip(t)
 	authGuestOrSkip(t)
-	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+	jwt := loggedInEnv(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	// The endpoint from the environment, since no option names one.
 	t.Setenv("CS_ZEROKMS_HOST", stub.URL)
@@ -420,7 +434,7 @@ func TestNewClientWithAutoCredentials(t *testing.T) {
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized from the stub", err)
 	}
-	if len(stub.requests) != 1 || stub.requests[0].auth != "Bearer profile-token" {
+	if len(stub.requests) != 1 || stub.requests[0].auth != "Bearer "+jwt {
 		t.Fatalf("requests = %+v, want one bearing the profile's token", stub.requests)
 	}
 	if strings.Contains(err.Error(), testClientKey[:16]) {
@@ -668,7 +682,7 @@ func TestZeroKMSEndpointOrder(t *testing.T) {
 // profile's guest.
 func TestAutoCredentialsCloseReleasesTheGuest(t *testing.T) {
 	authGuestOrSkip(t)
-	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+	loggedInEnv(t)
 	resolved, err := AutoCredentials().resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
 	if err != nil {
 		t.Fatal(err)
@@ -729,7 +743,7 @@ func TestNewCredentialsReportsTheStrategysMemoryLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	strategy, err := store.AccessKey(ctx, testCRN, testAccessKey, auth.WithBaseURL("https://cts.example.com"))
+	strategy, err := store.AccessKey(ctx, testCRN, auth.NewAccessKey([]byte(testAccessKey)), auth.WithBaseURL("https://cts.example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -769,7 +783,7 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = store.Close() })
-			strategy, err := store.AccessKey(ctx, testCRN, testAccessKey, auth.WithBaseURL(cts.URL))
+			strategy, err := store.AccessKey(ctx, testCRN, auth.NewAccessKey([]byte(testAccessKey)), auth.WithBaseURL(cts.URL))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -777,7 +791,7 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 			return NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), strategy)
 		},
 		"AutoCredentials": func(t *testing.T) Credentials {
-			cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+			loggedInEnv(t)
 			return AutoCredentials()
 		},
 	} {
@@ -874,7 +888,7 @@ func TestNewCredentialsLeavesTheStrategyToTheCaller(t *testing.T) {
 	}
 	defer store.Close()
 	cts := newStub(t, http.StatusUnauthorized, "", "nope")
-	strategy, err := store.AccessKey(ctx, testCRN, "CSAKtest.key", auth.WithBaseURL(cts.URL))
+	strategy, err := store.AccessKey(ctx, testCRN, auth.NewAccessKey([]byte("CSAKtest.key")), auth.WithBaseURL(cts.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -883,7 +897,7 @@ func TestNewCredentialsLeavesTheStrategyToTheCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Token != tokenSource(strategy) || resolved.Close != nil {
+	if resolved.Token != strategy || resolved.Close != nil {
 		t.Fatalf("resolved = %+v, want the strategy as the token source and no Close", resolved)
 	}
 	resolved.ClientKey.Wipe()

@@ -981,7 +981,7 @@ func ExampleNewClient() {
 			return err
 		}
 		defer store.Close()
-		strategy, err := store.AccessKey(ctx, "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY", "CSAK...")
+		strategy, err := store.AccessKey(ctx, "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY", auth.NewAccessKey([]byte("CSAK...")))
 		if err != nil {
 			return err
 		}
