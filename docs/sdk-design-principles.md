@@ -223,6 +223,7 @@ The Python SDK is the package `stackencrypt` under `languages/python`.
 Its binding is the extension module `stackencrypt._engine`.
 Do not call the extension the SDK, and do not call the SDK the binding.
 [ADR-0001](../languages/python/docs/adr/0001-a-declaration-is-checked-when-the-class-is-defined.md) under `languages/python/docs/adr/` records the first decision below.
+No code demonstrates these yet: the walking skeleton exposes only build metadata, and the tickets under spec #1341 build the rest.
 
 ### 1. Find mistakes at the earliest stage
 

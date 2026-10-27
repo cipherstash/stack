@@ -8,10 +8,9 @@
 #
 # Two crates, by design (the Python SDK spec, "Layout"):
 #
-# - `crates/core` holds everything that is not pyo3: later the declaration
-#   plan, the value conversion rules and the error mapping. It depends on
-#   `stack-encrypt` by path. The parity binary, `cargo test` and a fuzz
-#   target link this crate alone, with no interpreter on the loader path.
+# - `crates/core` holds everything that is not pyo3. It depends on
+#   `stack-encrypt` by path, and is linked and tested with no interpreter on
+#   the loader path.
 # - `crates/engine` is the pyo3 glue: the `_engine` cdylib maturin builds into
 #   the `stackencrypt` wheel. It depends on core.
 #
@@ -36,7 +35,7 @@ repository = "https://github.com/cipherstash/stack"
 # the ticket that turns `encrypt` live names `http` explicitly on the engine
 # crate so a later `default-features = false` cannot remove it silently.
 # `dynamic` is the runtime value model every binding speaks (frames, plans
-# read at run time); core will call nothing else.
+# read at run time), and the only stack-encrypt surface the spec has core use.
 stack-encrypt = { path = "../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
 
 [profile.release]

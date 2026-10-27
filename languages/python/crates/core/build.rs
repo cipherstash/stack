@@ -3,21 +3,29 @@
 //! The engine is `stack-encrypt`, taken by path from this repository, so the
 //! commit of this checkout is the engine's commit. The wheel exposes it as
 //! `stackencrypt.__engine__` so a bug report names it (spec, user story 42).
-//! When `packages/stack-encrypt` carries uncommitted changes the value ends
-//! in `-dirty`, because the commit alone would then name code the wheel was
-//! not built from.
+//! When any `packages/stack-*` crate carries uncommitted changes the value
+//! ends in `-dirty`, because the commit alone would then name code the wheel
+//! was not built from. The scope is every stack-* crate, not only
+//! `stack-encrypt`: it depends by path on `stack-kms` and
+//! `stack-encrypt-derive`, and a wider scope can only add a `-dirty` that is
+//! true. Edits outside `packages/stack-*` (this workspace, the Python
+//! package) are not engine edits and do not mark the engine dirty; the wheel
+//! version and the checkout commit describe those.
 //!
 //! `STACKENCRYPT_ENGINE_COMMIT` in the environment wins over git, for a build
-//! from a source tree that is not a checkout. With neither, the build fails:
-//! an "unknown" engine in a wheel is a report nobody can act on.
+//! from a source tree that is not a checkout. It is trusted as given: with no
+//! checkout there is nothing to check it against. With neither, the build
+//! fails: an "unknown" engine in a wheel is a report nobody can act on.
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const ENV_OVERRIDE: &str = "STACKENCRYPT_ENGINE_COMMIT";
-/// The engine's source, relative to this crate.
-const ENGINE_DIR: &str = "../../../../packages/stack-encrypt";
+/// The directory of the stack-* crates, relative to this crate. Every
+/// `stack-*` entry in it is engine source for the `-dirty` check.
+const PACKAGES_DIR: &str = "../../../../packages";
+const ENGINE_PREFIX: &str = "stack-";
 
 fn main() {
     println!("cargo:rerun-if-env-changed={ENV_OVERRIDE}");
@@ -66,10 +74,9 @@ fn commit_from_git() -> String {
             println!("cargo:rerun-if-changed={}", resolved.display());
         }
     }
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest_dir.join(ENGINE_DIR).display()
-    );
+    for dir in engine_dirs(&manifest_dir) {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
 
     let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| {
         panic!(
@@ -78,10 +85,37 @@ fn commit_from_git() -> String {
              commit the engine (packages/stack-encrypt) is taken from."
         )
     });
-    let dirty = git(&["status", "--porcelain", "--", ENGINE_DIR]).is_some_and(|s| !s.is_empty());
+    let dirs = engine_dirs(&manifest_dir);
+    let mut status = vec!["status", "--porcelain", "--"];
+    status.extend(dirs.iter().map(|d| d.to_str().expect("utf-8 path")));
+    let dirty = git(&status).is_some_and(|s| !s.is_empty());
     if dirty {
         format!("{commit}-dirty")
     } else {
         commit
     }
+}
+
+/// Every `packages/stack-*` directory, as engine source.
+fn engine_dirs(manifest_dir: &Path) -> Vec<PathBuf> {
+    let packages = manifest_dir.join(PACKAGES_DIR);
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packages)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", packages.display()))
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(ENGINE_PREFIX)
+        })
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.path())
+        .collect();
+    dirs.sort();
+    assert!(
+        !dirs.is_empty(),
+        "no {ENGINE_PREFIX}* crate under {}",
+        packages.display()
+    );
+    dirs
 }
