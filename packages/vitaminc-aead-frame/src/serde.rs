@@ -489,14 +489,12 @@ impl<'de> Deserializer<'de> {
         Ok(())
     }
 
-    /// Whether the next node is a null scalar.
+    /// Whether the next node is a null scalar: plain null, or `undefined`,
+    /// which reads as null ([`is_plain`]). Told from the tag alone, so a
+    /// node that is not null is not decoded here and then again by the
+    /// read that follows.
     fn next_is_null(&self) -> Result<bool, Error> {
-        if matches!(self.peek()?, ARRAY | OBJECT | MAP | PASSTHROUGH | SOME) {
-            return Ok(false);
-        }
-        let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
-        let ((ty, value), _) = leaf::read(rest, Form::Frame).map_err(|_| malformed())?;
-        Ok(is_plain(ty) && matches!(value, Physical::Null))
+        Ok(matches!(self.peek()?, tags::NULL | tags::UNDEFINED))
     }
 
     /// A storage map's next key, consumed, if it is text; otherwise
@@ -514,26 +512,35 @@ impl<'de> Deserializer<'de> {
     }
 
     /// The kind of the next node, for a refusal. It carries no value, so a
-    /// message built from it cannot repeat one.
+    /// message built from it cannot repeat one. The kind is told from the
+    /// tag alone: a scalar is not decoded here and then again by the read
+    /// that follows, and a tag the validator would not have passed is
+    /// reported as malformed, as that read would report it.
     fn found(&self) -> Result<Unexpected<'static>, Error> {
         Ok(match self.peek()? {
             ARRAY => Unexpected::Seq,
             OBJECT | MAP => Unexpected::Map,
             PASSTHROUGH => Unexpected::Other("a passthrough"),
             SOME => Unexpected::Option,
-            _ => {
-                let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
-                let ((ty, value), _) = leaf::read(rest, Form::Frame).map_err(|_| malformed())?;
-                match (ty, value) {
-                    (Some(_), _) => Unexpected::Other("a value with a logical type"),
-                    (None, Physical::Null) => Unexpected::Unit,
-                    (None, Physical::Bool(_)) => Unexpected::Bool(false),
-                    (None, Physical::Int(_)) => Unexpected::Unsigned(0),
-                    (None, Physical::Float(_)) => Unexpected::Float(0.0),
-                    (None, Physical::Text(_)) => Unexpected::Str(""),
-                    (None, Physical::Bytes(_)) => Unexpected::Bytes(&[]),
-                }
+            tags::NULL => Unexpected::Unit,
+            tags::BOOL_FALSE | tags::BOOL_TRUE => Unexpected::Bool(false),
+            tags::INT8
+            | tags::INT16
+            | tags::INT32
+            | tags::INT64
+            | tags::INT128
+            | tags::UINT8
+            | tags::UINT16
+            | tags::UINT32
+            | tags::UINT64
+            | tags::UINT128 => Unexpected::Unsigned(0),
+            tags::FLOAT32 | tags::FLOAT64 => Unexpected::Float(0.0),
+            tags::STRING => Unexpected::Str(""),
+            tags::BYTES => Unexpected::Bytes(&[]),
+            tags::UNDEFINED | tags::DATE | tags::TIMESTAMP | tags::DECIMAL | tags::LOGICAL => {
+                Unexpected::Other("a value with a logical type")
             }
+            _ => return Err(malformed()),
         })
     }
 
