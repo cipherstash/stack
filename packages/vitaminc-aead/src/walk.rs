@@ -17,7 +17,7 @@
 use core::convert::Infallible;
 use std::collections::HashSet;
 
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{Buffer, Controlled, Protected};
 
 use crate::leaf::{self, Item};
 use crate::plaintext::{Error, MapSink, SeqSink, Sink, SourceError};
@@ -221,18 +221,18 @@ fn walk_map<S: Sink>(
 
 /// Decrypt into a frame: the Go guest's whole `decrypt`.
 ///
-/// The frame is plaintext, so it is built and returned inside `Protected`
+/// The frame is plaintext, so it is built in a [`Buffer`] under `Protected`
 /// and wiped on every error path.
 pub fn decrypt_to_frame<'a, C, A>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: A,
-) -> Result<Protected<Vec<u8>>, DecryptError<crate::frame::FrameWriteError, C::Error>>
+) -> Result<Protected<Buffer>, DecryptError<crate::frame::FrameWriteError, C::Error>>
 where
     C: Cipher,
     A: IntoAad<'a>,
 {
-    let mut out = Protected::new(Vec::new());
+    let mut out = Protected::new(Buffer::new());
     decrypt_into(
         cipher,
         node,
@@ -407,8 +407,11 @@ mod tests {
         let sealed = encrypt(sample(), &Mock, "ctx").expect("encrypts");
         let frame = decrypt_to_frame(&Mock, sealed, "ctx").expect("decrypts");
         assert_eq!(
-            frame.risky_ref(),
-            crate::to_frame(sample()).expect("frames").risky_ref()
+            frame.risky_ref().as_slice(),
+            crate::to_frame(sample())
+                .expect("frames")
+                .risky_ref()
+                .as_slice()
         );
     }
 

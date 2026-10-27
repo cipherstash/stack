@@ -130,7 +130,7 @@ use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT, PASSTHROUG
 use vitaminc_aead::leaf::{self, Form};
 use vitaminc_aead::plaintext::{Float, Int, Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{tags, Encrypt, Frame, FrameWriter};
-use vitaminc_protected::Protected;
+use vitaminc_protected::{Buffer, Protected};
 use zeroize::Zeroizing;
 
 // =============================================================================
@@ -1058,11 +1058,11 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 ///
 /// What a host and Rust exchange this way is not plaintext to seal, but may
 /// still be secret (a credential in a configuration, say). So the frame is
-/// returned [`Protected`], and wiped when it is dropped. The buffer grows
-/// without leaving copies of what it held behind, as every frame vitaminc
-/// writes does, and is wiped if writing fails part way. A value written
-/// through `Display` (`collect_str`) is formatted into a buffer that is
-/// wiped too.
+/// returned as a [`Buffer`] under [`Protected`], and wiped when it is
+/// dropped. The buffer grows without leaving copies of what it held
+/// behind, as every frame vitaminc writes does, and is wiped if writing
+/// fails part way. A value written through `Display` (`collect_str`) is
+/// formatted into a buffer that is wiped too.
 ///
 /// # Errors
 ///
@@ -1077,17 +1077,17 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 /// refused ("container length does not match its children"). `serde_json`
 /// ignores a wrong length, so a hand-written impl that works there can fail
 /// here. Pass `None` when the count is not known up front.
-pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Protected<Vec<u8>>, Error> {
-    let mut out = Zeroizing::new(Vec::new());
+pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Protected<Buffer>, Error> {
+    let mut out = Buffer::new();
     value.serialize(Serializer(FrameWriter::new(&mut out)))?;
-    Ok(Protected::new(core::mem::take(&mut *out)))
+    Ok(Protected::new(out))
 }
 
 /// Write `value` as a frame of its own, for a node `depth` levels below
 /// the top of a document. The buffer is wiped when it is dropped, whether
 /// or not it was copied into the document.
-fn to_part<T: Serialize + ?Sized>(value: &T, depth: usize) -> Result<Zeroizing<Vec<u8>>, Error> {
-    let mut out = Zeroizing::new(Vec::new());
+fn to_part<T: Serialize + ?Sized>(value: &T, depth: usize) -> Result<Buffer, Error> {
+    let mut out = Buffer::new();
     value.serialize(Serializer(FrameWriter::at_depth(&mut out, depth)))?;
     Ok(out)
 }
@@ -1097,43 +1097,21 @@ pub(crate) fn written(error: FrameWriteError) -> Error {
 }
 
 /// Writes one node into a [`FrameWriter`].
-/// Make room for `additional` more bytes. A `Vec` that regrows frees its
-/// old allocation without wiping it, so grow into a fresh allocation and
-/// wipe the old one instead.
-///
-/// The same as `reserve` in `vitaminc_aead::frame`, which the frame writer
-/// uses; that one is private to its crate. A fix to either belongs in both.
-pub(crate) fn reserve(out: &mut Vec<u8>, additional: usize) {
-    if out.capacity() - out.len() >= additional {
-        return;
-    }
-    let capacity = out
-        .len()
-        .saturating_add(additional)
-        .max(out.len().saturating_mul(2))
-        .max(64);
-    let mut grown = Vec::with_capacity(capacity);
-    grown.extend_from_slice(out);
-    vitaminc_protected::wipe_vec(out);
-    *out = grown;
-}
-
-/// Appends formatted text to a buffer, growing it as [`reserve`] does.
-pub(crate) struct Appender<'o>(pub(crate) &'o mut Vec<u8>);
+/// Appends formatted text to a buffer.
+pub(crate) struct Appender<'o>(pub(crate) &'o mut Buffer);
 
 impl fmt::Write for Appender<'_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        reserve(self.0, s.len());
         self.0.extend_from_slice(s.as_bytes());
         Ok(())
     }
 }
 
-/// `value`'s `Display`, in a buffer that grows as [`reserve`] does and is
-/// wiped when it is dropped. serde's default `collect_str` formats into a
-/// `String` of its own and frees it unwiped.
-fn displayed<T: fmt::Display + ?Sized>(value: &T) -> Result<Zeroizing<Vec<u8>>, Error> {
-    let mut out = Zeroizing::new(Vec::new());
+/// `value`'s `Display`, in a [`Buffer`], so it is wiped when it is dropped.
+/// serde's default `collect_str` formats into a `String` of its own and
+/// frees it unwiped.
+fn displayed<T: fmt::Display + ?Sized>(value: &T) -> Result<Buffer, Error> {
+    let mut out = Buffer::new();
     fmt::write(&mut Appender(&mut out), format_args!("{value}"))
         .map_err(|_| <Error as ser::Error>::custom(""))?;
     Ok(out)
@@ -1443,7 +1421,7 @@ struct SerVariant<'o> {
     variant: &'static str,
     /// Each part's key (a struct variant's field; `None` in a tuple
     /// variant) and frame.
-    parts: Vec<(Option<&'static str>, Zeroizing<Vec<u8>>)>,
+    parts: Vec<(Option<&'static str>, Buffer)>,
 }
 
 impl<'o> SerVariant<'o> {
@@ -1488,7 +1466,7 @@ impl<'o> SerVariant<'o> {
 fn write_variant(
     writer: FrameWriter<'_>,
     variant: &str,
-    parts: &[(Option<&'static str>, Zeroizing<Vec<u8>>)],
+    parts: &[(Option<&'static str>, Buffer)],
     is_struct: bool,
 ) -> Result<(), Error> {
     let mut outer = writer.map(Some(1)).map_err(written)?;

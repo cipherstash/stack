@@ -65,7 +65,12 @@ fn writing_frees_no_block_with_the_value_in_it() {
     // buffer grows many times over.
     let map: BTreeMap<String, Option<String>> =
         (0..64).map(|i| (marked(i), Some(marked(i + 64)))).collect();
-    let (left, blob) = left_behind(|| to_vec(&map).expect("writes").risky_unwrap());
+    let (left, blob) = left_behind(|| {
+        to_vec(&map)
+            .expect("writes")
+            .risky_unwrap()
+            .risky_into_vec()
+    });
     assert!(blob.windows(MARKER.len()).any(|w| w == MARKER));
     assert_eq!(left, 0, "a freed block still held the value");
 
@@ -94,7 +99,12 @@ fn writing_frees_no_block_with_the_value_in_it() {
             .map(|i| (Shown(marked(i)), Shown(marked(i + 64))))
             .collect(),
     );
-    let (left, blob) = left_behind(|| to_vec(&shown).expect("writes").risky_unwrap());
+    let (left, blob) = left_behind(|| {
+        to_vec(&shown)
+            .expect("writes")
+            .risky_unwrap()
+            .risky_into_vec()
+    });
     assert!(blob.windows(MARKER.len()).any(|w| w == MARKER));
     assert_eq!(left, 0, "a displayed value was left in a freed block");
 
@@ -103,7 +113,12 @@ fn writing_frees_no_block_with_the_value_in_it() {
     // bytes are the marker show that copy is wiped.
     let base = u128::from_le_bytes(*MARKER);
     let integers: BTreeMap<u128, u8> = (0..64).map(|i| (base + (i << 120), 1)).collect();
-    let (left, blob) = left_behind(|| to_vec(&integers).expect("writes").risky_unwrap());
+    let (left, blob) = left_behind(|| {
+        to_vec(&integers)
+            .expect("writes")
+            .risky_unwrap()
+            .risky_into_vec()
+    });
     assert_eq!(left, 0, "an integer key's copy was left in a freed block");
     // What is read is the caller's, and kept past the armed read.
     let mut read = BTreeMap::<u128, u8>::new();

@@ -111,7 +111,7 @@ use vitaminc_aead_frame::storage;
 use vitaminc_protected::Controlled;
 
 let blob = storage::to_vec(&Some(Option::<u8>::None)).expect("writes");
-assert_eq!(blob.risky_ref(), &[0x56, 0x43, 0x53, 0x01, 0xF5, 0x00]);
+assert_eq!(blob.risky_ref().as_slice(), &[0x56, 0x43, 0x53, 0x01, 0xF5, 0x00]);
 let back: Option<Option<u8>> = storage::from_slice(blob.risky_ref()).expect("reads");
 assert_eq!(back, Some(None));
 # }

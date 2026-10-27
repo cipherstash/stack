@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use vitaminc_protected::{OpaqueDebug, Protected};
+use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, Protected};
 
 use crate::frame::{to_frame_at, FrameWriteError, MAX_DEPTH};
 use crate::plaintext::{Encrypt, Error, Logical, Path, Physical, Step};
@@ -190,11 +190,15 @@ where
     if let Err(refusal) = self::depth(depth, at) {
         return Err(refused(refusal));
     }
-    to_frame_at(value, depth + 1).map_err(|e| match e {
-        FrameWriteError::Source(e) => E::source(e),
-        FrameWriteError::TooDeep => refused(refuse(at, Unencryptable::TooDeep)),
-        _ => refused(refuse(at, Unencryptable::UnframablePassthrough)),
-    })
+    // A passthrough crosses in the clear, as its `PassthroughFrame` holds
+    // it, so the frame leaves the buffer's rules here.
+    to_frame_at(value, depth + 1)
+        .map(|frame| frame.map(Buffer::risky_into_vec))
+        .map_err(|e| match e {
+            FrameWriteError::Source(e) => E::source(e),
+            FrameWriteError::TooDeep => refused(refuse(at, Unencryptable::TooDeep)),
+            _ => refused(refuse(at, Unencryptable::UnframablePassthrough)),
+        })
 }
 
 /// How a container's children have gone: how many were handed a sink, how

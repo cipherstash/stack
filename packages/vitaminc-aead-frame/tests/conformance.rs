@@ -32,7 +32,7 @@ fn unhex(text: &str) -> Vec<u8> {
 }
 
 fn framed<P: Encrypt>(p: P) -> Vec<u8> {
-    to_frame(p).expect("frames").risky_ref().clone()
+    to_frame(p).expect("frames").risky_ref().to_vec()
 }
 
 fn scalar(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {

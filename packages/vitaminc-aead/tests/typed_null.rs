@@ -214,12 +214,15 @@ fn a_frame_reads_a_typed_null_and_writes_the_plain_null() {
     assert_eq!(sealed(parsed), from_host);
 
     assert_eq!(
-        to_frame(None::<u32>).expect("frames").risky_ref(),
+        to_frame(None::<u32>)
+            .expect("frames")
+            .risky_ref()
+            .as_slice(),
         &[tags::NULL]
     );
     let node = encrypt(None::<u32>, &Mock, "ctx").expect("encrypts");
     let back = decrypt_to_frame(&Mock, node, "ctx").expect("decrypts");
-    assert_eq!(back.risky_ref(), &[tags::NULL]);
+    assert_eq!(back.risky_ref().as_slice(), &[tags::NULL]);
 }
 
 #[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]

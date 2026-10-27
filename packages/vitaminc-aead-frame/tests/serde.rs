@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 use vitaminc_aead::plaintext::{Int, Logical, MapSink, Physical, Raw, Sink};
 use vitaminc_aead::{Encrypt, FrameWriter};
 use vitaminc_aead_frame::serde::{self as transport, from_slice, Error, PathSegment};
-use vitaminc_protected::Controlled;
+use vitaminc_protected::{Buffer, Controlled};
 
 /// Write `value`, and take the frame out of its `Protected`.
 fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
-    transport::to_vec(value).map(Controlled::risky_unwrap)
+    transport::to_vec(value).map(|frame| frame.risky_unwrap().risky_into_vec())
 }
 
 fn unhex(text: &str) -> Vec<u8> {
@@ -122,7 +122,7 @@ fn enums_are_externally_tagged() {
     }
     // An object of one entry naming a unit variant, with a null payload,
     // reads as the unit variant too.
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(1)).expect("map");
         map.entry("eq")
@@ -404,7 +404,7 @@ fn a_logical_scalar_and_a_passthrough_are_refused() {
     let error = from_slice::<Seen>(date.risky_ref_for_test()).expect_err("refused");
     assert!(error.message().contains("logical type"), "{error}");
 
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(1)).expect("map");
         map.entry("p")
@@ -439,7 +439,7 @@ fn reads_a_frame_a_sink_wrote() {
         name: String,
         age: u32,
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
         "alice"
@@ -462,7 +462,7 @@ trait RiskyRefForTest {
     fn risky_ref_for_test(&self) -> &[u8];
 }
 
-impl RiskyRefForTest for vitaminc_protected::Protected<Vec<u8>> {
+impl RiskyRefForTest for vitaminc_protected::Protected<Buffer> {
     fn risky_ref_for_test(&self) -> &[u8] {
         use vitaminc_protected::Controlled;
         self.risky_ref()
@@ -697,7 +697,7 @@ fn a_unit_variant_reads_its_null_payload() {
         Eq,
         Ore,
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut out = FrameWriter::new(&mut bytes).seq(Some(2)).expect("seq");
         {
@@ -1157,7 +1157,7 @@ fn a_key_only_a_host_chose_is_placed_by_position() {
 
     // A passthrough under a flattened key fails while serde buffers the
     // entry, through this format: the entry is placed by position.
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
         map.entry("known")
@@ -1220,7 +1220,7 @@ fn undefined_reads_as_null() {
         context: Option<String>,
         unit: (),
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
         map.entry("context")
@@ -1437,7 +1437,7 @@ fn a_string_reads_only_text_and_bytes_only_bytes() {
     assert!(error.message().contains("logical type"), "{error}");
     let error = from_slice::<BTreeMap<String, u8>>(date.risky_ref_for_test()).expect_err("refused");
     assert!(error.message().contains("logical type"), "{error}");
-    let mut passthrough = Vec::new();
+    let mut passthrough = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut passthrough)
             .map(Some(1))
