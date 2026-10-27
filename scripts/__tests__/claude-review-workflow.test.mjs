@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { readWorkflow } from './lib/workflows.mjs'
+import { readWorkflow, triggers } from './lib/workflows.mjs'
 
 const WORKFLOW = '.github/workflows/claude-review.yml'
 const ACTION_SHA = 'bf38e86e58df9ebf3420326d019f955bb3be64dd'
 const gha = (expression) => `\${{ ${expression} }}`
 
 const workflow = readWorkflow(WORKFLOW)
-const triggers = workflow.on ?? workflow[true]
+const on = triggers(workflow)
 const review = workflow.jobs.review
 const claude = review.steps.find((step) =>
   String(step.uses ?? '').startsWith('anthropics/claude-code-action@'),
@@ -19,14 +19,14 @@ describe('Claude pull-request review', () => {
   })
 
   it('reviews every agreed pull-request lifecycle event', () => {
-    expect(Object.keys(triggers)).toEqual(['pull_request'])
-    expect(triggers.pull_request.types).toEqual([
+    expect(Object.keys(on)).toEqual(['pull_request'])
+    expect(on.pull_request.types).toEqual([
       'opened',
       'synchronize',
       'ready_for_review',
       'reopened',
     ])
-    expect(triggers.pull_request['paths-ignore']).toEqual([
+    expect(on.pull_request['paths-ignore']).toEqual([
       '.changeset/**',
       '**/__snapshots__/**',
       '**/*.snap',

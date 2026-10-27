@@ -4,7 +4,12 @@ import { dirname, join, relative, sep } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
-import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
+import {
+  readWorkflow,
+  runWorkingDirectory,
+  WORKFLOW_DIR,
+  workflowFiles,
+} from './lib/workflows.mjs'
 
 /**
  * Guards that the EQL suite is RUN, not merely present.
@@ -76,17 +81,17 @@ const SUITE_TASKS = [
  * names all three suite tasks, and so does a `paths:` filter, which is a
  * trigger and not a run.
  *
- * Only the steps whose working directory is under `packages/eql`, because a
- * mise task name is scoped to the config mise finds from the current
- * directory, and nothing else. `mise run test` from `languages/python` runs
- * THAT workspace's `test` task; read without the directory it counted as
- * EQL's `test`, which depends on `test:sqlx` and `test:lint`, and the two
- * exemptions below went stale the day `tests-python.yml` landed — a false
- * "CI runs this" in the direction this file exists to rule out. The
- * directory is the step's own, else the job's `defaults.run`, else the
- * workflow's; AGENTS.md records that every EQL task must run that way, and
- * every EQL workflow does. A composite action's bodies are appended by the
- * caller unscoped, as before: an action is reached by `uses:`, which has no
+ * Only the steps whose working directory is under `packages/eql`. A mise
+ * task name is scoped to the config mise finds from the current directory,
+ * and to nothing else. `mise run test` from `languages/python` runs THAT
+ * workspace's `test` task. Read without the directory, it counted as EQL's
+ * `test`, and EQL's `test` depends on `test:sqlx` and `test:lint`. So the
+ * two exemptions below were wrong from the first commit of
+ * `tests-python.yml`: a false "CI runs this", in the direction this file
+ * exists to rule out. The directory is resolved by `runWorkingDirectory`.
+ * AGENTS.md records that every EQL task must run that way, and every EQL
+ * workflow does. A composite action's bodies are appended by the caller
+ * unscoped, as before. An action is reached by `uses:`, and `uses:` has no
  * working directory of its own.
  */
 const EQL_DIR = EQL_PREFIX.slice(0, -1)
@@ -94,14 +99,11 @@ const insideEql = (dir) =>
   dir !== undefined &&
   (String(dir) === EQL_DIR || String(dir).startsWith(EQL_PREFIX))
 function eqlRunBodies(wf) {
-  const workflowDefault = wf?.defaults?.run?.['working-directory']
-  return Object.values(wf?.jobs ?? {}).flatMap((job) => {
-    const jobDefault =
-      job?.defaults?.run?.['working-directory'] ?? workflowDefault
-    return (Array.isArray(job?.steps) ? job.steps : [])
-      .filter((step) => insideEql(step?.['working-directory'] ?? jobDefault))
-      .map((step) => String(step?.run ?? '').replace(/^[ \t]*#.*$/gm, ''))
-  })
+  return Object.values(wf?.jobs ?? {}).flatMap((job) =>
+    (Array.isArray(job?.steps) ? job.steps : [])
+      .filter((step) => insideEql(runWorkingDirectory(wf, job, step)))
+      .map((step) => String(step?.run ?? '').replace(/^[ \t]*#.*$/gm, '')),
+  )
 }
 
 /** The two spellings GitHub accepts for a composite action's manifest. */

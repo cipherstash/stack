@@ -1,51 +1,51 @@
 name: Tests (Python)
 
-# The Python SDK workspace at languages/python: its two crates
-# (stackencrypt-core, stackencrypt-engine) and the pure-Python package
-# `stackencrypt`. The fourth Cargo workspace, and the first one whose checks
-# nothing else runs: tests-crates.yml compiles the stack-* crates but never
-# links them into pyo3, and tests.yml's gate excludes those crates on purpose.
-# So a stack-encrypt change that breaks the engine crate is caught here or
-# nowhere. scripts/__tests__/python-ci.test.mjs derives the `pull_request`
-# filter below from the workspace's Cargo.lock, so a new path dependency fails
+# The Python SDK workspace at languages/python: the crates stackencrypt-core
+# and stackencrypt-engine, and the pure-Python package `stackencrypt`. It is
+# the fourth Cargo workspace. No other workflow runs its checks.
+# tests-crates.yml compiles the stack-* crates but never links them into
+# pyo3. tests.yml's gate excludes those crates on purpose. So this workflow
+# is the only one that catches a stack-encrypt change that breaks the engine
+# crate. scripts/__tests__/python-ci.test.mjs derives the `pull_request`
+# filter below from the workspace's Cargo.lock. A new path dependency fails
 # that test until the filter follows.
 #
-# Two jobs. `python` runs the Rust checks and the pure-Python suite on the
-# oldest supported interpreter (the `requires-python` floor) and the one
-# mise.toml names, since a wheel tagged abi3-py39 is a claim about the floor
-# that only a run on the floor tests. `wheels` builds one abi3 wheel per platform the FFI
-# ships for, and uploads them as artifacts; nothing is released. The two jobs
-# are independent, so a pytest failure does not hide whether the wheels build.
+# Two jobs. `python` runs the Rust checks and the pure-Python suite on two
+# interpreters: the oldest supported one (the `requires-python` floor) and
+# the one mise.toml names. A wheel tagged abi3-py39 claims to work on the
+# floor. Only a run on the floor tests that claim. `wheels` builds one abi3
+# wheel per platform the FFI ships for and uploads them as artifacts. Nothing
+# is released. The two jobs are independent, so a pytest failure does not
+# hide whether the wheels build.
 #
 # No job here holds a CipherStash credential. The live test job (credentials,
-# Postgres) lands with the first `encrypt` ticket (#1389), as its own job.
+# Postgres) arrives with the first `encrypt` ticket, #1389, as its own job.
 
 on:
   pull_request:
     paths:
       - languages/python/**
       # The crates the workspace compiles by path, in the order Cargo.lock
-      # lists them: stack-encrypt and its derive macro, stack-kms, and the
-      # stack-auth and stack-profile that stack-kms's `profile` feature pulls
-      # in. The root manifest comes with them: their requirements are
-      # `{ workspace = true }` and resolve from the root Cargo.toml even when
-      # built from this workspace.
+      # lists them. The last two are what stack-kms's `profile` feature pulls
+      # in. The root manifest
+      # comes with them. Their requirements are `{ workspace = true }`. Those
+      # resolve from the root Cargo.toml even when built from this workspace.
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-kms/**
       - packages/stack-auth/**
       - packages/stack-profile/**
       - Cargo.toml
-      # The EQL codegen and the catalog it reads: the SDK's marker names are
-      # generated from the catalog (#1385), so a change to either must rerun
-      # the suite that reads them.
+      # The EQL codegen and the catalog it reads. The SDK's marker names are
+      # generated from the catalog (#1385). A change to either must rerun the
+      # suite that reads them.
       - packages/eql/crates/eql-codegen/**
       - packages/eql/crates/eql-domains/**
-      # The Rust version the workspace builds under; its own mise.toml
-      # is under languages/python/** above.
+      # The Rust version the workspace builds under. The workspace's own
+      # mise.toml is under languages/python/** above.
       - mise.toml
       - .github/workflows/tests-python.yml
-  # Unfiltered, like tests-rust.yml: every push to main runs the suite, so
+  # Unfiltered, like tests-rust.yml. Every push to main runs the suite, so
   # main runs a superset of what pull requests run. Recorded in
   # scripts/__tests__/workflow-paths-filter-parity.test.mjs.
   push:
@@ -74,8 +74,8 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     strategy:
-      # Both interpreters report: a failure on 3.9 alone is the abi3 floor
-      # breaking, and that reads differently from a failure on both.
+      # Both interpreters report. A failure on 3.9 alone means the abi3 floor
+      # is broken. That reads differently from a failure on both.
       fail-fast: false
       matrix:
         # Quoted on purpose: YAML reads a bare 3.10 as the number 3.1.
@@ -83,11 +83,11 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
       # languages/python/mise.toml names python = "3.14" for the local loop.
-      # mise reads MISE_<TOOL>_VERSION ahead of any config file, so this one
-      # variable moves every step, the mise-action install included, to the
-      # leg's interpreter; `mise run build` and `test:cargo` take `python3`
-      # from PATH and so follow it. The step "The interpreter is the leg's"
-      # below is what proves it took.
+      # mise reads MISE_<TOOL>_VERSION before any config file. So this one
+      # variable moves every step to the leg's interpreter, the mise-action
+      # install included. `mise run build` and `test:cargo` take `python3`
+      # from PATH, so they follow it. The step "Check that python3 is the
+      # leg's interpreter" below fails the leg when that did not happen.
       MISE_PYTHON_VERSION: ${{ matrix.python }}
     defaults:
       run:
@@ -97,14 +97,14 @@ jobs:
         with:
           persist-credentials: false
 
-      # In the workspace folder, so mise merges languages/python/mise.toml
+      # Run in the workspace folder, so mise merges languages/python/mise.toml
       # (python, uv, the tasks) over the root one (rust 1.94.1). Only the
-      # three tools this job uses: with no install_args, `install: true`
-      # also installs the root's Go and golangci-lint, which nothing here
-      # runs. The cache key is shared by both legs (it hashes the config, not
-      # the environment), so the leg that saves first holds its interpreter
-      # and the other installs its own, uncached. That costs the other leg a
-      # download, and nothing else: see the interpreter check below.
+      # three tools this job uses are installed. With no install_args,
+      # `install: true` also installs the root's Go and golangci-lint, and
+      # nothing here runs them. The cache key hashes the config, not the
+      # environment, so both legs share it. The leg that saves first holds
+      # its interpreter. The other leg downloads its own, uncached. That
+      # costs a download and nothing else: see the interpreter check below.
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
@@ -115,17 +115,17 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2404
 
-      # mise caches its rust install as a symlink into ~/.rustup, which the
-      # cache does not hold, so on a cache hit the components mise.toml
-      # declares can be missing. A no-op when they are there. The same step
-      # as tests-crates.yml, for the same reason.
+      # mise caches its rust install as a symlink into ~/.rustup. The cache
+      # does not hold ~/.rustup, so on a cache hit the components mise.toml
+      # declares can be missing. The command does nothing when they are
+      # there. tests-crates.yml has the same step for the same reason.
       - name: Add rustfmt and clippy to the toolchain mise installed
         run: rustup component add rustfmt clippy
 
-      # The matrix is decorative unless the interpreter on PATH is the leg's.
-      # A version mise stopped reading from the environment would run both
-      # legs on 3.14 and both would go green.
-      - name: The interpreter is the leg's
+      # The matrix tests nothing unless the interpreter on PATH is the leg's.
+      # If mise stopped reading the version from the environment, both legs
+      # would run on 3.14 and both would pass.
+      - name: Check that python3 is the leg's interpreter
         env:
           WANT: ${{ matrix.python }}
         run: |
@@ -144,8 +144,8 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
 
-      # pyo3's build script asks the `python3` on PATH for its configuration,
-      # which is why this runs after mise is installed and per interpreter.
+      # pyo3's build script asks the `python3` on PATH for its configuration.
+      # That is why this runs after mise is installed, once per interpreter.
       - name: clippy
         run: cargo clippy --locked --no-deps --workspace --all-targets -- -D warnings
 
@@ -156,40 +156,41 @@ jobs:
         run: mise run test:cargo
 
       # Builds the extension with maturin (dev profile) into a virtualenv for
-      # the leg's interpreter and runs pytest in it.
+      # the leg's interpreter, then runs pytest in it.
       - name: pytest
         run: mise run test
 
   # One abi3-py39 wheel per platform the FFI ships for, by the same Rust
-  # triples (python-ci.test.mjs holds the list to the protect-ffi platform
-  # packages). The wheels are uploaded as artifacts and nothing publishes them:
-  # the spec puts PyPI out of scope. The build time of each is written to the
-  # leg's own job summary and, as one table, to `wheels-summary`'s.
+  # triples. python-ci.test.mjs holds the list to the protect-ffi platform
+  # packages. The wheels are uploaded as artifacts. Nothing publishes them:
+  # the spec puts PyPI out of scope. Each build time is written to the leg's
+  # own job summary and, as one table, to `wheels-summary`'s.
   #
-  # Release profile, deliberately: the local loop builds the dev profile for
-  # speed (languages/python/mise.toml), and the number this job records is the
+  # Release profile, on purpose. The local loop builds the dev profile for
+  # speed (languages/python/mise.toml). The number this job records is the
   # cost of the wheel a user would install.
   wheels:
     name: "wheel ${{ matrix.platform }}"
     strategy:
-      # One platform failing must not cancel the other five: the failure is
-      # usually specific to a toolchain, and seeing which of the six are fine
-      # is most of the diagnosis.
+      # One platform failing must not cancel the others. The failure is
+      # usually specific to a toolchain. Seeing which platforms pass is most
+      # of the diagnosis.
       fail-fast: false
       matrix:
         # `platform` is the FFI's name for the leg and `target` its triple,
         # read from languages/typescript/packages/protect-ffi/platforms/*/package.json.
-        # `wheel` is the platform tag the wheel's filename must carry, and the
-        # one fact each leg checks about what it built. `native` marks the legs
-        # whose runner can import the wheel it built.
+        # `wheel` is the platform tag the wheel's filename must carry. It is
+        # the one fact each leg checks about what it built. `native` marks
+        # the legs whose runner can import the wheel it built.
         #
-        # Linux builds run inside maturin-action's manylinux containers, which
-        # is what gives the gnu wheels their glibc floor: 2.28, the same floor
-        # the FFI's zigbuild passes as `--target <triple>.2.28`. The musl wheel
-        # is built in the musllinux_1_2 container, a musl system, as the FFI's
-        # musl binary is built in Alpine. Both Darwin legs share macos-latest,
-        # which is arm64, so `target` is what makes darwin-x64 an x86_64 wheel
-        # and not a second arm64 one with the wrong name.
+        # Linux builds run inside maturin-action's manylinux containers. That
+        # gives the gnu wheels their glibc floor, 2.28. The FFI's zigbuild
+        # passes the same floor as `--target <triple>.2.28`. The musl wheel is
+        # built in the musllinux_1_2 container, a musl system. The FFI's musl
+        # binary is built in Alpine for the same reason. Both Darwin legs
+        # share macos-latest, an arm64 runner. So `target` is what makes
+        # darwin-x64 an x86_64 wheel, not a second arm64 wheel with the wrong
+        # name.
         include:
           - platform: linux-x64-gnu
             target: x86_64-unknown-linux-gnu
@@ -229,13 +230,12 @@ jobs:
             native: true
     runs-on: ${{ matrix.os }}
     # A release build of the stack-encrypt graph, cross-compiled on two legs,
-    # on a 4 vCPU runner with no registry cache inside the container. Wider
-    # than the other jobs on purpose; tighten once a few runs have shown the
-    # real number.
+    # on a 4 vCPU runner with no registry cache inside the container. No run
+    # has measured it yet, so this is wider than the other jobs on purpose.
     timeout-minutes: 90
     steps:
-      # Git for Windows defaults to CRLF on checkout. `cargo fmt` is not run
-      # here, but a CRLF pyproject.toml is what maturin would read.
+      # Git for Windows defaults to CRLF on checkout. `cargo fmt` does not
+      # run here, but maturin would read a CRLF pyproject.toml.
       - name: Keep LF line endings
         run: git config --global core.autocrlf false
 
@@ -244,11 +244,11 @@ jobs:
           persist-credentials: false
 
       # One source of truth for the Rust version: the root mise.toml the
-      # `python` job builds under. mise itself is not installed here: the
+      # `python` job builds under. mise itself is not installed here. The
       # Linux legs compile inside a container, where maturin-action installs
-      # the toolchain this names. If that line changes shape, fail here by name
-      # rather than hand maturin-action an empty toolchain, which it would
-      # read as "stable".
+      # the toolchain this step names. If that line changes shape, this step
+      # fails by name. Otherwise maturin-action would receive an empty
+      # toolchain and read it as "stable".
       - name: Rust version from mise.toml
         id: rust
         run: |
@@ -259,24 +259,24 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # The floor, not the newest: an abi3-py39 wheel claims to load on 3.9,
-      # and the import below is that claim tested. maturin needs no
-      # interpreter for an abi3 build, so this is for the import alone.
-      # "3.9" resolves to the newest 3.9.x the runner has a build for: 3.9.13
-      # on arm64 macOS and on Windows, where the later security releases
-      # shipped no binaries (actions/python-versions manifest, 2026-10-27),
-      # and 3.9.25 on Linux and x64 macOS.
+      # The floor, not the newest. An abi3-py39 wheel claims to load on 3.9,
+      # and the import below tests that claim. maturin needs no interpreter
+      # for an abi3 build, so this is for the import alone. "3.9" resolves to
+      # the newest 3.9.x the runner has a build for. That is 3.9.13 on arm64
+      # macOS and on Windows, where the later security releases shipped no
+      # binaries (actions/python-versions manifest, 2026-10-27). It is 3.9.25
+      # on Linux and x64 macOS.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.9"
 
-      # The toolchain the wheel is built with, installed before the cache step
-      # so that step keys on it: rust-cache reads `rustc -vV` from the default
-      # toolchain, and without this it would key on whatever the runner image
-      # ships and never follow the version mise.toml names. maturin-action
-      # installs the same version again inside the Linux containers, where
-      # this install is not visible; `rustup toolchain install` is a no-op
-      # where it already is.
+      # The toolchain the wheel is built with. It is installed before the
+      # cache step so that step keys on it. rust-cache reads `rustc -vV` from
+      # the default toolchain. Without this step it would key on whatever the
+      # runner image ships and never follow the version mise.toml names.
+      # maturin-action installs the same version again inside the Linux
+      # containers, where this install is not visible. `rustup toolchain
+      # install` does nothing where the version is already installed.
       - name: Install the Rust toolchain mise.toml names
         env:
           RUST_VERSION: ${{ steps.rust.outputs.version }}
@@ -285,18 +285,22 @@ jobs:
           rustup toolchain install "$RUST_VERSION" --profile minimal
           rustup default "$RUST_VERSION"
 
-      # Keyed by target as well as by lockfile, so the six legs do not evict
-      # each other. On the three host legs this caches the registry and the
-      # workspace `target/` directory. On the three container legs it is weak:
-      # the container keeps its own registry, and writes `target/` as root
-      # through the bind mount, so the post step may only warn. It stays on
-      # every leg because every leg compiles Rust (#1383).
+      # Keyed by target as well as by lockfile, so the legs do not evict each
+      # other. On the three host legs this caches the registry and the
+      # workspace `target/` directory. On the three container legs it caches
+      # little. The container keeps its own registry, and it writes `target/`
+      # as root through the bind mount, so the post step may only warn. It
+      # stays on every leg because every leg compiles Rust (#1383).
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: languages/python
           key: ${{ matrix.target }}
 
-      - name: Start the clock
+      # The build time below is measured from here, so it includes everything
+      # maturin-action does. On the three Linux legs that is the container
+      # pull and the toolchain install inside it. On every leg it is the
+      # registry fetch on a cache miss, and the compile itself.
+      - name: Record the start time
         id: clock
         run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
 
@@ -313,8 +317,8 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           rust-toolchain: ${{ steps.rust.outputs.version }}
 
-      # The build time is the number this job exists to record (the spec's
-      # scorecard asks for it per platform). Written here, to this leg's
+      # The build time is the number this job exists to record. The spec's
+      # scorecard asks for it per platform. It is written here, to this leg's
       # summary, and to a file the `wheels-summary` job gathers into one table.
       - name: Record the build time
         env:
@@ -328,10 +332,10 @@ jobs:
           echo "Built the ${PLATFORM} wheel in ${seconds}s" >> "$GITHUB_STEP_SUMMARY"
 
       # Exactly one wheel, tagged for the floor (cp39-abi3) and for this leg's
-      # platform. A wrong `target` on the shared Darwin runner, or a container
-      # that produced a manylinux tag below the floor, both show up in the
-      # filename and nowhere else that this job reads.
-      - name: The wheel is one, abi3-py39, for this platform
+      # platform. A wrong `target` on the shared Darwin runner shows up in the
+      # filename. So does a container that produced a manylinux tag below the
+      # floor. This job reads the filename and nothing else about the wheel.
+      - name: Check that the wheel is one, abi3-py39, for this platform
         env:
           PLATFORM: ${{ matrix.platform }}
           WHEEL_TAG: ${{ matrix.wheel }}
@@ -352,8 +356,8 @@ jobs:
 
       # On the legs whose runner is the wheel's platform, install it into the
       # floor interpreter and load both halves. The cross-compiled legs
-      # (linux-arm64-gnu, linux-x64-musl, darwin-x64) cannot run theirs here;
-      # for them the filename check above is the whole verification.
+      # (linux-arm64-gnu, linux-x64-musl, darwin-x64) cannot run theirs here.
+      # For them the filename check above is the whole verification.
       - name: Import the wheel on Python 3.9
         if: ${{ matrix.native }}
         run: |
@@ -375,12 +379,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The six wheels in one place: counts them, and writes one table of build
-  # time per platform to the job summary. A missing wheel fails here by
-  # platform name, so a leg that uploaded nothing is not mistaken for one
-  # whose job was skipped.
+  # All the wheels in one place. The job counts them against the platform
+  # list and writes one table of build time per platform to the job summary.
+  # A missing wheel fails here by platform name. So a leg that uploaded
+  # nothing is not mistaken for a leg whose job was skipped.
   wheels-summary:
-    name: six wheels, build time per platform
+    name: one wheel per platform, build time per platform
     needs: [wheels]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
@@ -391,11 +395,16 @@ jobs:
           merge-multiple: true
           path: wheels
 
-      - name: Six wheels, one per platform, and their build times
+      - name: One wheel per platform, and their build times
         run: |
           set -euo pipefail
           shopt -s nullglob
+          # A copy of the wheel matrix's `platform` values. This job cannot
+          # read the matrix. python-ci.test.mjs holds the copy to the
+          # original. The expected count comes from this list alone.
           platforms="linux-x64-gnu linux-arm64-gnu linux-x64-musl darwin-x64 darwin-arm64 win32-x64-msvc"
+          read -ra platform_list <<<"$platforms"
+          want=${#platform_list[@]}
           wheels=(wheels/*.whl)
           {
             echo "## Python wheels"
@@ -404,7 +413,7 @@ jobs:
             echo "|---|---|---:|"
           } >> "$GITHUB_STEP_SUMMARY"
           missing=0
-          for platform in $platforms; do
+          for platform in "${platform_list[@]}"; do
             timing="wheels/${platform}.seconds"
             if [ ! -f "$timing" ]; then
               echo "::error::no build time recorded for ${platform}"
@@ -415,7 +424,7 @@ jobs:
           done
           echo "" >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' "${wheels[@]##*/}" | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
-          if [ "${#wheels[@]}" -ne 6 ] || [ "$missing" -ne 0 ]; then
-            echo "::error::expected six wheels with six build times, found ${#wheels[@]} wheels: ${wheels[*]##*/}"
+          if [ "${#wheels[@]}" -ne "$want" ] || [ "$missing" -ne 0 ]; then
+            echo "::error::expected ${want} wheels with ${want} build times, found ${#wheels[@]} wheels: ${wheels[*]##*/}"
             exit 1
           fi

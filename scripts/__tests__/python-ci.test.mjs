@@ -3,7 +3,11 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
-import { readWorkflow } from './lib/workflows.mjs'
+import {
+  readWorkflow,
+  runWorkingDirectory,
+  triggers,
+} from './lib/workflows.mjs'
 
 /**
  * `tests-python.yml` is held to the Python workspace it tests, with every
@@ -15,9 +19,9 @@ import { readWorkflow } from './lib/workflows.mjs'
  * pyo3, and `tests.yml`'s gate excludes those crates on purpose. So a
  * stack-encrypt change that breaks the Python engine crate is caught here or
  * nowhere, and "here" depends on the `pull_request` filter naming every tree
- * the workspace compiles. That list is the workspace's path dependencies,
- * which `Cargo.lock` records as packages with no `source`: a new path
- * dependency lands in the lockfile, and this file fails until the filter
+ * the workspace compiles. That list is the workspace's path dependencies.
+ * `Cargo.lock` records those as packages with no `source`. A new path
+ * dependency appears in the lockfile, and this file fails until the filter
  * follows.
  *
  * The other facts are read the same way: the two Python versions from
@@ -31,12 +35,6 @@ const WORKFLOW = '.github/workflows/tests-python.yml'
 const PYTHON_ROOT = 'languages/python'
 
 const read = (rel) => readFileSync(join(REPO_ROOT, rel), 'utf8')
-
-/** `wf.on`, under YAML 1.1's reading of the bare key `on` as `true`. */
-function triggers() {
-  const wf = readWorkflow(WORKFLOW)
-  return wf.on ?? wf[true]
-}
 
 /**
  * The directories outside `languages/python` whose crates the workspace
@@ -72,7 +70,7 @@ const coversTree = (pattern, file) =>
 
 describe('tests-python.yml', () => {
   it('runs on pull requests touching every tree the Python workspace compiles', () => {
-    const on = triggers()
+    const on = triggers(readWorkflow(WORKFLOW))
     const paths = on.pull_request?.paths ?? []
     const wanted = [
       PYTHON_ROOT,
@@ -124,10 +122,12 @@ describe('tests-python.yml', () => {
   })
 
   it('builds one wheel per platform the FFI ships for, by the same Rust triples', () => {
-    // The six platform packages each carry `neon.rust`, the triple their
-    // binary is built for. The issue names "the six platforms the FFI already
-    // ships for", so the wheel matrix is held to that list rather than to a
-    // copy of it: a seventh platform package, or a moved triple, fails here.
+    // Each platform package carries `neon.rust`, the triple its binary is
+    // built for. The issue names "the six platforms the FFI already ships
+    // for", so the wheel matrix is held to that list, not to a copy of it. A
+    // seventh platform package, or a moved triple, fails here. The count six
+    // is written here and nowhere else: the workflow derives its own count
+    // from the platform list in `wheels-summary`.
     const platformsDir = 'languages/typescript/packages/protect-ffi/platforms'
     const ffi = readdirSync(join(REPO_ROOT, platformsDir))
       .map((name) => {
@@ -203,16 +203,11 @@ describe('tests-python.yml', () => {
     )
 
     const wf = readWorkflow(WORKFLOW)
-    const workflowDefault = wf.defaults?.run?.['working-directory']
-    const runs = Object.values(wf.jobs).flatMap((job) => {
-      const jobDefault =
-        job.defaults?.run?.['working-directory'] ?? workflowDefault
-      return job.steps
-        .filter(
-          (step) => (step['working-directory'] ?? jobDefault) === PYTHON_ROOT,
-        )
-        .map((step) => step.run ?? '')
-    })
+    const runs = Object.values(wf.jobs).flatMap((job) =>
+      job.steps
+        .filter((step) => runWorkingDirectory(wf, job, step) === PYTHON_ROOT)
+        .map((step) => step.run ?? ''),
+    )
     const invoked = (command) =>
       runs.some((run) =>
         new RegExp(`(^|[\\s;&|])${command}(\\s|$)`, 'm').test(run),

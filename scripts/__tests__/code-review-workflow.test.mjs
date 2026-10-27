@@ -11,13 +11,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runsWhen } from './lib/expressions.mjs'
-import { readWorkflow } from './lib/workflows.mjs'
+import { readWorkflow, triggers } from './lib/workflows.mjs'
 
 const WORKFLOW = '.github/workflows/code-review.yml'
 const gha = (expression) => `\${{ ${expression} }}`
 
 const workflow = readWorkflow(WORKFLOW)
-const triggers = workflow.on ?? workflow[true]
+const on = triggers(workflow)
 const request = workflow.jobs.request
 const fire = request.steps.find(
   (step) => step.name === 'Fire the code-review routine',
@@ -32,8 +32,8 @@ describe('Code-review routine trigger', () => {
   it('fires once per lifecycle event, never on every push', () => {
     // No `synchronize`: each push would start another review session. Mark the
     // pull request draft and ready again for a fresh review.
-    expect(Object.keys(triggers)).toEqual(['pull_request'])
-    expect(triggers.pull_request.types).toEqual([
+    expect(Object.keys(on)).toEqual(['pull_request'])
+    expect(on.pull_request.types).toEqual([
       'opened',
       'reopened',
       'ready_for_review',
