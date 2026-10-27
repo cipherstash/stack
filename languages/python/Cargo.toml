@@ -3,9 +3,6 @@
 # excludes it, as it excludes the Go guests and the fuzz crates, so its
 # pyo3 graph and its own Cargo.lock never enter a stack-* build.
 #
-# The release profile below is what the CI wheel is built with; the local
-# `mise run build` uses the dev profile (see mise.toml).
-#
 # Two crates, by design (the Python SDK spec, "Layout"):
 #
 # - `crates/core` holds everything that is not pyo3. It depends on
@@ -37,7 +34,3 @@ repository = "https://github.com/cipherstash/stack"
 # `dynamic` is the runtime value model every binding speaks (frames, plans
 # read at run time), and the only stack-encrypt surface the spec has core use.
 stack-encrypt = { path = "../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
-
-[profile.release]
-strip = true
-lto = true

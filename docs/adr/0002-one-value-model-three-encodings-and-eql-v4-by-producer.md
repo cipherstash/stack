@@ -409,8 +409,9 @@ without loss, and refuses it otherwise.
   `date`, then by range: an `int` that does not fit the kind, a `float`
   that does not round-trip through the kind's width, a naive `datetime` and
   `None` are refused. Nothing is converted. A decrypted value comes back as
-  the same Python type. The rules are the Python SDK spec's (#1341) and
-  ADR-0001 under `languages/python/docs/adr/`.
+  the same Python type. The rules are the Python SDK spec's (#1341,
+  "Values"). ADR-0001 under `languages/python/docs/adr/` records only the
+  decorator the annotation check runs in, not these rules.
 - **Decimal.** A host decimal (Go's `shopspring/decimal`, a JavaScript
   string) is refused if it is NaN or infinite, has more than 28 digits after
   the point, or does not fit a 96-bit mantissa at its scale. Postgres

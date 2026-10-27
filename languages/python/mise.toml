@@ -31,9 +31,9 @@ if [ "$have" != "$want" ]; then
   rm -rf .venv
   uv venv --python "$(command -v python3)" .venv
 fi
-# The dev profile for the local loop: the workspace's release profile is fat
-# LTO over the whole stack-encrypt graph, minutes per rebuild, and the CI
-# ticket is where the release wheel is built and timed.
+# The dev profile for the local loop: maturin builds release by default, and
+# a release build of the stack-encrypt graph takes minutes per rebuild. The
+# CI ticket decides the release profile for the wheel it builds and times.
 export MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:---profile dev}"
 # The package itself, built by maturin through the PEP 517 backend, plus the
 # `test` extra. Always reinstall the package so a Rust change is picked up.

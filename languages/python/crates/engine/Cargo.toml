@@ -16,8 +16,7 @@ repository.workspace = true
 # maturin installs this as `stackencrypt._engine` (pyproject.toml,
 # `module-name`).
 name = "_engine"
-# rlib as well, so the crate's own tests can link the module function.
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 stackencrypt-core = { path = "../core" }

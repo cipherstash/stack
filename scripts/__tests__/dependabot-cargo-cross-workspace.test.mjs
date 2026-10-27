@@ -88,7 +88,12 @@ function crossWorkspaceEdges(workspaces) {
   }
   const edges = []
   for (const [dir, crates] of workspaces) {
-    for (const crate of crates) {
+    // The workspace root manifest is scanned too: a `path =` under its
+    // `[workspace.dependencies]` is a dependency of every member that
+    // inherits it with `workspace = true`, and the member's own manifest
+    // then names no path. A single-crate workspace's root is already in
+    // `crates`, so the Set keeps it from being read twice.
+    for (const crate of new Set([dir, ...crates])) {
       for (const to of pathDependencies(crate, readManifest(crate))) {
         const toDir = owner.get(to) ?? null
         const seen = edges.some((e) => e.from === crate && e.to === to)
@@ -127,6 +132,17 @@ describe('cargo Dependabot entries that share crates across workspaces never edi
     // If these all go away the rule below has nothing to hold, and this file
     // can be retired rather than left vacuously green.
     expect(edges).not.toHaveLength(0)
+  })
+
+  it('reads a path dependency declared in [workspace.dependencies]', () => {
+    // languages/python names stack-encrypt only in its root manifest; its
+    // crates inherit it. The guard missed that edge until this test existed.
+    expect(edges).toContainEqual({
+      from: 'languages/python',
+      to: 'packages/stack-encrypt',
+      fromDir: 'languages/python',
+      toDir: '',
+    })
   })
 
   it('covers every crate a path dependency reaches', () => {
