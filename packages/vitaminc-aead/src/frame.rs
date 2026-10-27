@@ -20,7 +20,6 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
-use zeroize::Zeroize;
 
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{
@@ -421,7 +420,7 @@ pub(crate) fn reserve(out: &mut Vec<u8>, additional: usize) {
         .max(64);
     let mut grown = Vec::with_capacity(capacity);
     grown.extend_from_slice(out);
-    out.zeroize();
+    vitaminc_protected::wipe_vec(out);
     *out = grown;
 }
 

@@ -131,7 +131,7 @@ use vitaminc_aead::leaf::{self, Form};
 use vitaminc_aead::plaintext::{Float, Int, Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{tags, Encrypt, Frame, FrameWriter};
 use vitaminc_protected::Protected;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 // =============================================================================
 // Errors
@@ -1114,7 +1114,7 @@ pub(crate) fn reserve(out: &mut Vec<u8>, additional: usize) {
         .max(64);
     let mut grown = Vec::with_capacity(capacity);
     grown.extend_from_slice(out);
-    out.zeroize();
+    vitaminc_protected::wipe_vec(out);
     *out = grown;
 }
 
