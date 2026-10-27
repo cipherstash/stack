@@ -1,8 +1,7 @@
 //! The pyo3 extension: `stackencrypt._engine`.
 //!
-//! Deliberately thin. Everything that encrypts, derives a term or frames an
-//! EQL value will live in `stackencrypt-core` and `stack-encrypt`; this crate
-//! only converts between Python and Rust at the boundary.
+//! Deliberately thin: this crate only converts between Python and Rust at
+//! the boundary. Logic belongs in `stackencrypt-core` and `stack-encrypt`.
 
 use pyo3::prelude::*;
 

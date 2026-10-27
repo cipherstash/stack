@@ -18,7 +18,7 @@ def test_version_starts_the_independent_semver_line():
 
 
 def test_engine_names_the_commit_the_extension_was_built_from():
-    # `-dirty` when packages/stack-encrypt had local edits at build time.
+    # `-dirty` when a packages/stack-* crate had local edits at build time.
     assert re.fullmatch(r"[0-9a-f]{40}(-dirty)?", stackencrypt.__engine__)
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "stackencrypt-core"
-description = "The Python SDK's engine-side logic, with no pyo3: what the parity binary and the fuzz target link alone"
+description = "The Python SDK's engine-side logic, with no pyo3, linked and tested without a Python interpreter"
 # This crate's version is not the wheel's. The wheel takes its version from
 # crates/engine (see pyproject.toml, `dynamic = ["version"]`).
 version = "0.0.0"
