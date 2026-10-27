@@ -11,6 +11,9 @@ The third part applies to the Python SDK and is a start, not a complete set.
 - **Engine:** the Rust code that encrypts, decrypts and derives search terms.
 - **Binding:** the FFI or WASI interface between the engine and a target language.
 - **Language SDK:** what users of the target language work with day to day.
+- **Extension:** the Python SDK's binding, the module `stackencrypt._engine` in the crate `stackencrypt-engine`.
+  The spec #1341 fixes both names, so "engine" in them names the binding, not Stack Encrypt.
+  `stackencrypt.__engine__` reports the Stack Encrypt commit, the engine in this list's sense.
 - **Declaration:** the statement of how each field is encrypted: its context, and its indexes.
   The engine calls a saved declaration a plan.
 
@@ -220,7 +223,7 @@ The generator does not guess a plural.
 ## Principles for the Python SDK
 
 The Python SDK is the package `stackencrypt` under `languages/python`.
-Its binding is the extension module `stackencrypt._engine`.
+Its binding is the extension module `stackencrypt._engine`, named under Terms above.
 Do not call the extension the SDK, and do not call the SDK the binding.
 [ADR-0001](../languages/python/docs/adr/0001-a-declaration-is-checked-when-the-class-is-defined.md) under `languages/python/docs/adr/` records the first decision below.
 No code demonstrates these yet: the walking skeleton exposes only build metadata, and the tickets under spec #1341 build the rest.

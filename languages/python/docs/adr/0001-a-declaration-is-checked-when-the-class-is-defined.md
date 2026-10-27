@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-10-16
+accepted: 2026-10-27, by the review on PR #1284; the status edit rode with the first implementation PR, as the spec (#1341) says
 extends: ADR-0007, ADR-0008 (packages/stack-encrypt/docs/adr)
 ticket: the Python SDK discovery ticket, backlog item 1 (its 15 October 2026 amendment)
 ---
@@ -16,8 +17,19 @@ The call site takes the class: `Cipher(User)`.
 No public name is a plan or returns one.
 
 This is the trade-off memo for backlog item 1's first question, written as
-the ADR the gate will accept or amend.
-The reviewers decide (the ticket, decision 7).
+the ADR for the gate (the ticket, decision 7).
+The reviewers accepted it on PR #1284, with the amendments the spec (#1341) made.
+Five items in the body are still open after acceptance.
+None of them changes the decision: the check runs at the class statement, by a decorator.
+
+- The decorator's name (decision 2): `stash.model`, or one of the two alternatives.
+- Rule A, every field carries a marker (decision 7): backlog item 1.2 decides it after the user test.
+- The marker spelling (decision 8): the recommended option for item 1.1, not decided here.
+- An `Ignore` field with an unresolved forward reference (decision 5): a later relaxation.
+- A linter rule for a print of an opted-out model (decision 9): open under principle G3.
+
+The rig of 2026-10-20 in "What was run" is later than the date above, because
+the memo was revised for the review after it was written.
 
 ## The problem
 
@@ -280,8 +292,11 @@ Option 2.
    | Encrypted, no index | `Annotated[str, stash.Text]` |
    | Not encrypted | `Annotated[int, stash.Passthrough]` |
 
-   Whether the kind can also come from the Python type (`str` for text)
-   instead of the marker is the user-test question of item 1.1.
+   *Amended 2026-10-27:* the spec (#1341, "Values") settles the kind
+   question this paragraph left to item 1.1. The kind comes from the
+   marker, never from the Python type. The annotation must name the one
+   Python type the kind takes, and the decorator refuses a class where
+   the two disagree.
    An earlier draft of this ADR spelled a field as a kind marker plus an
    index marker (`stash.Text, stash.Equality`).
    That spelling needs a Python copy of the catalog's kind-and-index
@@ -290,7 +305,8 @@ Option 2.
 9. **A model does not print a sealed value through `repr`, `str` or
    `logging`, by default.**
    The decorator writes `__repr__` and `__str__` on the class it
-   decorates and on the encrypted type the SDK returns.
+   decorates. (`encrypt` returns plain mappings, by the spec, so there is
+   no encrypted type to write them on.)
    Both print the passthrough fields and `[sealed]` in place of each
    sealed field's value, the format of Go's generated `String` and
    `LogValue`.
@@ -446,7 +462,8 @@ file and a hand-written one reports the class's module.
 - Python has less kind ambiguity than Go.
   Go's `time.Time` can mean a date or a timestamp.
   Python's `datetime.date` and `datetime.datetime` are different types, so
-  the hint alone can pick the kind when those kinds land.
+  the annotation can be checked against the marker's kind exactly. (The
+  marker picks the kind; see the amendment under decision 8.)
 - The week-1 step 2 sentence becomes true by construction, and the
   scorecard marks G3 "held" for the declaration check.
 - Backlog item 1 still owes two memos: 1.1 (`Annotated` against other

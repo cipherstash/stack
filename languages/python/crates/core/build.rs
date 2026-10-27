@@ -85,9 +85,20 @@ fn commit_from_git() -> String {
              commit the engine (packages/stack-encrypt) is taken from."
         )
     });
+    // Each crate's `fuzz/` is a detached workspace the engine build never
+    // compiles, and its tracked seed corpus grows on every fuzz run, so a
+    // corpus file must not mark the engine dirty.
     let dirs = engine_dirs(&manifest_dir);
+    let mut paths: Vec<String> = dirs
+        .iter()
+        .map(|d| d.to_str().expect("utf-8 path").to_string())
+        .collect();
+    paths.extend(
+        dirs.iter()
+            .map(|d| format!(":(exclude){}/fuzz", d.display())),
+    );
     let mut status = vec!["status", "--porcelain", "--"];
-    status.extend(dirs.iter().map(|d| d.to_str().expect("utf-8 path")));
+    status.extend(paths.iter().map(String::as_str));
     let dirty = git(&status).is_some_and(|s| !s.is_empty());
     if dirty {
         format!("{commit}-dirty")
