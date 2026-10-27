@@ -149,7 +149,7 @@ async fn canonical_ciphertext_opens_through_the_record() {
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
     let canonical = keyset
-        .encrypt(email.clone(), Identifier::email())
+        .encrypt_node(email.clone(), Identifier::email())
         .await
         .unwrap();
     let probe = keyset
@@ -309,7 +309,7 @@ impl<P: stack_encrypt::Decrypt + Send + 'static> DecryptInto<P> for FixedLeaf {
 
 #[tokio::test]
 async fn unit_context_target_supplies_its_own_context() {
-    use stack_encrypt::EncryptInto;
+    use stack_encrypt::target::legacy::EncryptInto;
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
     let text = String::from("fixed");
@@ -468,7 +468,7 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         ("empty".into(), vec![]),
     ]);
     let tree = keyset
-        .encrypt(value.clone(), nonempty!("document"))
+        .encrypt_node(value.clone(), nonempty!("document"))
         .await
         .unwrap();
     let stored = tree.read(TreeVisitor).unwrap();
@@ -491,7 +491,10 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         "and opened with one retrieval"
     );
     // Transcoding keeps the authentication: changing a cryptographic map key fails.
-    let tree = keyset.encrypt(value, nonempty!("document")).await.unwrap();
+    let tree = keyset
+        .encrypt_node(value, nonempty!("document"))
+        .await
+        .unwrap();
     let Stored::Object(mut entries) = tree.read(TreeVisitor).unwrap() else {
         panic!("object")
     };
@@ -504,7 +507,7 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         "a map key is part of its entry's authenticated context: renaming it fails to open"
     );
     let tree = keyset
-        .encrypt(HashMap::<String, String>::new(), nonempty!("document"))
+        .encrypt_node(HashMap::<String, String>::new(), nonempty!("document"))
         .await
         .unwrap();
     let Stored::EmptyObject(marker) = tree.read(TreeVisitor).unwrap() else {

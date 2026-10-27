@@ -3,7 +3,6 @@ use super::{CipherScope, Pending, Request, Responses};
 use crate::cipher::{bind_keys, open_keyed, KeyedCipherText, PendingStackCipherText};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher, StackCipherText};
 use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad, IntoContext};
-use vitaminc_protected::NonEmpty;
 
 /// Internal term operation. It is deliberately inaccessible to target authors.
 ///
@@ -29,7 +28,7 @@ pub(crate) trait Term<S, K, Ctx>: Sized {
 pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
     source: S,
     cipher: &'a KeysetCipher<'_, K>,
-    context: NonEmpty<T>,
+    context: T,
 ) -> Pending<'a, StackCipherText, K> {
     let context = context.into_context();
     let descriptor = Descriptor::from_piece(&context);
@@ -45,7 +44,7 @@ pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
 pub(crate) fn open_native<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext<'c>>(
     tree: StackCipherText,
     cipher: &'a StackCipher<K>,
-    context: NonEmpty<T>,
+    context: T,
 ) -> Pending<'a, P, K> {
     let context = context.into_context();
     let descriptor = Descriptor::from_piece(&context);

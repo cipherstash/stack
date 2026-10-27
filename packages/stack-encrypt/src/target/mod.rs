@@ -1,5 +1,15 @@
 //! Targets declare operations; the cipher executes them through Vitamin C.
 //!
+//! The owned API uses [`EncryptTarget`] and [`DecryptSource`] declarations,
+//! executed by [`EncryptInto`] and [`DecryptFrom`]. Their `ContextInput`
+//! capabilities explicitly allow omission or supply; `Default` does not
+//! determine either. [`scalar_ciphertext`] is the first owned operation.
+//!
+//! # Structural API during migration
+//!
+//! Existing derives, plans and dynamic targets still use the declarations
+//! below. Their borrowed convenience methods are isolated in [`legacy`].
+//!
 //! [`EncryptFrom<S>`] describes ciphertext and/or term operations and has an
 //! associated context type. It does not receive plaintext or a cipher. The
 //! cipher's `encrypt_as` executes that description, returning the existing
@@ -82,12 +92,14 @@
 //! Implement `encryption`/`decryption`, returning core-owned descriptions, in place
 //! of `encrypt_from`/`decrypt_into` methods that took a cipher. The derives do this
 //! automatically. Call `keyset.encrypt_as(&value, context)` and
-//! `cipher.decrypt_as(record, context)`, or import the blanket [`EncryptInto`] and
-//! [`DecryptFrom`] convenience traits for the existing source-side call syntax.
-//! `EncryptTarget` and `DecryptTarget` are no longer extension points.
+//! `cipher.decrypt_as(record, context)`, or import [`legacy::EncryptInto`] and
+//! [`legacy::DecryptFrom`] while migrating these declarations. New scalar
+//! targets implement [`EncryptTarget`] and [`DecryptSource`].
 mod context;
+mod conversion;
 pub(crate) mod core;
 mod index;
+mod input;
 mod operations;
 mod pending;
 mod request;
@@ -106,11 +118,26 @@ pub(crate) use operations::chosen;
 pub(crate) use operations::inspect;
 pub use operations::{
     ciphertext, equality, json_document, json_terms, matching, ope, open, ore, ore_block,
-    passthrough, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption, EncryptFrom,
-    EncryptInto, Encryption, Layout,
+    passthrough, scalar_ciphertext, DecryptField, DecryptInto, Decryptable, Decryption,
+    EncryptFrom, Encryption, Layout,
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 pub use tuples::JoinContext;
+
+// The old borrowed declarations remain for plans, derives and the dynamic
+// engine during the staged migration. New applications use the traits above.
+/// Borrowed conversion helpers for declarations not yet migrated to the owned API.
+/// Do not import these alongside the new conversion traits.
+pub mod legacy {
+    pub use super::operations::{
+        LegacyDecryptFrom as DecryptFrom, LegacyEncryptInto as EncryptInto,
+    };
+}
+pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
+pub use input::{
+    AcceptsContext, AllowsNoContext, ContextInput, NoCallerContext, OptionalContext,
+    RequiredContext, ScalarContext,
+};

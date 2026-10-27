@@ -11,7 +11,8 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use common::{counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::sem::Orderable;
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm, TermError};
-use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto, Encrypted};
+use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
+use stack_encrypt::target::{AeadContext, Encrypted};
 use stack_encrypt::{
     nonempty, ContextPiece, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error,
     IntoContext, MaybeEmpty, NonEmpty, StackCipherText,
@@ -419,7 +420,7 @@ async fn a_ciphertext_only_record_accepts_an_aead_only_context_like_the_leaf_doe
     let opened: String = cipher.decrypt(record.c, tenant()).await.unwrap();
     assert_eq!(opened, name);
 
-    let leaf = keyset.encrypt(name.clone(), tenant()).await.unwrap();
+    let leaf = keyset.encrypt_node(name.clone(), tenant()).await.unwrap();
     let opened: String = SealedName { c: leaf }
         .decrypt_into(&cipher, tenant())
         .await

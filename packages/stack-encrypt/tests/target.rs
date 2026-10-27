@@ -9,9 +9,10 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm};
+use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::target::{
-    ciphertext, equality, CallerContext, DeclaredContext, DecryptFrom, DecryptInto, Decryption,
-    EncryptFrom, EncryptInto, Encryption, Pending, Request,
+    ciphertext, equality, CallerContext, DeclaredContext, DecryptInto, Decryption, EncryptFrom,
+    Encryption, Pending, Request,
 };
 use stack_encrypt::{nonempty, EmptyError, Error, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
@@ -923,7 +924,10 @@ async fn cipher_directed_encrypt_and_decrypt_are_one_batched_call_each() {
         .into_iter()
         .map(String::from)
         .collect();
-    let ct = keyset.encrypt(names.clone(), "users/name").await.unwrap();
+    let ct = keyset
+        .encrypt_node(names.clone(), "users/name")
+        .await
+        .unwrap();
     assert_eq!(
         generates.load(AtomicOrdering::SeqCst),
         1,
@@ -946,7 +950,10 @@ async fn cipher_directed_and_target_directed_ciphertexts_are_interchangeable() {
     let value = vec!["one".to_string(), "two".to_string(), "three".to_string()];
 
     // Sealed by the cipher-directed API, opened by the target-directed one.
-    let ct = keyset.encrypt(value.clone(), "users/tags").await.unwrap();
+    let ct = keyset
+        .encrypt_node(value.clone(), "users/tags")
+        .await
+        .unwrap();
     let via_target: Vec<String> = ct
         .decrypt_into(&cipher, nonempty!("users/tags"))
         .await

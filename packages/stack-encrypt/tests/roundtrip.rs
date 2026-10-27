@@ -25,7 +25,7 @@ async fn scalar_roundtrips_with_no_aad() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("hello world".to_string(), ())
+        .encrypt_node("hello world".to_string(), ())
         .await
         .expect("encrypt");
     let pt: String = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -38,7 +38,7 @@ async fn scalar_roundtrips_with_matching_aad() {
     let keyset = cipher.default_keyset();
     let aad = b"public-context".as_slice();
     let ct = keyset
-        .encrypt("secret".to_string(), aad)
+        .encrypt_node("secret".to_string(), aad)
         .await
         .expect("encrypt");
     let pt: String = cipher.decrypt(ct, aad).await.expect("decrypt");
@@ -50,7 +50,7 @@ async fn decrypt_fails_with_wrong_aad() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("secret".to_string(), b"aad-a".as_slice())
+        .encrypt_node("secret".to_string(), b"aad-a".as_slice())
         .await
         .expect("encrypt");
     let result: Result<String, _> = cipher.decrypt(ct, b"aad-b".as_slice()).await;
@@ -62,7 +62,7 @@ async fn decrypt_fails_when_aad_omitted() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("secret".to_string(), b"bound".as_slice())
+        .encrypt_node("secret".to_string(), b"bound".as_slice())
         .await
         .expect("encrypt");
     // The leaf bound the PAE-encoded tuple `(aad, tag)`; dropping the caller
@@ -76,7 +76,10 @@ async fn vec_roundtrips() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    let ct = keyset.encrypt(items.clone(), ()).await.expect("encrypt");
+    let ct = keyset
+        .encrypt_node(items.clone(), ())
+        .await
+        .expect("encrypt");
     let pt: Vec<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
     assert_eq!(pt, items);
 }
@@ -90,7 +93,7 @@ async fn map_roundtrips() {
     input.insert("name", "alice".to_string());
     input.insert("role", "admin".to_string());
 
-    let ct = keyset.encrypt(input, ()).await.expect("encrypt");
+    let ct = keyset.encrypt_node(input, ()).await.expect("encrypt");
     let pt: HashMap<String, String> = cipher.decrypt(ct, ()).await.expect("decrypt");
 
     assert_eq!(pt.get("name"), Some(&"alice".to_string()));
@@ -103,7 +106,7 @@ async fn option_some_roundtrips() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(Some("present".to_string()), ())
+        .encrypt_node(Some("present".to_string()), ())
         .await
         .expect("encrypt");
     let pt: Option<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -115,7 +118,7 @@ async fn option_none_roundtrips() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(Option::<String>::None, ())
+        .encrypt_node(Option::<String>::None, ())
         .await
         .expect("encrypt");
     let pt: Option<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -131,13 +134,13 @@ async fn a_plain_null_opens_as_a_fixed_width_none() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(Option::<String>::None, ())
+        .encrypt_node(Option::<String>::None, ())
         .await
         .expect("encrypt");
     let pt: Option<i64> = cipher.decrypt(ct, ()).await.expect("decrypt");
     assert_eq!(pt, None, "i64");
     let ct = keyset
-        .encrypt(Option::<String>::None, ())
+        .encrypt_node(Option::<String>::None, ())
         .await
         .expect("encrypt");
     let pt: Option<f64> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -159,7 +162,7 @@ async fn a_fixed_width_none_is_as_long_as_a_some() {
     where
         T: Encrypt + Send + 'static,
     {
-        match keyset.encrypt(value, ()).await.expect("encrypt") {
+        match keyset.encrypt_node(value, ()).await.expect("encrypt") {
             CipherText::Single(leaf) => leaf.to_bytes().len(),
             other => panic!("a scalar seals as one leaf: {other:?}"),
         }
@@ -185,7 +188,7 @@ async fn a_fixed_width_none_is_as_long_as_a_some() {
         "text has no width to pad to"
     );
     let ct = keyset
-        .encrypt(Option::<i64>::None, ())
+        .encrypt_node(Option::<i64>::None, ())
         .await
         .expect("encrypt");
     let pt: Option<i64> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -199,7 +202,7 @@ async fn protected_roundtrip() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let secret = Protected::new("classified".to_string());
-    let ct = keyset.encrypt(secret, ()).await.expect("encrypt");
+    let ct = keyset.encrypt_node(secret, ()).await.expect("encrypt");
     let pt: Protected<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
     assert_eq!(pt.risky_unwrap(), "classified".to_string());
 }
@@ -212,7 +215,10 @@ async fn nested_vec_roundtrips() {
         vec!["a".to_string(), "b".to_string()],
         vec!["c".to_string()],
     ];
-    let ct = keyset.encrypt(nested.clone(), ()).await.expect("encrypt");
+    let ct = keyset
+        .encrypt_node(nested.clone(), ())
+        .await
+        .expect("encrypt");
     let pt: Vec<Vec<String>> = cipher.decrypt(ct, ()).await.expect("decrypt");
     assert_eq!(pt, nested);
 }
@@ -225,7 +231,7 @@ async fn context_tag_binds_and_roundtrips() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("token".to_string(), ContextTag::aad("user:42"))
+        .encrypt_node("token".to_string(), ContextTag::aad("user:42"))
         .await
         .expect("encrypt");
 
@@ -242,7 +248,7 @@ async fn context_tag_wrong_context_fails() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("token".to_string(), ContextTag::aad("user:42"))
+        .encrypt_node("token".to_string(), ContextTag::aad("user:42"))
         .await
         .expect("encrypt");
 
@@ -256,7 +262,7 @@ async fn empty_vec_roundtrips() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(Vec::<String>::new(), ())
+        .encrypt_node(Vec::<String>::new(), ())
         .await
         .expect("encrypt");
     let pt: Vec<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -268,7 +274,7 @@ async fn empty_map_roundtrips() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(HashMap::<&'static str, String>::new(), ())
+        .encrypt_node(HashMap::<&'static str, String>::new(), ())
         .await
         .expect("encrypt");
     let pt: HashMap<String, String> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -280,7 +286,7 @@ async fn empty_marker_does_not_decode_under_wrong_aad() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(Vec::<String>::new(), b"bound".as_slice())
+        .encrypt_node(Vec::<String>::new(), b"bound".as_slice())
         .await
         .expect("encrypt");
     let result: Result<Vec<String>, _> = cipher.decrypt(ct, ()).await;
@@ -340,7 +346,7 @@ fn clear(value: u32) -> PassthroughFrame {
 async fn a_passthrough_map_entry_is_stored_in_the_clear_once() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let ct = keyset.encrypt(Row::once(), ()).await.expect("encrypt");
+    let ct = keyset.encrypt_node(Row::once(), ()).await.expect("encrypt");
     let CipherText::Map(entries) = ct else {
         panic!("a record encrypts as a map: {ct:?}");
     };
@@ -359,7 +365,7 @@ async fn a_passthrough_map_entry_is_stored_in_the_clear_once() {
         "{entries:?}"
     );
 
-    let result = keyset.encrypt(Row::with_duplicate_id(), ()).await;
+    let result = keyset.encrypt_node(Row::with_duplicate_id(), ()).await;
     assert!(result.is_err(), "a passthrough key given twice is refused");
 }
 
@@ -410,7 +416,7 @@ async fn renamed_map_key_fails() {
     let mut input: HashMap<&'static str, String> = HashMap::new();
     input.insert("name", "alice".to_string());
 
-    let ct = keyset.encrypt(input, ()).await.expect("encrypt");
+    let ct = keyset.encrypt_node(input, ()).await.expect("encrypt");
     let tampered = match ct {
         CipherText::Map(entries) => CipherText::Map(
             entries
@@ -432,7 +438,7 @@ async fn sequence_element_cannot_be_rehomed_as_scalar() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(vec!["a".to_string()], ())
+        .encrypt_node(vec!["a".to_string()], ())
         .await
         .expect("encrypt");
     let element = match ct {
@@ -453,7 +459,7 @@ async fn wrong_shape_fails() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("scalar".to_string(), ())
+        .encrypt_node("scalar".to_string(), ())
         .await
         .expect("encrypt");
     let result: Result<Vec<String>, _> = cipher.decrypt(ct, ()).await;
@@ -468,7 +474,7 @@ async fn leaf_survives_persistence_via_parts() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("durable".to_string(), b"ctx".as_slice())
+        .encrypt_node("durable".to_string(), b"ctx".as_slice())
         .await
         .expect("encrypt");
     let leaf = match ct {
@@ -490,7 +496,7 @@ async fn leaf_survives_persistence_via_serde() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("durable".to_string(), ())
+        .encrypt_node("durable".to_string(), ())
         .await
         .expect("encrypt");
     let leaf = match ct {
@@ -516,7 +522,7 @@ async fn tampered_leaf_bytes_fail() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt("durable".to_string(), ())
+        .encrypt_node("durable".to_string(), ())
         .await
         .expect("encrypt");
     let leaf = match ct {

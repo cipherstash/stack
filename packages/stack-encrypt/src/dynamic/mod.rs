@@ -57,7 +57,7 @@
 //! # What is not here
 //!
 //! Encrypting a whole value is not: a [`ValueFrame`], like any source,
-//! implements `Encrypt` already, so `keyset.encrypt(value, aad)` is the whole
+//! implements `Encrypt` already, so `keyset.encrypt_node(value, aad)` is the whole
 //! of it and needs nothing from this module. Nor is a second executor: nothing here calls
 //! the term functions or the seal path to produce a record. A capability a
 //! data plan needs and the builder lacks is added to the builder, once.
