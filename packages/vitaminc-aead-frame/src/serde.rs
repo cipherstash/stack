@@ -192,9 +192,30 @@ impl Error {
         })
     }
 
-    pub(crate) fn at(mut self, segment: PathSegment) -> Self {
-        self.path.insert(0, segment);
+    pub(crate) fn at(mut self, segment: impl Into<PathSegment>) -> Self {
+        self.path.insert(0, segment.into());
         self
+    }
+}
+
+/// Where an entry sits on the path, held while its value is read or
+/// written. It names a key by the type's own `&'static str`, and becomes a
+/// [`PathSegment`] only when an error is placed at it, so an entry read or
+/// written without one allocates nothing for its path.
+#[derive(Clone, Copy)]
+enum At {
+    Key(&'static str),
+    Index(usize),
+    Entry(usize),
+}
+
+impl From<At> for PathSegment {
+    fn from(at: At) -> Self {
+        match at {
+            At::Key(key) => PathSegment::Key(key.to_owned()),
+            At::Index(index) => PathSegment::Index(index),
+            At::Entry(index) => PathSegment::Entry(index),
+        }
     }
 }
 
@@ -617,10 +638,10 @@ fn is_plain(ty: Option<Logical>) -> bool {
 /// The path segment for an object's entry: its key when that is one of the
 /// names the type declares, and otherwise only its position, so a key a
 /// host chose is never printed.
-fn entry_at(names: &'static [&'static str], key: &str, index: usize) -> PathSegment {
+fn entry_at(names: &'static [&'static str], key: &str, index: usize) -> At {
     match names.iter().find(|name| **name == key) {
-        Some(name) => PathSegment::Key((*name).to_owned()),
-        None => PathSegment::Entry(index),
+        Some(name) => At::Key(name),
+        None => At::Entry(index),
     }
 }
 
@@ -833,7 +854,7 @@ struct Map<'a, 'de> {
     /// The position of the next entry.
     index: usize,
     /// Where the entry whose value is next sits on the path.
-    at: Option<PathSegment>,
+    at: Option<At>,
 }
 
 impl<'de> MapAccess<'de> for Map<'_, 'de> {
@@ -870,7 +891,7 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
         if self.keys == Keys::Names {
             return Err(de::Error::invalid_type(self.de.found()?, &"a field name"));
         }
-        self.at = Some(PathSegment::Entry(index));
+        self.at = Some(At::Entry(index));
         let start = self.de.pos;
         let key = seed.deserialize(&mut *self.de)?;
         if self.de.pos == start {
@@ -886,9 +907,7 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
             .take()
             .ok_or_else(|| Error::new("a map value was read before its key"))?;
         let start = self.de.pos;
-        let value = seed
-            .deserialize(&mut *self.de)
-            .map_err(|e| e.at(at.clone()))?;
+        let value = seed.deserialize(&mut *self.de).map_err(|e| e.at(at))?;
         if self.de.pos == start {
             return Err(unread().at(at));
         }
@@ -995,7 +1014,7 @@ impl Enum<'_, '_> {
     /// once the variant is accepted, and names it only if it is one the
     /// type declares: a variant read through `#[serde(other)]` accepts a
     /// name the type does not know, which is never printed.
-    fn at(&self) -> PathSegment {
+    fn at(&self) -> At {
         entry_at(self.variants, self.variant, 0)
     }
 }
@@ -1134,11 +1153,15 @@ impl<'o> Serializer<'o> {
     }
 
     /// An object of one entry: an enum variant with a payload.
-    fn variant<T: Serialize + ?Sized>(self, variant: &str, payload: &T) -> Result<(), Error> {
+    fn variant<T: Serialize + ?Sized>(
+        self,
+        variant: &'static str,
+        payload: &T,
+    ) -> Result<(), Error> {
         let mut map = self.0.map(Some(1)).map_err(written)?;
         payload
             .serialize(Serializer(map.entry(variant).map_err(written)?))
-            .map_err(|e| e.at(PathSegment::Key(variant.to_owned())))?;
+            .map_err(|e| e.at(At::Key(variant)))?;
         map.end().map_err(written)
     }
 }
@@ -1349,12 +1372,7 @@ impl SerMap<'_> {
     /// Write one entry. `at` is where an error inside it is placed: a
     /// struct's field by name, a map's entry by position only, as in
     /// reading.
-    fn entry<T: Serialize + ?Sized>(
-        &mut self,
-        key: &str,
-        at: PathSegment,
-        value: &T,
-    ) -> Result<(), Error> {
+    fn entry<T: Serialize + ?Sized>(&mut self, key: &str, at: At, value: &T) -> Result<(), Error> {
         self.index += 1;
         value
             .serialize(Serializer(self.map.entry(key).map_err(written)?))
@@ -1380,8 +1398,7 @@ impl ser::SerializeMap for SerMap<'_> {
             .key
             .take()
             .ok_or_else(|| Error::new("a map value was written before its key"))?;
-        let at = PathSegment::Entry(self.index);
-        self.entry(&key, at, value)
+        self.entry(&key, At::Entry(self.index), value)
     }
     fn end(self) -> Result<(), Error> {
         if self.key.is_some() {
@@ -1399,7 +1416,7 @@ impl ser::SerializeStruct for SerMap<'_> {
         key: &'static str,
         value: &T,
     ) -> Result<(), Error> {
-        self.entry(key, PathSegment::Key(key.to_owned()), value)
+        self.entry(key, At::Key(key), value)
     }
     fn end(self) -> Result<(), Error> {
         self.map.end().map_err(written)
@@ -1446,14 +1463,13 @@ impl<'o> SerVariant<'o> {
         value: &T,
     ) -> Result<(), Error> {
         let at = match key {
-            Some(key) => PathSegment::Key(key.to_owned()),
-            None => PathSegment::Index(self.parts.len()),
+            Some(key) => At::Key(key),
+            None => At::Index(self.parts.len()),
         };
         // A part is an element of the payload container, two levels below
         // the outer object.
         let depth = self.writer.depth() + 2;
-        let frame = to_part(value, depth)
-            .map_err(|e| e.at(at).at(PathSegment::Key(self.variant.to_owned())))?;
+        let frame = to_part(value, depth).map_err(|e| e.at(at).at(At::Key(self.variant)))?;
         self.parts.push((key, frame));
         Ok(())
     }
