@@ -35,13 +35,12 @@
 //!
 #![doc = include_str!("../STORAGE.md")]
 
-use std::collections::HashSet;
 use std::fmt;
 use std::ops::Range;
 
 use ::serde::ser::{self, Serialize};
 use ::serde::Deserialize;
-use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT};
+use vitaminc_aead::frame::{FrameWriteError, SeenKeys, ARRAY, MAX_DEPTH, OBJECT};
 use vitaminc_aead::leaf::{self, Form, ScalarError};
 use vitaminc_aead::plaintext::{Float, Int, Physical};
 use vitaminc_aead::tags;
@@ -339,7 +338,7 @@ fn node(c: &mut Cursor<'_>, depth: usize) -> Result<(), Invalid> {
         OBJECT => {
             c.pos += 1;
             let count = c.count()?;
-            let mut seen = HashSet::new();
+            let mut seen = SeenKeys::default();
             for _ in 0..count {
                 if !seen.insert(c.key()?) {
                     return Err(Invalid::DuplicateKey);
