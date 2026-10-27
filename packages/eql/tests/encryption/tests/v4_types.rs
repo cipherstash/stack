@@ -84,7 +84,7 @@ async fn sealed_from_frame(
     keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
     value: ValueFrame,
 ) -> Ciphertext {
-    match keyset.encrypt(value, column()).await.unwrap() {
+    match keyset.encrypt_node(value, column()).await.unwrap() {
         CipherText::Single(leaf) => CiphertextVisitor.sealed(leaf).unwrap(),
         _ => panic!("a scalar seals as one leaf"),
     }

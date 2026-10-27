@@ -23,7 +23,7 @@
 //!
 //! * **Encrypt** — [`PendingStackCipherText::plan`] walks the value into
 //!   vitaminc's pending tree and does no I/O. A single
-//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt`]
+//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt_node`]
 //!   convenience) then batches **one** `generate_keys` call for the whole
 //!   tree, under the handle's keyset, and seals every leaf through
 //!   `MintedKeys`, the sealing half of this crate's [`Cipher`], one key per
@@ -667,7 +667,7 @@ impl<K: IndexKeySource> StackCipher<K> {
     ///     .init()
     ///     .await?;
     /// let tenant = cipher.keyset(IdentifiedBy::Name("acme".to_string().into())).await?;
-    /// let sealed = tenant.encrypt("hello".to_string(), nonempty!("greeting")).await?;
+    /// let sealed = tenant.encrypt_node("hello".to_string(), nonempty!("greeting")).await?;
     /// # Ok(())
     /// # }
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
@@ -1010,10 +1010,13 @@ fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::Hm
 }
 
 impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
+    /// Low-level structural encryption. For one opaque scalar use
+    /// [`Self::encrypt`] or [`Self::encrypt_with_context`].
+    ///
     /// Encrypt a value, binding `aad`, and seal it against fresh ZeroKMS data
     /// keys in a single batched `generate_keys` call under this keyset.
     /// Every key is requested under the [`Descriptor`] of `aad`.
-    pub async fn encrypt<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
+    pub async fn encrypt_node<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
     where
         T: Encrypt,
         A: IntoContext<'a>,
@@ -1026,7 +1029,11 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
     /// under any other is [`Error::ForeignKeyset`], refused before any key
     /// is retrieved.
-    pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
+    pub async fn decrypt_node<'a, T, A>(
+        &self,
+        ciphertext: StackCipherText,
+        aad: A,
+    ) -> Result<T, Error>
     where
         T: Decrypt,
         A: IntoContext<'a>,
@@ -1784,13 +1791,16 @@ mod tests {
             .await
             .unwrap();
         let keyset = cipher.default_keyset();
-        let leaf = keyset.encrypt(7u32, "users/age").await.unwrap();
+        let leaf = keyset.encrypt_node(7u32, "users/age").await.unwrap();
         let opened: Result<String, _> = cipher.decrypt(leaf, "users/age").await;
         assert!(
             matches!(opened, Err(Error::OpenedType { .. })),
             "{opened:?}"
         );
-        let seq = keyset.encrypt(vec![7u32, 8], "users/age").await.unwrap();
+        let seq = keyset
+            .encrypt_node(vec![7u32, 8], "users/age")
+            .await
+            .unwrap();
         let opened: Result<u32, _> = cipher.decrypt(seq, "users/age").await;
         assert!(
             matches!(opened, Err(Error::OpenedType { .. })),

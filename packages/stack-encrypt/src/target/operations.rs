@@ -462,6 +462,20 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S
         ),
     }
 }
+/// Encrypt a supported scalar as one opaque ciphertext, permitting empty context.
+/// This reads the source under the owned conversion API's zeroization guard.
+pub fn scalar_ciphertext<'s, S: crate::Scalar, K: 'static>(
+) -> Encryption<'s, S, crate::Ciphertext, K, super::OptionalContext<super::ScalarContext>> {
+    Encryption {
+        build: Box::new(
+            move |source, cipher, context: super::OptionalContext<super::ScalarContext>| {
+                encrypt_native(crate::scalar::ScalarRef(source), cipher, context.piece())
+                    .try_map(crate::Ciphertext::from_node)
+            },
+        ),
+    }
+}
+
 /// Carry the plaintext through unchanged: the output is the source itself,
 /// and the context the description is handed is ignored.
 ///
@@ -808,7 +822,7 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     }
     /// Execute under a scope. A [`KeysetCipher`] scope refuses a leaf from any
     /// other keyset; a [`StackCipher`] scope opens leaves from any.
-    fn open_in<'a>(self, scope: impl CipherScope<'a, K>) -> Pending<'a, T, K> {
+    pub(super) fn open_in<'a>(self, scope: impl CipherScope<'a, K>) -> Pending<'a, T, K> {
         let pending = match self.inner {
             Opening::Failed(error) => return Pending::failed(scope, error),
             Opening::Open(open) => open(scope.cipher()),
@@ -967,7 +981,7 @@ impl<K: 'static> StackCipher<K> {
 /// Source-side call syntax for [`KeysetCipher::encrypt_as`], implemented for
 /// every type: `value.encrypt_into(&keyset)`. Targets implement
 /// [`EncryptFrom`], never these methods.
-pub trait EncryptInto: Sized {
+pub trait LegacyEncryptInto: Sized {
     /// Encrypt into `T` with its default context — `()` for a declaration
     /// that carries its own contexts.
     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
@@ -1002,11 +1016,11 @@ pub trait EncryptInto: Sized {
         cipher.encrypt_as(source, context.into())
     }
 }
-impl<T> EncryptInto for T {}
+impl<T> LegacyEncryptInto for T {}
 /// Source-side call syntax for `decrypt_as`, implemented for every type:
 /// `stored.decrypt_into(&cipher, ctx)`. Targets implement [`DecryptInto`],
 /// never these methods.
-pub trait DecryptFrom: Sized + 'static {
+pub trait LegacyDecryptFrom: Sized + 'static {
     /// Recover `P` through `cipher`, which may be a [`KeysetCipher`] (refusing
     /// foreign leaves) or a [`StackCipher`] (opening any).
     fn decrypt_into<'a, P: 'static, K: 'static>(
@@ -1044,7 +1058,7 @@ pub trait DecryptFrom: Sized + 'static {
         source.decrypt_into(cipher, context.into())
     }
 }
-impl<T: 'static> DecryptFrom for T {}
+impl<T: 'static> LegacyDecryptFrom for T {}
 
 // The leaf declarations below keep `Clone` on purpose. An `EncryptFrom`
 // declaration runs in the `Borrowed` mode (`encrypt_as` hands it `&S`), and an

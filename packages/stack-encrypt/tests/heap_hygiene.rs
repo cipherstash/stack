@@ -583,8 +583,9 @@ mod json_index {
     use stack_encrypt::json::{
         JsonDocument, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
     };
+    use stack_encrypt::target::legacy::DecryptFrom;
     use stack_encrypt::target::{json_document, AeadContext, Borrowed, CallerContext};
-    use stack_encrypt::{op, DecryptFrom, Plan, StackCipher};
+    use stack_encrypt::{op, Plan, StackCipher};
     use stack_kms::{
         DataKey, DataKeySource, DataKeyWithTag, DeterministicSource, GenerateKeyPayload,
         IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,

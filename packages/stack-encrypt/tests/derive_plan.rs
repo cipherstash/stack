@@ -14,9 +14,10 @@ use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::op;
 use stack_encrypt::plan::{pick, FieldValues};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
+use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::target::{
-    AeadContext, CallerContext, DeclaredContext, DecryptField, DecryptFrom, Decryptable,
-    Decryption, EncryptInto, Encrypted, Encryption, ExpectedContext, IndexSpec,
+    AeadContext, CallerContext, DeclaredContext, DecryptField, Decryptable, Decryption, Encrypted,
+    Encryption, ExpectedContext, IndexSpec,
 };
 use stack_encrypt::{
     nonempty, DecryptInto, EncryptFrom, Error, NonEmpty, Plan, PlanError, StackCipherText,

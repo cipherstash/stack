@@ -52,7 +52,7 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
         let opened: String = cipher.decrypt_as(stored, Default::default()).await.unwrap();
         assert_eq!(opened, value);
 
-        let native = keyset.encrypt(value.clone(), column()).await.unwrap();
+        let native = keyset.encrypt_node(value.clone(), column()).await.unwrap();
         let stored = TextEq {
             v: SchemaVersion::CURRENT,
             i: column().into_inner(),

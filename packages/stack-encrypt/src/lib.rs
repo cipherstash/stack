@@ -25,14 +25,15 @@
 //! A [`StackCipher`] is scoped to one ZeroKMS client, and a [`KeysetCipher`] —
 //! the cipher bound to one of that client's keysets, from
 //! [`default_keyset`](StackCipher::default_keyset) or
-//! [`keyset`](StackCipher::keyset) — encrypts any value that implements
-//! vitaminc's [`Encrypt`] (`String`, `Vec<T>`, `HashMap<K, V>`,
-//! `Option<T>`, `Protected<T>`, your own types through
-//! `#[derive(vitaminc_aead::Encrypt)]`, and any nesting of them). Either
-//! cipher decrypts back into any [`Decrypt`] type. Every scalar inside the value is
-//! sealed under its **own** ZeroKMS data key, so each value access is an
-//! individually auditable key retrieval — there is no long-lived key in your
-//! process.
+//! [`keyset`](StackCipher::keyset) — consumes a scalar with
+//! [`KeysetCipher::encrypt`] and returns one opaque [`Ciphertext`]. Use
+//! [`KeysetCipher::decrypt`] to open it under the same keyset. Each ciphertext
+//! has its own ZeroKMS data key and independently auditable retrieval.
+//!
+//! Structural encryption, searchable targets and derives use the existing
+//! plan/target engine. Its [`StackCipherText`] nodes and Vitamin C
+//! [`Encrypt`]/[`Decrypt`] visitors remain available through the low-level
+//! API while the owned Rust interface is extended beyond scalars.
 //!
 //! # Quick start
 //!
@@ -52,10 +53,9 @@ use stack_encrypt::StackCipher;
 let cipher = StackCipher::new().await?;
 let keyset = cipher.default_keyset();
 
-// A `&str` encrypts as it is; decryption is owned, so it comes back a
-// `String` — nothing borrows from a ciphertext.
-let ciphertext = keyset.encrypt("secret message", ()).await?;
-let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
+// Encryption consumes and wipes the owned plaintext.
+let ciphertext = keyset.encrypt("secret message".to_owned()).await?;
+let plaintext: String = keyset.decrypt(ciphertext).await?;
 assert_eq!(plaintext, "secret message");
 # Ok(())
 # }
@@ -79,17 +79,18 @@ assert_eq!(plaintext, "secret message");
 //! selects any of them by id or name, loading it on first use. The [`keyset`](crate::keyset)
 //! module docs lay out the model.
 //!
-//! The second argument is the *associated data* (AAD): anything that implements
-//! [`IntoAad`] — `()`, `&[u8]`, `&str`, a tuple, or a derived [`Context`]. It is
+//! Use `encrypt_with_context` and `decrypt_with_context` for *associated data*
+//! (AAD): anything implementing [`IntoContext`] — `()`, `&[u8]`, `&str`, a tuple,
+//! or a derived [`Context`]. It is
 //! authenticated, not encrypted, and must be supplied identically on decrypt.
 //! Use it to bind a ciphertext to its context (a table name, a tenant, a record
 //! id) so it cannot be replayed elsewhere:
 //!
 //! ```no_run
-//! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
+//! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
-//! let ct = keyset.encrypt("4111 1111 1111 1111", "users/42/card").await?;
-//! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok
+//! let ct = keyset.encrypt_with_context("4111 1111 1111 1111".to_owned(), "users/42/card").await?;
+//! let card: String = keyset.decrypt_with_context(ct, "users/42/card").await?; // ok
 //! # Ok(())
 //! # }
 //! ```
@@ -197,30 +198,49 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!     .init()
 //!     .await?;
 //! let keyset = cipher.default_keyset();
-//! let ct = keyset.encrypt(vec!["a".to_string(), "b".to_string()], ()).await?;
-//! let pt: Vec<String> = cipher.decrypt(ct, ()).await?;
-//! assert_eq!(pt, vec!["a", "b"]);
+//! let ct = keyset.encrypt(42i32).await?;
+//! let pt: i32 = keyset.decrypt(ct).await?;
+//! assert_eq!(pt, 42);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
 //! ```
 //!
 //! # Storing ciphertext
 //!
-//! [`encrypt`](KeysetCipher::encrypt) returns a [`StackCipherText`]: a tree whose
-//! shape mirrors the value (a scalar is a single leaf, a `Vec` a sequence of
-//! leaves, a map a set of named leaves) and whose leaves are [`SealedValue`]s.
-//! A `SealedValue` is the persistable unit: its canonical, frozen byte
-//! encoding is [`to_bytes`](SealedValue::to_bytes) /
-//! [`from_bytes`](SealedValue::from_bytes) — the format a database column
-//! holds and every language binding reads. Each leaf carries the id of the
-//! keyset it was sealed under, which is what lets a column be opened with no
-//! keyset named. For callers that manage their own
-//! storage format it also implements `serde` `Serialize`/`Deserialize` and
-//! offers [`into_parts`](SealedValue::into_parts) /
-//! [`from_parts`](SealedValue::from_parts). Map keys are stored in the clear
-//! (and authenticated); nothing else about a value is visible without its
-//! data keys. Index terms have their own frozen encodings — see
-//! [`sem`](crate::sem#byte-encodings).
+//! [`KeysetCipher::encrypt`] returns one opaque [`Ciphertext`]. Persist it with
+//! [`Ciphertext::to_bytes`] and restore it with [`Ciphertext::from_bytes`].
+//! These bytes are exactly the existing [`SealedValue`] v1 envelope, with no
+//! extra wrapper. Parsing does not authenticate a value; decryption does.
+//!
+//! The scalar API accepts owned [`Scalar`] values. It wipes the owned source
+//! before returning the pending request, including on planning failure. A
+//! successful decrypt returns an ordinary owned value: the caller is then
+//! responsible for its cleanup. Copy types may still have copies held by the
+//! caller, and this is not a guarantee about every compiler-generated copy.
+//!
+//! For target-directed conversion, import [`EncryptInto`] and [`DecryptFrom`]:
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::{Ciphertext, EncryptInto, DecryptFrom, StackCipher};
+//! let cipher = StackCipher::builder()
+//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! let keyset = cipher.default_keyset();
+//! let encrypted: Ciphertext = 42i32.encrypt_into(&keyset).await?;
+//! let plain = i32::decrypt_from(encrypted, &keyset).await?;
+//! assert_eq!(plain, 42);
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! Existing structural plans and derives still use [`StackCipherText`], a tree
+//! of sealed leaves. Their low-level direct entry points are
+//! [`KeysetCipher::encrypt_node`] and [`KeysetCipher::decrypt_node`]; their
+//! borrowed conversion helpers live in [`target::legacy`]. They are separate
+//! from the owned scalar API. Collection targets, opaque blob adapters and
+//! migrated derives will be added in subsequent API slices. No generic
+//! `Serialize` fallback or implicit `Vec<u8>` blob is provided here.
 //!
 //! # What is authenticated
 //!
@@ -244,7 +264,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # Relationship to vitaminc
 //!
 //! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
-//! can encrypt, it can encrypt, and the data model, the AAD derivations and
+//! can encrypt remains available through the structural engine. Its data model, AAD derivations and
 //! the leaf wire format are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
@@ -269,6 +289,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod cipher;
+mod scalar;
+pub use scalar::{Ciphertext, Scalar};
 #[cfg(test)]
 mod codes;
 pub mod descriptor;
@@ -301,9 +323,10 @@ pub use stack_kms as kms;
 /// crate, so a binding encodes an error from any of them the same way.
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
-    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
-    EncryptFrom, EncryptInto, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Json,
-    Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request, Responses, TermSet,
+    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
+    Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index,
+    IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request,
+    Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
@@ -327,8 +350,8 @@ pub use vitaminc_prf::IntoPrfContext;
 #[allow(deprecated)]
 pub use vitaminc_prf::PrfContext;
 
-// And the proof every target-directed leaf asks for: a `NonEmpty<T>` is what
-// `encrypt_into_with_context` / `decrypt_into` take, built with `nonempty!`
+// The nonempty proof used by searchable targets and legacy declarations,
+// built with `nonempty!`
 // (a literal, checked at compile time) or `NonEmpty::new` (a runtime value,
 // checked once); `MaybeEmpty` is what a context type of your own implements
 // to be wrapped. `#[derive(EncryptFrom)]` names these through this crate.

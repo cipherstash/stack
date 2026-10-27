@@ -2,7 +2,8 @@
 //! either all need a `NonEmpty<_>` context: the context-free `encrypt_into`
 //! / `decrypt_from` pass `()`, which no leaf accepts.
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+
+use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 

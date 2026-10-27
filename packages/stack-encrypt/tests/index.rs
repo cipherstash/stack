@@ -15,10 +15,11 @@ use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
 };
+use stack_encrypt::target::legacy::DecryptFrom;
 use stack_encrypt::target::{
     ciphertext, equality, indexed, matching, ope, ore, passthrough, AeadContext, Borrowed,
-    CallerContext, DecryptFrom, Decryption, Encrypted, Encryption, Equality, Index, IndexSpec,
-    Indexes, Match, Ope, Ore, Owned,
+    CallerContext, Decryption, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Match,
+    Ope, Ore, Owned,
 };
 use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, Error, StackCipherText};
 use stack_kms::{FakeDataKeySource, IdentifiedBy};
@@ -763,7 +764,8 @@ mod given_encrypted_terms_as_a_target {
 #[tokio::test]
 async fn a_boolean_has_no_equality_term() {
     use stack_encrypt::sem::TermError;
-    use stack_encrypt::EncryptInto;
+
+    use stack_encrypt::target::legacy::EncryptInto;
 
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
