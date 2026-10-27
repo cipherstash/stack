@@ -58,8 +58,8 @@ var Types = []Type{
 	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore_block"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: true, Reason: ""},
 	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: true, Reason: ""},
 	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: true, Reason: ""},
-	{Name: "SteVecDocument", GoName: "SteVecDocument", Family: "json", Suffix: "Search", Plaintext: "", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "SteVecQuery", QuerySQLDomain: "eql_v4.query_json", Producible: false, Reason: "the JSON index is a new operation in the engine (#1060)"},
 	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided"},
+	{Name: "JsonSearch", GoName: "JSONSearch", Family: "json_tree", Suffix: "", Plaintext: "json", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "JsonSearchQuery", QuerySQLDomain: "eql_v4.query_json", Producible: true, Reason: ""},
 }
 
 // Integer is the EQL type stored in public.eql_v4_integer: the integer family with no index.
@@ -2135,53 +2135,6 @@ func (v *DoubleOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SteVecDocument is the EQL type stored in public.eql_v4_json_search: the json family with the json index.
-// The engine cannot produce it yet: the JSON index is a new operation in the engine (#1060).
-type SteVecDocument []byte
-
-// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
-func (v SteVecDocument) Value() (driver.Value, error) {
-	return value(v)
-}
-
-// Scan reads a public.eql_v4_json_search column.
-func (v *SteVecDocument) Scan(src any) error {
-	return scan((*[]byte)(v), src, "SteVecDocument")
-}
-
-// MarshalJSON is the EQL value as the JSON it is, or null when empty.
-func (v SteVecDocument) MarshalJSON() ([]byte, error) {
-	return marshal(v, "SteVecDocument")
-}
-
-// UnmarshalJSON reads the EQL value from JSON, as it is.
-func (v *SteVecDocument) UnmarshalJSON(b []byte) error {
-	return unmarshal((*[]byte)(v), b)
-}
-
-// SteVecQuery is the query value for SteVecDocument: the operand eql_v4.query_json takes.
-type SteVecQuery []byte
-
-// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
-func (v SteVecQuery) Value() (driver.Value, error) {
-	return value(v)
-}
-
-// Scan reads a eql_v4.query_json column.
-func (v *SteVecQuery) Scan(src any) error {
-	return scan((*[]byte)(v), src, "SteVecQuery")
-}
-
-// MarshalJSON is the EQL value as the JSON it is, or null when empty.
-func (v SteVecQuery) MarshalJSON() ([]byte, error) {
-	return marshal(v, "SteVecQuery")
-}
-
-// UnmarshalJSON reads the EQL value from JSON, as it is.
-func (v *SteVecQuery) UnmarshalJSON(b []byte) error {
-	return unmarshal((*[]byte)(v), b)
-}
-
 // JSON is the EQL type stored in public.eql_v4_json: the json family with no index.
 // The engine cannot produce it yet: a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided.
 type JSON []byte
@@ -2203,6 +2156,99 @@ func (v JSON) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *JSON) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// JSONSearch is the EQL type stored in public.eql_v4_json_search: the json_tree family with the json index.
+// The engine produces it from a json.
+type JSONSearch []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v JSONSearch) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a public.eql_v4_json_search column.
+func (v *JSONSearch) Scan(src any) error {
+	return scan((*[]byte)(v), src, "JSONSearch")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v JSONSearch) MarshalJSON() ([]byte, error) {
+	return marshal(v, "JSONSearch")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *JSONSearch) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// JSONSearchQuery is the query value for JSONSearch: the operand eql_v4.query_json takes.
+type JSONSearchQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v JSONSearchQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_json column.
+func (v *JSONSearchQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "JSONSearchQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v JSONSearchQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "JSONSearchQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *JSONSearchQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// JSONSearchLeafQuery is the json_tree family's ordering operand at a path, compared with an entry `->` extracts: the value eql_v4.query_json_leaf holds.
+type JSONSearchLeafQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v JSONSearchLeafQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_json_leaf column.
+func (v *JSONSearchLeafQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "JSONSearchLeafQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v JSONSearchLeafQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "JSONSearchLeafQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *JSONSearchLeafQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// JSONEntry is the json_tree family's entry: one node of a document, as `->` and the walks return it: the value public.eql_v4_json_entry holds.
+type JSONEntry []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v JSONEntry) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a public.eql_v4_json_entry column.
+func (v *JSONEntry) Scan(src any) error {
+	return scan((*[]byte)(v), src, "JSONEntry")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v JSONEntry) MarshalJSON() ([]byte, error) {
+	return marshal(v, "JSONEntry")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *JSONEntry) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 

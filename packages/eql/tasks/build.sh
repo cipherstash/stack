@@ -91,8 +91,11 @@ mv src/deps-ordered-v3.txt.tmp src/deps-ordered-v3.txt
 # writes nothing unless every file renders.
 #
 # Not every file belongs to every version. A file with a `-- ONLY EQL VERSION: N`
-# line belongs to version N alone: today the generated range query domains and
-# `between` (query_<T>_range_*.sql, ADR-0009 decision 7) are EQL v4 only.
+# line belongs to version N alone. Three surfaces carry one today: the
+# generated range query domains and `between` (query_<T>_range_*.sql, ADR-0009
+# decision 7) and the JSON tree family (src/v3/json_tree/) are EQL v4 only, and
+# the SteVec SQL (src/v3/json/) with the generated json_entry_<T> cross files is
+# EQL v3 only, since in v4 its domain names belong to the JSON tree family.
 # `eql-codegen select` drops the files that belong to the other version from the
 # install order, keeping the order of the rest, and `render` refuses to render a
 # file as a version it does not belong to, so nothing confined to v4 can reach

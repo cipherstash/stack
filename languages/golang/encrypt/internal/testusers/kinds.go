@@ -108,8 +108,9 @@ type Lookup struct {
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Everything -name Everything
 
-// Everything is an opaque struct with a field of every type JSON carries
-// both ways. It crosses as one document and comes back as it was.
+// Everything is an opaque struct with a field of every type the storage
+// profile and JSON carry both ways. It crosses as one storage blob and comes
+// back as it was, save that a nil slice or map comes back empty.
 type Everything struct {
 	_      struct{} `stash:"context=everything,opaque"`
 	S      string

@@ -86,6 +86,7 @@ type instance struct {
 	cipherInit, shutdown, keyset  api.Function
 	term                          api.Function
 	queryTerm, verify, limit      api.Function
+	jsonOpen                      api.Function
 	encryptRecord, decryptRecord  api.Function
 	planCheck, targets, operators api.Function
 	// The step loop (step.go): take a paused export's step, resume it with
@@ -179,6 +180,7 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 		"se_keyset":         &inst.keyset,
 		"se_term":           &inst.term,
 		"se_query_term":     &inst.queryTerm,
+		"se_json_open":      &inst.jsonOpen,
 		"se_verify":         &inst.verify,
 		"se_target_limit":   &inst.limit,
 		"se_encrypt_record": &inst.encryptRecord,

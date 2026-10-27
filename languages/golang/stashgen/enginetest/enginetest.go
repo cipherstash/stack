@@ -278,7 +278,7 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 			return nil
 		}
 	case stashgen.IndexJSON:
-		return fmt.Errorf("the engine cannot derive the json index yet")
+		return fmt.Errorf("the json index is not an output beside a ciphertext: store a JSON document with encrypt_into=JsonSearch")
 	}
 	return fmt.Errorf("%s does not apply to %s", name, t)
 }

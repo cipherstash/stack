@@ -162,17 +162,22 @@ order term and is refused, stored or queried. A family's `Ord` and `OrdOpe`
 types store the same term under one column. The query value carries one
 bound: `BETWEEN` needs EQL v4's range query domains and is not produced yet.
 `TextMatch` builds its filter under a configuration pinned in this crate
-(`EqlMatch`: 3-grams of the lower-cased text, `k = 6`, a 2048-bit filter) for
-stored values and queries alike. The configuration is part of the stored
+(`EqlMatch`: 3-grams of the lower-cased text, plus each two-letter word whole
+as one more token, `k = 6`, a 2048-bit filter) for stored values and queries
+alike. The word token makes a two-letter surname such as "Ng" storable and
+searchable: `@@` with "ng" finds "Ng" and "Mike Ng", not "Nguyen". A query's
+two-letter words must be whole words of the row (words split on space,
+comma, semicolon, colon and exclamation mark), so "Mike Ng" does not find
+"Mike Nguyen", and a query is not a plain substring test. The configuration is part of the stored
 format, so changing it means a new domain or payload version. A filter can
 match a row that does not contain the query, so re-check after decrypting
 where that matters. Write the stored column on the left, `col @@ query`: the
-other order finds nothing until #1171 is fixed. Text too short to make a
-3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
-column yet, and a `TextMatchQuery` for it is refused too: one filter type
-builds both, and an empty filter as a query would match every row.
+other order finds nothing until #1171 is fixed. Text that cuts no token
+(empty strings, one letter) cannot be stored in a `TextMatch` column, and a
+`TextMatchQuery` for it is refused too: one filter type builds both, and an
+empty filter as a query would match every row.
 `TextSearch` stores all three terms (`TextEq`'s `hm`, `TextOrd`'s `op` and
-`TextMatch`'s `bf`). Text too short for a 3-gram is stored with the empty
+`TextMatch`'s `bf`). Text that cuts no token is stored with the empty
 filter (`"bf": []`, the `SearchBloomFilter` field type): `=` and `<` find it
 through `hm` and `op`, and no `@@` query does, because a query's filter is
 never empty. (A `@@` between two stored values, which no producer builds, is
@@ -180,7 +185,7 @@ not a query: two stored empty filters match each other there, as in v3.) Its que
 through `TextSearchEqualityQuery` (`=`, `<>`), `TextSearchOrderQuery` (`<`,
 `<=`, `>`, `>=`) or `TextSearchMatchQuery` (`@@`) and convert into
 `TextSearchQuery`, and the by-name dispatch picks the one for the index that
-answers the operator. So `=` and `<` work on short text, a match query on it
+answers the operator. So `=` and `<` work on such text, a match query on it
 is refused, and EQL v4 raises on an operator whose term the query lacks (or
 holds as `null`, or as an empty filter).
 The ORE types (`*OrdOre`, `TextSearchOre`) store a block ORE term (`ob`):

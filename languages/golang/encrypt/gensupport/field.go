@@ -15,6 +15,9 @@ type Field[T any] struct {
 	name string
 	plan *record.Plan
 	err  error
+	// holdsStruct is set by [NewDocumentField]: the field is a document
+	// whose Go type holds a struct, which is no containment needle.
+	holdsStruct bool
 }
 
 // NewField makes the entry for one sealed field of a declaration.
@@ -33,6 +36,19 @@ func NewField[T any](d Declaration, name string) Field[T] {
 	// One field, its own plan: the label is the same, so the bytes are the
 	// same as in a whole record.
 	f.plan = &record.Plan{Context: plan.Context, ContextField: plan.ContextField, Fields: []record.Field{*rf}}
+	return f
+}
+
+// NewDocumentField makes the entry for a document field (JsonSearch)
+// whose Go type T holds a struct, as [NewField] does, and its Contains
+// refuses a needle of type T or *T: encoding/json writes each struct field
+// that has no omitempty or omitzero, zero or not, and a zero one narrows the
+// query to the documents holding that zero. stashgen picks it for such a
+// field; a json.RawMessage, a map of scalars or a slice of them gets
+// NewField.
+func NewDocumentField[T any](d Declaration, name string) Field[T] {
+	f := NewField[T](d, name)
+	f.holdsStruct = true
 	return f
 }
 

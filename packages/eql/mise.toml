@@ -343,7 +343,11 @@ psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f release/cipherstash-encrypt-
 for suite in text_eq v4_types v4_order v4_date_time_numeric v4_range v4_text_search v4_ore_block json_tree; do
   listing=$(cargo test --locked -p eql-encryption-tests --test "$suite" -- --ignored --list | sed -n 's/: test$//p')
   [ -n "$listing" ] || { echo "error: '--ignored' selects no test in $suite; the PostgreSQL test has gone missing." >&2; exit 1; }
-  cargo test --locked -p eql-encryption-tests --test "$suite" -- --ignored
+  # `--show-output`: a passing test's output is otherwise captured, and the
+  # generated containment properties in json_tree log the proptest seed and
+  # case count they ran under (PROPTEST_RNG_SEED and PROPTEST_CASES replay
+  # them) and what they checked.
+  cargo test --locked -p eql-encryption-tests --test "$suite" -- --ignored --show-output
 done
 """
 

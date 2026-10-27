@@ -12,9 +12,10 @@ use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
 /// Every EQL type a plan may name as a target, in
-/// `eql-domains::CATALOG` order: one per stored domain (every flat
-/// scalar domain plus the SteVec document). Query twins are not
-/// targets; each row names its own under `query`.
+/// `eql-domains::CATALOG` order: one per stored scalar domain, then
+/// one per document family's stored type
+/// (`eql-domains::DOCUMENT_FAMILIES`). Query twins are not targets;
+/// each row names its own under `query`.
 pub const TARGETS: &[Target] = &[
     Target {
         name: "Integer",
@@ -605,18 +606,6 @@ pub const TARGETS: &[Target] = &[
         reason: None,
     },
     Target {
-        name: "SteVecDocument",
-        family: "json",
-        suffix: "Search",
-        plaintext: None,
-        sql_domain: "public.eql_v4_json_search",
-        indexes: &["json"],
-        query: Some("SteVecQuery"),
-        query_sql_domain: Some("eql_v4.query_json"),
-        producible: false,
-        reason: Some("the JSON index is a new operation in the engine (#1060)"),
-    },
-    Target {
         name: "Json",
         family: "json",
         suffix: "",
@@ -630,7 +619,24 @@ pub const TARGETS: &[Target] = &[
             "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided",
         ),
     },
+    Target {
+        name: "JsonSearch",
+        family: "json_tree",
+        suffix: "",
+        plaintext: Some("json"),
+        sql_domain: "public.eql_v4_json_search",
+        indexes: &["json"],
+        query: Some("JsonSearchQuery"),
+        query_sql_domain: Some("eql_v4.query_json"),
+        producible: true,
+        reason: None,
+    },
 ];
+/// The families whose stored type stores a document
+/// (`eql-domains::DOCUMENT_FAMILIES`): the dispatch below has no
+/// arm for them, and `crate::encryption::targets` runs their types
+/// under the field's options.
+pub(crate) const DOCUMENT_FAMILIES: &[&str] = &["json_tree"];
 /// Run the named type's own encryption plan for one field, or refuse
 /// the name: the type is not producible (`TargetError::Unproducible`)
 /// or does not exist (`TargetError::Unknown`).

@@ -72,5 +72,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "json_text"
+path = "fuzz_targets/json_text.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 resolver = "2"

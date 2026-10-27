@@ -69,11 +69,6 @@ pub fn index_key(term: Term) -> &'static str {
     }
 }
 
-/// The index a SteVec document carries: the engine's JSON index, which has
-/// no catalog `Term` because its terms live per `sv` leaf, not as flat
-/// payload keys.
-const JSON_INDEX_KEY: &str = "json";
-
 /// An operator a producible EQL type answers in Stack Encrypt's typed query
 /// chain: what the generated file implements `op::Answers` for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,11 +182,53 @@ pub(crate) struct Row {
     /// The operators the type answers in the typed query chain: none
     /// unless it is producible and has a query twin ([`answers_for_indexes`]).
     pub(crate) answers: Vec<Answer>,
+    /// A document family's stored type (`eql_domains::DOCUMENT_FAMILIES`):
+    /// its plan is the JSON index's under the field's options, so the
+    /// generated dispatch has no arm for it and
+    /// `encryption::targets` runs it by hand.
+    pub(crate) document: bool,
 }
 
-/// Every row, in catalog order: one per stored domain.
+/// The catalog domains that are targets, in catalog order: every stored
+/// scalar domain. The `json` family's SteVec document is not one: its SQL is
+/// EQL v3 only, and in v4 its domain name, `json_search`, is the JSON tree
+/// family's stored type, a document family's row.
+fn target_domains() -> impl Iterator<Item = (&'static DomainFamily, &'static Domain)> {
+    stored_payload_domains().filter(|(_, d)| d.is_scalar())
+}
+
+/// Every row, in catalog order: one per [target domain](target_domains),
+/// then one per document family's stored domain.
 pub(crate) fn rows() -> Vec<Row> {
-    stored_payload_domains().map(|(f, d)| row(f, d)).collect()
+    target_domains()
+        .map(|(f, d)| row(f, d))
+        .chain(eql_domains::DOCUMENT_FAMILIES.iter().map(document_row))
+        .collect()
+}
+
+/// A document family's row: its stored type, produced from the family's
+/// plaintext kind, carrying its index, with its containment needle as the
+/// query twin. Producible: `encryption::targets` runs it by hand.
+fn document_row(family: &'static eql_domains::DocumentFamily) -> Row {
+    use eql_domains::DocumentRole;
+    let stored = family
+        .domain(DocumentRole::Stored)
+        .expect("a document family has a stored domain");
+    Row {
+        name: stored.name.to_owned(),
+        family: family.name,
+        suffix: String::new(),
+        plaintext: Some(family.plaintext),
+        sql_domain: stored.sql_domain.to_owned(),
+        indexes: vec![family.index],
+        query: family
+            .domain(DocumentRole::Query)
+            .map(|query| (query.name.to_owned(), query.sql_domain.to_owned())),
+        projections: Vec::new(),
+        reason: None,
+        answers: Vec::new(),
+        document: true,
+    }
 }
 
 /// The PascalCase of a bare domain name — `TextOrdOre` is family `text`,
@@ -209,36 +246,11 @@ fn suffix(domain: &Domain) -> String {
 }
 
 fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
-    let is_stevec = matches!(domain.shape, Shape::SteVec);
-    let indexes = if is_stevec {
-        vec![JSON_INDEX_KEY]
-    } else {
-        Term::payload_terms(domain.terms)
-            .into_iter()
-            .map(index_key)
-            .collect()
-    };
-    let query = if is_stevec {
-        // The containment needle is the document's query form. Its struct
-        // is the hand-written `SteVecQuery`; its domain is the family's
-        // `query` domain (`eql_v4.query_json`), read from the catalog so
-        // the name is spelled once. v4 has no compiled SteVec types yet, so
-        // these rows are never producible.
-        family
-            .domains
-            .iter()
-            .find(|d| matches!(d.shape, Shape::SteVec) && d.name == "query")
-            .map(|needle| {
-                (
-                    needle.rust_struct_name(family.name),
-                    format!(
-                        "{}.{}",
-                        TARGET_VERSION.prefix(),
-                        needle.full_name(family.name)
-                    ),
-                )
-            })
-    } else if domain.terms.is_empty() {
+    let indexes: Vec<&'static str> = Term::payload_terms(domain.terms)
+        .into_iter()
+        .map(index_key)
+        .collect();
+    let query = if domain.terms.is_empty() {
         None
     } else {
         Some((
@@ -269,7 +281,7 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
         ),
         indexes,
         query,
-        projections: if !is_stevec && v4_optional_query_terms(domain) {
+        projections: if v4_optional_query_terms(domain) {
             Term::payload_terms(domain.terms)
                 .into_iter()
                 .map(|term| {
@@ -284,6 +296,7 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
         },
         reason,
         answers,
+        document: false,
     }
 }
 
@@ -413,7 +426,17 @@ fn render_targets_from(rows: &[Row]) -> String {
 
     // One arm per producible type. The plaintext Rust type is the family's;
     // a producible family always has one, since a derive names it.
-    let producible: Vec<&Row> = rows.iter().filter(|r| r.reason.is_none()).collect();
+    // A document family's type is run by hand, under the field's options.
+    let producible: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.reason.is_none() && !r.document)
+        .collect();
+    let mut document_families: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.document)
+        .map(|r| r.family)
+        .collect();
+    document_families.dedup();
     let arm = |r: &Row, strukt: &str| {
         let name = &r.name;
         let module = format_ident!("{}", r.family);
@@ -535,12 +558,19 @@ fn render_targets_from(rows: &[Row]) -> String {
         use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
 
         /// Every EQL type a plan may name as a target, in
-        /// `eql-domains::CATALOG` order: one per stored domain (every flat
-        /// scalar domain plus the SteVec document). Query twins are not
-        /// targets; each row names its own under `query`.
+        /// `eql-domains::CATALOG` order: one per stored scalar domain, then
+        /// one per document family's stored type
+        /// (`eql-domains::DOCUMENT_FAMILIES`). Query twins are not targets;
+        /// each row names its own under `query`.
         pub const TARGETS: &[Target] = &[
             #entries
         ];
+
+        /// The families whose stored type stores a document
+        /// (`eql-domains::DOCUMENT_FAMILIES`): the dispatch below has no
+        /// arm for them, and `crate::encryption::targets` runs their types
+        /// under the field's options.
+        pub(crate) const DOCUMENT_FAMILIES: &[&str] = &[#(#document_families),*];
 
         /// Run the named type's own encryption plan for one field, or refuse
         /// the name: the type is not producible (`TargetError::Unproducible`)
@@ -799,20 +829,21 @@ mod tests {
         // whitespace-collapsed line so the assertions below do not depend on
         // where it broke.
         let out: String = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
-        // One row per stored domain, in catalog order, named as the struct.
+        // One row per target domain, in catalog order, named as the struct.
         let mut last = 0;
-        for (family, domain) in stored_payload_domains() {
+        for (family, domain) in target_domains() {
             let needle = format!("name: \"{}\",", domain.rust_struct_name(family.name));
             let at = out[last..]
                 .find(&needle)
                 .unwrap_or_else(|| panic!("{needle} missing or out of order"));
             last += at + needle.len();
         }
-        // The SteVec document carries the JSON index and the containment
-        // needle as its query form; the scalar storage domain carries none.
-        assert!(out.contains("name: \"SteVecDocument\""));
+        // The SteVec document is EQL v3 only, so it is no target: the
+        // v4 `json_search` domain is the JSON tree family's stored type,
+        // `JsonSearch`, which carries the JSON index and the containment
+        // needle as its query form.
+        assert!(!out.contains("SteVec"));
         assert!(out.contains("indexes: &[\"json\"]"));
-        assert!(out.contains("query: Some(\"SteVecQuery\")"));
         assert!(out.contains("query_sql_domain: Some(\"eql_v4.query_json\")"));
         assert!(out.contains("sql_domain: \"public.eql_v4_text_eq\""));
         assert!(out.contains("query_sql_domain: Some(\"eql_v4.query_text_eq\")"));
@@ -918,7 +949,9 @@ mod tests {
     fn a_producible_type_with_a_twin_answers_what_its_indexes_answer() {
         for row in rows() {
             let answers: Vec<&str> = row.answers.iter().map(|a| a.name()).collect();
-            if row.reason.is_some() || row.query.is_none() {
+            // A document's operators are the JSON index's, answered in
+            // the typed chain by the engine's own document target.
+            if row.reason.is_some() || row.query.is_none() || row.document {
                 assert!(answers.is_empty(), "{}: answers nothing", row.name);
                 continue;
             }

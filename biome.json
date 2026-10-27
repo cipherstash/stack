@@ -14,6 +14,7 @@
       "!packages/stack-encrypt/tests/fixtures/query_operators.json",
       "!packages/stack-encrypt/tests/fixtures/value_kinds.json",
       "!packages/stack-encrypt/tests/fixtures/stored_rows_v1.json",
+      "!packages/stack-encrypt/tests/fixtures/json_tree_vectors.json",
       "!packages/eql/tests/encryption/fixtures/ste_vec_selectors.json",
       "!packages/eql/tests/encryption/fixtures/v4_rows.json",
       "!packages/eql/tests/encryption/fixtures/stored_v4_rows_v1.json",

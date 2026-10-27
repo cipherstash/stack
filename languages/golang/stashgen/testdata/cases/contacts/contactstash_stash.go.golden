@@ -12,7 +12,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // crm.Contact prints its sealed fields in the clear, and stashgen cannot add
 // print methods to a type from another package.

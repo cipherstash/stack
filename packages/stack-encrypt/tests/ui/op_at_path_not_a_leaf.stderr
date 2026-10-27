@@ -1,4 +1,4 @@
-error[E0277]: `Contains` is not a leaf operator, so it cannot be applied at a path
+error[E0277]: `stack_encrypt::op::Contains` is not a leaf operator, so it cannot be applied at a path
  --> tests/ui/op_at_path_not_a_leaf.rs:9:25
   |
 9 |     operator(op::AtPath(op::Contains));
@@ -6,7 +6,7 @@ error[E0277]: `Contains` is not a leaf operator, so it cannot be applied at a pa
   |     |
   |     required by a bound introduced by this call
   |
-  = help: the trait `Leaf` is not implemented for `Contains`
+  = help: the trait `Leaf` is not implemented for `stack_encrypt::op::Contains`
   = note: `op::AtPath` applies `op::Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches` at a path; `op::Contains` and `op::ContainedBy` compare whole documents, and an accessor does not nest
   = help: the following other types implement trait `Leaf`:
             stack_encrypt::op::Between
@@ -16,7 +16,7 @@ error[E0277]: `Contains` is not a leaf operator, so it cannot be applied at a pa
             stack_encrypt::op::Lt
             stack_encrypt::op::Lte
             stack_encrypt::op::Matches<C>
-  = note: required for `AtPath<Contains>` to implement `Operator`
+  = note: required for `AtPath<stack_encrypt::op::Contains>` to implement `Operator`
 note: required by a bound in `operator`
  --> tests/ui/op_at_path_not_a_leaf.rs:6:17
   |

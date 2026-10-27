@@ -72,11 +72,12 @@ impl TargetResolver for Eql {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        options: Option<&dynamic::TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::encrypt(name, keyset, label, plaintext).map_err(convert)
+        eql_targets::encrypt_with(name, options, keyset, label, plaintext).map_err(convert)
     }
     fn decrypt<'a, K: 'static>(
         &self,
@@ -289,7 +290,13 @@ async fn typed_and_input(
 #[test]
 fn the_typed_chain_answers_what_the_data_path_answers() {
     let mut gap = Vec::new();
-    for target in eql_targets::targets() {
+    // A document's typed chain is the engine's own document target, not
+    // `op::Answers` on the EQL type: tests/json_tree_data_plan.rs holds the
+    // two to the same operands.
+    for target in eql_targets::targets()
+        .iter()
+        .filter(|t| t.plaintext != Some("json"))
+    {
         let data: Vec<&str> = describe(target)
             .operators()
             .into_iter()
@@ -462,7 +469,7 @@ async fn a_typed_query_refuses_what_the_data_path_refuses() {
         .build()
         .unwrap();
     let short = cipher
-        .query(op::Matches, "al")
+        .query(op::Matches, "a")
         .keyset("tenant")
         .on(&plan)
         .await;

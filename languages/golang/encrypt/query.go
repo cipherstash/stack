@@ -36,8 +36,16 @@ type QueryTerm struct {
 	Domain string
 	// Terms is the term: one, or for between two, the low bound's then the
 	// high's. For a field that names an EQL type it is the query value's
-	// JSON.
+	// JSON. Empty when the term is Text.
 	Terms [][]byte
+	// Encoding says what the term holds: bytes (an index term), eql (an EQL
+	// query value's JSON), text (a JSON path's selector or one node's
+	// token, in Text[0]) or text_array (a read's tokens, in Text).
+	Encoding string
+	// Text is the term as text, for the text and text_array encodings: what
+	// a document's selector, children, child_count and subtree operators
+	// derive. It binds as SQL text, or text[].
+	Text []string
 }
 
 // Bucket is one bar of a histogram of the stored match filters' set-bit
@@ -103,7 +111,9 @@ func (l Limit) FetchOr(page uint64) uint64 {
 
 // QueryTerm derives the query term for one field of the plan, an operator
 // and its input under this cipher's keyset: one value for every operator
-// but between, whose input is a two-element slice, low then high. The
+// but between, whose input is a two-element slice, low then high, and a
+// document's operators (contains, eq_at, selector, ...), whose input is a
+// vcvalue.Object of named inputs with JSON values as JSON text. The
 // engine reads the input as the field's declared type, finds the index
 // that answers the operator, and derives that index's term under the
 // field's context; for a field that names an EQL type it runs the type's
@@ -150,15 +160,19 @@ func (cph *Cipher) QueryTerm(ctx context.Context, plan *record.Plan, field, oper
 }
 
 // parseQueryTerm reads se_query_term's object: exactly the keys operator,
-// fidelity, index, domain (a string or null) and term (bytes, or a list of
-// two for between). The operator, fidelity and index take only the values
-// the engine writes, as the catalog reader's do.
+// fidelity, index, domain (a string or null), encoding and term, in the
+// shapes the engine writes and no other: encoding bytes is a term of bytes
+// (a list of two for between) with no domain; eql is bytes (two for
+// between_at) with a domain; text is one string; text_array is a list of
+// strings, perhaps empty. The operator, fidelity and index take only the
+// values the engine writes, as the catalog reader's do.
 func parseQueryTerm(decoded any) (QueryTerm, error) {
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok {
 		return QueryTerm{}, fmt.Errorf("came back as %T, not an object", decoded)
 	}
 	var t QueryTerm
+	var shape string
 	seen := map[string]bool{}
 	for _, f := range obj {
 		if seen[f.Key] {
@@ -184,20 +198,42 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 			}
 		case "domain":
 			t.Domain, err = targetOptionalString(f)
+		case "encoding":
+			var s string
+			if s, err = targetString(f); err == nil {
+				switch s {
+				case "bytes", "eql", "text", "text_array":
+					t.Encoding = s
+				default:
+					err = fmt.Errorf("unknown encoding %q", s)
+				}
+			}
 		case "term":
 			switch v := f.Value.(type) {
 			case []byte:
 				t.Terms = [][]byte{v}
+				shape = "bytes"
+			case string:
+				t.Text = []string{v}
+				shape = "text"
 			case []any:
-				if len(v) != 2 {
-					return QueryTerm{}, fmt.Errorf("a range of %d terms", len(v))
-				}
-				for _, bound := range v {
-					b, ok := bound.([]byte)
-					if !ok {
-						return QueryTerm{}, fmt.Errorf("a bound is %T, not bytes", bound)
+				shape = "list"
+				for _, item := range v {
+					switch x := item.(type) {
+					case []byte:
+						t.Terms = append(t.Terms, x)
+					case string:
+						t.Text = append(t.Text, x)
+					default:
+						return QueryTerm{}, fmt.Errorf("a term part is %T", item)
 					}
-					t.Terms = append(t.Terms, b)
+				}
+				if t.Terms != nil && (len(t.Terms) != 2 || t.Text != nil) {
+					return QueryTerm{}, fmt.Errorf("a range of %d terms", len(t.Terms))
+				}
+				if t.Text == nil && t.Terms == nil {
+					// An empty list is a read that sends no token.
+					t.Text = []string{}
 				}
 			default:
 				return QueryTerm{}, fmt.Errorf("term is %T", f.Value)
@@ -209,8 +245,24 @@ func parseQueryTerm(decoded any) (QueryTerm, error) {
 			return QueryTerm{}, err
 		}
 	}
-	if len(seen) != 5 {
-		return QueryTerm{}, fmt.Errorf("%d keys, not 5", len(seen))
+	if len(seen) != 6 {
+		return QueryTerm{}, fmt.Errorf("%d keys, not 6", len(seen))
+	}
+	// The encoding, the term's shape and the domain agree, as the engine
+	// writes them.
+	var fits bool
+	switch t.Encoding {
+	case "bytes":
+		fits = t.Terms != nil && t.Domain == ""
+	case "eql":
+		fits = t.Terms != nil && t.Domain != ""
+	case "text":
+		fits = shape == "text" && t.Domain != ""
+	case "text_array":
+		fits = shape == "list" && t.Terms == nil && t.Domain != ""
+	}
+	if !fits {
+		return QueryTerm{}, fmt.Errorf("a %s term of %d texts and %d byte strings (a %s), domain set %t", t.Encoding, len(t.Text), len(t.Terms), shape, t.Domain != "")
 	}
 	return t, nil
 }

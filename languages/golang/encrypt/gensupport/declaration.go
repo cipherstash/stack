@@ -14,7 +14,7 @@ import (
 // derives; every field seals as vitaminc's tagged leaf whatever its kind,
 // which a Rust record opens when its field is a Value. Every sealed field has a
 // scalar kind: stashgen refuses a struct, slice or map outside an opaque
-// struct, and an opaque struct seals as Bytes (one JSON document). Untyped
+// struct, and an opaque struct seals as Bytes (one storage blob). Untyped
 // names a field with no declared type; generated code never writes it, and
 // the engine refuses a plan whose indexed field has no type.
 type Kind string
@@ -48,13 +48,19 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
+	// JSON is a field stored as a JSONSearch document: it crosses as
+	// its JSON text, which the engine parses. A json.RawMessage is that
+	// text; a field of another Go type is marshalled with encoding/json
+	// ([Field.Encrypt]) and opened with [GetDocument].
+	JSON Kind = "json"
 )
 
 // OpaqueField is the one field of an opaque declaration: the whole struct,
 // sealed as one value under <context>/value. The struct crosses the binding
-// as one JSON document — the engine seals a composite value as a tree of
-// leaves, and an opaque struct is one column — so its field types are what
-// JSON carries: scalars, []byte (base64), slices and maps of them.
+// as one storage blob (vitaminc's storage profile, version 1) — the engine
+// seals a composite value as a tree of leaves, and an opaque struct is one
+// column. A value an earlier release sealed is a JSON document, which
+// [Opaque] still reads.
 const OpaqueField = "value"
 
 type verb uint8
@@ -77,6 +83,19 @@ type field struct {
 	indexes  []encrypt.Index
 	eqlType  string
 	null     NullMode
+	options  *TargetOptions
+}
+
+// TargetOptions are the options an EncryptInto field gives its EQL type:
+// for JsonSearch, the JSON index's. The engine checks them when the
+// declaration is first used (stashgen asked it when the file was written).
+type TargetOptions struct {
+	// SealedRoot says whether the document's root is sealed; nil is the
+	// default, sealed.
+	SealedRoot *bool
+	// Ordered are the JSONPath paths whose number and string leaves carry
+	// an ordering term.
+	Ordered []string
 }
 
 // NullMode is how a sealed field declared over a pointer (*T) stores nil:
@@ -167,6 +186,28 @@ func (d Declaration) Index(name string, kind Kind, indexes ...encrypt.Index) Dec
 // beside it, and the stored field holds the value as it is.
 func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration {
 	return d.add(field{name: name, kind: kind, verb: verbEncryptInto, eqlType: eqlType})
+}
+
+// Options gives the named EncryptInto field's EQL type its options: the
+// `encrypt_into=JsonSearch(ordered=...)` tag.
+func (d Declaration) Options(name string, options TargetOptions) Declaration {
+	if d.err != nil {
+		return d
+	}
+	for i := range d.fields {
+		if d.fields[i].name != name {
+			continue
+		}
+		if d.fields[i].verb != verbEncryptInto {
+			d.err = fmt.Errorf("gensupport: Options(%q): only an EncryptInto field's EQL type takes options", name)
+			return d
+		}
+		d.fields = slices.Clone(d.fields)
+		d.fields[i].options = &options
+		return d
+	}
+	d.err = fmt.Errorf("gensupport: Options(%q): no such field", name)
+	return d
 }
 
 // Null says how the named field, declared over a pointer, stores nil. The
@@ -292,6 +333,9 @@ func (d Declaration) plan() (*record.Plan, error) {
 			// is the engine's to say, at the first call (stashgen asked it
 			// when the file was written).
 			rf.Target = f.eqlType
+			if f.options != nil {
+				rf.TargetOptions = &record.TargetOptions{SealedRoot: f.options.SealedRoot, Ordered: slices.Clone(f.options.Ordered)}
+			}
 		case verbEncrypt:
 			rf.Outputs = []record.Output{record.Ciphertext}
 		case verbEncryptIndex:
@@ -319,3 +363,7 @@ func (d Declaration) plan() (*record.Plan, error) {
 var termOutputs = map[record.Output]struct{}{
 	record.Equality: {}, record.Match: {}, record.Ore: {}, record.Ope: {},
 }
+
+// Ptr is a pointer to v: what a generated TargetOptions literal spells an
+// option set to false with.
+func Ptr[T any](v T) *T { return &v }

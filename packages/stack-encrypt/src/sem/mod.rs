@@ -74,6 +74,29 @@
 //! caller's context, so the same value indexed as an equality term, a match
 //! token, or an ORE key can never produce colliding PRF outputs.
 //!
+//! # What a match index reveals
+//!
+//! A stored [`MatchTerms`] is a set of Bloom-filter bit positions, `k` per
+//! token, under a key the server does not hold. Someone holding the column
+//! sees, per row, which bits are set and how many: the fill tracks the number
+//! of distinct tokens, and so the text's approximate length. Tokens are
+//! deterministic per column, so the same token sets the same bits in every
+//! row, and bits that recur together across rows can be clustered into
+//! tokens and their frequency counted; a query shows which bits it asks for
+//! and which rows hold them. A value that cuts no token stores the empty
+//! filter, which shows that it is empty, separator-only or too short for
+//! any token.
+//!
+//! With [`MatchOptions::short_words`] on, each word shorter than the n-gram
+//! length (and at least 2 characters) adds one token: the word itself, under
+//! the same PRF and a domain of its own, folded into the same filter by the
+//! same `k` positions and matched by the same containment rule. That is one
+//! extra token per short word and no new class of leakage. The token is
+//! specific to the word, so someone who clusters tokens across rows can tell
+//! the rows holding the word "Ng" from those holding "Nguyen", where before
+//! only the boundary trigram `" ng"` they share was visible. No bigram of a
+//! longer word is ever indexed.
+//!
 //! This is a fresh (v2) term format: PRF inputs are framed with vitaminc's PAE
 //! context encoding, so terms are intentionally **not** byte-compatible with
 //! `cipherstash-client`'s existing `IndexTerm` values.
@@ -141,7 +164,6 @@ mod tokenize;
 
 pub use tokenize::Tokenizer;
 
-use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -184,6 +206,12 @@ const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v2";
 /// `v2`: the text is tokenized in Unicode 16 NFC, where `v1` tokenized it as
 /// written.
 const MATCH_DOMAIN: &[u8] = b"stack-encrypt/sem/match/v2";
+/// PAE domain for a match index's short-word tokens
+/// ([`MatchOptions::short_words`]). Distinct from [`MATCH_DOMAIN`] so a word
+/// token and a tokenizer token of the same characters derive different PRF
+/// blocks, under any tokenizer: `ng` as a word never sets the bits of `ng`
+/// as a 2-gram.
+const MATCH_WORD_DOMAIN: &[u8] = b"stack-encrypt/sem/match/word/v1";
 /// PAE domain for ORE key derivation.
 ///
 /// `v2`: the key keys clww-ore's vitaminc ORE scheme, which encrypts the
@@ -312,15 +340,15 @@ pub enum TermError {
         help("The JSON index numbers at most 2147483647 children under one node, so no stored document has an element past position 2147483647. Split the array, or ask for a position below that.")
     )]
     JsonTooWide,
-    /// A subtree key was asked for the root, or a path whose first step is
-    /// a wildcard, of a JSON index whose root is sealed: no token exists
-    /// for the root, by design, and the document opens whole instead.
-    #[error("the sealed root of a JSON document has no subtree token")]
+    /// A subtree read's wildcards would expand to more tokens than one read
+    /// sends: a wildcard expands to its bound plus one tokens under each node
+    /// it sits below, so nested wildcards multiply.
+    #[error("a JSON subtree read expands to too many tokens")]
     #[diagnostic(
-        code(stack_encrypt::json_sealed_root),
-        help("Under the sealed root (the default) the chain starts at the top-level fields: walk a subtree from `$.field` down, or open the whole document.")
+        code(stack_encrypt::json_wildcard_too_wide),
+        help("A read sends at most 8192 tokens. Lower the wildcard bound (`json_subtree_key_with_bound`), use fewer nested wildcards, or read the array itself.")
     )]
-    JsonSealedRoot,
+    JsonWildcardTooWide,
     /// An ordering at a JSON path was asked with a value that is neither a
     /// number nor a string, the only leaves the index orders.
     #[error("an ordering at a JSON path takes a number or a string")]
@@ -341,13 +369,13 @@ pub enum TermError {
     /// An ordered path, or an ordering asked at a path, names an array
     /// position. An ordering compares the leaf `->` extracts by the path's
     /// selector, and a selector reads every position as the wildcard, so
-    /// `->` returns the first element at the path whatever position was
-    /// named: the comparison would be against another element's leaf, or
-    /// against one with no term.
+    /// `->` returns an unspecified element at the path whatever position
+    /// was named: the comparison would be against another element's leaf,
+    /// or against one with no term.
     #[error("an ordering at a JSON path cannot name an array position")]
     #[diagnostic(
         code(stack_encrypt::json_ordering_at_position),
-        help("Write `[*]` where an ordered path, or the path an ordering asks at, crosses an array: `$.orders[*].total`, not `$.orders[2].total`. The comparison extracts the first element at the path.")
+        help("Write `[*]` where an ordered path, or the path an ordering asks at, crosses an array: `$.orders[*].total`, not `$.orders[2].total`. The comparison extracts one element at the path, by selector, never the one a position names.")
     )]
     JsonOrderingAtPosition,
     #[error("equality at a JSON path takes a scalar")]
@@ -374,7 +402,7 @@ impl crate::ErrorPayload for TermError {
             | Self::Normalize(_)
             | Self::JsonTooDeep
             | Self::JsonTooWide
-            | Self::JsonSealedRoot
+            | Self::JsonWildcardTooWide
             | Self::JsonLeafNotOrdered
             | Self::JsonPathNotOrdered
             | Self::JsonOrderingAtPosition
@@ -631,13 +659,58 @@ where
 
 /// Options controlling match-term generation. The defaults mirror the existing
 /// match indexer: 3-gram tokens, downcased, `k = 3` hash slices into an
-/// `m = 256`-bit filter.
+/// `m = 256`-bit filter, no short-word tokens.
+///
+/// Every option is part of the index's identity: a stored filter and a query
+/// filter agree only when both were cut under the same options, so a query
+/// asked under options other than the index's is refused
+/// ([`PlanError::IndexOptions`](crate::plan::PlanError::IndexOptions)).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MatchOptions {
     /// How text splits into tokens.
     pub tokenizer: Tokenizer,
     /// Lower-case the text before tokenization (case-insensitive matching).
     pub downcase: bool,
+    /// Also index every short word whole, so a word too short to hold an
+    /// n-gram can be searched: "Ng" under 3-grams. Off by default.
+    ///
+    /// With it on, every word of the normalized (and, with
+    /// [`downcase`](Self::downcase), case-folded) text that is at least 2
+    /// characters long and shorter than the n-gram length is one more
+    /// token, the word itself, beside the n-grams of the whole text. Under
+    /// the default 3-grams that is every two-letter word; under 4-grams,
+    /// every word of 2 or 3. A one-letter word adds nothing, and a word as
+    /// long as an n-gram is found by its n-grams as before. A word is a run
+    /// of characters between the separators [`Tokenizer::Standard`] splits
+    /// on (space, comma, semicolon, colon, exclamation mark), so "Ng, Mike"
+    /// holds the word `ng`, and "Ng." or "Ng-Smith" does not (a full stop, a
+    /// hyphen, a tab or a newline is part of a word); length is counted in
+    /// characters of the case-folded text.
+    ///
+    /// The word token is PRF'd under a domain of its own, so it never
+    /// derives the bits of an n-gram of the same characters, and folds into
+    /// the same filter by the same `k` positions. Stored, "Ng" is one token
+    /// rather than the empty filter, and "Mike Ng" carries its trigrams and
+    /// `ng`. Queried, "Ng" is one token and is accepted, and "Mike Ng" asks
+    /// for its trigrams and `ng`: every short word of a query must be a
+    /// whole word of the row, so "Mike Ng" does not find "Mike Nguyen",
+    /// which it would with the option off. A query that cuts nothing at all,
+    /// such as one letter, is still refused
+    /// ([`TermError::EmptyTermText`]).
+    ///
+    /// **What it reveals.** One more token per short word, under the same
+    /// PRF, in the same filter, matched by the same containment rule, so
+    /// there is no new class of leakage. The token is specific to the word:
+    /// someone who clusters tokens across rows can tell the rows holding the
+    /// word "Ng" from those holding "Nguyen", where before only the boundary
+    /// trigram `" ng"` they share was visible. Only words shorter than an
+    /// n-gram get one, so no bigram of a longer word is ever indexed.
+    ///
+    /// It takes an n-gram tokenizer of length at least 3: the
+    /// [`Standard`](Tokenizer::Standard) tokenizer already emits whole words,
+    /// and under shorter n-grams no word is short enough. Either pairing is
+    /// refused ([`TermError::InvalidOptions`]).
+    pub short_words: bool,
     /// Number of bit positions derived per token, `3..=16` (the v1 match
     /// indexer's bounds; the upper bound is also the PRF block size — each
     /// position consumes 2 bytes of the 32-byte block).
@@ -652,6 +725,7 @@ impl Default for MatchOptions {
         Self {
             tokenizer: Tokenizer::default(),
             downcase: true,
+            short_words: false,
             k: 3,
             m: 256,
         }
@@ -667,6 +741,21 @@ impl MatchOptions {
             return Err(TermError::InvalidOptions(
                 "n-gram length must be at least 1",
             ));
+        }
+        if self.short_words {
+            match self.tokenizer {
+                Tokenizer::Standard => {
+                    return Err(TermError::InvalidOptions(
+                        "short_words takes an n-gram tokenizer: the standard tokenizer already indexes whole words",
+                    ))
+                }
+                Tokenizer::Ngram { length } if length < 3 => {
+                    return Err(TermError::InvalidOptions(
+                        "short_words takes an n-gram length of at least 3: no word of two characters or more is shorter than the n-grams",
+                    ))
+                }
+                Tokenizer::Ngram { .. } => {}
+            }
         }
         if !(3..=16).contains(&self.k) {
             return Err(TermError::InvalidOptions("k must be in 3..=16"));
@@ -689,7 +778,9 @@ pub trait MatchConfig: Send + Sync + 'static {
     fn options() -> MatchOptions;
 
     /// The typical number of distinct tokens in a value this index stores:
-    /// 20 for a name column, 200 for a notes column. A prior, used to size a query's
+    /// 20 for a name column, 200 for a notes column, counting a value's
+    /// short-word tokens when [`MatchOptions::short_words`] is on (each sets
+    /// `k` bits, as an n-gram does). A prior, used to size a query's
     /// fetch ([`Stats::declared`](crate::op::Stats::declared)) before the
     /// column's filters have been measured. It is not part of the index's
     /// identity and changes no term. `None`, the default, declares no
@@ -1033,7 +1124,7 @@ impl<T> RangeQuery<T> {
 /// can make), so one query's tokens never verify rows for another value's
 /// filter.
 #[derive(Clone, Default)]
-pub struct QueryTokens(Zeroizing<Vec<String>>);
+pub struct QueryTokens(Zeroizing<tokenize::Tokens>);
 
 impl QueryTokens {
     /// The tokens of `text` under `O`'s tokenizer and case folding.
@@ -1052,11 +1143,7 @@ impl QueryTokens {
     ///
     /// As for [`of`](Self::of).
     pub(crate) fn under(text: &str, options: &MatchOptions) -> Result<Self, TermError> {
-        Ok(Self(Zeroizing::new(tokenize::tokens(
-            text,
-            options.tokenizer,
-            options.downcase,
-        )?)))
+        Ok(Self(Zeroizing::new(tokenize::tokens(text, options)?)))
     }
 
     /// The tokens of a query's `text` under `options`, or why the query is
@@ -1079,15 +1166,16 @@ impl QueryTokens {
     /// Whether `value` holds every one of these tokens, cut under the same
     /// `options` the tokens were: what [`MatchQuery`]'s `verify` asks, with
     /// the options a value rather than a type, so a match index declared as
-    /// data verifies by the same code. No tokens verify nothing, and a value
-    /// the index cannot normalize holds no token of any query.
+    /// data verifies by the same code. Each kind is held by its own kind: a
+    /// short-word token of the query must be a short word of the value. No
+    /// tokens verify nothing, and a value the index cannot normalize holds
+    /// no token of any query.
     pub(crate) fn verify(&self, value: &str, options: &MatchOptions) -> bool {
-        let Ok(tokens) = tokenize::tokens(value, options.tokenizer, options.downcase) else {
+        let Ok(tokens) = tokenize::tokens(value, options) else {
             return false;
         };
         let tokens = Zeroizing::new(tokens);
-        let have: HashSet<&str> = tokens.iter().map(String::as_str).collect();
-        !self.0.is_empty() && self.0.iter().all(|t| have.contains(t.as_str()))
+        !self.0.is_empty() && tokens.hold(&self.0)
     }
 }
 
@@ -1158,9 +1246,13 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
 
 /// Derive a match term. Synchronous — see [`equality`]: validation and
 /// tokenization run before the PRF, the visitor folds blocks into positions.
+/// The tokenizer's tokens derive under [`MATCH_DOMAIN`] and the short-word
+/// tokens under [`MATCH_WORD_DOMAIN`], each bound to `context`, and both
+/// fold into the one filter.
 ///
 /// Text that cuts no token (empty, separator-only, or shorter than the
-/// n-gram length) is the empty filter: no position set, no PRF call. Stored,
+/// n-gram length with no short word) is the empty filter: no position set,
+/// no PRF call. Stored,
 /// it is a value no query matches, since a query always has at least one
 /// token and the empty filter holds none of its positions. This is the
 /// *stored* side's answer; a query of such text is refused by the query
@@ -1172,23 +1264,52 @@ fn match_term<O>(
     options: MatchOptions,
 ) -> Result<MatchTerms<O>, TermError> {
     let mask = options.validate()?;
-    let tokens = tokenize::tokens(text, options.tokenizer, options.downcase)?;
-    if tokens.is_empty() {
-        return Ok(MatchTerms::normalised(Vec::new()));
-    }
-    let context = Context::pae(&[MATCH_DOMAIN, context.as_bytes()]);
-
     // The PRF takes the tokens by value and moves each `String`'s buffer
     // into a `Protected`, which zeroizes it on drop: the tokens are wiped
-    // there, not here. The `Vec` itself holds only their pointers.
-
-    let positions = tokens
-        .prf_visit_with_context(prf, context, BloomVisitor { k: options.k, mask })
-        .into_result()
-        .map_err(TermError::from_prf)?;
+    // there, not here. The `Vec`s themselves hold only their pointers.
+    let tokenize::Tokens {
+        tokenizer,
+        short_words,
+    } = tokenize::tokens(text, &options)?;
+    // Held wiped-on-drop until the PRF takes them, so a failure deriving
+    // the tokenizer's tokens does not free the words unwiped.
+    let mut short_words = Zeroizing::new(short_words);
+    let mut positions = bloom_positions(prf, tokenizer, MATCH_DOMAIN, &context, options.k, mask)?;
+    positions.extend(bloom_positions(
+        prf,
+        std::mem::take(&mut *short_words),
+        MATCH_WORD_DOMAIN,
+        &context,
+        options.k,
+        mask,
+    )?);
     // Every position came out of the visitor masked to `m - 1`, so the range
     // check `from_positions` applies is already satisfied by construction.
     Ok(MatchTerms::normalised(positions))
+}
+
+/// The Bloom positions of `tokens`, each PRF'd under the PAE-framed
+/// `[domain, context]` and folded by [`BloomVisitor`]. No tokens is no
+/// positions and no PRF call.
+fn bloom_positions(
+    prf: &HmacSha256Prf,
+    tokens: Vec<String>,
+    domain: &[u8],
+    context: &Context<'_>,
+    k: usize,
+    mask: u16,
+) -> Result<Vec<u16>, TermError> {
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+    tokens
+        .prf_visit_with_context(
+            prf,
+            Context::pae(&[domain, context.as_bytes()]),
+            BloomVisitor { k, mask },
+        )
+        .into_result()
+        .map_err(TermError::from_prf)
 }
 
 /// A match term of any text source, generated under `O`'s options. Under
@@ -2134,7 +2255,7 @@ mod tests {
         // one built any other way, which must never match every row.
         let query = MatchQuery::<DefaultMatch>::new(
             MatchTerms::normalised(vec![1, 2, 3]),
-            QueryTokens(Zeroizing::new(Vec::new())),
+            QueryTokens::default(),
         );
         assert!(!crate::op::Probabilistic::verify(&query, "anything at all"));
         assert!(!crate::op::Probabilistic::verify(&query, ""));
@@ -2215,12 +2336,200 @@ mod tests {
         ));
         let tokens = QueryTokens::of_query("ALICE", &options).expect("cuts tokens");
         assert_eq!(
-            tokens.0.as_slice(),
+            tokens.0.tokenizer,
             QueryTokens::under("alice", &options)
                 .expect("normalizes")
                 .0
-                .as_slice()
+                .tokenizer
         );
+    }
+
+    mod given_short_words {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn options() -> MatchOptions {
+            MatchOptions {
+                short_words: true,
+                ..MatchOptions::default()
+            }
+        }
+
+        /// The positions `token` sets as one token of the kind `domain`
+        /// names, under the widest filter and the most slices, so two
+        /// blocks that differ anywhere in their first 32 bytes show it.
+        fn positions(prf: &HmacSha256Prf, token: &str, domain: &[u8], context: &[u8]) -> Vec<u16> {
+            bloom_positions(
+                prf,
+                vec![token.to_owned()],
+                domain,
+                &Context::from_encoded(context),
+                16,
+                u16::MAX,
+            )
+            .expect("derives")
+        }
+
+        #[test]
+        fn the_option_is_valid_beside_ngrams_of_three_or_more() {
+            for length in [3, 4, 8] {
+                let options = MatchOptions {
+                    tokenizer: Tokenizer::Ngram { length },
+                    ..options()
+                };
+                assert!(
+                    options.validate().is_ok(),
+                    "{length}-grams take short words"
+                );
+            }
+        }
+
+        #[test]
+        fn the_option_is_refused_beside_the_standard_tokenizer_or_shorter_ngrams() {
+            for tokenizer in [
+                Tokenizer::Standard,
+                Tokenizer::Ngram { length: 1 },
+                Tokenizer::Ngram { length: 2 },
+            ] {
+                let refused = MatchOptions {
+                    tokenizer,
+                    ..options()
+                }
+                .validate();
+                assert!(
+                    matches!(refused, Err(TermError::InvalidOptions(_))),
+                    "{tokenizer:?}: {refused:?}"
+                );
+                assert!(
+                    MatchOptions {
+                        tokenizer,
+                        ..MatchOptions::default()
+                    }
+                    .validate()
+                    .is_ok(),
+                    "{tokenizer:?} is valid without the option"
+                );
+            }
+        }
+
+        #[test]
+        fn a_query_of_one_short_word_is_accepted_and_of_one_letter_refused() {
+            let tokens = QueryTokens::of_query("Ng", &options()).expect("one word token");
+            assert_eq!(tokens.0.short_words, ["ng"], "the word, folded");
+            assert!(tokens.0.tokenizer.is_empty(), "no trigram in two letters");
+            for text in ["N", "", "  ", "n "] {
+                assert!(
+                    matches!(
+                        QueryTokens::of_query(text, &options()),
+                        Err(TermError::EmptyTermText)
+                    ),
+                    "{text:?} still cuts nothing"
+                );
+            }
+            assert!(
+                matches!(
+                    QueryTokens::of_query(
+                        "Ng",
+                        &MatchOptions {
+                            tokenizer: Tokenizer::Standard,
+                            ..options()
+                        }
+                    ),
+                    Err(TermError::InvalidOptions(_))
+                ),
+                "options are checked before the text"
+            );
+        }
+
+        /// A word token is framed under its own domain, so it never sets
+        /// the bits an n-gram of the same characters sets: pinned for
+        /// `ng`, under a fixed key and the widest filter, where the two
+        /// would share all sixteen positions if the domains did not part
+        /// them.
+        #[test]
+        fn a_word_token_and_an_ngram_of_the_same_characters_share_no_position() {
+            let prf = HmacSha256Prf::new(Protected::new([7; 32]));
+            let as_gram = positions(&prf, "ng", MATCH_DOMAIN, b"users/name");
+            let as_word = positions(&prf, "ng", MATCH_WORD_DOMAIN, b"users/name");
+            assert_eq!(as_gram.len(), 16, "sixteen distinct positions: {as_gram:?}");
+            assert!(
+                as_gram.iter().all(|p| as_word.binary_search(p).is_err()),
+                "no position in common: {as_gram:?} and {as_word:?}"
+            );
+        }
+
+        /// The stored filter of a value is the union of its two kinds,
+        /// each under its own domain: the n-grams' positions under the
+        /// match domain, the words' under the word domain.
+        #[test]
+        fn a_stored_filter_is_the_union_of_both_kinds() {
+            let prf = HmacSha256Prf::new(Protected::new([7; 32]));
+            let context = Context::from_encoded(&b"users/name"[..]);
+            let stored: MatchTerms =
+                match_term(&prf, "Mike Ng", context.clone(), options()).expect("derives");
+            let mask = options().validate().expect("valid");
+            let mut union = bloom_positions(
+                &prf,
+                vec![
+                    "mik".into(),
+                    "ike".into(),
+                    "ke ".into(),
+                    "e n".into(),
+                    " ng".into(),
+                ],
+                MATCH_DOMAIN,
+                &context,
+                3,
+                mask,
+            )
+            .expect("grams");
+            union.extend(
+                bloom_positions(
+                    &prf,
+                    vec!["ng".into()],
+                    MATCH_WORD_DOMAIN,
+                    &context,
+                    3,
+                    mask,
+                )
+                .expect("word"),
+            );
+            assert_eq!(
+                stored,
+                MatchTerms::normalised(union),
+                "the trigrams of the whole text and the word"
+            );
+            let alone: MatchTerms =
+                match_term(&prf, "Ng", context.clone(), options()).expect("derives");
+            assert!(
+                !alone.positions().is_empty() && stored.contains(&alone),
+                "\"Ng\" stores one token, which \"Mike Ng\" holds: {alone:?}"
+            );
+            let without: MatchTerms =
+                match_term(&prf, "Ng", context, MatchOptions::default()).expect("derives");
+            assert!(
+                without.positions().is_empty(),
+                "without the option, \"Ng\" is the empty filter"
+            );
+        }
+
+        proptest! {
+            /// For any token, key and context, the word domain and the
+            /// match domain derive different blocks: the positions differ.
+            #[test]
+            fn the_two_domains_never_derive_one_block(
+                token in "\\PC{1,4}",
+                key in any::<[u8; 32]>(),
+                context in prop::collection::vec(any::<u8>(), 1..24),
+            ) {
+                let prf = HmacSha256Prf::new(Protected::new(key));
+                prop_assert_ne!(
+                    positions(&prf, &token, MATCH_DOMAIN, &context),
+                    positions(&prf, &token, MATCH_WORD_DOMAIN, &context),
+                    "a word token and an n-gram of the same characters derive apart"
+                );
+            }
+        }
     }
 
     /// The Bloom fold reads a token *stream*: handed a map-shaped PRF input

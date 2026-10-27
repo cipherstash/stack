@@ -9,8 +9,8 @@
 // dynamic::record: the output keys "c", "eq", "match", "ore", "ope",
 // "ore_block" and "passthrough", and the type names "bool", "int8", "int16", "int32",
 // "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128",
-// "float32", "float64", "decimal", "date", "timestamp", "string" and
-// "bytes". A field's context is
+// "float32", "float64", "decimal", "date", "timestamp", "string",
+// "bytes" and "json". A field's context is
 // its label — the plan's context segments and the field's identity — nested
 // to the left under each part the caller extends it by.
 //
@@ -62,6 +62,11 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
+	// JSON is a JSON document, which crosses the binding as its UTF-8 JSON
+	// text in a bytes value and opens back to its text. The engine parses
+	// the text by one set of rules (numbers, repeated members, Unicode);
+	// a field of this kind names a target that stores a document.
+	JSON Kind = "json"
 )
 
 // Output is one output of a sealed field, by its wire key.
@@ -70,12 +75,16 @@ type Output string
 // The outputs. Passthrough is not one a Plan's Fields ask for (see the
 // package doc); it is the context field's, which Wire writes itself.
 const (
-	Ciphertext  Output = "c"
-	Equality    Output = "eq"
-	Match       Output = "match"
-	Ore         Output = "ore"
-	Ope         Output = "ope"
-	OreBlock    Output = "ore_block"
+	Ciphertext Output = "c"
+	Equality   Output = "eq"
+	Match      Output = "match"
+	Ore        Output = "ore"
+	Ope        Output = "ope"
+	OreBlock   Output = "ore_block"
+	// JSONIndex is the JSON index, which a target that stores a JSON
+	// document carries and answers a document's operators through. No
+	// field asks for it as an output.
+	JSONIndex   Output = "json"
 	Passthrough Output = "passthrough"
 )
 
@@ -110,6 +119,41 @@ type Field struct {
 	// field every row has, SealedNull or SQLNull for one declared over a
 	// pointer.
 	Null Null
+	// TargetOptions are the options the field gives its Target: those of
+	// the index the target carries. A target that stores a JSON document
+	// (JsonSearch) takes the JSON index's; nil runs a target under its
+	// defaults, and no other target takes any.
+	TargetOptions *TargetOptions
+}
+
+// TargetOptions are a target's options, as a plan gives them: the JSON
+// index's, the only index that takes any. A field left nil takes the
+// index's default. The engine checks them when the plan is built.
+type TargetOptions struct {
+	// SealedRoot says whether the document's root is sealed: its entry
+	// holds the whole document, and no token enumerates its top-level
+	// members. nil is the default, sealed.
+	SealedRoot *bool
+	// Ordered are the JSONPath paths ($.age, $.visits[*].at) whose number
+	// and string leaves carry an ordering term, so they answer the
+	// orderings. None by default.
+	Ordered []string
+}
+
+// wire is the options object as the plan spells it: only the options set.
+func (o *TargetOptions) wire() vcvalue.Object {
+	out := vcvalue.Object{}
+	if o.SealedRoot != nil {
+		out = append(out, vcvalue.Field{Key: "sealed_root", Value: *o.SealedRoot})
+	}
+	if o.Ordered != nil {
+		paths := make([]any, len(o.Ordered))
+		for i, p := range o.Ordered {
+			paths[i] = p
+		}
+		out = append(out, vcvalue.Field{Key: "ordered", Value: paths})
+	}
+	return out
 }
 
 // Null is how a field stores a value that is not there: the plan's "null".
@@ -289,6 +333,15 @@ func (p *Plan) Validate() error {
 		default:
 			return fmt.Errorf("record: field %q: unknown null %q", f.Name, f.Null)
 		}
+		if f.TargetOptions != nil && !f.IsTarget() {
+			return fmt.Errorf("record: field %q has target options and no target", f.Name)
+		}
+		// A JSON document is stored only through a target that stores one
+		// (JsonSearch); the engine refuses a json field with no target
+		// (json_needs_target), and saying it here names the field first.
+		if f.Kind == JSON && !f.IsTarget() {
+			return fmt.Errorf("record: field %q is a JSON document and names no target; a document is stored through an EQL type that stores one, such as JsonSearch", f.Name)
+		}
 		if f.IsTarget() {
 			if len(f.Outputs) != 0 {
 				return fmt.Errorf("record: field %q names the EQL type %s and outputs; a field has one or the other", f.Name, f.Target)
@@ -333,7 +386,7 @@ func (p *Plan) Validate() error {
 func (k Kind) Known() bool {
 	switch k {
 	case Untyped, Bool, Int8, Int16, Int32, Int64, Int128, Uint8, Uint16, Uint32, Uint64, Uint128,
-		Float32, Float64, Decimal, Date, Timestamp, String, Bytes:
+		Float32, Float64, Decimal, Date, Timestamp, String, Bytes, JSON:
 		return true
 	}
 	return false
@@ -374,9 +427,15 @@ func (p *Plan) Wire() vcvalue.Object {
 	}
 	for _, f := range p.Fields {
 		spec := vcvalue.Object{{Key: "context", Value: p.FieldContext(f)}}
-		if f.IsTarget() {
+		switch {
+		case f.IsTarget() && f.TargetOptions != nil:
+			spec = append(spec, vcvalue.Field{Key: "target", Value: vcvalue.Object{
+				{Key: "name", Value: f.Target},
+				{Key: "options", Value: f.TargetOptions.wire()},
+			}})
+		case f.IsTarget():
 			spec = append(spec, vcvalue.Field{Key: "target", Value: f.Target})
-		} else {
+		default:
 			outputs := make([]any, len(f.Outputs))
 			for i, o := range f.Outputs {
 				outputs[i] = string(o)
@@ -511,7 +570,9 @@ const (
 // lists it.
 type Operator struct {
 	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
-	// gte, between or matches.
+	// gte, between or matches; for a field that stores a JSON document,
+	// contains, contained_by, eq_at, lt_at, lte_at, gt_at, gte_at,
+	// between_at, selector, subtree, children or child_count.
 	Name string
 	// Fidelity is how far the server's answer can be trusted.
 	Fidelity Fidelity
@@ -520,4 +581,9 @@ type Operator struct {
 	Pair bool
 	// Index is the index that answers it: the field's, or its EQL type's.
 	Index Output
+	// Input is the shape of the operator's input, as the engine names it:
+	// value (one value of the field's kind), pair (two, low then high),
+	// json, path_json, path_pair, path or path_bound (objects of named
+	// inputs, for a document's operators).
+	Input string
 }

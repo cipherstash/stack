@@ -14,9 +14,10 @@ import (
 
 // EQL v4's TextSearch, sealed and queried through generated code over the
 // deterministic guest build with the EQL types. A stored value carries all
-// three terms, short text with the empty filter; a query carries only the
-// one its operator reads (ADR-0002, amended 2026-10-19), so Eq and Lt take a
-// two-letter name and Matches refuses one.
+// three terms, text that cuts no match token with the empty filter; a query
+// carries only the one its operator reads (ADR-0002, amended 2026-10-19), so
+// Eq and Lt take a one-letter name and Matches refuses one. A two-letter
+// word is a match token of its own, so a two-letter name is matched too.
 // packages/eql/tests/encryption/tests/v4_text_search.rs holds the same rules
 // against PostgreSQL.
 
@@ -82,14 +83,14 @@ func TestV4TextSearchStoresEveryTermAndQueriesCarryOne(t *testing.T) {
 		if string(terms[tc.term]) != string(stored[tc.term]) {
 			t.Errorf("%s query's %s is not the stored one", tc.method, tc.term)
 		}
-		// Text too short for a 3-gram still has an equality and an order
+		// Text that cuts no match token still has an equality and an order
 		// term.
-		short, err := tc.query("Al")
+		short, err := tc.query("A")
 		if err != nil {
-			t.Fatalf("%s on two-letter text: %v", tc.method, err)
+			t.Fatalf("%s on one-letter text: %v", tc.method, err)
 		}
 		if keys, _ := keysAndTerms(t, short); keys != strings.Join(sortedWith("i", "v", tc.term), ",") {
-			t.Errorf("%s query keys on two-letter text %s", tc.method, keys)
+			t.Errorf("%s query keys on one-letter text %s", tc.method, keys)
 		}
 	}
 
@@ -108,19 +109,36 @@ func TestV4TextSearchStoresEveryTermAndQueriesCarryOne(t *testing.T) {
 		t.Errorf("Verify = %v, %v", ok, err)
 	}
 
-	// A match query on text too short for a 3-gram is refused, never sent
-	// as an empty filter.
-	if q, err := f.Matches(ctx, cipher, "Al"); !errors.Is(err, encrypt.ErrTerm) {
-		t.Errorf("Matches on two-letter text = %v, %v, want ErrTerm", q, err)
+	// A match query on text that cuts no token is refused, never sent as an
+	// empty filter.
+	if q, err := f.Matches(ctx, cipher, "A"); !errors.Is(err, encrypt.ErrTerm) {
+		t.Errorf("Matches on one-letter text = %v, %v, want ErrTerm", q, err)
+	}
+	// A two-letter word is one token: "Ng" stores a filter, and the query of
+	// "ng" carries the same bits.
+	ng, err := testusers.EncryptEntry(ctx, cipher, []testusers.Entry{{ID: 4, Name: "Ng"}})
+	if err != nil {
+		t.Fatalf("storing a two-letter name in a TextSearch: %v", err)
+	}
+	_, ngTerms := keysAndTerms(t, ng[0].Name)
+	if string(ngTerms["bf"]) == "[]" {
+		t.Error(`"Ng" stored the empty filter, want its word token`)
+	}
+	ngQuery, err := f.Matches(ctx, cipher, "ng")
+	if err != nil {
+		t.Fatalf("Matches(%q): %v", "ng", err)
+	}
+	if _, q := keysAndTerms(t, ngQuery.Query()); string(q["bf"]) != string(ngTerms["bf"]) {
+		t.Errorf(`the query "ng"'s bf %s is not the stored "Ng"'s %s`, q["bf"], ngTerms["bf"])
 	}
 	// Storing such text, an empty string included, keeps every term, the
 	// match term as the empty filter (where TextMatch refuses the text): Eq
 	// and Lt find the row through hm and op, and no Matches query does.
-	short, err := testusers.EncryptEntry(ctx, cipher, []testusers.Entry{{ID: 2, Name: "Al"}, {ID: 3, Name: ""}})
+	short, err := testusers.EncryptEntry(ctx, cipher, []testusers.Entry{{ID: 2, Name: "A"}, {ID: 3, Name: ""}})
 	if err != nil {
 		t.Fatalf("storing short text in a TextSearch: %v", err)
 	}
-	for i, name := range []string{"Al", ""} {
+	for i, name := range []string{"A", ""} {
 		keys, terms := keysAndTerms(t, short[i].Name)
 		if keys != "bf,c,hm,i,op,v" {
 			t.Errorf("stored keys for %q %s, want bf,c,hm,i,op,v", name, keys)
@@ -147,7 +165,7 @@ func TestV4TextSearchStoresEveryTermAndQueriesCarryOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opened[0].Name != "Al" || opened[1].Name != "" {
+	if opened[0].Name != "A" || opened[1].Name != "" {
 		t.Errorf("opened %q and %q", opened[0].Name, opened[1].Name)
 	}
 }

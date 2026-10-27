@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // The key of the struct tag the generator reads.
@@ -23,6 +26,8 @@ const tagKey = "stash"
 //	stash:"tenant,context_field"              Name, VerbContextField
 //	stash:",passthrough"                      VerbPassthrough with no Name, on an embedded struct
 //	stash:"dob,encrypt_into=Date,null=sql"    Null, on a sealed field declared over a pointer
+//	stash:"profile,encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at,sealed_root=false)"
+//	                                          EQLType and EQLOptions
 type tag struct {
 	Omit    bool
 	Context string
@@ -31,6 +36,9 @@ type tag struct {
 	Verb    Verb
 	Indexes []Index
 	EQLType string
+	// EQLOptions are the EQL type's options, from the parentheses after its
+	// name; nil when the tag gives none.
+	EQLOptions *record.TargetOptions
 	// Null is how a sealed field declared over a pointer stores nil, when
 	// the tag says; the generator picks NullSealed where it can.
 	Null Null
@@ -96,6 +104,16 @@ func parseTagValue(value string) (tag, error) {
 			}
 			sawInto = true
 			t.EQLType = strings.TrimPrefix(item, "encrypt_into=")
+			if open := strings.IndexByte(t.EQLType, '('); open >= 0 {
+				if !strings.HasSuffix(t.EQLType, ")") {
+					return tag{}, fmt.Errorf("tag %q: encrypt_into's options open with ( and do not close", value)
+				}
+				t.EQLOptions, err = parseEQLOptions(t.EQLType[open+1 : len(t.EQLType)-1])
+				if err != nil {
+					return tag{}, fmt.Errorf("tag %q: %w", value, err)
+				}
+				t.EQLType = t.EQLType[:open]
+			}
 			if !isIdent(t.EQLType) {
 				return tag{}, fmt.Errorf("tag %q: encrypt_into names an EQL type, and %q is not a type name", value, t.EQLType)
 			}
@@ -182,6 +200,83 @@ func parseContextTag(items []string) (tag, error) {
 		}
 	}
 	return t, nil
+}
+
+// parseEQLOptions reads an EQL type's options: `ordered=$.age;$.visits[*].at`
+// and `sealed_root=true|false`, separated by commas. The engine checks the
+// paths when the declaration is checked. A path in a tag is plain JSONPath:
+// keys of letters, digits and underscores, [n] and [*]; a quoted key, or a
+// key holding a comma, semicolon or parenthesis, has no tag spelling.
+func parseEQLOptions(list string) (*record.TargetOptions, error) {
+	if list == "" {
+		return nil, errors.New("encrypt_into has empty options; drop the parentheses")
+	}
+	options := &record.TargetOptions{}
+	seen := map[string]bool{}
+	for _, opt := range strings.Split(list, ",") {
+		key, value, ok := strings.Cut(opt, "=")
+		if !ok || value == "" {
+			return nil, fmt.Errorf("encrypt_into option %q is not key=value", opt)
+		}
+		if seen[key] {
+			return nil, fmt.Errorf("encrypt_into option %s is given twice", key)
+		}
+		seen[key] = true
+		switch key {
+		case "ordered":
+			for _, path := range strings.Split(value, ";") {
+				if !plainPath(path) {
+					return nil, fmt.Errorf("encrypt_into ordered path %q is not a plain JSONPath ($ then .key, [n] or [*] steps, keys of letters, digits and underscores)", path)
+				}
+				options.Ordered = append(options.Ordered, path)
+			}
+		case "sealed_root":
+			b, err := strconv.ParseBool(value)
+			if err != nil || (value != "true" && value != "false") {
+				return nil, fmt.Errorf("encrypt_into sealed_root is true or false, not %q", value)
+			}
+			options.SealedRoot = &b
+		default:
+			return nil, fmt.Errorf("encrypt_into has no option %q; the options are ordered and sealed_root", key)
+		}
+	}
+	return options, nil
+}
+
+// plainPath reports whether s is a JSONPath a tag can spell: $, then .key
+// steps (letters, digits, underscores) and [n] or [*] steps.
+func plainPath(s string) bool {
+	if !strings.HasPrefix(s, "$") {
+		return false
+	}
+	for i := 1; i < len(s); {
+		switch s[i] {
+		case '.':
+			j := i + 1
+			for j < len(s) && (s[j] == '_' || s[j] >= 'a' && s[j] <= 'z' || s[j] >= 'A' && s[j] <= 'Z' || s[j] >= '0' && s[j] <= '9') {
+				j++
+			}
+			if j == i+1 {
+				return false
+			}
+			i = j
+		case '[':
+			end := strings.IndexByte(s[i:], ']')
+			if end < 0 {
+				return false
+			}
+			inner := s[i+1 : i+end]
+			if inner != "*" {
+				if _, err := strconv.ParseUint(inner, 10, 32); err != nil {
+					return false
+				}
+			}
+			i += end + 1
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // parseIndexes reads `equality;match(k=3,m=2048)`.

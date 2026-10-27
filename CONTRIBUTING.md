@@ -1,6 +1,6 @@
 # Contributing to CipherStash Stack
 
-Thank you for your interest in contributing to the CipherStash Stack for TypeScript! This document walks you through the repository's structure, how to build and run the project locally, and how to make contributions effectively.
+Thank you for your interest in contributing to CipherStash Stack. This document walks you through the repository's structure, how to build and run the project locally, and how to make contributions effectively.
 
 ## I want to report a bug, or make a feature request
 
@@ -20,6 +20,7 @@ This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https:/
 │   │   ├── cli/          <-- The `stash` CLI
 │   │   └── ...           <-- stack-drizzle, stack-supabase, stack-prisma, nextjs, migrate, wizard, ...
 │   └── examples/         <-- Runnable example apps
+├── languages/golang/      <-- Go SDK, stashgen and credential packages
 ├── packages/eql/         <-- EQL (@cipherstash/eql and its Rust crates)
 ├── e2e/                  <-- Cross-package end-to-end tests
 ├── skills/               <-- Agent skills
@@ -28,6 +29,8 @@ This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https:/
 ```
 
 See [AGENTS.md](./AGENTS.md) for a detailed layout, key APIs, environment variables, and gotchas — it's written for coding agents but is the most complete developer reference in the repo.
+
+For the Go module, start with [languages/golang/README.md](languages/golang/README.md).
 
 ### `languages/typescript/packages/stack`
 
@@ -44,6 +47,7 @@ The `languages/typescript/examples/` directory contains applications demonstrati
 - **Node.js** >= 22
 - **pnpm** (the version pinned in `package.json`'s `packageManager` field)
 - CipherStash credentials if you want to run integration tests or examples (see [AGENTS.md](./AGENTS.md) for the required environment variables)
+- For Go work: mise and the Go and Rust toolchains pinned in `mise.toml`
 
 ### 1. Clone the Repo
 
@@ -75,6 +79,27 @@ pnpm run dev
 ```
 
 Then navigate to one of the examples in `languages/typescript/examples/` and follow its README.
+
+### Go module
+
+The Go module is in `languages/golang/`, outside the pnpm workspace. Its
+`encrypt` and `auth` packages embed WASI guests built from Rust. In a source
+checkout, build those guests before running the Go suite:
+
+```bash
+mise run wasm:guest:build
+mise run wasm:guest:build:eql
+mise run wasm:guest:build:deterministic
+mise run wasm:guest:build:eql:deterministic
+mise run wasm:auth-guest:build
+mise run go:test
+```
+
+For EQL v4 PostgreSQL coverage, set `EQL_TEST_DATABASE_URL` and run
+`mise run go:test:postgres`. Go examples that connect to ZeroKMS need
+CipherStash credentials. The [Go module guide](languages/golang/README.md)
+links to the SDK, generator, credentials, examples and release notes. Commit
+generated `*_stash.go` files when changing Go model tags; CI checks for drift.
 
 ## Making Changes
 

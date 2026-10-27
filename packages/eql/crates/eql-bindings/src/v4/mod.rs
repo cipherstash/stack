@@ -98,8 +98,9 @@ pub mod terms {
     /// The `bf` term of a stored search value (`TextSearch`,
     /// `TextSearchOre`): a [`BloomFilter`] that may be empty.
     ///
-    /// Text too short to cut a 3-gram (empty, separator-only, or shorter than
-    /// three characters) has no match tokens. A search column stores it with
+    /// Text that cuts no match token (empty, separator-only, or shorter than
+    /// three characters with no two-letter word, such as one letter) has no
+    /// match tokens. A search column stores it with
     /// the empty filter, Stack Encrypt's answer for a stored value, so `=`
     /// and `<` still find it through its `hm` and `op`, and no `@@` query
     /// does: EQL's `matches` finds a stored filter only when it contains the

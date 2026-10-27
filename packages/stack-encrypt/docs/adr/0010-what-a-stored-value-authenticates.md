@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-10-18
+amended: 2026-10-26
 extends: vitaminc ADR 0002
 ---
 
@@ -40,6 +41,36 @@ was sealed exactly so, under exactly that context.
   rows. A caller who needs a value bound to its row puts the row's identity
   (or a tenant) in the context.
 
+### The JSON index (`json_tree`)
+
+A JSON index document is one sealed entry per node, and it authenticates
+more than a container does. Each entry's ciphertext binds, beside its
+context, the node's path selector, the slot it is stored at, and a digest
+of its children's AEAD tags in their order (amended 2026-10-26, the
+cascade). A node's tag therefore commits to every ciphertext beneath it:
+the client opens the rows beneath the node a read names only if they are
+exactly the ones sealed there, each under its parent and in its place,
+however the database orders them. A row swapped, dropped, added,
+reordered or moved under another parent is `Error::Aead`. The stored
+order of the entries is random and carries no meaning, and the search
+fields beside the ciphertexts (selectors, the projection, the self and
+parent tags, the ordering terms) are not authenticated, like every
+search term.
+
+Three things stay outside it, by design, as they were before the cascade:
+
+- **Another row's entry.** An entry returned with its own row's header
+  opens, as any leaf sealed under the column context does (the row rule
+  above).
+- **Another element's node at the top of a read.** Every element of an
+  array shares a selector, and the node a read names is checked by its
+  selector and label alone, since nothing above it is read. So
+  `$.items[0].price` opens in answer to a read of `$.items[1].price`.
+  Beneath that node the cascade rules the substitution out.
+- **Withheld rows.** Nothing says how many nodes a read should find, so a
+  read the database answers with fewer whole subtrees, or none, opens to
+  what it returned.
+
 ## Consequences
 
 - **A typed open separates a failed leaf from a refused shape.** A leaf
@@ -47,7 +78,13 @@ was sealed exactly so, under exactly that context.
   `Error::Aead`. A value whose every leaf opened but whose type or shape the
   target refuses, including a container missing a field the target needs,
   is a shape mismatch: `Error::OpenedType`, not `Aead`. The Go guest maps
-  them to `STATUS_AUTH` and `STATUS_ENCODING`.
+  them to `STATUS_AUTH` and `STATUS_ENCODING`. One case cannot be
+  separated before the open: a JSON index entry returned by `->` that does
+  not open alone is either a container with children, whose ciphertext is
+  sealed over children `->` does not return, or an altered entry, and
+  nothing outside the ciphertext says which. That is `Error::JsonNotALeaf`,
+  which names both causes and claims neither, and maps to
+  `STATUS_ENCODING`.
 - **Review findings of these kinds are not defects.** `AGENTS.md` lists
   them under "Review guidelines", and `.github/copilot-instructions.md`
   repeats them. A finding that a *leaf* is not bound to its context, key,

@@ -30,6 +30,7 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 		"Boolean",
 		"Real", "RealEq", "RealOrdOre", "RealOrd", "RealOrdOpe",
 		"Double", "DoubleEq", "DoubleOrdOre", "DoubleOrd", "DoubleOrdOpe",
+		"JsonSearch",
 	}
 	if len(producible) != len(want) {
 		t.Fatalf("producible = %v, want %v", producible, want)

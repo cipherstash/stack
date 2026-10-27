@@ -69,7 +69,7 @@ impl Zeroize for PlainJson {
 
 /// Overwrite every scalar and key in `value` in place, then empty its
 /// containers.
-fn wipe(value: &mut Value) {
+pub(crate) fn wipe(value: &mut Value) {
     match value {
         Value::String(text) => text.zeroize(),
         Value::Number(number) => *number = Number::from(0u8),

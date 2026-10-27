@@ -156,11 +156,11 @@ async fn v3_and_v4_install_side_by_side(pool: PgPool) -> Result<()> {
         ["eql_v3", "eql_v3_internal", "eql_v4", "eql_v4_internal"]
     );
 
-    // Every public domain v3 owns, v4 owns under its own prefix. v4 also
-    // owns the domains of the files confined to it with `-- ONLY EQL
-    // VERSION: 4` (`tasks/build.sh`): today the JSON tree family, which Stack
-    // Encrypt writes and cipherstash-client does not. Those are the only
-    // domains v4 may have that v3 lacks, and v3 may own nothing v4 lacks.
+    // Every public domain v3 owns, v4 owns under its own prefix, and v4 owns
+    // no other. The searchable JSON document is the one pair whose SQL
+    // differs: v3's `json_search` and `json_entry` are the SteVec domains
+    // (`src/v3/json/`, `-- ONLY EQL VERSION: 3`), v4's the JSON tree family
+    // (`src/v3/json_tree/`, `-- ONLY EQL VERSION: 4`) under the same names.
     let (v3, v4) = public_domains(&pool).await?;
     assert!(!v3.is_empty(), "v3 installed no public domains");
     let to_v3 = |name: &String| name.replacen("eql_v4_", "eql_v3_", 1);
@@ -178,10 +178,9 @@ async fn v3_and_v4_install_side_by_side(pool: PgPool) -> Result<()> {
         .filter(|name| !v3.contains(&to_v3(name)))
         .map(String::as_str)
         .collect();
-    assert_eq!(
-        v4_only,
-        ["eql_v4_json_tree", "eql_v4_json_tree_entry"],
-        "the only public domains v4 owns and v3 does not are the JSON tree family"
+    assert!(
+        v4_only.is_empty(),
+        "v4 owns public domains v3 does not: {v4_only:?}"
     );
 
     let (a, b): (String, String) = sqlx::query_as("SELECT eql_v3.version(), eql_v4.version()")

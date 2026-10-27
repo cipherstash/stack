@@ -104,10 +104,17 @@ func TestRefusals(t *testing.T) {
 		{"an opaque struct with a channel", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tDone chan int"), stashgen.Request{Type: "User"}, "Done", "is not a type JSON carries"},
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},
+		{"an opaque struct with a type that writes itself only as JSON", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx jsonOnly") + "\ntype jsonOnly struct {\n\tA int\n\tb int\n}\n\nfunc (j jsonOnly) MarshalJSON() ([]byte, error) { return nil, nil }\n\nfunc (j *jsonOnly) UnmarshalJSON([]byte) error { return nil }\n", stashgen.Request{Type: "User"}, "Tx", "a storage blob would drop"},
+		{"an opaque struct with a decimal", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAmount encrypt.Decimal"), stashgen.Request{Type: "User"}, "Amount", "has no storage form"},
+		{"an opaque struct with a date in a slice", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tDays []encrypt.Date"), stashgen.Request{Type: "User"}, "Days", "has no storage form"},
+		{"an opaque struct with a type that writes text it cannot read", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tL level") + "\ntype level int\n\nfunc (l level) MarshalText() ([]byte, error) { return nil, nil }\n", stashgen.Request{Type: "User"}, "L", "MarshalText but no UnmarshalText"},
+		{"an opaque struct with a pointer to a type that writes text it cannot read", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tL *level") + "\ntype level int\n\nfunc (l level) MarshalText() ([]byte, error) { return nil, nil }\n", stashgen.Request{Type: "User"}, "L", "MarshalText but no UnmarshalText"},
+		{"an opaque struct with a type that reads text it does not write", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tL level") + "\ntype level int\n\nfunc (l *level) UnmarshalText([]byte) error { return nil }\n", stashgen.Request{Type: "User"}, "L", "UnmarshalText but no MarshalText"},
+		{"an opaque struct with a JSON-only type keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tE ev") + "\ntype k struct{ A int }\n\ntype ev struct{ M map[k]int }\n\nfunc (e ev) MarshalJSON() ([]byte, error) { return nil, nil }\n\nfunc (e *ev) UnmarshalJSON([]byte) error { return nil }\n", stashgen.Request{Type: "User"}, "E", "map key that is not an integer, a string, bytes or text"},
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
 		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=BigintOrdOre\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type BigintOrdOre"},
 		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
-		{"the json index, not in the engine yet", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "cannot derive the json index yet"},
+		{"the json index as an output", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "encrypt_into=JsonSearch"},
 		{"an index option a query term cannot use", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "a query term uses only the default index options"},
 		{"a passthrough field that has an index", user(ctx + "\tID int64 `stash:\"id,passthrough,index=equality\"`"), stashgen.Request{Type: "User"}, "ID", "passthrough field has no index"},
 		{"an embedded struct from another package with no tag", user(ctx + "\tgorm.Model\n\tEmail string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Model", "cannot carry tags; tag the field"},
@@ -196,7 +203,7 @@ func TestStaleOutputFileIsIgnored(t *testing.T) {
 	}
 	// A stale file: it names a type that no longer exists and redeclares
 	// Encrypt, so the package does not type-check with it.
-	stale := "package users\n\nimport \"github.com/cipherstash/stack/languages/golang/encrypt/gensupport\"\n\nconst _ = gensupport.GeneratedVersion1\n\ntype EncryptedUser struct{ Gone Missing }\n\nfunc Encrypt() {}\n"
+	stale := "package users\n\nimport \"github.com/cipherstash/stack/languages/golang/encrypt/gensupport\"\n\nconst _ = gensupport.GeneratedVersion2\n\ntype EncryptedUser struct{ Gone Missing }\n\nfunc Encrypt() {}\n"
 	if err := os.WriteFile(filepath.Join(dir, "user_stash.go"), []byte(stale), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -390,5 +397,27 @@ func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
 	}
 	if !strings.Contains(string(file.Content), "func (f ScoreField) Between(") {
 		t.Errorf("a float field with ore has no Between:\n%s", file.Content)
+	}
+}
+
+// The storage profile writes a struct with no fields at all as an empty
+// object, so a set (map[string]struct{}) and an empty struct seal in an
+// opaque struct, as they did as JSON.
+func TestOpaqueStructAcceptsEmptyStructs(t *testing.T) {
+	src := user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tSeen map[string]struct{}\n\tMark marker") + "\ntype marker struct{}\n"
+	if _, err := generate(t, src, stashgen.Request{Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A pointer to a type with MarshalText and UnmarshalText (*time.Time, and
+// a slice, a map value or a pointer to a pointer of one) is written as its
+// element's text and read back into a new element. The pair is looked up on
+// the element: the method set of **time.Time holds neither method, and
+// asking it there refused the field as writing text it could not read.
+func TestOpaqueStructAcceptsPointersToTextTypes(t *testing.T) {
+	src := user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAt *time.Time\n\tAts []*time.Time\n\tByName map[string]*time.Time\n\tDeep **time.Time")
+	if _, err := generate(t, src, stashgen.Request{Type: "User"}); err != nil {
+		t.Fatal(err)
 	}
 }

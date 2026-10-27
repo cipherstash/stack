@@ -279,12 +279,23 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 		t.Errorf("TargetLimit with a histogram = %d (bounded %v), want at least 10", rows, bounded)
 	}
 
-	// A needle too short for a 3-gram has no filter bits, and an empty
-	// filter would be a subset of every row's: the engine refuses it.
-	for _, short := range []string{"", "al"} {
+	// A needle that cuts no token (one letter, or none) has no filter bits,
+	// and an empty filter would be a subset of every row's: the engine
+	// refuses it.
+	for _, short := range []string{"", "a"} {
 		if q, err := testusers.ProfileFields.Name.Matches(ctx, cipher, short); err == nil {
 			t.Errorf("Name.Matches(%q) = %s, want a refusal", short, q)
 		}
+	}
+	// A two-letter word is a token of its own in EQL v4's match types, so a
+	// two-letter surname is a query, and Verify keeps the rows holding it as
+	// a word.
+	ng, err := testusers.ProfileFields.Name.Matches(ctx, cipher, "Ng")
+	if err != nil {
+		t.Fatalf("Name.Matches(%q): %v", "Ng", err)
+	}
+	if ok, err := ng.Verify(ctx, []string{"Ng", "Mike Ng", "Nguyen"}); err != nil || !ok[0] || !ok[1] || ok[2] {
+		t.Errorf("Verify(Ng, Mike Ng, Nguyen) = %v, %v, want true, true, false", ok, err)
 	}
 }
 

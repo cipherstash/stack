@@ -33,7 +33,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
-    Output, TargetDescriptor, TargetError, TargetResolver, ValueFrame, ValueKind,
+    Output, TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueFrame, ValueKind,
 };
 use stack_encrypt::{
     Encrypt, KeysetCipher, Label, PassthroughFrame, Pending, SealedValue, StackCipher,
@@ -86,6 +86,7 @@ impl TargetResolver for Fixed {
     fn encrypt<'a, K: 'static>(
         &self,
         _: &str,
+        _: Option<&TargetOptions>,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: ValueFrame,

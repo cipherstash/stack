@@ -68,9 +68,18 @@ run = "mise x --env test -- cargo +nightly fuzz run plan_build --sanitizer none 
 # aarch64 and x86_64) and the header's frozen layout must never panic, and an
 # accepted document or entry must survive a round trip through its wire form.
 ["fuzz:json-wire"]
-description = "Fuzz stack-encrypt's JSON index wire decoders: JsonDocument, JsonNode, JsonProjection, JsonLeafQuery and JsonHeader (libFuzzer, nightly, 60s default)"
+description = "Fuzz stack-encrypt's JSON index wire decoders: JsonDocument, JsonNode, JsonSelectorSet, JsonLeafQuery and JsonHeader (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "mise x --env test -- cargo +nightly fuzz run json_wire_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the boundary parser a language SDK's JSON document goes through
+# (`json::parse_text`), the engine's own: it must never panic, and it is held
+# to serde_json, reading what serde_json reads to the same value and refusing
+# only repeated members and out-of-range integers beyond it.
+["fuzz:json-text"]
+description = "Fuzz stack-encrypt's JSON text parser (json::parse_text) against serde_json (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "mise x --env test -- cargo +nightly fuzz run json_text --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
 # warning fails the build. Doc *examples* are `test:doc:stack-encrypt`. Both run

@@ -1060,6 +1060,32 @@ pub fn render_v4_inventory_rs() -> String {
             quote! { Box::new(PhantomData::<super::#m::#s>), }
         })
         .collect();
+    // The document families' hand-written types: the stored document in
+    // `all()`, its two query operands in `all_query()`. The entry `->`
+    // returns is neither a column nor an operand, so it is in neither.
+    let document = |roles: &'static [eql_domains::DocumentRole]| -> TokenStream {
+        eql_domains::DOCUMENT_FAMILIES
+            .iter()
+            .flat_map(|f| f.domains.iter().map(move |d| (f, d)))
+            .filter(|(_, d)| roles.contains(&d.role))
+            .map(|(f, d)| {
+                let m = format_ident!("{}", f.name);
+                let s = format_ident!("{}", d.rust);
+                quote! { Box::new(PhantomData::<super::#m::#s>), }
+            })
+            .collect()
+    };
+    let all_entries = {
+        let documents = document(&[eql_domains::DocumentRole::Stored]);
+        quote! { #all_entries #documents }
+    };
+    let query_entries = {
+        let documents = document(&[
+            eql_domains::DocumentRole::Query,
+            eql_domains::DocumentRole::LeafQuery,
+        ]);
+        quote! { #query_entries #documents }
+    };
     let range_entries: TokenStream = eql_domains::families_with_scalar_domains()
         .flat_map(|f| f.range_terms().into_iter().map(move |t| (f, t)))
         .map(|(f, t)| {
@@ -1081,7 +1107,8 @@ pub fn render_v4_inventory_rs() -> String {
         use super::DomainType;
 
         /// Every v4 stored-payload domain type, in `eql-domains::CATALOG`
-        /// order — generated. Scalar domains only: v4 has no SteVec bindings.
+        /// order, then each document family's stored document — generated.
+        /// v4 has no SteVec bindings.
         pub fn all() -> Vec<Box<dyn DomainType>> {
             vec![
                 #all_entries
@@ -1089,7 +1116,8 @@ pub fn render_v4_inventory_rs() -> String {
         }
 
         /// Every v4 QUERY-operand twin (`eql_v4.query_<name>`), in
-        /// `eql-domains::CATALOG` order — generated.
+        /// `eql-domains::CATALOG` order, then each document family's
+        /// containment needle and ordering operand — generated.
         pub fn all_query() -> Vec<Box<dyn DomainType>> {
             vec![
                 #query_entries

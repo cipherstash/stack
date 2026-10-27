@@ -3,6 +3,8 @@ package stashgen
 import (
 	"fmt"
 	"strings"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // Declaration is how each field of one struct is encrypted: the context of
@@ -43,6 +45,9 @@ type Field struct {
 	Indexes []Index
 	// EQLType is the EQL type an EncryptInto field seals into.
 	EQLType string
+	// TargetOptions are the EQL type's options, for a type that takes them
+	// (JsonSearch); nil for its defaults.
+	TargetOptions *record.TargetOptions
 	// Identity is the field's part of its context when it differs from Name:
 	// a column that was renamed keeps the identity it was first written
 	// under. "" means Name. Only a policy sets it.
@@ -270,6 +275,14 @@ const (
 	KindTimestamp
 	// KindDecimal is encrypt.Decimal.
 	KindDecimal
+	// KindJSON is json.RawMessage: a JSON document, stored as an
+	// JSONSearch value.
+	KindJSON
+	// KindJSONValue is a struct, map or slice type stored as an
+	// JSONSearch document: encoding/json writes it to JSON text and reads
+	// it back. A field is classified so only where it names such an EQL
+	// type; anywhere else the type keeps its own kind.
+	KindJSONValue
 )
 
 var kindNames = [...]string{
@@ -289,6 +302,8 @@ var kindNames = [...]string{
 	KindDate:      "date",
 	KindTimestamp: "timestamp",
 	KindDecimal:   "decimal",
+	KindJSON:      "json",
+	KindJSONValue: "json value",
 }
 
 // String returns the kind's name.
@@ -303,7 +318,7 @@ func (k Kind) String() string {
 func (k Kind) Scalar() bool {
 	switch k {
 	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes,
-		KindInt128, KindUint128, KindDate, KindTimestamp, KindDecimal:
+		KindInt128, KindUint128, KindDate, KindTimestamp, KindDecimal, KindJSON, KindJSONValue:
 		return true
 	}
 	return false

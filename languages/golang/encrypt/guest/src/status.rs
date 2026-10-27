@@ -129,6 +129,9 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // retrieved, like a foreign keyset and unlike a wrong-context open.
         stack_encrypt::Error::ContextMismatch { .. } => STATUS_CONTEXT_MISMATCH,
         stack_encrypt::Error::Kms(kms) => status_for_kms(kms),
+        // A keyset a JSON document needed could not be loaded: the load's
+        // own error says what the host can act on.
+        stack_encrypt::Error::KeysetLoad { source, .. } => status_for_error(source),
         // A context that renders past ZeroKMS's descriptor limit is the
         // caller's input, refused before any request is sent.
         stack_encrypt::Error::DescriptorTooLong { .. } => STATUS_ENCODING,
@@ -141,6 +144,17 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // one it was opened as: sealed as that type, not tampered with, so
         // the caller's input and not STATUS_AUTH.
         stack_encrypt::Error::OpenedType { .. } => STATUS_ENCODING,
+        // A JSON read's rows that are not the ones its request asked for,
+        // or a wildcard read of an array longer than its bound: statements
+        // about the rows the host handed over, decided before any key is
+        // retrieved, which the host acts on (asks again, raises the bound).
+        // The diagnostic's code tells the two apart.
+        stack_encrypt::Error::JsonWrongEntry { .. }
+        | stack_encrypt::Error::JsonWildcardTruncated { .. } => STATUS_ENCODING,
+        // The entry `->` returned did not open alone: a container with
+        // children asked for as a scalar, or an altered entry. The client
+        // cannot tell which, so neither STATUS_AUTH nor a claim of either.
+        stack_encrypt::Error::JsonNotALeaf => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
@@ -284,10 +298,27 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_keyset_load_maps_as_its_cause() {
+        let load = stack_encrypt::Error::KeysetLoad {
+            keyset_id: uuid::Uuid::from_u128(1),
+            source: std::sync::Arc::new(stack_encrypt::Error::Kms(stack_kms::Error::LoadKeyset(
+                stack_kms::LoadKeysetError::Unauthorized(vitur(
+                    ViturRequestErrorKind::Unauthorized,
+                )),
+            ))),
+        };
+        assert_eq!(status_for_error(&load), STATUS_KMS_UNAUTHORIZED);
+    }
+
+    #[test]
     fn aead_and_composition_errors_map_to_the_vitaminc_codes() {
         assert_eq!(status_for_error(&stack_encrypt::Error::Aead), STATUS_AUTH);
         assert_eq!(
             status_for_error(&stack_encrypt::Error::OpenedType { expected: "i32" }),
+            STATUS_ENCODING
+        );
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::JsonNotALeaf),
             STATUS_ENCODING
         );
         assert_eq!(

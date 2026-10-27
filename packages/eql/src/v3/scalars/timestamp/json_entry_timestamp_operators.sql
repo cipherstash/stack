@@ -1,4 +1,5 @@
 -- AUTOMATICALLY GENERATED FILE.
+-- ONLY EQL VERSION: 3
 -- REQUIRE: src/v3/schema.sql
 -- REQUIRE: src/v3/json/types.sql
 -- REQUIRE: src/v3/scalars/timestamp/query_timestamp_types.sql

@@ -70,9 +70,10 @@ $$ LANGUAGE plpgsql;
 --! as no row.
 --!
 --! A term whose value is JSON `null` is missing, and so is an empty array: a
---! `bf` with no positions is the filter of text too short for a 3-gram, which
---! a stored filter of the same text would contain, so a query carrying it
---! would match exactly the stored values no match query should find.
+--! `bf` with no positions is the filter of text that cuts no match token (one
+--! letter, or none), which a stored filter of the same text would contain, so
+--! a query carrying it would match exactly the stored values no match query
+--! should find.
 --!
 --! The raise happens where the operand is evaluated, not where the statement
 --! is planned. A literal operand is folded at plan time and raises even over

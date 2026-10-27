@@ -47,11 +47,11 @@
 //! |---|---|
 //! | `name` | The type's name, one across Rust, TypeScript and Go: the catalog struct identifier. The data plan's target form names this. (Go spells the `Json` family's types `JSON`; that rename is the Go generator's.) |
 //! | `family` | The catalog family, lower case: `text`, `integer`, `json`, … |
-//! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `Search` for the SteVec document. |
+//! | `suffix` | What a query can do, as the plan's table of suffixes spells it: `""` (stored and read only), `Eq`, `Ord`, `OrdOpe`, `OrdOre`, `Match`, `Search`, `SearchOre`; `""` too for a document family's stored type, whose queries are the JSON index's operators. |
 //! | `plaintext` | The vitaminc [`ValueKind`] name the type is produced from — the same names a plan field's `"type"` key uses — or `null` while the family's plaintext encoding for the stack-encrypt producer profile is unspecified. |
 //! | `sql_domain` | The schema-qualified PostgreSQL domain the stored value inhabits. |
-//! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for the SteVec document. A query may ask a field typed with this target for exactly these. |
-//! | `query` | The query twin's type name (`TextEqQuery`, `SteVecQuery`), or `null` for a storage-only type, which answers no query. |
+//! | `indexes` | The indexes the type carries, by the engine's `IndexSpec::key()` names: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type. A query may ask a field typed with this target for exactly these. |
+//! | `query` | The query twin's type name (`TextEqQuery`, `JsonSearchQuery`), or `null` for a storage-only type, which answers no query. |
 //! | `query_sql_domain` | The query twin's PostgreSQL domain, `null` likewise. |
 //! | `producible` | Whether the engine can produce this type today. [`encrypt`] and [`query`] refuse a type that is not, and a generator should too. |
 //! | `reason` | Why not, when `producible` is `false`; `null` when it is. |
@@ -88,7 +88,8 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+use stack_encrypt::dynamic::{TargetOptions, ValueFrame, ValueKind};
+use stack_encrypt::json::JsonOptions;
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::{ExpectedContext, IndexSpec};
 use stack_encrypt::{
@@ -139,6 +140,16 @@ impl Target {
     /// [`plaintext`](Self::plaintext).
     pub fn plaintext_kind(&self) -> Option<ValueKind> {
         self.plaintext.and_then(|name| name.parse().ok())
+    }
+
+    /// The PostgreSQL domain of the type's ordering operand at a path, for
+    /// a type that stores a JSON document (`JsonSearch`:
+    /// `eql_v4.query_json_leaf`); `None` for every other type. Stack
+    /// Encrypt binds an ordering at a path as it
+    /// (`TargetDescriptor::with_leaf_query_sql_domain`).
+    pub fn leaf_query_sql_domain(&self) -> Option<&'static str> {
+        use crate::v4::DomainType;
+        document(self.name).map(|_| crate::v4::json_tree::JsonTreeLeafQuery::sql_domain_static())
     }
 
     /// The options this type's match index is built under, for a type that
@@ -200,6 +211,15 @@ pub enum TargetError {
         /// The type's name.
         name: &'static str,
     },
+    /// The type stores a JSON document, which is queried by operator
+    /// (`contains`, `eq_at`, an ordering at a path, a read) from named
+    /// inputs, not from one plaintext: Stack Encrypt derives those
+    /// operands itself (`stack_encrypt::dynamic::query_term`).
+    #[error("{name} is queried by a JSON operator, not by one plaintext")]
+    DocumentQuery {
+        /// The type's name.
+        name: &'static str,
+    },
     /// A query asked through an index the type does not carry
     /// ([`Target::indexes`]), so it has no term to derive.
     #[error("{name} carries no {index} index, so no query is answered through it")]
@@ -231,6 +251,25 @@ pub enum TargetError {
         /// The kind it was given, or `None` for a null, undefined or
         /// passthrough value, which no kind holds.
         found: Option<ValueKind>,
+    },
+    /// The value is not a JSON document by the engine's rules, for a type
+    /// that stores one ([`stack_encrypt::json::parse_text`]). `code` is the
+    /// engine's code for what was wrong, never a byte of the value.
+    #[error("{target} stores a JSON document, and the value is not one: {source}")]
+    Json {
+        /// The type the value was handed to.
+        target: &'static str,
+        /// What was wrong.
+        #[source]
+        source: stack_encrypt::dynamic::JsonValueError,
+    },
+    /// Options were given to a type that takes none: a type takes the
+    /// options of the index it carries, and only a type that stores a
+    /// JSON document carries one with options.
+    #[error("{name} takes no options")]
+    Options {
+        /// The type's name.
+        name: &'static str,
     },
     /// The stored bytes do not parse as the type: not JSON, not this
     /// domain's shape, or another EQL version.
@@ -315,8 +354,40 @@ pub fn encrypt<'a, K: 'static>(
     context: &Label,
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+    encrypt_with(name, None, keyset, context, plaintext)
+}
+
+/// [`encrypt`], under the options the plan gives the field
+/// ([`TargetOptions`]): a type that stores a JSON document
+/// (`JsonSearch`) seals under the JSON index's options, the defaults
+/// when `options` is `None`. Every other type takes none.
+///
+/// # Errors
+///
+/// As [`encrypt`], [`TargetError::Options`] for options a type does not
+/// take, and [`TargetError::Json`] for a value that is not a JSON document
+/// by the engine's rules, for a type that stores one.
+pub fn encrypt_with<'a, K: 'static>(
+    name: &str,
+    options: Option<&TargetOptions>,
+    keyset: &'a KeysetCipher<'_, K>,
+    context: &Label,
+    plaintext: ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
+    if let Some(document) = document(name) {
+        let options = match options {
+            None => JsonOptions::default(),
+            Some(options) => options.json().cloned().ok_or(TargetError::Options {
+                name: document.name,
+            })?,
+        };
+        return encrypt_document(document.name, &options, keyset, column, &plaintext);
+    }
+    if let Some(target) = options.and(target(name)) {
+        return Err(TargetError::Options { name: target.name });
+    }
     encrypt_named(name, keyset, column, plaintext)
 }
 
@@ -338,7 +409,74 @@ pub fn decrypt<'a, K: 'static>(
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
+    if let Some(document) = document(name) {
+        return decrypt_document(document.name, opener.into(), column, stored);
+    }
     decrypt_named(name, opener.into(), column, stored)
+}
+
+/// The stored domain of a document family (`eql-domains`'
+/// `DOCUMENT_FAMILIES`), when `name` is one's target: a type the generated
+/// dispatch has no arm for, whose plan is the JSON index's, under options.
+fn document(name: &str) -> Option<&'static Target> {
+    target(name).filter(|target| crate::v4::targets::DOCUMENT_FAMILIES.contains(&target.family))
+}
+
+/// Seal one `JsonSearch` value: the document the field's text holds,
+/// parsed by the engine's rules, laid out by the JSON index under
+/// `options`, under the column. The parsed document is wiped when this
+/// returns; the pending has taken what it seals.
+fn encrypt_document<'a, K: 'static>(
+    name: &'static str,
+    options: &JsonOptions,
+    keyset: &'a KeysetCipher<'_, K>,
+    column: NonEmpty<Identifier>,
+    plaintext: &ValueFrame,
+) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+    let document =
+        stack_encrypt::dynamic::read_json(plaintext).map_err(|source| TargetError::Json {
+            target: name,
+            source,
+        })?;
+    Ok(keyset
+        .run(
+            stack_encrypt::target::Layout::<serde_json::Value>::encryption::<K>(
+                &crate::v4::json_tree::JsonTree::new(options.clone()),
+            ),
+            document.value(),
+            column,
+        )
+        .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
+}
+
+/// Open one stored `JsonSearch` value to the document's text, checking
+/// it was stored under the column.
+fn decrypt_document<'a, K: 'static>(
+    name: &'static str,
+    opener: Opener<'a, K>,
+    column: NonEmpty<Identifier>,
+    stored: &[u8],
+) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+    use crate::v4::json_tree::JsonTreeDocument;
+    let value: JsonTreeDocument =
+        serde_json::from_slice(stored).map_err(|source| TargetError::Stored {
+            target: name,
+            source,
+        })?;
+    let expected: ExpectedContext<Identifier> = column.into();
+    Ok(match opener {
+        Opener::Client(cipher) => {
+            cipher.decrypt_as::<serde_json::Value, JsonTreeDocument>(value, expected)
+        }
+        Opener::Keyset(keyset) => {
+            keyset.decrypt_as::<serde_json::Value, JsonTreeDocument>(value, expected)
+        }
+    }
+    .try_map(|mut document| {
+        let frame = stack_encrypt::dynamic::json_frame(&document);
+        stack_encrypt::json::wipe_value(&mut document);
+        frame
+    }))
 }
 
 /// Run the named type's query twin for one plaintext: the operand that
@@ -371,6 +509,9 @@ pub fn query<'a, K: 'static>(
         return Err(error);
     }
     carries(target, index)?;
+    if document(name).is_some() {
+        return Err(TargetError::DocumentQuery { name: target.name });
+    }
     let column = Identifier::from_label(context)?;
     query_named(name, index, keyset, column, plaintext)
 }

@@ -1612,3 +1612,77 @@ mod shape_tests {
         assert_eq!(ope.pattern(), "^(00|01)([0-9a-f]{16})+$");
     }
 }
+
+mod document_families {
+    use crate::{DocumentRole, DOCUMENT_FAMILIES, JSON_TREE};
+
+    /// Every document family has one domain per role, the stored one
+    /// first, each a v4 domain under the schema its role lives in, and no
+    /// two families share a name or a domain.
+    #[test]
+    fn each_family_has_one_domain_per_role_in_v4() {
+        let mut names = Vec::new();
+        for family in DOCUMENT_FAMILIES {
+            assert_eq!(
+                family.domains[0].role,
+                DocumentRole::Stored,
+                "{}",
+                family.name
+            );
+            for role in [
+                DocumentRole::Stored,
+                DocumentRole::Query,
+                DocumentRole::LeafQuery,
+                DocumentRole::Entry,
+            ] {
+                assert_eq!(
+                    family.domains.iter().filter(|d| d.role == role).count(),
+                    1,
+                    "{}: {role:?}",
+                    family.name
+                );
+            }
+            for domain in family.domains {
+                let schema = match domain.role {
+                    DocumentRole::Stored | DocumentRole::Entry => "public.eql_v4_",
+                    DocumentRole::Query | DocumentRole::LeafQuery => "eql_v4.query_",
+                };
+                assert!(
+                    domain.sql_domain.starts_with(schema),
+                    "{}",
+                    domain.sql_domain
+                );
+                names.push(domain.name);
+                names.push(domain.sql_domain);
+            }
+        }
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "a name or a domain is listed twice");
+    }
+
+    #[test]
+    fn json_tree_is_the_json_search_target() {
+        // The names EQL v3 gives its searchable JSON document, in v4.
+        for (role, name, sql_domain) in [
+            (
+                DocumentRole::Stored,
+                "JsonSearch",
+                "public.eql_v4_json_search",
+            ),
+            (DocumentRole::Query, "JsonSearchQuery", "eql_v4.query_json"),
+            (
+                DocumentRole::LeafQuery,
+                "JsonSearchLeafQuery",
+                "eql_v4.query_json_leaf",
+            ),
+            (DocumentRole::Entry, "JsonEntry", "public.eql_v4_json_entry"),
+        ] {
+            let domain = JSON_TREE.domain(role).unwrap();
+            assert_eq!((domain.name, domain.sql_domain), (name, sql_domain));
+        }
+        assert_eq!(JSON_TREE.plaintext, "json");
+        assert_eq!(JSON_TREE.index, "json");
+    }
+}

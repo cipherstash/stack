@@ -36,7 +36,7 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use super::ValueFrame;
-use stack_kms::DataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 use vitaminc_aead::plaintext::{
     Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError,
@@ -69,13 +69,15 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 ///
 /// ```text
 /// { "match": { "tokenizer": "standard" | { "ngram": <length> },
-///              "downcase": <bool>, "k": <int>, "m": <int> } }
+///              "downcase": <bool>, "short_words": <bool>,
+///              "k": <int>, "m": <int> } }
 /// ```
 ///
 /// Every option is optional and defaults to [`MatchOptions::default`]'s
 /// value; an unknown option, an option given twice, or options that fail
 /// the match scheme's bounds (`k` in `3..=16`, `m` a power of two in
-/// `[32, 65536]`, a non-zero n-gram length) are refused.
+/// `[32, 65536]`, a non-zero n-gram length, `short_words` only beside an
+/// n-gram length of at least 3) are refused.
 ///
 /// A JSON index is `"json"`, or an object mapping `"json"` to its options:
 ///
@@ -94,9 +96,10 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// indexes have no options and no object form.
 ///
 /// Serialized (it is `Serialize`), an index writes the string whenever the
-/// options are the defaults and the object, with every option, otherwise,
-/// so a default plan is byte-for-byte what it was before options had a
-/// wire form.
+/// options are the defaults and the object otherwise, with every option but
+/// `short_words`, which it writes only when it is on. So a default plan is
+/// byte-for-byte what it was before options had a wire form, and a plan with
+/// other options is what it was before `short_words` existed.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.
@@ -202,8 +205,8 @@ fn ordered(ty: Option<Logical>, value: &Physical<'_>) -> bool {
 }
 
 /// An index in its wire form: its key, or for a match index under options
-/// other than the defaults, a one-entry object mapping `"match"` to all four
-/// of them (see [`IndexSpec`'s docs](IndexSpec#wire-form)).
+/// other than the defaults, a one-entry object mapping `"match"` to them,
+/// `short_words` only when it is on (see [`IndexSpec`'s docs](IndexSpec#wire-form)).
 impl Serialize for IndexSpec {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
@@ -230,6 +233,8 @@ impl Serialize for IndexSpec {
         struct MatchOut {
             tokenizer: TokenizerOut,
             downcase: bool,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            short_words: bool,
             k: u64,
             m: u64,
         }
@@ -248,6 +253,7 @@ impl Serialize for IndexSpec {
                     Tokenizer::Ngram { length } => TokenizerOut::Ngram(length as u64),
                 },
                 downcase: options.downcase,
+                short_words: options.short_words,
                 k: options.k as u64,
                 m: u64::from(options.m),
             }),
@@ -343,6 +349,7 @@ pub(super) struct MatchWire(pub(super) MatchOptions);
 struct MatchOptionsWire {
     tokenizer: TokenizerWire,
     downcase: bool,
+    short_words: bool,
     k: usize,
     m: u32,
 }
@@ -352,6 +359,7 @@ impl Default for MatchOptionsWire {
         let MatchOptions {
             tokenizer,
             downcase,
+            short_words,
             k,
             m,
         } = MatchOptions::default();
@@ -361,6 +369,7 @@ impl Default for MatchOptionsWire {
                 Tokenizer::Ngram { length } => TokenizerWire::Ngram(length),
             },
             downcase,
+            short_words,
             k,
             m,
         }
@@ -385,6 +394,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
                 TokenizerWire::Ngram(length) => Tokenizer::Ngram { length },
             },
             downcase: wire.downcase,
+            short_words: wire.short_words,
             k: wire.k,
             m: wire.m,
         };
@@ -446,7 +456,7 @@ pub async fn term<'c, K, P, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
     P: Encrypt,
     D: IntoPrfContext<'c>,
 {
@@ -1640,6 +1650,7 @@ mod tests {
             MatchOptions {
                 tokenizer: crate::sem::Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 6,
                 m: 1024,
             }
@@ -1721,6 +1732,15 @@ mod tests {
                     m: 512,
                     ..MatchOptions::default()
                 },
+                MatchOptions {
+                    short_words: true,
+                    ..MatchOptions::default()
+                },
+                MatchOptions {
+                    tokenizer: crate::sem::Tokenizer::Ngram { length: 4 },
+                    short_words: true,
+                    ..MatchOptions::default()
+                },
             ];
             for options in cases {
                 let spec = IndexSpec::Match(options.clone());
@@ -1735,6 +1755,64 @@ mod tests {
                     "{options:?} round-trips"
                 );
             }
+        }
+
+        /// `short_words` is written only when it is on, so a plan under
+        /// other options is the bytes it was before the option existed, and
+        /// read as `"short_words": true`, with every other option defaulted.
+        #[test]
+        fn short_words_is_written_only_when_on() {
+            let obj = |entries: Vec<(&str, Tree)>| {
+                Tree::Object(
+                    entries
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v))
+                        .collect(),
+                )
+            };
+            let keys = |spec: &IndexSpec| match crate::dynamic::test_frame::value_of(spec) {
+                Tree::Object(mut entries) => match entries.pop() {
+                    Some((_, Tree::Object(options))) => {
+                        options.into_iter().map(|(k, _)| k).collect::<Vec<_>>()
+                    }
+                    other => panic!("a match options object, got {other:?}"),
+                },
+                other => panic!("an object, got {other:?}"),
+            };
+            assert_eq!(
+                keys(&IndexSpec::Match(non_default_match())),
+                ["tokenizer", "downcase", "k", "m"],
+                "off, the option is not written"
+            );
+            assert_eq!(
+                keys(&IndexSpec::Match(MatchOptions {
+                    short_words: true,
+                    ..MatchOptions::default()
+                })),
+                ["tokenizer", "downcase", "short_words", "k", "m"],
+                "on, it is written beside the others"
+            );
+            assert_eq!(
+                index_of(&obj(vec![(
+                    "match",
+                    obj(vec![("short_words", Tree::Bool(true))])
+                )]))
+                .expect("reads"),
+                IndexSpec::Match(MatchOptions {
+                    short_words: true,
+                    ..MatchOptions::default()
+                }),
+                "the option alone is the defaults with short words"
+            );
+            assert_eq!(
+                index_of(&obj(vec![(
+                    "match",
+                    obj(vec![("short_words", Tree::Bool(false))])
+                )]))
+                .expect("reads"),
+                default_match(),
+                "the option off is the default index"
+            );
         }
 
         /// The object form spells each option by name and defaults the
@@ -1834,6 +1912,24 @@ mod tests {
                     opts(vec![("tokenizer", obj(vec![("ngram", Tree::UInt32(0))]))]),
                 ),
                 ("a mistyped downcase", opts(vec![("downcase", s("yes"))])),
+                (
+                    "a mistyped short_words",
+                    opts(vec![("short_words", Tree::UInt32(1))]),
+                ),
+                (
+                    "short_words beside the standard tokenizer",
+                    opts(vec![
+                        ("tokenizer", s("standard")),
+                        ("short_words", Tree::Bool(true)),
+                    ]),
+                ),
+                (
+                    "short_words beside 2-grams",
+                    opts(vec![
+                        ("tokenizer", obj(vec![("ngram", Tree::UInt32(2))])),
+                        ("short_words", Tree::Bool(true)),
+                    ]),
+                ),
                 ("a negative k", opts(vec![("k", Tree::Int32(-3))])),
                 ("a float k", opts(vec![("k", Tree::Float64(3.0))])),
                 ("k out of bounds", opts(vec![("k", Tree::UInt32(17))])),
@@ -1867,6 +1963,7 @@ mod tests {
                     MatchOptions {
                         tokenizer: crate::sem::Tokenizer::Standard,
                         downcase: false,
+                        short_words: false,
                         k: 6,
                         m: 1024,
                     }
@@ -1894,6 +1991,48 @@ mod tests {
                 .expect("default");
             assert_ne!(wide, default, "other options derive other terms");
         }
+
+        /// The data path derives a short-word index's term as the typed
+        /// path does, and "Ng", which cuts nothing under the default
+        /// options, is one token under them.
+        #[tokio::test]
+        async fn short_words_drive_the_derivation() {
+            struct ShortWords;
+            impl crate::sem::MatchConfig for ShortWords {
+                fn options() -> MatchOptions {
+                    MatchOptions {
+                        short_words: true,
+                        ..MatchOptions::default()
+                    }
+                }
+            }
+            let options = <ShortWords as crate::sem::MatchConfig>::options();
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for text in ["Ng", "Mike Ng"] {
+                let data = term(
+                    &keyset,
+                    &s(text),
+                    &IndexSpec::Match(options.clone()),
+                    ctx("users/x"),
+                )
+                .await
+                .expect("a short word is a query");
+                let typed = keyset
+                    .match_terms::<ShortWords>(text, nonempty!("users/x"))
+                    .await
+                    .expect("typed");
+                assert_eq!(data, typed.to_bytes(), "{text:?}: the typed config's bytes");
+            }
+            let refused = term(&keyset, &s("Ng"), &default_match(), ctx("users/x")).await;
+            assert!(
+                matches!(
+                    refused,
+                    Err(Error::Cipher(crate::Error::Term(TermError::EmptyTermText)))
+                ),
+                "without the option, \"Ng\" is no query: {refused:?}"
+            );
+        }
     }
 }
 
@@ -1917,6 +2056,7 @@ mod wire_form {
             MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }

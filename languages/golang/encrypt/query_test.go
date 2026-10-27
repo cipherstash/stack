@@ -419,7 +419,7 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	orderings := func(index record.Output) []record.Operator {
 		var ops []record.Operator
 		for _, name := range []string{"lt", "lte", "gt", "gte"} {
-			ops = append(ops, record.Operator{Name: name, Fidelity: record.Exact, Index: index})
+			ops = append(ops, record.Operator{Name: name, Fidelity: record.Exact, Index: index, Input: "value"})
 		}
 		return ops
 	}
@@ -427,21 +427,21 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 		index, ordered := orderIndex[target.Name]
 		switch {
 		case strings.HasSuffix(target.Name, "Eq") && slices.Contains(families, strings.TrimSuffix(target.Name, "Eq")):
-			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
+			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality, Input: "value"}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
 		case ordered:
 			var want []record.Operator
 			if strings.HasPrefix(target.Name, "Text") {
-				want = append(want, record.Operator{Name: "eq", Fidelity: record.Exact, Index: record.Equality})
+				want = append(want, record.Operator{Name: "eq", Fidelity: record.Exact, Index: record.Equality, Input: "value"})
 			}
 			want = append(want, orderings(index)...)
 			if !slices.Equal(target.Operators, want) {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
 		case target.Name == "TextMatch":
-			want := record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match}
+			want := record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match, Input: "value"}
 			if len(target.Operators) != 1 || target.Operators[0] != want {
 				t.Fatalf("TextMatch answers %+v, want %+v", target.Operators, want)
 			}
@@ -451,11 +451,24 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 			if target.Name == "TextSearchOre" {
 				index = record.OreBlock
 			}
-			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
+			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality, Input: "value"}}
 			want = append(want, orderings(index)...)
-			want = append(want, record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match})
+			want = append(want, record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match, Input: "value"})
 			if !slices.Equal(target.Operators, want) {
 				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
+			}
+		case target.Name == "JsonSearch":
+			// A document's operators, under the index's defaults: no
+			// ordering without an ordered path. Each through the JSON index.
+			var names []string
+			for _, op := range target.Operators {
+				if op.Index != record.JSONIndex || op.Fidelity != record.Exact {
+					t.Fatalf("JsonSearch answers %+v", op)
+				}
+				names = append(names, op.Name)
+			}
+			if want := []string{"contains", "contained_by", "eq_at", "selector", "subtree", "children", "child_count"}; !slices.Equal(names, want) {
+				t.Fatalf("JsonSearch answers %v, want %v", names, want)
 			}
 		case len(target.Operators) != 0:
 			// Every other type is storage-only or not produced.
@@ -481,16 +494,16 @@ func TestTheCheckerListsAFieldsOperators(t *testing.T) {
 	}
 	defer func() { _ = checker.Close() }()
 	exact := func(name string, index record.Output) record.Operator {
-		return record.Operator{Name: name, Fidelity: record.Exact, Index: index}
+		return record.Operator{Name: name, Fidelity: record.Exact, Index: index, Input: "value"}
 	}
 	for field, want := range map[string][]record.Operator{
 		"email": {exact("eq", record.Equality)},
 		"age": {
 			exact("eq", record.Equality), exact("lt", record.Ore), exact("lte", record.Ore),
 			exact("gt", record.Ore), exact("gte", record.Ore),
-			{Name: "between", Fidelity: record.Exact, Pair: true, Index: record.Ore},
+			{Name: "between", Fidelity: record.Exact, Pair: true, Index: record.Ore, Input: "pair"},
 		},
-		"name": {{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match}},
+		"name": {{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match, Input: "value"}},
 	} {
 		got, err := checker.Operators(ctx, queryPlan, field)
 		if err != nil {

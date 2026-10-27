@@ -571,6 +571,49 @@ pub unsafe extern "C" fn se_query_term(
     })
 }
 
+/// Open the rows a read of a document field returned ([`ops::json_open`]):
+/// the codec-encoded rows (a list per database row of entries), the
+/// codec-encoded plan, the field's name (UTF-8 bytes) and the codec-encoded
+/// read request in, under the keyset `opts` selects (the keyset the read
+/// was prepared under); a codec-encoded list per row of JSON texts out. The
+/// output buffer contains **plaintext**: the host copies it out and
+/// immediately `se_dealloc`s it (which wipes it). The rows and the request
+/// hold no plaintext and are left untouched.
+///
+/// # Safety
+///
+/// As for [`se_term`].
+#[no_mangle]
+pub unsafe extern "C" fn se_json_open(
+    rows_ptr: *const u8,
+    rows_len: u32,
+    plan_ptr: *const u8,
+    plan_len: u32,
+    field_ptr: *const u8,
+    field_len: u32,
+    req_ptr: *const u8,
+    req_len: u32,
+    opt_ptr: *const u8,
+    opt_len: u32,
+) -> u64 {
+    export(|| {
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns.
+        let rows = unsafe { input(rows_ptr, rows_len)? }.to_vec();
+        let plan = unsafe { input(plan_ptr, plan_len)? }.to_vec();
+        let field = unsafe { input(field_ptr, field_len)? }.to_vec();
+        let request = unsafe { input(req_ptr, req_len)? }.to_vec();
+        let opts = unsafe { input(opt_ptr, opt_len)? };
+        ops::validate::json_open(&rows, &plan, &field, &request)?;
+        let options = parse_options(opts, Side::Mint)?;
+        let cipher = cipher()?;
+        run(Box::pin(async move {
+            let keyset = options.keyset.resolve(&cipher).await?;
+            ops::json_open(&keyset, &rows, &plan, &field, &request).await
+        }))
+    })
+}
+
 /// Verify a page of decrypted values against a probabilistic query
 /// ([`ops::verify`]): the query's codec-encoded input and a codec-encoded
 /// list of values, the codec-encoded plan, and the field's and the

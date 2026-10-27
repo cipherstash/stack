@@ -400,3 +400,44 @@ async fn every_integer_width_orders_by_its_own_key() {
     }
     width!(u16, u32, u64, u128, i16, i32, i64, i128);
 }
+
+/// Short-word tokens under a 65536-bit filter: the word domain
+/// (`stack-encrypt/sem/match/word/v1`) and its framing, pinned. "ng" alone is
+/// the word's token and nothing else; "Mike Ng" is its trigrams and the same
+/// word, so it holds every one of "ng"'s positions.
+struct WideShortWords;
+
+impl MatchConfig for WideShortWords {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            short_words: true,
+            m: 65536,
+            ..Default::default()
+        }
+    }
+}
+
+#[tokio::test]
+async fn short_word_positions_are_pinned() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let word = keyset
+        .match_terms::<WideShortWords>("Ng", nonempty!("users/name"))
+        .await
+        .unwrap();
+    assert_eq!(
+        word.positions(),
+        PINNED_NG,
+        "the word token's positions are frozen"
+    );
+    let whole = keyset
+        .match_terms::<WideShortWords>("Mike Ng", nonempty!("users/name"))
+        .await
+        .unwrap();
+    assert!(
+        whole.contains(&word),
+        "\"Mike Ng\" carries the word token of \"Ng\""
+    );
+}
+
+const PINNED_NG: [u16; 3] = [47881, 55268, 60379];

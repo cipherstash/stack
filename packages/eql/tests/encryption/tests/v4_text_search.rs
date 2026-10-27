@@ -4,8 +4,9 @@
 //!
 //! A stored value carries all three terms, each the one the single-index
 //! type stores (`TextEq`'s `hm`, `TextOrd`'s `op`, `TextMatch`'s `bf`).
-//! Text too short to cut a 3-gram stores the empty filter, where `TextMatch`
-//! refuses it, so `=` and `<` find it and no `@@` query does. A query is built
+//! Text that cuts no match token (one letter, or none: a two-letter word is
+//! a token of its own) stores the empty filter, where `TextMatch` refuses
+//! it, so `=` and `<` find it and no `@@` query does. A query is built
 //! through the projection of the index that answers its operator, so `=` and
 //! `<` on such text work and a match query on it is refused. Against an EQL
 //! v4 database: a query with any one term is a `query_text_search`, one with
@@ -106,7 +107,8 @@ async fn a_stored_value_carries_the_three_single_index_terms() {
     assert_eq!(opened.risky_ref(), frame("Alice").risky_ref());
 }
 
-/// Text too short to cut a 3-gram has no match tokens. `TextSearch` stores
+/// Text that cuts no match token (one letter, or none) has no filter.
+/// `TextSearch` stores
 /// it with the empty filter and the same `hm` and `op` as `TextEq` and
 /// `TextOrd`, so `=` and `<` find it and no match query does. `TextMatch`,
 /// which has no other term to find it by, still refuses it.
@@ -114,7 +116,7 @@ async fn a_stored_value_carries_the_three_single_index_terms() {
 async fn short_text_stores_the_empty_filter_where_text_match_refuses_it() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    for text in ["Al", "", "  "] {
+    for text in ["A", "", "  "] {
         let search = stored(&keyset, "TextSearch", text).await;
         assert_eq!(keys(&search), ["bf", "c", "hm", "i", "op", "v"], "{text:?}");
         assert_eq!(search["bf"], serde_json::json!([]), "{text:?}");
@@ -186,24 +188,24 @@ async fn a_query_carries_only_the_term_its_operator_reads() {
     );
 }
 
-/// `=` and `<` on text shorter than one 3-gram: the query carries `hm` or
+/// `=` and `<` on text that cuts no match token: the query carries `hm` or
 /// `op`, never an empty filter. A match query on it is refused, as a
 /// `TextMatchQuery` is, rather than sent as a filter that matches every row.
 #[tokio::test]
 async fn short_text_is_queried_by_equality_and_order_and_refused_for_match() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let eq = query(&keyset, "eq", "Al").await.unwrap();
+    let eq = query(&keyset, "eq", "A").await.unwrap();
     assert_eq!(keys(&eq), ["hm", "i", "v"]);
     assert!(eq["hm"].as_str().is_some_and(|hm| !hm.is_empty()));
-    let ord = query(&keyset, "ope", "Al").await.unwrap();
+    let ord = query(&keyset, "ope", "A").await.unwrap();
     assert_eq!(keys(&ord), ["i", "op", "v"]);
     assert!(ord["op"].as_str().is_some_and(|op| !op.is_empty()));
-    // The order term of "Al" sorts before "Alice"'s: a prefix first.
+    // The order term of "A" sorts before "Alice"'s: a prefix first.
     let alice = stored(&keyset, "TextSearch", "Alice").await;
     assert!(ord["op"].as_str().unwrap() < alice["op"].as_str().unwrap());
 
-    let refused = query(&keyset, "match", "Al").await.unwrap_err();
+    let refused = query(&keyset, "match", "A").await.unwrap_err();
     assert!(
         matches!(
             refused,
@@ -219,7 +221,7 @@ async fn short_text_is_queried_by_equality_and_order_and_refused_for_match() {
 async fn the_typed_projections_are_what_the_dispatch_writes() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let text = "Al".to_owned();
+    let text = "A".to_owned();
     let eq: TextSearchEqualityQuery = keyset.encrypt_as(&text, column()).await.unwrap();
     let ord: TextSearchOrderQuery = keyset.encrypt_as(&text, column()).await.unwrap();
     for (typed, key) in [
@@ -228,7 +230,7 @@ async fn the_typed_projections_are_what_the_dispatch_writes() {
     ] {
         assert_eq!(
             serde_json::to_value(&typed).unwrap(),
-            query(&keyset, key, "Al").await.unwrap(),
+            query(&keyset, key, "A").await.unwrap(),
             "{key}"
         );
     }
@@ -266,7 +268,7 @@ async fn the_typed_projections_are_what_the_dispatch_writes() {
         serde_json::json!([])
     );
     let opened: String = cipher.decrypt_as(short, column().into()).await.unwrap();
-    assert_eq!(opened, "Al");
+    assert_eq!(opened, "A");
 }
 
 // ---- PostgreSQL -------------------------------------------------------------
@@ -311,7 +313,7 @@ fn sqlstate(error: &postgres::Error) -> &str {
 
 /// Needs an EQL v4 installation. Rows written through the by-name dispatch,
 /// queried with operands that carry one term each: `=`, `<`, `>` and `@@`
-/// find the rows the plaintexts say, two-letter and empty text, stored with
+/// find the rows the plaintexts say, one-letter and empty text, stored with
 /// the empty filter, included on `=` and `<` and found by no `@@`; a
 /// `query_text_search` holds any one term and refuses none; and each
 /// operator refuses an operand without its term, naming the term, never the
@@ -330,9 +332,9 @@ fn postgres_answers_each_operator_through_its_own_term() {
         "CREATE TEMP TABLE v4_search (id int PRIMARY KEY, name public.eql_v4_text_search);",
     )
     .unwrap();
-    // 4 and 5 are too short for a 3-gram: stored with `"bf": []`, which the
+    // 4 and 5 cut no match token: stored with `"bf": []`, which the
     // domain's CHECK accepts.
-    let names = [(1, "alice"), (2, "Bob"), (3, "carol"), (4, "Al"), (5, "")];
+    let names = [(1, "alice"), (2, "Bob"), (3, "carol"), (4, "A"), (5, "")];
     for (id, name) in names {
         let value = runtime.block_on(stored(&keyset, "TextSearch", name));
         db.execute(
@@ -386,13 +388,13 @@ fn postgres_answers_each_operator_through_its_own_term() {
         ),
         [3]
     );
-    // Two-letter text, which has no match term, on `=` and `<`/`>`: stored
+    // One-letter text, which has no match term, on `=` and `<`/`>`: stored
     // and queried.
     assert_eq!(
         ids(
             &mut db,
             &select(&format!("name = {operand}")),
-            &q("eq", "Al")
+            &q("eq", "A")
         ),
         [4]
     );

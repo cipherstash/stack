@@ -86,7 +86,7 @@ assert_eq!(plaintext, "secret message");
 //! id) so it cannot be replayed elsewhere:
 //!
 //! ```no_run
-//! # async fn example<K: stack_encrypt::kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
+//! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
 //! let ct = keyset.encrypt("4111 1111 1111 1111", "users/42/card").await?;
 //! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok

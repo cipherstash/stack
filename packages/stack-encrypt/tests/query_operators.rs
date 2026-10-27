@@ -116,6 +116,8 @@ fn json_of_term(term: &QueryTerm) -> Json {
         "term": match term.operand() {
             Operand::One(bytes) => json!(hex(bytes)),
             Operand::Range { lo, hi } => json!([hex(lo), hex(hi)]),
+            Operand::Text(text) => json!(text),
+            Operand::TextList(texts) => json!(texts),
         },
     })
 }

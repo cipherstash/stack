@@ -10,10 +10,18 @@ use eql_bindings::v4;
 use eql_domains::{Term, CATALOG};
 use serde_json::{json, Value};
 
-/// The catalog's scalar domains under their v4 names, in catalog order. v4 has
-/// no SteVec bindings, so only scalar domains appear. The catalog spells each
-/// name with the `eql_v3_` prefix, which is swapped for v4's.
+/// The catalog's scalar domains under their v4 names, in catalog order, then
+/// each document family's stored document. v4 has no SteVec bindings, so
+/// only scalar domains appear from `CATALOG`. The catalog spells each name
+/// with the `eql_v3_` prefix, which is swapped for v4's; a document family
+/// is v4 only and spells its own.
 fn expected_v4_domains() -> Vec<String> {
+    let documents = eql_domains::DOCUMENT_FAMILIES.iter().flat_map(|f| {
+        f.domains
+            .iter()
+            .filter(|d| d.role == eql_domains::DocumentRole::Stored)
+            .map(|d| d.sql_domain.trim_start_matches("public.").to_owned())
+    });
     CATALOG
         .iter()
         .flat_map(|spec| {
@@ -28,6 +36,7 @@ fn expected_v4_domains() -> Vec<String> {
                 .unwrap_or_else(|| panic!("{name} does not carry the catalog typname prefix"));
             format!("{}{bare}", v4::PUBLIC_TYPNAME_PREFIX)
         })
+        .chain(documents)
         .collect()
 }
 

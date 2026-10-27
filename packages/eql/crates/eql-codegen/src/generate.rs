@@ -28,6 +28,12 @@ const V3_JSON_FUNCTIONS: &str = "src/v3/json/functions.sql";
 /// selecting the leaf is necessarily by name — the same way `dump.rs` resolves
 /// them. Only the name is spelled here; the SQL type name is DERIVED below.
 const JSON_ENTRY_DOMAIN: &str = "entry";
+/// The EQL version the json_entry cross surface belongs to. It binds the SteVec
+/// entry, whose SQL (`src/v3/json/`) is confined to EQL v3: in v4 the names
+/// `json_search`, `json_entry` and `query_json` belong to the JSON tree family
+/// (`src/v3/json_tree/`), so a cross file rendered as v4 would bind to a type
+/// with another wire shape, or fail its `-- REQUIRE:` on a dropped file.
+const JSON_ENTRY_VERSION: crate::render::EqlVersion = crate::render::EqlVersion::V3;
 
 /// The fixed cross type: the extracted SteVec leaf, `public.eql_v3_json_entry`.
 ///
@@ -52,6 +58,20 @@ fn json_entry_type() -> String {
 /// `V3_SCALARS_DIR` / `types_path` / `query_types_path` exist.
 fn json_entry_stem(family_name: &str) -> String {
     format!("json_entry_{family_name}")
+}
+
+/// Confine a rendered json_entry cross file to [`JSON_ENTRY_VERSION`]: its
+/// `-- ONLY EQL VERSION:` line, after the generated-file marker, as the range
+/// files carry theirs.
+fn confine_json_entry_file(body: String) -> String {
+    let (marker, rest) = body
+        .split_once('\n')
+        .expect("a rendered file starts with its generated-file marker line");
+    format!(
+        "{marker}\n{} {}\n{rest}",
+        crate::render::ONLY_DIRECTIVE,
+        JSON_ENTRY_VERSION.number()
+    )
 }
 
 /// REQUIRE path for a family's generated json_entry cross functions file.
@@ -707,11 +727,13 @@ pub fn render_json_entry_cross_functions(
         dom: json_entry,
         entries,
     };
-    environment()
-        .get_template("functions.sql")
-        .unwrap()
-        .render(&ctx)
-        .expect("render json_entry cross functions")
+    confine_json_entry_file(
+        environment()
+            .get_template("functions.sql")
+            .unwrap()
+            .render(&ctx)
+            .expect("render json_entry cross functions"),
+    )
 }
 
 /// Body for a family's json_entry_<T>_operators.sql: a CREATE
@@ -779,11 +801,13 @@ pub fn render_json_entry_cross_operators(
         dom: json_entry,
         operators,
     };
-    environment()
-        .get_template("operators.sql")
-        .unwrap()
-        .render(&ctx)
-        .expect("render json_entry cross operators")
+    confine_json_entry_file(
+        environment()
+            .get_template("operators.sql")
+            .unwrap()
+            .render(&ctx)
+            .expect("render json_entry cross operators"),
+    )
 }
 
 /// Body for a domain's _aggregates.sql, or None if not ord-capable.
@@ -994,7 +1018,8 @@ pub fn render_type(spec: &DomainFamily, out_dir: &Path) -> Vec<(PathBuf, String)
     // (date/timestamp — no native JSON leaf; text's Bloom-bearing `search`) get
     // blocker-only files so the pair raises instead of flattening to native
     // `jsonb <op> jsonb`. Both lists empty for boolean (storage-only) and json
-    // (no scalar operands) → no cross files.
+    // (no scalar operands) → no cross files. Both files carry
+    // `-- ONLY EQL VERSION: 3`, as the SteVec SQL they bind does.
     let cross_domains = json_entry_cross_domains(spec);
     let cross_blocked = json_entry_cross_blocked_domains(spec);
     if !(cross_domains.is_empty() && cross_blocked.is_empty()) {

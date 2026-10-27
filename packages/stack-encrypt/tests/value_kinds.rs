@@ -335,7 +335,7 @@ async fn query(
         .expect("the term derives");
     match term.operand() {
         Operand::One(bytes) => bytes.clone(),
-        Operand::Range { .. } => panic!("one term"),
+        other => panic!("one term, not {other:?}"),
     }
 }
 

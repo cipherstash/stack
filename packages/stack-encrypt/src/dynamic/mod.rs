@@ -38,6 +38,8 @@
 //!   is the same bytes (ADR-0007). The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
+//! * [`read_json`] and [`json_frame`] — a `json` field's document, from
+//!   the JSON text a binding hands over and back to it.
 //! * [`TargetResolver`] — the EQL types a build holds, installed by the host
 //!   that links them, so a plan field may name one as its target and the
 //!   lowering runs that type's own plan in the same request; [`NoTargets`]
@@ -86,6 +88,8 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod json;
+mod json_query;
 mod kind;
 mod query;
 pub mod record;
@@ -98,16 +102,17 @@ mod value_frame;
 use std::fmt;
 
 pub use context::{borrowed, context};
+pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
 /// The value kinds, the type a plan field declares in its `"type"` key. A
 /// kind's names are frozen wire format; see [`admits`] and [`read`] for what
 /// a kind means to this engine.
 pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
 pub use query::{
-    check_query, field_operators, query_term, target_limit, verify, Fidelity, OpSpec, Operand,
-    OperatorEntry, QueryTerm,
+    check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
+    Fidelity, OpSpec, Operand, OperatorEntry, QueryTerm,
 };
 pub use record::{FieldPlan, NullMode, Output, Plan};
-pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
+pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
 pub use term::{term, TermBytes};
 pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
 
@@ -535,18 +540,29 @@ reasons! {
         DuplicateOutput => "duplicate_output", "an output is named twice";
         /// A field names `"passthrough"` beside another output.
         PassthroughWithOutputs => "passthrough_with_outputs", r#""passthrough" beside another output"#;
-        /// `"target"` is not a non-empty string.
-        InvalidTarget => "invalid_target", r#""target" is not a non-empty string"#;
+        /// `"target"` is not a non-empty string, nor an object of a
+        /// non-empty `"name"` and the target's `"options"`; or the options
+        /// do not parse as the target's (an unknown option, a path that is
+        /// not one, an ordered path naming a position).
+        InvalidTarget => "invalid_target", r#""target" is not a non-empty string or a {"name", "options"} object the target reads"#;
         /// `"type"` is not a string naming a value type.
         UnknownType => "unknown_type", r#""type" does not name a value type"#;
         /// The field's declared type has no such index: match on an integer,
         /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
-        /// The field declares the JSON index, which a data plan names but
-        /// cannot run yet: the engine's typed path produces a JSON
-        /// document, and the binding's half, a document plaintext and its
-        /// EQL target, is not written.
-        JsonIndexPending => "json_index_pending", "the JSON index has no data-plan form yet";
+        /// The field declares the JSON index as an output. A data plan
+        /// reaches the JSON index through a target that stores a document
+        /// (`JsonSearch`, with the `json` type), whose options are the
+        /// index's; the index is not an output of its own.
+        JsonIndexPending => "json_index_pending", "the JSON index is reached through a target that stores a document, not as an output";
+        /// The field declares the `json` type and names no target: a JSON
+        /// document is stored through a target that stores one
+        /// (`JsonSearch`).
+        JsonNeedsTarget => "json_needs_target", r#"a "json" field names a target that stores a document"#;
+        /// The field gives its target options the target does not take: a
+        /// target takes the options of the index it carries, and this one
+        /// carries none that has any.
+        TargetOptions => "target_options", "the target takes no options";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.
@@ -603,6 +619,25 @@ reasons! {
         /// Statistics are not a row count with an optional histogram and
         /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
         NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
+        /// A JSON operator's input or a read's request or rows are not the
+        /// object the operator takes ([`json_open`], the JSON operators of
+        /// [`OpSpec`]): a missing or unknown key, a value of another kind,
+        /// a row that is not an entry, or more than one entry for a
+        /// selector.
+        JsonInput => "json_input", "the input is not the object the JSON operator takes";
+        /// A JSON value in an input is not JSON text the engine reads.
+        JsonSyntax => "json_syntax", "a JSON value is not JSON text";
+        /// A JSON value in an input names an object member twice.
+        JsonDuplicateKey => "json_duplicate_key", "a JSON object names a member twice";
+        /// A JSON value in an input has an integer literal outside the 64-bit
+        /// range.
+        JsonIntegerRange => "json_integer_range", "a JSON integer literal is outside the 64-bit range";
+        /// A path names an array position where the operand is a selector,
+        /// which reads every position as the wildcard: read a position with
+        /// a subtree read.
+        JsonPathPosition => "json_path_position", "a selector reads a position as the wildcard; read a position with subtree";
+        /// A path has a wildcard where the operator names one node.
+        JsonPathWildcard => "json_path_wildcard", "the operator names one node, and a wildcard names many";
         /// `"null"` is not `"sealed"` or `"sql"`.
         UnknownNull => "unknown_null", r#""null" is not "sealed" or "sql""#;
         /// A passthrough field says how to store a null: it carries one as

@@ -5,7 +5,7 @@
 -- REQUIRE: src/v3/sem/ope_cllw/types.sql
 
 --! @file v3/json_tree/operators.sql
---! @brief Operators on public.{{prefix}}_json_tree and public.{{prefix}}_json_tree_entry.
+--! @brief Operators on public.{{prefix}}_json_search and public.{{prefix}}_json_entry.
 
 ------------------------------------------------------------------------------
 -- -> and ->> accessors (by selector)
@@ -23,11 +23,11 @@
 --!   literal resolves to the NATIVE `jsonb -> text` operator and silently
 --!   returns native jsonb semantics, as it does on every EQL jsonb domain.
 --!
---! @param e public.{{prefix}}_json_tree The stored document.
+--! @param e public.{{prefix}}_json_search The stored document.
 --! @param selector text The path selector, base64.
---! @return public.{{prefix}}_json_tree_entry The entry, or NULL.
-CREATE FUNCTION {{prefix}}."->"(e public.{{prefix}}_json_tree, selector text)
-  RETURNS public.{{prefix}}_json_tree_entry
+--! @return public.{{prefix}}_json_entry The entry, or NULL.
+CREATE FUNCTION {{prefix}}."->"(e public.{{prefix}}_json_search, selector text)
+  RETURNS public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   SELECT {{prefix}}.json_tree_path_query_first(e::jsonb, selector)
@@ -35,16 +35,16 @@ $$;
 
 CREATE OPERATOR ->(
   FUNCTION={{prefix}}."->",
-  LEFTARG=public.{{prefix}}_json_tree,
+  LEFTARG=public.{{prefix}}_json_search,
   RIGHTARG=text
 );
 
 --! @brief ->> operator with a text selector: the first entry at the path, as
 --!        JSON text. It does not decrypt.
---! @param e public.{{prefix}}_json_tree The stored document.
+--! @param e public.{{prefix}}_json_search The stored document.
 --! @param selector text The path selector, base64.
 --! @return text The entry as text, or NULL.
-CREATE FUNCTION {{prefix}}."->>"(e public.{{prefix}}_json_tree, selector text)
+CREATE FUNCTION {{prefix}}."->>"(e public.{{prefix}}_json_search, selector text)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -53,7 +53,7 @@ $$;
 
 CREATE OPERATOR ->> (
   FUNCTION={{prefix}}."->>",
-  LEFTARG=public.{{prefix}}_json_tree,
+  LEFTARG=public.{{prefix}}_json_search,
   RIGHTARG=text
 );
 
@@ -61,18 +61,18 @@ CREATE OPERATOR ->> (
 -- @> and <@ containment
 ------------------------------------------------------------------------------
 
---! @brief @> contains operator with a query_json_tree needle.
+--! @brief @> contains operator with a query_json needle.
 --!
 --! Inlines to native `jsonb @>` over `{{prefix}}.json_tree_query(a)`, so
 --! a functional GIN index on that expression engages. Not STRICT, for the
 --! reason `{{prefix}}.json_tree_contains` gives: a STRICT wrapper around a
 --! non-STRICT body is not inlined.
 --!
---! @param a public.{{prefix}}_json_tree The container.
---! @param b {{prefix}}.query_json_tree The needle.
+--! @param a public.{{prefix}}_json_search The container.
+--! @param b {{prefix}}.query_json The needle.
 --! @return boolean True when `a` contains `b`; NULL when either is NULL.
 --! @see {{prefix}}.json_tree_contains
-CREATE FUNCTION {{prefix}}."@>"(a public.{{prefix}}_json_tree, b {{prefix}}.query_json_tree)
+CREATE FUNCTION {{prefix}}."@>"(a public.{{prefix}}_json_search, b {{prefix}}.query_json)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
 AS $$
@@ -81,15 +81,15 @@ $$;
 
 CREATE OPERATOR @>(
   FUNCTION={{prefix}}."@>",
-  LEFTARG=public.{{prefix}}_json_tree,
-  RIGHTARG={{prefix}}.query_json_tree
+  LEFTARG=public.{{prefix}}_json_search,
+  RIGHTARG={{prefix}}.query_json
 );
 
 --! @brief @> contains operator (document, document).
---! @param a public.{{prefix}}_json_tree The container.
---! @param b public.{{prefix}}_json_tree The contained document.
+--! @param a public.{{prefix}}_json_search The container.
+--! @param b public.{{prefix}}_json_search The contained document.
 --! @return boolean True when `a` contains `b`.
-CREATE FUNCTION {{prefix}}."@>"(a public.{{prefix}}_json_tree, b public.{{prefix}}_json_tree)
+CREATE FUNCTION {{prefix}}."@>"(a public.{{prefix}}_json_search, b public.{{prefix}}_json_search)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -98,16 +98,16 @@ $$;
 
 CREATE OPERATOR @>(
   FUNCTION={{prefix}}."@>",
-  LEFTARG=public.{{prefix}}_json_tree,
-  RIGHTARG=public.{{prefix}}_json_tree
+  LEFTARG=public.{{prefix}}_json_search,
+  RIGHTARG=public.{{prefix}}_json_search
 );
 
---! @brief <@ contained-by operator with a query_json_tree container.
---! @param a public.{{prefix}}_json_tree The contained document.
---! @param b {{prefix}}.query_json_tree The needle that must contain it.
+--! @brief <@ contained-by operator with a query_json container.
+--! @param a public.{{prefix}}_json_search The contained document.
+--! @param b {{prefix}}.query_json The needle that must contain it.
 --! @return boolean True when `b` contains `a`.
 --! @see {{prefix}}.json_tree_contained_by
-CREATE FUNCTION {{prefix}}."<@"(a public.{{prefix}}_json_tree, b {{prefix}}.query_json_tree)
+CREATE FUNCTION {{prefix}}."<@"(a public.{{prefix}}_json_search, b {{prefix}}.query_json)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -116,16 +116,16 @@ $$;
 
 CREATE OPERATOR <@(
   FUNCTION={{prefix}}."<@",
-  LEFTARG=public.{{prefix}}_json_tree,
-  RIGHTARG={{prefix}}.query_json_tree
+  LEFTARG=public.{{prefix}}_json_search,
+  RIGHTARG={{prefix}}.query_json
 );
 
---! @brief <@ contained-by operator with a query_json_tree LHS: `b @> a`.
+--! @brief <@ contained-by operator with a query_json LHS: `b @> a`.
 --! Not STRICT, as `@>` is not.
---! @param a {{prefix}}.query_json_tree The needle.
---! @param b public.{{prefix}}_json_tree The container.
+--! @param a {{prefix}}.query_json The needle.
+--! @param b public.{{prefix}}_json_search The container.
 --! @return boolean True when `b` contains `a`; NULL when either is NULL.
-CREATE FUNCTION {{prefix}}."<@"(a {{prefix}}.query_json_tree, b public.{{prefix}}_json_tree)
+CREATE FUNCTION {{prefix}}."<@"(a {{prefix}}.query_json, b public.{{prefix}}_json_search)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
 AS $$
@@ -134,15 +134,15 @@ $$;
 
 CREATE OPERATOR <@(
   FUNCTION={{prefix}}."<@",
-  LEFTARG={{prefix}}.query_json_tree,
-  RIGHTARG=public.{{prefix}}_json_tree
+  LEFTARG={{prefix}}.query_json,
+  RIGHTARG=public.{{prefix}}_json_search
 );
 
 --! @brief <@ contained-by operator (document, document).
---! @param a public.{{prefix}}_json_tree The contained document.
---! @param b public.{{prefix}}_json_tree The container.
+--! @param a public.{{prefix}}_json_search The contained document.
+--! @param b public.{{prefix}}_json_search The container.
 --! @return boolean True when `b` contains `a`.
-CREATE FUNCTION {{prefix}}."<@"(a public.{{prefix}}_json_tree, b public.{{prefix}}_json_tree)
+CREATE FUNCTION {{prefix}}."<@"(a public.{{prefix}}_json_search, b public.{{prefix}}_json_search)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -151,8 +151,8 @@ $$;
 
 CREATE OPERATOR <@(
   FUNCTION={{prefix}}."<@",
-  LEFTARG=public.{{prefix}}_json_tree,
-  RIGHTARG=public.{{prefix}}_json_tree
+  LEFTARG=public.{{prefix}}_json_search,
+  RIGHTARG=public.{{prefix}}_json_search
 );
 
 ------------------------------------------------------------------------------
@@ -161,10 +161,10 @@ CREATE OPERATOR <@(
 
 --! @brief Less-than on an extracted entry against an ordering operand, via
 --!        the CLLW OPE term (native bytea order).
---! @param a public.{{prefix}}_json_tree_entry The entry, `col -> 'sel'`.
---! @param b {{prefix}}.query_json_tree_leaf The operand.
+--! @param a public.{{prefix}}_json_entry The entry, `col -> 'sel'`.
+--! @param b {{prefix}}.query_json_leaf The operand.
 --! @return boolean True when the entry's leaf is below the operand's.
-CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_json_tree_entry, b {{prefix}}.query_json_tree_leaf)
+CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_json_entry, b {{prefix}}.query_json_leaf)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -173,18 +173,18 @@ $$;
 
 CREATE OPERATOR < (
   FUNCTION = {{prefix}}.lt,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = {{prefix}}.query_json_tree_leaf,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = {{prefix}}.query_json_leaf,
   NEGATOR  = >=,
   RESTRICT = scalarltsel,
   JOIN     = scalarltjoinsel
 );
 
 --! @brief Less-than-or-equal on an extracted entry against an ordering operand.
---! @param a public.{{prefix}}_json_tree_entry The entry.
---! @param b {{prefix}}.query_json_tree_leaf The operand.
+--! @param a public.{{prefix}}_json_entry The entry.
+--! @param b {{prefix}}.query_json_leaf The operand.
 --! @return boolean True when the entry's leaf is at or below the operand's.
-CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_json_tree_entry, b {{prefix}}.query_json_tree_leaf)
+CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_json_entry, b {{prefix}}.query_json_leaf)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -193,18 +193,18 @@ $$;
 
 CREATE OPERATOR <= (
   FUNCTION = {{prefix}}.lte,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = {{prefix}}.query_json_tree_leaf,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = {{prefix}}.query_json_leaf,
   NEGATOR  = >,
   RESTRICT = scalarlesel,
   JOIN     = scalarlejoinsel
 );
 
 --! @brief Greater-than on an extracted entry against an ordering operand.
---! @param a public.{{prefix}}_json_tree_entry The entry.
---! @param b {{prefix}}.query_json_tree_leaf The operand.
+--! @param a public.{{prefix}}_json_entry The entry.
+--! @param b {{prefix}}.query_json_leaf The operand.
 --! @return boolean True when the entry's leaf is above the operand's.
-CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_json_tree_entry, b {{prefix}}.query_json_tree_leaf)
+CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_json_entry, b {{prefix}}.query_json_leaf)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -213,18 +213,18 @@ $$;
 
 CREATE OPERATOR > (
   FUNCTION = {{prefix}}.gt,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = {{prefix}}.query_json_tree_leaf,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = {{prefix}}.query_json_leaf,
   NEGATOR  = <=,
   RESTRICT = scalargtsel,
   JOIN     = scalargtjoinsel
 );
 
 --! @brief Greater-than-or-equal on an extracted entry against an ordering operand.
---! @param a public.{{prefix}}_json_tree_entry The entry.
---! @param b {{prefix}}.query_json_tree_leaf The operand.
+--! @param a public.{{prefix}}_json_entry The entry.
+--! @param b {{prefix}}.query_json_leaf The operand.
 --! @return boolean True when the entry's leaf is at or above the operand's.
-CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_json_tree_entry, b {{prefix}}.query_json_tree_leaf)
+CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_json_entry, b {{prefix}}.query_json_leaf)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -233,8 +233,8 @@ $$;
 
 CREATE OPERATOR >= (
   FUNCTION = {{prefix}}.gte,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = {{prefix}}.query_json_tree_leaf,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = {{prefix}}.query_json_leaf,
   NEGATOR  = <,
   RESTRICT = scalargesel,
   JOIN     = scalargejoinsel
@@ -245,10 +245,10 @@ CREATE OPERATOR >= (
 ------------------------------------------------------------------------------
 
 --! @brief Less-than between two extracted entries via their OPE terms.
---! @param a public.{{prefix}}_json_tree_entry Left operand.
---! @param b public.{{prefix}}_json_tree_entry Right operand.
+--! @param a public.{{prefix}}_json_entry Left operand.
+--! @param b public.{{prefix}}_json_entry Right operand.
 --! @return boolean True when `a`'s leaf is below `b`'s.
-CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_json_tree_entry, b public.{{prefix}}_json_tree_entry)
+CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -257,8 +257,8 @@ $$;
 
 CREATE OPERATOR < (
   FUNCTION = {{prefix}}.lt,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = public.{{prefix}}_json_tree_entry,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = >,
   NEGATOR  = >=,
   RESTRICT = scalarltsel,
@@ -266,10 +266,10 @@ CREATE OPERATOR < (
 );
 
 --! @brief Less-than-or-equal between two extracted entries.
---! @param a public.{{prefix}}_json_tree_entry Left operand.
---! @param b public.{{prefix}}_json_tree_entry Right operand.
+--! @param a public.{{prefix}}_json_entry Left operand.
+--! @param b public.{{prefix}}_json_entry Right operand.
 --! @return boolean True when `a`'s leaf is at or below `b`'s.
-CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_json_tree_entry, b public.{{prefix}}_json_tree_entry)
+CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -278,8 +278,8 @@ $$;
 
 CREATE OPERATOR <= (
   FUNCTION = {{prefix}}.lte,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = public.{{prefix}}_json_tree_entry,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = >=,
   NEGATOR  = >,
   RESTRICT = scalarlesel,
@@ -287,10 +287,10 @@ CREATE OPERATOR <= (
 );
 
 --! @brief Greater-than between two extracted entries.
---! @param a public.{{prefix}}_json_tree_entry Left operand.
---! @param b public.{{prefix}}_json_tree_entry Right operand.
+--! @param a public.{{prefix}}_json_entry Left operand.
+--! @param b public.{{prefix}}_json_entry Right operand.
 --! @return boolean True when `a`'s leaf is above `b`'s.
-CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_json_tree_entry, b public.{{prefix}}_json_tree_entry)
+CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -299,8 +299,8 @@ $$;
 
 CREATE OPERATOR > (
   FUNCTION = {{prefix}}.gt,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = public.{{prefix}}_json_tree_entry,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = <,
   NEGATOR  = <=,
   RESTRICT = scalargtsel,
@@ -308,10 +308,10 @@ CREATE OPERATOR > (
 );
 
 --! @brief Greater-than-or-equal between two extracted entries.
---! @param a public.{{prefix}}_json_tree_entry Left operand.
---! @param b public.{{prefix}}_json_tree_entry Right operand.
+--! @param a public.{{prefix}}_json_entry Left operand.
+--! @param b public.{{prefix}}_json_entry Right operand.
 --! @return boolean True when `a`'s leaf is at or above `b`'s.
-CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_json_tree_entry, b public.{{prefix}}_json_tree_entry)
+CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -320,8 +320,8 @@ $$;
 
 CREATE OPERATOR >= (
   FUNCTION = {{prefix}}.gte,
-  LEFTARG  = public.{{prefix}}_json_tree_entry,
-  RIGHTARG = public.{{prefix}}_json_tree_entry,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = <=,
   NEGATOR  = <,
   RESTRICT = scalargesel,

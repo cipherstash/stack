@@ -295,8 +295,9 @@ impl crate::ErrorPayload for PlanError {
 }
 
 /// An index as a plan writes it: its key, or for a match index the object of
-/// all four options (`{"match": {"tokenizer": "standard", "downcase": true,
-/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`), and for a
+/// its options (`{"match": {"tokenizer": "standard", "downcase": true,
+/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`, and
+/// `"short_words": true` only when that option is on), and for a
 /// JSON index the object of its options (`{"json": {"sealed_root":
 /// true, "ordered": ["$.age"]}}`). A caller in another language can read
 /// it, and it does not move when a field is added to the Rust type, as
@@ -309,14 +310,16 @@ fn index_value(index: &IndexSpec) -> serde_json::Value {
                 Tokenizer::Standard => serde_json::Value::from("standard"),
                 Tokenizer::Ngram { length } => serde_json::json!({ "ngram": length }),
             };
-            serde_json::json!({
-                "match": {
-                    "tokenizer": tokenizer,
-                    "downcase": options.downcase,
-                    "k": options.k,
-                    "m": options.m,
-                }
-            })
+            let mut value = serde_json::json!({
+                "tokenizer": tokenizer,
+                "downcase": options.downcase,
+                "k": options.k,
+                "m": options.m,
+            });
+            if options.short_words {
+                value["short_words"] = true.into();
+            }
+            serde_json::json!({ "match": value })
         }
         IndexSpec::Json(options) => serde_json::json!({
             "json": {

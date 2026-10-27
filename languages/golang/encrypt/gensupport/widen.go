@@ -31,6 +31,12 @@ func asKind(kind Kind, v any) (any, error) {
 	if err := checkValue(v); err != nil {
 		return nil, err
 	}
+	if kind == JSON {
+		// A document crosses as its JSON text, in a bytes value; the
+		// engine parses it. A json.RawMessage is that text; a field of
+		// another Go type (a struct, say) is marshalled, explicitly, here.
+		return JSONText(v)
+	}
 	if !isInteger(kind) {
 		return v, nil
 	}

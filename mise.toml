@@ -368,7 +368,7 @@ description = "Format check, vet and test the Go module (languages/golang: encry
 run = "scripts/go-binding-test.sh languages/golang"
 
 [tasks."go:test:postgres"]
-description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the Go module's PostgreSQL tests against it: rows the Go SDK stores in every EQL type it produces, found by the queries it derives, and random values in every ordered type, ordered as their plaintexts (EQL_ORDER_SEED replays a seed); needs `wasm:guest:build:deterministic` and `wasm:guest:build:eql:deterministic` first"
+description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the Go module's PostgreSQL tests against it: rows the Go SDK stores in every EQL type it produces, found by the queries it derives, encrypted JSON documents, raw and of Go types, queried and read through their generated methods, and random values in every ordered type, ordered as their plaintexts (EQL_ORDER_SEED replays a seed); needs `wasm:guest:build:deterministic` and `wasm:guest:build:eql:deterministic` first"
 # The bundle is built from packages/eql, as test:encryption:postgres builds
 # it: the copy under crates/eql-bindings/sql is the RELEASED bundle and moves
 # only at the lockstep bump, so it cannot show a SQL change in the same pull
@@ -384,7 +384,7 @@ cd languages/golang
 # The tests skip without DATABASE_URL and without their guest builds; -v and
 # the grep turn either skip into a failure here, where both are provided.
 DATABASE_URL="$EQL_TEST_DATABASE_URL" CGO_ENABLED=0 go test -count=1 -v \
-  -run '^(TestEQLTypesRoundTripAndQueryInPostgres|TestEQLOrderMatchesPlaintextInPostgres|TestQueriesRunAgainstPostgres)$' ./encrypt \
+  -run '^(TestEQLTypesRoundTripAndQueryInPostgres|TestEQLOrderMatchesPlaintextInPostgres|TestQueriesRunAgainstPostgres|TestJSONDocumentsQueryAndReadInPostgres|TestJSONTypedDocumentsInPostgres)$' ./encrypt \
   | tee "${TMPDIR:-/tmp}/go-test-postgres.log"
 if grep -q -- '--- SKIP' "${TMPDIR:-/tmp}/go-test-postgres.log"; then
   echo "error: a PostgreSQL test skipped; build the deterministic guests first" >&2
@@ -392,7 +392,7 @@ if grep -q -- '--- SKIP' "${TMPDIR:-/tmp}/go-test-postgres.log"; then
 fi
 # A -run pattern that matches no test (one renamed, say) prints "no tests
 # to run" and PASS, so each test has to be seen to pass by name.
-for test in TestEQLTypesRoundTripAndQueryInPostgres TestEQLOrderMatchesPlaintextInPostgres TestQueriesRunAgainstPostgres; do
+for test in TestEQLTypesRoundTripAndQueryInPostgres TestEQLOrderMatchesPlaintextInPostgres TestQueriesRunAgainstPostgres TestJSONDocumentsQueryAndReadInPostgres TestJSONTypedDocumentsInPostgres; do
   if ! grep -q -- "^--- PASS: $test " "${TMPDIR:-/tmp}/go-test-postgres.log"; then
     echo "error: $test did not run and pass; was it renamed?" >&2
     exit 1

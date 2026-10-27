@@ -575,12 +575,16 @@ pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
     options: JsonOptions,
 ) -> Encryption<'s, serde_json::Value, JsonTerms, K, CallerContext, M> {
     Encryption {
-        build: Box::new(
-            move |source, cipher, cx: CallerContext| match cx.validated() {
+        build: Box::new(move |source, cipher, cx: CallerContext| {
+            let pending = match cx.validated() {
                 Ok(ctx) => crate::json::terms_pending(M::view(&source), &options, cipher, ctx),
                 Err(e) => Pending::failed(cipher, e),
-            },
-        ),
+            };
+            // The terms are derived by now; a document this description
+            // owns (the one a query asks about) is wiped rather than dropped.
+            M::release(source, |value| drop(crate::json::PlainJson::protect(value)));
+            pending
+        }),
     }
 }
 
