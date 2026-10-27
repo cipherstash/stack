@@ -113,10 +113,10 @@
 //! into a fresh allocation and wipes the old one. A `Display` value is
 //! formatted into a buffer that is wiped. A map's keys are checked for a
 //! repeat where they lie in the frame, rather than copied. The frame is
-//! returned [`Protected`]. `tests/transport_wipe.rs` checks this. Copies
-//! on the stack and in registers are not wiped, as for the storage
-//! profile (STORAGE.md, *Memory and timing*). The reader borrows text and
-//! bytes from its input.
+//! returned in a [`Buffer`], whose bytes are read through `risky_ref`.
+//! `tests/transport_wipe.rs` checks this. Copies on the stack and in
+//! registers are not wiped, as for the storage profile (STORAGE.md,
+//! *Memory and timing*). The reader borrows text and bytes from its input.
 
 use std::fmt;
 
@@ -130,7 +130,7 @@ use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT, PASSTHROUG
 use vitaminc_aead::leaf::{self, Form};
 use vitaminc_aead::plaintext::{Float, Int, Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{tags, Encrypt, Frame, FrameWriter};
-use vitaminc_protected::{Buffer, Protected};
+use vitaminc_protected::{Buffer, Controlled};
 use zeroize::Zeroizing;
 
 // =============================================================================
@@ -1058,7 +1058,7 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 ///
 /// What a host and Rust exchange this way is not plaintext to seal, but may
 /// still be secret (a credential in a configuration, say). So the frame is
-/// returned as a [`Buffer`] under [`Protected`], and wiped when it is
+/// returned as a [`Buffer`], and wiped when it is
 /// dropped. The buffer grows without leaving copies of what it held
 /// behind, as every frame vitaminc writes does, and is wiped if writing
 /// fails part way. A value written through `Display` (`collect_str`) is
@@ -1077,10 +1077,10 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 /// refused ("container length does not match its children"). `serde_json`
 /// ignores a wrong length, so a hand-written impl that works there can fail
 /// here. Pass `None` when the count is not known up front.
-pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Protected<Buffer>, Error> {
+pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Buffer, Error> {
     let mut out = Buffer::new();
     value.serialize(Serializer(FrameWriter::new(&mut out)))?;
-    Ok(Protected::new(out))
+    Ok(out)
 }
 
 /// Write `value` as a frame of its own, for a node `depth` levels below
@@ -1202,7 +1202,7 @@ impl<'o> ser::Serializer for Serializer<'o> {
     }
     fn collect_str<T: fmt::Display + ?Sized>(self, value: &T) -> Result<(), Error> {
         let shown = displayed(value)?;
-        self.serialize_str(text(&shown)?)
+        self.serialize_str(text(shown.risky_ref())?)
     }
     fn serialize_bytes(self, v: &[u8]) -> Result<(), Error> {
         self.scalar(Physical::Bytes(v))
@@ -1474,7 +1474,7 @@ fn write_variant(
     if is_struct {
         let mut map = entry.map(Some(parts.len())).map_err(written)?;
         for (key, frame) in parts {
-            let frame = Frame::parse(frame).map_err(|_| malformed())?;
+            let frame = Frame::parse(frame.risky_ref()).map_err(|_| malformed())?;
             frame
                 .visit(map.entry(key.unwrap_or_default()).map_err(written)?)
                 .map_err(written)?;
@@ -1483,7 +1483,7 @@ fn write_variant(
     } else {
         let mut seq = entry.seq(Some(parts.len())).map_err(written)?;
         for (_, frame) in parts {
-            let frame = Frame::parse(frame).map_err(|_| malformed())?;
+            let frame = Frame::parse(frame.risky_ref()).map_err(|_| malformed())?;
             frame
                 .visit(seq.element().map_err(written)?)
                 .map_err(written)?;
@@ -1544,7 +1544,7 @@ impl ser::Serializer for KeySerializer {
         // The key itself is kept `Zeroizing` by the map; only the text it
         // is copied from is this function's to wipe.
         let shown = displayed(value)?;
-        self.serialize_str(text(&shown)?)
+        self.serialize_str(text(shown.risky_ref())?)
     }
     fn serialize_char(self, v: char) -> Result<String, Error> {
         Ok(v.to_string())

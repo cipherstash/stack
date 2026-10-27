@@ -102,7 +102,7 @@ are nodes, so an integer, text or bytes key keeps its kind. Only the plain
 scalars are admitted: no logical types, no `undefined`, no passthrough.
 And every refusal has a stable `ErrorKind`, so a caller can tell a reader
 that needs upgrading from a corrupt blob. The blob is plaintext, so it
-comes back `Protected`, and is wiped when dropped.
+comes back in a `Buffer`: read through `risky_ref`, wiped when dropped.
 
 ```rust
 # #[cfg(feature = "serde")]

@@ -19,8 +19,8 @@
 //! }
 //!
 //! let note = Note { title: "hi".into(), pinned: Some(()) };
-//! // The blob is plaintext, so it comes back `Protected`, and is wiped
-//! // when it is dropped.
+//! // The blob is plaintext, so it comes back in a `Buffer`: read through
+//! // `risky_ref`, and wiped when it is dropped.
 //! let blob = storage::to_vec(&note)?;
 //! assert_eq!(blob.risky_ref()[..4], HEADER);
 //! let back: Note = storage::from_slice(blob.risky_ref())?;
@@ -45,7 +45,7 @@ use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT};
 use vitaminc_aead::leaf::{self, Form, ScalarError};
 use vitaminc_aead::plaintext::{Float, Int, Physical};
 use vitaminc_aead::tags;
-use vitaminc_protected::{Buffer, Protected};
+use vitaminc_protected::{Buffer, Controlled};
 
 use crate::serde::{self as transport, from_validated, written, Appender, PathSegment, Profile};
 
@@ -418,7 +418,7 @@ fn distinct<'a>(keys: impl ExactSizeIterator<Item = MapKey<'a>>) -> Result<(), I
             Identity::Node(node) => nodes.push(node),
         }
     }
-    let (integers, rest) = integers.as_chunks_mut::<INT_IDENTITY>();
+    let (integers, rest) = integers.risky_inner_mut().as_chunks_mut::<INT_IDENTITY>();
     debug_assert!(rest.is_empty(), "every identity is whole");
     integers.sort_unstable();
     nodes.sort_unstable();
@@ -436,8 +436,7 @@ fn distinct<'a>(keys: impl ExactSizeIterator<Item = MapKey<'a>>) -> Result<(), I
 
 /// Write `value` as a blob: [`HEADER`], then its node.
 ///
-/// The blob is the value's plaintext, so it is returned as a [`Buffer`]
-/// under [`Protected`], and wiped when it is dropped. It grows without
+/// The blob is the value's plaintext, so it is returned as a [`Buffer`], and wiped when it is dropped. It grows without
 /// leaving copies of what it held behind, and is wiped if writing fails
 /// part way. The writer
 /// checks each rule a reader checks as it writes, so a blob this returns
@@ -451,7 +450,7 @@ fn distinct<'a>(keys: impl ExactSizeIterator<Item = MapKey<'a>>) -> Result<(), I
 /// length other than the number of children it wrote, a map key written
 /// without its value (or a value without its key), or a value its own
 /// `Serialize` refused.
-pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Protected<Buffer>, Error> {
+pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Buffer, Error> {
     let mut out = Buffer::new();
     out.extend_from_slice(&HEADER);
     value
@@ -464,11 +463,11 @@ pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Protected<Buffer>, Err
     // goes, so reading the blob back finds nothing. A debug build does so
     // anyway, since a blob that disagrees with the reader is a bug.
     debug_assert_eq!(
-        validate(&out[HEADER.len()..]),
+        validate(&out.risky_ref()[HEADER.len()..]),
         Ok(()),
         "the writer wrote a blob the reader refuses"
     );
-    Ok(Protected::new(out))
+    Ok(out)
 }
 
 fn write_len(out: &mut Buffer, len: usize) -> Result<(), transport::Error> {
@@ -512,7 +511,7 @@ fn write_display<T: fmt::Display + ?Sized>(
         .map_err(|_| <transport::Error as ser::Error>::custom(""))?;
     let len = out.len() - at - 4;
     let len = u32::try_from(len).map_err(|_| written(FrameWriteError::TooLong))?;
-    out[at..at + 4].copy_from_slice(&len.to_le_bytes());
+    out.overwrite(at, &len.to_le_bytes());
     Ok(())
 }
 
@@ -680,7 +679,7 @@ impl Container<'_> {
             return Err(written(FrameWriteError::CountMismatch));
         }
         let n = u32::try_from(self.n).map_err(|_| written(FrameWriteError::TooLong))?;
-        self.out[self.at..self.at + 4].copy_from_slice(&n.to_le_bytes());
+        self.out.overwrite(self.at, &n.to_le_bytes());
         Ok(())
     }
 }
@@ -980,7 +979,7 @@ impl ser::SerializeMap for MapWriter<'_> {
         }
         // The blob only grows while the map is written, so every range
         // still holds its key.
-        let out: &[u8] = self.c.out;
+        let out: &[u8] = self.c.out.risky_ref();
         match distinct(self.keys.iter().map(|range| MapKey(&out[range.clone()]))) {
             Ok(()) => {}
             Err(Invalid::DuplicateKey) => return Err(written(FrameWriteError::DuplicateKey)),

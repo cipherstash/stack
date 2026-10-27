@@ -17,7 +17,7 @@
 use core::convert::Infallible;
 use std::collections::HashSet;
 
-use vitaminc_protected::{Buffer, Controlled, Protected};
+use vitaminc_protected::{Buffer, Controlled};
 
 use crate::leaf::{self, Item};
 use crate::plaintext::{Error, MapSink, SeqSink, Sink, SourceError};
@@ -221,24 +221,19 @@ fn walk_map<S: Sink>(
 
 /// Decrypt into a frame: the Go guest's whole `decrypt`.
 ///
-/// The frame is plaintext, so it is built in a [`Buffer`] under `Protected`
+/// The frame is plaintext, so it is built in a [`Buffer`]
 /// and wiped on every error path.
 pub fn decrypt_to_frame<'a, C, A>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: A,
-) -> Result<Protected<Buffer>, DecryptError<crate::frame::FrameWriteError, C::Error>>
+) -> Result<Buffer, DecryptError<crate::frame::FrameWriteError, C::Error>>
 where
     C: Cipher,
     A: IntoAad<'a>,
 {
-    let mut out = Protected::new(Buffer::new());
-    decrypt_into(
-        cipher,
-        node,
-        aad,
-        crate::frame::FrameWriter::new(out.risky_inner_mut()),
-    )?;
+    let mut out = Buffer::new();
+    decrypt_into(cipher, node, aad, crate::frame::FrameWriter::new(&mut out))?;
     Ok(out)
 }
 

@@ -24,7 +24,7 @@ use support::{blob, erase, model, unhex, Model};
 
 /// Write `value`, and take the blob out of its `Protected`.
 fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
-    storage::to_vec(value).map(|blob| blob.risky_unwrap().risky_into_vec())
+    storage::to_vec(value).map(Controlled::risky_unwrap)
 }
 
 /// The class the reference gives a refusal, as the crate names it.

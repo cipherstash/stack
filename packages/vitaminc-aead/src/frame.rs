@@ -19,7 +19,7 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
-use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, Protected, TimingSafeEq};
+use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, TimingSafeEq};
 
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{
@@ -321,27 +321,23 @@ impl Error for FrameWriteError {
     }
 }
 
-/// Write any source as a frame. The result is a [`Buffer`] under
-/// `Protected`, since a frame of plaintext is plaintext: it grows without
+/// Write any source as a frame. The result is a [`Buffer`], since a frame of plaintext is plaintext: it grows without
 /// leaving copies behind, and is wiped when it is dropped.
 ///
 /// The result is checked with [`Frame::parse`] before it is returned, so a
 /// source that opens a container and never ends it is refused here, not by
 /// every later reader of the frame.
-pub fn to_frame<P: Encrypt>(p: P) -> Result<Protected<Buffer>, FrameWriteError> {
+pub fn to_frame<P: Encrypt>(p: P) -> Result<Buffer, FrameWriteError> {
     to_frame_at(p, 0)
 }
 
 /// [`to_frame`] for a subtree whose root sits `depth` levels below the top
 /// of a document, so [`MAX_DEPTH`] counts from the top, as the transport
 /// decoder counts it.
-pub(crate) fn to_frame_at<P: Encrypt>(
-    p: P,
-    depth: usize,
-) -> Result<Protected<Buffer>, FrameWriteError> {
-    let mut out = Protected::new(Buffer::new());
+pub(crate) fn to_frame_at<P: Encrypt>(p: P, depth: usize) -> Result<Buffer, FrameWriteError> {
+    let mut out = Buffer::new();
     p.visit(FrameWriter {
-        out: out.risky_inner_mut(),
+        out: &mut out,
         depth,
     })?;
     Frame::parse(out.risky_ref()).map_err(|_| FrameWriteError::Unfinished)?;
@@ -446,7 +442,7 @@ impl Count<'_> {
             return Err(FrameWriteError::CountMismatch);
         }
         let n = u32::try_from(self.n).map_err(|_| FrameWriteError::TooLong)?;
-        self.out[self.at..self.at + 4].copy_from_slice(&n.to_le_bytes());
+        self.out.overwrite(self.at, &n.to_le_bytes());
         Ok(())
     }
 }
@@ -563,7 +559,7 @@ impl MapSink for FrameMap<'_> {
     fn end(mut self) -> Result<(), FrameWriteError> {
         // The frame only grows while the map is written, so every range
         // still holds its key.
-        let out: &[u8] = self.count.out;
+        let out: &[u8] = self.count.out.risky_ref();
         self.keys
             .sort_unstable_by(|a, b| out[a.clone()].cmp(&out[b.clone()]));
         if self

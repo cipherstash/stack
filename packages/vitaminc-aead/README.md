@@ -180,7 +180,7 @@ assert_eq!(back, [Some(1), None]);
 let ciphertext = encrypt(vec![Some(1u32), None], &cipher, "ctx")?;
 let mut frame = vitaminc_protected::Buffer::new();
 decrypt_into(&cipher, ciphertext, "ctx", FrameWriter::new(&mut frame))?;
-assert!(Frame::parse(&frame).is_ok());
+assert!(Frame::parse(vitaminc_protected::Controlled::risky_ref(&frame)).is_ok());
 
 // A target refuses a shape it cannot build, before anything is trusted.
 let ciphertext = encrypt("text", &cipher, "ctx")?;

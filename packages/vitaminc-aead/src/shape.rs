@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, Protected};
+use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 
 use crate::frame::{to_frame_at, FrameWriteError, MAX_DEPTH};
 use crate::plaintext::{Encrypt, Error, Logical, Path, Physical, Step};
@@ -193,7 +193,7 @@ where
     // A passthrough crosses in the clear, as its `PassthroughFrame` holds
     // it, so the frame leaves the buffer's rules here.
     to_frame_at(value, depth + 1)
-        .map(|frame| frame.map(Buffer::risky_into_vec))
+        .map(|frame| Protected::new(frame.risky_unwrap()))
         .map_err(|e| match e {
             FrameWriteError::Source(e) => E::source(e),
             FrameWriteError::TooDeep => refused(refuse(at, Unencryptable::TooDeep)),
