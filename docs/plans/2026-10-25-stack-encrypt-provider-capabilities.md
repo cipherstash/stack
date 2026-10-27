@@ -26,6 +26,15 @@ source value requires explicit declaration, not inference from a name.
 
 ## Current implementation evidence
 
+**Update, 2026-10-27:** #1379 makes open-root JSON verification load the
+index keyset as well as the data key. `Pending` settlement and generic
+execution entry points now require `DataKeySource + IndexKeySource`.
+The future neutral provider split below must preserve that verification
+requirement for JSON while allowing data-key-only capabilities where an
+operation genuinely needs no index key. This change does not implement
+plaintext-derived keyset routing or ZeroKMS lock-context plumbing.
+
+
 - [StackCipher::keyset](../../packages/stack-encrypt/src/cipher.rs) accepts
   `IdentifiedBy` by UUID or name, resolves the keyset and its index key,
   and returns a bound `KeysetCipher`. The client has a bounded keyset cache

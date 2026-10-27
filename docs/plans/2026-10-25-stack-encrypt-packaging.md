@@ -7,11 +7,12 @@ renames. Existing companion examples retain their working names until this
 proposal is accepted. The detailed JSON operation contract remains under
 separate user review.
 
-**Sequencing update:** customer Go delivery supersedes the original
-move-first sequence. The JSON stack headed by #1363 has merged. Vitamin C
-#520 and #526 address storage and await review/release. Adopt those encodings
-and deliver Go JSON/match search first. The package map below is the intended destination; neither a new
-format crate nor public Rust facade completion is a customer release gate.
+**Implementation update, 2026-10-27:** Go JSON and opaque storage have
+landed on `next` through #1369/#1370/#1372/#1373/#1378/#1402; #1397 adds
+short whole-word match terms. The customer path is remaining configuration
+and conformance work plus release readiness, including replacing temporary
+Vitamin C Go module pins. Rust stays on crates.io Vitamin C 0.8.0. Neither
+crate extraction nor final Rust facade completion is a customer release gate.
 
 Source baseline: the current documentation branch and inspected local Vitamin
 C 0.8.0 sources. Stack's
@@ -196,9 +197,16 @@ for the ciphertext wrappers; avoid an unchecked public string constructor.
 
 ## JSON names by role
 
-Keep the existing EQL package and version modules. Avoid importing low-level
-engine JSON documents into normal application examples alongside EQL output
-types. Recommend this glossary for the first-class public surface:
+Keep the existing EQL package and version modules. The merged public Go
+surface is `eql.JSONSearch`, `JSONSearchQuery`, `JSONSearchLeafQuery` and
+`JSONEntry`, configured through `JsonSearch`; SQL uses `eql_v4_json_search`,
+`query_json`, `query_json_leaf` and `eql_v4_json_entry`. Prepared Go objects
+are `encrypt.JSONSelection` and `JSONRead`.
+
+The table below remains a proposed Rust facade glossary. Its `JsonTree*`
+names describe handwritten Rust adapters, not the registered Go target.
+Do not rename the working Go/SQL surface to this glossary as a customer
+release prerequisite. Later Rust renames must preserve frozen dynamic IDs.
 
 | Working/current name | Recommended name | Role / home |
 | --- | --- | --- |
@@ -235,13 +243,12 @@ or dynamic discriminants.
 
 ## Implementation order and acceptance
 
-1. Use the merged JSON stack and specify Go-visible names/contracts and stable
-   profiles needed by the customer. Keep codec work in Vitamin C, coordinating
-   #519. Preserve distinct transport/storage semantics and freeze search
-   semantics as well as byte layouts.
-2. Deliver and validate Go JSON, configurable match search and the selected
-   short-input solution under the customer-first sequence. Record frozen Go/data
-   fixtures; leave internal Rust plan ergonomics free to change.
+1. Specify and validate the now-implemented Go JSON and opaque storage
+   contracts. Freeze post-cascade JSON/search semantics and exact fixtures.
+   Replace temporary Vitamin C Go module pins for a final release.
+2. Complete outstanding Go match configuration and JSON read/conformance
+   gaps. Short whole-word matching is implemented in EQL; its leakage and
+   profile compatibility still require explicit release acceptance.
 3. After delivery, establish the shared format crate and move the value model,
    traversal and dependent normalization/index adapters into Stack. Preserve
    frozen encodings and an acyclic graph; move tests with their code.

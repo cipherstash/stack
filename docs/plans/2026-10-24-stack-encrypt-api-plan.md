@@ -10,14 +10,28 @@ criteria. User requirements are distinguished from recommendations that
 have not yet been accepted. Examples below are proposed APIs, not working
 code for the current release.
 
-**Customer delivery priority, 2026-10-25:** the JSON-tree stack
-headed by #1363 has merged; next deliver Go JSON and configurable Bloom search, including
-the short-input requirement under investigation. Stabilize the Go contract
-and persisted encoding/search semantics before customer release. Adopt the
-Vitamin C codec in its existing repository now; defer crate moves and the
-standalone Rust facade. The customer-first sequence below supersedes
-earlier implementation ordering where they conflict. The short-gram design is
-a release dependency, not a feature silently deferred to a later version.
+**Implementation reconciliation, 2026-10-27:** reviewed merged `next` at
+`ffeed7adb3f7d8739cda53261046147852bffc82`. Go JSON catalog, configured
+targets, queries, request-bound reads, typed documents and executable docs
+have landed (#1372, #1373, #1378, #1402). Opaque Go storage adoption has
+landed (#1369/#1370). The active customer work is now contract conformance,
+remaining read/configuration gaps and release readiness, not implementing
+those foundations again. See the refreshed
+[Go JSON plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
+and [JSON inventory](2026-10-25-stack-encrypt-json-operations.md).
+
+#1379 added cascade authentication and randomized storage/projection order.
+Wildcard `->` now selects an unspecified element; old first-in-document-order
+recipes are invalid. Freeze the post-cascade format and compare query
+semantics rather than randomized byte ordering. #1397 implements short
+whole-word terms in the shared Bloom filter; configurable native Go match
+options and broader tokenizer/filter work remain. This is implementation
+status, not acceptance of a stronger privacy claim for those terms.
+
+Go's Vitamin C storage modules are temporarily pinned to `06568ba93bd9`.
+The final-release guard requires replacing pseudo-versions with released
+module tags; prereleases may carry them. Rust remains on crates.io 0.8.0.
+Keep crate moves and the final Rust facade behind customer delivery.
 
 **Latest delivery decisions, 2026-10-25:** encoded ciphertext field targets
 are accepted. The comprehensive JSON first-release contract and Rust/dynamic
@@ -52,7 +66,9 @@ aliases, deprecation period, or data migration is required. Choose the
 coherent new design and update its Rust, Go, guest, and EQL consumers
 together. Engine output must still agree with the SQL that consumes it;
 that is current interoperability, not a legacy-format requirement.
-This exemption ends for the customer profiles when released: subsequent
+The merged Go implementation nevertheless retains a legacy JSON opaque
+reader; record it as existing behavior, not a new requirement to add
+prototype migration machinery. This exemption ends for customer profiles when released: subsequent
 Rust API/package refactors must preserve the Go interface and stored
 data/search compatibility.
 
@@ -202,15 +218,15 @@ particular, the full ordered-path policy is not stored in the JSON header.
 
 ## Candidate dynamic representation and Go requirements
 
-Extend the existing string target with an object form, using the current
-type name provisionally rather than deciding a registry rename here:
+Implemented by #1372: string targets and configured object targets share
+the native options validator. Use the landed `JsonSearch` identifier:
 
 ```json
 {
   "payroll": {
     "context": ["employees", "payroll"],
     "target": {
-      "name": "JsonTreeDocument",
+      "name": "JsonSearch",
       "options": { "ordered": ["$.salary"] }
     }
   }
@@ -218,7 +234,7 @@ type name provisionally rather than deciding a registry rename here:
 ```
 
 Keep `"target": "TextEq"` as shorthand for that target's default options.
-The object form is new: current dynamic targets accept only a string.
+The object form and JSON target options are now implemented.
 Reject unknown options, incompatible options, unsupported target names, and
 invalid paths during declaration validation. Do not silently fall back to
 defaults. Specify one consistent JSON wire format and context encoding
@@ -236,13 +252,13 @@ serialize its resolved options, not its function identifier. This contract
 does not require all Rust-only targets to depend on Serde; data conversion
 is required for targets registered with the dynamic interface.
 
-Current gaps: JSON tree is absent from EQL's catalog/target table, the
-dynamic JSON index is refused with `JsonIndexPending`, target fields carry
-only a name, and Go's generated target declarations carry no target options.
-Supporting an index's option syntax in Go does not establish executable
-JSON-tree support. Include JSON input transport for objects, arrays, scalar
-roots, and null; preserve the engine's numeric semantics and reject values
-the cross-language contract cannot faithfully represent.
+The catalog/guest, JSON value kind, strict JSON text parser and generated
+Go target options are now implemented. #1373 adds operation input shapes and
+operand encodings, and #1378 adds typed Go document adapters. Remaining
+work includes the formal versioned specification, generalized definition
+lifecycle/caching, direct typed EQL conversion and context-role separation.
+The current data-plan grammar is still a field map; the illustrative
+versioned schema below is not already accepted by the runtime.
 
 Writes and queries must reuse the normalized configured target in Rust and
 Go. An ordering query on an undeclared path must fail before key I/O.
@@ -408,48 +424,34 @@ and batching; this trait separation must not add a blanket `Clone` bound.
 The final signatures must show where borrowed and owned sources are
 supported rather than concealing the existing difference behind the rename.
 
-## Parallel Go JSON work: PR #1353
+## Go JSON implementation and PR #1353
 
-Read on 2026-10-24: [PR #1353](https://github.com/cipherstash/stack/pull/1353)
-is an open documentation-only plan, not an implementation. Its write-up is
-[The json_tree capability in the Go SDK](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md).
-It tracks [#1347](https://github.com/cipherstash/stack/issues/1347), with
-catalog, dynamic execution, queries, Go SDK, and extraction work in
-[#1348](https://github.com/cipherstash/stack/issues/1348),
-[#1349](https://github.com/cipherstash/stack/issues/1349),
-[#1350](https://github.com/cipherstash/stack/issues/1350),
-[#1351](https://github.com/cipherstash/stack/issues/1351), and
-[#1352](https://github.com/cipherstash/stack/issues/1352).
+The [Go JSON plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
+has been updated against merged `next`. Tracking issue #1347 and steps
+#1348–#1352 are closed. #1372, #1373 and #1378 implement the catalog,
+configured JSON targets, dynamic execution, operation-specific operands,
+request-bound opening and generated typed Go frontend; #1402 supplies
+current docs and the executable database example.
 
-Treat that work as an implementation dependency to reconcile, not a parallel
-SDK design to recreate. Its engine-owned execution, catalog/generated Go
-types, engine-validated options, and cross-language tests fit this plan.
-Review the following differences before freezing interfaces:
+The shipped target identifier is `JsonSearch`; Go uses `eql.JSONSearch`,
+`JSONSearchQuery`, `JSONSearchLeafQuery` and `JSONEntry`. Do not impose the
+proposed `EncryptedJson` glossary as a pre-release rewrite. Preserve the
+role distinctions and freeze actual customer names before later Rust renames.
+Prepared Go reads retain their cipher and use `Open(ctx, rows)`. The engine
+rederives trusted selectors/read keys from the original request. No new
+persistent guest-handle protocol is needed to implement that verification.
 
-- Route its JSON-specific option plumbing through the general target's
-  typed options/deserialization boundary. Go tags may retain idiomatic
-  syntax, but lower to target options rather than a second JSON policy path.
-- Adapt the proposed `Layout` integration to the configured-target contract;
-  no second executor or permanently competing public configuration model.
-- Reconcile type/registry names and generated query accessors with the shared
-  glossary and configured query capabilities. Its `At.*` accessor proposal
-  is useful input, not an accepted Rust or Go naming decision here.
-- Carry the agreed context requirements and paired method semantics into
-  the relevant language interfaces without requiring identical language
-  syntax. Distinguish JSON `null` as content from nullable SQL fields.
-- Evaluate its JSON-text ABI recommendation for numeric fidelity and return
-  types. This is compatible with direct typed EQL output adaptation: input
-  transport text and an avoidable encrypted-output Serde round trip are
-  different boundaries.
-- Release scope is now decided: extraction, opening entries and walks ship
-  in the comprehensive first version alongside writes/queries. The earlier
-  Go plan's step-5 deferral is superseded by the linked JSON operation
-  inventory; sequential internal PRs must not become a reduced release.
-- Byte-for-byte parity tests need deterministic randomness as that plan
-  proposes; normal randomized encryption needs cross-opening/query tests.
+Residual requirements must be explicit: SQL children/counts exist but a
+parent-bound plaintext child opener does not; selector opening accepts at
+most one entry per document group. Use subtree reads for all-match plaintext
+retrieval. General scope/row-binding inputs remain unsupported for EQL
+targets. The existing column/keyset profile can ship without claiming them.
 
-These are dependencies and recommendations recorded locally. No changes or
-comments have been posted to the parallel PR or its issues.
+The JSON contract now uses randomized projection order and cascade-bound
+ciphertexts. Semantic parity and cross-opening are required; raw term byte
+equality is meaningful only with controlled test randomness. Go typed JSON
+adapters follow `encoding/json`, while raw JSON goes through the strict
+engine parser. Do not claim arbitrary Go encoders preserve every input byte.
 
 ## Prior query design: baseline and reconciliation
 
@@ -834,44 +836,34 @@ Track this action in
 for this review. It explicitly distinguishes storage stability from the
 transport-only rationale in Vitamin C #332.
 
-**Recommendation, 2026-10-25:** reuse Vitamin C's frame writer/parser as the
-foundation for the library-owned blob codec, with a specified blob Serde
-mapping. Do not adopt the existing transport Serde mapping unchanged.
-The inspected dependency is `vitaminc-aead-frame` 0.8.0; its `serde` module
-already provides `to_vec(&T)` and `from_slice::<T>(&[u8])`. Stack currently
-uses that module for dynamic control data. Its module documentation
-explicitly scopes it to transport data rather than plaintext to seal.
+**Implemented upstream and in Go, 2026-10-27:** Vitamin C's dedicated
+storage profile and Go reader/writer address the format work from #519
+(#520/#526, carried onto upstream main via #544). Stack #1369/#1370 adopt
+the Go codec: opaque generated structs call `vcffi.MarshalStorage` and
+`UnmarshalStorage`. The profile is versioned (`VCS` plus version), supports
+explicit optional values and typed map keys, and is separate from transport.
+The transport mapping's `Some(())` ambiguity and text-only map-key rules
+must not be reported as defects of this new storage profile.
 
-The implementation already guards the serializer output, temporary variant
-buffers, and buffered map keys with `Zeroizing`. The underlying
-`vitaminc-aead` frame writer grows into a fresh allocation and wipes the old
-one. However, `to_vec` returns an ordinary `Vec<u8>` on success. Provide an
-internal guarded-output entry point or sensitive sink for the blob path,
-keeping the result guarded through sealing. Inspect remaining temporary
-storage and custom Serde paths before asserting a complete cleanup contract.
+Go generated shapes use `vc` tags and `GeneratedVersion2`. A reader rejects
+unsupported future blob versions distinctly and retains the old JSON
+fallback. Go storage mapping has documented qualifications: nil containers
+become empty, supported nonfinite floats round-trip, and unsupported opaque
+types are refused by generation. Go pointers and Rust `Option` do not always
+write identical bytes; cross-reading and the normative corpus matter.
 
-The current mapping is not lossless for every ordinary Serde type:
-`serialize_some` delegates directly to its value, while `None` and unit both
-encode as null. Thus `Some(())` reads back as `None`; nested optional values
-have the same ambiguity. The blob mapping must preserve option presence
-explicitly, using an unambiguous representation, and test these cases.
-The current map representation also requires text keys. Specify support or
-explicit rejection for non-string map keys, and document enum/buffered Serde
-limitations rather than advertising all `Serialize` types as round-trippable.
+Rust workspaces still use crates.io Vitamin C 0.8.0; the final proposed Rust
+`OpaqueBlob` facade has not thereby been implemented. Adopt the dedicated
+storage entry points when that facade lands rather than repurposing the
+transport Serde codec. Go's temporary pseudo-version dependency must move
+to released module tags for a final Go release. A new serializer evaluation
+is not on the customer critical path.
 
-Frame parsing validates one complete frame before invoking `Deserialize`,
-but that neither prevents type-level decode failures nor cleans up partial
-application values. Resolve that cleanup boundary alongside format limits,
-authenticated codec versioning, and cross-language fixtures. Reusing the
-frame format is not a constant-time guarantee and does not make an opaque
-blob a structurally encrypted JSON document.
-
-[Borsh](https://docs.rs/borsh/latest/borsh/) remains a fallback if the blob
-mapping would require disproportionate changes. It introduces
-`BorshSerialize` / `BorshDeserialize` instead of the Serde traits, and has
-writer-based serialization. Changing serialization libraries does not by
-itself establish wiping or a constant-time contract. Prefer evaluating the
-existing frame machinery against these requirements first.
+Stable bytes do not establish constant-time behavior or complete cleanup.
+Retain the remaining guarded-output, temporary-buffer, partial decode and
+caller-owned-value work, without changing stored format. JSON tree retains
+its own node/envelope encoding; its post-cascade compatibility profile must
+be frozen separately from opaque blobs.
 
 The same consuming contract applies to target-directed `encrypt_into`.
 For a structural target, declared passthrough fields intentionally
@@ -895,32 +887,34 @@ this design discussion.
 
 ## Configured-target implementation sequence and completion criteria
 
-Customer commitments supersede the earlier Rust/Go front-end lockstep sequence:
+Customer commitments supersede the earlier Rust/Go front-end lockstep sequence.
+The foundational Go JSON slice and opaque storage adoption are now merged.
 
-1. **JSON engine baseline is landed:** #1345, #1358, #1361 and #1363 have
-   merged. Build Go support against that baseline; revise the older #1353 plan.
-2. **Settle Go/dynamic contracts and storage profiles:** target options,
-   context/scope, errors, query composition and stable Vitamin C encodings.
-   Vitamin C #520 and #526 implement the Rust/Go storage profiles and await
-   colleague review and release; adoption remains a Stack integration task. Start short-gram research immediately;
-   its storage/query implications must resolve before that feature freezes.
-3. **Deliver Go JSON and configurable match search:** use the landed engine
-   and SQL contract, implement analyzer/filter definitions and supported
-   two-character behavior, and preserve the comprehensive JSON operation
-   inventory. Carry through the numeric round-trip fix from #1366 (#1364).
-4. **Freeze and release the customer surface:** Go generation/runtime tests,
-   Rust-engine/Go cross-opening, PostgreSQL queries, schema/semantic
-   conformance, and stable storage/search vectors are release gates.
-   The final Rust derive facade is not.
-5. **Complete Rust ergonomics and packaging:** implement public traits,
-   derives and examples and move crates behind the frozen Go and data
-   contracts. Internal plans may change; customer data must remain usable.
+1. **Specify the implemented contract.** Capture target options, operator
+   input/result encodings, grouped reads, errors and the column/keyset
+   profile in the formal interoperability spec and conformance fixtures.
+   Keep proposed schema envelopes distinct from the current field-map grammar.
+2. **Close actual remaining customer gaps.** Parent-bound child opening,
+   complex ordered-path declarations if needed, configurable Go match
+   options (#1112) and the tokenizer/filter pipeline. #1397 already supplies
+   short whole-word matching through EQL; confirm its accepted leakage and
+   freeze its index semantics rather than planning it as unimplemented.
+3. **Validate and freeze the release candidate.** Run the existing engine,
+   Go/guest and PostgreSQL suites against the selected bundle. Preserve
+   numeric/null behavior, cascade tamper checks, wildcard/fallback semantics,
+   known omission limitations and post-cascade stored vectors. Tests already
+   landed are not proof this review reran a release build.
+4. **Release the dependencies and customer surface.** Replace Vitamin C's
+   temporary Go pseudo-version pins for a final release; the existing guard
+   allows prereleases. Opaque storage is already integrated; keep it separate
+   from the JSON-tree storage profile. Build production guests and matching SQL.
+5. **Complete Rust ergonomics and packaging.** Implement public traits,
+   derives, definition lifecycle and crate moves behind the frozen Go/data
+   contract. Direct EQL conversion is a format-preserving optimization.
 
-Keep shared validation and one execution engine throughout. Final static
-Rust examples become executable acceptance tests in step 5; they need not
-delay step 4. Each delivered contract change updates its specification and
-fixtures in the same change. Do not add a second policy location through
-an ad hoc plaintext-configuration wrapper.
+Use one execution engine throughout. The final Rust facade and package
+layout are not gates for the existing Go JSON profile. Do not reimplement
+configured JSON options or request-bound reads that have already landed.
 
 ### Required deliverable: dynamic interoperability specification
 
@@ -1505,16 +1499,16 @@ specification and implementation obligations:
 
 | Remaining question | Decision required |
 | --- | --- |
-| JSON contract review | User review is in progress. Review concrete operation recipes against the comprehensive required inventory, including stricter path validation and request-bound extraction. Custom-stage portability, validation timing and initial ORE equality policy are now accepted. |
+| JSON contract completion | Main Go surface is implemented. Close parent-bound child opening and formal conformance gaps; use current cascade/random-order semantics. Do not reopen operator design or rename shipped Go APIs for cosmetic consistency. |
 | Key selection and optional provider policy | Review plaintext-derived keyset selection, client-scoped routed execution, and ZeroKMS lock context as optional provider capabilities. Assess the neutral data/index-key boundary and the intentional non-use of Vitamin C AsyncCipher in the provider-capabilities companion. |
-| Customer storage profiles | Stabilize the Vitamin C encodings and semantics used by Go/JSON/search before release, coordinating #519 upstream. Full Rust blob conveniences can follow; unsupported shapes must remain explicitly unsupported. Crate relocation is deferred. |
-| Configurable match and short input | Whole-word semantics are confirmed. Define the analyzer/token-filter catalog and named indexes/Boolean composition; choose the short-word mechanism only after leakage/performance assessment. Select the storage/query scheme before release. |
+| Customer storage profiles | Go opaque storage is integrated. Replace temporary Go dependency pins for final release and freeze post-cascade JSON/search profiles. Rust blob conveniences and crate relocation may follow. |
+| Configurable match and short input | #1397 implements deterministic short-word terms in the same Bloom filter. Broader configurable Go tokenizers/filters remain, including #1112. Reconcile the earlier privacy concern explicitly; merging support is not proof of unchanged leakage. |
 | Packaging and names — review in progress | Review the packaging companion's shared format crate, Stack-owned value execution, primitive-only Vitamin C boundary, AsyncCipher retirement, ZeroKMS client rename and role-based JSON names. Encoded ciphertext field targets themselves are accepted. The accepted trait names, `ScopeKey`, and receiver choices are not open again. |
 
-Next reconcile the operation document and #1353 with the merged JSON
-stack. Settle the Go contract and adopt the upcoming Vitamin C storage
-release. Use the customer-facing conformance gates above for release. Packaging remains a proposed destination after Go
-delivery; finish query integration without reopening ORE equality.
+Next complete the supported-contract specification and remaining customer
+configuration/read gaps, then validate the candidate and resolve final-release
+pins. The original JSON vertical slice is already implemented. Packaging
+remains deferred; keep initial ORE equality policy unchanged.
 
 Specification/implementation work still includes exact context/scope grouping
 and encoding, dynamic grammar and version identifiers, error codes, binary

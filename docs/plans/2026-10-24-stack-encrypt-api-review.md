@@ -1144,3 +1144,33 @@ search. The current tokenizer permits length 2, but the current one-match
 output and one/range-query-term shapes need expansion for named filters and
 Boolean alternatives. Resolve the scheme's leakage, SQL representation and
 performance before release; do not silently defer the customer requirement.
+
+### Merged implementation reconciliation, 2026-10-27
+
+Reviewed `next` at `ffeed7adb3f7d8739cda53261046147852bffc82` against the
+previous `ebdb5de0a` baseline. #1372/#1373/#1378/#1402 deliver the Go JSON
+catalog, configured targets, operators, request-bound opening, typed document
+adapters and executable documentation. #1347–#1352 are closed. #1369/#1370
+integrate Go opaque storage; final Go releases still require replacing the
+temporary Vitamin C pseudo-version pins. Rust dependencies remain on 0.8.0.
+
+#1379 adds cascade authentication and randomized stored/projection order.
+Wildcard `->` returns an unspecified match, not the first document element.
+Post-cascade data is the format to freeze; unchanged header version 1 does
+not imply compatibility with the old prototype AAD. Read verification still
+does not authenticate result completeness, absence or database row identity.
+
+#1397 implements deterministic, domain-separated short-word terms inside
+the existing Bloom filter, enabled by EQL's pinned match profile. This avoids
+a separate short-word index but is not the random-variant mechanism explored
+earlier, and it does not by itself resolve the user's frequency/leakage
+concern. Native Go index options still refuse configuration (#1112). The
+uncommitted ngram research and Go delivery document are unchanged.
+
+The refreshed API plan and JSON operation inventory mark landed work as
+implemented. Remaining items include the formal interoperability spec and
+conformance corpus, parent-bound child opening, configurable Go match
+pipelines, direct typed EQL conversion and later context-role separation.
+The customer release does not wait for final Rust traits or crate moves.
+This review inspected source and existing tests; runtime/database suites
+were not rerun and no production code was changed.
