@@ -51,7 +51,7 @@ catalogs:
     '@vitest/coverage-v8': 4.1.11
   security:
     '@clerk/nextjs': 7.9.14
-    next: 15.5.27
+    next: 15.5.28
     vite: 8.3.4
 
 # Security overrides for Dependabot alerts on transitive deps that Dependabot
@@ -94,8 +94,8 @@ overrides:
   # patched 1.2.2 (published 2026-09-30). Reached through postcss and magicast,
   # both of which declare ^1.x, so the pin is in range for every consumer.
   'source-map-js@>=1.0.0 <1.2.2': '1.2.2'
-  # #145 GHSA-fx2h-pf6j-xcff, #146 GHSA-v6wh-96g9-6wx3 — vite dev server (Windows)
-  'vite@>=7.0.0 <7.3.5': '~7.3.5'
+  # #145 GHSA-fx2h-pf6j-xcff, #146 GHSA-v6wh-96g9-6wx3, #250-#252 GHSA-587h-7wmj-h5pm, GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw — vite dev server
+  'vite@>=7.0.0 <7.3.7': '~7.3.7'
   # #142 GHSA-g7r4-m6w7-qqqr — esbuild dev server. 0.28.1 is the FIRST patched
   # release and sits outside tsup@8.5.1's declared ^0.27.0 (esbuild 0.x minors
   # are breaking). Exercised builds pass; retire by bumping tsup once a release

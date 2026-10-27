@@ -1,3 +1,4 @@
+-- ONLY EQL VERSION: 3
 -- REQUIRE: src/v3/schema.sql
 
 --! @file v3/json/types.sql

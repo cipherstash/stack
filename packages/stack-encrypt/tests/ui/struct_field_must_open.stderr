@@ -13,11 +13,11 @@ help: the trait `FromScalar` is not implemented for `Name`
              Vec<u8>
              [u8; N]
              bool
+             chrono::datetime::DateTime<chrono::offset::utc::Utc>
+             chrono::naive::date::NaiveDate
              f32
              f64
              i128
-             i16
-             i32
            and $N others
    = note: required for `Name` to implement `Decrypt`
    = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `DecryptInto<Name>`

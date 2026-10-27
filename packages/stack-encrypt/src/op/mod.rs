@@ -347,14 +347,17 @@ impl<S: 'static> Input<Pair> for (S, S) {
 
 /// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
 /// [`Between`]) are answered over: the integers of 16 bits and wider, the
-/// floats (`f32` and `f64`) and text (`String`). Not `u8` or `i8`, which
-/// have no order term ([`Orderable`] says why), as `bool` has none. Each is
-/// encoded as its [`Orderable`] target and its terms order as cllw-ore
-/// orders that encoding: integers as numbers; floats as Postgres's `float8`
-/// does, `-0.0` tied with `0.0` and every NaN one value above `+Infinity`,
-/// an `f32` as the `f64` it widens to; text by the system ADR-0002's fold,
+/// floats (`f32` and `f64`), text (`String`), and dates, timestamps and
+/// decimals ([`value`](crate::value)). Not `u8` or `i8`, which have no
+/// order term ([`Orderable`] says why), as `bool` has none. Each is encoded
+/// as its [`Orderable`] target and its terms order as clww-ore orders that
+/// encoding: integers as numbers; floats as Postgres's `float8` does,
+/// `-0.0` tied with `0.0` and every NaN one value above `+Infinity`, an
+/// `f32` as the `f64` it widens to; text by the system ADR-0002's fold,
 /// Unicode 16 NFC with case and accents folded, so `Café`, `cafe` and
-/// `CAFÉ` tie and `alice` orders before `Zoe` (ADR-0009).
+/// `CAFÉ` tie and `alice` orders before `Zoe` (ADR-0009); dates by day;
+/// timestamps by the microsecond, so instants within one microsecond tie;
+/// and decimals by value, so `1.5` ties `1.50`.
 ///
 /// Sealed: a type joins only when the order its terms compare in is the
 /// one its operators promise, so a type whose terms could order otherwise
@@ -371,9 +374,9 @@ impl<S: 'static> Input<Pair> for (S, S) {
 ///
 /// [`Orderable`]: crate::sem::Orderable
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats and text",
+    message = "`{Self}` is not ordered: the ordering operators are answered over the integers of 16 bits and wider, the floats, text, dates, timestamps and decimals",
     label = "no ordering operator over this type",
-    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64` or a `String`; a `u8`, an `i8` and a `bool` have no order term"
+    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u16` to `u128`, `i16` to `i128`, `f32`, `f64`, a `String`, or a `value::Date`, `value::Timestamp` or `value::Decimal`; a `u8`, an `i8` and a `bool` have no order term"
 )]
 pub trait Ordered: sealed::Sealed + Orderable {}
 
@@ -383,7 +386,22 @@ macro_rules! ordered {
         impl Ordered for $ty {}
     )+};
 }
-ordered!(u16, u32, u64, u128, i16, i32, i64, i128, f32, f64, String);
+ordered!(
+    u16,
+    u32,
+    u64,
+    u128,
+    i16,
+    i32,
+    i64,
+    i128,
+    f32,
+    f64,
+    String,
+    crate::value::Date,
+    crate::value::Timestamp,
+    crate::value::Decimal,
+);
 
 /// Text search: rows whose text contains the query's tokens, under the
 /// match index's tokenizer. Not containment: a Bloom match is order- and
@@ -1018,5 +1036,23 @@ mod tests {
         assert!(Supports::<Between, (i64, i64)>::check(&Ope, &(1, -1)).is_ok());
         assert!(Supports::<Lt, u16>::check(&Ore, &7).is_ok());
         assert!(Supports::<Gte, i128>::check(&Ope, &-7).is_ok());
+    }
+
+    /// A date, a timestamp and a decimal are ordered, through every order
+    /// index, and `Between` takes a pair of each.
+    #[test]
+    fn dates_timestamps_and_decimals_are_ordered() {
+        use crate::value::{Date, Decimal, Timestamp};
+        fn answers<Op: Operator, T: TermFor<Op>>() {}
+        answers::<Lt, OreTerm<Date>>();
+        answers::<Gte, OpeTerm<Timestamp>>();
+        answers::<Between, RangeQuery<OreTerm<Decimal>>>();
+        let day = || Date::from_days_since_epoch(19_782).expect("in range");
+        let at = || Timestamp::new(1_700_000_000, 5).expect("in range");
+        let price = || Decimal::new(150, 2).expect("in range");
+        assert!(Supports::<Lt, Date>::check(&Ore, &day()).is_ok());
+        assert!(Supports::<Lte, Timestamp>::check(&Ope, &at()).is_ok());
+        assert!(Supports::<Gt, Decimal>::check(&OreBlock, &price()).is_ok());
+        assert!(Supports::<Between, (Date, Date)>::check(&Ore, &(day(), day())).is_ok());
     }
 }

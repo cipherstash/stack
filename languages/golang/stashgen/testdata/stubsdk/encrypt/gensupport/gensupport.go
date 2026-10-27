@@ -14,8 +14,8 @@ import (
 
 type generatedVersion uint8
 
-// GeneratedVersion1 is the layout of files stashgen writes today.
-const GeneratedVersion1 generatedVersion = 1
+// GeneratedVersion2 is the layout of files stashgen writes today.
+const GeneratedVersion2 generatedVersion = 2
 
 // OpaqueField is the one field of an opaque declaration.
 const OpaqueField = "value"
@@ -44,6 +44,7 @@ const (
 	Timestamp Kind = "timestamp"
 	String    Kind = "string"
 	Bytes     Kind = "bytes"
+	JSON      Kind = "json"
 )
 
 // Redacted formats a value with its sealed fields hidden.
@@ -87,6 +88,7 @@ func (d Declaration) Encrypt(name string, kind Kind) Declaration                
 func (d Declaration) EncryptIndex(name string, kind Kind, idx ...encrypt.Index) Declaration { return d }
 func (d Declaration) Index(name string, kind Kind, idx ...encrypt.Index) Declaration        { return d }
 func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration        { return d }
+func (d Declaration) Options(name string, options TargetOptions) Declaration                { return d }
 func (d Declaration) Omit(name string) Declaration                                          { return d }
 func (d Declaration) Err() error                                                            { return nil }
 
@@ -128,6 +130,10 @@ type Field[T any] struct{ _ struct{} }
 // NewField makes the entry for one field of a declaration.
 func NewField[T any](Declaration, string) Field[T] { return Field[T]{} }
 
+// NewDocumentField makes the entry for a document field whose type holds a
+// struct.
+func NewDocumentField[T any](Declaration, string) Field[T] { return Field[T]{} }
+
 func (Field[T]) Encrypt(context.Context, *encrypt.Cipher, T) (Output, error)      { return Output{}, nil }
 func (Field[T]) Term(context.Context, *encrypt.Cipher, string, T) ([]byte, error) { return nil, nil }
 func (Field[T]) Range(context.Context, *encrypt.Cipher, string, T, T) ([]byte, []byte, error) {
@@ -164,3 +170,83 @@ func NoticePrintsPlaintext(typeName string)           {}
 
 // Identity gives a field a context part other than its name.
 func (d Declaration) Identity(name, identity string) Declaration { return d }
+
+// NullMode is how a sealed field declared over a pointer stores nil.
+type NullMode string
+
+const (
+	NullSealed NullMode = "sealed"
+	NullSQL    NullMode = "sql"
+)
+
+// Null says how the named field, declared over a pointer, stores nil.
+func (d Declaration) Null(name string, mode NullMode) Declaration { return d }
+
+// Deref is a field declared over a pointer as Source gives it.
+func Deref[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// EncryptNull seals nil for a field that stores it as a sealed null.
+func (f Field[T]) EncryptNull(context.Context, *encrypt.Cipher) (Output, error) {
+	return Output{}, nil
+}
+
+// NullTerm derives an exact operator's term for nil.
+func (f Field[T]) NullTerm(context.Context, *encrypt.Cipher, string) ([]byte, error) {
+	return nil, nil
+}
+
+// GetPtr reads one opened field declared over a pointer.
+func GetPtr[T any](Values, string) (*T, error) { return nil, nil }
+
+// GetDocument reads one opened document field into its Go type.
+func GetDocument[T any](Values, string) (T, error) { var z T; return z, nil }
+
+// GetDocumentPtr reads one opened document field declared over a pointer.
+func GetDocumentPtr[T any](Values, string) (*T, error) { return nil, nil }
+
+// JSONText is a Go value as JSON text.
+func JSONText(any) ([]byte, error) { return nil, nil }
+
+// TargetOptions are the options an EncryptInto field gives its EQL type.
+type TargetOptions struct {
+	SealedRoot *bool
+	Ordered    []string
+}
+
+// Ptr is a pointer to v.
+func Ptr[T any](v T) *T { return &v }
+
+// JSONQuery derives a containment operator's query on a JSON field.
+func JSONQuery[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, any) (Q, error) {
+	return nil, nil
+}
+
+// JSONQueryAt derives an operator at a path on a JSON field.
+func JSONQueryAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, string, any) (Q, error) {
+	return nil, nil
+}
+
+// JSONBetweenAt derives between_at on a JSON field.
+func JSONBetweenAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, any, any) (encrypt.JSONRange[Q], error) {
+	return encrypt.JSONRange[Q]{}, nil
+}
+
+// JSONSelect prepares `->` at a path on a JSON field.
+func JSONSelect[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string) (encrypt.JSONSelection[E], error) {
+	return encrypt.JSONSelection[E]{}, nil
+}
+
+// JSONSubtree prepares a subtree read at a path on a JSON field.
+func JSONSubtree[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, encrypt.JSONReadOptions) (encrypt.JSONRead[E], error) {
+	return encrypt.JSONRead[E]{}, nil
+}
+
+// JSONNodeToken derives the token of the node at a path.
+func JSONNodeToken[T any](context.Context, Field[T], *encrypt.Cipher, string, string) (encrypt.JSONToken, error) {
+	return "", nil
+}

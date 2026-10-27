@@ -2,43 +2,43 @@
   "_comment": "The v4 query operands eql-bindings derives for one plaintext of each OPE-ordered type under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
   "floor": {
     "plaintext": -3,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"floor\"},\"op\":\"0068773fbf20d83c18c9e2c158d14a9601d12eab933e59d10e163110e4f030377b\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"floor\"},\"op\":\"00ef8ea3833a80e22d0add60fdbcf250c26a3ce5ca10d6bb890804e19e4458fb1b\"}"
   },
   "handle": {
     "plaintext": "carol",
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"handle\"},\"hm\":\"30fca14a65e5695fc96bd9fc7e3747afe79c7ff2993d532e3ad97f8e8b95ffac\",\"op\":\"00e169c8297d7be0a24e597d20e140b6a098c488dda2a5fab8b1a7071ff703df7f0880519d1ea23890b5c6a01066f62633\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"handle\"},\"hm\":\"30fca14a65e5695fc96bd9fc7e3747afe79c7ff2993d532e3ad97f8e8b95ffac\",\"op\":\"0050d344117a1ebd003b5c7a95186c8d46a9bb20ff555f86bdd726ffb033a113b8daae3b210a878df9b37e0f48f6cd9b97\"}"
   },
   "level": {
     "plaintext": 10,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"level\"},\"op\":\"0159d19c111791f639ba0638692ca6f6c53ecac713e356a7e8bf95fc2d839691f4\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"level\"},\"op\":\"0175ce2d2193c247e19cdeeaf00c3aa33f8f41ae2ae07ea8f54907726ef81d76c6\"}"
   },
   "mean": {
     "plaintext": 0.0,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"mean\"},\"op\":\"017bc9729378e320ff0c1504dc995074a7db7b05d24bed8a923f6944899e4517d213bba21ee639bb01063902e92cad61b3f3b0755b0dacc66fa5188b434c455360\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"mean\"},\"op\":\"0092c35e5c06045d306925d152beb010ac631de046e645a8fc36d9809494f97d17931a4e97b083f7725796c282b7aaa3c6a483634026a4ef01c14c9ec5f7d48743\"}"
   },
   "pace": {
     "plaintext": -0.5,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"pace\"},\"op\":\"00028af974e429d69504e291c6615487c98d3abbaf6a36a012b22bd60ddb569ba83f09243bb5f22d9df419926a7b9e31c7c4411c822471fd427c7a74ac57df0482\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"pace\"},\"op\":\"00fc1eaf0613a705488a607f2415941128f4675696e63176b0747adb930727be4c77852c13c8ecf605cffa93d0ae8c0a39e23d295e17f8d87e78996a4d49fd9ea0\"}"
   },
   "points": {
     "plaintext": 5000000000,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"points\"},\"op\":\"0124da6c76e6a9d3572f27a08b17b843e6581a23213f34fea500706db6d0edf539fee6624d544ab352bbfcd0987056c61e7e2b808fcb36eef07e673ec3639e4235\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"points\"},\"op\":\"00cee5592b12ad2e56642aea465a82520c4975a84e5e423871fd8c293684946167de3bf467704da5d857f93dd27c836494e7a208adad194349f0c37e05a0f60156\"}"
   },
   "score": {
     "plaintext": 9.75,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"score\"},\"op\":\"00cf2820721cd8c187f434f8986fd01c7eb126c713b0619086b0ca6d0b2120f8d322bbc60d5e40ac640ec49f271c0894a6965ab22b7da190f2e2af8f157a7b503f\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"score\"},\"op\":\"0130440c006ce9cfd5eaae7c256850391359737687b73654638245f850c248cdc5b048baf4ea157de1a7ba1da432b34ce8db6242944a1487c8650b12ed349aff2d\"}"
   },
   "speed": {
     "plaintext": 2.5,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"speed\"},\"op\":\"00bbc2ac417a8cb6a4b5b69c9f81223f9016f7ffc9e250417dd5afa5cfd4844dac6f9f72bf972a4aba57ae0f7e64bc7ce315095aab620f1f0f7a567d525837af8c\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"speed\"},\"op\":\"00eb900ca25552ce78eaef5e2496345a98454225f1b19c906a2e7aeb3c52c3fe559b518926897a71ef5b835ae2d445d30274ac3b4bca05c2cba135065fd0581e42\"}"
   },
   "table": "rankings",
   "title": {
     "plaintext": "Mango",
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"title\"},\"hm\":\"5d14d6d4a7e93c15cf6b7a0e92dc102adbfcbfb7c0492ad09d6b1938bafb748b\",\"op\":\"00344fe120b7abb89fdad4d2ace56e65d225dc12e1f08841a86ad18728afb74d36c3bdd298ed9a2e94e98a2e9328a2fa76\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"title\"},\"hm\":\"5d14d6d4a7e93c15cf6b7a0e92dc102adbfcbfb7c0492ad09d6b1938bafb748b\",\"op\":\"00e162e4c13c10a383ee7c6728a616e1e72458a7cc35c5204061bf8f01800520009adea5aca7256ecb6b5a1f95ebfa4fcd\"}"
   },
   "total": {
     "plaintext": -1,
-    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"total\"},\"op\":\"007152e605e2cc13823bd1379c7733939403474f5dfe1a65fa73eb63ea134f4a0505668fc80076fb24aaefd4763b1d1a2be9bf875178cf8f4abdbdce276f071ed9\"}"
+    "query": "{\"v\":4,\"i\":{\"t\":\"rankings\",\"c\":\"total\"},\"op\":\"00fd575c3250caeb1c5e8c45e48cd4ad8ef38eec0d52d6fd9fcf6f53c01dc212fcb747d609ddf4585907072d7fbd9bf29b59314a2d30ef33f1ac857c803ac46bfb\"}"
   }
 }

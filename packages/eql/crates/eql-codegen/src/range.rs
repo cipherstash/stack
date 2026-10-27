@@ -63,18 +63,26 @@ pub fn term_label(term: Term) -> &'static str {
 }
 
 /// The CHECK clauses one bound of a `term` range must satisfy: the shape the
-/// single-bound query domain's term key has. An ORE bound is a non-empty
-/// array of block terms, as `ob` is; an OPE bound is a hex string, as `op` is.
+/// single-bound query domain's term key has in EQL v4, a JSON string that
+/// starts with one of the term's prefixes ([`eql_domains::V4TermFormat`]).
 fn bound_checks(term: Term, bound: &str) -> Vec<String> {
+    let format = term
+        .v4_format()
+        .unwrap_or_else(|| unreachable!("{term:?} has no range domain"));
+    let prefixes = format
+        .prefixes
+        .iter()
+        .map(|p| format!("'{}'", sql_str(p)))
+        .collect::<Vec<_>>()
+        .join(", ");
     let bound = sql_str(bound);
-    match term {
-        Term::Ore => vec![
-            format!("jsonb_typeof(VALUE -> '{bound}') = 'array'"),
-            format!("jsonb_array_length(VALUE -> '{bound}') > 0"),
-        ],
-        Term::Ope => vec![format!("jsonb_typeof(VALUE -> '{bound}') = 'string'")],
-        Term::Hm | Term::Bloom => unreachable!("{term:?} has no range domain"),
-    }
+    vec![
+        format!("jsonb_typeof(VALUE -> '{bound}') = 'string'"),
+        format!(
+            "left(VALUE ->> '{bound}', {}) IN ({prefixes})",
+            format.prefixes[0].len()
+        ),
+    ]
 }
 
 /// The keys a range value must carry, in order: the envelope's `v` and `i`,
@@ -389,10 +397,10 @@ mod tests {
             "VALUE ? 'lo'",
             "VALUE ? 'hi'",
             "NOT (VALUE ? 'c')",
-            "jsonb_typeof(VALUE -> 'lo') = 'array'",
-            "jsonb_array_length(VALUE -> 'lo') > 0",
-            "jsonb_typeof(VALUE -> 'hi') = 'array'",
-            "jsonb_array_length(VALUE -> 'hi') > 0",
+            "jsonb_typeof(VALUE -> 'lo') = 'string'",
+            "left(VALUE ->> 'lo', 4) IN ('0202', '0203')",
+            "jsonb_typeof(VALUE -> 'hi') = 'string'",
+            "left(VALUE ->> 'hi', 4) IN ('0202', '0203')",
             "COALESCE(VALUE->>'v' = '4', VALUE IS NULL)",
         ] {
             assert!(ore.contains(clause), "ORE range lacks {clause}:\n{ore}");
@@ -405,8 +413,11 @@ mod tests {
             .next()
             .unwrap();
         assert!(ope.contains("jsonb_typeof(VALUE -> 'lo') = 'string'"));
+        assert!(ope.contains("left(VALUE ->> 'lo', 2) IN ('00', '01')"));
         assert!(ope.contains("jsonb_typeof(VALUE -> 'hi') = 'string'"));
+        assert!(ope.contains("left(VALUE ->> 'hi', 2) IN ('00', '01')"));
         assert!(!ope.contains("jsonb_array_length"), "{ope}");
+        assert!(!ore.contains("jsonb_array_length"), "{ore}");
         assert!(v4.contains(
             "COMMENT ON DOMAIN eql_v4.query_integer_range_ore IS 'EQL integer range query operand (block ORE)'"
         ));

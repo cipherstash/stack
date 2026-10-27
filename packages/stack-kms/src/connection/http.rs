@@ -18,12 +18,28 @@ use zerokms_protocol::{ViturRequest, ViturRequestError};
 #[cfg(not(target_arch = "wasm32"))]
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 
-/// The HTTP client could not be built. reqwest's message is not repeated
-/// (it is another library's text); it is this error's source.
+/// The HTTP client could not be built. reqwest's or rustls's message is not
+/// repeated (it is another library's text); it is this error's source.
 #[derive(Debug, Error, miette::Diagnostic)]
 #[error("Failed to initialize HTTP connection")]
 #[diagnostic(code(stack_kms::http_client_init))]
-pub struct ConnectionInitError(#[from] reqwest::Error);
+pub struct ConnectionInitError(#[source] InitFailure);
+
+#[derive(Debug, Error)]
+enum InitFailure {
+    #[error(transparent)]
+    Client(reqwest::Error),
+    /// The TLS configuration (`stack_auth::tls::client_config`) failed.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error(transparent)]
+    Tls(rustls::Error),
+}
+
+impl From<reqwest::Error> for ConnectionInitError {
+    fn from(error: reqwest::Error) -> Self {
+        Self(InitFailure::Client(error))
+    }
+}
 
 impl stack_auth::ErrorPayload for ConnectionInitError {}
 
@@ -136,9 +152,17 @@ impl ZeroKMSConnectionInit for HttpConnection {
         // `with_*` builder methods are documented as no-ops on wasm32.
         #[cfg(not(target_arch = "wasm32"))]
         let builder = {
-            let mut b = builder.timeout(Duration::from_secs(
-                opts.request_timeout.unwrap_or(REQUEST_TIMEOUT_SECS),
-            ));
+            // The platform verifier with the compromised-CA blocklist around
+            // it, shared with stack-auth's client. A preconfigured backend
+            // gets its ALPN from the config, so `h2` is offered exactly when
+            // this crate's `http2` feature built reqwest with HTTP/2.
+            let tls = stack_auth::tls::client_config(cfg!(feature = "http2"))
+                .map_err(|error| ConnectionInitError(InitFailure::Tls(error)))?;
+            let mut b = builder
+                .tls_backend_preconfigured(tls)
+                .timeout(Duration::from_secs(
+                    opts.request_timeout.unwrap_or(REQUEST_TIMEOUT_SECS),
+                ));
             if let Some(connect_timeout) = opts.connect_timeout {
                 b = b.connect_timeout(Duration::from_secs(connect_timeout));
             }

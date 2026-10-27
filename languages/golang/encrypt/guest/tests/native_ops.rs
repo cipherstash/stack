@@ -19,12 +19,14 @@ use std::future::IntoFuture;
 
 mod support;
 
+use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext};
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{
     nonempty, CipherText, Label, Node, PassthroughFrame, PendingStackCipherText, SealedValue,
     StackCipher,
 };
+use stack_encrypt::{Controlled, Protected};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
@@ -35,8 +37,6 @@ use stack_kms::{
 };
 use support::Tree;
 use uuid::Uuid;
-use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext};
-use vitaminc_protected::{Controlled, Protected};
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
 /// `futures::executor::block_on` over anything awaitable: the term API
@@ -330,7 +330,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     .expect("native");
     assert_eq!(eq_bytes, native_bytes.as_bytes());
 
-    // Variable-width CLLW output for strings: the text behind cllw-ore's
+    // Variable-width CLLW output for strings: the text behind clww-ore's
     // one marker byte, eight bytes a plaintext byte.
     let ore_s = block_on(ops::term(
         &cipher.default_keyset(),
@@ -352,15 +352,16 @@ fn unsupported_term_inputs_are_encoding_errors() {
     let ctx = encode(s("f"));
 
     // Bools have no equality domain and no order term; match is text-only;
-    // containers have no term semantics; kinds outside the table and empty
-    // contexts are rejected.
+    // containers have no term semantics; a null has an equality term
+    // (#1298) and no order term; kinds outside the table and empty contexts
+    // are rejected.
     for (value, kind) in [
         (Tree::Bool(true), TERM_EQUALITY),
         (Tree::Bool(true), TERM_ORE),
         (Tree::Bool(false), TERM_OPE),
         (Tree::UInt32(1), TERM_MATCH),
         (Tree::Array(vec![]), TERM_ORE),
-        (Tree::Null, TERM_EQUALITY),
+        (Tree::Null, TERM_ORE),
         (Tree::UInt32(1), 99),
     ] {
         assert_eq!(
@@ -1380,10 +1381,19 @@ fn targets_lists_what_the_build_holds() {
             "BigintOrdOpe",
             "Date",
             "DateEq",
+            "DateOrdOre",
+            "DateOrd",
+            "DateOrdOpe",
             "Timestamp",
             "TimestampEq",
+            "TimestampOrdOre",
+            "TimestampOrd",
+            "TimestampOrdOpe",
             "Numeric",
             "NumericEq",
+            "NumericOrdOre",
+            "NumericOrd",
+            "NumericOrdOpe",
             "Text",
             "TextEq",
             "TextMatch",
@@ -1402,7 +1412,8 @@ fn targets_lists_what_the_build_holds() {
             "DoubleEq",
             "DoubleOrdOre",
             "DoubleOrd",
-            "DoubleOrdOpe"
+            "DoubleOrdOpe",
+            "JsonSearch"
         ],
         "the engine's producible types, in catalog order"
     );
@@ -1785,7 +1796,7 @@ fn the_catalog_lists_each_types_operators() {
                 op.iter().map(|(k, v)| (k.as_str(), text(v))).collect()
             })
             .collect();
-        let only = |want: [(&str, &str); 4]| {
+        let only = |want: [(&str, &str); 5]| {
             assert_eq!(listed, [want.to_vec()], "{name}");
         };
         let exact = |operator: &'static str, index: &'static str| {
@@ -1794,6 +1805,7 @@ fn the_catalog_lists_each_types_operators() {
                 ("fidelity", "exact"),
                 ("arity", "one"),
                 ("index", index),
+                ("input", "value"),
             ]
         };
         // OPE for Ord and OrdOpe, block ORE for OrdOre and SearchOre.
@@ -1806,7 +1818,9 @@ fn the_catalog_lists_each_types_operators() {
         match name.as_str() {
             "IntegerOrd" | "IntegerOrdOpe" | "IntegerOrdOre" | "SmallintOrd" | "SmallintOrdOpe"
             | "SmallintOrdOre" | "BigintOrd" | "BigintOrdOpe" | "BigintOrdOre" | "RealOrd"
-            | "RealOrdOpe" | "RealOrdOre" | "DoubleOrd" | "DoubleOrdOpe" | "DoubleOrdOre" => {
+            | "RealOrdOpe" | "RealOrdOre" | "DoubleOrd" | "DoubleOrdOpe" | "DoubleOrdOre"
+            | "DateOrd" | "DateOrdOpe" | "DateOrdOre" | "TimestampOrd" | "TimestampOrdOpe"
+            | "TimestampOrdOre" | "NumericOrd" | "NumericOrdOpe" | "NumericOrdOre" => {
                 assert_eq!(listed, orderings().to_vec(), "{name}");
             }
             "TextOrd" | "TextOrdOpe" | "TextOrdOre" => {
@@ -1820,13 +1834,41 @@ fn the_catalog_lists_each_types_operators() {
                 ("fidelity", "exact"),
                 ("arity", "one"),
                 ("index", "eq"),
+                ("input", "value"),
             ]),
             "TextMatch" => only([
                 ("operator", "matches"),
                 ("fidelity", "probabilistic"),
                 ("arity", "one"),
                 ("index", "match"),
+                ("input", "value"),
             ]),
+            // A document's operators under the index's defaults: the
+            // orderings at a path only for a field that orders one.
+            "JsonSearch" => {
+                let json = |operator: &'static str, arity: &'static str, input: &'static str| {
+                    vec![
+                        ("operator", operator),
+                        ("fidelity", "exact"),
+                        ("arity", arity),
+                        ("index", "json"),
+                        ("input", input),
+                    ]
+                };
+                assert_eq!(
+                    listed,
+                    [
+                        json("contains", "one", "json"),
+                        json("contained_by", "one", "json"),
+                        json("eq_at", "one", "path_json"),
+                        json("selector", "one", "path"),
+                        json("subtree", "one", "path_bound"),
+                        json("children", "one", "path"),
+                        json("child_count", "one", "path"),
+                    ],
+                    "{name}"
+                );
+            }
             // Each operator through its own index, whose term alone the
             // query carries.
             "TextSearch" | "TextSearchOre" => {
@@ -1837,6 +1879,7 @@ fn the_catalog_lists_each_types_operators() {
                     ("fidelity", "probabilistic"),
                     ("arity", "one"),
                     ("index", "match"),
+                    ("input", "value"),
                 ]);
                 assert_eq!(listed, want, "{name}");
             }
@@ -1954,7 +1997,7 @@ fn operators_of(plan: &[u8], field: &str) -> Vec<[String; 4]> {
                 panic!("an operator is an object");
             };
             let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
-            assert_eq!(keys, ["operator", "fidelity", "arity", "index"]);
+            assert_eq!(keys, ["operator", "fidelity", "arity", "index", "input"]);
             [0, 1, 2, 3].map(|i| text(&entries[i].1).to_owned())
         })
         .collect()

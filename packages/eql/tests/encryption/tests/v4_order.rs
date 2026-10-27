@@ -1,11 +1,13 @@
 //! The OPE-ordered EQL v4 types Stack Encrypt produces: `IntegerOrd`,
-//! `BigintOrd`, `RealOrd`, `DoubleOrd`, `TextOrd` and their `OrdOpe` twins.
+//! `BigintOrd`, `RealOrd`, `DoubleOrd`, `TextOrd`, `DateOrd`,
+//! `TimestampOrd`, `NumericOrd` and their `OrdOpe` twins.
 //!
 //! EQL compares the `op` term as `bytea` after decoding its hex, which is
 //! lexicographic byte order. So the stored terms must sort as ADR-0002's
 //! order keys sort: integers by value, floats as PostgreSQL's `float8` sorts
-//! them (`-0.0` ties `0.0`, every NaN is one value after `+Infinity`), and
-//! text by its fold (case and accents folded, Unicode 16). These tests hold
+//! them (`-0.0` ties `0.0`, every NaN is one value after `+Infinity`), text
+//! by its fold (case and accents folded, Unicode 16), dates by day,
+//! timestamps by the microsecond and decimals by value. These tests hold
 //! that through both entry points, pin the query twins to the stored terms,
 //! and, against an EQL v4 database, check that `<`, `<=`, `>`, `>=`, `=` and
 //! `ORDER BY` find exactly the rows the plaintexts say.
@@ -16,6 +18,7 @@ use eql_bindings::encryption::targets::{self as targets};
 use eql_bindings::v4::{bigint, double, integer, real, text};
 use eql_bindings::Identifier;
 use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{Encrypt, Label, NonEmpty};
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -44,6 +47,12 @@ const ORDERED: &[&str] = &[
     "DoubleOrdOpe",
     "TextOrd",
     "TextOrdOpe",
+    "DateOrd",
+    "DateOrdOpe",
+    "TimestampOrd",
+    "TimestampOrdOpe",
+    "NumericOrd",
+    "NumericOrdOpe",
 ];
 
 /// The stored JSON the named type writes for `value`, through the by-name
@@ -122,6 +131,12 @@ async fn each_ordered_type_stores_its_catalog_terms() {
             frame::<i64>(7)
         } else if name.starts_with("Real") {
             frame::<f32>(7.0)
+        } else if name.starts_with("Date") {
+            frame(Date::from_days_since_epoch(7).unwrap())
+        } else if name.starts_with("Timestamp") {
+            frame(Timestamp::new(7, 8).unwrap())
+        } else if name.starts_with("Numeric") {
+            frame(Decimal::new(750, 2).unwrap())
         } else {
             frame::<f64>(7.0)
         };
@@ -212,6 +227,50 @@ async fn integer_terms_order_by_value() {
             .enumerate()
             .map(|(rank, v)| (rank, frame(*v), "an i64"))
             .collect();
+        sorts_as(&keyset, name, values).await;
+    }
+}
+
+/// A date orders by day, a timestamp by the microsecond (floored, so a
+/// nanosecond before the epoch ties the microsecond before it), and a
+/// decimal by value whatever its scale.
+#[tokio::test]
+async fn date_timestamp_and_decimal_terms_order_by_value() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let day = |days| frame(Date::from_days_since_epoch(days).unwrap());
+    for name in ["DateOrd", "DateOrdOpe"] {
+        let values = vec![
+            (0, day(-719_162), "0001-01-01"),
+            (1, day(-1), "1969-12-31"),
+            (2, day(0), "1970-01-01"),
+            (3, day(19_782), "2024-02-29"),
+        ];
+        sorts_as(&keyset, name, values).await;
+    }
+    let at = |seconds, nanos| frame(Timestamp::new(seconds, nanos).unwrap());
+    for name in ["TimestampOrd", "TimestampOrdOpe"] {
+        let values = vec![
+            (0, at(-1, 999_999_000), "-1us"),
+            (0, at(-1, 999_999_999), "-1ns, floored"),
+            (1, at(0, 0), "the epoch"),
+            (1, at(0, 999), "999ns"),
+            (2, at(0, 1_000), "1us"),
+            (3, at(1_700_000_000, 0), "2023"),
+        ];
+        sorts_as(&keyset, name, values).await;
+    }
+    let number = |mantissa, scale| frame(Decimal::new(mantissa, scale).unwrap());
+    for name in ["NumericOrd", "NumericOrdOpe"] {
+        let values = vec![
+            (0, number(-1_000, 0), "-1000"),
+            (1, number(-15, 1), "-1.5"),
+            (2, number(0, 0), "0"),
+            (2, number(0, 3), "0.000"),
+            (3, number(15, 1), "1.5"),
+            (3, number(150, 2), "1.50"),
+            (4, number(2, 0), "2"),
+        ];
         sorts_as(&keyset, name, values).await;
     }
 }

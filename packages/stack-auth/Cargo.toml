@@ -60,6 +60,13 @@ zeroize = { workspace = true }
 open = "5.3.2"
 jsonwebtoken = { workspace = true }
 tokio = { workspace = true }
+# The bundled clients' TLS configuration (`tls`): the platform verifier with
+# a compiled-in SPKI blocklist around it. Native only, since on wasm32 reqwest
+# uses the runtime's `fetch`, and only with `http`.
+rustls = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
+# Its library is named `webpki`.
+rustls-webpki = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1.47.1", default-features = false, features = ["sync"] }
@@ -75,7 +82,13 @@ default = ["http"]
 # native-only and keep the bundled transport, so they need this feature.
 # `StaticTokenStrategy` is a test double behind `test-utils`, not part of
 # the production surface.
-http = ["dep:reqwest", "dep:bytes"]
+http = [
+  "dep:reqwest",
+  "dep:bytes",
+  "dep:rustls",
+  "dep:rustls-platform-verifier",
+  "dep:rustls-webpki",
+]
 test-utils = []
 # Exposes fuzz-only entry points (e.g. `fuzz_decode_claims`) for the cargo-fuzz
 # harnesses in `fuzz/`. A Cargo feature (not `#[cfg(fuzzing)]`) so it is a known

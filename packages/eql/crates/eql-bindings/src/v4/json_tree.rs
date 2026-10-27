@@ -23,8 +23,8 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stack_encrypt::json::{
-    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
-    JsonSubtreeKey,
+    JsonDocument, JsonLeafQuery, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSelector,
+    JsonSubtree, JsonSubtreeKey,
 };
 use stack_encrypt::target::{AeadContext, ExpectedContext, IndexSpec, Json, Layout};
 use stack_encrypt::{
@@ -32,40 +32,53 @@ use stack_encrypt::{
 };
 use ts_rs::TS;
 
-use crate::v3::terms::KeyHeader;
+use crate::encoding::{Base64Text, Base85Text};
 use crate::v4::{DomainType, SchemaVersion};
 use crate::Identifier;
 
 /// A path selector `s` (and the value selector `vs` of a projection pair):
-/// sixteen bytes, padded standard base64, as PostgreSQL's `encode(x,
-/// 'base64')` writes it. Column-wide: the same path has the same selector
-/// in every row, which is what `->` and containment match on.
+/// sixteen bytes in [`Base64Text`]. Column-wide: the same path has the
+/// same selector in every row, which is what `->` and containment match on.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeSelector(pub String);
+pub struct JsonTreeSelector(pub Base64Text);
 
-/// A node's ciphertext `c`: RFC 1924 base85 (`base85-simd`), which no SQL
-/// function decodes. The AES-GCM envelope of the node's label, kind, child
-/// count and scalar value under the document's data key.
+/// A node's ciphertext `c`, in [`Base85Text`], which no SQL function
+/// decodes. The AES-GCM envelope of the node's label, kind, child count and
+/// scalar value under the document's data key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeCiphertext(pub String);
+pub struct JsonTreeCiphertext(pub Base85Text);
 
-/// An eight-byte parent tag `p`, padded base64: the first eight bytes of
-/// the parent-tag hash, per document, salted by the document's `iv`, so
-/// unlinkable across rows at rest. `eql_v4.json_tree_subtree_at` derives
-/// the same text with `encode(substr(…, 1, 8), 'base64')` to find a child.
+/// An eight-byte chain tag in [`Base64Text`]: an entry's self tag `x`, the
+/// first eight bytes of `H("x" ‖ iv ‖ t)` for the entry's own token `t`, or
+/// its parent tag `p`, the first eight bytes of
+/// `H("p" ‖ iv ‖ t(parent) ‖ LE32(o))`. Salted by the document's `iv`, so
+/// unlinkable across rows at rest. `eql_v4.json_tree_subtree` derives the
+/// same text with `encode(substr(…, 1, 8), 'base64')` to find the node a
+/// token names (`x`) and its children (`p`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeTag(pub String);
+pub struct JsonTreeTag(pub Base64Text);
 
-/// A leaf ordering term `op`, padded base64: the CLLW OPE term of a number
-/// or string leaf at a path the index orders. `eql_v4.ord_term` decodes it
-/// to the bytea-backed `eql_v4_internal.ope_cllw` domain.
+/// A leaf ordering term `op`, in [`Base64Text`]: the CLLW OPE term of a
+/// number or string leaf at a path the index orders. `eql_v4.ord_term`
+/// decodes it to the bytea-backed `eql_v4_internal.ope_cllw` domain.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
-pub struct JsonTreeOrderingTerm(pub String);
+pub struct JsonTreeOrderingTerm(pub Base64Text);
 
-/// `public.eql_v4_json_tree`: a JSON tree document, `{v, i, h, sv:
+/// The document's key header `h`, in [`Base64Text`]: what retrieving the
+/// document's data key needs, and the root's layout
+/// ([`stack_encrypt::json::JsonHeader`]'s bytes). Stored once per document,
+/// and grafted onto every entry an extractor returns. The SQL decodes it to
+/// read the `iv` the parent tags are salted by and the sealed-root flag.
+/// Not the v3 SteVec [`KeyHeader`](crate::v3::terms::KeyHeader), which is
+/// base85 and which SQL never parses.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+pub struct JsonTreeKeyHeader(pub Base64Text);
+
+/// `public.eql_v4_json_search`: a JSON tree document, `{v, i, h, sv:
 /// [entry], q: group}`. Strict. `h` is the document's key header, stored
 /// once (every entry is sealed under the document's one data key); `sv`
-/// holds one entry per node in depth-first order, the root first; `q` is
+/// holds one entry per node, the root first and the rest in a random order
+/// drawn when the document was sealed; `q` is
 /// the document's containment projection, one `{s, vs}` pair per node
 /// nested by array element, which the client writes beside the entries
 /// and which is the only place the value selectors live: the server's
@@ -76,21 +89,29 @@ pub struct JsonTreeOrderingTerm(pub String);
 pub struct JsonTreeDocument {
     pub v: SchemaVersion,
     pub i: Identifier,
-    pub h: KeyHeader,
+    pub h: JsonTreeKeyHeader,
     pub sv: Vec<JsonTreeEntry>,
     pub q: JsonTreeQueryGroup,
 }
 
-/// `public.eql_v4_json_tree_entry`: one node. `s` is the path selector,
-/// `c` the node's own ciphertext; `p` the parent tag below the chain's
-/// heads, which the walk probes by ordinal; `op` the leaf ordering term.
+/// `public.eql_v4_json_entry`: one node. `s` is the path selector,
+/// `c` the node's own ciphertext, `x` the self tag by which a read finds
+/// the node its token names; `p` the parent tag below the chain's heads,
+/// which a read probes by ordinal; `op` the leaf ordering term.
 /// `h`, `j`, `d`, `v` and `i` are what the extractors graft onto an entry
-/// they return, so it opens on its own.
+/// they return, so that it can be opened.
+///
+/// An entry a query returned is the database's word and does not open on
+/// its own: open the entry `->` returned through the selector that asked
+/// for it ([`JsonTreeExtracted::from_selector`]), and a read's rows through
+/// the key that keyed it ([`JsonTreeSubtree::from_key`]). Each checks that
+/// the rows are the ones it asked for.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JsonTreeEntry {
     pub s: JsonTreeSelector,
     pub c: JsonTreeCiphertext,
+    pub x: JsonTreeTag,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub p: Option<JsonTreeTag>,
@@ -99,7 +120,7 @@ pub struct JsonTreeEntry {
     pub op: Option<JsonTreeOrderingTerm>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub h: Option<KeyHeader>,
+    pub h: Option<JsonTreeKeyHeader>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub j: Option<u64>,
@@ -131,7 +152,7 @@ pub struct JsonTreeQueryGroup {
     pub el: Vec<JsonTreeQueryGroup>,
 }
 
-/// `eql_v4.query_json_tree`: a containment needle, the element-nested
+/// `eql_v4.query_json`: a containment needle, the element-nested
 /// projection of the needle document's selectors, with the alternative
 /// projection a root scalar carries. Strict. What
 /// [`stack_encrypt::json::JsonQuery`] serializes to; [`TryFrom`] converts
@@ -146,7 +167,7 @@ pub struct JsonTreeQuery {
     pub alt: Option<JsonTreeQueryGroup>,
 }
 
-/// `eql_v4.query_json_tree_leaf`: an ordering operand at a path, the path's
+/// `eql_v4.query_json_leaf`: an ordering operand at a path, the path's
 /// selector and the leaf ordering term. What
 /// [`stack_encrypt::json::JsonLeafQuery`] serializes to.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -156,18 +177,59 @@ pub struct JsonTreeLeafQuery {
     pub op: JsonTreeOrderingTerm,
 }
 
-/// The rows a subtree walk returned (`eql_v4.json_tree_subtree` or
-/// `json_tree_subtree_at`), collected with the key that keyed the walk:
-/// opens to the value under the walked path, or to the list of complete
-/// subtrees the rows hold.
+/// The entry `col -> selector` returned, with the selector that asked for
+/// it: opens to the scalar the entry holds, or to the whole document for a
+/// sealed root asked for at `$`. The only constructor,
+/// [`from_selector`](Self::from_selector), takes the selector, and opening
+/// refuses an entry that does not carry it
+/// ([`Error::JsonWrongEntry`](stack_encrypt::Error::JsonWrongEntry)), as
+/// [`JsonSelector::open`] does: a database that answers one path with
+/// another path's entry, or with the sealed root, returns an entry that
+/// would otherwise open.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonTreeExtracted {
+    entry: JsonTreeEntry,
+    selector: JsonSelector,
+}
+
+impl JsonTreeExtracted {
+    /// The entry `col -> selector` returned for `selector`, as the server
+    /// sent it.
+    pub fn from_selector(selector: &JsonSelector, entry: JsonTreeEntry) -> Self {
+        Self {
+            entry,
+            selector: *selector,
+        }
+    }
+
+    /// The entry.
+    pub fn entry(&self) -> &JsonTreeEntry {
+        &self.entry
+    }
+
+    /// The selector the read asked for.
+    pub fn selector(&self) -> &JsonSelector {
+        &self.selector
+    }
+}
+
+/// The rows a subtree read returned,
+/// `eql_v4.json_tree_subtree(doc, key.tokens(), budget)`, collected with the
+/// key that keyed the read. Every read returns each node a token names at
+/// depth `0` with everything beneath it, so the rows open to the value at
+/// the path, `{}`, `[]` and scalars included; to `None` as an
+/// `Option<Value>` when the row has no node there; or to a list, one value
+/// per concrete path a wildcard reaches. A wildcard read of an array longer
+/// than the key's bound fails with
+/// [`Error::JsonWildcardTruncated`](stack_encrypt::Error::JsonWildcardTruncated)
+/// rather than open to part of the answer.
 ///
-/// Past its budget a walk returns the sealed root alone, at depth `0`;
-/// those rows open to the whole document, and the key's path selects the
-/// same value(s) the walked rows open to. The key also says which walk the
-/// rows came from (no gates: `json_tree_subtree`, the rows below the path's
-/// node; gates: `json_tree_subtree_at`, the nodes the path reaches), so the
-/// only constructor, [`from_key`](Self::from_key), takes it, and rows
-/// cannot be opened without it.
+/// Past its budget a read returns the sealed root alone, at depth `0`;
+/// those rows open to the whole document, and the key's concrete paths and
+/// probes are evaluated over it to the same answers. The only constructor,
+/// [`from_key`](Self::from_key), takes the key, which checks every row
+/// against its path when the rows are opened, so rows cannot be opened
+/// without it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsonTreeSubtree {
     rows: Vec<JsonTreeEntry>,
@@ -175,7 +237,7 @@ pub struct JsonTreeSubtree {
 }
 
 impl JsonTreeSubtree {
-    /// The rows the walk `key` keyed returned, as the server sent them.
+    /// The rows the read `key` keyed returned, as the server sent them.
     pub fn from_key(key: &JsonSubtreeKey, rows: Vec<JsonTreeEntry>) -> Self {
         Self {
             rows,
@@ -188,7 +250,7 @@ impl JsonTreeSubtree {
         &self.rows
     }
 
-    /// The path the walk was keyed from.
+    /// The path the read was keyed from.
     pub fn path(&self) -> &JsonPath {
         self.key.path()
     }
@@ -221,10 +283,10 @@ macro_rules! json_tree_domain_type {
     };
 }
 
-json_tree_domain_type!(JsonTreeDocument, "public.eql_v4_json_tree");
-json_tree_domain_type!(JsonTreeEntry, "public.eql_v4_json_tree_entry");
-json_tree_domain_type!(JsonTreeQuery, "eql_v4.query_json_tree");
-json_tree_domain_type!(JsonTreeLeafQuery, "eql_v4.query_json_tree_leaf");
+json_tree_domain_type!(JsonTreeDocument, "public.eql_v4_json_search");
+json_tree_domain_type!(JsonTreeEntry, "public.eql_v4_json_entry");
+json_tree_domain_type!(JsonTreeQuery, "eql_v4.query_json");
+json_tree_domain_type!(JsonTreeLeafQuery, "eql_v4.query_json_leaf");
 
 // =============================================================================
 // Conversions to and from the engine's types, through their one wire form
@@ -387,21 +449,25 @@ where
 }
 
 /// An extracted entry opens to the scalar it holds, or to the whole
-/// document for a sealed root, under the column it was extracted from. A
+/// document for a sealed root asked for at `$`, under the column it was
+/// extracted from, once it is shown to carry the selector asked for. A
 /// container node holds no value of its own; its subtree opens through
 /// [`JsonTreeSubtree`].
-impl DecryptInto<Value> for JsonTreeEntry {
+impl DecryptInto<Value> for JsonTreeExtracted {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
-        match self.node() {
-            Ok(node) => node.decryption(AeadContext::from(context)),
+        match self.entry.node() {
+            Ok(node) => self
+                .selector
+                .open(node)
+                .decryption(AeadContext::from(context)),
             Err(error) => Decryption::failed(error),
         }
     }
 }
 
-/// The rows of `json_tree_subtree(doc, token)` open to the value under the
-/// walked node.
+/// The rows of a read open to the value at its path; no node there is an
+/// error, which `Option<Value>` reads as `None`.
 impl DecryptInto<Value> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Value, K> {
@@ -412,8 +478,20 @@ impl DecryptInto<Value> for JsonTreeSubtree {
     }
 }
 
-/// The rows of a walk open to the complete subtrees they hold, in order:
-/// one per node the gates of `json_tree_subtree_at` reached.
+/// The rows of a read open to the value at its path, or `None` where the
+/// row has no node there: the four answers `jsonb #>` gives.
+impl DecryptInto<Option<Value>> for JsonTreeSubtree {
+    type Context = NonEmpty<Identifier>;
+    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<Value>, K> {
+        match self.subtree() {
+            Ok(subtree) => subtree.decryption(AeadContext::from(context)),
+            Err(error) => Decryption::failed(error),
+        }
+    }
+}
+
+/// The rows of a read open to a list: one value per concrete path the key
+/// named that the row has, in order.
 impl DecryptInto<Vec<Value>> for JsonTreeSubtree {
     type Context = NonEmpty<Identifier>;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<Value>, K> {
@@ -439,29 +517,44 @@ impl JsonTreeSubtree {
 mod tests {
     use super::*;
 
+    /// Sixteen bytes of `byte` as a selector's wire text.
+    fn b64(byte: u8) -> String {
+        Base64Text::encode([byte; 16]).as_str().to_owned()
+    }
+
+    /// Eight bytes of `byte` as a self or parent tag's wire text.
+    fn b64_8(byte: u8) -> String {
+        Base64Text::encode([byte; 8]).as_str().to_owned()
+    }
+
+    /// A ciphertext's wire text.
+    fn b85(byte: u8) -> String {
+        Base85Text::encode([byte; 28]).as_str().to_owned()
+    }
+
     #[test]
     fn the_domains_are_the_v4_json_tree_family() {
         assert_eq!(
             JsonTreeDocument::sql_domain_static(),
-            "public.eql_v4_json_tree"
+            "public.eql_v4_json_search"
         );
         assert_eq!(
             JsonTreeEntry::sql_domain_static(),
-            "public.eql_v4_json_tree_entry"
+            "public.eql_v4_json_entry"
         );
-        assert_eq!(JsonTreeQuery::sql_domain_static(), "eql_v4.query_json_tree");
+        assert_eq!(JsonTreeQuery::sql_domain_static(), "eql_v4.query_json");
         assert_eq!(
             JsonTreeLeafQuery::sql_domain_static(),
-            "eql_v4.query_json_tree_leaf"
+            "eql_v4.query_json_leaf"
         );
     }
 
     #[test]
     fn a_query_needs_sv_and_el_and_takes_an_alt() {
         let query: JsonTreeQuery = serde_json::from_value(serde_json::json!({
-            "sv": [{"s": "aa", "vs": "bb"}],
+            "sv": [{"s": b64(0xaa), "vs": b64(0xbb)}],
             "el": [{"sv": [], "el": []}],
-            "alt": {"sv": [{"s": "cc", "vs": "dd"}], "el": []},
+            "alt": {"sv": [{"s": b64(0xcc), "vs": b64(0xdd)}], "el": []},
         }))
         .unwrap();
         assert_eq!(query.el.len(), 1);
@@ -477,8 +570,8 @@ mod tests {
     fn a_document_carries_its_projection() {
         let document = serde_json::json!({
             "v": 4, "i": {"t": "users", "c": "profile"}, "h": "AA==",
-            "sv": [{"s": "aa", "c": "AA=="}],
-            "q": {"sv": [{"s": "aa", "vs": "bb"}], "el": []},
+            "sv": [{"s": b64(0xaa), "c": b85(0), "x": b64_8(0xcc)}],
+            "q": {"sv": [{"s": b64(0xaa), "vs": b64(0xbb)}], "el": []},
         });
         let stored: JsonTreeDocument = serde_json::from_value(document.clone()).unwrap();
         assert_eq!(stored.q.sv.len(), 1);
@@ -492,9 +585,25 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_with_a_field_in_the_wrong_encoding_is_refused() {
+        for entry in [
+            serde_json::json!({"s": "aa", "c": b85(0), "x": b64_8(0)}),
+            serde_json::json!({"s": b64(0), "c": "z", "x": b64_8(0)}),
+            serde_json::json!({"s": b64(0), "c": b85(0), "x": "not base64"}),
+            serde_json::json!({"s": b64(0), "c": b85(0), "x": b64_8(0), "p": "not base64"}),
+            serde_json::json!({"s": b64(0), "c": b85(0)}),
+        ] {
+            assert!(
+                serde_json::from_value::<JsonTreeEntry>(entry.clone()).is_err(),
+                "{entry} should not deserialize"
+            );
+        }
+    }
+
+    #[test]
     fn an_entry_without_the_grafted_fields_does_not_open() {
         let entry: JsonTreeEntry = serde_json::from_value(serde_json::json!({
-            "s": "00", "c": "AA=="
+            "s": b64(0), "c": b85(0), "x": b64_8(0)
         }))
         .unwrap();
         assert!(entry.node().is_err());

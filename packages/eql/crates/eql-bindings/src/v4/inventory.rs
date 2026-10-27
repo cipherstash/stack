@@ -3,7 +3,8 @@
 use super::DomainType;
 use std::marker::PhantomData;
 /// Every v4 stored-payload domain type, in `eql-domains::CATALOG`
-/// order — generated. Scalar domains only: v4 has no SteVec bindings.
+/// order, then each document family's stored document — generated.
+/// v4 has no SteVec bindings.
 pub fn all() -> Vec<Box<dyn DomainType>> {
     vec![
         Box::new(PhantomData::<super::integer::Integer>),
@@ -56,10 +57,12 @@ pub fn all() -> Vec<Box<dyn DomainType>> {
         Box::new(PhantomData::<super::double::DoubleOrd>),
         Box::new(PhantomData::<super::double::DoubleOrdOpe>),
         Box::new(PhantomData::<super::json::Json>),
+        Box::new(PhantomData::<super::json_tree::JsonTreeDocument>),
     ]
 }
 /// Every v4 QUERY-operand twin (`eql_v4.query_<name>`), in
-/// `eql-domains::CATALOG` order — generated.
+/// `eql-domains::CATALOG` order, then each document family's
+/// containment needle and ordering operand — generated.
 pub fn all_query() -> Vec<Box<dyn DomainType>> {
     vec![
         Box::new(PhantomData::<super::integer::IntegerEqQuery>),
@@ -101,6 +104,8 @@ pub fn all_query() -> Vec<Box<dyn DomainType>> {
         Box::new(PhantomData::<super::double::DoubleOrdOreQuery>),
         Box::new(PhantomData::<super::double::DoubleOrdQuery>),
         Box::new(PhantomData::<super::double::DoubleOrdOpeQuery>),
+        Box::new(PhantomData::<super::json_tree::JsonTreeQuery>),
+        Box::new(PhantomData::<super::json_tree::JsonTreeLeafQuery>),
     ]
 }
 /// Every v4 RANGE query operand (`eql_v4.query_<family>_range_<term>`),

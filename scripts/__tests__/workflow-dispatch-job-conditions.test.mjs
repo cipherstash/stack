@@ -118,6 +118,8 @@ const DISPATCH_SKIPPED_JOBS = [
 const EXPECTED_FORK_GUARDED_JOBS = [
   // Anthropic federation is available only to same-repository pull requests.
   '.github/workflows/claude-review.yml / review',
+  // The routine token is a repository secret, which forks are not given.
+  '.github/workflows/code-review.yml / request',
   '.github/workflows/integration-drizzle.yml / integration',
   '.github/workflows/integration-prisma-next.yml / integration',
   '.github/workflows/integration-protect-ffi.yml / integration',

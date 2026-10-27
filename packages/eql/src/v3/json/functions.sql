@@ -1,3 +1,4 @@
+-- ONLY EQL VERSION: 3
 -- REQUIRE: src/v3/schema.sql
 -- REQUIRE: src/v3/json/types.sql
 -- REQUIRE: src/v3/sem/ope_cllw/types.sql

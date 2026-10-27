@@ -36,15 +36,16 @@
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
 //! `between`) through an ORE index over an integer of 16 bits or wider, a
-//! float or text, else a block ORE index, else an OPE index. The typed
+//! float, text, a date, a timestamp or a decimal, else a block ORE index,
+//! else an OPE index. The typed
 //! path's default for an ordering is ORE, and block ORE and OPE are the
 //! typed path's `.via(OreBlock)` and `.via(Ope)`; here a field that
 //! declares only one of them is answered through it. Every order term is
 //! derived over the value's ADR-0002 order key: a float's ties `-0.0` with
 //! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
 //! bytes is not answered, as `op::Ordered` does not cover them. Nor is one
-//! over an 8-bit integer, which has no order term, or over a decimal, date
-//! or timestamp: a plan cannot declare an order index on one yet.
+//! over an 8-bit integer, which has no order term. A timestamp orders by the
+//! microsecond and a decimal by value, so `1.5` ties `1.50`.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -75,14 +76,17 @@ use serde::{Serialize, Serializer};
 use super::WireBytes;
 use std::fmt;
 
-use stack_kms::DataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 
 use super::record::{FieldPlan, Plan};
 use super::term::OneScalar;
 use super::term::{derive, Use};
 use super::value_frame::Parts;
 use super::ValueKind;
-use super::{admits, read, Error, Reason, TargetDescriptor, TargetResolver, ValueFrame};
+use super::{
+    admits, read, Error, Reason, TargetDescriptor, TargetError, TargetOptions, TargetResolver,
+    ValueFrame,
+};
 use crate::op::{Limit, Stats};
 use crate::sem::{match_limit, MatchOptions, QueryTokens, TermError};
 use crate::target::IndexSpec;
@@ -115,12 +119,47 @@ pub enum OpSpec {
     /// `"matches"`: [`op::Matches`](struct@crate::op::Matches), in the case
     /// the field's match index fixes.
     Matches,
+    /// `"contains"`: [`op::Contains`](crate::op::Contains), a stored
+    /// document containing a JSON document (`@>`). Answered by the JSON index
+    /// of a field that stores a document. The inputs of this and the
+    /// operators below are named by [`OpSpec::input`]; [`query_term`]
+    /// derives their operands and [`json_open`] opens their reads.
+    Contains,
+    /// `"contained_by"`: [`op::ContainedBy`](crate::op::ContainedBy), a
+    /// stored document contained by a JSON document (`<@`).
+    ContainedBy,
+    /// `"eq_at"`: [`op::AtPath`](crate::op::AtPath)`(op::Eq)`, a scalar at
+    /// a path.
+    EqAt,
+    /// `"lt_at"`: `op::AtPath(op::Lt)`, at a path the index orders.
+    LtAt,
+    /// `"lte_at"`: `op::AtPath(op::Lte)`.
+    LteAt,
+    /// `"gt_at"`: `op::AtPath(op::Gt)`.
+    GtAt,
+    /// `"gte_at"`: `op::AtPath(op::Gte)`.
+    GteAt,
+    /// `"between_at"`: `op::AtPath(op::Between)`, two bounds, inclusive.
+    BetweenAt,
+    /// `"selector"`: the selector of a path, which `->` and the path
+    /// functions take ([`KeysetCipher::json_selector`](crate::KeysetCipher::json_selector)).
+    Selector,
+    /// `"subtree"`: the tokens of a read of the node at a path, wildcards
+    /// expanded to a bound, which `json_tree_subtree` takes
+    /// ([`KeysetCipher::json_subtree_key_with_bound`](crate::KeysetCipher::json_subtree_key_with_bound)).
+    Subtree,
+    /// `"children"`: the token of the node at a path with no wildcard,
+    /// which `json_tree_children` takes.
+    Children,
+    /// `"child_count"`: the same token, which `json_tree_child_count`
+    /// takes.
+    ChildCount,
 }
 
 impl OpSpec {
     /// Every operator, in declaration order: the order a catalog lists them
     /// in.
-    pub const ALL: [OpSpec; 7] = [
+    pub const ALL: [OpSpec; 19] = [
         OpSpec::Eq,
         OpSpec::Lt,
         OpSpec::Lte,
@@ -128,6 +167,18 @@ impl OpSpec {
         OpSpec::Gte,
         OpSpec::Between,
         OpSpec::Matches,
+        OpSpec::Contains,
+        OpSpec::ContainedBy,
+        OpSpec::EqAt,
+        OpSpec::LtAt,
+        OpSpec::LteAt,
+        OpSpec::GtAt,
+        OpSpec::GteAt,
+        OpSpec::BetweenAt,
+        OpSpec::Selector,
+        OpSpec::Subtree,
+        OpSpec::Children,
+        OpSpec::ChildCount,
     ];
 
     /// The operator a name names, or `None` for a name that is not one.
@@ -146,11 +197,57 @@ impl OpSpec {
             OpSpec::Gte => "gte",
             OpSpec::Between => "between",
             OpSpec::Matches => "matches",
+            OpSpec::Contains => "contains",
+            OpSpec::ContainedBy => "contained_by",
+            OpSpec::EqAt => "eq_at",
+            OpSpec::LtAt => "lt_at",
+            OpSpec::LteAt => "lte_at",
+            OpSpec::GtAt => "gt_at",
+            OpSpec::GteAt => "gte_at",
+            OpSpec::BetweenAt => "between_at",
+            OpSpec::Selector => "selector",
+            OpSpec::Subtree => "subtree",
+            OpSpec::Children => "children",
+            OpSpec::ChildCount => "child_count",
+        }
+    }
+
+    /// Whether the JSON index answers this operator: the document
+    /// operators, whose input is an object of named JSON inputs
+    /// ([`OpSpec::input`]).
+    pub fn is_json(self) -> bool {
+        super::json_query::binds(self).is_some()
+    }
+
+    /// The shape of the operator's input, as a catalog names it: `value`
+    /// (one value of the field's kind), `pair` (two, low then high),
+    /// `json` (`{"json"}`), `path_json` (`{"path", "json"}`), `path_pair`
+    /// (`{"path", "low", "high"}`), `path` (`{"path"}`) or `path_bound`
+    /// (`{"path", "wildcard_bound"?}`).
+    pub fn input(self) -> &'static str {
+        match self {
+            OpSpec::Between => "pair",
+            OpSpec::Contains | OpSpec::ContainedBy => "json",
+            OpSpec::EqAt | OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt => {
+                "path_json"
+            }
+            OpSpec::BetweenAt => "path_pair",
+            OpSpec::Selector | OpSpec::Children | OpSpec::ChildCount => "path",
+            OpSpec::Subtree => "path_bound",
+            OpSpec::Eq | OpSpec::Lt | OpSpec::Lte | OpSpec::Gt | OpSpec::Gte | OpSpec::Matches => {
+                "value"
+            }
         }
     }
 
     /// How far the server's answer to this operator can be trusted: what
-    /// the typed path says by the trait the term implements.
+    /// the typed path says by the trait the term implements. For the JSON
+    /// reads and tokens (`selector`, `subtree`, `children`, `child_count`),
+    /// which are not predicates, `exact` says only that the server finds
+    /// the nodes the operand names, not that it returns them all (a read
+    /// opens what the rows hold; see [`json_open`]). Equality at a wildcard
+    /// path matches when any element does, and an ordering compared through
+    /// `col -> sel` at one sees an unspecified element of each row.
     pub fn fidelity(self) -> Fidelity {
         match self {
             OpSpec::Matches => Fidelity::Probabilistic,
@@ -159,9 +256,10 @@ impl OpSpec {
     }
 
     /// Whether the operator takes a pair of values, low then high, rather
-    /// than one: `between` does.
+    /// than one: `between` does. `between_at` takes one object holding its
+    /// path and both bounds (its [`input`](Self::input) is `path_pair`).
     pub fn takes_pair(self) -> bool {
-        self == OpSpec::Between
+        matches!(self, OpSpec::Between)
     }
 
     /// The index among `indexes` that answers this operator for a field of
@@ -181,6 +279,21 @@ impl OpSpec {
     /// ```
     pub fn answered_by(self, kind: ValueKind, indexes: &[IndexSpec]) -> Option<&IndexSpec> {
         let declared = |wanted: fn(&IndexSpec) -> bool| indexes.iter().find(|index| wanted(index));
+        if self.is_json() {
+            // A document field's JSON index answers the document operators;
+            // the orderings at a path only when it orders some path.
+            if kind != ValueKind::Json {
+                return None;
+            }
+            let ordering = matches!(
+                self,
+                OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt | OpSpec::BetweenAt
+            );
+            return indexes.iter().find(|index| match index {
+                IndexSpec::Json(options) => !ordering || !options.ordered.is_empty(),
+                _ => false,
+            });
+        }
         match self {
             OpSpec::Eq => declared(|index| matches!(index, IndexSpec::Equality)),
             OpSpec::Matches => declared(|index| matches!(index, IndexSpec::Match(_))),
@@ -192,6 +305,19 @@ impl OpSpec {
                     .or_else(|| declared(|index| matches!(index, IndexSpec::OreBlock)))
                     .or_else(|| declared(|index| matches!(index, IndexSpec::Ope)))
             }
+            // Answered above, by the JSON index alone.
+            OpSpec::Contains
+            | OpSpec::ContainedBy
+            | OpSpec::EqAt
+            | OpSpec::LtAt
+            | OpSpec::LteAt
+            | OpSpec::GtAt
+            | OpSpec::GteAt
+            | OpSpec::BetweenAt
+            | OpSpec::Selector
+            | OpSpec::Subtree
+            | OpSpec::Children
+            | OpSpec::ChildCount => None,
         }
         .filter(|index| admits(kind, index))
     }
@@ -205,11 +331,11 @@ impl fmt::Display for OpSpec {
 }
 
 /// The kinds the ordering operators are answered over: the integers of 16
-/// bits and wider, `int16` to `uint128`, the floats and text, as
-/// [`op::Ordered`](crate::op::Ordered) covers them in the typed path. Not
-/// `int8` or `uint8`, which have no order term. Each orders by its ADR-0002
-/// order key; a `float32` is ordered as the `f64` it widens to, as the
-/// typed path asks.
+/// bits and wider, `int16` to `uint128`, the floats, text, and dates,
+/// timestamps and decimals, as [`op::Ordered`](crate::op::Ordered) covers
+/// them in the typed path. Not `int8` or `uint8`, which have no order term.
+/// Each orders by its ADR-0002 order key; a `float32` is ordered as the
+/// `f64` it widens to, as the typed path asks.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
@@ -224,6 +350,9 @@ fn ordered(kind: ValueKind) -> bool {
             | ValueKind::Float32
             | ValueKind::Float64
             | ValueKind::String
+            | ValueKind::Decimal
+            | ValueKind::Date
+            | ValueKind::Timestamp
     )
 }
 
@@ -278,6 +407,8 @@ pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(OpSpec, IndexS
             },
         )
         .collect();
+    // `between` through an EQL type is not answered yet; `between_at` on a
+    // document is (its bounds are two leaf operands).
     OpSpec::ALL
         .into_iter()
         .filter(|op| !op.takes_pair())
@@ -309,13 +440,20 @@ pub enum Operand {
     /// One term: an index term's frozen bytes ([`TermBytes`](super::TermBytes)), or an EQL
     /// query value's JSON bytes.
     One(Vec<u8>),
-    /// A range's two terms, each the index term of one bound, inclusive.
+    /// A range's two terms, each the index term of one bound, inclusive:
+    /// index terms' bytes, or for `between_at` two EQL leaf operands' JSON.
     Range {
         /// The low bound's term.
         lo: Vec<u8>,
         /// The high bound's term.
         hi: Vec<u8>,
     },
+    /// Text: a JSON path's selector (`selector`), or one node's token
+    /// (`children`, `child_count`). Binds as SQL `text`.
+    Text(String),
+    /// A list of text: the tokens of a subtree read (`subtree`), in the
+    /// read's order. Binds as SQL `text[]`.
+    TextList(Vec<String>),
 }
 
 /// The term in its wire form: an object with every key present, an
@@ -326,8 +464,9 @@ pub enum Operand {
 /// | `operator` | string: the [operator's name](OpSpec::name), `"matches"` |
 /// | `fidelity` | string: `"exact"` or `"probabilistic"` ([`Fidelity::name`]) |
 /// | `index` | string: the [key](IndexSpec::key) of the index that answers, `"match"` |
-/// | `domain` | string or null: the query value's PostgreSQL domain, for a field that names an EQL type |
-/// | `term` | bytes: the term, or for `between` a list of two byte strings, the low bound's term then the high's |
+/// | `domain` | string or null: the SQL type the operand binds as: an EQL query domain for a field that names an EQL type, `text` or `text[]` for a selector or tokens, null for an index term's bytes |
+/// | `encoding` | string: what `term` holds: `bytes` (an index term), `eql` (an EQL query value's JSON), `text` or `text_array` |
+/// | `term` | bytes, or for a range a list of two (the low bound's then the high's); a string for `text`; a list of strings for `text_array` |
 impl Serialize for QueryTerm {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
@@ -336,6 +475,7 @@ impl Serialize for QueryTerm {
             fidelity: &'static str,
             index: &'static str,
             domain: Option<&'a str>,
+            encoding: &'static str,
             term: Term<'a>,
         }
         #[derive(Serialize)]
@@ -343,15 +483,20 @@ impl Serialize for QueryTerm {
         enum Term<'a> {
             One(WireBytes<'a>),
             Range([WireBytes<'a>; 2]),
+            Text(&'a str),
+            TextList(&'a [String]),
         }
         Wire {
             operator: self.operator.name(),
             fidelity: self.fidelity().name(),
             index: self.index.key(),
             domain: self.domain.as_deref(),
+            encoding: self.encoding(),
             term: match &self.operand {
                 Operand::One(term) => Term::One(WireBytes(term)),
                 Operand::Range { lo, hi } => Term::Range([WireBytes(lo), WireBytes(hi)]),
+                Operand::Text(text) => Term::Text(text),
+                Operand::TextList(texts) => Term::TextList(texts),
             },
         }
         .serialize(s)
@@ -374,8 +519,9 @@ impl QueryTerm {
         &self.index
     }
 
-    /// The PostgreSQL domain the operand is cast to, for a field that names
-    /// an EQL type; `None` for a field with indexes, whose terms are bytes.
+    /// The SQL type the operand is bound as: the PostgreSQL domain of an EQL
+    /// type's query, `text` or `text[]` for a document's selector, token or
+    /// tokens; `None` for a field with indexes, whose terms are bytes.
     pub fn domain(&self) -> Option<&str> {
         self.domain.as_deref()
     }
@@ -383,6 +529,18 @@ impl QueryTerm {
     /// What the term binds.
     pub fn operand(&self) -> &Operand {
         &self.operand
+    }
+
+    /// What the operand holds, as the wire's `encoding` names it: `bytes`
+    /// for an index term, `eql` for an EQL query value's JSON, `text` for a
+    /// selector or a token, `text_array` for a read's tokens.
+    pub fn encoding(&self) -> &'static str {
+        match &self.operand {
+            Operand::Text(_) => "text",
+            Operand::TextList(_) => "text_array",
+            Operand::One(_) | Operand::Range { .. } if self.domain.is_some() => "eql",
+            Operand::One(_) | Operand::Range { .. } => "bytes",
+        }
     }
 }
 
@@ -461,6 +619,25 @@ fn answers(
     };
     if let Some(name) = field.target() {
         let target = resolver.resolve(name).map_err(Error::Target)?;
+        // A document's operators are its JSON index's under the options
+        // the plan resolved for the field: the orderings at a path only
+        // when it orders one.
+        // An operator is listed only when the target names the SQL type
+        // its operand binds as, so every one listed is one `query_term`
+        // derives.
+        if let Some(TargetOptions::Json(options)) = field.target_options() {
+            let index = [IndexSpec::Json(options.clone())];
+            let operators = OpSpec::ALL
+                .into_iter()
+                .filter(|op| {
+                    super::json_query::binds(*op)
+                        .and_then(|binds| super::json_query::domain(&target, binds))
+                        .is_some()
+                })
+                .filter_map(|op| op.answered_by(kind, &index).map(|i| (op, i.clone())))
+                .collect();
+            return Ok((operators, Some(target)));
+        }
         return Ok((target_operators(&target), Some(target)));
     }
     let indexes = field.indexes();
@@ -524,12 +701,14 @@ pub fn field_operators(
 /// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`]) |
 /// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
 /// | `index` | string: the [key](IndexSpec::key) of the index that answers it, `eq` |
+/// | `input` | string: the shape of the operator's input ([`OpSpec::input`]): `value`, `pair`, `json`, `path_json`, `path_pair`, `path` or `path_bound` |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct OperatorEntry {
     operator: &'static str,
     fidelity: &'static str,
     arity: &'static str,
     index: &'static str,
+    input: &'static str,
 }
 
 impl OperatorEntry {
@@ -540,6 +719,7 @@ impl OperatorEntry {
             fidelity: operator.fidelity().name(),
             arity: if operator.takes_pair() { "pair" } else { "one" },
             index: index.key(),
+            input: operator.input(),
         }
     }
 }
@@ -569,7 +749,23 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
 fn read_input(answer: &Answer<'_>, operator: OpSpec, input: impl Encrypt) -> Result<Input, Error> {
     let name = answer.field.name();
     if !operator.takes_pair() {
-        return read(answer.kind, input)
+        let input = ValueFrame::of(input).map_err(|_| Error::Source {
+            field: Some(name.to_owned()),
+            reason: Reason::FieldType,
+        })?;
+        // A null is found by its equality term, which a field that seals
+        // its nulls stores beside each one (#1298); nothing else has one.
+        if input.is_null() {
+            let sealed = answer.field.null() == Some(super::NullMode::Sealed);
+            return match (sealed, &answer.index) {
+                (true, IndexSpec::Equality) => Ok(Input::One(input)),
+                _ => Err(Error::Source {
+                    field: Some(name.to_owned()),
+                    reason: Reason::NullQuery,
+                }),
+            };
+        }
+        return read(answer.kind, &input)
             .map(Input::One)
             .map_err(|error| error.in_field(name));
     }
@@ -709,13 +905,157 @@ pub fn check_query(
 ) -> Result<(), Error> {
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;
+    if operator.is_json() {
+        let input = ValueFrame::of(input).map_err(|_| json_input(field))?;
+        return super::json_query::check(operator, json_options(&answer)?, &input)
+            .map_err(|error| error.in_field(field));
+    }
     let input = read_input(&answer, operator, input)?;
     check_input(&answer.index, &input)
 }
 
+/// The JSON index options a document field's plan resolved.
+fn json_options<'p>(answer: &Answer<'p>) -> Result<&'p crate::json::JsonOptions, Error> {
+    match answer.field.target_options() {
+        Some(TargetOptions::Json(options)) => Ok(options),
+        // A JSON operator is answered only through a document target,
+        // whose options the plan always resolves.
+        _ => Err(Error::Internal),
+    }
+}
+
+fn json_input(field: &str) -> Error {
+    Error::Source {
+        field: Some(field.to_owned()),
+        reason: Reason::JsonInput,
+    }
+}
+
+/// A JSON operator's term: the operand [`json_query`](super::json_query)
+/// derives, bound as the type its target names for it.
+fn json_term<'a, K: 'static>(
+    cipher: &'a KeysetCipher<'_, K>,
+    answer: Answer<'_>,
+    operator: OpSpec,
+    input: impl Encrypt,
+) -> Result<Pending<'a, QueryTerm, K>, Error> {
+    let field = answer.field.name();
+    let input = ValueFrame::of(input).map_err(|_| json_input(field))?;
+    let target = answer.target.as_ref().ok_or(Error::Internal)?;
+    // The SQL type each operand binds as, from the target: `answer` lists
+    // no operator whose domain the target does not name.
+    let binds = super::json_query::binds(operator).ok_or(Error::Internal)?;
+    let domain = super::json_query::domain(target, binds).ok_or_else(|| {
+        Error::Target(TargetError::NoQuery {
+            name: target.name.clone(),
+        })
+    })?;
+    let index = answer.index.clone();
+    let derived = super::json_query::derive(
+        cipher,
+        answer.field.label(),
+        json_options(&answer)?,
+        operator,
+        &input,
+    )
+    .map_err(|error| error.in_field(field))?;
+    Ok(derived.map(move |operand| QueryTerm {
+        operator,
+        index,
+        domain: Some(domain),
+        operand,
+    }))
+}
+
+/// Check a read of a document field without a cipher: everything
+/// [`json_open`] refuses before it derives anything. A binding calls this
+/// at its boundary.
+///
+/// # Errors
+///
+/// As [`json_open`].
+pub fn check_json_open(
+    plan: &Plan,
+    field: &str,
+    request: impl Encrypt,
+    rows: impl Encrypt,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<(), Error> {
+    let _ = answer(plan, field, OpSpec::Selector, resolver)?;
+    has_context(plan, field)?;
+    let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
+    let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
+    super::json_query::check_open(&request, &rows).map_err(|error| error.in_field(field))
+}
+
+/// Open the rows a read of a document field returned, against the request
+/// that prepared it: the runtime form of [`JsonSelector::open`] and
+/// [`JsonSubtreeKey::open`], for a binding. `request` is the read as the
+/// binding prepared it, `{"operation": "selector" | "subtree", "path",
+/// "wildcard_bound"?}`, and `rows` a list per database row of the entries
+/// the SQL returned for it (`public.eql_v4_json_entry` JSON, as text
+/// or bytes): for `selector`, the one entry `->` returned or none, and for
+/// `subtree`, the rows `json_tree_subtree` returned. The engine derives
+/// the selector or the read key again, under `cipher`'s keyset and the
+/// field's column and options, and checks every row against it; the rows
+/// open through that keyset alone, so a document sealed under another is
+/// refused before any key is retrieved. The result is a list per database
+/// row of JSON
+/// texts, as bytes: for `selector` the scalar or nothing, for `subtree`
+/// one value per concrete path the read named that the row has, in
+/// document order. One key request for every row.
+///
+/// [`JsonSelector::open`]: crate::json::JsonSelector::open
+/// [`JsonSubtreeKey::open`]: crate::json::JsonSubtreeKey::open
+///
+/// # Errors
+///
+/// As [`query_term`] refuses a field that does not answer the read's
+/// operator, and a plan whose context comes from a field of each record
+/// ([`Reason::QueryContextField`]): a read names no record, so it has no
+/// context to derive under. [`Error::Source`] names the field for a
+/// request or rows that do not parse ([`Reason::JsonInput`]). A row that
+/// is not one the read asked for fails the pending
+/// ([`Error::JsonWrongEntry`](crate::Error::JsonWrongEntry)), as does a
+/// wildcard read of an array longer than its bound
+/// ([`Error::JsonWildcardTruncated`](crate::Error::JsonWildcardTruncated)).
+/// A `selector` entry that does not open alone, a container with members
+/// or an altered entry, fails it as
+/// [`Error::JsonNotALeaf`](crate::Error::JsonNotALeaf); a container is read
+/// with `subtree`.
+pub fn json_open<'a, K>(
+    cipher: &'a KeysetCipher<'_, K>,
+    plan: &Plan,
+    field: &str,
+    request: impl Encrypt,
+    rows: impl Encrypt,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<Pending<'a, ValueFrame, K>, Error>
+where
+    K: DataKeySource + Sync + 'static,
+{
+    // Answering `selector` is what makes a field a document field.
+    let answer = answer(plan, field, OpSpec::Selector, resolver)?;
+    has_context(plan, field)?;
+    let request = ValueFrame::of(request).map_err(|_| json_input(field))?;
+    let rows = ValueFrame::of(rows).map_err(|_| json_input(field))?;
+    super::json_query::open(
+        cipher,
+        answer.field.label(),
+        json_options(&answer)?,
+        &request,
+        &rows,
+    )
+    .map_err(|error| error.in_field(field))
+}
+
 /// Derive the query term for one field of a plan, an operator and its
 /// input: one value for most operators, a list of two for
-/// [`between`](OpSpec::Between).
+/// [`between`](OpSpec::Between), and for a document's operators an object
+/// of named inputs ([`OpSpec::input`]), whose operand the engine derives
+/// with the JSON index under the options the plan resolved for the field,
+/// tagged with its encoding ([`QueryTerm::encoding`]) and the SQL type it
+/// binds as ([`QueryTerm::domain`]).
 ///
 /// The input is read as the field's declared kind first ([`read`]), so a
 /// host's `34` as a float queries a `uint64` field as the `u64` it stored.
@@ -759,7 +1099,15 @@ pub fn check_query(
 /// that context. [`Error::Source`] naming the field for an operator the
 /// field does not answer ([`Reason::OperatorNotAnswered`]), an input that
 /// cannot be read as the field's kind ([`Reason::FieldType`]) and a
-/// `between` input that is not two values ([`Reason::NotARange`]).
+/// `between` input that is not two values ([`Reason::NotARange`]). For a
+/// document's operator: an input that is not its object
+/// ([`Reason::JsonInput`]), JSON text that is not a document
+/// ([`Reason::JsonSyntax`], [`Reason::JsonDuplicateKey`],
+/// [`Reason::JsonIntegerRange`]), a position where the operand is a
+/// selector ([`Reason::JsonPathPosition`]) and a wildcard where it names
+/// one node ([`Reason::JsonPathWildcard`]); [`Error::Cipher`] for what the
+/// JSON index refuses (a path that does not parse, a container at a path,
+/// a path the field does not order).
 /// [`Error::Cipher`] for the query refusals the typed path makes: match
 /// text that cuts no token ([`TermError::EmptyTermText`]), and text the
 /// index cannot normalize ([`TermError::Normalize`]). A range whose low
@@ -775,10 +1123,13 @@ pub fn query_term<'a, K>(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, QueryTerm, K>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;
+    if operator.is_json() {
+        return json_term(cipher, answer, operator, input);
+    }
     let input = read_input(&answer, operator, input)?;
     check_input(&answer.index, &input)?;
     let index = answer.index.clone();
@@ -1150,7 +1501,7 @@ mod tests {
         let names: std::collections::BTreeSet<&str> =
             OpSpec::ALL.iter().map(|op| op.name()).collect();
         assert_eq!(names.len(), OpSpec::ALL.len(), "names are distinct");
-        for not_one in ["Eq", "=", "", "contains", "at_path", "matches "] {
+        for not_one in ["Eq", "=", "", "Contains", "at_path", "matches ", "eq-at"] {
             assert_eq!(OpSpec::parse(not_one), None, "{not_one:?}");
         }
     }
@@ -1222,6 +1573,9 @@ mod tests {
                 ValueKind::Float32,
                 ValueKind::Float64,
                 ValueKind::String,
+                ValueKind::Decimal,
+                ValueKind::Date,
+                ValueKind::Timestamp,
             ] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1239,13 +1593,7 @@ mod tests {
                     "{op} {kind}"
                 );
             }
-            for kind in [
-                ValueKind::Bytes,
-                ValueKind::Bool,
-                ValueKind::Decimal,
-                ValueKind::Date,
-                ValueKind::Timestamp,
-            ] {
+            for kind in [ValueKind::Bytes, ValueKind::Bool] {
                 assert_eq!(
                     answered(op, kind, &all),
                     None,
@@ -2185,16 +2533,20 @@ mod tests {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, ["operator", "fidelity", "index", "domain", "term"]);
+        assert_eq!(
+            keys,
+            ["operator", "fidelity", "index", "domain", "encoding", "term"]
+        );
         assert!(matches!(&entries[0].1, Tree::String(s) if s.as_bytes() == b"between"));
         assert!(matches!(&entries[1].1, Tree::String(s) if s.as_bytes() == b"exact"));
         assert!(matches!(&entries[2].1, Tree::String(s) if s.as_bytes() == b"ore"));
         assert!(matches!(&entries[3].1, Tree::Null));
+        assert!(matches!(&entries[4].1, Tree::String(s) if s.as_bytes() == b"bytes"));
         let Operand::Range { lo, hi } = term.operand() else {
             panic!("a range");
         };
         assert!(matches!(
-            &entries[4].1,
+            &entries[5].1,
             Tree::Array(bounds) if matches!(
                 bounds.as_slice(),
                 [Tree::Bytes(l), Tree::Bytes(h)] if l.as_slice() == lo && h.as_slice() == hi
@@ -2292,7 +2644,8 @@ mod tests {
                 ("operator", b"lt".as_slice()),
                 ("fidelity", b"exact".as_slice()),
                 ("arity", b"one".as_slice()),
-                ("index", b"ore".as_slice())
+                ("index", b"ore".as_slice()),
+                ("input", b"value".as_slice())
             ]
         );
     }
@@ -2393,7 +2746,8 @@ mod tests {
                 ("operator", b"between".as_slice()),
                 ("fidelity", b"exact".as_slice()),
                 ("arity", b"pair".as_slice()),
-                ("index", b"ope".as_slice())
+                ("index", b"ope".as_slice()),
+                ("input", b"pair".as_slice())
             ]
         );
         let Tree::Object(entries) =
@@ -2427,6 +2781,7 @@ mod tests {
         fn encrypt<'a, K: 'static>(
             &self,
             _: &str,
+            _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,
@@ -2604,6 +2959,7 @@ mod tests {
         fn encrypt<'a, K: 'static>(
             &self,
             _: &str,
+            _: Option<&crate::dynamic::TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,
@@ -2711,6 +3067,7 @@ mod wire_bytes {
             IndexSpec::Match(MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }),
@@ -2720,6 +3077,7 @@ mod wire_bytes {
             }),
             IndexSpec::Ore,
             IndexSpec::Ope,
+            IndexSpec::Json(crate::json::JsonOptions::default()),
         ]
     }
 
@@ -2743,9 +3101,10 @@ mod wire_bytes {
         )
     }
 
-    /// Every index, and every operator entry under it; three query terms,
-    /// one a range and one with a domain; four limits; three pages of
-    /// verdicts; four catalog entries.
+    /// Every index, the JSON index's included, and every operator entry
+    /// under it; five query terms, one a range, one with a domain, one a
+    /// selector's text and one a read's tokens; four limits; three pages
+    /// of verdicts; four catalog entries.
     #[test]
     fn every_answer_writes_its_pinned_bytes() {
         let mut written = Vec::new();
@@ -2777,6 +3136,18 @@ mod wire_bytes {
                 domain: None,
                 operand: Operand::One(Vec::new()),
             },
+            QueryTerm {
+                operator: OpSpec::Selector,
+                index: IndexSpec::Json(crate::json::JsonOptions::default()),
+                domain: Some("text".to_owned()),
+                operand: Operand::Text("c2VsZWN0b3I=".to_owned()),
+            },
+            QueryTerm {
+                operator: OpSpec::Subtree,
+                index: IndexSpec::Json(crate::json::JsonOptions::default()),
+                domain: Some("text[]".to_owned()),
+                operand: Operand::TextList(vec!["dA==".to_owned(), "dQ==".to_owned()]),
+            },
         ] {
             written.push(hex(&term));
         }
@@ -2803,58 +3174,152 @@ mod wire_bytes {
         assert_eq!(written, PINNED);
     }
 
-    const PINNED: [&str; 62] = [
+    const PINNED: [&str; 156] = [
         "0a020000006571",
-        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
-        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
-        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
-        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
-        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
-        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a020000006571",
-        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a020000006571",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a02000000657105000000696e7075740a0400000070616972",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a08000000636f6e7461696e7308000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0c000000636f6e7461696e65645f627908000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0500000065715f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a050000006c745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006c74655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0500000067745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006774655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0a0000006265747765656e5f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a09000000706174685f70616972",
+        "f105000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0a000000706174685f626f756e64",
+        "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0400000070617468",
         "0a050000006d61746368",
-        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d6174636805000000696e7075740a0400000070616972",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a08000000636f6e7461696e7308000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0c000000636f6e7461696e65645f627908000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0500000065715f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a050000006c745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006c74655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0500000067745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006774655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0a0000006265747765656e5f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f70616972",
+        "f105000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0a000000706174685f626f756e64",
+        "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
         "f101000000050000006d61746368f10400000009000000746f6b656e697a65720a080000007374616e6461726408000000646f776e6361736502010000006b070400000000000000010000006d070002000000000000",
-        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d6174636805000000696e7075740a0400000070616972",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a08000000636f6e7461696e7308000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0c000000636f6e7461696e65645f627908000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0500000065715f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a050000006c745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006c74655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0500000067745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006774655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0a0000006265747765656e5f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f70616972",
+        "f105000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0a000000706174685f626f756e64",
+        "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
         "f101000000050000006d61746368f10400000009000000746f6b656e697a6572f101000000050000006e6772616d07040000000000000008000000646f776e6361736503010000006b070300000000000000010000006d070001000000000000",
-        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d61746368",
-        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a050000006d6174636805000000696e7075740a0400000070616972",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a08000000636f6e7461696e7308000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0c000000636f6e7461696e65645f627908000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0500000065715f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a050000006c745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006c74655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0500000067745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006774655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0a0000006265747765656e5f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000706174685f70616972",
+        "f105000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0a000000706174685f626f756e64",
+        "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
         "0a030000006f7265",
-        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
-        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
-        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
-        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
-        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
-        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f7265",
-        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f726505000000696e7075740a0400000070616972",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a08000000636f6e7461696e7308000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0c000000636f6e7461696e65645f627908000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0500000065715f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a050000006c745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006c74655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0500000067745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006774655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0a0000006265747765656e5f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a09000000706174685f70616972",
+        "f105000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0a000000706174685f626f756e64",
+        "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0400000070617468",
         "0a030000006f7065",
-        "f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
-        "f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
-        "f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
-        "f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
-        "f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
-        "f104000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f7065",
-        "f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f7065",
-        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a05000000657861637405000000696e6465780a02000000657106000000646f6d61696e00040000007465726d0b03000000010203",
-        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a05000000657861637405000000696e6465780a030000006f706506000000646f6d61696e0a1000000065716c5f76342e71756572795f696e74040000007465726df0020000000b01000000040b020000000506",
-        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c697374696305000000696e6465780a050000006d6174636806000000646f6d61696e00040000007465726d0b00000000",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a030000006f706505000000696e7075740a0400000070616972",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a08000000636f6e7461696e7308000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0c000000636f6e7461696e65645f627908000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0500000065715f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a050000006c745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006c74655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0500000067745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006774655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0a0000006265747765656e5f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a09000000706174685f70616972",
+        "f105000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0a000000706174685f626f756e64",
+        "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0400000070617468",
+        "0a040000006a736f6e",
+        "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a0500000065786163740500000061726974790a040000007061697205000000696e6465780a040000006a736f6e05000000696e7075740a0400000070616972",
+        "f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
+        "f105000000080000006f70657261746f720a08000000636f6e7461696e7308000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0c000000636f6e7461696e65645f627908000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a040000006a736f6e",
+        "f105000000080000006f70657261746f720a0500000065715f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a050000006c745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006c74655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0500000067745f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a060000006774655f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a09000000706174685f6a736f6e",
+        "f105000000080000006f70657261746f720a0a0000006265747765656e5f617408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a09000000706174685f70616972",
+        "f105000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0a000000706174685f626f756e64",
+        "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0400000070617468",
+        "f106000000080000006f70657261746f720a02000000657108000000666964656c6974790a05000000657861637405000000696e6465780a02000000657106000000646f6d61696e0008000000656e636f64696e670a050000006279746573040000007465726d0b03000000010203",
+        "f106000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a05000000657861637405000000696e6465780a030000006f706506000000646f6d61696e0a1000000065716c5f76342e71756572795f696e7408000000656e636f64696e670a0300000065716c040000007465726df0020000000b01000000040b020000000506",
+        "f106000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c697374696305000000696e6465780a050000006d6174636806000000646f6d61696e0008000000656e636f64696e670a050000006279746573040000007465726d0b00000000",
+        "f106000000080000006f70657261746f720a0800000073656c6563746f7208000000666964656c6974790a05000000657861637405000000696e6465780a040000006a736f6e06000000646f6d61696e0a040000007465787408000000656e636f64696e670a0400000074657874040000007465726d0a0c000000633256735a574e306233493d",
+        "f106000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a05000000657861637405000000696e6465780a040000006a736f6e06000000646f6d61696e0a06000000746578745b5d08000000656e636f64696e670a0a000000746578745f6172726179040000007465726df0020000000a0400000064413d3d0a0400000064513d3d",
         "070000000000000000",
         "070b00000000000000",
         "07ffffffffffffffff",
@@ -2862,9 +3327,9 @@ mod wire_bytes {
         "f000000000",
         "f00100000003",
         "f003000000030203",
-        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f001000000f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571",
-        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f002000000f104000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a020000006571f104000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d61746368",
-        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a05000000696e7436340a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0010000000a030000006f72650500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f004000000f104000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265f104000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f7265",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f001000000f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a06000000737472696e670a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0020000000a0200000065710a050000006d617463680500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f002000000f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565f105000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c69737469630500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
+        "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e746578740a05000000696e7436340a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f0010000000a030000006f72650500000071756572790a09000000536f6d6551756572791000000071756572795f73716c5f646f6d61696e0a1100000065716c5f76332e71756572795f736f6d650a00000070726f64756369626c650306000000726561736f6e00090000006f70657261746f7273f004000000f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565f105000000080000006f70657261746f720a030000006c746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565f105000000080000006f70657261746f720a02000000677408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565f105000000080000006f70657261746f720a0300000067746508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
         "f10b000000040000006e616d650a04000000536f6d650600000066616d696c790a04000000736f6d65060000007375666669780a0000000009000000706c61696e74657874000a00000073716c5f646f6d61696e0a0b0000007075626c69632e736f6d6507000000696e6465786573f000000000050000007175657279001000000071756572795f73716c5f646f6d61696e000a00000070726f64756369626c650206000000726561736f6e0a070000006e6f7420796574090000006f70657261746f7273f000000000",
     ];
 }

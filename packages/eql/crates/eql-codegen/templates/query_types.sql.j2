@@ -39,19 +39,24 @@ BEGIN
         {%- for k in d.forbidden_keys %}
         AND NOT (VALUE ? '{{ k }}')
         {%- endfor %}
-        {%- if d.optional_term_keys and d.nonempty_array_keys %}
+        {%- if d.nonempty_array_keys %}
 {{ v3_only }}
-        {%- endif %}
         {%- for k in d.nonempty_array_keys %}
         AND jsonb_typeof(VALUE -> '{{ k }}') = 'array'
         AND jsonb_array_length(VALUE -> '{{ k }}') > 0
         {%- endfor %}
-        {%- if d.optional_term_keys and d.nonempty_array_keys %}
 {{ v3_end }}
+        {%- endif %}
+        {%- if d.v4_hex_terms %}
 {{ v4_only }}
-        {%- for k in d.nonempty_array_keys %}
-        AND (NOT (VALUE ? '{{ k }}') OR (jsonb_typeof(VALUE -> '{{ k }}') = 'array'
-          AND jsonb_array_length(VALUE -> '{{ k }}') > 0))
+        {%- for t in d.v4_hex_terms %}
+        {%- if d.optional_term_keys %}
+        AND (NOT (VALUE ? '{{ t.key }}') OR (jsonb_typeof(VALUE -> '{{ t.key }}') = 'string'
+          AND left(VALUE ->> '{{ t.key }}', {{ t.prefix_len }}) IN ({{ t.prefixes }})))
+        {%- else %}
+        AND jsonb_typeof(VALUE -> '{{ t.key }}') = 'string'
+        AND left(VALUE ->> '{{ t.key }}', {{ t.prefix_len }}) IN ({{ t.prefixes }})
+        {%- endif %}
         {%- endfor %}
 {{ v4_end }}
         {%- endif %}

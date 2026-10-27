@@ -76,20 +76,21 @@ stack-profile = { path = "./packages/stack-profile", version = "0.43.0" }
 # cts-common and zerokms-protocol take caret requirements because the
 # published stack-auth inherits them: an exact pin would stop the suite
 # unifying stack-auth with a later compatible cts-common, and a second copy
-# breaks the shared Crn, Region and WorkspaceId types. recipher and cllw-ore
-# feed only unpublished crates, so they stay exact.
+# breaks the shared Crn, Region and WorkspaceId types. recipher feeds
+# only unpublished crates, so it stays exact.
 cts-common = { version = "0.43.0", default-features = false }
 zerokms-protocol = "0.12.31"
 recipher = "=0.3.1"
-# cllw-ore's `vitaminc` feature implements vitaminc-ore's `OrderScheme`,
-# which Stack Encrypt's order terms are encrypted through. It first ships
-# in a pre-release, and Cargo resolves a pre-release only when named.
-cllw-ore = { version = "=0.5.2-rc.1", default-features = false, features = ["vitaminc"] }
-# ore-rs's `vitaminc` feature implements the same traits for block ORE:
-# `Bit6BlockOre` (fixed width up to ten bytes) and `ChainedBlockOre`
-# (variable length), the 6-bit schemes EQL v4's `_ord_ore` domains store.
-# Both wire formats are frozen as of 0.9.0. ore-rs feeds only stack-encrypt.
-ore-rs = { version = "0.9.0", default-features = false, features = ["vitaminc"] }
+# The two order-preserving schemes Stack Encrypt's order terms encrypt
+# through. Both implement vitaminc-ore's `OrderScheme` against vitaminc 0.8:
+# `clww-ore` (cllw-ore renamed) for CLWW ORE and OPE, and ore-rs's
+# `BlockOre` for block ORE, which routes a value to its 6-bit fixed-width
+# engine (up to ten bytes) or its chained one (wider, or variable length),
+# the terms EQL v4's `_ord_ore` domains store.
+# vitaminc is a plain dependency of both from here, not a feature. Both are
+# pinned exactly: a new release can change every stored order term.
+clww-ore = { version = "=0.6.0", default-features = false }
+ore-rs = { version = "=0.10.0", default-features = false }
 
 # External dependencies, with the suite's feature lists.
 base64 = "0.22.0"
@@ -109,8 +110,18 @@ reqwest = { version = "0.13", default-features = false, features = [
   "form",
   "query",
 ] }
+# The TLS stack under reqwest's `rustls` feature, named directly by
+# stack-auth's `tls` module (the SPKI blocklist around the platform
+# verifier) and by stack-kms. They must stay the versions reqwest resolves:
+# `tls_backend_preconfigured` recognises a `ClientConfig` only from the
+# rustls reqwest itself links.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
+rustls-platform-verifier = "0.6"
+rustls-webpki = { version = "0.103", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.132" }
+# Constant-time hex (through base16ct) for serde over the order terms.
+serdect = { version = "0.3", default-features = false, features = ["alloc"] }
 thiserror = "1.0.56"
 tokio = { version = "1.47.1", features = ["full"] }
 tracing = { version = "0.1", features = ["log"] }
@@ -128,18 +139,18 @@ web-time = "1.1"
 zeroize = { version = "1.8.1", features = ["derive"] }
 # This is needed because lock_api 0.4.6 was breaking things and the branch forces the use of 0.4.12
 temp-env = { git = "https://github.com/cipherstash/temp-env", branch = "main" }
-vitaminc = { version = "0.6.1", features = ["random", "protected", "encrypt"] }
-vitaminc-aead = "0.6.1"
+vitaminc = { version = "0.8.0", features = ["random", "protected", "encrypt"] }
+vitaminc-aead = "0.8.0"
 # The transport frame and ciphertext codec every language binding carries
 # across its FFI boundary. Optional in stack-encrypt (the `dynamic` feature).
-vitaminc-aead-frame = "0.6.1"
-vitaminc-encrypt = "0.6.1"
-vitaminc-hmac = "0.6.1"
+vitaminc-aead-frame = "0.8.0"
+vitaminc-encrypt = "0.8.0"
+vitaminc-hmac = "0.8.0"
 # Normalized equality terms (Unicode 16 NFC text, one integer encoding for
 # every width), which `vitaminc-prf`'s `normalize` feature derives over.
-vitaminc-normalize = "0.6.1"
+vitaminc-normalize = "0.8.0"
 # The text order key: the system ADR-0002's fold, pinned to Unicode 16,
 # which text ORE and OPE terms are derived over (ADR-0009).
-vitaminc-ore = "0.6.1"
-vitaminc-prf = { version = "0.6.1", features = ["normalize"] }
-vitaminc-protected = "0.6.1"
+vitaminc-ore = "0.8.0"
+vitaminc-prf = { version = "0.8.0", features = ["normalize"] }
+vitaminc-protected = "0.8.0"

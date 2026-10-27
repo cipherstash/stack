@@ -15,6 +15,9 @@ type Field[T any] struct {
 	name string
 	plan *record.Plan
 	err  error
+	// holdsStruct is set by [NewDocumentField]: the field is a document
+	// whose Go type holds a struct, which is no containment needle.
+	holdsStruct bool
 }
 
 // NewField makes the entry for one sealed field of a declaration.
@@ -36,6 +39,19 @@ func NewField[T any](d Declaration, name string) Field[T] {
 	return f
 }
 
+// NewDocumentField makes the entry for a document field (JsonSearch)
+// whose Go type T holds a struct, as [NewField] does, and its Contains
+// refuses a needle of type T or *T: encoding/json writes each struct field
+// that has no omitempty or omitzero, zero or not, and a zero one narrows the
+// query to the documents holding that zero. stashgen picks it for such a
+// field; a json.RawMessage, a map of scalars or a slice of them gets
+// NewField.
+func NewDocumentField[T any](d Declaration, name string) Field[T] {
+	f := NewField[T](d, name)
+	f.holdsStruct = true
+	return f
+}
+
 // kind is the field's declared kind, as its plan holds it.
 func (f Field[T]) kind() Kind {
 	if pf := f.plan.Field(f.name); pf != nil {
@@ -50,12 +66,32 @@ func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, 
 	if f.err != nil {
 		return Output{}, f.err
 	}
-	if c == nil {
-		return Output{}, fmt.Errorf("gensupport: %s: Encrypt needs a cipher", f.name)
-	}
 	value, err := asKind(f.kind(), v)
 	if err != nil {
 		return Output{}, fmt.Errorf("gensupport: %s: %w", f.name, err)
+	}
+	return f.seal(ctx, c, "Encrypt", value)
+}
+
+// EncryptNull seals nil for a field that stores nil as a sealed null: a
+// ciphertext as long as a value's, and the term every nil of the field
+// shares. It is the update that sets one such column to nil, which writing
+// SQL NULL is not. A field that stores nil any other way is refused: under
+// null=sql nil is SQL NULL, and a field of no null mode has no nil.
+func (f Field[T]) EncryptNull(ctx context.Context, c *encrypt.Cipher) (Output, error) {
+	if f.err != nil {
+		return Output{}, f.err
+	}
+	if pf := f.plan.Field(f.name); pf == nil || pf.Null != record.SealedNull {
+		return Output{}, fmt.Errorf("%w: gensupport: %s: EncryptNull seals nil only for a field that stores it as a sealed null (null=sealed)", encrypt.ErrEncoding, f.name)
+	}
+	return f.seal(ctx, c, "EncryptNull", nil)
+}
+
+// seal seals one value of the field, or nil, through the field's own plan.
+func (f Field[T]) seal(ctx context.Context, c *encrypt.Cipher, method string, value any) (Output, error) {
+	if c == nil {
+		return Output{}, fmt.Errorf("gensupport: %s: %s needs a cipher", f.name, method)
 	}
 	row := record.Source{f.name: value}
 	if f.plan.ContextField != "" {
@@ -98,6 +134,18 @@ func (f Field[T]) Range(ctx context.Context, c *encrypt.Cipher, operator string,
 		return nil, nil, err
 	}
 	return terms[0], terms[1], nil
+}
+
+// NullTerm derives an exact operator's term for nil: for eq on a field that
+// stores nil as a sealed null, the term every such nil shares, so it finds
+// the rows whose value is absent. The engine refuses it for any other field
+// or operator: nothing else stores a null's term.
+func (f Field[T]) NullTerm(ctx context.Context, c *encrypt.Cipher, operator string) ([]byte, error) {
+	terms, err := f.query(ctx, c, operator, nil, 1)
+	if err != nil {
+		return nil, err
+	}
+	return terms[0], nil
 }
 
 // query derives an exact operator's terms, and refuses an answer of another

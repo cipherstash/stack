@@ -4,7 +4,9 @@
 //
 // # Use the SDK
 //
-// 1. Add the generator to your module (Go 1.26 or later):
+// 1. Add the generator to your module (Go 1.26.10 or later, or 1.27.3 or later
+// on 1.27: the first releases whose crypto/x509 blocks the compromised eMudhra
+// intermediate CAs, CVE-2026-111943):
 //
 //	go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
 //
@@ -121,15 +123,17 @@
 // or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date] or a
 // time.Time (a timestamp), or a type defined over one of the built-in types.
 // Each integer seals at its own width. Equality applies to every one but a
-// bool; ORE and OPE to the integers, text, bytes and floats, and not yet to a
-// decimal, date or timestamp, whose order terms wait for new cllw-ore and
-// ore-rs releases (#1236).
+// bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
+// bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no
+// order index, since over so few values its order terms would show which
+// rows hold which value.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
 // carry every Go type a program stores beside a ciphertext (a
-// driver.Valuer, a sql.NullTime). An opaque struct crosses as one JSON
-// document and is one column.
+// driver.Valuer, a sql.NullTime). An opaque struct crosses as one storage
+// blob (vitaminc's storage profile, vcffi.MarshalStorage) and is one column;
+// a row an earlier release sealed as a JSON document still opens.
 //
 // # Terms
 //
@@ -161,9 +165,10 @@
 // type's query value), an ordering an [OreTerm] or [OpeTerm], and Between a
 // [Range] of two. Their answers are exact. The orderings are answered on
 // integers, on floats, which order as PostgreSQL's float8 does (-0.0 ties
-// 0.0, NaN sorts last), and on text, which orders by its folded form (case
-// and accents folded, under Unicode 16), so Café and cafe tie and alice
-// orders before Zoe. Matches returns a [MatchQuery],
+// 0.0, NaN sorts last), on text, which orders by its folded form (case and
+// accents folded, under Unicode 16), so Café and cafe tie and alice orders
+// before Zoe, and on a [Decimal], which orders by value (1.5 ties 1.50), a
+// [Date], and a time.Time, which orders by the microsecond. Matches returns a [MatchQuery],
 // whose answer can hold rows that do not match: size the fetch with
 // [MatchQuery.TargetLimit], then decrypt the rows and keep those
 // [MatchQuery.Verify] reports true, one call into the engine for the page.
@@ -194,6 +199,48 @@
 // tokens again in the engine. Go cannot wipe a string, so the text stays in
 // memory until the garbage collector reclaims it; a MatchQuery never prints
 // it.
+//
+// # Encrypted JSON documents
+//
+// A field tagged encrypt_into=JsonSearch is stored as one encrypted JSON
+// document. Declare it as a json.RawMessage, which holds the document's JSON
+// text, or as a struct, map or slice type. The generated code marshals such
+// a type with encoding/json when it seals the field. It unmarshals the
+// opened text into the declared type, so integers to 64 bits and finite
+// float64s come back exactly. The rest comes back as encoding/json reads
+// what it wrote, which is not always the value sealed: invalid UTF-8 in a
+// string becomes U+FFFD, with no error (a property of the value, which the
+// generated code does not walk, so check it with utf8.ValidString first); a
+// nil map or slice is stored as JSON null, which a needle of an empty one
+// does not match; and a time.Time inside a document is stored as RFC 3339
+// text in its own offset, so EqAt with a time in another zone misses and
+// an ordering on that path orders the text, not the instants. Store a time
+// you query as an integer, such as t.UnixNano().
+//
+// The field's operands are Go values. Contains and ContainedBy take a
+// needle, and EqAt and the orderings take a scalar. Each is a
+// json.RawMessage of JSON text or any value encoding/json writes:
+//
+//	q, err := customers.Fields.Profile.Contains(ctx, cipher, map[string]any{"tier": "gold"})
+//	older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
+//
+// A Go string is the string value itself, never parsed. So Contains and
+// ContainedBy refuse a string needle, or a pointer to one; put JSON text in
+// a json.RawMessage. They refuse a needle that writes JSON null (nil, or a
+// nil pointer, map or slice) too: only a null document contains it.
+//
+// A document contains a needle when it holds every member the needle writes.
+// encoding/json writes a struct field that has no omitempty even when the
+// field is zero. So a zero field narrows the query to documents that hold
+// that zero. Give a needle struct pointer fields with omitempty, or use a
+// map. Contains refuses a needle of the field's own type when that type
+// holds a struct, the likeliest way to make this mistake, a slice of
+// structs included: for a []Visit document, pass a slice of a needle type
+// with pointer fields. ContainedBy takes one: there a zero field widens
+// the query.
+//
+// A selection or a subtree read opens values as JSON text ([JSONValue],
+// [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
 //
 // # Cancellation
 //

@@ -252,6 +252,10 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 	}
 	for _, f := range p.Fields {
 		v, ok := row[f.Name]
+		if f.Null == record.SQLNull && (!ok || v == nil) {
+			// Nothing is stored for it: the engine leaves it out.
+			continue
+		}
 		if !ok {
 			return nil, fmt.Errorf("no value for field %q", f.Name)
 		}
@@ -323,7 +327,8 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 		sealed[name] = o
 	}
 	for _, f := range p.Fields {
-		if _, ok := sealed[f.Name]; !ok {
+		// A SQLNull field that was nil has no entry: nothing was stored.
+		if _, ok := sealed[f.Name]; !ok && f.Null != record.SQLNull {
 			return nil, fmt.Errorf("the engine returned no outputs for field %q", f.Name)
 		}
 	}
@@ -379,6 +384,11 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, 
 				continue
 			}
 			outputs, ok := rec[f.Name]
+			if !ok && f.Null == record.SQLNull {
+				// It was nil, and nothing was stored: the engine opens it
+				// as nil.
+				continue
+			}
 			if f.IsTarget() {
 				if !ok || outputs.EQL == nil {
 					return nil, fmt.Errorf("%w: row %d, field %q", errNoEQL, i, f.Name)

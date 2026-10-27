@@ -23,9 +23,9 @@ import (
 //
 // The zero Date (year 0, month 0, day 0) is not a date: a Date field must be
 // set before it is encrypted or queried, and a zero one is refused with
-// ErrEncoding, naming the field. A sealed field cannot be a pointer, so an
-// optional date has no sealed form of its own yet: keep it in an opaque
-// struct, or store a sentinel date your program treats as absent.
+// ErrEncoding, naming the field. An optional date is a *Date field: nil is
+// stored as a sealed null as long as a date, or, with the tag's null=sql, as
+// SQL NULL (see stashgen's README, "Optional fields").
 type Date = vcvalue.Date
 
 // DateOf is the calendar day t falls on in its own location: what t.Date()

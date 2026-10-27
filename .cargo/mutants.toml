@@ -85,9 +85,10 @@ exclude_re = [
   # the empty list (`dynamic::target::NoTargets`), which a test asserts on
   # and `resolve` turns into `TargetError::NoTargets`; `vec![]` is the body.
   'stack-encrypt/src/dynamic/target\.rs:\d+:\d+: replace <impl TargetResolver for NoTargets>::targets -> Vec<TargetDescriptor> with vec!\[\]$',
-  # A passthrough has no kind: `KindOf::passthrough` returns `Ok(None)`,
-  # which is `Ok(Default::default())`. `a_frame_names_its_kind` asserts it.
-  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::passthrough -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
+  # A passthrough, and a typed null as any null, has no kind:
+  # `KindOf::passthrough` and `KindOf::typed_null` return `Ok(None)`, which
+  # is `Ok(Default::default())`. `a_frame_names_its_kind` asserts the first.
+  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::(passthrough|typed_null) -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
   # `model`'s `admits` guard on a date, decimal or undefined value is checked
   # again by vitaminc on every path that reaches it: the frame writer behind
   # `Modeled` and `ModelOnly` refuses an inadmissible logical value
@@ -112,14 +113,12 @@ exclude_re = [
   'stack-encrypt/src/json/mod\.rs:\d+:\d+: replace \| with \^ in unhex$',
   # `JsonPath::root` is `Self::default()`.
   'stack-encrypt/src/json/path\.rs:\d+:\d+: replace JsonPath::root -> Self with Default::default\(\)$',
-  # The sealed root's `None` token: with that arm gone, the root falls to
-  # the arm that wraps its parent's token, and the root has no parent, so
-  # it is `None` there too. `the_sealed_root_has_no_token_and_its_fields_are_heads`
-  # pins the value; the arm stays so the match says it.
-  'stack-encrypt/src/json/derive\.rs:\d+:\d+: delete match arm \(0, true\) in Walker<\x27_>::visit$',
   # A document always has a root, so its terms are never empty: `false` is
   # the value `is_empty` returns. The `true` replacement is still caught.
   'stack-encrypt/src/json/derive\.rs:\d+:\d+: replace JsonTerms::is_empty -> bool with false$',
+  # A JSON operator's input: the `JsonText` visitor's `expecting` writes a
+  # message `read_frame` discards for its fixed `Reason::JsonInput`.
+  'stack-encrypt/src/dynamic/json_query\.rs:\d+:\d+: replace <impl Deserialize<\x27de> for JsonText>::deserialize::<impl Visitor<\x27_> for V>::expecting -> std::fmt::Result with Ok\(Default::default\(\)\)$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

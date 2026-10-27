@@ -1592,4 +1592,97 @@ mod shape_tests {
             "JSON must be catalogued at the flip"
         );
     }
+
+    /// EQL v4 stores the two order terms as hex strings of Stack Encrypt's
+    /// types, and the others as EQL v3 does. A pattern accepts a prefix and
+    /// whole units of lowercase hex, and nothing else.
+    #[test]
+    fn v4_formats_name_the_order_terms_and_their_patterns() {
+        use crate::Term;
+        assert_eq!(Term::Hm.v4_format(), None);
+        assert_eq!(Term::Bloom.v4_format(), None);
+        let ore = Term::Ore.v4_format().expect("ob has a v4 format");
+        assert_eq!(
+            (ore.rust_type, ore.json_shape),
+            ("OreBlockTerm", "OreBlockHex")
+        );
+        assert_eq!(ore.pattern(), "^(0202|0203)([0-9a-f]{2})+$");
+        let ope = Term::Ope.v4_format().expect("op has a v4 format");
+        assert_eq!((ope.rust_type, ope.json_shape), ("OpeTerm", "OpeHex"));
+        assert_eq!(ope.pattern(), "^(00|01)([0-9a-f]{16})+$");
+    }
+}
+
+mod document_families {
+    use crate::{DocumentRole, DOCUMENT_FAMILIES, JSON_TREE};
+
+    /// Every document family has one domain per role, the stored one
+    /// first, each a v4 domain under the schema its role lives in, and no
+    /// two families share a name or a domain.
+    #[test]
+    fn each_family_has_one_domain_per_role_in_v4() {
+        let mut names = Vec::new();
+        for family in DOCUMENT_FAMILIES {
+            assert_eq!(
+                family.domains[0].role,
+                DocumentRole::Stored,
+                "{}",
+                family.name
+            );
+            for role in [
+                DocumentRole::Stored,
+                DocumentRole::Query,
+                DocumentRole::LeafQuery,
+                DocumentRole::Entry,
+            ] {
+                assert_eq!(
+                    family.domains.iter().filter(|d| d.role == role).count(),
+                    1,
+                    "{}: {role:?}",
+                    family.name
+                );
+            }
+            for domain in family.domains {
+                let schema = match domain.role {
+                    DocumentRole::Stored | DocumentRole::Entry => "public.eql_v4_",
+                    DocumentRole::Query | DocumentRole::LeafQuery => "eql_v4.query_",
+                };
+                assert!(
+                    domain.sql_domain.starts_with(schema),
+                    "{}",
+                    domain.sql_domain
+                );
+                names.push(domain.name);
+                names.push(domain.sql_domain);
+            }
+        }
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "a name or a domain is listed twice");
+    }
+
+    #[test]
+    fn json_tree_is_the_json_search_target() {
+        // The names EQL v3 gives its searchable JSON document, in v4.
+        for (role, name, sql_domain) in [
+            (
+                DocumentRole::Stored,
+                "JsonSearch",
+                "public.eql_v4_json_search",
+            ),
+            (DocumentRole::Query, "JsonSearchQuery", "eql_v4.query_json"),
+            (
+                DocumentRole::LeafQuery,
+                "JsonSearchLeafQuery",
+                "eql_v4.query_json_leaf",
+            ),
+            (DocumentRole::Entry, "JsonEntry", "public.eql_v4_json_entry"),
+        ] {
+            let domain = JSON_TREE.domain(role).unwrap();
+            assert_eq!((domain.name, domain.sql_domain), (name, sql_domain));
+        }
+        assert_eq!(JSON_TREE.plaintext, "json");
+        assert_eq!(JSON_TREE.index, "json");
+    }
 }

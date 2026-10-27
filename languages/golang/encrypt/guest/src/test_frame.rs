@@ -2,7 +2,7 @@
 //! send what no writer would (a repeated key, an integer of any width).
 
 use serde::{Serialize, Serializer};
-use vitaminc_aead_frame::serde::to_vec;
+use stack_encrypt::dynamic::frame::serde::to_vec;
 
 /// A test input, written as raw frame bytes by [`frame`].
 pub(crate) enum V {
@@ -35,7 +35,7 @@ pub(crate) fn frame(v: &V) -> Vec<u8> {
     };
     match v {
         V::Obj(entries) => {
-            let mut out = container(vitaminc_aead_frame::OBJECT, entries.len());
+            let mut out = container(stack_encrypt::dynamic::frame::OBJECT, entries.len());
             for (key, value) in entries {
                 out.extend_from_slice(&u32::try_from(key.len()).expect("short").to_le_bytes());
                 out.extend_from_slice(key.as_bytes());
@@ -44,7 +44,7 @@ pub(crate) fn frame(v: &V) -> Vec<u8> {
             out
         }
         V::Arr(items) => {
-            let mut out = container(vitaminc_aead_frame::ARRAY, items.len());
+            let mut out = container(stack_encrypt::dynamic::frame::ARRAY, items.len());
             for item in items {
                 out.extend_from_slice(&frame(item));
             }

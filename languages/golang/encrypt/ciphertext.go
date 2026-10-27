@@ -15,9 +15,11 @@ import (
 // vitaminc-encrypt and must never scan or marshal where one belongs.
 //
 // A sealed field is one scalar — a string, a number, a bool or a []byte, or
-// a type defined over one — and seals as vitaminc's tagged leaf, which a
+// a type defined over one, or a pointer to either, whose nil is sealed as a
+// null as long as a value or stored as SQL NULL — and seals as vitaminc's
+// tagged leaf, which a
 // Rust record opens when its field is a Value (not a bare u32 or String). A struct, slice or map seals only as part of an opaque struct,
-// which crosses as one JSON document and is one leaf; stashgen refuses it
+// which crosses as one storage blob and is one leaf; stashgen refuses it
 // anywhere else, because the engine would seal it as a tree of leaves and a
 // column holds one.
 type Ciphertext []byte

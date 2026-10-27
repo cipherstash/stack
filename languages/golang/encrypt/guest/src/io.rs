@@ -28,9 +28,9 @@
 //! copies, and the host wipes the buffers with `se_dealloc`.
 
 use serde::{Deserialize, Serialize, Serializer};
+use stack_encrypt::dynamic::frame::serde::{from_slice, to_vec};
 use stack_guest_abi::last_error::malformed;
 use stack_guest_abi::step::{Request, Response};
-use vitaminc_aead_frame::serde::{from_slice, to_vec};
 use zeroize::Zeroizing;
 
 use crate::status::STATUS_ENCODING;

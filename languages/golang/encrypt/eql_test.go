@@ -315,7 +315,7 @@ func TestTextEqIsRefusedByTheBuildWithoutEQLTypes(t *testing.T) {
 	if err := eqlChecker.Check(ctx, plan); err != nil {
 		t.Fatalf("the eql build refuses TextEq: %v", err)
 	}
-	for _, name := range []string{"DateOrdOre", "Nope"} {
+	for _, name := range []string{"Json", "Nope"} {
 		refused := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: name}}}
 		if err := eqlChecker.Check(ctx, refused); !errors.Is(err, encrypt.ErrEncoding) {
 			t.Errorf("%s: Check = %v, want ErrEncoding", name, err)

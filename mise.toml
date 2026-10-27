@@ -28,8 +28,11 @@ rust = { version = "1.94.1", components = "rustc,cargo,rustfmt,rust-std,clippy,r
 # The cargo tools (nextest, llvm-cov, crap, mutants, fuzz, udeps) live in
 # mise.test.toml, pinned, and load only with `--env test` / MISE_ENV=test.
 # The Go module (languages/golang) — the wazero host of the WASI guests.
-# CGO_ENABLED=0 throughout; see `go:test`.
-go = "1.26"
+# CGO_ENABLED=0 throughout; see `go:test`. Pinned to the patch, not the minor:
+# 1.26.10 is the first 1.26 release whose crypto/x509 blocks the compromised
+# eMudhra intermediates (CVE-2026-111943, #1300), and a floating "1.26" could
+# resolve an older patch from a cache. Keep it at or above go.mod's `go` line.
+go = "1.26.10"
 golangci-lint = "2.14.0"
 # wasm-pack for the auth binding's `build:wasm`, which builds
 # languages/typescript/packages/stack-auth-wasm into the auth package's wasm/.
@@ -363,6 +366,39 @@ description = "Format check, vet and test the Go module (languages/golang: encry
 # at languages/golang holds every Go package (ADR-0005 §4); the guest it
 # embeds is named relative to the module root.
 run = "scripts/go-binding-test.sh languages/golang"
+
+[tasks."go:test:postgres"]
+description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the Go module's PostgreSQL tests against it: rows the Go SDK stores in every EQL type it produces, found by the queries it derives, encrypted JSON documents, raw and of Go types, queried and read through their generated methods, and random values in every ordered type, ordered as their plaintexts (EQL_ORDER_SEED replays a seed); needs `wasm:guest:build:deterministic` and `wasm:guest:build:eql:deterministic` first"
+# The bundle is built from packages/eql, as test:encryption:postgres builds
+# it: the copy under crates/eql-bindings/sql is the RELEASED bundle and moves
+# only at the lockstep bump, so it cannot show a SQL change in the same pull
+# request. One connection string serves psql and the Go tests; pgx reads a
+# libpq keyword/value string as well as a URL.
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+: "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
+mise -C packages/eql run build
+psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f packages/eql/release/cipherstash-encrypt-v4.sql
+cd languages/golang
+# The tests skip without DATABASE_URL and without their guest builds; -v and
+# the grep turn either skip into a failure here, where both are provided.
+DATABASE_URL="$EQL_TEST_DATABASE_URL" CGO_ENABLED=0 go test -count=1 -v \
+  -run '^(TestEQLTypesRoundTripAndQueryInPostgres|TestEQLOrderMatchesPlaintextInPostgres|TestQueriesRunAgainstPostgres|TestJSONDocumentsQueryAndReadInPostgres|TestJSONTypedDocumentsInPostgres)$' ./encrypt \
+  | tee "${TMPDIR:-/tmp}/go-test-postgres.log"
+if grep -q -- '--- SKIP' "${TMPDIR:-/tmp}/go-test-postgres.log"; then
+  echo "error: a PostgreSQL test skipped; build the deterministic guests first" >&2
+  exit 1
+fi
+# A -run pattern that matches no test (one renamed, say) prints "no tests
+# to run" and PASS, so each test has to be seen to pass by name.
+for test in TestEQLTypesRoundTripAndQueryInPostgres TestEQLOrderMatchesPlaintextInPostgres TestQueriesRunAgainstPostgres TestJSONDocumentsQueryAndReadInPostgres TestJSONTypedDocumentsInPostgres; do
+  if ! grep -q -- "^--- PASS: $test " "${TMPDIR:-/tmp}/go-test-postgres.log"; then
+    echo "error: $test did not run and pass; was it renamed?" >&2
+    exit 1
+  fi
+done
+"""
 
 [tasks."go:lint"]
 description = "Lint and format-check the Go module (languages/golang) with golangci-lint; config in languages/golang/.golangci.yaml"

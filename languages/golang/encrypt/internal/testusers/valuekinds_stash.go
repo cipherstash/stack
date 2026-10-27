@@ -12,7 +12,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // ValueKinds prints its sealed fields in the clear: it has no String or
 // LogValue method. Write them, or run stashgen with -redact.
@@ -66,16 +66,19 @@ type EncryptedValueKindsU128 struct {
 type EncryptedValueKindsDate struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
+	Ore        encrypt.OreTerm
 }
 
 type EncryptedValueKindsAt struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
+	Ope        encrypt.OpeTerm
 }
 
 type EncryptedValueKindsAmount struct {
 	Ciphertext encrypt.Ciphertext
 	Equality   encrypt.EqualityTerm
+	Ore        encrypt.OreTerm
 }
 
 func (e EncryptedValueKinds) String() string {
@@ -109,9 +112,9 @@ var valueKindsDeclaration = gensupport.Declare("value_kinds").
 	EncryptIndex("u16", gensupport.Uint16, encrypt.Equality, encrypt.Ope).
 	EncryptIndex("i128", gensupport.Int128, encrypt.Equality, encrypt.Ore).
 	EncryptIndex("u128", gensupport.Uint128, encrypt.Equality, encrypt.Ope).
-	EncryptIndex("date", gensupport.Date, encrypt.Equality).
-	EncryptIndex("at", gensupport.Timestamp, encrypt.Equality).
-	EncryptIndex("amount", gensupport.Decimal, encrypt.Equality)
+	EncryptIndex("date", gensupport.Date, encrypt.Equality, encrypt.Ore).
+	EncryptIndex("at", gensupport.Timestamp, encrypt.Equality, encrypt.Ope).
+	EncryptIndex("amount", gensupport.Decimal, encrypt.Equality, encrypt.Ore)
 
 var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedValueKinds]{
 	TypeName:        "ValueKinds",
@@ -163,14 +166,17 @@ var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedV
 		e.Date = EncryptedValueKindsDate{
 			Ciphertext: rec["date"].Ciphertext,
 			Equality:   rec["date"].Equality,
+			Ore:        rec["date"].Ore,
 		}
 		e.At = EncryptedValueKindsAt{
 			Ciphertext: rec["at"].Ciphertext,
 			Equality:   rec["at"].Equality,
+			Ope:        rec["at"].Ope,
 		}
 		e.Amount = EncryptedValueKindsAmount{
 			Ciphertext: rec["amount"].Ciphertext,
 			Equality:   rec["amount"].Equality,
+			Ore:        rec["amount"].Ore,
 		}
 		return e, nil
 	},
@@ -182,9 +188,9 @@ var valueKindsCodec = gensupport.New(gensupport.Generated[ValueKinds, EncryptedV
 			"u16":    {Ciphertext: e.U16.Ciphertext, Equality: e.U16.Equality, Ope: e.U16.Ope},
 			"i128":   {Ciphertext: e.I128.Ciphertext, Equality: e.I128.Equality, Ore: e.I128.Ore},
 			"u128":   {Ciphertext: e.U128.Ciphertext, Equality: e.U128.Equality, Ope: e.U128.Ope},
-			"date":   {Ciphertext: e.Date.Ciphertext, Equality: e.Date.Equality},
-			"at":     {Ciphertext: e.At.Ciphertext, Equality: e.At.Equality},
-			"amount": {Ciphertext: e.Amount.Ciphertext, Equality: e.Amount.Equality},
+			"date":   {Ciphertext: e.Date.Ciphertext, Equality: e.Date.Equality, Ore: e.Date.Ore},
+			"at":     {Ciphertext: e.At.Ciphertext, Equality: e.At.Equality, Ope: e.At.Ope},
+			"amount": {Ciphertext: e.Amount.Ciphertext, Equality: e.Amount.Equality, Ore: e.Amount.Ore},
 		}
 	},
 	Value: func(e EncryptedValueKinds, vals gensupport.Values) (ValueKinds, error) {
@@ -467,12 +473,37 @@ func (f ValueKindsDateField) Encrypt(ctx context.Context, c *encrypt.Cipher, v e
 	if err != nil {
 		return EncryptedValueKindsDate{}, err
 	}
-	return EncryptedValueKindsDate{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
+	return EncryptedValueKindsDate{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
 }
 
 func (f ValueKindsDateField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
 	return encrypt.EqualityTerm(term), err
+}
+
+func (f ValueKindsDateField) Lt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsDateField) Lte(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsDateField) Gt(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsDateField) Gte(ctx context.Context, c *encrypt.Cipher, v encrypt.Date) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsDateField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi encrypt.Date) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type ValueKindsAtField struct {
@@ -484,12 +515,37 @@ func (f ValueKindsAtField) Encrypt(ctx context.Context, c *encrypt.Cipher, v tim
 	if err != nil {
 		return EncryptedValueKindsAt{}, err
 	}
-	return EncryptedValueKindsAt{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
+	return EncryptedValueKindsAt{Ciphertext: out.Ciphertext, Equality: out.Equality, Ope: out.Ope}, nil
 }
 
 func (f ValueKindsAtField) Eq(ctx context.Context, c *encrypt.Cipher, v time.Time) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
 	return encrypt.EqualityTerm(term), err
+}
+
+func (f ValueKindsAtField) Lt(ctx context.Context, c *encrypt.Cipher, v time.Time) (encrypt.OpeTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OpeTerm(term), err
+}
+
+func (f ValueKindsAtField) Lte(ctx context.Context, c *encrypt.Cipher, v time.Time) (encrypt.OpeTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OpeTerm(term), err
+}
+
+func (f ValueKindsAtField) Gt(ctx context.Context, c *encrypt.Cipher, v time.Time) (encrypt.OpeTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OpeTerm(term), err
+}
+
+func (f ValueKindsAtField) Gte(ctx context.Context, c *encrypt.Cipher, v time.Time) (encrypt.OpeTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OpeTerm(term), err
+}
+
+func (f ValueKindsAtField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi time.Time) (encrypt.Range[encrypt.OpeTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OpeTerm]{Low: low, High: high}, err
 }
 
 type ValueKindsAmountField struct {
@@ -501,10 +557,35 @@ func (f ValueKindsAmountField) Encrypt(ctx context.Context, c *encrypt.Cipher, v
 	if err != nil {
 		return EncryptedValueKindsAmount{}, err
 	}
-	return EncryptedValueKindsAmount{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
+	return EncryptedValueKindsAmount{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
 }
 
 func (f ValueKindsAmountField) Eq(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
 	return encrypt.EqualityTerm(term), err
+}
+
+func (f ValueKindsAmountField) Lt(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsAmountField) Lte(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsAmountField) Gt(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsAmountField) Gte(ctx context.Context, c *encrypt.Cipher, v encrypt.Decimal) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ValueKindsAmountField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi encrypt.Decimal) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }

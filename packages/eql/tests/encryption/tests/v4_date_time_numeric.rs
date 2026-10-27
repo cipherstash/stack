@@ -1,8 +1,9 @@
 //! The EQL v4 date, timestamp and numeric types Stack Encrypt produces:
 //! each family's storage-only type (`Date`, `Timestamp`, `Numeric`) and its
-//! equality type (`DateEq`, `TimestampEq`, `NumericEq`), from eql-bindings'
-//! own plaintexts (`v4::plaintext`). Their ordered types wait for the
-//! engine's order terms and are refused.
+//! equality type (`DateEq`, `TimestampEq`, `NumericEq`), from the
+//! plaintexts eql-bindings re-exports (`v4::plaintext`). Their ordered
+//! types are covered with the other families' in `v4_order.rs` (OPE) and
+//! `v4_ore_block.rs` (block ORE).
 //!
 //! Each type must round-trip through both entry points, seal the leaf a
 //! chrono or rust_decimal value of the same instant, day or number seals
@@ -346,27 +347,6 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     };
     let opened: Result<Timestamp, _> = cipher.decrypt_as(moved, column().into()).await;
     assert!(opened.is_err(), "a date is not a timestamp");
-}
-
-/// The ordered types wait for the engine's order terms over these kinds,
-/// and say so; block ORE waits for that first.
-#[tokio::test]
-async fn the_ordered_types_are_refused_with_their_reason() {
-    let (cipher, _) = common::cipher().await;
-    let keyset = cipher.default_keyset();
-    for family in ["Date", "Timestamp", "Numeric"] {
-        for suffix in ["Ord", "OrdOpe", "OrdOre"] {
-            let name = format!("{family}{suffix}");
-            let value = frame(Decimal::new(1, 0).unwrap());
-            match refused(targets::encrypt(&name, &keyset, &label(), value)) {
-                TargetError::Unproducible { reason, .. } => assert!(
-                    reason.contains("no order term for a date, timestamp or decimal"),
-                    "{name}: {reason}"
-                ),
-                other => panic!("{name}: {other}"),
-            }
-        }
-    }
 }
 
 /// `fixtures/v4_ledger_queries.json`: the `DateEq`, `TimestampEq` and
@@ -906,4 +886,179 @@ fn postgres_stores_and_queries_ledger_rows_the_go_sdk_sealed() {
             .collect();
         assert_eq!(ids, expected, "= over Go-sealed {column_name}");
     }
+}
+
+/// The length of the sealed leaf a stored `c` holds.
+fn leaf_len(c: &Ciphertext) -> usize {
+    match c.clone().read(NativeLeaf).unwrap() {
+        stack_encrypt::CipherText::Single(leaf) => leaf.to_bytes().len(),
+        _ => panic!("a stored c is one leaf"),
+    }
+}
+
+/// A storage-only type stores an absent value (#1298): `None` seals as a
+/// typed null as long as a value, so the column does not show which rows
+/// are absent, and opens as `None`, on the typed path and by name. A value
+/// sealed from `Some` is the leaf the plaintext alone seals, so each opens
+/// the other's.
+#[tokio::test]
+async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let value = Date::from(day("2024-02-29"));
+
+    let present: date::Date = keyset.encrypt_as(&value, column()).await.unwrap();
+    let absent: date::Date = keyset.encrypt_as(&None::<Date>, column()).await.unwrap();
+    assert_eq!(
+        leaf_len(&absent.c),
+        leaf_len(&present.c),
+        "as long as a value"
+    );
+    let opened: Option<Date> = cipher
+        .decrypt_as(absent.clone(), column().into())
+        .await
+        .unwrap();
+    assert!(opened.is_none());
+    let refused: Result<Date, _> = cipher.decrypt_as(absent.clone(), column().into()).await;
+    assert!(refused.is_err(), "a None does not open as a value");
+
+    let some: date::Date = keyset
+        .encrypt_as(&Some(value.clone()), column())
+        .await
+        .unwrap();
+    let opened: Date = cipher.decrypt_as(some, column().into()).await.unwrap();
+    assert_eq!(
+        NaiveDate::from(&opened),
+        day("2024-02-29"),
+        "Some seals the plaintext's own leaf"
+    );
+    let opened: Option<Date> = cipher.decrypt_as(present, column().into()).await.unwrap();
+    assert_eq!(
+        opened.as_ref().map(NaiveDate::from),
+        Some(day("2024-02-29")),
+        "and an Option opens a value"
+    );
+
+    let null = ValueFrame::from_bytes(&[0x00]).unwrap();
+    let named: date::Date = by_name(&keyset, "Date", null.clone()).await;
+    assert_eq!(leaf_len(&named.c), leaf_len(&absent.c), "by name too");
+    let opened = targets::decrypt(
+        "Date",
+        &cipher,
+        &label(),
+        &serde_json::to_vec(&named).unwrap(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    assert!(same(&opened, &null), "opens as a null by name");
+
+    // A type whose term is equality's stores a null with a null's term,
+    // the one a query of a null derives (#1298); a type with an order term
+    // has no null to store, since its term column would show it.
+    let eq: date::DateEq = by_name(&keyset, "DateEq", null.clone()).await;
+    let present_eq: date::DateEq = by_name(&keyset, "DateEq", frame(day("2024-02-29"))).await;
+    assert_eq!(
+        leaf_len(&eq.c),
+        leaf_len(&present_eq.c),
+        "as long as a value"
+    );
+    assert_ne!(eq.hm, present_eq.hm, "a null's term is no value's");
+    assert_eq!(
+        hm(&keyset, "DateEq", null.clone()).await,
+        eq.hm.0,
+        "a query of a null finds it"
+    );
+    let opened = targets::decrypt(
+        "DateEq",
+        &cipher,
+        &label(),
+        &serde_json::to_vec(&eq).unwrap(),
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    assert!(same(&opened, &null), "opens as a null");
+    assert!(matches!(
+        refused_null(&keyset, "IntegerOrd"),
+        TargetError::Plaintext { .. }
+    ));
+}
+
+fn refused_null(
+    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    name: &str,
+) -> TargetError {
+    let null = ValueFrame::from_bytes(&[0x00]).unwrap();
+    refused(targets::encrypt(name, keyset, &label(), null))
+}
+
+/// Needs an EQL v4 installation. A storage-only column stores an absent
+/// value sealed as a typed null (#1298): the domain's check takes it, as
+/// it takes a value, and it reads back and opens as `None`.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_stores_a_sealed_null_in_a_storage_only_column() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = database();
+    db.batch_execute(
+        "CREATE TEMP TABLE v4_optional (
+            id int PRIMARY KEY,
+            entry public.eql_v4_date,
+            due public.eql_v4_date_eq
+        );",
+    )
+    .unwrap();
+    let rows: Vec<(i32, Option<Date>)> = vec![
+        (1, None),
+        (2, Some(Date::from(day("2024-02-29")))),
+        (3, None),
+    ];
+    for (id, value) in &rows {
+        let (entry, due): (date::Date, date::DateEq) = runtime.block_on(async {
+            (
+                keyset.encrypt_as(value, column()).await.unwrap(),
+                keyset.encrypt_as(value, column()).await.unwrap(),
+            )
+        });
+        db.execute(
+            "INSERT INTO v4_optional VALUES ($1,
+                $2::text::jsonb::public.eql_v4_date,
+                $3::text::jsonb::public.eql_v4_date_eq)",
+            &[id, &json(&entry), &json(&due)],
+        )
+        .unwrap();
+    }
+    let stored: String = db
+        .query_one(
+            "SELECT entry::jsonb::text FROM v4_optional WHERE id = 1",
+            &[],
+        )
+        .unwrap()
+        .get(0);
+    let stored: date::Date = serde_json::from_str(&stored).unwrap();
+    let opened: Option<Date> = runtime
+        .block_on(async { cipher.decrypt_as(stored, column().into()).await })
+        .unwrap();
+    assert!(opened.is_none(), "the stored null opens as None");
+
+    // `=` with the query of a null finds the absent rows, and only them.
+    let null_query: date::DateEqQuery = runtime
+        .block_on(async { keyset.encrypt_as(&None::<Date>, column()).await })
+        .unwrap();
+    let found: Vec<i32> = db
+        .query(
+            "SELECT id FROM v4_optional WHERE due = $1::text::jsonb::eql_v4.query_date_eq ORDER BY id",
+            &[&json(&null_query)],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(found, [1, 3]);
 }

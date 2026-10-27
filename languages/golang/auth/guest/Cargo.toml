@@ -48,7 +48,7 @@ zeroize = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 # `Controlled::risky_ref`, to read a codec value back in the tests.
-vitaminc-protected = "0.6.0"
+vitaminc-protected = "0.8.0"
 
 [profile.release]
 # Smaller .wasm; the guest is IO-bound on the FFI copy and the file reads,

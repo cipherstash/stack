@@ -2,12 +2,12 @@
 # CI installs it with `pip install --require-hashes --no-deps`, so nothing here
 # resolves at install time and a transitive dependency cannot float.
 #
-# The top-level pins are impact-gate==0.4.1, lizard==1.23.0 (Lizard 1.24.0 is
+# The top-level pins are impact-gate==0.4.1, lizard==1.24.1 (Lizard 1.24.0 is
 # excluded by ImpactGate's own metadata) and pygments==2.21.0, which
 # scripts/impact-gate.py imports directly. uv still annotates pygments "via
 # lizard". To regenerate after changing them, from the repository root:
 #
-#   printf 'impact-gate==0.4.1\nlizard==1.23.0\npygments==2.21.0\n' \
+#   printf 'impact-gate==0.4.1\nlizard==1.24.1\npygments==2.21.0\n' \
 #     | uv pip compile - --generate-hashes --universal --python-version 3.12 \
 #         --no-header -o .github/impact-gate/requirements.txt
 #
@@ -15,9 +15,9 @@
 impact-gate==0.4.1 \
     --hash=sha256:9d9c8fb4c6f2fa56559d0530ff82569bc6d42b28ff5a77103e504e2470f198c6 \
     --hash=sha256:e6dab6abec925151bd4dbffff92d4a40f742d561a6f8527b3fbe15dd68b25518
-lizard==1.23.0 \
-    --hash=sha256:e9111e35c8a5f2e00d55cab318fca3504622991417411ea16cf46874fb752f42 \
-    --hash=sha256:ed75cd45f086a2f51d6be64b0149b71bda820f92f95e30898254528bb949f795
+lizard==1.24.1 \
+    --hash=sha256:746060a3e9a375af7340b2d4c6aab307b8a8b4199339c36ddc7afc4188b53d1c \
+    --hash=sha256:c022cf1aac8170994b175e2a700f0535088f66da7e6bdf6c59fbd3b716cd10ac
     # via impact-gate
 pathspec==1.1.1 \
     --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \

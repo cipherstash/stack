@@ -26,7 +26,7 @@ use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
 use stack_encrypt::dynamic::{
-    context, query_term, Error, NoTargets, OpSpec, Operand, Reason, Scope, ValueFrame, ValueKind,
+    context, query_term, NoTargets, OpSpec, Operand, Reason, Scope, ValueFrame, ValueKind,
 };
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{CipherText, KeysetCipher, SealedValue, StackCipher, StackCipherText};
@@ -124,30 +124,31 @@ fn kinds() -> Vec<Kind> {
         Kind {
             field: "date",
             kind: ValueKind::Date,
-            outputs: &["c", "eq"],
+            outputs: &["c", "eq", "ore"],
             text: "2024-02-29",
             value: date(19_782),
         },
         Kind {
             field: "at",
             kind: ValueKind::Timestamp,
-            outputs: &["c", "eq"],
+            outputs: &["c", "eq", "ope"],
             text: "2026-10-17T01:02:03.123456789Z",
             value: instant(AT),
         },
         Kind {
             field: "amount",
             kind: ValueKind::Decimal,
-            outputs: &["c", "eq"],
+            outputs: &["c", "eq", "ore"],
             text: "-1234.5600",
             value: decimal(-12_345_600, 4),
         },
     ]
 }
 
-/// Equality queries whose input differs from the stored value and whose
-/// term is the stored one: vitaminc-normalize drops a decimal's trailing
-/// zeros and a timestamp's nanoseconds below the microsecond.
+/// Queries whose input differs from the stored value and whose terms are
+/// the stored ones: vitaminc's equality and order encodings both drop a
+/// decimal's trailing zeros and a timestamp's nanoseconds below the
+/// microsecond.
 fn folded_queries() -> Vec<(&'static str, &'static str, Raw<'static>)> {
     vec![
         ("amount", "-1234.56", decimal(-123_456, 2)),
@@ -334,7 +335,7 @@ async fn query(
         .expect("the term derives");
     match term.operand() {
         Operand::One(bytes) => bytes.clone(),
-        Operand::Range { .. } => panic!("one term"),
+        other => panic!("one term, not {other:?}"),
     }
 }
 
@@ -396,6 +397,15 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             stored,
             "{field}: vitaminc-normalize folds the query onto the stored term"
         );
+        let order = ["ore", "ope"]
+            .into_iter()
+            .find(|key| sealed[field].get(*key).is_some())
+            .expect("each folded field has an order term");
+        assert_eq!(
+            query(&keyset, &plan, field, OpSpec::Lt, input).await,
+            unhex(sealed[field][order].as_str().expect("a term")),
+            "{field}: vitaminc-ore folds the query onto the stored {order} term"
+        );
     }
 }
 
@@ -430,24 +440,6 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
         "an int32 is not an int8: {:?}",
         refused.err()
     );
-    let ore_on_a_date = record::plan(
-        object(vec![(
-            "day",
-            object(vec![
-                ("context", value_of(vec!["value_kinds", "day"])),
-                ("outputs", value_of(vec!["ore"])),
-                ("type", value_of("date")),
-            ]),
-        )])
-        .risky_ref(),
-    );
-    assert!(matches!(
-        ore_on_a_date,
-        Err(Error::Plan {
-            reason: Reason::OrderTermPending,
-            ..
-        })
-    ));
 }
 
 /// The committed fixture: the record sealed in an earlier run opens now, its

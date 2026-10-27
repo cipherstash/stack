@@ -184,7 +184,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 		plan.Context = segments
 	}
 	if d.Opaque {
-		// gensupport seals an opaque struct as one JSON document under
+		// gensupport seals an opaque struct as one storage blob under
 		// <context>/value; see gensupport.OpaqueField.
 		plan.Fields = []record.Field{{Name: "value", Kind: record.Bytes, Outputs: []record.Output{record.Ciphertext}}}
 		return plan, nil
@@ -193,7 +193,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 		if !f.Sealed() {
 			continue
 		}
-		rf := record.Field{Name: f.Name, Identity: f.Identity, Kind: wireKind(f.GoType)}
+		rf := record.Field{Name: f.Name, Identity: f.Identity, Kind: wireKind(f.GoType), Null: record.Null(f.Null)}
 		switch f.Verb {
 		case VerbEncryptInto:
 			if len(eqlTypes) == 0 {
@@ -225,6 +225,13 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				// intoKind takes every built-in integer except into a
 				// 128-bit kind, which gensupport does not convert to.
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and the built-in integer %s is not converted to it", f.EQLType, eqlType.wire, f.GoType)}
+			} else if eqlType.wire == record.JSON {
+				// A document's kind is no Go scalar's: name the Go types
+				// that carry one, not a kind mismatch. A json.RawMessage
+				// and a type encoding/json carries both cross as JSON text.
+				if f.GoType.Kind != KindJSON && f.GoType.Kind != KindJSONValue {
+					return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a json document: %s", f.EQLType, documentTypes)}
+				}
 			} else {
 				// The engine checks the kind too (se_plan_check refuses a
 				// "type" other than the EQL type's plaintext); saying it
@@ -250,6 +257,7 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s is stored under a table and a column, and the context %q has %d segments, not one", f.EQLType, d.Context, len(plan.Context))}
 			}
 			rf.Target = f.EQLType
+			rf.TargetOptions = f.TargetOptions
 		case VerbEncrypt, VerbEncryptIndex:
 			rf.Outputs = append(rf.Outputs, record.Ciphertext)
 		}
@@ -264,7 +272,11 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 			}
 			out, ok := outputOfIndex[idx.Name]
 			if !ok {
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine does not derive the %s index yet", idx.Name)}
+				reason := fmt.Sprintf("the engine does not derive the %s index yet", idx.Name)
+				if idx.Name == IndexJSON {
+					reason = "the json index is not an output beside a ciphertext: store a JSON document as a struct, map, slice or json.RawMessage field with encrypt_into=JsonSearch, whose EQL type carries the index"
+				}
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: reason}
 			}
 			rf.Outputs = append(rf.Outputs, out)
 		}
@@ -281,7 +293,7 @@ var outputOfIndex = map[IndexName]record.Output{
 // no entry in outputOfIndex, so no tag asks for it.
 var indexOfOutput = map[record.Output]IndexName{
 	record.Equality: IndexEquality, record.Match: IndexMatch, record.Ore: IndexOre, record.Ope: IndexOpe,
-	record.OreBlock: IndexOreBlock,
+	record.OreBlock: IndexOreBlock, record.JSONIndex: IndexJSON,
 }
 
 // wireKind is the record kind of a Go type: the same mapping the emitter
@@ -330,9 +342,14 @@ func wireKind(t GoType) record.Kind {
 		return record.Timestamp
 	case KindDecimal:
 		return record.Decimal
+	case KindJSON, KindJSONValue:
+		return record.JSON
 	}
 	return record.Untyped
 }
+
+// documentTypes names the Go types a field stored as a JSON document takes.
+const documentTypes = "declare the field json.RawMessage, or a struct, map or slice type that encoding/json writes and reads (a pointer to either with null=sql)"
 
 // kindOfWire is the generator's kind for a wire kind, for an EQL type's
 // plaintext.
@@ -360,6 +377,8 @@ func kindOfWire(k record.Kind) Kind {
 		return KindTimestamp
 	case record.Decimal:
 		return KindDecimal
+	case record.JSON:
+		return KindJSON
 	}
 	return KindOther
 }

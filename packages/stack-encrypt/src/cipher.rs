@@ -173,6 +173,65 @@ pub enum Error {
         help("Open the value as the type it was sealed as. The ciphertext is authentic: it was sealed as another type, not altered.")
     )]
     OpenedType { expected: &'static str },
+    /// The database answered a JSON index read with an entry other than
+    /// the one the read asked for: `->` returned the entry of another path,
+    /// or the sealed root in place of a node, or a subtree walk returned a
+    /// row that is not where the walk's key says its rows are (a node of
+    /// another path, a row out of its place in the document, a row whose
+    /// parent is not among the rows, rows that stop before a node's
+    /// subtree is complete, one entry returned twice, or rows of two
+    /// documents). Refused by the client, which
+    /// derived the path's selector itself; see
+    /// [`JsonSelector::open`](crate::json::JsonSelector::open) and
+    /// [`JsonSubtreeKey::open`](crate::json::JsonSubtreeKey::open).
+    ///
+    /// Not [`Aead`](Self::Aead): every entry may be genuine, sealed in
+    /// this column and this row. Not [`OpenedType`](Self::OpenedType)
+    /// either: the entry is not of an unexpected shape, it is the answer to
+    /// another question. A database that answers the query it was sent
+    /// never returns one, so this says the rows were tampered with or the
+    /// query that produced them was not the one the key or selector keyed.
+    ///
+    /// Which row a value belongs to is not checked: an entry from another
+    /// row of the same column at the same path, returned with that row's
+    /// header, opens (ADR 0010, `docs/adr/0010-what-a-stored-value-authenticates.md`).
+    ///
+    /// `expected` names what the read expected, never what the entry held.
+    #[error("the database returned a JSON index entry other than {expected}")]
+    #[diagnostic(
+        code(stack_encrypt::json_wrong_entry),
+        help("The entry opened, but it is not the one the query asked for. A database that answers the query it was sent never returns one: check that the rows came from the query the selector or subtree key was derived for, and treat them as tampered with if they did.")
+    )]
+    JsonWrongEntry { expected: &'static str },
+    /// A JSON subtree read with a wildcard found an array longer than the
+    /// bound the wildcard was expanded to: the probe the read sent for the
+    /// element at `bound` named a node. The read fails rather than return
+    /// part of the answer; see
+    /// [`KeysetCipher::json_subtree_key_with_bound`](crate::KeysetCipher::json_subtree_key_with_bound).
+    ///
+    /// Names the bound and nothing of the path, whose key names can be
+    /// customer data.
+    #[error("a JSON array at the wildcard is longer than the read's bound of {bound}")]
+    #[diagnostic(
+        code(stack_encrypt::json_wildcard_truncated),
+        help("A wildcard read expands to the positions below its bound and fails when an array is longer, so it never returns part of the answer. Derive the key with a larger bound (`json_subtree_key_with_bound`), or read the array itself.")
+    )]
+    JsonWildcardTruncated { bound: u32 },
+    /// The JSON index entry `->` returned did not open on its own. An entry
+    /// opens alone only if it is a scalar, an empty container or the sealed
+    /// root: a container with children is sealed over its children's
+    /// ciphertexts, which `->` does not return. So the path named a container
+    /// with children, which is read with a subtree read
+    /// ([`KeysetCipher::json_subtree_key`](crate::KeysetCipher::json_subtree_key)),
+    /// or the entry was altered, or sealed under another key or column. The
+    /// client cannot tell which before the entry opens, so this names both
+    /// and claims neither.
+    #[error("the JSON index entry at the path did not open on its own")]
+    #[diagnostic(
+        code(stack_encrypt::json_not_a_leaf),
+        help("If the path names an object or an array with members, read it with a subtree read (`json_subtree_key`): `->` returns one entry, and a container's entry is sealed over its children. If the path names a scalar, the entry was altered, or sealed under another key or column.")
+    )]
+    JsonNotALeaf,
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     #[diagnostic(code(stack_encrypt::key_count_mismatch))]
@@ -283,6 +342,22 @@ pub enum Error {
         help("Build every part of one record or batch through the same keyset.")
     )]
     KeysetMismatch { left: Uuid, right: Uuid },
+    /// A keyset a decryption needed could not be loaded. Opening a JSON
+    /// document whose root is open derives the root's token under the index
+    /// key of the keyset the document was sealed under, and the cipher could
+    /// not load that keyset; `source` is the load's own error. Only the
+    /// documents under that keyset fail: the rest of the batch they were
+    /// opened in settles.
+    #[error("keyset {keyset_id} could not be loaded")]
+    #[diagnostic(
+        code(stack_encrypt::keyset_load),
+        help("The source says why the load failed. Check that this client is authorised for the keyset the document was sealed under.")
+    )]
+    KeysetLoad {
+        keyset_id: Uuid,
+        #[source]
+        source: Arc<Error>,
+    },
     /// A leaf sealed under one keyset was handed to a [`KeysetCipher`] for
     /// another. The handle's keyset is a constraint the caller asked for —
     /// a tenant-scoped request handler must not open another tenant's row
@@ -343,7 +418,10 @@ impl crate::ErrorPayload for Error {
                 ("expected", (*expected).into()),
                 ("received", (*received).into()),
             ]),
-            Self::OpenedType { expected } => payload([("expected", (*expected).into())]),
+            Self::OpenedType { expected } | Self::JsonWrongEntry { expected } => {
+                payload([("expected", (*expected).into())])
+            }
+            Self::JsonWildcardTruncated { bound } => payload([("bound", (*bound).into())]),
             Self::DescriptorTooLong { len } => payload([
                 ("len", (*len).into()),
                 ("limit", Descriptor::MAX_LEN.into()),
@@ -356,6 +434,11 @@ impl crate::ErrorPayload for Error {
                 ("left", left.to_string().into()),
                 ("right", right.to_string().into()),
             ]),
+            Self::KeysetLoad { keyset_id, source } => {
+                let mut fields = payload([("keyset_id", keyset_id.to_string().into())]);
+                fields.extend(source.payload());
+                fields
+            }
             Self::ForeignKeyset { expected, found } => payload([
                 ("expected", expected.to_string().into()),
                 ("found", found.to_string().into()),
@@ -368,6 +451,7 @@ impl crate::ErrorPayload for Error {
             #[cfg(not(feature = "http"))]
             Self::Config(_) => serde_json::Map::new(),
             Self::Aead
+            | Self::JsonNotALeaf
             | Self::Other(_)
             | Self::UnsupportedShape
             | Self::ResponseShape
@@ -484,6 +568,10 @@ pub struct StackCipher<K> {
     /// Every other keyset this cipher has selected, least recently used
     /// first out. See [`keyset`](Self::keyset).
     keysets: Mutex<KeysetCache>,
+    /// Where the JSON index draws its permutations from (a document's stored
+    /// order, the order a query's selectors are sent in): fresh entropy per
+    /// document or query, outside tests.
+    json_randomness: crate::json::Randomness,
 }
 
 #[cfg(feature = "http")]
@@ -543,6 +631,11 @@ impl<K> StackCipher<K> {
     /// The underlying data-key source.
     pub fn kms(&self) -> &K {
         &self.kms
+    }
+
+    /// Where this cipher draws the JSON index's permutations from.
+    pub(crate) fn json_randomness(&self) -> &crate::json::Randomness {
+        &self.json_randomness
     }
 
     fn keysets(&self) -> std::sync::MutexGuard<'_, KeysetCache> {
@@ -626,6 +719,33 @@ impl<K: IndexKeySource> StackCipher<K> {
         let state = self.keysets().insert(state, resolution);
         Ok(KeysetCipher::new(self, state))
     }
+
+    /// The loaded state of the keyset `id`: from the cache, or loaded from
+    /// ZeroKMS and cached on a miss, as [`keyset`](Self::keyset) selects a
+    /// keyset by id. What a keyset request settles to
+    /// ([`Request::load_keyset`](crate::target::Request)).
+    pub(crate) async fn keyset_state(&self, id: Uuid) -> Result<Arc<KeysetState>, Error> {
+        // Bound first, so the cache's lock is released before the await.
+        let lookup = self.keysets().get(&IdentifiedBy::Uuid(id));
+        let resolution = match lookup {
+            Lookup::Hit(state) => return Ok(state),
+            Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
+        };
+        // Boxed: this runs after a batch's data keys have been through the
+        // stack, and a future is built on the stack and moved with every
+        // byte it does not initialise (see `dispatch`).
+        let state = Box::pin(load_keyset(&self.kms, IdentifiedBy::Uuid(id))).await?;
+        // Asked by id, ZeroKMS answers for that id. A source that answers for
+        // another would have the document walked under another keyset's PRF,
+        // and cached under an id no later lookup asks for.
+        if state.id != id {
+            return Err(Error::KeysetMismatch {
+                left: id,
+                right: state.id,
+            });
+        }
+        Ok(self.keysets().insert(state, resolution))
+    }
 }
 
 /// Resolve a keyset at ZeroKMS and build the state the cipher holds for it:
@@ -654,11 +774,22 @@ async fn load_keyset<K: IndexKeySource>(
         IdentifiedBy::Uuid(_) => None,
     };
     let (id, index_key) = kms.load_index_key(Some(keyset)).await?;
-    Ok(Arc::new(KeysetState {
+    Ok(keyset_state_of(id, name, &index_key))
+}
+
+/// The state the cipher holds for a loaded keyset: its id, the name it was
+/// selected by, and the PRF keyed by its index key. One construction for
+/// every way a keyset is loaded.
+fn keyset_state_of(
+    id: Uuid,
+    name: Option<String>,
+    index_key: &stack_kms::IndexKey,
+) -> Arc<KeysetState> {
+    Arc::new(KeysetState {
         id,
         name,
-        prf: hmac_prf_from_index_key(&index_key),
-    }))
+        prf: hmac_prf_from_index_key(index_key),
+    })
 }
 
 /// The client's own default keyset — the one a ZeroKMS administrator set for
@@ -667,11 +798,7 @@ async fn load_keyset<K: IndexKeySource>(
 /// there is no id or name to carry.
 async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetState>, Error> {
     let (id, index_key) = kms.load_index_key(None).await?;
-    Ok(Arc::new(KeysetState {
-        id,
-        name: None,
-        prf: hmac_prf_from_index_key(&index_key),
-    }))
+    Ok(keyset_state_of(id, None, &index_key))
 }
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key
@@ -723,6 +850,8 @@ pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
     cache_size: NonZeroUsize,
     name_ttl: Duration,
+    #[cfg(feature = "test-support")]
+    json_seed: Option<Protected<[u8; 32]>>,
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -736,6 +865,8 @@ impl StackCipherBuilder<FromEnv> {
             kms: FromEnv,
             cache_size: KeysetCache::DEFAULT_CAPACITY,
             name_ttl: DEFAULT_NAME_TTL,
+            #[cfg(feature = "test-support")]
+            json_seed: None,
         }
     }
 }
@@ -770,6 +901,23 @@ impl<K> StackCipherBuilder<K> {
         self.name_ttl = ttl;
         self
     }
+
+    /// Test support: draw every permutation the JSON index needs (the
+    /// stored order of each document it seals, its objects' member
+    /// ordinals, the order each query's selectors are sent in) from one
+    /// generator started at `seed`,
+    /// so that a run sealing the same documents in the same sequence draws
+    /// the same permutations and a fixture can pin them. Paired with the
+    /// deterministic key source (`kms::DeterministicSource`).
+    ///
+    /// Never for data: the permutations are drawn from the operating
+    /// system's entropy so that they say nothing, and one that follows from
+    /// a known seed hides nothing of a document's shape.
+    #[cfg(feature = "test-support")]
+    pub fn json_seed(mut self, seed: [u8; 32]) -> Self {
+        self.json_seed = Some(Protected::new(seed));
+        self
+    }
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -785,6 +933,8 @@ impl StackCipherBuilder<FromEnv> {
             kms,
             cache_size: self.cache_size,
             name_ttl: self.name_ttl,
+            #[cfg(feature = "test-support")]
+            json_seed: self.json_seed,
         }
     }
 
@@ -812,6 +962,18 @@ impl StackCipherBuilder<FromEnv> {
     }
 }
 
+impl<K> StackCipherBuilder<K> {
+    /// The randomness the cipher's JSON index draws from: the seeded stream
+    /// under `test-support` when one was given, entropy otherwise.
+    fn json_randomness(&self) -> crate::json::Randomness {
+        #[cfg(feature = "test-support")]
+        if let Some(seed) = &self.json_seed {
+            return crate::json::Randomness::seeded(seed.clone());
+        }
+        crate::json::Randomness::from_entropy()
+    }
+}
+
 impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
     /// Resolve the default keyset and load its index key, producing a
     /// cipher whose [`default_keyset`](StackCipher::default_keyset) can both
@@ -819,6 +981,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
     /// always pays; every other keyset loads on first selection.
     pub async fn init(self) -> Result<StackCipher<K>, Error> {
         let default = load_default_keyset(&self.kms).await?;
+        let json_randomness = self.json_randomness();
         Ok(StackCipher {
             kms: self.kms,
             keysets: Mutex::new(KeysetCache::new(
@@ -827,6 +990,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
                 Arc::clone(&default),
             )),
             default,
+            json_randomness,
         })
     }
 }
@@ -845,7 +1009,7 @@ fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::Hm
     prf
 }
 
-impl<K: DataKeySource> KeysetCipher<'_, K> {
+impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
     /// Encrypt a value, binding `aad`, and seal it against fresh ZeroKMS data
     /// keys in a single batched `generate_keys` call under this keyset.
     /// Every key is requested under the [`Descriptor`] of `aad`.
@@ -882,7 +1046,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
 /// is a derivation of the descriptor its key was minted under —
 /// `for_sequence_element`, `for_map_entry`, `for_leaf` — and that
 /// derivation is the library's to compute, never the caller's to supply.
-async fn decrypt_through<'s, 'a, T, K: DataKeySource + 's>(
+async fn decrypt_through<'s, 'a, T, K: DataKeySource + IndexKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
     aad: impl IntoContext<'a>,
@@ -897,7 +1061,7 @@ where
     open_keyed(keyed, context)
 }
 
-impl<K: DataKeySource> StackCipher<K> {
+impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
     ///
     /// One batched `retrieve_keys` call per keyset the leaves were sealed
@@ -1340,7 +1504,7 @@ impl PendingStackCipherText {
     /// ([`seal_pending`](crate::target)), so this and
     /// `encrypt_into_with_context` into a `StackCipherText` share one definition of how a tree
     /// is sealed and one path to ZeroKMS.
-    pub async fn seal<'a, K: DataKeySource>(
+    pub async fn seal<'a, K: DataKeySource + IndexKeySource>(
         self,
         cipher: &KeysetCipher<'_, K>,
         aad: impl IntoContext<'a>,

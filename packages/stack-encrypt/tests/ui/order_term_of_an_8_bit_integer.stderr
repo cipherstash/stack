@@ -17,7 +17,7 @@ error[E0277]: the trait bound `u8: Orderable` is not satisfied
 note: required by a bound in `OreTerm`
   --> src/sem/mod.rs
    |
-   | pub struct OreTerm<T: Orderable>(OreCllw8VariableV1, PhantomData<fn() -> T>);
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
    |                       ^^^^^^^^^ required by this bound in `OreTerm`
 
 error[E0277]: the trait bound `i8: Orderable` is not satisfied
@@ -39,7 +39,7 @@ error[E0277]: the trait bound `i8: Orderable` is not satisfied
 note: required by a bound in `OpeTerm`
   --> src/sem/mod.rs
    |
-   | pub struct OpeTerm<T: Orderable>(OpeCllw8VariableV1, PhantomData<fn() -> T>);
+   | pub struct OpeTerm<T: Orderable>(OpeClww8VariableV1, PhantomData<fn() -> T>);
    |                       ^^^^^^^^^ required by this bound in `OpeTerm`
 
 error[E0277]: the trait bound `i8: Orderable` is not satisfied

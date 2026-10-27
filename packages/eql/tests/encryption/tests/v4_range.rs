@@ -10,9 +10,8 @@
 //! derives the block ORE (`ob`) and CLLW OPE (`op`) terms of EQL v4's ordered
 //! types, so a row is a real `IntegerOrdOre`, `TextOrdOpe`, …, and a bound is
 //! the term the single-bound query of that type carries. Nothing here derives
-//! an order term itself. The ordered date, timestamp and numeric types are
-//! not producible (the engine derives no order term for those kinds), so the
-//! smoke test ranges over the families whose ordered types are.
+//! an order term itself. The smoke test ranges over every family with
+//! ordered types.
 //!
 //! The PostgreSQL tests need an EQL v4 installation (`mise run
 //! test:encryption:postgres`); the others need no database.
@@ -24,6 +23,7 @@ use eql_bindings::v4::{self, integer, text, DomainType};
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::target::IndexSpec;
+use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{Encrypt, KeysetCipher, Label};
 
 fn identifier() -> Value {
@@ -686,7 +686,12 @@ fn ascending(family: &str) -> Option<[Value; 5]> {
         // `real` values are exact in f32; both float widths order as f64.
         "real" => [-2.5, -0.5, 0.0, 1.25, 1e10].map(Value::from),
         "double" => [-1e300, -1.0, 0.0, 2.5, 1e300].map(Value::from),
-        "date" | "timestamp" | "numeric" => return None,
+        // Days since 1970-01-01.
+        "date" => [-719_162, -1, 0, 19_782, 30_000].map(Value::from),
+        // Seconds since the epoch.
+        "timestamp" => [-1_000_000_000, -1, 0, 1_700_000_000, 4_000_000_000_i64].map(Value::from),
+        // Hundredths: -12.50, -0.01, 0.00, 1.50, 99999.99.
+        "numeric" => [-1_250, -1, 0, 150, 9_999_999].map(Value::from),
         other => panic!("no smoke-test values for the ordered family {other:?}: add them here"),
     })
 }
@@ -700,6 +705,9 @@ fn frame_of(family: &str, value: &Value) -> ValueFrame {
         "real" => frame(value.as_f64().unwrap() as f32),
         "double" => frame(value.as_f64().unwrap()),
         "text" => frame(value.as_str().unwrap().to_owned()),
+        "date" => frame(Date::from_days_since_epoch(value.as_i64().unwrap() as i32).unwrap()),
+        "timestamp" => frame(Timestamp::new(value.as_i64().unwrap(), 0).unwrap()),
+        "numeric" => frame(Decimal::new(i128::from(value.as_i64().unwrap()), 2).unwrap()),
         other => panic!("no plaintext for the ordered family {other:?}"),
     }
 }
@@ -732,9 +740,8 @@ fn postgres_between_smoke_test_over_every_ordered_family() {
             .iter()
             .filter(|d| d.terms.iter().any(|t| t.range_suffix().is_some()))
             .collect();
-        // A family's ordered types are producible together or not at all:
-        // the engine derives no order term for a date, a timestamp or a
-        // decimal, so there is no row of those to range over.
+        // A family's ordered types are producible together or not at all,
+        // and a family with none has no row to range over.
         let producible: Vec<bool> = columns
             .iter()
             .map(|d| {
@@ -904,13 +911,16 @@ fn postgres_between_smoke_test_over_every_ordered_family() {
             db.batch_execute("RESET enable_seqscan;").unwrap();
         }
     }
-    // The 5 numeric families with 3 overloads each, and text's 5.
+    // The 5 number families, date, timestamp and numeric with 3 overloads
+    // each, and text's 5.
     assert_eq!(
-        checked, 20,
+        checked, 29,
         "every between overload of a producible type was exercised"
     );
-    skipped.sort_unstable();
-    assert_eq!(skipped, ["date", "numeric", "timestamp"]);
+    assert!(
+        skipped.is_empty(),
+        "every ordered family is producible: {skipped:?}"
+    );
 }
 
 /// Needs an EQL v4 installation. The range parameter must be cast to its

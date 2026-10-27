@@ -122,6 +122,76 @@ async fn option_none_roundtrips() {
     assert_eq!(pt, None);
 }
 
+/// A plain null opens as `None` of a fixed-width type too. Before vitaminc
+/// 0.8 every `None` was sealed as a plain null, and the dynamic path still
+/// seals one, so rows stored that way must keep opening into an `i64` or an
+/// `f64` field.
+#[tokio::test]
+async fn a_plain_null_opens_as_a_fixed_width_none() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ct = keyset
+        .encrypt(Option::<String>::None, ())
+        .await
+        .expect("encrypt");
+    let pt: Option<i64> = cipher.decrypt(ct, ()).await.expect("decrypt");
+    assert_eq!(pt, None, "i64");
+    let ct = keyset
+        .encrypt(Option::<String>::None, ())
+        .await
+        .expect("encrypt");
+    let pt: Option<f64> = cipher.decrypt(ct, ()).await.expect("decrypt");
+    assert_eq!(pt, None, "f64");
+}
+
+/// A sealed `None` of a fixed-width type is as long as a sealed `Some`:
+/// vitaminc 0.8 seals it as a typed null padded to the type's leaf, so the
+/// length of a ciphertext does not say whether its value was there. It opens
+/// as `None`. Text has no fixed width, so its `None` stays the short null.
+#[tokio::test]
+async fn a_fixed_width_none_is_as_long_as_a_some() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    async fn sealed_len<T>(
+        keyset: &stack_encrypt::KeysetCipher<'_, FakeDataKeySource>,
+        value: T,
+    ) -> usize
+    where
+        T: Encrypt + Send + 'static,
+    {
+        match keyset.encrypt(value, ()).await.expect("encrypt") {
+            CipherText::Single(leaf) => leaf.to_bytes().len(),
+            other => panic!("a scalar seals as one leaf: {other:?}"),
+        }
+    }
+    assert_eq!(
+        sealed_len(&keyset, Option::<i64>::None).await,
+        sealed_len(&keyset, Some(-7i64)).await,
+        "i64"
+    );
+    assert_eq!(
+        sealed_len(&keyset, Option::<u32>::None).await,
+        sealed_len(&keyset, Some(7u32)).await,
+        "u32"
+    );
+    assert_eq!(
+        sealed_len(&keyset, Option::<f64>::None).await,
+        sealed_len(&keyset, Some(1.5f64)).await,
+        "f64"
+    );
+    assert!(
+        sealed_len(&keyset, Option::<String>::None).await
+            < sealed_len(&keyset, Some("x".to_string())).await,
+        "text has no width to pad to"
+    );
+    let ct = keyset
+        .encrypt(Option::<i64>::None, ())
+        .await
+        .expect("encrypt");
+    let pt: Option<i64> = cipher.decrypt(ct, ()).await.expect("decrypt");
+    assert_eq!(pt, None);
+}
+
 #[tokio::test]
 async fn protected_roundtrip() {
     // Exercises the `Protected` Decrypt impl, which builds the value inside

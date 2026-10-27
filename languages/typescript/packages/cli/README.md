@@ -42,7 +42,7 @@ npx stash auth login
                             └── npx stash status   ← where am I?
 ```
 
-`stash` covers authentication, initialization, EQL install/upgrade/status, schema introspection, and the staged EQL v3 encryption rollout.
+`stash` covers authentication, initialization, EQL install/upgrade/status, schema introspection, the staged EQL v3 encryption rollout, and its reverse: moving encrypted columns back to plaintext (`stash decrypt`).
 
 ---
 
@@ -66,7 +66,7 @@ export default defineConfig({
 
 The CLI loads `.env` files automatically before reading the config, so `process.env` references work without extra setup. The config file is resolved by walking up from the current working directory.
 
-Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `eql validate`, `eql status`, `db test-connection`, `schema build`, and `encrypt *`.
+Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `eql validate`, `eql status`, `db test-connection`, `schema build`, `encrypt *`, and `decrypt *`.
 
 ---
 
@@ -307,6 +307,40 @@ npx stash schema build [--supabase]
 Connects to your database, lets you select tables and columns to encrypt, asks about searchable indexes, and generates a typed encryption client file.
 
 Reads `databaseUrl` from `stash.config.ts`.
+
+---
+
+### `npx stash decrypt` — moving columns back to plaintext
+
+Leaving CipherStash is the encrypt lifecycle run backwards, with the same safety rails. Decryption is never charged.
+
+```
+decrypt plan      add a plaintext twin per encrypted column (type mapped back from its EQL domain)
+  → deploy dual-writes (app writes the encrypted column AND its plaintext twin)
+decrypt backfill  decrypt every row into the twin — resumable, one ZeroKMS request per chunk
+  → switch reads to the plaintext column and deploy (keep writing BOTH columns)
+decrypt drop      generate the migration that drops the encrypted column and its EQL indexes
+  → apply it, then stop writing the encrypted column
+decrypt status    where each column stands
+```
+
+```bash
+npx stash decrypt plan                                                  # read-only overview
+npx stash decrypt plan --table users                                    # generate the twins
+npx stash decrypt backfill --table users --column email_encrypted
+npx stash decrypt drop --table users --column email_encrypted [--uninstall-eql]
+npx stash decrypt status
+```
+
+`--column` always names the column being migrated away from — the encrypted one here. The plaintext twin defaults to the pairing the reverse migration in progress recorded, then the original name recorded in `.cipherstash/migrations.json`, else the column name without `_encrypted`, else `<column>_plaintext`; override with `--plaintext-column`. Plaintext types: `text*` → `text`, `integer*`/`smallint*`/`bigint*`/`numeric*`/`real*` → the same type, `double*` → `double precision`, `boolean` → `boolean`, `date*` → `date`, `timestamp*` → `timestamptz` (EQL timestamps are instants), `json`/`json_search` → `jsonb`. The backfill casts to whatever type the twin actually has, so you can widen or narrow it in the migration.
+
+**Keep dual-writing until the drop is applied.** Unlike the forward rollout, the application keeps writing both the encrypted column and the plaintext column until the `decrypt drop` migration has run. `decrypt backfill --force` and the drop's coverage check depend on it: if writes to the encrypted column stop early, a value cleared in the plaintext column keeps its old ciphertext, and a re-run of the backfill writes the old value back.
+
+**A forward encryption that was never dropped cannot be reversed.** The backfill refuses a plaintext column that is the source of a forward encryption not yet dropped: finish it with `encrypt drop`, or abandon it by stopping writes to the encrypted column and dropping it. **A plaintext column that already holds values is refused on the first run.** The backfill only fills NULLs, so it refuses such a column until you pass `--force` (overwrite it from the ciphertext; every later run is then forced until a forced pass completes) or `--confirm-plaintext-current` (keep it; only if it was written on every change). `decrypt plan` warns about the same columns.
+
+**Values bound to a lock context are not decrypted.** A value encrypted with an end-user lock context can only be decrypted as that user. The backfill skips those rows, counts them, leaves the twin NULL and reports them; `decrypt drop` refuses while any remain, because dropping the encrypted column would destroy their only copy. Decrypt them in your application on each user's behalf, then re-run the backfill.
+
+The backfill loads your encryption client exactly as `encrypt backfill` does (client file or Prisma Next contract), so export the `CS_*` credentials of the environment that wrote the data.
 
 ---
 

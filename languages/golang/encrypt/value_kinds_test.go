@@ -211,10 +211,13 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 		}
 	}
 	orders := map[string]func() ([]byte, error){
-		"i16:ore":  func() ([]byte, error) { return fields.I16.Lt(ctx, cipher, want.I16) },
-		"u16:ope":  func() ([]byte, error) { return fields.U16.Lt(ctx, cipher, want.U16) },
-		"i128:ore": func() ([]byte, error) { return fields.I128.Lt(ctx, cipher, want.I128) },
-		"u128:ope": func() ([]byte, error) { return fields.U128.Lt(ctx, cipher, want.U128) },
+		"i16:ore":    func() ([]byte, error) { return fields.I16.Lt(ctx, cipher, want.I16) },
+		"u16:ope":    func() ([]byte, error) { return fields.U16.Lt(ctx, cipher, want.U16) },
+		"i128:ore":   func() ([]byte, error) { return fields.I128.Lt(ctx, cipher, want.I128) },
+		"u128:ope":   func() ([]byte, error) { return fields.U128.Lt(ctx, cipher, want.U128) },
+		"date:ore":   func() ([]byte, error) { return fields.Date.Lt(ctx, cipher, want.Date) },
+		"at:ope":     func() ([]byte, error) { return fields.At.Lt(ctx, cipher, want.At) },
+		"amount:ore": func() ([]byte, error) { return fields.Amount.Lt(ctx, cipher, want.Amount) },
 	}
 	for key, order := range orders {
 		field, output, _ := bytes.Cut([]byte(key), []byte(":"))
@@ -224,9 +227,9 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 		}
 	}
 
-	// A query value that vitaminc-normalize folds onto the stored value —
-	// a decimal at another scale, a timestamp truncated to microseconds —
-	// derives the stored equality term.
+	// A query value that vitaminc folds onto the stored value — a decimal
+	// at another scale, a timestamp truncated to microseconds — derives the
+	// stored equality term, and the stored order term.
 	for _, q := range f.Queries {
 		if q.Operator != "eq" {
 			t.Fatalf("the fixture has a %s query the test does not know", q.Operator)
@@ -237,13 +240,23 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 			t.Errorf("%s query %q: Go writes the frame %x (%v), Rust wrote %s", q.Field, q.Text, frame, err, q.Frame)
 		}
 		var term encrypt.EqualityTerm
+		var order []byte
+		var orderErr error
+		var orderOutput string
 		switch q.Field {
 		case "amount":
 			term, err = fields.Amount.Eq(ctx, cipher, value.(encrypt.Decimal))
+			order, orderErr = fields.Amount.Lt(ctx, cipher, value.(encrypt.Decimal))
+			orderOutput = "ore"
 		case "at":
 			term, err = fields.At.Eq(ctx, cipher, value.(time.Time))
+			order, orderErr = fields.At.Lt(ctx, cipher, value.(time.Time))
+			orderOutput = "ope"
 		default:
 			t.Fatalf("the fixture has a query on %q the test does not know", q.Field)
+		}
+		if orderErr != nil || !bytes.Equal(order, hexField(t, rec, q.Field, orderOutput)) {
+			t.Errorf("%s query %q: %v, its %s term is not the stored one", q.Field, q.Text, orderErr, orderOutput)
 		}
 		wantTerm, _ := hex.DecodeString(q.Term)
 		if err != nil || !term.Equal(wantTerm) || !term.Equal(hexField(t, rec, q.Field, "eq")) {
@@ -308,9 +321,9 @@ func valueKindsTerms(e testusers.EncryptedValueKinds) map[string]map[string][]by
 		"u16":    {"eq": e.U16.Equality, "ope": e.U16.Ope},
 		"i128":   {"eq": e.I128.Equality, "ore": e.I128.Ore},
 		"u128":   {"eq": e.U128.Equality, "ope": e.U128.Ope},
-		"date":   {"eq": e.Date.Equality},
-		"at":     {"eq": e.At.Equality},
-		"amount": {"eq": e.Amount.Equality},
+		"date":   {"eq": e.Date.Equality, "ore": e.Date.Ore},
+		"at":     {"eq": e.At.Equality, "ope": e.At.Ope},
+		"amount": {"eq": e.Amount.Equality, "ore": e.Amount.Ore},
 	}
 }
 

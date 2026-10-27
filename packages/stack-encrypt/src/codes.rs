@@ -49,6 +49,11 @@ mod tests {
             Error::Kms(_) => Error::Kms(crate::kms::Error::Unexpected("kms".into())),
             Error::Aead => Error::Aead,
             Error::OpenedType { .. } => Error::OpenedType { expected: "i32" },
+            Error::JsonWrongEntry { .. } => Error::JsonWrongEntry {
+                expected: "the entry at the path asked for",
+            },
+            Error::JsonWildcardTruncated { .. } => Error::JsonWildcardTruncated { bound: 64 },
+            Error::JsonNotALeaf => Error::JsonNotALeaf,
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
@@ -63,6 +68,10 @@ mod tests {
             },
             Error::ResponseShape => Error::ResponseShape,
             Error::KeysetMismatch { .. } => Error::KeysetMismatch { left: a, right: b },
+            Error::KeysetLoad { .. } => Error::KeysetLoad {
+                keyset_id: a,
+                source: std::sync::Arc::new(Error::KeysetMismatch { left: a, right: b }),
+            },
             Error::ForeignKeyset { .. } => Error::ForeignKeyset {
                 expected: a,
                 found: b,
@@ -78,7 +87,7 @@ mod tests {
         ]));
         errors.extend(boxed(variants![
             TermError::Prf(_) => TermError::Prf(cause()),
-            TermError::Ore(_) => TermError::Ore(cllw_ore::Error),
+            TermError::Ore(_) => TermError::Ore(clww_ore::Error),
             TermError::OreBlockTooLong => TermError::OreBlockTooLong,
             TermError::OreBlockTrailingNul => TermError::OreBlockTrailingNul,
             TermError::OreBlock(_) => TermError::OreBlock(cause()),
@@ -95,7 +104,7 @@ mod tests {
             }),
             TermError::JsonTooDeep => TermError::JsonTooDeep,
             TermError::JsonTooWide => TermError::JsonTooWide,
-            TermError::JsonSealedRoot => TermError::JsonSealedRoot,
+            TermError::JsonWildcardTooWide => TermError::JsonWildcardTooWide,
             TermError::JsonLeafNotOrdered => TermError::JsonLeafNotOrdered,
             TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
             TermError::JsonOrderingAtPosition => TermError::JsonOrderingAtPosition,
@@ -244,6 +253,11 @@ mod tests {
                 name: name(),
                 target: target(),
                 reason: "not JSON".into(),
+            },
+            TargetError::Json { .. } => TargetError::Json {
+                name: name(),
+                target: target(),
+                reason: "json_duplicate_key",
             },
             TargetError::Other(_) => TargetError::Other(Box::new(std::io::Error::other("boom"))),
         ]));
@@ -396,6 +410,16 @@ mod tests {
             (
                 Box::new(Error::OpenedType { expected: "i32" }),
                 json!({ "expected": "i32" }),
+            ),
+            (
+                Box::new(Error::JsonWrongEntry {
+                    expected: "the entry at the path asked for",
+                }),
+                json!({ "expected": "the entry at the path asked for" }),
+            ),
+            (
+                Box::new(Error::JsonWildcardTruncated { bound: 64 }),
+                json!({ "bound": 64 }),
             ),
             (
                 Box::new(LeafBytesError::UnknownVersion(9)),

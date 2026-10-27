@@ -41,6 +41,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+// The byte encodings of the EQL v4 json_tree wire fields, which are their
+// only users; the encoders come with the `stack-encrypt` feature.
+#[cfg(feature = "stack-encrypt")]
+pub mod encoding;
 pub mod from_v2;
 pub mod sql;
 pub mod v3;

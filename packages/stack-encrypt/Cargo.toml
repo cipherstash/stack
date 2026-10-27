@@ -37,15 +37,29 @@ vitaminc-hmac = { workspace = true }
 # number whatever its width, text in Unicode 16 NFC. Match text is
 # normalized by the same crate before it is tokenized.
 vitaminc-normalize = { workspace = true }
-# The order targets (`OrderTarget`) and the scheme traits cllw-ore's
-# `vitaminc` feature implements, which order terms encrypt through.
+# The order targets (`OrderTarget`) and the scheme traits clww-ore and
+# ore-rs implement, which order terms encrypt through.
 vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
+# The generator the JSON index draws its permutations from (`json::shuffle`):
+# `vitaminc::random::SafeRand`, seeded from the operating system.
+vitaminc = { workspace = true }
+# `rand::seq::SliceRandom::shuffle`, the Fisher–Yates shuffle `SafeRand`
+# drives. The version is vitaminc-random's, so the `Rng` it asks for is the
+# one `SafeRand` implements. No default features: `std`, the OS and thread
+# generators are not used.
+rand = { version = "0.10.1", default-features = false }
+# `future::join` and `join_all`: a pending's dispatch loads the keysets its
+# JSON documents need beside the data-key retrieval, in one await.
+futures = { version = "0.3.25", default-features = false }
 # `dynamic` only: serde over the transport frame, which reads a binding's
 # control data (statistics, options, a plan) into typed messages.
 vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true }
+# The order terms' serde: lowercase hex in JSON, raw bytes in a binary
+# format, through serdect's constant-time hex.
+serdect = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS,
 # and the JSON index's chain fields, header and ordering term on the wire:
 # padded standard base64, the one form PostgreSQL's `decode(x, 'base64')`
@@ -61,18 +75,29 @@ base85-simd = "0.1.0"
 # already builds, so nothing new is compiled.
 sha2 = "0.11"
 
-cllw-ore = { workspace = true }
-# Block ORE (`OreBlock`): ore-rs's 6-bit schemes through the same
-# vitaminc-ore traits cllw-ore implements.
+clww-ore = { workspace = true }
+# Block ORE (`OreBlock`): ore-rs's `BlockOre`, its 6-bit schemes behind
+# the same vitaminc-ore traits clww-ore implements.
 ore-rs = { workspace = true }
 # Every error derives `miette::Diagnostic` (a code, and help where a caller
 # can act) and gives its structured fields as a `serde_json` map through
 # `ErrorPayload`. Both are already in the graph through stack-kms.
 miette = { workspace = true }
-serde_json = { workspace = true }
+# `float_roundtrip`: the JSON index stores a number leaf as its shortest
+# round-trip text and parses it back when the entry or the sealed root
+# opens (`json::derive::decode_node`, `json::plain::PlainJson::parse`).
+# serde_json's default float parser is fast and can land one unit in the
+# last place off the `f64` that text names; this one returns the nearest
+# `f64`, so the value opens to the one sealed (#1364). It costs slower
+# float parsing and a little more code, and nothing new is compiled.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
+# `value::{Date, Timestamp}` to and from chrono's types (the `chrono`
+# feature), and `value::Decimal` to and from rust_decimal's (`rust_decimal`).
+chrono = { version = "0.4.44", optional = true, default-features = false }
+rust_decimal = { version = "1", optional = true, default-features = false }
 
 [features]
 default = ["http"]
@@ -86,6 +111,11 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author. Its transport frames are vitaminc-aead's own.
 dynamic = ["dep:vitaminc-aead-frame"]
+# Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
+# `value::Date` / `value::Timestamp`.
+chrono = ["dep:chrono", "vitaminc-aead/chrono"]
+# Conversions between rust_decimal's `Decimal` and `value::Decimal`.
+rust_decimal = ["dep:rust_decimal", "vitaminc-aead/rust_decimal"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.
@@ -105,6 +135,14 @@ zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
+# Property tests of the JSON index's derivations and reads
+# (tests/json_properties.rs), the generated containment property in
+# tests/json_index.rs, and the JSON index's executable leakage profile
+# (tests/json_leakage): random columns for its positive control, and the
+# seeded generator its simulator draws from. Default features off, as
+# stack-guest-abi takes it: `std` carries the failure persistence and the
+# ChaCha RNG the runs are seeded with, and nothing else is needed.
+proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
 # and CI run them. They cannot be relied on to hold under both feature sets

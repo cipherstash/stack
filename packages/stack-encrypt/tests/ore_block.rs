@@ -4,7 +4,8 @@
 //! Every kind the index takes orders as its ADR-0002 order key: integers by
 //! value at their own width, floats as PostgreSQL's `float8` (`-0.0` ties
 //! `0.0`, every NaN one value after `+Infinity`), text by its fold, bytes
-//! as bytes. A term carries a random nonce, so the pins hold the left half
+//! as bytes, dates by day, timestamps by the microsecond and decimals by
+//! value. A term carries a random nonce, so the pins hold the left half
 //! only (the header, the permuted symbols and the per-block tags), which is
 //! deterministic in the key, the context and the value.
 //!
@@ -14,6 +15,7 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::sem::{Orderable, OreBlockTerm, TermBytesError, TermError};
+use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{nonempty, Error, KeysetCipher, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -116,6 +118,78 @@ async fn wide_integers_are_the_chained_scheme_unpadded() {
         unsigned.push(term(&keyset, value).await);
     }
     assert_sorted(&unsigned, "u128");
+}
+
+/// A date is four bytes, so the 6-bit fixed-width scheme's six blocks; a
+/// timestamp (twelve bytes) and a decimal (fourteen) are the chained
+/// scheme, unpadded. Each orders by value: a timestamp by the microsecond,
+/// floored, so a nanosecond before the epoch is a microsecond before it,
+/// and a decimal whatever its scale.
+#[tokio::test]
+async fn dates_timestamps_and_decimals_order_by_value() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let mut dates = Vec::new();
+    for days in [-719_162, -1, 0, 1, 19_782] {
+        let term = term(
+            &keyset,
+            Date::from_days_since_epoch(days).expect("in range"),
+        )
+        .await;
+        assert_eq!(
+            &term.as_bytes()[..2],
+            &[0x02, 0x02],
+            "a date is the 6-bit scheme"
+        );
+        assert_eq!(blocks(term.as_bytes()), 6);
+        dates.push(term);
+    }
+    assert_sorted(&dates, "date");
+
+    let instant = |seconds, nanos| Timestamp::new(seconds, nanos).expect("in range");
+    let mut instants = Vec::new();
+    for (seconds, nanos) in [(-1, 999_999_000), (0, 0), (0, 1_000), (1_700_000_000, 0)] {
+        let term = term(&keyset, instant(seconds, nanos)).await;
+        assert_eq!(
+            &term.as_bytes()[..2],
+            &[0x02, 0x03],
+            "a timestamp is chained"
+        );
+        assert_eq!(&term.as_bytes()[4..7], &[0, 0, 0], "no padding");
+        assert_eq!(blocks(term.as_bytes()), 16);
+        instants.push(term);
+    }
+    assert_sorted(&instants, "timestamp");
+    let tie = |a: &OreBlockTerm<Timestamp>, b: &OreBlockTerm<Timestamp>| a.compare(b);
+    assert_eq!(
+        tie(
+            &term(&keyset, instant(0, 1_000)).await,
+            &term(&keyset, instant(0, 1_999)).await
+        ),
+        Some(Ordering::Equal),
+        "one microsecond"
+    );
+    assert_eq!(
+        tie(&term(&keyset, instant(-1, 999_999_999)).await, &instants[0]),
+        Some(Ordering::Equal),
+        "a nanosecond before the epoch floors to the microsecond before it"
+    );
+
+    let decimal = |mantissa, scale| Decimal::new(mantissa, scale).expect("in range");
+    let mut decimals = Vec::new();
+    for (mantissa, scale) in [(-1, 0), (15, 1), (2, 0), (100, 0)] {
+        let term = term(&keyset, decimal(mantissa, scale)).await;
+        assert_eq!(&term.as_bytes()[..2], &[0x02, 0x03], "a decimal is chained");
+        assert_eq!(&term.as_bytes()[4..7], &[0, 0, 0], "no padding");
+        assert_eq!(blocks(term.as_bytes()), 19);
+        decimals.push(term);
+    }
+    assert_sorted(&decimals, "decimal");
+    assert_eq!(
+        term(&keyset, decimal(150, 2)).await.compare(&decimals[1]),
+        Some(Ordering::Equal),
+        "1.50 ties 1.5"
+    );
 }
 
 /// Floats order as PostgreSQL's `float8`: `-0.0` ties `0.0`, every NaN is
@@ -245,6 +319,24 @@ async fn bytes_order_as_bytes() {
     assert_sorted(&terms, "bytes");
 }
 
+/// Bytes take a term up to 1023 bytes, as text's fold does: ore-rs's
+/// 1024-byte ceiling counts the marker byte in front of them.
+#[tokio::test]
+async fn bytes_of_more_than_1023_bytes_have_no_term() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let longest = term(&keyset, vec![7u8; 1023]).await;
+    assert!(blocks(longest.as_bytes()) > 1023, "every byte is ordered");
+    let too_long = keyset
+        .ore_block_term(vec![7u8; 1024], nonempty!("users/n"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(too_long, Error::Term(TermError::OreBlockTooLong)),
+        "{too_long:?}"
+    );
+}
+
 /// One value encrypts to different bytes each time (the right half's
 /// nonce), and those terms compare equal; the left half is deterministic.
 #[tokio::test]
@@ -264,8 +356,8 @@ async fn one_value_is_new_bytes_that_compare_equal() {
         assert_ne!(a, b, "a fresh nonce each time");
         assert_eq!(left(&a), left(&b));
         let (a, b) = (
-            OreBlockTerm::<i64>::from_bytes(&a).unwrap(),
-            OreBlockTerm::<i64>::from_bytes(&b).unwrap(),
+            OreBlockTerm::<i64>::from_bytes(a.clone()).unwrap(),
+            OreBlockTerm::<i64>::from_bytes(b.clone()).unwrap(),
         );
         assert_eq!(a.compare(&b), Some(Ordering::Equal));
         assert!(a == b, "== is the scheme's equality");
@@ -325,9 +417,9 @@ async fn left_halves_are_pinned() {
     );
 }
 
-const PINNED_I32: &str = "020200060c0a0a1f37375535b8d860bd115a46292e8aac8ef6571e4ab59087b3b4c68d4621980b5633ca7f5a6d0da5d7d9d683003c2bfcc4630697cbce320a75f61b0875bc8d63c530d74c515d0ee6fc1b5303f5ff16e767ad905a95a1e5fbfebfb047d2f959b91b9b3d";
-const PINNED_F64: &str = "0202000b1501163b2a0a33341205014148b5ed0af663b698a1e4727de4a2f9749c116d8be814ed51540319016cc48b5c9ca000d776bf2aa438a615f84fe4c8856567731aebe1d043dcee1cf0a62e1995e3247033d370b0c7b24e6c043d33ecff732552dacfd13cad5b7b11f5c90f6480e05c5d75b04d605a7522c5102491999f35690dcd5ae228b08e812766bf35f8622307ffce17091ad737af98f1c82a9caa2fa556156c52ee7caee7b97d2b6a8f6e0e1ac247e006dae5d61fee390b39e2";
-const PINNED_TEXT: &str = "0203001601001039201c002d22313e3625260c211a36351e3507391835d9cec533ab14188edbe7bb248118b82ff3a1635b1469dd20ab6021b66d5d957893d251ad85f93322d5d445a149f4cea13a7be3692c56241a6cf438a1b6f3353bac005c4eabbeb193ee467a15d7b5cf6d171d8347f4fe2a9d87694bcc86db61747b9e4a1f76c078331be8e57291969b4c6a9e38d6efa1500d921c712888fa953fc94099f0cc0a5852c1decc45563122685a3c07184f4f49ed2b98abb2682e22fcb42140d0a0ff51cca79c678a0b0077c7de2f6690b6e63957e433a96e4f42b2f6e8eb15180349c8d3a4aa9e3663e11e90267b22428407a5f051095113a0ac0bbcbf99e0c4fc41fe2f1c233cf27af369a5f956f29813a6a153f78ab56af7e60f06f3a8fc7a637e6749d44218c0a58d5541944c85a970aff3ca00dbe3bc6be3fdd1944ccab358071e8baac6aeec381c2a2fdac3ba2d69b3c09f7694abf699f6a652da1a2510df98ac20716dd7c25f834d412c0617d195922952942187e399bb6b6d";
+const PINNED_I32: &str = "020200062422373e222f96362b6599fc5183c20804eeddd52d41890dc85341958dc7329d18a521c1d74f76fed42c7517b4e8cdfc74cbc6f9e521a72658dc177b73e9fa5a2d8a661bf3ef7117ecef8aeca900b3465c3640ebddfc8d5887729387bcdc64486801f99d2dda";
+const PINNED_F64: &str = "0202000b0b033912381600140628353cede9c0b7d2aebfd0b81f922c34bb5faa5cd0f3723ab63db491c0f20f47873e7a28d2cde32d31b9ddc8ffb2708429b2432d25b6c806a06cd6efe7021e9c965388064ca5493283cc499209b81c212593869c9baca7cf007f21a318ba7c3932ea23448843d69cb7f79c952cf4bb986a42ddb795a01b558f97fcf9ef5eba7efe87bcb51c10fbe80a7997aa55963596e851c858f014c9408b15ad2762c2a02b32db5bd58e5d3f85651ee7d2d43869d3b09d";
+const PINNED_TEXT: &str = "02030016010010172510373d14172510363017212d163e161a10341620b9ce74f6d4e48df255a31928333790bb04fffdcf1c73688b642c450bfd649429589029e048f81f6b746af7306d8c88833d5e3cd1dca9d109b48203a44e1be8cad4717a7072aeb2c694c4c7952bb117fc89635665a8c4023aed2b84e8652849986c7a4b6fd64d22012154868ba39ac5a7f55cfb26fee81c0b419ab238dc435cb5ac7475b496bb6fae32b60aa38855d425126a44fa59342dfb2d114e74d059399ab0b526d856e0f96f59a7740eef99a787001ebc2d1b6ca5d9bf600bc43f1452250ce58dd8f1e0590f1030c9bbacc31b9f2d984d19bbe6a35a0fd156871d39ff9d55e05f3b497efbfa358f17e32a7b96e3585f3d8a83308693ce3ed3d2dac7268c4570b10910fc73d0937f100ef31a7c7b70c1469984fad0be135ca4e00dcedc4242d1327c73746d3e90db658f48561f4f0572dc65dff246102e9875d98aa0dbdc5e079e76e3d3999f8a10766fcb034119794e333d82ba81db0692dbc93745204b";
 
 /// The block ORE key is the index's own: its terms share no left half with
 /// another context's, and none with CLLW ORE's key (a CLLW term is a
@@ -405,8 +497,13 @@ async fn decoding_checks_the_shape() {
     let keyset = cipher.default_keyset();
     let bit6 = term(&keyset, 42i64).await.into_bytes();
     let chained = term(&keyset, "alice".to_string()).await.into_bytes();
-    assert!(OreBlockTerm::<i64>::from_bytes(&bit6).is_ok());
-    assert!(OreBlockTerm::<String>::from_bytes(&chained).is_ok());
+    assert!(OreBlockTerm::<i64>::from_bytes(bit6.clone()).is_ok());
+    assert!(OreBlockTerm::<String>::from_bytes(chained.clone()).is_ok());
+    // The std conversions are the same decoder, by value and by copy.
+    let by_value = OreBlockTerm::<i64>::try_from(bit6.clone()).unwrap();
+    assert_eq!(by_value.as_bytes(), &bit6[..]);
+    let by_copy = OreBlockTerm::<String>::try_from(&chained[..]).unwrap();
+    assert_eq!(by_copy.as_bytes(), &chained[..]);
     for bad in [
         &bit6[..bit6.len() - 1],
         &chained[..10],
@@ -414,13 +511,15 @@ async fn decoding_checks_the_shape() {
         &[0x02, 0x04, 0, 1][..],
     ] {
         assert_eq!(
-            OreBlockTerm::<i64>::from_bytes(bad).unwrap_err(),
+            OreBlockTerm::<i64>::from_bytes(bad.to_vec()).unwrap_err(),
             TermBytesError::MalformedOreBlockCiphertext(bad.len())
         );
+        assert!(OreBlockTerm::<i64>::try_from(bad).is_err());
+        assert!(OreBlockTerm::<i64>::try_from(bad.to_vec()).is_err());
     }
     // A 6-bit and a chained term have no order between them.
-    let a = OreBlockTerm::<i64>::from_bytes(&bit6).unwrap();
-    let b = OreBlockTerm::<i64>::from_bytes(&chained).unwrap();
+    let a = OreBlockTerm::<i64>::from_bytes(bit6).unwrap();
+    let b = OreBlockTerm::<i64>::from_bytes(chained).unwrap();
     assert_eq!(a.compare(&b), None);
     assert!(a != b);
 }

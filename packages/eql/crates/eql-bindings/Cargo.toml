@@ -47,22 +47,15 @@ schemars = "1"
 # Stack Encrypt's typed API. The `targets` feature turns `dynamic` on.
 stack-encrypt = { path = "../../../stack-encrypt", version = "0.3.0", optional = true, default-features = false }
 # The plaintext a target reads out of its `Protected` runtime value is held
-# in `Zeroizing` until it is sealed, so the copy is wiped like the original;
-# and the date, timestamp and decimal plaintexts (`v4::plaintext`) wipe
-# themselves on drop.
+# in `Zeroizing` until it is sealed, so the copy is wiped like the original.
 zeroize = { version = "1", optional = true }
-# `TargetError` and `v4::plaintext::RangeError`.
+# `TargetError`.
 thiserror = { version = "2", optional = true }
-# `stack-encrypt` only: the sink and scalar vocabulary the date, timestamp
-# and decimal plaintexts (`v4::plaintext`) describe themselves with, and
-# vitaminc's range checks for them. The version Stack Encrypt uses, so the
-# traits are the ones it calls.
-vitaminc-aead = { version = "0.6.0", optional = true }
-# The `chrono` and `rust_decimal` features: conversions between those
-# crates' types and `v4::plaintext`'s.
-chrono = { version = "0.4.44", optional = true, default-features = false }
-rust_decimal = { version = "1", optional = true, default-features = false }
 base64 = { version = "0.22", optional = true }
+# `encoding::Base85Text`: RFC 1924 base85, the encoder and decoder Stack
+# Encrypt writes the json_tree ciphertext `c` with, at the version it uses,
+# so the lockfile holds one copy.
+base85-simd = { version = "0.1.0", optional = true }
 hex = { version = "0.4", optional = true }
 
 [features]
@@ -73,16 +66,16 @@ default = []
 stack-encrypt = [
   "dep:stack-encrypt",
   "dep:base64",
+  "dep:base85-simd",
   "dep:hex",
-  "dep:vitaminc-aead",
   "dep:zeroize",
   "dep:thiserror",
 ]
 # Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
 # `v4::plaintext::Date` / `Timestamp`.
-chrono = ["stack-encrypt", "dep:chrono", "vitaminc-aead/chrono"]
+chrono = ["stack-encrypt", "stack-encrypt/chrono"]
 # Conversions between rust_decimal's `Decimal` and `v4::plaintext::Decimal`.
-rust_decimal = ["stack-encrypt", "dep:rust_decimal", "vitaminc-aead/rust_decimal"]
+rust_decimal = ["stack-encrypt", "stack-encrypt/rust_decimal"]
 # The by-name dispatch a language binding needs (`encryption::targets`,
 # `v4::targets`): an EQL type named at run time, a `ValueFrame` plaintext,
 # and the target table a guest serializes. Turns on stack-encrypt's
@@ -101,3 +94,5 @@ features = ["targets", "chrono", "rust_decimal"]
 # exactly covers eql_domains::CATALOG, so the types here cannot drift from
 # the generated SQL surface.
 eql-domains = { path = "../eql-domains" }
+# `encoding`'s round-trip properties. The version eql-domains uses.
+proptest = "1"

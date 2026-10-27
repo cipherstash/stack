@@ -49,17 +49,21 @@ that schema already exists, it refuses to run rather than touch it.
 
 ## Method
 
-`ctgen` produces real ore-rs 0.9.0 ciphertexts, one term per side, in four
-kinds of two classes each, plus a correctness set:
+`ctgen` produces real ore-rs ciphertexts, one term per side, in four kinds
+of two classes each, plus a correctness set. It encrypts through ore-rs's
+`BlockOre` and vitaminc-ore, as stack-encrypt does, so text is encoded as a
+marker byte and then the text:
 
 - **fixed**: `u64` terms of the fixed-width scheme (11 blocks), differing in
   the first block against differing only in the last;
 - **equal**: a `u64` against a second encryption of the same value (a
   different nonce, no block differs), against a first-block difference;
-- **chained**: 31-byte text of the chained scheme (a 32-byte bucket, 43
-  blocks), differing in the first character against only the last;
-- **prefix**: 10-byte text (a 16-byte bucket, 22 blocks) against 26-byte
-  text (a 32-byte bucket, 43 blocks) whose first 22 blocks equal it, so the
+- **chained**: 31-character text of the chained scheme (32 bytes encoded,
+  a 32-byte bucket, 43 blocks), differing in the first character against
+  only the last;
+- **prefix**: 10-character text (11 bytes encoded, a 16-byte bucket, 22
+  blocks) against 26 encoded bytes (a 32-byte bucket, 43 blocks) whose first
+  22 blocks equal it, so the
   block counts settle the order, against the same shapes differing in the
   first block;
 - **checks**: 1,500 random pairs of either scheme with shared prefixes of
@@ -83,6 +87,11 @@ Classes are chosen at random per sample, so drift affects both equally. `|t| < 5
 counts as no detectable difference.
 
 ## Results
+
+These were measured with ore-rs 0.9.0's ciphertexts, before `ctgen` moved to
+0.10. The wire format the comparator reads (the headers, the block counts,
+the halves) did not change, and the text shapes above give the same block
+counts as they did.
 
 PostgreSQL 17.5 run natively on macOS, Apple silicon, 100,000 samples per
 kind, two runs. The machine was shared with other builds, which shows in

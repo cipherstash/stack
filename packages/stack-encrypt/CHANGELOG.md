@@ -7,13 +7,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`OpSpec`, `Operand` and the query term's wire form grow for documents**
+  (#1350). `OpSpec` gains twelve operators and `Operand` gains `Text` and
+  `TextList`; a binding that matches on either adds the arms. The query
+  term an `se_query_term`-style export writes has a sixth key,
+  `encoding` (`bytes`, `eql`, `text`, `text_array`), and an operator entry
+  a fifth, `input` (`value`, `pair`, `json`, `path_json`, `path_pair`,
+  `path`, `path_bound`); a reader that checks every key reads the new
+  ones. `TargetDescriptor` has a `leaf_query_sql_domain`, set with
+  `with_leaf_query_sql_domain`.
+
+- **`TargetResolver::encrypt` takes the field's target options** (#1349):
+  `encrypt(name, options: Option<&TargetOptions>, keyset, label,
+  plaintext)`. A resolver implemented outside this crate adds the
+  parameter; one that resolves no document type ignores it.
+- **`dynamic::ValueKind` gains `Json`, and `ValueKind::ALL` holds 21
+  kinds** (#1349). The enum is not `#[non_exhaustive]`, so an exhaustive
+  `match` on it, or a `[ValueKind; 20]` binding of `ALL`, stops compiling.
+### Changed
+
+- **`->` on a JSON index container with members is `Error::JsonNotALeaf`.**
+  Every entry's ciphertext now commits to its children's ciphertexts (the
+  cascade), so a container's entry does not open on its own, and `->`
+  returns one entry. The client cannot tell a container from an altered
+  entry before the open, so the error names both causes and claims
+  neither; the Go guest maps it to `STATUS_ENCODING`, where a container was
+  `OpenedType` before. Read a container with a subtree read
+  (`KeysetCipher::json_subtree_key`). Decrypting a JSON document whose root
+  is open loads the keyset it was sealed under, beside its data key; a load
+  that fails is `Error::KeysetLoad` on those documents alone.
+- **Awaiting a `Pending` needs an `IndexKeySource` as well as a
+  `DataKeySource`.** A root-open JSON document's keyset is loaded through
+  the cipher's own keyset path when the pending settles, so `IntoFuture for
+  Pending`, `StackCipher::decrypt`, `KeysetCipher::encrypt` and the other
+  settling entry points bound `K: DataKeySource + IndexKeySource`. Every
+  `StackCipher` is built over a source that implements both
+  (`StackCipherBuilder::init` requires it), so a concrete call site is
+  unchanged; generic code written over `K: DataKeySource` alone adds the
+  second bound.
+
+### Fixed
+
+- **A float in a JSON index document opens to the value that was sealed**
+  (#1364). A number leaf is stored as its shortest round-trip text and
+  parsed back when its entry or the sealed root opens, and serde_json's
+  default float parser can land one unit in the last place off the `f64`
+  that text names: `-926809.5051008083` opened as `-926809.5051008085`,
+  through `JsonDocument`, `JsonNode` and `JsonSubtree` alike. The crate now
+  builds serde_json with `float_roundtrip`, whose parser returns the
+  nearest `f64`. The trade is slower float parsing and slightly more code.
+  Cargo unifies features, so every serde_json parse in a program that links
+  this crate (the caller's own included) uses that parser. Integers and
+  short decimals were never affected, and the read side derives no term
+  from the value it parses.
+
 ### Added
+
+- **A match index can search words too short for its n-grams:
+  `MatchOptions::short_words`** (#1309). Off by default. With it on, every
+  word of the normalized, case-folded text that is at least 2 characters long
+  and shorter than the n-gram length (two-letter words under the default
+  3-grams) is one more token, the word itself, beside the n-grams of the whole
+  text. So the surname "Ng" stores one token rather than the empty filter,
+  and the query "Ng" is accepted and finds rows holding the word "Ng" or
+  "Mike Ng", but not "Nguyen". A query's short words must be whole words of
+  the row: "Mike Ng" does not find "Mike Nguyen" with the option on. A word
+  is a run of characters between the separators `Tokenizer::Standard` splits
+  on (space, comma, semicolon, colon, exclamation mark). The word token is
+  PRF'd under its own domain (`stack-encrypt/sem/match/word/v1`), so it never
+  sets the bits of an n-gram of the same characters. The option is part of
+  the index's identity, as `k` is (`PlanError::IndexOptions`), is written as
+  `"short_words": true` in a data plan's `{"match": {...}}` (and only when on,
+  so other plans serialize as before), and is refused beside the standard
+  tokenizer or an n-gram length under 3 (`TermError::InvalidOptions`). What
+  it reveals: one more token per short word, under the same PRF, in the same
+  filter, by the same containment rule, so no new class of leakage; the token
+  is specific to the word, so clustering tokens across rows can tell "Ng"
+  from "Nguyen", where before only their shared boundary trigram `" ng"` was
+  visible. `MatchOptions` gains the public field, so a struct literal naming
+  every field names it too. The `sem` module docs carry the match index's
+  leakage in full.
+
+- **A document field's queries and reads through a data plan** (#1350,
+  #1352). A field naming `JsonSearch` answers `contains`,
+  `contained_by`, `eq_at`, `selector`, `subtree`, `children` and
+  `child_count`, and, when it orders a path, `lt_at`, `lte_at`, `gt_at`,
+  `gte_at` and `between_at`, each taking an object of named inputs
+  (`{"json"}`, `{"path", "json"}`, `{"path", "low", "high"}`,
+  `{"path"}`, `{"path", "wildcard_bound"}`; JSON values as JSON text).
+  `query_term` derives the typed chain's operands, bit for bit: the
+  containment needle and the leaf ordering operand as EQL JSON (bound as
+  `eql_v4.query_json` and `eql_v4.query_json_leaf`), the
+  selector as `text` and a read's tokens as `text[]`. A position in a
+  path is refused where the operand is a selector (`json_path_position`),
+  a wildcard where the operator names one node (`json_path_wildcard`).
+  `json_open` opens the rows a read returned against the request that
+  prepared it: the engine derives the selector or the read key again from
+  the request, the field's options and the keyset, checks every row with
+  the index's own checks, and opens each database row's group on its own,
+  in one key request. `check_json_open` is its cipher-free check. A plan
+  whose context comes from a field of each record (`context_field`) is
+  refused by both (`query_context_field`), as it is by `query_term`: a read
+  through the data plan names no record to take a context from.
+
+- **A JSON document through a data plan** (#1349). A plan field may
+  declare the new `json` value kind and name a target that stores a
+  document, `JsonSearch`, with the JSON index's options:
+  `"target": {"name": "JsonSearch", "options": {"sealed_root": true,
+  "ordered": ["$.age"]}}`, or the bare name for the defaults. The plan
+  resolves the options once when it is built (`FieldPlan::target_options`,
+  `TargetOptions::Json`), so writes, queries and reads of the field run
+  under one definition, and refuses options on a target that takes none
+  (`Reason::TargetOptions`), a `json` field with no target
+  (`Reason::JsonNeedsTarget`) and a sealed null on one. The document
+  crosses as UTF-8 JSON text in a text or bytes leaf and opens back to
+  its text in a bytes leaf (`dynamic::read_json`, `dynamic::json_frame`).
+  `json::parse_text` is the one parser, the engine's own (held to
+  serde_json's by a differential property test and the `fuzz:json-text`
+  target), so no heap block it frees holds the document's strings or an
+  array's buffer (a number or boolean in an object of twelve or more
+  members can stay in a map node it frees; those are wiped best-effort):
+  it refuses an object that names a member twice and an integer literal
+  outside
+  `i64::MIN ..= u64::MAX` (which serde_json would read as the nearest
+  `f64`), as well as text that is not JSON, each with a code
+  (`JsonTextError::code`) and a position, never a byte of the text.
+  `json::to_text` sizes its buffer before it writes. `check_source` reads
+  a document by these rules too, so a malformed one is refused before
+  any key, as `encrypt` refuses it. A present `"options": null` is
+  refused (`Reason::InvalidTarget`), not read as the defaults. `TargetError::Json` carries the code
+  when a resolver refuses a document. `json::wipe_value` wipes a parsed
+  document in place. `ValueKind::holds` says whether a value of one kind
+  is a value of a declared one (`json` holds text and bytes).
 
 - **A JSON index, `target::Json`** (`docs/plans/2026-10-17-json-tree-index.md`,
   ADR-0009). An `Index<serde_json::Value>` whose stored form,
   `json::JsonDocument`, is one entry per node under one data key per
-  document: a path selector, the node's own ciphertext, a chain of tokens
-  derived by ordinal that the server walks from one client-derived token,
+  document: a path selector, the node's own ciphertext, a self tag and a
+  parent tag by which the server finds the node a client-derived token
+  names and walks beneath it, every token derivable from its node's path
+  alone,
   a stored containment projection that agrees with `jsonb @>` across array
   elements, and, at the paths `JsonOptions::ordered` names, an ordering
   term on number and string leaves. It is what EQL v4's `json_tree` family
@@ -21,47 +156,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EncryptFrom<Value>` / `DecryptInto<Value>` target, and it answers
   `op::Contains`, `op::ContainedBy`, `op::AtPath(op::Eq)` (a scalar at a
   path) and the orderings at an ordered path; `KeysetCipher::json_selector`
-  and `json_subtree_key` derive the extraction keys, and `JsonNode` and
-  `JsonSubtree` open what the server returns. `JsonOptions::sealed_root`,
-  on by default, makes the root entry the whole document so no token for
-  the root exists. A document is at most 127 levels deep. New `TermError`
-  variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`, `JsonSealedRoot`,
-  `JsonLeafNotOrdered`, `JsonPathNotOrdered`, `JsonOrderingAtPosition`
-  and `JsonValueNotScalar`. `JsonOptions::ordering([..])` names the
+  and `json_subtree_key` derive the extraction keys. What the server
+  returns (`JsonNode` rows) opens only through what the client derived for
+  the read, which checks that the rows are the ones it asked for: an
+  entry's ciphertext is bound to its own selector and position, so any
+  entry of the row would otherwise open. `JsonSelector::open(node)` builds
+  a `JsonExtracted`, which refuses an entry that does not carry the
+  selector (another path's, or the sealed root in place of a node) before
+  any key is retrieved; `JsonSubtreeKey::open(rows)` builds a
+  `JsonSubtree`, which refuses a row that is not where the read's rows
+  must be: a node a token names without the path's selector or last step
+  (its key, its position, or the root), a row without the selector of its
+  parent's path and its own label (the key holds the keyset's index-key
+  PRF and the column's context to derive it), a row that does not follow
+  the one before it in the document or whose parent is not among the
+  rows, a row whose self tag is not the one the client recomputes
+  (unauthenticated, so a consistency check), an entry returned twice, and
+  rows of two documents. Each refusal is the new `Error::JsonWrongEntry`.
+  Not checked, by design: which row of the column
+  an entry comes from (ADR 0010), which element a node at a selector sits
+  under, and whether the database withheld rows. `JsonOptions::sealed_root`,
+  on by default, makes the root entry the whole document and chains the
+  top-level fields from nothing, so the root's token finds the root entry
+  and nothing beneath it. A document is at most 127 levels deep. New
+  `TermError` variants: `JsonPath`, `JsonTooDeep`, `JsonTooWide`,
+  `JsonWildcardTooWide`, `JsonLeafNotOrdered`, `JsonPathNotOrdered`,
+  `JsonOrderingAtPosition` and `JsonValueNotScalar`. `JsonTooWide` also
+  refuses a subtree key for a path naming an array position, or a
+  wildcard bound, past 2^31 - 1, PostgreSQL's `integer`: no stored
+  document has an element there. `JsonOptions::ordering([..])` names the
   ordered paths, `JsonPath::covers` is the rule that matches them, and a
   path naming an array position is refused there and in an ordering
   query, since the comparison extracts by selector and reads a position as
   the wildcard. A data plan reads and writes the index (`"json"`, or
   `{"json": {"sealed_root": bool, "ordered": [path, …]}}`) and refuses to
-  run it with `Reason::JsonIndexPending`. A subtree key is a token and
-  `JsonSubtreeKey::gates()`, one gate per path step below it, a selector
-  or `#n:<selector>` for an array position. A walk past its budget returns
-  the sealed root in place of the subtree. The key carries the path it
-  was derived from (`JsonSubtreeKey::path`) and builds the rows' wrapper,
-  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor; from
-  its gates it knows whether the rows are below the path's node
-  (`json_tree_subtree`) or at the nodes it reaches (`json_tree_subtree_at`),
-  so the rows open to the same value either way, over `JsonPath::select`,
-  which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
-  of `q`, `p`, `op`, `h`, tokens and gates) is padded standard base64, and
+  run it with `Reason::JsonIndexPending`. `JsonPath` implements `Serialize`
+  and `Deserialize` as its text, read back through `JsonPath::parse`. A subtree key
+  (`KeysetCipher::json_subtree_key`, or `json_subtree_key_with_bound`) is
+  one token per concrete path its path names, in document order:
+  exactly one for a path with no wildcard, `$` included, and for each
+  wildcard level the positions below its bound (64 by default,
+  `JsonSubtreeKey::DEFAULT_BOUND`) and a probe at the bound
+  (`JsonSubtreeKey::tokens()`, `probes()`, `bound()`), which
+  `json_tree_subtree(doc, tokens, budget)` takes. A read whose probe finds
+  an element, an array longer than the bound, fails with the new
+  `Error::JsonWildcardTruncated { bound }` rather than return part of the
+  answer, and a read that would send more than 8,192 tokens is refused
+  as `JsonWildcardTooWide`. The rows open as a `Value` (the node at the
+  path, `{}`, `[]` and scalars included), an `Option<Value>` (`None` where
+  the row has no node there) or a `Vec<Value>` (one value per concrete
+  path reached). A read past its budget returns the sealed root in place
+  of the rows; the key carries the path it was derived from
+  (`JsonSubtreeKey::path`) and builds the rows' wrapper,
+  `key.open(rows) -> JsonSubtree`, the wrapper's only constructor, and
+  evaluates its concrete paths and probes over the whole document, so the
+  rows open to the same answer either way, the truncation included, over
+  `JsonPath::select`, which evaluates a path over a value. On the wire every field the SQL reads (`s`, the pairs
+  of `q`, `x`, `p`, `op`, `h` and the tokens) is padded standard base64, and
   the ciphertext `c` is RFC 1924 base85 (`base85-simd`). The document's
   plaintext is held under `Protected` throughout, as the scalar paths hold
   theirs: each node's plaintext is encoded straight from the caller's value
   into a `Protected<Vec<u8>>` for the cipher, and what an entry opens to
   (a key, a scalar, a sealed root's document) stays wrapped until it is
-  handed to the caller, so the sealed-root fallback's whole document is
-  wiped once the walked path is selected from it.
+  handed to the caller. The sealed-root fallback moves the nodes at the
+  read's paths out of the whole document rather than copying them, so their
+  plaintext exists once, and the rest of the document is wiped.
 
 - **A layout chosen by value, `target::Layout`, and
-  `Plan::value().encrypt_as(layout)`.** `EncryptFrom` is a type's own
-  layout, fixed where the type is written; a `Layout<S>` is a value with
-  options that seals the same target under them and names the index a
-  query answers through. `Json::new(options)` is one. `encrypt_as` builds
-  a `ValuePlan<S, plan::Laid<X, T>>` that seals under the layout and
-  resolves every query through its index, so a query does not name the
-  options again; `ValuePlan::specs` and `ValuePlan::layout` report them.
+  `Plan::value().encrypt_with_layout(layout)`.** `EncryptFrom` is a type's
+  own layout, fixed where the type is written; a `Layout<S>` is a value
+  with options that seals the same target under them and names the index
+  a query answers through. `Json::new(options)` is one.
+  `encrypt_with_layout` builds a `ValuePlan<S, plan::Laid<X, T>>` that
+  seals under the layout and resolves every query through its index, so a
+  query does not name the options again; `ValuePlan::specs` and
+  `ValuePlan::layout` report them.
   `Error` gains `From<json::JsonPathError>`.
 
+- **The order terms are serde types.** `OreTerm`, `OpeTerm` and
+  `OreBlockTerm` serialize as the lowercase hex of their bytes in a
+  human-readable format such as JSON, and as the raw bytes in a binary one,
+  through `serdect`, whose hex is constant-time. Deserializing decodes
+  through `from_bytes`, so it refuses what `from_bytes` refuses, and no
+  error carries a byte of the term. EQL v4's bindings store them this way.
+
+- **Dates, timestamps and decimals are ordered** (#1236). The new
+  `value` module holds `Date`, `Timestamp` and `Decimal` (and their
+  `RangeError`), moved here from eql-bindings, which re-exports them at
+  `v4::plaintext`: wipeable, `Clone` plaintexts with no Rust standard type,
+  with conversions to chrono's and rust_decimal's types behind the new
+  `chrono` and `rust_decimal` features. Each is `sem::Orderable` and
+  `op::Ordered`, so ORE, OPE and block ORE terms derive over it and `Lt`,
+  `Lte`, `Gt`, `Gte` and `Between` answer it, at vitaminc-ore's `Date`,
+  `Timestamp` and `Decimal` targets: a date by its day, a timestamp by the
+  microsecond (floored, as its equality term is), a decimal by value
+  whatever its scale, so `1.5` ties `1.50`. On the data-plan path a
+  `decimal`, `date` or `timestamp` field admits `ore`, `ope` and
+  `ore_block`, and its order terms are the typed path's. Block ORE puts a
+  date through the 6-bit fixed-width engine and a timestamp or decimal
+  through the chained one.
+
+- **The vitaminc a binding speaks through is re-exported.** `dynamic::frame`
+  is `vitaminc-aead-frame` (the transport frame and ciphertext codec, with
+  its `serde` module), `dynamic::plaintext` is vitaminc-aead's value model,
+  for implementing `Encrypt` on a binding's own values, and the crate root
+  adds `DecodeError`, `Protected` and `Controlled`. A binding that takes
+  these from stack-encrypt cannot resolve a second vitaminc, which would
+  fail only at a `ValueFrame: Decrypt` bound. The Go guest now takes
+  vitaminc only this way.
+
+- **A data plan field says how it stores a null** (`dynamic` feature,
+  #1298). A field spec takes `"null": "sealed"` or `"null": "sql"`
+  (`dynamic::NullMode`, `FieldPlan::with_null`). `"sealed"` seals a null
+  like a value, under the field's label, as vitaminc 0.8's typed null of
+  the field's type, as long as a present value, so the stored record does
+  not show which rows are absent; it opens as a null. Beside an equality
+  index it stores a null's equality term, the one every null of the field
+  shares, so the absent rows are one equality group, as any repeated value
+  is, and an `eq` query whose input is a null finds them (`query_term`,
+  `record::query`). It needs a declared type of fixed width (a bool's plain
+  null is already as long as its value) and no index but equality, on the
+  field or on the EQL type it names, since a null has no other term:
+  refused otherwise with `Reason::SealedNullType` or
+  `Reason::SealedNullIndex`. A null query of any other field or operator is
+  `Reason::NullQuery`. `"sql"`
+  stores nothing for a null, or for a row with no entry for the field: the
+  stored record has no entry, so a host writes SQL `NULL`, and a stored
+  record with no entry for the field opens it as a null. A batch's rows are
+  run by one lowered plan per set of fields they leave out, and every
+  group's requests go in the one ZeroKMS call. A passthrough takes no
+  `"null"` (`Reason::NullPassthrough`), and an unknown mode is
+  `Reason::UnknownNull`. A field with no `"null"` is unchanged: every row
+  has it, and a typed field refuses a null.
 - **A block ORE index, `OreBlock`** (ADR-0002 and ADR-0009, amended
   2026-10-19). It derives ore-rs 0.9.0's 6-bit block ORE under its own key
   domain, over the same order keys as the CLLW indexes:
@@ -96,10 +322,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them, through vitaminc-normalize: one term per integer value at every
   width, decimals at any scale, timestamps to the microsecond. ORE and OPE
   apply to every integer width, each passed to cllw-ore as its own type.
-  An ORE or OPE index on a decimal, date or timestamp is refused with the
-  new `Reason::OrderTermPending`, which names #1236: those order terms wait
-  for new cllw-ore and ore-rs releases. `dynamic::not_admitted` says why a
-  kind does not admit an index. `dynamic::read` converts between the new
+  A decimal, a date and a timestamp take an order index too (see
+  "Dates, timestamps and decimals are ordered"). `dynamic::not_admitted`
+  says why a kind does not admit an index. `dynamic::read` converts between the new
   kinds where a value fits (an integer into any width that holds it, a
   whole integer into a decimal at scale 0). `tests/value_kinds.rs` and its
   fixture hold the record path, the data query path and the typed path to
@@ -273,6 +498,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`IndexSpec` has a sixth variant, `Json(JsonOptions)`** (the JSON index
   above), so a `match` over it needs an arm for it.
+
+- **The order terms' `from_bytes` takes the buffer.** `OreTerm`, `OpeTerm`
+  and `OreBlockTerm::from_bytes` take a `Vec<u8>` and keep it, copying
+  nothing; each also implements `TryFrom<Vec<u8>>`. `TryFrom<&[u8]>`
+  remains, and copies once. `OpeTerm` now refuses a term whose leading
+  carry byte is not 0 or 1, which clww-ore's comparator already refuses
+  (`TermBytesError::MalformedCllwCiphertext`).
+
+- **stack-encrypt requires the vitaminc 0.8 crates, clww-ore 0.6 and
+  ore-rs 0.10.** A crate that names a vitaminc type stack-encrypt takes or
+  returns moves to 0.8 with it. What changes for a caller:
+  - **Every order term changes.** cllw-ore is now `clww-ore`. Its
+    keystream was fixed, and its schemes' names (`clww-ore`, `clww-ope`),
+    which every term's salt binds, changed, so ORE and OPE terms written
+    before do not compare with new ones. Block ORE goes through ore-rs's
+    single `BlockOre` scheme, which keys its 6-bit and chained engines
+    under a new label, so its terms change too. The wire formats, the key
+    domains of this crate and every sealed ciphertext and equality term are
+    unchanged: a stored row still opens, and its order terms are re-derived.
+    `tests/fixtures/stored_rows_v1.json`'s order terms were re-frozen.
+  - `sem::OreCllw8VariableV1` and `sem::OpeCllw8VariableV1` are renamed
+    `OreClww8VariableV1` and `OpeClww8VariableV1`, as clww-ore names them.
+  - **A sealed `None` of a fixed-width type is as long as a `Some`.**
+    vitaminc 0.8 seals it as a typed null, padded to the type's leaf length,
+    so absent values no longer show in the length of their ciphertexts. A
+    reader on vitaminc 0.7 or older refuses a typed null, so upgrade
+    readers before writers; every null written before still opens. The
+    `dynamic` feature's sinks carry a typed null through the value model,
+    and the frame a binding receives holds the plain null.
+  - **A null has an equality term** (vitaminc-normalize 0.8, #1298), the
+    one term every null of a context shares, on the typed path
+    (`EqualityTerm` of a `None`) and the dynamic one (`IndexSpec::Equality`
+    now defines a null). No other index has a term for a null.
+  - **Block ORE's text ceiling is unchanged, but counted the new way.**
+    `vitaminc-ore` puts the marker byte in front of text itself now, and
+    ore-rs's 1024-byte ceiling counts it, so the fold is still at most 1023
+    bytes.
+
 - **`IndexSpec` has a fifth variant, `OreBlock`** (the block ORE index
   above). The enum is exhaustive on purpose, since a binding has to be
   taught each index, so a `match` over it needs an arm for `OreBlock`. The

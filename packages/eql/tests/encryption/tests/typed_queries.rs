@@ -72,11 +72,12 @@ impl TargetResolver for Eql {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        options: Option<&dynamic::TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_targets::encrypt(name, keyset, label, plaintext).map_err(convert)
+        eql_targets::encrypt_with(name, options, keyset, label, plaintext).map_err(convert)
     }
     fn decrypt<'a, K: 'static>(
         &self,
@@ -289,7 +290,13 @@ async fn typed_and_input(
 #[test]
 fn the_typed_chain_answers_what_the_data_path_answers() {
     let mut gap = Vec::new();
-    for target in eql_targets::targets() {
+    // A document's typed chain is the engine's own document target, not
+    // `op::Answers` on the EQL type: tests/json_tree_data_plan.rs holds the
+    // two to the same operands.
+    for target in eql_targets::targets()
+        .iter()
+        .filter(|t| t.plaintext != Some("json"))
+    {
         let data: Vec<&str> = describe(target)
             .operators()
             .into_iter()
@@ -335,6 +342,15 @@ fn the_typed_chain_answers_what_the_data_path_answers() {
             "BigintOrdOre",
             "BigintOrd",
             "BigintOrdOpe",
+            "DateOrdOre",
+            "DateOrd",
+            "DateOrdOpe",
+            "TimestampOrdOre",
+            "TimestampOrd",
+            "TimestampOrdOpe",
+            "NumericOrdOre",
+            "NumericOrd",
+            "NumericOrdOpe",
             "TextOrdOre",
             "TextOrd",
             "TextOrdOpe",
@@ -453,7 +469,7 @@ async fn a_typed_query_refuses_what_the_data_path_refuses() {
         .build()
         .unwrap();
     let short = cipher
-        .query(op::Matches, "al")
+        .query(op::Matches, "a")
         .keyset("tenant")
         .on(&plan)
         .await;
@@ -539,4 +555,78 @@ async fn an_extended_typed_query_is_refused_before_any_keyset() {
         .await
         .unwrap();
     assert_eq!(calls.lock().unwrap().loads, 1);
+}
+
+/// A record field naming a storage-only EQL type may store a null as the
+/// plan says (#1298), through the resolver the Go guest installs:
+/// `"sealed"` stores an EQL value whose `c` is a typed null, as long as a
+/// value's, and `"sql"` stores nothing for the field. Both open as a null.
+#[tokio::test]
+async fn a_record_stores_a_null_in_an_eql_field_as_its_plan_says() {
+    use dynamic::{NullMode, Scope};
+    use stack_encrypt::CipherText;
+    use std::collections::BTreeMap;
+
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let context = |column: &str| {
+        NonEmpty::new(ContextPiece::List(vec![
+            ContextPiece::Text("users".into()),
+            ContextPiece::Text(column.to_owned().into()),
+        ]))
+        .unwrap()
+    };
+    let plan = record::Plan::new_with(
+        vec![
+            FieldPlan::with_target("a_dob", context("dob"), "Date")
+                .unwrap()
+                .with_null(NullMode::Sealed),
+            FieldPlan::with_target("b_born", context("born"), "DateEq")
+                .unwrap()
+                .with_null(NullMode::Sql),
+        ],
+        &Eql,
+    )
+    .unwrap();
+    let day = chrono::NaiveDate::from_ymd_opt(1990, 5, 17);
+    let rows = |dob, born| BTreeMap::from([("a_dob", dob), ("b_born", born)]);
+    let source = vec![rows(day, day), rows(None, None)];
+    let sealed = record::encrypt_with(&keyset, frame(&source), &plan, &Eql)
+        .unwrap()
+        .await
+        .unwrap();
+
+    // The EQL value's size, as the stored record carries it.
+    let eql_len = |row: &stack_encrypt::StackCipherText, field: &str| -> Option<usize> {
+        let CipherText::Map(fields) = row else {
+            panic!("a row is a map")
+        };
+        let (_, CipherText::Map(outputs)) = fields.iter().find(|(name, _)| name == field)? else {
+            panic!("{field} is a map of outputs");
+        };
+        match outputs.iter().find(|(key, _)| key == "eql") {
+            Some((_, CipherText::Passthrough(payload))) => Some(payload.0.len()),
+            other => panic!("{field}'s EQL value is a passthrough: {other:?}"),
+        }
+    };
+    let CipherText::Sequence(stored) = &sealed else {
+        panic!("a batch is a sequence");
+    };
+    assert_eq!(
+        eql_len(&stored[1], "a_dob"),
+        eql_len(&stored[0], "a_dob"),
+        "a sealed null is as long as a value"
+    );
+    assert!(eql_len(&stored[0], "b_born").is_some());
+    assert_eq!(
+        eql_len(&stored[1], "b_born"),
+        None,
+        "a sql null stores nothing"
+    );
+
+    let opened = record::decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &Eql)
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(opened.risky_ref(), frame(&source).risky_ref());
 }

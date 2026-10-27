@@ -9,13 +9,14 @@
 
 #![allow(dead_code)]
 
-use vitaminc_aead::frame::{FrameError, FrameWriteError};
-use vitaminc_aead::plaintext::{
-    visit_map, visit_seq, Error as _, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
-    SourceError,
+use stack_encrypt::dynamic::frame::{to_frame, Frame};
+use stack_encrypt::dynamic::frame::{FrameError, FrameWriteError};
+use stack_encrypt::dynamic::plaintext::{
+    visit_map, visit_seq, Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink,
+    Sink, SourceError,
 };
-use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, Frame};
-use vitaminc_protected::{Controlled, Protected};
+use stack_encrypt::{Controlled, Protected};
+use stack_encrypt::{DecodeError, Decrypt, Encrypt};
 
 /// A value as a test spells it: each scalar at its own width, a logical
 /// scalar under its type. Equality is structural and variable-time, which
@@ -117,7 +118,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
     let count = |len: usize| u32::try_from(len).expect("short").to_le_bytes();
     match value {
         Tree::Object(entries) => {
-            out.push(vitaminc_aead::frame::OBJECT);
+            out.push(stack_encrypt::dynamic::frame::OBJECT);
             out.extend_from_slice(&count(entries.len()));
             for (key, value) in entries {
                 out.extend_from_slice(&count(key.len()));
@@ -126,7 +127,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
             }
         }
         Tree::Array(items) => {
-            out.push(vitaminc_aead::frame::ARRAY);
+            out.push(stack_encrypt::dynamic::frame::ARRAY);
             out.extend_from_slice(&count(items.len()));
             for item in items {
                 write(item, out);
@@ -139,7 +140,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
 /// What a binding reads back from an answer the engine writes: its frame,
 /// read back.
 pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> Tree {
-    let frame = vitaminc_aead_frame::serde::to_vec(answer).expect("frames");
+    let frame = stack_encrypt::dynamic::frame::serde::to_vec(answer).expect("frames");
     Tree::from_frame(&frame).expect("a value")
 }
 
@@ -271,6 +272,10 @@ impl<O: Put> Sink for TreeSink<O> {
             Some(ty) => Tree::Typed(ty, Box::new(physical(value))),
         };
         Ok(self.0.put(value))
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<O::Ok, DecodeError> {
+        Ok(self.0.put(Tree::Null))
     }
 
     fn seq(self, _: Option<usize>) -> Result<TreeSeq<O>, DecodeError> {

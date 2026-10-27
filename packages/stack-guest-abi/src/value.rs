@@ -10,7 +10,8 @@
 //! through a [`Sink`], for the tests that check what a host is given.
 
 use vitaminc_aead::plaintext::{
-    visit_map, visit_seq, Encrypt, Float, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    visit_map, visit_seq, Encrypt, FixedType, Float, Logical, MapSink, Physical, SeqSink, Sink,
+    SourceError,
 };
 use vitaminc_aead_frame::{to_frame, Frame, FrameError, FrameWriteError};
 use vitaminc_protected::{Controlled, Protected};
@@ -231,6 +232,12 @@ impl<O: Put> Sink for ValueSink<O> {
         Ok(self.0.put(value))
     }
 
+    /// A typed null is a null to the host: its type only hides its length
+    /// once sealed.
+    fn typed_null(self, _: FixedType) -> Result<O::Ok, DecodeError> {
+        Ok(self.0.put(HostValue::Null))
+    }
+
     fn seq(self, _: Option<usize>) -> Result<ValueSeq<O>, DecodeError> {
         Ok(ValueSeq {
             out: self.0,
@@ -359,6 +366,26 @@ mod tests {
         assert_eq!(back.get("name").and_then(HostValue::as_text), Some("alice"));
         assert!(matches!(back.get("key"), Some(HostValue::Bytes(b)) if b.risky_ref() == &[1, 2]));
         assert!(matches!(back.get("ids"), Some(HostValue::List(items)) if items.len() == 2));
+    }
+
+    /// A typed null (vitaminc's null of a fixed-width type, padded to the
+    /// type's length) reads as a null: the host has no typed nulls. A guest
+    /// writes none itself, but a frame may hold one.
+    #[test]
+    fn a_typed_null_reads_back_as_a_null() {
+        use vitaminc_aead::plaintext::Width;
+        for ty in [
+            FixedType::new(None, Width::I64),
+            FixedType::new(Some(Logical::Date), Width::I32),
+        ] {
+            let ty = ty.expect("a fixed-width type");
+            let mut frame = Vec::new();
+            vitaminc_aead::leaf::write_typed_null(ty, &mut frame);
+            assert!(
+                matches!(HostValue::decode(&frame), Ok(HostValue::Null)),
+                "{ty:?}"
+            );
+        }
     }
 
     #[test]

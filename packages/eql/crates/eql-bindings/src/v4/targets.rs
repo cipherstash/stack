@@ -12,9 +12,10 @@ use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
 /// Every EQL type a plan may name as a target, in
-/// `eql-domains::CATALOG` order: one per stored domain (every flat
-/// scalar domain plus the SteVec document). Query twins are not
-/// targets; each row names its own under `query`.
+/// `eql-domains::CATALOG` order: one per stored scalar domain, then
+/// one per document family's stored type
+/// (`eql-domains::DOCUMENT_FAMILIES`). Query twins are not targets;
+/// each row names its own under `query`.
 pub const TARGETS: &[Target] = &[
     Target {
         name: "Integer",
@@ -229,10 +230,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ore_block"],
         query: Some("DateOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord_ore"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DateOrd",
@@ -243,10 +242,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DateOrdQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DateOrdOpe",
@@ -257,10 +254,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("DateOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_date_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Timestamp",
@@ -295,10 +290,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ore_block"],
         query: Some("TimestampOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ore"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TimestampOrd",
@@ -309,10 +302,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("TimestampOrdQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TimestampOrdOpe",
@@ -323,10 +314,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("TimestampOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Numeric",
@@ -361,10 +350,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ore_block"],
         query: Some("NumericOrdOreQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord_ore"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "NumericOrd",
@@ -375,10 +362,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("NumericOrdQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "NumericOrdOpe",
@@ -389,10 +374,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["ope"],
         query: Some("NumericOrdOpeQuery"),
         query_sql_domain: Some("eql_v4.query_numeric_ord_ope"),
-        producible: false,
-        reason: Some(
-            "the engine derives no order term for a date, timestamp or decimal yet: how they are ordered is not decided (#1236)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "Text",
@@ -623,18 +606,6 @@ pub const TARGETS: &[Target] = &[
         reason: None,
     },
     Target {
-        name: "SteVecDocument",
-        family: "json",
-        suffix: "Search",
-        plaintext: None,
-        sql_domain: "public.eql_v4_json_search",
-        indexes: &["json"],
-        query: Some("SteVecQuery"),
-        query_sql_domain: Some("eql_v4.query_json"),
-        producible: false,
-        reason: Some("the JSON index is a new operation in the engine (#1060)"),
-    },
-    Target {
         name: "Json",
         family: "json",
         suffix: "",
@@ -648,7 +619,24 @@ pub const TARGETS: &[Target] = &[
             "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided",
         ),
     },
+    Target {
+        name: "JsonSearch",
+        family: "json_tree",
+        suffix: "",
+        plaintext: Some("json"),
+        sql_domain: "public.eql_v4_json_search",
+        indexes: &["json"],
+        query: Some("JsonSearchQuery"),
+        query_sql_domain: Some("eql_v4.query_json"),
+        producible: true,
+        reason: None,
+    },
 ];
+/// The families whose stored type stores a document
+/// (`eql-domains::DOCUMENT_FAMILIES`): the dispatch below has no
+/// arm for them, and `crate::encryption::targets` runs their types
+/// under the field's options.
+pub(crate) const DOCUMENT_FAMILIES: &[&str] = &["json_tree"];
 /// Run the named type's own encryption plan for one field, or refuse
 /// the name: the type is not producible (`TargetError::Unproducible`)
 /// or does not exist (`TargetError::Unknown`).
@@ -659,12 +647,15 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
-        "Integer" => {
-            run_target::<super::integer::Integer, i32, K>("Integer", keyset, column, plaintext)
-        }
-        "IntegerEq" => {
-            run_target::<super::integer::IntegerEq, i32, K>("IntegerEq", keyset, column, plaintext)
-        }
+        "Integer" => run_target::<super::integer::Integer, Option<i32>, K>(
+            "Integer", keyset, column, plaintext,
+        ),
+        "IntegerEq" => run_target::<super::integer::IntegerEq, Option<i32>, K>(
+            "IntegerEq",
+            keyset,
+            column,
+            plaintext,
+        ),
         "IntegerOrdOre" => run_target::<super::integer::IntegerOrdOre, i32, K>(
             "IntegerOrdOre",
             keyset,
@@ -683,10 +674,10 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "Smallint" => {
-            run_target::<super::smallint::Smallint, i16, K>("Smallint", keyset, column, plaintext)
-        }
-        "SmallintEq" => run_target::<super::smallint::SmallintEq, i16, K>(
+        "Smallint" => run_target::<super::smallint::Smallint, Option<i16>, K>(
+            "Smallint", keyset, column, plaintext,
+        ),
+        "SmallintEq" => run_target::<super::smallint::SmallintEq, Option<i16>, K>(
             "SmallintEq",
             keyset,
             column,
@@ -711,11 +702,11 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             plaintext,
         ),
         "Bigint" => {
-            run_target::<super::bigint::Bigint, i64, K>("Bigint", keyset, column, plaintext)
+            run_target::<super::bigint::Bigint, Option<i64>, K>("Bigint", keyset, column, plaintext)
         }
-        "BigintEq" => {
-            run_target::<super::bigint::BigintEq, i64, K>("BigintEq", keyset, column, plaintext)
-        }
+        "BigintEq" => run_target::<super::bigint::BigintEq, Option<i64>, K>(
+            "BigintEq", keyset, column, plaintext,
+        ),
         "BigintOrdOre" => run_target::<super::bigint::BigintOrdOre, i64, K>(
             "BigintOrdOre",
             keyset,
@@ -731,33 +722,84 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "Date" => run_target::<super::date::Date, Date, K>("Date", keyset, column, plaintext),
-        "DateEq" => run_target::<super::date::DateEq, Date, K>("DateEq", keyset, column, plaintext),
-        "Timestamp" => run_target::<super::timestamp::Timestamp, Timestamp, K>(
+        "Date" => {
+            run_target::<super::date::Date, Option<Date>, K>("Date", keyset, column, plaintext)
+        }
+        "DateEq" => {
+            run_target::<super::date::DateEq, Option<Date>, K>("DateEq", keyset, column, plaintext)
+        }
+        "DateOrdOre" => {
+            run_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", keyset, column, plaintext)
+        }
+        "DateOrd" => {
+            run_target::<super::date::DateOrd, Date, K>("DateOrd", keyset, column, plaintext)
+        }
+        "DateOrdOpe" => {
+            run_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", keyset, column, plaintext)
+        }
+        "Timestamp" => run_target::<super::timestamp::Timestamp, Option<Timestamp>, K>(
             "Timestamp",
             keyset,
             column,
             plaintext,
         ),
-        "TimestampEq" => run_target::<super::timestamp::TimestampEq, Timestamp, K>(
+        "TimestampEq" => run_target::<super::timestamp::TimestampEq, Option<Timestamp>, K>(
             "TimestampEq",
             keyset,
             column,
             plaintext,
         ),
-        "Numeric" => {
-            run_target::<super::numeric::Numeric, Decimal, K>("Numeric", keyset, column, plaintext)
-        }
-        "NumericEq" => run_target::<super::numeric::NumericEq, Decimal, K>(
+        "TimestampOrdOre" => run_target::<super::timestamp::TimestampOrdOre, Timestamp, K>(
+            "TimestampOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrd" => run_target::<super::timestamp::TimestampOrd, Timestamp, K>(
+            "TimestampOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrdOpe" => run_target::<super::timestamp::TimestampOrdOpe, Timestamp, K>(
+            "TimestampOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "Numeric" => run_target::<super::numeric::Numeric, Option<Decimal>, K>(
+            "Numeric", keyset, column, plaintext,
+        ),
+        "NumericEq" => run_target::<super::numeric::NumericEq, Option<Decimal>, K>(
             "NumericEq",
             keyset,
             column,
             plaintext,
         ),
-        "Text" => run_target::<super::text::Text, String, K>("Text", keyset, column, plaintext),
-        "TextEq" => {
-            run_target::<super::text::TextEq, String, K>("TextEq", keyset, column, plaintext)
+        "NumericOrdOre" => run_target::<super::numeric::NumericOrdOre, Decimal, K>(
+            "NumericOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrd" => run_target::<super::numeric::NumericOrd, Decimal, K>(
+            "NumericOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrdOpe" => run_target::<super::numeric::NumericOrdOpe, Decimal, K>(
+            "NumericOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "Text" => {
+            run_target::<super::text::Text, Option<String>, K>("Text", keyset, column, plaintext)
         }
+        "TextEq" => run_target::<super::text::TextEq, Option<String>, K>(
+            "TextEq", keyset, column, plaintext,
+        ),
         "TextMatch" => {
             run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, column, plaintext)
         }
@@ -788,11 +830,15 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "Boolean" => {
-            run_target::<super::boolean::Boolean, bool, K>("Boolean", keyset, column, plaintext)
+        "Boolean" => run_target::<super::boolean::Boolean, Option<bool>, K>(
+            "Boolean", keyset, column, plaintext,
+        ),
+        "Real" => {
+            run_target::<super::real::Real, Option<f32>, K>("Real", keyset, column, plaintext)
         }
-        "Real" => run_target::<super::real::Real, f32, K>("Real", keyset, column, plaintext),
-        "RealEq" => run_target::<super::real::RealEq, f32, K>("RealEq", keyset, column, plaintext),
+        "RealEq" => {
+            run_target::<super::real::RealEq, Option<f32>, K>("RealEq", keyset, column, plaintext)
+        }
         "RealOrdOre" => {
             run_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", keyset, column, plaintext)
         }
@@ -803,11 +849,11 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             run_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", keyset, column, plaintext)
         }
         "Double" => {
-            run_target::<super::double::Double, f64, K>("Double", keyset, column, plaintext)
+            run_target::<super::double::Double, Option<f64>, K>("Double", keyset, column, plaintext)
         }
-        "DoubleEq" => {
-            run_target::<super::double::DoubleEq, f64, K>("DoubleEq", keyset, column, plaintext)
-        }
+        "DoubleEq" => run_target::<super::double::DoubleEq, Option<f64>, K>(
+            "DoubleEq", keyset, column, plaintext,
+        ),
         "DoubleOrdOre" => run_target::<super::double::DoubleOrdOre, f64, K>(
             "DoubleOrdOre",
             keyset,
@@ -835,12 +881,15 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
     stored: &[u8],
 ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     match name {
-        "Integer" => {
-            open_target::<super::integer::Integer, i32, K>("Integer", opener, column, stored)
-        }
-        "IntegerEq" => {
-            open_target::<super::integer::IntegerEq, i32, K>("IntegerEq", opener, column, stored)
-        }
+        "Integer" => open_target::<super::integer::Integer, Option<i32>, K>(
+            "Integer", opener, column, stored,
+        ),
+        "IntegerEq" => open_target::<super::integer::IntegerEq, Option<i32>, K>(
+            "IntegerEq",
+            opener,
+            column,
+            stored,
+        ),
         "IntegerOrdOre" => open_target::<super::integer::IntegerOrdOre, i32, K>(
             "IntegerOrdOre",
             opener,
@@ -856,12 +905,15 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
             column,
             stored,
         ),
-        "Smallint" => {
-            open_target::<super::smallint::Smallint, i16, K>("Smallint", opener, column, stored)
-        }
-        "SmallintEq" => {
-            open_target::<super::smallint::SmallintEq, i16, K>("SmallintEq", opener, column, stored)
-        }
+        "Smallint" => open_target::<super::smallint::Smallint, Option<i16>, K>(
+            "Smallint", opener, column, stored,
+        ),
+        "SmallintEq" => open_target::<super::smallint::SmallintEq, Option<i16>, K>(
+            "SmallintEq",
+            opener,
+            column,
+            stored,
+        ),
         "SmallintOrdOre" => open_target::<super::smallint::SmallintOrdOre, i16, K>(
             "SmallintOrdOre",
             opener,
@@ -880,10 +932,12 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
             column,
             stored,
         ),
-        "Bigint" => open_target::<super::bigint::Bigint, i64, K>("Bigint", opener, column, stored),
-        "BigintEq" => {
-            open_target::<super::bigint::BigintEq, i64, K>("BigintEq", opener, column, stored)
+        "Bigint" => {
+            open_target::<super::bigint::Bigint, Option<i64>, K>("Bigint", opener, column, stored)
         }
+        "BigintEq" => open_target::<super::bigint::BigintEq, Option<i64>, K>(
+            "BigintEq", opener, column, stored,
+        ),
         "BigintOrdOre" => open_target::<super::bigint::BigintOrdOre, i64, K>(
             "BigintOrdOre",
             opener,
@@ -899,31 +953,82 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
             column,
             stored,
         ),
-        "Date" => open_target::<super::date::Date, Date, K>("Date", opener, column, stored),
-        "DateEq" => open_target::<super::date::DateEq, Date, K>("DateEq", opener, column, stored),
-        "Timestamp" => open_target::<super::timestamp::Timestamp, Timestamp, K>(
+        "Date" => open_target::<super::date::Date, Option<Date>, K>("Date", opener, column, stored),
+        "DateEq" => {
+            open_target::<super::date::DateEq, Option<Date>, K>("DateEq", opener, column, stored)
+        }
+        "DateOrdOre" => {
+            open_target::<super::date::DateOrdOre, Date, K>("DateOrdOre", opener, column, stored)
+        }
+        "DateOrd" => {
+            open_target::<super::date::DateOrd, Date, K>("DateOrd", opener, column, stored)
+        }
+        "DateOrdOpe" => {
+            open_target::<super::date::DateOrdOpe, Date, K>("DateOrdOpe", opener, column, stored)
+        }
+        "Timestamp" => open_target::<super::timestamp::Timestamp, Option<Timestamp>, K>(
             "Timestamp",
             opener,
             column,
             stored,
         ),
-        "TimestampEq" => open_target::<super::timestamp::TimestampEq, Timestamp, K>(
+        "TimestampEq" => open_target::<super::timestamp::TimestampEq, Option<Timestamp>, K>(
             "TimestampEq",
             opener,
             column,
             stored,
         ),
-        "Numeric" => {
-            open_target::<super::numeric::Numeric, Decimal, K>("Numeric", opener, column, stored)
-        }
-        "NumericEq" => open_target::<super::numeric::NumericEq, Decimal, K>(
+        "TimestampOrdOre" => open_target::<super::timestamp::TimestampOrdOre, Timestamp, K>(
+            "TimestampOrdOre",
+            opener,
+            column,
+            stored,
+        ),
+        "TimestampOrd" => open_target::<super::timestamp::TimestampOrd, Timestamp, K>(
+            "TimestampOrd",
+            opener,
+            column,
+            stored,
+        ),
+        "TimestampOrdOpe" => open_target::<super::timestamp::TimestampOrdOpe, Timestamp, K>(
+            "TimestampOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
+        "Numeric" => open_target::<super::numeric::Numeric, Option<Decimal>, K>(
+            "Numeric", opener, column, stored,
+        ),
+        "NumericEq" => open_target::<super::numeric::NumericEq, Option<Decimal>, K>(
             "NumericEq",
             opener,
             column,
             stored,
         ),
-        "Text" => open_target::<super::text::Text, String, K>("Text", opener, column, stored),
-        "TextEq" => open_target::<super::text::TextEq, String, K>("TextEq", opener, column, stored),
+        "NumericOrdOre" => open_target::<super::numeric::NumericOrdOre, Decimal, K>(
+            "NumericOrdOre",
+            opener,
+            column,
+            stored,
+        ),
+        "NumericOrd" => open_target::<super::numeric::NumericOrd, Decimal, K>(
+            "NumericOrd",
+            opener,
+            column,
+            stored,
+        ),
+        "NumericOrdOpe" => open_target::<super::numeric::NumericOrdOpe, Decimal, K>(
+            "NumericOrdOpe",
+            opener,
+            column,
+            stored,
+        ),
+        "Text" => {
+            open_target::<super::text::Text, Option<String>, K>("Text", opener, column, stored)
+        }
+        "TextEq" => {
+            open_target::<super::text::TextEq, Option<String>, K>("TextEq", opener, column, stored)
+        }
         "TextMatch" => {
             open_target::<super::text::TextMatch, String, K>("TextMatch", opener, column, stored)
         }
@@ -945,11 +1050,13 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "TextSearch" => {
             open_target::<super::text::TextSearch, String, K>("TextSearch", opener, column, stored)
         }
-        "Boolean" => {
-            open_target::<super::boolean::Boolean, bool, K>("Boolean", opener, column, stored)
+        "Boolean" => open_target::<super::boolean::Boolean, Option<bool>, K>(
+            "Boolean", opener, column, stored,
+        ),
+        "Real" => open_target::<super::real::Real, Option<f32>, K>("Real", opener, column, stored),
+        "RealEq" => {
+            open_target::<super::real::RealEq, Option<f32>, K>("RealEq", opener, column, stored)
         }
-        "Real" => open_target::<super::real::Real, f32, K>("Real", opener, column, stored),
-        "RealEq" => open_target::<super::real::RealEq, f32, K>("RealEq", opener, column, stored),
         "RealOrdOre" => {
             open_target::<super::real::RealOrdOre, f32, K>("RealOrdOre", opener, column, stored)
         }
@@ -957,10 +1064,12 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "RealOrdOpe" => {
             open_target::<super::real::RealOrdOpe, f32, K>("RealOrdOpe", opener, column, stored)
         }
-        "Double" => open_target::<super::double::Double, f64, K>("Double", opener, column, stored),
-        "DoubleEq" => {
-            open_target::<super::double::DoubleEq, f64, K>("DoubleEq", opener, column, stored)
+        "Double" => {
+            open_target::<super::double::Double, Option<f64>, K>("Double", opener, column, stored)
         }
+        "DoubleEq" => open_target::<super::double::DoubleEq, Option<f64>, K>(
+            "DoubleEq", opener, column, stored,
+        ),
         "DoubleOrdOre" => open_target::<super::double::DoubleOrdOre, f64, K>(
             "DoubleOrdOre",
             opener,
@@ -992,7 +1101,7 @@ pub(crate) fn query_named<'a, K: 'static>(
     plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
-        "IntegerEq" => run_target::<super::integer::IntegerEqQuery, i32, K>(
+        "IntegerEq" => run_target::<super::integer::IntegerEqQuery, Option<i32>, K>(
             "IntegerEq",
             keyset,
             column,
@@ -1016,7 +1125,7 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "SmallintEq" => run_target::<super::smallint::SmallintEqQuery, i16, K>(
+        "SmallintEq" => run_target::<super::smallint::SmallintEqQuery, Option<i16>, K>(
             "SmallintEq",
             keyset,
             column,
@@ -1040,7 +1149,7 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "BigintEq" => run_target::<super::bigint::BigintEqQuery, i64, K>(
+        "BigintEq" => run_target::<super::bigint::BigintEqQuery, Option<i64>, K>(
             "BigintEq", keyset, column, plaintext,
         ),
         "BigintOrdOre" => run_target::<super::bigint::BigintOrdOreQuery, i64, K>(
@@ -1061,24 +1170,75 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "DateEq" => {
-            run_target::<super::date::DateEqQuery, Date, K>("DateEq", keyset, column, plaintext)
+        "DateEq" => run_target::<super::date::DateEqQuery, Option<Date>, K>(
+            "DateEq", keyset, column, plaintext,
+        ),
+        "DateOrdOre" => run_target::<super::date::DateOrdOreQuery, Date, K>(
+            "DateOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "DateOrd" => {
+            run_target::<super::date::DateOrdQuery, Date, K>("DateOrd", keyset, column, plaintext)
         }
-        "TimestampEq" => run_target::<super::timestamp::TimestampEqQuery, Timestamp, K>(
+        "DateOrdOpe" => run_target::<super::date::DateOrdOpeQuery, Date, K>(
+            "DateOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampEq" => run_target::<super::timestamp::TimestampEqQuery, Option<Timestamp>, K>(
             "TimestampEq",
             keyset,
             column,
             plaintext,
         ),
-        "NumericEq" => run_target::<super::numeric::NumericEqQuery, Decimal, K>(
+        "TimestampOrdOre" => run_target::<super::timestamp::TimestampOrdOreQuery, Timestamp, K>(
+            "TimestampOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrd" => run_target::<super::timestamp::TimestampOrdQuery, Timestamp, K>(
+            "TimestampOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TimestampOrdOpe" => run_target::<super::timestamp::TimestampOrdOpeQuery, Timestamp, K>(
+            "TimestampOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericEq" => run_target::<super::numeric::NumericEqQuery, Option<Decimal>, K>(
             "NumericEq",
             keyset,
             column,
             plaintext,
         ),
-        "TextEq" => {
-            run_target::<super::text::TextEqQuery, String, K>("TextEq", keyset, column, plaintext)
-        }
+        "NumericOrdOre" => run_target::<super::numeric::NumericOrdOreQuery, Decimal, K>(
+            "NumericOrdOre",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrd" => run_target::<super::numeric::NumericOrdQuery, Decimal, K>(
+            "NumericOrd",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "NumericOrdOpe" => run_target::<super::numeric::NumericOrdOpeQuery, Decimal, K>(
+            "NumericOrdOpe",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "TextEq" => run_target::<super::text::TextEqQuery, Option<String>, K>(
+            "TextEq", keyset, column, plaintext,
+        ),
         "TextMatch" => run_target::<super::text::TextMatchQuery, String, K>(
             "TextMatch",
             keyset,
@@ -1142,9 +1302,9 @@ pub(crate) fn query_named<'a, K: 'static>(
             >("TextSearch", keyset, column, plaintext),
             _ => Err(no_index("TextSearch", index)),
         },
-        "RealEq" => {
-            run_target::<super::real::RealEqQuery, f32, K>("RealEq", keyset, column, plaintext)
-        }
+        "RealEq" => run_target::<super::real::RealEqQuery, Option<f32>, K>(
+            "RealEq", keyset, column, plaintext,
+        ),
         "RealOrdOre" => run_target::<super::real::RealOrdOreQuery, f32, K>(
             "RealOrdOre",
             keyset,
@@ -1160,7 +1320,7 @@ pub(crate) fn query_named<'a, K: 'static>(
             column,
             plaintext,
         ),
-        "DoubleEq" => run_target::<super::double::DoubleEqQuery, f64, K>(
+        "DoubleEq" => run_target::<super::double::DoubleEqQuery, Option<f64>, K>(
             "DoubleEq", keyset, column, plaintext,
         ),
         "DoubleOrdOre" => run_target::<super::double::DoubleOrdOreQuery, f64, K>(

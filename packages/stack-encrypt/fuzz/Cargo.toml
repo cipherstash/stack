@@ -17,9 +17,9 @@ cargo-fuzz = true
 [dependencies]
 # `Controlled`, to take a passthrough node's frame out of its wrapper: the
 # same line stack-encrypt builds on.
-vitaminc-protected = "0.6.1"
+vitaminc-protected = "0.8.0"
 # The sinks the record harness writes its plans and passthroughs through.
-vitaminc-aead = "0.6.1"
+vitaminc-aead = "0.8.0"
 libfuzzer-sys = "0.4"
 # Structure-aware inputs for `check_record` and `plan_build`: the mirror
 # types derive `Arbitrary`, so the fuzzer mutates trees and plans, not bytes.
@@ -68,6 +68,13 @@ bench = false
 [[bin]]
 name = "json_wire_decode"
 path = "fuzz_targets/json_wire_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_text"
+path = "fuzz_targets/json_text.rs"
 test = false
 doc = false
 bench = false

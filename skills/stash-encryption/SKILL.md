@@ -968,6 +968,8 @@ Once dual-writes are recorded as live in `cs_migrations`:
 
 **Create functional indexes between backfill and the read switch.** Build the `eql_v3.*` extractor indexes for every queried capability and run `ANALYZE`.
 
+**Reversing, back to plaintext.** `stash decrypt plan` / `backfill` / `drop` run this lifecycle backwards; the Decrypt section of `stash-cli` is the reference. Two differences to plan for. In reverse, the application keeps writing BOTH columns until the encrypted column's drop migration is applied, including after reads move to the plaintext column. And while the forward migration is still open (before `stash encrypt drop` has generated its drop migration), `stash decrypt backfill` refuses the original plaintext column outright, whatever flags are passed: only one migration may be open on a pair of columns, so finish the forward one with `encrypt drop` first. If the original column was already removed outside stash, `stash decrypt plan` notices it is missing and closes the forward migration itself (see `stash-cli`). Once `encrypt drop` has generated the drop but it has not been applied, the original column still exists but stopped being updated when the dual-write code above was removed, so the first `decrypt backfill` run refuses to reuse it as-is: pass `--force` to overwrite it from the ciphertext, or `--confirm-plaintext-current` only if it was written on every change. Values encrypted under an end-user lock context cannot be decrypted by the CLI (see `stash-auth`).
+
 ### State storage
 
 Two current sources of truth, kept separate on purpose:
@@ -1048,7 +1050,7 @@ await runBackfill({
 })
 ```
 
-Useful when the backfill needs to run in a worker, on a schedule, or alongside an existing job runner. `runBackfill` is version-agnostic — for an EQL v3 column pass an `Encryption` client built from a v3 schema set and it writes v3 envelopes straight into the concrete `eql_v3_*` domain column.
+Useful when the backfill needs to run in a worker, on a schedule, or alongside an existing job runner. The engine applies the same rules as the CLI, whoever calls it: it throws a `ColumnMigrationError` while a reverse migration of the same columns is open; a run that follows an interrupted `force: true` run is forced too, until a forced pass completes (the result's `forcedBy` says why); a failed run resumes from its last committed position; and an `error` event records the error's class (`errorName`) and safe details, never its message. it throws a `ColumnMigrationError` with code `twin-mismatch` when `encryptedColumn` differs from the encrypted column recorded for that column. `ColumnMigration.load()` from `@cipherstash/migrate` answers the same questions (phase, twin, owed forced pass) before a run. A column whose migration was dropped and then migrated back the other way starts a new column migration. `runBackfill` is version-agnostic — for an EQL v3 column pass an `Encryption` client built from a v3 schema set and it writes v3 envelopes straight into the concrete `eql_v3_*` domain column.
 
 ### Invariants the rollout preserves
 

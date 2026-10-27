@@ -33,7 +33,8 @@ use std::sync::Arc;
 use vitaminc_aead::frame::{Frame, FrameError, FrameMap, FrameSeq, FrameWriteError, FrameWriter};
 use vitaminc_aead::plaintext::kinds::timestamp_nanos;
 use vitaminc_aead::plaintext::{
-    Error as _, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError, TimeUnit,
+    Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    TimeUnit, Width,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
@@ -100,6 +101,13 @@ impl ValueFrame {
 
     /// Read one value from frame bytes a host handed over.
     ///
+    /// A typed null in the bytes reads as a plain null: the value this
+    /// returns does not remember the type, so sealing it does not pad it to
+    /// the type's length. To store a field's absent values padded, give the
+    /// field `"null": "sealed"` in its plan ([`FieldPlan::with_null`]).
+    ///
+    /// [`FieldPlan::with_null`]: crate::dynamic::FieldPlan::with_null
+    ///
     /// # Errors
     ///
     /// [`FromFrameError::Frame`] when the
@@ -136,6 +144,33 @@ impl ValueFrame {
     pub(super) fn from_written(buffer: Protected<Vec<u8>>) -> Result<Self, crate::Error> {
         let _ = Frame::parse(buffer.risky_ref()).map_err(|_| crate::Error::ResponseShape)?;
         Ok(Self(buffer))
+    }
+
+    /// The null, as a frame: what an absent value opens to.
+    pub(super) fn null() -> Self {
+        Self(Protected::new(vec![vitaminc_aead::tags::NULL]))
+    }
+
+    /// A typed null of `ty`, as a frame: the leaf alone. Walked into the
+    /// encrypting sink it seals as a typed null, as long as a value of `ty`
+    /// (vitaminc 0.8); any other sink sees a null. The value model holds a
+    /// typed null of its own types only ([`model_null`]), so `ty` is one of
+    /// those a [`ValueKind`] names.
+    pub(super) fn typed_null(ty: FixedType) -> Self {
+        let mut leaf = Protected::new(Vec::new());
+        vitaminc_aead::leaf::write_typed_null(ty, leaf.risky_inner_mut());
+        Self(leaf)
+    }
+
+    /// Whether the value is a null, plain or typed.
+    pub(super) fn is_null(&self) -> bool {
+        self.visit(super::term::OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                (None, Physical::Null) => Ok(()),
+                _ => Err(None),
+            },
+        ))
+        .is_ok()
     }
 
     /// The frame bytes. Same chain-of-custody caveats as
@@ -196,6 +231,12 @@ impl Sink for Check {
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), DecodeError> {
         model(ty, value)
+            .map(drop)
+            .ok_or(DecodeError::Expected(EXPECTED))
+    }
+
+    fn typed_null(self, ty: FixedType) -> Result<(), DecodeError> {
+        model_null(ty)
             .map(drop)
             .ok_or(DecodeError::Expected(EXPECTED))
     }
@@ -331,6 +372,20 @@ fn model(ty: Option<Logical>, value: Physical<'_>) -> Option<(Option<Logical>, P
     })
 }
 
+/// A typed null in the value model: a timestamp's as a nanosecond
+/// timestamp's, as [`model`] reads the timestamp it stands in for, every
+/// other type of the model as it is, or `None` for a type outside the model
+/// (a uuid, or a logical type this crate does not know).
+fn model_null(ty: FixedType) -> Option<FixedType> {
+    match ty.logical() {
+        None | Some(Logical::Date | Logical::Decimal { .. }) => Some(ty),
+        Some(Logical::Timestamp(_)) => {
+            FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
+        }
+        _ => None,
+    }
+}
+
 /// A frame writer that holds the [value model](ValueFrame#the-value-model):
 /// each scalar is read through the model before it is written, and every
 /// error is a [`DecodeError`], the error a [`Decrypt`] target reports. A
@@ -417,6 +472,16 @@ impl<'o> Sink for Modeled<FrameWriter<'o>> {
         let Self { inner, field } = self;
         inner
             .scalar(ty, value)
+            .map_err(|error| Modeled { inner: (), field }.written(error))
+    }
+
+    fn typed_null(self, ty: FixedType) -> Result<(), DecodeError> {
+        let Some(ty) = model_null(ty) else {
+            return Err(self.fault(DecodeError::Expected(EXPECTED)));
+        };
+        let Self { inner, field } = self;
+        inner
+            .typed_null(ty)
             .map_err(|error| Modeled { inner: (), field }.written(error))
     }
 
@@ -542,6 +607,15 @@ impl<S: Sink> Sink for ModelOnly<S> {
         }
     }
 
+    fn typed_null(self, ty: FixedType) -> Result<S::Ok, S::Error> {
+        match model_null(ty) {
+            Some(ty) => self.0.typed_null(ty),
+            None => Err(S::Error::source(SourceError::new(DecodeError::Expected(
+                EXPECTED,
+            )))),
+        }
+    }
+
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, S::Error> {
         self.0.seq(len).map(ModelOnly)
     }
@@ -626,6 +700,11 @@ impl Sink for Split {
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Parts, DecodeError> {
         let _ = model(ty, value).ok_or(DecodeError::Expected(EXPECTED))?;
+        Ok(Parts::Scalar)
+    }
+
+    fn typed_null(self, ty: FixedType) -> Result<Parts, DecodeError> {
+        let _ = model_null(ty).ok_or(DecodeError::Expected(EXPECTED))?;
         Ok(Parts::Scalar)
     }
 
@@ -748,6 +827,10 @@ impl Sink for Opening {
         write(|writer| Modeled::new(writer).scalar(ty, value))
     }
 
+    fn typed_null(self, ty: FixedType) -> Result<ValueFrame, DecodeError> {
+        write(|writer| Modeled::new(writer).typed_null(ty))
+    }
+
     fn seq(self, _: Option<usize>) -> Result<Children<ValueFrame>, DecodeError> {
         Ok(Children::new(false, join))
     }
@@ -835,6 +918,10 @@ impl<T> Sink for Skip<T> {
         self.done()
     }
 
+    fn typed_null(self, _: FixedType) -> Result<T, DecodeError> {
+        self.done()
+    }
+
     fn seq(self, _: Option<usize>) -> Result<Self, DecodeError> {
         Ok(self)
     }
@@ -897,6 +984,11 @@ impl Sink for KindOf {
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Self::Ok, DecodeError> {
         Ok(scalar_kind(ty, &value))
+    }
+
+    /// A typed null is a null, which has no kind.
+    fn typed_null(self, _: FixedType) -> Result<Self::Ok, DecodeError> {
+        self.scalar(None, Physical::Null)
     }
 
     fn seq(self, _: Option<usize>) -> Result<Self::Seq, DecodeError> {
@@ -1006,6 +1098,10 @@ impl Sink for RowsSink {
         Ok(SourceRows::One(None))
     }
 
+    fn typed_null(self, _: FixedType) -> Result<SourceRows, DecodeError> {
+        Ok(SourceRows::One(None))
+    }
+
     fn seq(self, _: Option<usize>) -> Result<BatchSink, DecodeError> {
         Ok(BatchSink(Vec::new()))
     }
@@ -1050,6 +1146,11 @@ impl<'s> Sink for RowSink<'s> {
     type Map = RowMap<BatchRow<'s>>;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), DecodeError> {
+        self.0.put(None);
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), DecodeError> {
         self.0.put(None);
         Ok(())
     }
@@ -1171,6 +1272,153 @@ mod tests {
             ("empty".to_string(), Tree::Array(vec![])),
             ("none".to_string(), Tree::Object(vec![])),
         ])
+    }
+
+    /// A null that says what it stands in for, as vitaminc walks a `None`
+    /// of a fixed-width type and as a host may send one in a frame.
+    #[derive(Clone)]
+    struct TypedNull(FixedType);
+
+    impl Encrypt for TypedNull {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.typed_null(self.0)
+        }
+    }
+
+    fn fixed(ty: Option<Logical>, width: Width) -> FixedType {
+        FixedType::new(ty, width).expect("a fixed-width type")
+    }
+
+    /// A typed null of each kind of type the value model holds: a plain
+    /// int and float, and the three logical types, a timestamp of another
+    /// unit than the model's among them.
+    fn typed_nulls_in_the_model() -> Vec<FixedType> {
+        vec![
+            fixed(None, Width::I64),
+            fixed(None, Width::F32),
+            fixed(Some(Logical::Date), Width::I32),
+            fixed(Some(Logical::Decimal { scale: 2 }), Width::I128),
+            fixed(Some(Logical::Timestamp(TimeUnit::Micros)), Width::I64),
+            fixed(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128),
+        ]
+    }
+
+    /// A uuid has a typed null, and no place in the value model.
+    fn uuid_null() -> FixedType {
+        fixed(Some(Logical::Uuid), Width::Bytes16)
+    }
+
+    /// The frame a host sends for a typed null: the leaf alone.
+    fn typed_null_frame(ty: FixedType) -> Vec<u8> {
+        let mut out = Vec::new();
+        vitaminc_aead::leaf::write_typed_null(ty, &mut out);
+        out
+    }
+
+    /// A typed null of a type in the model is a null in a frame: written,
+    /// read from a host's bytes, or opened. Its padding belongs to a sealed
+    /// leaf, not to a frame, and a null has no kind. So a host's typed null
+    /// is not padded by this path.
+    #[test]
+    fn a_typed_null_in_the_model_is_a_null_in_its_frame() {
+        let null = frame_of(&Tree::Null);
+        for ty in typed_nulls_in_the_model() {
+            let written = ValueFrame::of(TypedNull(ty)).expect("in the model");
+            assert_eq!(written.risky_ref(), null.risky_ref(), "{ty:?} written");
+            let bytes = typed_null_frame(ty);
+            assert!(ValueFrame::check(&bytes).is_ok(), "{ty:?} checks");
+            let read = ValueFrame::from_bytes(&bytes).expect("reads");
+            assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
+            let opened = TypedNull(ty).visit(Opening).expect("opens");
+            assert_eq!(opened.risky_ref(), null.risky_ref(), "{ty:?} opened");
+            assert_eq!(read.kind(), None, "{ty:?} has no kind");
+        }
+    }
+
+    /// A typed null of a type outside the model is refused wherever a
+    /// value of that type is.
+    #[test]
+    fn a_typed_null_outside_the_model_is_refused() {
+        let uuid = uuid_null();
+        assert!(matches!(
+            ValueFrame::of(TypedNull(uuid)),
+            Err(DecodeError::Expected(EXPECTED))
+        ));
+        let bytes = typed_null_frame(uuid);
+        for refused in [
+            ValueFrame::check(&bytes).map(drop),
+            ValueFrame::from_bytes(&bytes).map(drop),
+        ] {
+            assert!(
+                matches!(
+                    refused,
+                    Err(FromFrameError::Value(DecodeError::Expected(EXPECTED)))
+                ),
+                "{refused:?}"
+            );
+        }
+        assert!(matches!(
+            TypedNull(uuid).visit(Opening),
+            Err(DecodeError::Expected(EXPECTED))
+        ));
+    }
+
+    /// A host's frame of a typed null inside a passthrough.
+    fn hidden_typed_null_frame(ty: FixedType) -> Vec<u8> {
+        let mut out = vec![vitaminc_aead::frame::PASSTHROUGH];
+        out.extend(typed_null_frame(ty));
+        out
+    }
+
+    /// A passthrough holds a typed null to the same rules: one in the model
+    /// is a null, written or read from a host's bytes, and a uuid's is
+    /// refused.
+    #[test]
+    fn a_typed_null_in_a_passthrough_is_held_to_the_model() {
+        let null = frame_of(&Tree::Passthrough(Box::new(Tree::Null)));
+        for ty in typed_nulls_in_the_model() {
+            let written = ValueFrame::of(Hidden(TypedNull(ty))).expect("in the model");
+            assert_eq!(written.risky_ref(), null.risky_ref(), "{ty:?} written");
+            let bytes = hidden_typed_null_frame(ty);
+            assert!(ValueFrame::check(&bytes).is_ok(), "{ty:?} checks");
+            let read = ValueFrame::from_bytes(&bytes).expect("reads");
+            assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
+        }
+        assert!(matches!(
+            ValueFrame::of(Hidden(TypedNull(uuid_null()))),
+            Err(DecodeError::Expected(EXPECTED))
+        ));
+        let bytes = hidden_typed_null_frame(uuid_null());
+        for refused in [
+            ValueFrame::check(&bytes).map(drop),
+            ValueFrame::from_bytes(&bytes).map(drop),
+        ] {
+            assert!(
+                matches!(
+                    refused,
+                    Err(FromFrameError::Value(DecodeError::Expected(EXPECTED)))
+                ),
+                "{refused:?}"
+            );
+        }
+    }
+
+    /// A record source that is a typed null, or holds one as a batch
+    /// element, is a row that is not a map, as a null is.
+    #[test]
+    fn a_typed_null_record_source_is_no_row() {
+        let ty = fixed(Some(Logical::Date), Width::I32);
+        let one = typed_null_frame(ty);
+        let one = Frame::parse(&one).expect("a frame");
+        assert!(matches!(split_rows(one), Ok(SourceRows::One(None))));
+        let mut batch = vec![vitaminc_aead::frame::ARRAY, 2, 0, 0, 0];
+        batch.extend(typed_null_frame(ty));
+        batch.extend(typed_null_frame(ty));
+        let batch = Frame::parse(&batch).expect("a frame");
+        assert!(matches!(
+            split_rows(batch),
+            Ok(SourceRows::Batch(rows)) if rows.len() == 2 && rows.iter().all(Option::is_none)
+        ));
     }
 
     /// A value's frame is the frame vitaminc writes for it, byte for byte,

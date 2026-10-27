@@ -21,8 +21,10 @@ import 'dotenv/config'
 import pg from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { type EncryptionClientLike, runBackfill } from '../backfill.js'
+import { ColumnMigrationError } from '../column-migration.js'
+import { runChunkedMigration } from '../engine.js'
 import { installMigrationsSchema } from '../install.js'
-import { latestByColumn, progress } from '../state.js'
+import { appendEvent, latestByColumn, progress } from '../state.js'
 
 const PG_URL = process.env.PG_TEST_URL
 
@@ -289,9 +291,10 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
     try {
       const state = await progress(readDb, 'migrate_test.users', 'email')
       expect(state?.event).toBe('error')
-      expect((state?.details as { message?: string } | null)?.message).toMatch(
-        /ZeroKMS exploded/,
-      )
+      // The error's name, never its message: a client or database message
+      // can carry row data.
+      expect(state?.details).toMatchObject({ errorName: 'Error' })
+      expect(JSON.stringify(state?.details)).not.toContain('ZeroKMS exploded')
     } finally {
       readDb.release()
     }
@@ -426,6 +429,289 @@ describe.skipIf(!runIntegration)('runBackfill (integration)', () => {
       expect(latest?.rowsProcessed).toBe(50)
     } finally {
       readDb.release()
+    }
+  })
+
+  /** One forward run over `migrate_test.users` with the stub client. */
+  async function forward(
+    overrides: Partial<Parameters<typeof runBackfill>[0]> = {},
+  ) {
+    const db = await pool.connect()
+    try {
+      return await runBackfill({
+        db,
+        encryptionClient: stubClient,
+        tableSchema: { tableName: 'users', build: () => ({}) },
+        tableName: 'migrate_test.users',
+        schemaColumnKey: 'email',
+        plaintextColumn: 'email',
+        encryptedColumn: 'email_encrypted',
+        pkColumn: 'id',
+        chunkSize: 50,
+        ...overrides,
+      })
+    } finally {
+      db.release()
+    }
+  }
+
+  async function staleCount(): Promise<number> {
+    const result = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM migrate_test.users WHERE email_encrypted->>'c' = 'stale'`,
+    )
+    return Number(result.rows[0]?.n ?? 0)
+  }
+
+  it('a resumed run counts its total once, so progress ends at 100%', async () => {
+    await seed(300)
+    const controller = new AbortController()
+    await forward({
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 100) controller.abort()
+      },
+    })
+    const resumed = await forward()
+    expect(resumed.resumed).toBe(true)
+    expect(resumed.rowsTotal).toBe(300)
+    expect(resumed.rowsProcessed).toBe(300)
+  })
+
+  it('resumes after a failed run from its last committed cursor', async () => {
+    await seed(150)
+    let calls = 0
+    const failSecond: EncryptionClientLike = {
+      bulkEncryptModels(input, table) {
+        calls += 1
+        return calls === 2
+          ? Promise.resolve({ failure: { message: 'boom' } })
+          : stubClient.bulkEncryptModels(input, table)
+      },
+    }
+    await expect(forward({ encryptionClient: failSecond })).rejects.toThrow()
+    const fixed = await forward()
+    expect(fixed.resumed).toBe(true)
+    expect(fixed.rowsProcessed).toBe(150)
+    expect(await countEncrypted()).toBe(150)
+  })
+
+  it('a plain run finishes an interrupted --force pass as a forced pass', async () => {
+    await seed(300)
+    await pool.query(
+      `UPDATE migrate_test.users SET email_encrypted = '{"v":2,"c":"stale"}'::jsonb`,
+    )
+    const controller = new AbortController()
+    await forward({
+      force: true,
+      signal: controller.signal,
+      onProgress: (p) => {
+        if (p.rowsProcessed >= 100) controller.abort()
+      },
+    })
+
+    // Unforced, this run would find nothing pending and leave rows 101-300
+    // stale. The open obligation makes it forced, and it resumes the pass.
+    const finished = await forward()
+    expect(finished).toMatchObject({
+      resumed: true,
+      completed: true,
+      force: true,
+      forcedBy: 'forced-pass',
+    })
+    expect(await staleCount()).toBe(0)
+
+    // The completed forced pass met the obligation.
+    expect(await forward()).toMatchObject({ force: false, forcedBy: null })
+  })
+
+  it('records the pass mode on every event', async () => {
+    await seed(120)
+    await forward({ force: true })
+    const { rows } = await pool.query<{ event: string; force: unknown }>(
+      `SELECT event, details->'force' AS force FROM cipherstash.cs_migrations ORDER BY id`,
+    )
+    expect(rows.map((r) => r.event)).toEqual([
+      'backfill_started',
+      'backfill_checkpoint',
+      'backfill_checkpoint',
+      'backfill_checkpoint',
+      'backfilled',
+    ])
+    expect(rows.every((r) => r.force === true)).toBe(true)
+  })
+
+  it('refuses to start while a reverse column migration of the pair is open', async () => {
+    await seed(10)
+    const db = await pool.connect()
+    try {
+      await appendEvent(db, {
+        tableName: 'migrate_test.users',
+        columnName: 'email_encrypted',
+        event: 'decrypt_started',
+        phase: 'decrypting',
+        details: { plaintextColumn: 'email' },
+      })
+    } finally {
+      db.release()
+    }
+    await expect(forward()).rejects.toBeInstanceOf(ColumnMigrationError)
+    expect(await countEncrypted()).toBe(0)
+  })
+  it('the engine records the twin itself, so a paused run is not resumed into another', async () => {
+    await seed(4)
+    const firstAfter: Array<string | null> = []
+    const run = async (twinColumn: string, controller?: AbortController) => {
+      const db = await pool.connect()
+      let fetched = false
+      try {
+        return await runChunkedMigration<{ pk: string }>({
+          db,
+          tableName: 'migrate_test.users',
+          stateColumn: 'email',
+          twinColumn,
+          direction: 'forward',
+          chunkSize: 2,
+          signal: controller?.signal,
+          // Pause once the first chunk has committed.
+          onProgress: () => controller?.abort(),
+          countPending: async (after) =>
+            Number(
+              (
+                await db.query<{ n: string }>(
+                  'SELECT count(*)::text AS n FROM migrate_test.users WHERE id > $1',
+                  [after ?? 0],
+                )
+              ).rows[0]?.n,
+            ),
+          fetchPage: async (after, limit) => {
+            if (!fetched) firstAfter.push(after)
+            fetched = true
+            const { rows } = await db.query<{ pk: string }>(
+              'SELECT id::text AS pk FROM migrate_test.users WHERE id > $1 ORDER BY id LIMIT $2',
+              [after ?? 0, limit],
+            )
+            return { rows, lastPk: rows.at(-1)?.pk ?? null }
+          },
+          prepareChunk: async () => ({ write: async () => {} }),
+        })
+      } finally {
+        db.release()
+      }
+    }
+
+    // Paused after its first chunk, with no baseDetails naming the twin.
+    const paused = await run('email_encrypted', new AbortController())
+    expect(paused.completed).toBe(false)
+    const { rows: recorded } = await pool.query<{
+      cursor_value: string | null
+      details: unknown
+    }>(
+      `SELECT cursor_value, details FROM cipherstash.cs_migrations
+        WHERE column_name = 'email' ORDER BY id DESC LIMIT 1`,
+    )
+    expect(recorded[0]?.cursor_value).toBe('2')
+    expect(recorded[0]?.details).toMatchObject({
+      encryptedColumn: 'email_encrypted',
+    })
+
+    // Another twin is refused before it can resume the paused cursor…
+    await expect(run('email_ciphertext')).rejects.toMatchObject({
+      code: 'twin-mismatch',
+    })
+    // …while the recorded one resumes after it.
+    const resumed = await run('email_encrypted')
+    expect(resumed.completed).toBe(true)
+    expect(firstAfter).toEqual([null, '2'])
+  })
+
+  it.each([
+    ['a thrown value that is not an Error', () => 'row 7: alice@example.com'],
+    [
+      'an Error whose name is not an identifier',
+      () =>
+        Object.assign(new Error('boom'), { name: 'alice@example.com failed' }),
+    ],
+  ])('records %s as errorName "Error"', async (_label, thrown) => {
+    await seed(2)
+    const db = await pool.connect()
+    try {
+      await expect(
+        runChunkedMigration<{ pk: string }>({
+          db,
+          tableName: 'migrate_test.users',
+          stateColumn: 'email',
+          twinColumn: 'email_encrypted',
+          direction: 'forward',
+          chunkSize: 2,
+          countPending: async () => 2,
+          fetchPage: async () => ({ rows: [{ pk: '1' }], lastPk: '1' }),
+          prepareChunk: async () => {
+            throw thrown()
+          },
+        }),
+      ).rejects.toBeDefined()
+    } finally {
+      db.release()
+    }
+
+    const { rows } = await pool.query<{ details: Record<string, unknown> }>(
+      `SELECT details FROM cipherstash.cs_migrations
+        WHERE column_name = 'email' AND event = 'error'`,
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.details.errorName).toBe('Error')
+    expect(JSON.stringify(rows[0]?.details)).not.toContain('alice@example.com')
+  })
+
+  it("a caller's checkpoint and error details cannot overwrite the fields a resume reads", async () => {
+    await seed(4)
+    const spoof = { encryptedColumn: 'spoofed', force: true, rowsSkipped: 99 }
+    const db = await pool.connect()
+    let chunk = 0
+    try {
+      await expect(
+        runChunkedMigration<{ pk: string }>({
+          db,
+          tableName: 'migrate_test.users',
+          stateColumn: 'email',
+          twinColumn: 'email_encrypted',
+          direction: 'forward',
+          chunkSize: 2,
+          errorDetails: () => spoof,
+          countPending: async () => 4,
+          fetchPage: async (after, limit) => {
+            const { rows } = await db.query<{ pk: string }>(
+              'SELECT id::text AS pk FROM migrate_test.users WHERE id > $1 ORDER BY id LIMIT $2',
+              [after ?? 0, limit],
+            )
+            return { rows, lastPk: rows.at(-1)?.pk ?? null }
+          },
+          prepareChunk: async () => {
+            chunk += 1
+            if (chunk === 2) throw new Error('second chunk fails')
+            return { checkpointDetails: spoof, write: async () => {} }
+          },
+        }),
+      ).rejects.toThrow('second chunk fails')
+    } finally {
+      db.release()
+    }
+
+    const { rows } = await pool.query<{
+      event: string
+      details: Record<string, unknown>
+    }>(
+      `SELECT event, details FROM cipherstash.cs_migrations
+        WHERE column_name = 'email' AND event IN ('backfill_checkpoint', 'error')
+        ORDER BY id`,
+    )
+    expect(rows.map((r) => r.event)).toEqual(['backfill_checkpoint', 'error'])
+    for (const { details } of rows) {
+      expect(details).toMatchObject({
+        encryptedColumn: 'email_encrypted',
+        force: false,
+        rowsSkipped: 0,
+      })
     }
   })
 })

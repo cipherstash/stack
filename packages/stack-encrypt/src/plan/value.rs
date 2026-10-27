@@ -1,7 +1,13 @@
-//! One-value plans: one plaintext, sealed with its indexes beside it
-//! ([`with`](ValueStart::with)), laid out by a target type
-//! ([`encrypt_into`](ValueStart::encrypt_into)), or laid out by a layout
-//! value with its options ([`encrypt_as`](ValueStart::encrypt_as)).
+//! One-value plans: how to encrypt a single plaintext. Start one with
+//! [`Plan::value`], then choose its output in one of three ways:
+//!
+//! - [`with`](ValueStart::with): a ciphertext with the indexes you name
+//!   beside it, as an [`Encrypted<Terms>`].
+//! - [`encrypt_into`](ValueStart::encrypt_into): a target type, laid out
+//!   as that type says.
+//! - [`encrypt_with_layout`](ValueStart::encrypt_with_layout): a target laid
+//!   out by a value with options, such as the JSON index with the paths it
+//!   orders ([`Layout`]).
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -127,12 +133,8 @@ impl<S> ValueStart<S> {
         }
     }
 
-    /// Lay the value out as `layout` does: a target's layout chosen by
-    /// value, with its options ([`Layout`]), where
-    /// [`encrypt_into`](Self::encrypt_into) takes the target type's own.
-    /// The output is the layout's target, and a query through the plan
-    /// runs through the layout's index, under its options: the JSON index
-    /// with the paths it orders, say.
+    /// Encrypt the value as `layout` does, with the layout's options. The
+    /// plan's output is the layout's target.
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -143,20 +145,31 @@ impl<S> ValueStart<S> {
     /// use stack_encrypt::{op, Plan, StackCipher};
     ///
     /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    ///
+    /// // The JSON index, ordering the leaves at `$.age`.
     /// let options = JsonOptions::default().ordering(["$.age"])?;
     /// let plan = Plan::value::<serde_json::Value>()
     ///     .context("users/profile")
-    ///     .encrypt_as(Json::new(options))
+    ///     .encrypt_with_layout(Json::new(options))
     ///     .build()?;
+    ///
+    /// // The output is a `JsonDocument`, with an ordering term on `$.age`.
     /// let doc: JsonDocument = cipher.encrypt(&json!({"age": 34, "name": "Bob"})).using(&plan).await?;
     /// assert_eq!(doc.entries().iter().filter(|e| e.ordering_term().is_some()).count(), 1);
-    /// // The query derives under the plan's options: `$.age` is ordered.
+    ///
+    /// // A query through the plan uses the same options, so `$.age` can be compared.
     /// let _at_least_18 = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&plan).await?;
     /// # Ok(())
     /// # }
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
     /// ```
-    pub fn encrypt_as<X>(self, layout: X) -> ValuePlanBuilder<S, Laid<X, X::Target>>
+    ///
+    /// Use this when the target needs options that its type cannot carry,
+    /// such as the paths the JSON index orders. With
+    /// [`encrypt_into::<JsonDocument>()`](Self::encrypt_into) the same
+    /// document is sealed under the default options, which order no path.
+    /// [`Layout`] says more.
+    pub fn encrypt_with_layout<X>(self, layout: X) -> ValuePlanBuilder<S, Laid<X, X::Target>>
     where
         X: Layout<S>,
     {
@@ -363,11 +376,11 @@ impl<T> fmt::Debug for Typed<T> {
 }
 
 /// A one-value plan's layout when it was given one by value
-/// ([`encrypt_as`](ValueStart::encrypt_as)): the layout `X`, whose target
-/// `T` is its output, and a query runs through the layout's own index,
-/// with its options ([`Layout::index`]). `T` is the layout's
-/// [`Target`](Layout::Target), spelled out so that opening one `T` and a
-/// `Vec<T>` are told apart as they are for a [`Typed`] plan.
+/// ([`encrypt_with_layout`](ValueStart::encrypt_with_layout)): the layout
+/// `X`, whose target `T` is its output, and a query runs through the
+/// layout's own index, with its options ([`Layout::index`]). `T` is the
+/// layout's [`Target`](Layout::Target), spelled out so that opening one
+/// `T` and a `Vec<T>` are told apart as they are for a [`Typed`] plan.
 pub struct Laid<X, T>(X, PhantomData<fn() -> T>);
 
 impl<X: Clone, T> Clone for Laid<X, T> {

@@ -33,10 +33,10 @@
 use std::num::NonZeroUsize;
 
 use serde::{Deserialize, Deserializer};
+use stack_encrypt::dynamic::frame::serde::from_slice;
 use stack_guest_abi::last_error::malformed;
 use stack_kms::{ClientKey, ZeroKmsEndpoint};
 use uuid::Uuid;
-use vitaminc_aead_frame::serde::from_slice;
 
 /// Everything `se_cipher_init` needs to build the cipher.
 pub struct CipherConfig {

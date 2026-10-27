@@ -44,8 +44,14 @@ BEGIN
         AND VALUE ? 'i'
         AND VALUE ? 'ob'
         AND NOT (VALUE ? 'c')
+-- {{#v3}}
         AND jsonb_typeof(VALUE -> 'ob') = 'array'
         AND jsonb_array_length(VALUE -> 'ob') > 0
+-- {{/v3}}
+-- {{#v4}}
+        AND jsonb_typeof(VALUE -> 'ob') = 'string'
+        AND left(VALUE ->> 'ob', 4) IN ('0202', '0203')
+-- {{/v4}}
         AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
@@ -64,6 +70,10 @@ BEGIN
         AND VALUE ? 'i'
         AND VALUE ? 'op'
         AND NOT (VALUE ? 'c')
+-- {{#v4}}
+        AND jsonb_typeof(VALUE -> 'op') = 'string'
+        AND left(VALUE ->> 'op', 2) IN ('00', '01')
+-- {{/v4}}
         AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
@@ -82,6 +92,10 @@ BEGIN
         AND VALUE ? 'i'
         AND VALUE ? 'op'
         AND NOT (VALUE ? 'c')
+-- {{#v4}}
+        AND jsonb_typeof(VALUE -> 'op') = 'string'
+        AND left(VALUE ->> 'op', 2) IN ('00', '01')
+-- {{/v4}}
         AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;

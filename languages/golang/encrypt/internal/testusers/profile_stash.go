@@ -12,7 +12,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Profile prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.

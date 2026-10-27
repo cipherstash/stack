@@ -42,10 +42,10 @@ BEGIN
         AND VALUE ? 'lo'
         AND VALUE ? 'hi'
         AND NOT (VALUE ? 'c')
-        AND jsonb_typeof(VALUE -> 'lo') = 'array'
-        AND jsonb_array_length(VALUE -> 'lo') > 0
-        AND jsonb_typeof(VALUE -> 'hi') = 'array'
-        AND jsonb_array_length(VALUE -> 'hi') > 0
+        AND jsonb_typeof(VALUE -> 'lo') = 'string'
+        AND left(VALUE ->> 'lo', 4) IN ('0202', '0203')
+        AND jsonb_typeof(VALUE -> 'hi') = 'string'
+        AND left(VALUE ->> 'hi', 4) IN ('0202', '0203')
         -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
         -- passes, so COALESCE refuses it. A NULL range still passes (no row
         -- matches it). The comparison keeps the one form the v4 isolation
@@ -70,7 +70,9 @@ BEGIN
         AND VALUE ? 'hi'
         AND NOT (VALUE ? 'c')
         AND jsonb_typeof(VALUE -> 'lo') = 'string'
+        AND left(VALUE ->> 'lo', 2) IN ('00', '01')
         AND jsonb_typeof(VALUE -> 'hi') = 'string'
+        AND left(VALUE ->> 'hi', 2) IN ('00', '01')
         -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
         -- passes, so COALESCE refuses it. A NULL range still passes (no row
         -- matches it). The comparison keeps the one form the v4 isolation

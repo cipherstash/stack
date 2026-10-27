@@ -38,7 +38,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, TimeUnit};
+use vitaminc_aead::plaintext::{FixedType, Float, Int, Logical, Physical, Raw, TimeUnit, Width};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
@@ -56,14 +56,11 @@ use crate::target::IndexSpec;
 /// of every width, both floats, a decimal, a date, a timestamp, text and
 /// bytes, and not a boolean. The rest are this crate's: match over text
 /// alone, and ORE, OPE and block ORE over the integers of 16 bits and
-/// wider, both floats, text and bytes. A boolean and an 8-bit integer have
-/// no order term: over so small a domain it would reveal which rows are
-/// `true`, or each row's rank among 256 values.
-/// A decimal, a date and a timestamp have none yet: their order encodings
-/// wait for new cllw-ore and ore-rs releases (#1236), and [`not_admitted`]
-/// names that reason. A composite (`array`, `object`) has no term. Only the
-/// index's kind matters: a match index's options do not change what it
-/// applies to.
+/// wider, both floats, text, bytes, a decimal, a date and a timestamp. A
+/// boolean and an 8-bit integer have no order term: over so small a domain
+/// it would reveal which rows are `true`, or each row's rank among 256
+/// values. A composite (`array`, `object`) has no term. Only the index's
+/// kind matters: a match index's options do not change what it applies to.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};
@@ -74,7 +71,7 @@ use crate::target::IndexSpec;
 /// assert!(admits(ValueKind::Int8, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Int8, &IndexSpec::Ore));
 /// assert!(admits(ValueKind::Date, &IndexSpec::Equality));
-/// assert!(!admits(ValueKind::Date, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Date, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Object, &IndexSpec::Ore));
@@ -84,35 +81,22 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 }
 
 /// Why `kind` does not admit `index`, or `None` when it does: the reason a
-/// plan that declares the pair is refused with.
-///
-/// [`Reason::OrderTermPending`] for an order index on a decimal, date
-/// or timestamp, whose order terms wait for new cllw-ore and ore-rs
-/// releases (#1236). [`Reason::IndexNotAdmitted`] for every other pair
-/// [`admits`] refuses.
+/// plan that declares the pair is refused with,
+/// [`Reason::IndexNotAdmitted`] for every pair [`admits`] refuses.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{not_admitted, Reason, ValueKind};
 /// use stack_encrypt::target::IndexSpec;
 ///
-/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Ope), Some(Reason::OrderTermPending));
 /// assert_eq!(not_admitted(ValueKind::Bool, &IndexSpec::Ore), Some(Reason::IndexNotAdmitted));
-/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Equality), None);
+/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Ope), None);
 /// ```
 pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
     if admits(kind, index) {
         return None;
     }
-    if matches!(index, IndexSpec::Json(_)) {
-        return Some(Reason::JsonIndexPending);
-    }
-    let ordering = matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock);
-    let pending = matches!(
-        kind,
-        ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
-    );
-    Some(if ordering && pending {
-        Reason::OrderTermPending
+    Some(if matches!(index, IndexSpec::Json(_)) {
+        Reason::JsonIndexPending
     } else {
         Reason::IndexNotAdmitted
     })
@@ -148,7 +132,7 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
         ),
         ValueKind::String => (None, Physical::Text("")),
         ValueKind::Bytes => (None, Physical::Bytes(&[])),
-        ValueKind::Array | ValueKind::Object => return None,
+        ValueKind::Array | ValueKind::Object | ValueKind::Json => return None,
     })
 }
 
@@ -205,7 +189,7 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
 pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<ValueFrame, Error> {
     let refused = || Error::bad_source(Reason::FieldType);
     let value = ValueFrame::of(value).map_err(|_| refused())?;
-    if value.kind() == Some(kind) {
+    if kind.holds(value.kind()) {
         return Ok(value);
     }
     let number = (&value)
@@ -408,11 +392,19 @@ pub enum ValueKind {
     Array,
     /// `"object"`. Says nothing about the entries' kinds.
     Object,
+    /// `"json"`: a JSON document, carried as UTF-8 JSON text in a text or
+    /// bytes leaf, which the engine parses by one set of rules
+    /// ([`crate::json::parse_text`]) and opens back to as bytes. A value
+    /// is never of this kind ([`ValueFrame::kind`] says `string` or
+    /// `bytes`); a field declares it, and takes a target that stores a
+    /// document (`JsonSearch`). A JSON document's `null` is the text
+    /// `null`, not the frame's null.
+    Json,
 }
 
 impl ValueKind {
     /// Every kind, in declaration order.
-    pub const ALL: [ValueKind; 20] = [
+    pub const ALL: [ValueKind; 21] = [
         ValueKind::Bool,
         ValueKind::Int8,
         ValueKind::Int16,
@@ -433,13 +425,14 @@ impl ValueKind {
         ValueKind::Bytes,
         ValueKind::Array,
         ValueKind::Object,
+        ValueKind::Json,
     ];
 
     /// How a declaration spells this kind: `"bool"`, `"int8"`, `"int16"`,
     /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
     /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
-    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"` or
-    /// `"object"`. Frozen wire format.
+    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"`,
+    /// `"object"` or `"json"`. Frozen wire format.
     pub const fn name(self) -> &'static str {
         match self {
             ValueKind::Bool => "bool",
@@ -462,6 +455,57 @@ impl ValueKind {
             ValueKind::Bytes => "bytes",
             ValueKind::Array => "array",
             ValueKind::Object => "object",
+            ValueKind::Json => "json",
+        }
+    }
+
+    /// How an absent value of this kind is sealed so that it is as long as
+    /// a present one (a plan's `"null": "sealed"`, #1298): `Some(Some(ty))`
+    /// for a kind of fixed width, sealed as a typed null of `ty` (vitaminc
+    /// 0.8); `Some(None)` for a boolean, whose leaf is one byte, as the
+    /// plain null is; `None` for a kind of no fixed width (text, bytes, a
+    /// container), whose absence no padding can hide.
+    pub(crate) const fn sealed_null(self) -> Option<Option<FixedType>> {
+        let plain = FixedType::plain;
+        Some(match self {
+            ValueKind::Bool => None,
+            ValueKind::Int8 => plain(Width::I8),
+            ValueKind::Int16 => plain(Width::I16),
+            ValueKind::Int32 => plain(Width::I32),
+            ValueKind::Int64 => plain(Width::I64),
+            ValueKind::Int128 => plain(Width::I128),
+            ValueKind::UInt8 => plain(Width::U8),
+            ValueKind::UInt16 => plain(Width::U16),
+            ValueKind::UInt32 => plain(Width::U32),
+            ValueKind::UInt64 => plain(Width::U64),
+            ValueKind::UInt128 => plain(Width::U128),
+            ValueKind::Float32 => plain(Width::F32),
+            ValueKind::Float64 => plain(Width::F64),
+            // The widths the value model holds each logical type at.
+            ValueKind::Decimal => FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128),
+            ValueKind::Date => FixedType::new(Some(Logical::Date), Width::I32),
+            ValueKind::Timestamp => {
+                FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
+            }
+            ValueKind::String
+            | ValueKind::Bytes
+            | ValueKind::Array
+            | ValueKind::Object
+            | ValueKind::Json => return None,
+        })
+    }
+}
+
+impl ValueKind {
+    /// Whether a value of kind `found` is a value of this declared kind:
+    /// the same kind, or for [`Json`](Self::Json), the text or bytes the
+    /// document crosses as. `None`, a value with no kind (a null, an
+    /// undefined, a passthrough), is a value of no kind.
+    pub const fn holds(self, found: Option<ValueKind>) -> bool {
+        match (self, found) {
+            (ValueKind::Json, Some(ValueKind::String | ValueKind::Bytes)) => true,
+            (declared, Some(found)) => declared as u8 == found as u8,
+            (_, None) => false,
         }
     }
 }
@@ -524,7 +568,8 @@ mod tests {
                 "string",
                 "bytes",
                 "array",
-                "object"
+                "object",
+                "json"
             ],
             "the frozen names"
         );
@@ -581,7 +626,51 @@ mod tests {
             ValueKind::Bytes => tree(Tree::Bytes(b"ab".to_vec())),
             ValueKind::Array => tree(Tree::Array(vec![Tree::UInt32(1)])),
             ValueKind::Object => tree(Tree::Object(vec![("k".to_string(), Tree::UInt32(1))])),
+            // A document crosses as its text: a value of kind string.
+            ValueKind::Json => tree(Tree::String(r#"{"k": 1}"#.into())),
         }
+    }
+
+    /// Every kind whose values are of that kind: all but `json`, which a
+    /// field declares and a value never is (it crosses as text or bytes).
+    fn value_kinds() -> impl Iterator<Item = ValueKind> {
+        ValueKind::ALL
+            .into_iter()
+            .filter(|kind| *kind != ValueKind::Json)
+    }
+
+    /// `json` admits no index (a document is indexed by the target that
+    /// stores it), holds text and bytes and nothing else, and reads either
+    /// as it is: the text is parsed where the document is sealed.
+    #[test]
+    fn json_holds_its_text_and_admits_no_index() {
+        for index in indexes() {
+            assert!(!admits(ValueKind::Json, &index), "{index}");
+        }
+        assert!(ValueKind::Json.holds(Some(ValueKind::String)));
+        assert!(ValueKind::Json.holds(Some(ValueKind::Bytes)));
+        for kind in value_kinds().filter(|k| !matches!(k, ValueKind::String | ValueKind::Bytes)) {
+            assert!(!ValueKind::Json.holds(Some(kind)), "{kind}");
+        }
+        assert!(
+            !ValueKind::Json.holds(None),
+            "a frame null is not a document"
+        );
+        assert!(!ValueKind::String.holds(Some(ValueKind::Bytes)));
+        for kind in value_kinds() {
+            assert!(kind.holds(Some(kind)), "{kind}");
+            assert!(!kind.holds(None), "{kind}");
+        }
+        let text = read_frame(ValueKind::Json, sample(ValueKind::Json)).expect("text");
+        assert_eq!(text.kind(), Some(ValueKind::String));
+        let bytes = read_frame(ValueKind::Json, Tree::Bytes(b"[1]".to_vec())).expect("bytes");
+        assert_eq!(bytes.kind(), Some(ValueKind::Bytes));
+        assert!(read_frame(ValueKind::Json, Tree::UInt32(1)).is_none());
+        assert_eq!(
+            ValueKind::Json.sealed_null(),
+            None,
+            "a document has no fixed width"
+        );
     }
 
     fn indexes() -> [IndexSpec; 5] {
@@ -598,7 +687,7 @@ mod tests {
     /// disagree about a value of any kind, and a composite admits nothing.
     #[test]
     fn admits_agrees_with_defines_for_every_kind() {
-        for kind in ValueKind::ALL {
+        for kind in value_kinds() {
             for index in indexes() {
                 assert_eq!(
                     admits(kind, &index),
@@ -635,7 +724,7 @@ mod tests {
     /// `vitaminc-normalize` gives the kind's values an equality domain.
     #[test]
     fn admits_equality_exactly_where_vitaminc_gives_a_domain() {
-        for kind in ValueKind::ALL {
+        for kind in value_kinds() {
             let has_domain = matches!(
                 vitaminc_normalize::terms(sample(kind)).as_deref(),
                 Ok([term]) if term.path.steps().is_empty()
@@ -655,6 +744,7 @@ mod tests {
         let wide = IndexSpec::Match(MatchOptions {
             tokenizer: Tokenizer::Standard,
             downcase: false,
+            short_words: false,
             k: 6,
             m: 1024,
         });
@@ -668,7 +758,7 @@ mod tests {
     }
 
     /// The new kinds' rows, spelled out: equality on every one, order on
-    /// every integer width but 8 bits and on none of the decimal, date and
+    /// every integer width but 8 bits and on the decimal, date and
     /// timestamp, match on none.
     #[test]
     fn admits_the_new_kinds_where_their_terms_exist() {
@@ -702,43 +792,26 @@ mod tests {
         }
         for kind in logical {
             assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
-            assert!(!admits(kind, &IndexSpec::Ore), "{kind} ore");
-            assert!(!admits(kind, &IndexSpec::Ope), "{kind} ope");
-            assert!(!admits(kind, &IndexSpec::OreBlock), "{kind} ore_block");
+            assert!(admits(kind, &IndexSpec::Ore), "{kind} ore");
+            assert!(admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(admits(kind, &IndexSpec::OreBlock), "{kind} ore_block");
             assert!(!admits(kind, &matched), "{kind} match");
         }
     }
 
     /// `not_admitted` is `admits` with a reason: none for an admitted pair,
-    /// the #1236 reason for an order index on a decimal, date or timestamp
-    /// and nothing else, and the generic reason for every other refusal.
+    /// and one reason for every refusal.
     #[test]
-    fn not_admitted_names_the_pending_order_terms_and_nothing_else() {
+    fn not_admitted_is_admits_with_a_reason() {
         for kind in ValueKind::ALL {
             for index in indexes() {
                 let reason = not_admitted(kind, &index);
                 assert_eq!(reason.is_none(), admits(kind, &index), "{kind} and {index}");
-                let pending =
-                    matches!(index, IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock)
-                        && matches!(
-                            kind,
-                            ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
-                        );
-                if pending {
-                    assert_eq!(reason, Some(Reason::OrderTermPending), "{kind} and {index}");
-                } else if reason.is_some() {
+                if reason.is_some() {
                     assert_eq!(reason, Some(Reason::IndexNotAdmitted), "{kind} and {index}");
                 }
             }
         }
-        assert_eq!(
-            not_admitted(ValueKind::Decimal, &IndexSpec::Ore),
-            Some(Reason::OrderTermPending)
-        );
-        assert_eq!(
-            not_admitted(ValueKind::Date, &IndexSpec::Ope),
-            Some(Reason::OrderTermPending)
-        );
         assert_eq!(
             not_admitted(ValueKind::Bool, &IndexSpec::Ope),
             Some(Reason::IndexNotAdmitted)
@@ -747,19 +820,18 @@ mod tests {
             not_admitted(ValueKind::Date, &IndexSpec::Match(MatchOptions::default())),
             Some(Reason::IndexNotAdmitted)
         );
-        assert_eq!(
-            not_admitted(ValueKind::Timestamp, &IndexSpec::OreBlock),
-            Some(Reason::OrderTermPending)
-        );
-        assert_eq!(not_admitted(ValueKind::Int16, &IndexSpec::Ore), None);
+        for kind in [ValueKind::Decimal, ValueKind::Date, ValueKind::Timestamp] {
+            for index in [IndexSpec::Ore, IndexSpec::Ope, IndexSpec::OreBlock] {
+                assert_eq!(not_admitted(kind, &index), None, "{kind} and {index}");
+            }
+        }
         for index in [IndexSpec::Ore, IndexSpec::Ope, IndexSpec::OreBlock] {
             assert_eq!(
                 not_admitted(ValueKind::Int8, &index),
                 Some(Reason::IndexNotAdmitted),
-                "an 8-bit integer is refused {index} as a boolean is, not as pending"
+                "an 8-bit integer is refused {index} as a boolean is"
             );
         }
-        assert!(Reason::OrderTermPending.to_string().contains("#1236"));
     }
 
     /// Every integer width is a source and a target: a value in range
@@ -913,7 +985,7 @@ mod tests {
 
     #[test]
     fn read_returns_a_value_of_the_kind_as_it_is() {
-        for kind in ValueKind::ALL {
+        for kind in value_kinds() {
             let read = read_frame(kind, sample(kind)).expect("its own kind");
             assert_eq!(read.kind(), Some(kind));
             assert_eq!(

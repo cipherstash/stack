@@ -47,8 +47,8 @@ use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 use zerokms_protocol::Name;
 
+use stack_encrypt::dynamic::frame::serde::from_slice;
 use stack_guest_abi::last_error::malformed;
-use vitaminc_aead_frame::serde::from_slice;
 
 use crate::status::fail_error;
 #[cfg(any(doc, test))]

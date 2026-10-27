@@ -22,6 +22,32 @@ describe('CLI live-Postgres CI contract', () => {
     )
   })
 
+  // `@cipherstash/migrate`'s integration suites self-skip without PG_TEST_URL,
+  // so a dropped variable reads as a green run. They DROP the `cipherstash`
+  // schema, so they must not share the CLI live suites' database.
+  it('forwards and supplies the migrate integration database URL', () => {
+    const turbo = readJsonc(join(REPO_ROOT, 'turbo.json'))
+    expect(turbo.tasks.test.env).toContain('PG_TEST_URL')
+
+    const workflow = readWorkflow('.github/workflows/tests.yml')
+    const runTests = workflow.jobs['run-tests'].steps.find(
+      (step) => step.name === 'Run tests',
+    )
+    const url = runTests.env.PG_TEST_URL
+    expect(url).toMatch(/^postgres:\/\/[^/]+\/\w+$/)
+    const database = url.split('/').at(-1)
+    expect(database).not.toBe(
+      runTests.env.STASH_TEST_DATABASE_URL.split('/').at(-1),
+    )
+
+    const steps = workflow.jobs['run-tests'].steps
+    const create = steps.findIndex((step) =>
+      String(step.run ?? '').includes(`CREATE DATABASE ${database}`),
+    )
+    expect(create).toBeGreaterThan(-1)
+    expect(create).toBeLessThan(steps.indexOf(runTests))
+  })
+
   it('runs the live reinstall suite against both pre-17 and current Postgres catalogs', () => {
     const workflow = readWorkflow('.github/workflows/tests.yml')
     const runTests = workflow.jobs['run-tests']

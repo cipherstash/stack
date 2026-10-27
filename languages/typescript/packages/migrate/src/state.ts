@@ -20,6 +20,23 @@ export type MigrationEvent =
   | 'cut_over'
   | 'dropped'
   | 'error'
+  | ReverseMigrationEvent
+
+/**
+ * Events written by the REVERSE (encrypted → plaintext) lifecycle that
+ * `stash decrypt` drives. They mirror the forward events one for one, and are
+ * keyed by the ENCRYPTED column — the column being migrated away from — so a
+ * reverse run never shares a `(table, column)` timeline with the forward
+ * history recorded under the plaintext name. That separation is what keeps the
+ * forward resume logic (`backfill_checkpoint`) and the reverse resume logic
+ * (`decrypt_checkpoint`) from ever reading each other's cursor.
+ */
+export type ReverseMigrationEvent =
+  | 'decrypt_dual_writing'
+  | 'decrypt_started'
+  | 'decrypt_checkpoint'
+  | 'decrypted'
+  | 'encrypted_dropped'
 
 /**
  * The per-column lifecycle phase as surfaced in status/plan output and
@@ -41,6 +58,63 @@ export type MigrationPhase =
   | 'backfilled'
   | 'cut-over'
   | 'dropped'
+  | ReverseMigrationPhase
+
+/**
+ * Phases of the reverse lifecycle `stash decrypt` drives, recorded against the
+ * encrypted column:
+ *
+ * ```
+ * decrypt-dual-writing → app writes both the ciphertext and the plaintext twin
+ * decrypting           → runDecryptBackfill is (or has been) decrypting rows
+ * decrypted            → every decryptable row has its plaintext twin set
+ * encrypted-dropped    → the encrypted column's drop migration was generated
+ * ```
+ *
+ * There is no reverse "schema added" phase for the same reason the forward
+ * `schema-added` is never written by the CLI: adding the plaintext twin is a
+ * migration the user applies, not a transition the CLI observes.
+ */
+export type ReverseMigrationPhase =
+  | 'decrypt-dual-writing'
+  | 'decrypting'
+  | 'decrypted'
+  | 'encrypted-dropped'
+
+/**
+ * The reverse phases as a value, so readers can tell a reverse row from a
+ * forward one without restating the list. `satisfies` keeps it total: a phase
+ * added to {@link ReverseMigrationPhase} and not here fails to compile.
+ */
+export const REVERSE_MIGRATION_PHASES = [
+  'decrypt-dual-writing',
+  'decrypting',
+  'decrypted',
+  'encrypted-dropped',
+] as const satisfies readonly ReverseMigrationPhase[]
+
+type MissingReversePhase = Exclude<
+  ReverseMigrationPhase,
+  (typeof REVERSE_MIGRATION_PHASES)[number]
+>
+// Compile-time totality check for the list above (the `satisfies` clause only
+// proves every member is a reverse phase, not that every reverse phase is a
+// member).
+const _reversePhasesAreTotal: [MissingReversePhase] extends [never]
+  ? true
+  : never = true
+void _reversePhasesAreTotal
+
+/** True when `phase` belongs to the reverse (decrypt) lifecycle. */
+export function isReverseMigrationPhase(
+  phase: MigrationPhase | null | undefined,
+): phase is ReverseMigrationPhase {
+  return (
+    phase !== null &&
+    phase !== undefined &&
+    (REVERSE_MIGRATION_PHASES as readonly string[]).includes(phase)
+  )
+}
 
 /**
  * Composite key of `<table>.<column>`. Used as the map key by
@@ -173,7 +247,8 @@ export async function progress(
   return rowToState(result.rows[0])
 }
 
-function rowToState(row: {
+/** Decode one `cs_migrations` row. Internal to this package. */
+export function rowToState(row: {
   id: string | number
   table_name: string
   column_name: string

@@ -161,12 +161,53 @@ pub struct DomainBlock {
     // its own version block, with a present `nonempty_array_keys` key still
     // a non-empty array.
     pub optional_term_keys: Vec<String>,
+    // The terms EQL v4 stores as hex strings (`Term::v4_format`), each with
+    // the prefixes its CHECK requires. Rendered in a v4 block; the v3 block
+    // keeps `nonempty_array_keys`.
+    pub v4_hex_terms: Vec<HexTermCheck>,
     // sql_str-escaped one-line human description rendered as `COMMENT ON DOMAIN`.
     // Capability text is derived from the domain's terms (via
     // `Term::operators_for_terms`), so it can't drift from the generated CHECK /
     // operators. Surfaced by `\dD`, `obj_description`, and tooling that reads
     // pg_type comments (e.g. Supabase's `types` introspection).
     pub comment: String,
+}
+
+/// The CHECK of one term EQL v4 stores as a hex string: the value is a JSON
+/// string whose first `prefix_len` characters are one of `prefixes`. Two
+/// constant-time string operations on top of the key lookup, so the cost of
+/// a write does not grow with the term; the comparator checks the rest.
+#[derive(serde::Serialize)]
+pub struct HexTermCheck {
+    pub key: String, // sql_str-escaped JSON key: `ob`, `op`
+    pub prefix_len: usize,
+    pub prefixes: String, // SQL list of literals: `'0202', '0203'`
+}
+
+/// The [`HexTermCheck`]s of `terms`, in key order.
+pub fn v4_hex_terms(terms: &[Term]) -> Vec<HexTermCheck> {
+    Term::payload_terms(terms)
+        .into_iter()
+        .filter_map(|term| term.v4_format().map(|format| (term, format)))
+        .map(|(term, format)| {
+            let prefix_len = format.prefixes[0].len();
+            assert!(
+                format.prefixes.iter().all(|p| p.len() == prefix_len),
+                "the prefixes of `{}` have one length",
+                term.json_key()
+            );
+            HexTermCheck {
+                key: sql_str(term.json_key()),
+                prefix_len,
+                prefixes: format
+                    .prefixes
+                    .iter()
+                    .map(|p| format!("'{}'", sql_str(p)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }
+        })
+        .collect()
 }
 
 /// Concise capability phrase from a domain's operator set — `equality`,
@@ -243,6 +284,7 @@ pub fn domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
         forbidden_keys: vec![],
         // A stored value carries every term in both versions.
         optional_term_keys: vec![],
+        v4_hex_terms: v4_hex_terms(domain.terms),
         comment: scalar_domain_comment(family_name, domain),
     }
 }
@@ -278,6 +320,7 @@ pub fn query_domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
             .collect(),
         forbidden_keys: vec![sql_str("c")],
         optional_term_keys,
+        v4_hex_terms: v4_hex_terms(domain.terms),
         comment: query_domain_comment(family_name, domain),
     }
 }

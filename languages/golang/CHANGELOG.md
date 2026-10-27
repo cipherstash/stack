@@ -10,8 +10,170 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- **A two-letter word is searchable in `TextMatch`, `TextSearch` and
+  `TextSearchOre` (#1309).** The EQL v4 match types index each two-letter
+  word whole, beside the 3-grams of the text, so a two-letter surname such
+  as "Ng" stores into a `TextMatch` field (it was refused with `ErrTerm`),
+  and `Matches` with "ng" is a query (it was refused) that finds the rows
+  holding the word "Ng", not "Nguyen". A query's two-letter words must be
+  whole words of the row: "Mike Ng" does not find "Mike Nguyen". Text that
+  cuts no token, an empty string or one letter, is still refused by
+  `TextMatch` and stored with the empty filter by the search types. The
+  word token is one more token per two-letter word, in the same filter, so
+  someone who clusters tokens across rows can tell "Ng" from "Nguyen".
+  A native `index=match` field takes no options yet (#1112), so this
+  reaches Go through the EQL types only.
+
+- **Encrypted JSON documents of Go types** (#1351). A struct, map or slice
+  field tagged `encrypt_into=JsonSearch` is a document: the generated code
+  marshals it with `encoding/json` when it seals it, and reads the opened
+  document back into the declared type (`gensupport.GetDocument`,
+  `GetDocumentPtr`), so 64-bit integers and finite `float64`s round-trip
+  exactly. A pointer to one takes `null=sql`. The rest of a document comes
+  back as `encoding/json` reads it: invalid UTF-8 in a string becomes
+  U+FFFD, a nil map or slice is stored as JSON `null` (not `{}` or `[]`),
+  and a `time.Time` inside a document is stored as RFC 3339 text in its
+  own offset, which `EqAt` and the orderings compare as text. `stashgen` refuses, when it
+  runs, a type `encoding/json` cannot carry both ways: an interface such as
+  `any`, a struct field `encoding/json` drops (unexported, tagged
+  `json:"-"`, or two writing one member), a field tagged
+  `json:",string"` (stored as a JSON string, which a query by its number
+  does not match), an embedded pointer to an
+  unexported struct (written, never read back), a one-way `MarshalJSON` or
+  `MarshalText`, a channel, a function, a scalar, or a `[]byte`. The `Fields` entry's operands are Go
+  values now: `Contains`, `ContainedBy`, `EqAt`, `Lt`, `Lte`, `Gt`, `Gte`
+  and `Between` take `any`,
+  a `json.RawMessage` crossing as the JSON text it is and anything else
+  marshalled (`gensupport.JSONText`); a `[]byte`, a type defined over
+  one, or a pointer to either is refused, and so is a containment needle
+  that is a Go string, a pointer to one, or writes JSON `null`. A zero
+  struct field without `omitempty` narrows a containment query, so
+  `Contains` on a field whose type holds a struct refuses a needle of that
+  type (`gensupport.NewDocumentField`); the generated doc comments say how
+  to write a needle. `encrypt.DecodeJSON[T]` reads a value a selection or
+  subtree read opened into a Go type, numbers in an interface as
+  `json.Number`. An error from either direction names a Go type and never
+  the value.
+
+- **Encrypted JSON documents with `stashgen`** (#1351, #1352). A
+  `json.RawMessage` field tagged `encrypt_into=JsonSearch` (options:
+  `ordered=$.a;$.b[*].c`, `sealed_root=false`) is stored as an
+  `eql.JSONSearch` in a `public.eql_v4_json_search` column; a
+  `*json.RawMessage` field takes `null=sql`. Its `Fields` entry has
+  `Contains`, `ContainedBy`, `EqAt`, `Selector`, `Subtree`, `Children` and
+  `ChildCount`, and `At.<Path>` per ordered path with `Lt`, `Lte`, `Gt`,
+  `Gte`, `Between` and the path's own `Selector`; at a wildcard path their
+  operands are compared over every match (`eql_v4.json_tree_path_query`),
+  since `->` there returns an unspecified element. `encrypt.JSONSelection`
+  and `encrypt.JSONRead` open the rows `->` and `eql_v4.json_tree_subtree`
+  return against the request that prepared them (`OpenOne` refuses a
+  wildcard read up front); `encrypt.JSONSelector`, `JSONToken` and
+  `JSONTokens` bind as `text` and `text[]`, and a zero selector, token or
+  token list is refused rather than bound. `JSONToken`, `JSONTokens`,
+  `JSONSelection` and `JSONRead` print and log with the tokens, the
+  selector and the path redacted; `encrypt.JSONValue` holds plaintext and
+  prints it. A `json.RawMessage` sealed any other way stays
+  bytes. `gensupport.JSON`, `TargetOptions`,
+  `Declaration.Options` and the `JSON*` helpers are the generated code's.
+
+- **Query and read an encrypted JSON document, at the record level**
+  (#1350, #1352). `Cipher.QueryTerm` derives a document field's operands:
+  `QueryTerm.Encoding` says what the term holds, and `QueryTerm.Text`
+  carries a selector, a node's token or a read's tokens.
+  `Cipher.JSONOpen` opens the rows a selector or subtree read returned
+  against the request that prepared it. `record.Operator.Input` names an
+  operator's input. Generated methods follow with `stashgen`.
+
+- **The EQL types for an encrypted JSON document** (#1348):
+  `eql.JSONSearch` (`public.eql_v4_json_search`), its containment needle
+  `eql.JSONSearchQuery`, its ordering operand
+  `eql.JSONSearchLeafQuery` and its entry `eql.JSONEntry`,
+  generated from the EQL catalog. The names are the ones EQL v3 gives its
+  searchable JSON document; `eql.JSON` stays the storage-only type. The
+  engine stores one from the module's own plans, and `stashgen` generates
+  fields tagged `encrypt_into=JsonSearch`.
+
+- **Decimals, dates and timestamps take an order index (#1236).** An
+  `encrypt.Decimal`, `encrypt.Date` or `time.Time` field takes `ore` and
+  `ope`, and the generated code gives it `Lt`, `Lte`, `Gt`, `Gte` and
+  `Between`. A decimal orders by value (`1.5` ties `1.50`), a date by its
+  day, and a timestamp by the microsecond, truncated as its equality term
+  is. The EQL types `DateOrd`, `DateOrdOpe`, `DateOrdOre`, `TimestampOrd`,
+  `TimestampOrdOpe`, `TimestampOrdOre`, `NumericOrd`, `NumericOrdOpe` and
+  `NumericOrdOre` are producible with `encrypt_into=`.
+- **An optional field: a sealed field declared over a pointer (#1298).**
+  `DOB *encrypt.Date` with `stash:"dob,encrypt_into=Date"` generates (it
+  was refused as a composite, #1293), and `Decrypt` gives `nil` back for a
+  `nil`. The new `null=` tag part says how `nil` is stored:
+  `null=sealed` seals it as a null as long as a value of the field's type,
+  so the column does not show which rows have no value; `null=sql` stores
+  nothing, so the field's columns are SQL `NULL` and its member in the
+  generated type is a pointer. `stashgen` picks `null=sealed` for a field
+  whose type has a fixed width (a bool, a number, `encrypt.Date`,
+  `time.Time`, `encrypt.Decimal`, the 128-bit integers) and whose only
+  index, if any, is equality, and asks for `null=sql` to be written on any
+  other: a null has an equality term and no other, and text shows its
+  length. Beside equality a sealed null stores the term every nil of the
+  field shares, and a generated `EqNull` method derives its `eq` query,
+  which finds the rows whose value is absent. A generated `EncryptNull`
+  method seals `nil` for an update of one such column, which writing SQL
+  `NULL` would not store. A stored null read into a
+  field that is not a pointer is an error from `Decrypt`. `-model` does not
+  map a `null=sql` field yet.
+
 ### Breaking
 
+- **`eql.SteVecDocument` and `eql.SteVecQuery` are gone.** They named
+  EQL v4's SteVec domains, which the engine never produced and the v4
+  bundle no longer carries: in v4, `public.eql_v4_json_search` is the
+  JSON tree document, `eql.JSONSearch`, and `eql.Types` lists it in
+  their place.
+
+- **An opaque struct seals as a storage blob, and reads the JSON it used
+  to (#1347).** `stash:"context=...,opaque"` now seals the struct as one
+  blob in vitaminc's storage profile, version 1 (`vcffi.MarshalStorage`),
+  the format vitaminc keeps readable across releases and languages, where
+  it sealed the JSON document `encoding/json` wrote. Rows sealed before
+  still decrypt: `Decrypt` reads a value that is not a blob as JSON.
+  **Run stashgen again:** generated files name
+  `gensupport.GeneratedVersion2`, so a file generated before does not
+  compile against this release (it would seal blobs keyed by Go field
+  names that the regenerated file could not read). The generated shape
+  struct names each field `vc:"name,default"`, so a field added to the
+  struct later reads as its zero value from a blob sealed before it, as
+  it did from JSON. A field added to a nested struct type has no such
+  tag: give it a pointer type, or rows sealed before it do not decrypt.
+  **Upgrade every reader before any writer:** an earlier release cannot
+  read a blob, so a rolling deploy or a rollback that runs an earlier
+  release after this one has sealed a row fails to decrypt that row.
+  What else changes for a program: a NaN or infinite float now seals
+  (JSON refused it with `ErrEncoding`); a nil slice or map comes back
+  empty, not nil, from a blob; `Encrypt` refuses, as `ErrEncoding`
+  wrapping `vcffi.ErrUnwritable`, a string that is not UTF-8 (JSON wrote
+  U+FFFD), a value nested more than 128 levels deep, and two map keys
+  whose `MarshalText` spells alike. `stashgen` refuses in an opaque
+  struct `encrypt.Decimal` and `encrypt.Date` (the storage profile has no
+  form for them), a type with only one of `MarshalText` and
+  `UnmarshalText`, a map key that is not an integer, a string, bytes or
+  text, and a type that only `MarshalJSON` carries over a struct with
+  unexported fields. **Rows already sealed with an `encrypt.Decimal` or
+  `encrypt.Date` in an opaque struct do not decrypt under this release**,
+  since no generated file can name the field: before upgrading, decrypt
+  them with the earlier release, change the field to a string (or to its
+  parts), and encrypt them again; the earlier release writes JSON, which
+  this release reads. A blob a later release writes is
+  `encrypt.ErrStorageVersion`. This takes vcffi from the unreleased
+  cipherstash/vitaminc#526 by pseudo-version; the storage format is a
+  compatibility commitment only once vitaminc releases it, so no Go
+  release should be cut while the pin is a pseudo-version.
+- **Every order term changes: re-derive stored `ore`, `ope` and
+  `ore_block` index terms.** The engine moved to vitaminc 0.8, clww-ore 0.6
+  (formerly cllw-ore) and ore-rs 0.10, and both order schemes now derive
+  different terms for the same value, so a query term no longer compares
+  with an order term stored before. Ciphertexts and equality terms are
+  unchanged.
 - **An `int8`, `int16`, `uint8` or `uint16` sealed field seals at its own
   width; run stashgen again.** It used to seal as a 32-bit integer. Values
   stored before do not decrypt under the regenerated declaration: the
@@ -59,8 +221,7 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `NumericEq` normalises the scale (`1.5 = 1.50`) and `TimestampEq` compares
   to the microsecond (truncated, never rounded), while each value opens as it was sealed. A
   `time.Time` seals its instant and opens in UTC. Their `Ord`, `OrdOpe` and
-  `OrdOre` types stay unproducible until the engine derives order terms
-  for these kinds (#1236).
+  `OrdOre` types follow (see above).
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as sealed fields** (#1144). Each integer type seals at its own width
   (`int8` as an int8, `uint16` as a uint16), so `record.Kind` and
@@ -70,8 +231,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   `Decimal` are vitaminc's `vcvalue` types, with `encrypt.DateOf`,
   `ParseInt128`, `ParseUint128` and `ParseDecimal` (which refuses NaN and
   the infinities with `ErrNonFiniteDecimal`). Equality applies to all of
-  them, ORE and OPE to every integer width but 8 bits. stashgen refuses an
-  order index on a decimal, date or timestamp, naming #1236. The value-kinds fixture
+  them, ORE and OPE to every integer width but 8 bits, and to decimals,
+  dates and timestamps (see above). The value-kinds fixture
   test opens a record the Rust lowering sealed and derives the same terms.
 - **Any built-in Go integer field takes an integer EQL type** (ADR-0002):
   an `int16` or a `uint16` into `Integer`, an `int` into `Bigint`. The
@@ -91,7 +252,8 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   implements `driver.Valuer`, `sql.Scanner` and JSON like the other query
   types. They are not in
   `eql.Types`, which lists stored types, and no generated method returns one
-  yet: the ordered EQL types are not producible.
+  yet: `stashgen` does not construct a range query operand, although the
+  ordered EQL types are producible and expose single-bound comparisons.
 - **`encrypt.MatchQuery` and `encrypt.EQLMatchQuery`**: what a `Matches`
   method returns. Each carries the term or EQL query value to bind,
   `Verify` (check decrypted rows, since a match can return false positives)
@@ -129,12 +291,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   these types: it is not a tag word.
 - **`TextSearch`**: a `string` field tagged `encrypt_into=TextSearch` gets
   `Eq`, `Lt`, `Lte`, `Gt`, `Gte` and `Matches`, one column for all of them.
-  The stored value keeps all three terms. Text shorter than three
-  characters, an empty string included, is stored with an empty match
+  The stored value keeps all three terms. Text that cuts no match token,
+  such as an empty string or one letter, is stored with an empty match
   filter, where `TextMatch` refuses it with `ErrTerm`: `Eq`, `Lt`, `Lte`,
   `Gt` and `Gte` find the row, and no `Matches` query does. Each query
   carries only the term its operator reads, so `Eq` and `Lt` take a
-  two-letter value and `Matches` refuses one (`ErrTerm`). Needs the EQL v4
+  one-letter value and `Matches` refuses one (`ErrTerm`). A two-letter
+  word has its own match token, as described above. Needs the EQL v4
   SQL from this release, whose `eql_v4.query_text_search` accepts one term.
 - **Ordering methods on text.** A string field with `index=ore` or
   `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
@@ -152,6 +315,27 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Changed
 
+- **vitaminc's Go bindings at an untagged vitaminc commit (temporary).**
+  `vcffi` and `vcvalue` move to vitaminc `06568ba93` on its `main`, which
+  carries the storage profile (`vcffi.MarshalStorage`, from
+  cipherstash/vitaminc#526); vitaminc's Go bindings have no tags, so the
+  commit is the pin. One encoding changes
+  with them, and it comes from vitaminc `e9c3837b` (on `main`, in no Go
+  tag yet), not from the storage profile: a nil pointer to a fixed-width
+  value (`(*int64)(nil)`) is written as a typed null where it was written
+  as a null. The engine reads a typed null as a null, and generated code
+  passes an untyped nil for a nil pointer, so this only shows in the bytes
+  a hand-built `record.Source` or query input sends. The pin returns to a
+  vitaminc release before this module is tagged:
+  `scripts/go-release-version.mjs` refuses a final version while `go.mod`
+  names a vitaminc pseudo-version.
+- **An EQL v4 block ORE term is one hex string.** The `ob` of a value
+  encrypted into an `_ord_ore` or `text_search_ore` EQL type is
+  `"ob": "0202…"`, where it was a one-element array, and the EQL v4 bundle
+  checks the shape of every `ob` and `op` it stores. A database that
+  installed the EQL v4 bundle attached to `v0.1.0-alpha.1` must drop its
+  stored order domains before installing the new one (EQL's upgrade note
+  U-003).
 - **A call whose context ends fails on its own and leaves the client
   open.** A cancelled or timed-out call used to close the `encrypt.Client`,
   or the `auth` profile behind its strategy, for every later caller, and a

@@ -1,7 +1,7 @@
-github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261017042657-ca2298d3e7e8 h1:kXpXvBsE5P35aw8yN8l2k3ARuoPdjQkXvxocg4D2WUc=
-github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261017042657-ca2298d3e7e8/go.mod h1:6jpaqAo6f7rjWuxoti0Ymoi9DQZyxpnieWVudhXv38Y=
-github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261017042657-ca2298d3e7e8 h1:72kmUdUUZENerHctDhFMD31/mWtE80cRbpjLPZOeLCs=
-github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261017042657-ca2298d3e7e8/go.mod h1:RJODA1DCSm4H+1pbmCzDdT2pAIkxhinwIu6ewjh5sPs=
+github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261026122913-06568ba93bd9 h1:ZF7YOnal03J9uj5ggsqF3vUlPgM3affKpz3DHIyO4UE=
+github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20261026122913-06568ba93bd9/go.mod h1:7hPdj2tN3YpcPZYdZ+Fe7+Fsc7dnSyH5bsL9y+LbRuM=
+github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261026122913-06568ba93bd9 h1:y1+c1HV4FeZ+EiX9k3imPIzQYYK3QZD7HoZU8YORa6Q=
+github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20261026122913-06568ba93bd9/go.mod h1:RJODA1DCSm4H+1pbmCzDdT2pAIkxhinwIu6ewjh5sPs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

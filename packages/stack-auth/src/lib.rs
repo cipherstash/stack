@@ -100,6 +100,10 @@ pub use stack_profile::ErrorPayload;
 mod device_client;
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 mod device_code;
+// The bundled reqwest clients' TLS configuration, this crate's and
+// stack-kms's. Native only: on wasm32 the runtime's `fetch` owns TLS.
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+pub mod tls;
 
 #[cfg(any(test, feature = "test-utils"))]
 mod static_token_strategy;

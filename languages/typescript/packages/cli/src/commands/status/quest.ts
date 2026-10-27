@@ -1,4 +1,7 @@
-import type { MigrationPhase } from '@cipherstash/migrate'
+import {
+  isReverseMigrationPhase,
+  type MigrationPhase,
+} from '@cipherstash/migrate'
 
 /** Status of one objective inside a quest. */
 export type ObjectiveStatus = 'done' | 'active' | 'locked'
@@ -215,6 +218,11 @@ function computeDoneMigrate(obs: ColumnObservation): number {
 
   // Phase progression dominates when we have it. The v3 ladder is one rung
   // shorter (no cut-over), so its terminal phases map one lower.
+  // Reverse (`stash decrypt`) phases are keyed by the encrypted column and
+  // never reach this forward lookup; if one does, the forward ladder is done.
+  if (obs.phase !== undefined && isReverseMigrationPhase(obs.phase)) {
+    return isV3 ? 4 : 5
+  }
   switch (obs.phase) {
     case 'dropped':
       return isV3 ? 4 : 5

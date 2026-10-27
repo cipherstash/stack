@@ -1,4 +1,7 @@
-import type { MigrationPhase } from '@cipherstash/migrate'
+import {
+  isReverseMigrationPhase,
+  type MigrationPhase,
+} from '@cipherstash/migrate'
 import { createPgClient } from '@/db/client.js'
 import { latestByColumnSafe } from '../../encrypt/lib/db-readers.js'
 
@@ -38,6 +41,10 @@ export function classifyPhase(phase: MigrationPhase | null): ColumnNeeds {
   if (phase === null) return 'unknown'
   if (phase === 'schema-added') return 'rollout'
   if (phase === 'dropped') return 'completed'
+  // Reverse (`stash decrypt`) phases are recorded against the ENCRYPTED
+  // column, so a forward (table, plaintext column) lookup never sees one. If
+  // one does arrive, the forward rollout has nothing left to do for it.
+  if (isReverseMigrationPhase(phase)) return 'completed'
   return 'cutover'
 }
 

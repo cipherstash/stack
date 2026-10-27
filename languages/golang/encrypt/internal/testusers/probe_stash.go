@@ -11,7 +11,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Probe prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
@@ -38,13 +38,13 @@ const _ = gensupport.GeneratedVersion1
 
 // B: stores ore terms that no generated method queries: the engine answers no
 // query through the ore index on this field ([]byte): the orderings are
-// answered over integers, floats and text only. Drop the index unless your own
-// code compares the stored terms.
+// answered over integers, floats, text, decimals, dates and timestamps only.
+// Drop the index unless your own code compares the stored terms.
 
 // B: stores ope terms that no generated method queries: the engine answers no
 // query through the ope index on this field ([]byte): the orderings are
-// answered over integers, floats and text only. Drop the index unless your own
-// code compares the stored terms.
+// answered over integers, floats, text, decimals, dates and timestamps only.
+// Drop the index unless your own code compares the stored terms.
 
 // F64: stores ope terms that no generated method queries: the engine answers no
 // query through the ope index on this field (float64): the ore index already

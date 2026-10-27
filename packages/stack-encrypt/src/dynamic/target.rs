@@ -30,6 +30,7 @@ use std::fmt;
 use super::query::target_operators;
 use super::{OpSpec, ValueFrame, ValueKind};
 
+use crate::json::JsonOptions;
 use crate::sem::MatchOptions;
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
@@ -50,7 +51,7 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 /// | `suffix` | string: the query-capability suffix, `Eq`; empty for a storage-only type |
 /// | `plaintext` | string or null: the [`ValueKind`] name the type is produced from — the same names a field's `"type"` key uses — or null while unspecified |
 /// | `sql_domain` | string: the stored value's PostgreSQL domain |
-/// | `indexes` | list of strings: the indexes the type carries, by `IndexSpec::key()`, plus `json` for a SteVec document |
+/// | `indexes` | list of strings: the indexes the type carries, by `IndexSpec::key()`: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type (`JsonSearch`) |
 /// | `query` | string or null: the query twin's type name |
 /// | `query_sql_domain` | string or null: the query twin's PostgreSQL domain |
 /// | `producible` | bool: whether the engine produces the type today |
@@ -102,6 +103,13 @@ pub struct TargetDescriptor {
     /// [`with_match_options`]: Self::with_match_options
     /// [`verify`]: super::verify
     pub match_options: Option<MatchOptions>,
+    /// The PostgreSQL domain of the type's ordering operand at a path, for
+    /// a type that stores a JSON document
+    /// ([`with_leaf_query_sql_domain`](Self::with_leaf_query_sql_domain)):
+    /// what an ordering at a path binds as, beside the containment query
+    /// [`query_sql_domain`](Self::query_sql_domain) names. Not on the
+    /// wire; a generator reads it from the operators' terms.
+    pub leaf_query_sql_domain: Option<String>,
 }
 
 /// The descriptor in its wire form: the object a guest's `se_targets`
@@ -169,7 +177,16 @@ impl TargetDescriptor {
             producible,
             reason,
             match_options: None,
+            leaf_query_sql_domain: None,
         }
+    }
+
+    /// The descriptor of a type that stores a JSON document, whose
+    /// ordering operand at a path is the domain `domain`.
+    #[must_use]
+    pub fn with_leaf_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
+        self.leaf_query_sql_domain = Some(domain.into());
+        self
     }
 
     /// The descriptor of a type whose match index is built under `options`:
@@ -206,6 +223,32 @@ impl TargetDescriptor {
             .into_iter()
             .map(|(op, _)| op)
             .collect()
+    }
+}
+
+/// The options a plan field gives the EQL type it names: the options of
+/// the index the type carries. A target that stores a JSON document
+/// (`JsonSearch`) carries the JSON index and takes its options, the
+/// sealed root and the ordered paths; no other target takes any today.
+///
+/// The plan resolves them once, when it is built ([`Plan::new_with`]):
+/// a JSON target given none runs under the index's defaults, so the
+/// field's writes, queries and reads run under one definition.
+///
+/// [`Plan::new_with`]: super::record::Plan::new_with
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TargetOptions {
+    /// The JSON index's options.
+    Json(JsonOptions),
+}
+
+impl TargetOptions {
+    /// The JSON index's options, if these are they.
+    pub fn json(&self) -> Option<&JsonOptions> {
+        match self {
+            TargetOptions::Json(options) => Some(options),
+        }
     }
 }
 
@@ -336,6 +379,22 @@ pub enum TargetError {
         /// passthrough value.
         found: Option<ValueKind>,
     },
+    /// The value is not a JSON document by the engine's rules
+    /// ([`crate::json::parse_text`]): not text or bytes, not JSON, an
+    /// object that names a member twice, or an integer literal outside the
+    /// 64-bit range. Decided before any key is touched.
+    #[error("{name}: {target} stores a JSON document, and the value is not one: {reason}")]
+    #[diagnostic(code(stack_encrypt::target_json))]
+    Json {
+        /// The field's name.
+        name: String,
+        /// The EQL type.
+        target: String,
+        /// What was wrong, by its code ([`super::JsonValueError::code`]):
+        /// `json_not_text`, `json_syntax`, `json_duplicate_key` or
+        /// `json_integer_range`. Never a byte of the value.
+        reason: &'static str,
+    },
     /// The stored bytes are not a value of the type.
     #[error("{name}: the stored value is not a {target}: {reason}")]
     #[diagnostic(code(stack_encrypt::target_stored))]
@@ -404,6 +463,10 @@ impl crate::ErrorPayload for TargetError {
                 ("target", target.as_str().into()),
                 ("reason", reason.as_str().into()),
             ]),
+            Self::Json { target, reason, .. } => payload([
+                ("target", target.as_str().into()),
+                ("reason", (*reason).into()),
+            ]),
         };
         // `name` is the target type for the first four, and the field for
         // the rest (the lowering fills it in): keep the two apart.
@@ -419,6 +482,7 @@ impl crate::ErrorPayload for TargetError {
             | Self::Kind { name, .. }
             | Self::Column { name, .. }
             | Self::Plaintext { name, .. }
+            | Self::Json { name, .. }
             | Self::Stored { name, .. } => {
                 if !name.is_empty() {
                     let _ = fields.insert("field".to_owned(), name.as_str().into());
@@ -482,7 +546,9 @@ pub trait TargetResolver {
     }
 
     /// Run the named type's own encryption plan over one value under
-    /// `label`, resolving to the EQL value's JSON bytes.
+    /// `label`, resolving to the EQL value's JSON bytes. `options` are the
+    /// ones the plan resolved for the field ([`TargetOptions`]): the JSON
+    /// index's for a type that carries it, `None` for every other type.
     ///
     /// # Errors
     ///
@@ -493,6 +559,7 @@ pub trait TargetResolver {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        options: Option<&TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
         plaintext: ValueFrame,
@@ -565,6 +632,7 @@ impl TargetResolver for NoTargets {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        _: Option<&TargetOptions>,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
         _: ValueFrame,
@@ -604,6 +672,16 @@ impl fmt::Display for TargetDescriptor {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
+
+    #[test]
+    fn json_options_are_read_back_as_given() {
+        let mut options = JsonOptions::new();
+        options.sealed_root = false;
+        let _ = options.ordered.insert("$.age".parse().unwrap());
+        let target = TargetOptions::Json(options.clone());
+        assert_eq!(target.json(), Some(&options));
+        assert_ne!(target.json(), Some(&JsonOptions::default()));
+    }
 
     fn text_eq() -> TargetDescriptor {
         TargetDescriptor::new(
@@ -645,6 +723,7 @@ mod tests {
         fn encrypt<'a, K: 'static>(
             &self,
             _: &str,
+            _: Option<&TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
             _: ValueFrame,

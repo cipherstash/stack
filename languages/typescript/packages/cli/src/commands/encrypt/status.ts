@@ -1,6 +1,9 @@
 import {
+  type ColumnKey,
   classifyEqlDomain,
+  deriveColumnMigration,
   type MigrationPhase,
+  type MigrationStateRow,
   readManifest,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
@@ -13,6 +16,16 @@ import {
   fetchPhysicalColumns,
   latestByColumnSafe,
 } from './lib/db-readers.js'
+import { formatTable } from './lib/table-format.js'
+
+/** The latest event under `key`, as the history `deriveColumnMigration` reads. */
+function latestOf(
+  stateMap: ReadonlyMap<ColumnKey, MigrationStateRow>,
+  key: ColumnKey,
+): MigrationStateRow[] {
+  const row = stateMap.get(key)
+  return row === undefined ? [] : [row]
+}
 
 interface Row {
   table: string
@@ -61,6 +74,8 @@ export async function statusCommand() {
         for (const column of columns) {
           const key: `${string}.${string}` = `${tableName}.${column.column}`
           seen.add(key)
+          const encryptedName =
+            column.encryptedColumn ?? `${column.column}_encrypted`
           rows.push(
             renderRow({
               tableName,
@@ -71,6 +86,13 @@ export async function statusCommand() {
               physicalColumns: physicalCols.get(tableName) ?? new Map(),
               eqlVersion: column.eqlVersion,
               encryptedColumn: column.encryptedColumn,
+              // `stash decrypt drop` records this against the ENCRYPTED
+              // column. The manifest entry stays, and `reversed` is its final
+              // state: the CLI owns `.cipherstash/`.
+              reversed: deriveColumnMigration({
+                direction: 'reverse',
+                history: latestOf(stateMap, `${tableName}.${encryptedName}`),
+              }).dropGenerated,
             }),
           )
         }
@@ -105,7 +127,7 @@ export async function statusCommand() {
       return
     }
 
-    p.note(formatTable(rows), 'Column migration status')
+    p.note(formatTable(STATUS_HEADERS, rows), 'Column migration status')
     p.outro('Done.')
   } catch (error) {
     p.log.error(
@@ -130,6 +152,11 @@ function renderRow(input: {
   /** The encrypted counterpart's name from the manifest, when recorded.
    * `<column>_encrypted` is only the conventional fallback. */
   encryptedColumn?: string
+  /**
+   * `stash decrypt drop` generated the encrypted column's drop. Its absence
+   * is then intended, not drift.
+   */
+  reversed?: boolean
   state: {
     phase: MigrationPhase
     rowsProcessed: number | null
@@ -183,7 +210,7 @@ function renderRow(input: {
   // rename that creates `<col>_plaintext`.
   if (!isV3 && intentIndexes && !eqlColumn) flags.push('not-registered')
   if (intentIndexes && !physicalColumns.has(encryptedName)) {
-    flags.push('encrypted-col-missing')
+    flags.push(input.reversed ? 'reversed' : 'encrypted-col-missing')
   }
   if (
     !isV3 &&
@@ -256,36 +283,12 @@ function formatProgress(
   }
 }
 
-function formatTable(rows: Row[]): string {
-  const headers: Row = {
-    table: 'TABLE',
-    column: 'COLUMN',
-    phase: 'PHASE',
-    eql: 'EQL',
-    indexes: 'INDEXES',
-    progress: 'PROGRESS',
-    flags: 'FLAGS',
-  }
-  const all = [headers, ...rows]
-  const widths: Record<keyof Row, number> = {
-    table: 0,
-    column: 0,
-    phase: 0,
-    eql: 0,
-    indexes: 0,
-    progress: 0,
-    flags: 0,
-  }
-  for (const row of all) {
-    for (const key of Object.keys(widths) as (keyof Row)[]) {
-      widths[key] = Math.max(widths[key], row[key].length)
-    }
-  }
-  return all
-    .map((row) =>
-      (Object.keys(widths) as (keyof Row)[])
-        .map((k) => row[k].padEnd(widths[k]))
-        .join('  '),
-    )
-    .join('\n')
+const STATUS_HEADERS: Row = {
+  table: 'TABLE',
+  column: 'COLUMN',
+  phase: 'PHASE',
+  eql: 'EQL',
+  indexes: 'INDEXES',
+  progress: 'PROGRESS',
+  flags: 'FLAGS',
 }

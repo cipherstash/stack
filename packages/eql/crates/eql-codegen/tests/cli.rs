@@ -52,11 +52,11 @@ fn bindings_subcommand_succeeds_and_reports_count() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     // v3: scalar families + json_storage + payload + query_payload +
     // inventory. v4: every family with a scalar domain + targets + answers +
-    // inventory.
+    // inventory + term_formats.
     let expected = eql_domains::scalar_families().count()
         + 4
         + eql_domains::families_with_scalar_domains().count()
-        + 3;
+        + 4;
     assert!(
         stdout.contains(&format!("bindings: ok ({expected} files)")),
         "expected 'bindings: ok ({expected} files)' in stdout, got:\n{stdout}"

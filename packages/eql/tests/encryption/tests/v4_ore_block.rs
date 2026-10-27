@@ -1,11 +1,12 @@
 //! The block ORE EQL v4 types Stack Encrypt produces: `IntegerOrdOre`,
 //! `SmallintOrdOre`, `BigintOrdOre`, `RealOrdOre`, `DoubleOrdOre`,
-//! `TextOrdOre` and `TextSearchOre`, and EQL v4's comparator for their `ob` term.
+//! `DateOrdOre`, `TimestampOrdOre`, `NumericOrdOre`, `TextOrdOre` and
+//! `TextSearchOre`, and EQL v4's comparator for their `ob` term.
 //!
 //! The term is ore-rs's 6-bit block ORE: the fixed-width scheme (wire
-//! header `02 02`) for the integers and floats, the chained scheme (`02 03`,
-//! text padded to a power-of-two length bucket of at least 16 bytes) for
-//! text. Every term carries a random nonce, so the stored bytes differ on
+//! header `02 02`) for the integers, floats and dates, the chained scheme
+//! (`02 03`) for timestamps, decimals and text, text padded to a
+//! power-of-two length bucket of at least 16 bytes. Every term carries a random nonce, so the stored bytes differ on
 //! each write and only the comparator orders them.
 //!
 //! Against an EQL v4 database these tests compare pairs of real ore-rs
@@ -15,8 +16,13 @@
 //! prefixes, and text in different padding buckets. They check the hash bit
 //! against ore.rs's vectors, that malformed and mismatched terms raise, that
 //! EQL admits the block counts ore-rs does up to 1366 blocks (the longest
-//! term Stack Encrypt writes) and none past it, and that the domains answer
-//! `<`, `=` and `ORDER BY` through a btree index.
+//! term Stack Encrypt writes) and none past it, that the domains answer
+//! `<`, `=` and `ORDER BY` through a btree index, and that a domain's CHECK
+//! takes an order term only as one hex string with its scheme's prefix.
+//!
+//! An `ob` term is one hex string on the wire, the whole ore-rs ciphertext,
+//! and the bindings hold it as Stack Encrypt's `OreBlockTerm`, which refuses
+//! anything else when the payload is read.
 
 mod common;
 
@@ -25,6 +31,7 @@ use std::cmp::Ordering;
 use eql_bindings::encryption::targets;
 use stack_encrypt::dynamic::ValueFrame;
 use stack_encrypt::sem::{Orderable, OreBlockTerm};
+use stack_encrypt::value::{Date, Decimal, Timestamp};
 use stack_encrypt::{Encrypt, Label};
 
 type Keyset<'a> = stack_encrypt::KeysetCipher<'a, common::Observed>;
@@ -57,12 +64,11 @@ async fn stored(keyset: &Keyset<'_>, name: &str, value: ValueFrame) -> serde_jso
     serde_json::from_slice(&bytes).unwrap()
 }
 
-/// The one block ORE term the named type stores for `value`, as bytes.
+/// The block ORE term the named type stores for `value`, as bytes: one hex
+/// string, the whole ore-rs ciphertext.
 async fn ob(keyset: &Keyset<'_>, name: &str, value: ValueFrame) -> Vec<u8> {
     let json = stored(keyset, name, value).await;
-    let terms = json["ob"].as_array().expect("ob is an array");
-    assert_eq!(terms.len(), 1, "{name}: one block ORE term");
-    unhex(terms[0].as_str().unwrap())
+    unhex(json["ob"].as_str().expect("ob is one hex string"))
 }
 
 /// The terms of `values`, two writes each: the second write of a value is
@@ -87,8 +93,8 @@ async fn text_terms(keyset: &Keyset<'_>, name: &str, values: &[&str]) -> Vec<Vec
 
 /// ore-rs's own comparator over two terms.
 fn rust_cmp<T: Orderable>(a: &[u8], b: &[u8]) -> Ordering {
-    let a = OreBlockTerm::<T>::from_bytes(a).unwrap();
-    let b = OreBlockTerm::<T>::from_bytes(b).unwrap();
+    let a = OreBlockTerm::<T>::try_from(a).unwrap();
+    let b = OreBlockTerm::<T>::try_from(b).unwrap();
     a.compare(&b).expect("terms of one index compare")
 }
 
@@ -118,6 +124,24 @@ async fn each_type_stores_one_block_ore_term_of_its_scheme() {
             &["c", "i", "ob", "v"],
         ),
         (
+            "DateOrdOre",
+            frame(Date::from_days_since_epoch(7).unwrap()),
+            [2, 2],
+            &["c", "i", "ob", "v"],
+        ),
+        (
+            "TimestampOrdOre",
+            frame(Timestamp::new(7, 8).unwrap()),
+            [2, 3],
+            &["c", "i", "ob", "v"],
+        ),
+        (
+            "NumericOrdOre",
+            frame(Decimal::new(750, 2).unwrap()),
+            [2, 3],
+            &["c", "i", "ob", "v"],
+        ),
+        (
             "TextOrdOre",
             frame("alice"),
             [2, 3],
@@ -139,8 +163,63 @@ async fn each_type_stores_one_block_ore_term_of_its_scheme() {
             .collect();
         found.sort_unstable();
         assert_eq!(found, keys, "{name}");
-        let term = unhex(json["ob"][0].as_str().unwrap());
+        let term = unhex(json["ob"].as_str().unwrap());
         assert_eq!(term[..2], header, "{name}: the scheme's wire header");
+    }
+}
+
+/// A v4 type reads an order term only as one hex string of its scheme:
+/// the value Stack Encrypt writes reads back and writes out unchanged, and
+/// an EQL v3 array, a term of the other scheme, a truncated term and text
+/// that is not hex are refused when the payload is read. No error repeats
+/// the term.
+#[tokio::test]
+async fn a_v4_type_reads_an_order_term_only_as_its_hex_string() {
+    use eql_bindings::v4::integer::{IntegerOrd, IntegerOrdOre};
+    use serde_json::{json, Value};
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore = stored(&keyset, "IntegerOrdOre", frame(7i32)).await;
+    let ope = stored(&keyset, "IntegerOrd", frame(7i32)).await;
+    let read: IntegerOrdOre = serde_json::from_value(ore.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&read).unwrap(), ore);
+    let read: IntegerOrd = serde_json::from_value(ope.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&read).unwrap(), ope);
+
+    let ob = ore["ob"].as_str().unwrap().to_owned();
+    let op = ope["op"].as_str().unwrap().to_owned();
+    let with = |base: &Value, key: &str, term: Value| {
+        let mut value = base.clone();
+        value[key] = term;
+        value
+    };
+    for (what, value) in [
+        ("an EQL v3 array", with(&ore, "ob", json!([ob]))),
+        ("an OPE term", with(&ore, "ob", json!(op))),
+        (
+            "a truncated term",
+            with(&ore, "ob", json!(&ob[..ob.len() - 2])),
+        ),
+        (
+            "text that is not hex",
+            with(&ore, "ob", json!(format!("zz{}", &ob[2..]))),
+        ),
+    ] {
+        let error = serde_json::from_value::<IntegerOrdOre>(value)
+            .expect_err(what)
+            .to_string();
+        assert!(!error.contains(&ob[8..]), "{what}: {error}");
+    }
+    let carry = format!("02{}", &op[2..]);
+    for (what, value) in [
+        ("an EQL v3 array", with(&ope, "op", json!([op]))),
+        ("a block ORE term", with(&ope, "op", json!(ob))),
+        ("a carry of 2", with(&ope, "op", json!(carry))),
+    ] {
+        let error = serde_json::from_value::<IntegerOrd>(value)
+            .expect_err(what)
+            .to_string();
+        assert!(!error.contains(&op[8..]), "{what}: {error}");
     }
 }
 
@@ -318,6 +397,78 @@ fn postgres_compares_fixed_width_terms_as_ore_rs_and_the_plaintexts_do() {
     ];
     let real_terms = runtime.block_on(terms(&keyset, "RealOrdOre", &reals));
     assert_agree::<f32, _>(&mut db, "RealOrdOre", &reals, &real_terms);
+}
+
+/// Each value's terms, two writes each, as `terms` makes them for a `Copy`
+/// plaintext: the plaintexts here are wiped on drop, so are not `Copy`.
+async fn terms_of<T: Encrypt + Clone>(
+    keyset: &Keyset<'_>,
+    name: &str,
+    values: impl IntoIterator<Item = T>,
+) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for value in values {
+        out.push(ob(keyset, name, frame(value.clone())).await);
+        out.push(ob(keyset, name, frame(value)).await);
+    }
+    out
+}
+
+/// Needs an EQL v4 installation. A date orders by day, a timestamp by the
+/// microsecond (floored), and a decimal by value whatever its scale; the
+/// plaintext each is compared as here says so.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_compares_date_timestamp_and_decimal_terms_as_ore_rs_and_the_plaintexts_do() {
+    let runtime = runtime();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+
+    let days = [-719_162, -1, 0, 1, 63, 64, 19_782];
+    let date_terms = runtime.block_on(terms_of(
+        &keyset,
+        "DateOrdOre",
+        days.map(|d| Date::from_days_since_epoch(d).unwrap()),
+    ));
+    assert_agree::<Date, _>(&mut db, "DateOrdOre", &days, &date_terms);
+
+    // (seconds, nanoseconds), compared as whole microseconds, floored.
+    let instants = [
+        (-1, 999_999_000),
+        (-1, 999_999_999),
+        (0, 0),
+        (0, 999),
+        (0, 1_000),
+        (1_700_000_000, 0),
+    ];
+    let micros = instants.map(|(s, n): (i64, u32)| {
+        (i128::from(s) * 1_000_000_000 + i128::from(n)).div_euclid(1_000)
+    });
+    let instant_terms = runtime.block_on(terms_of(
+        &keyset,
+        "TimestampOrdOre",
+        instants.map(|(s, n)| Timestamp::new(s, n).unwrap()),
+    ));
+    assert_agree::<Timestamp, _>(&mut db, "TimestampOrdOre", &micros, &instant_terms);
+
+    // (mantissa, scale), compared as ten-thousandths.
+    let numbers = [
+        (-1_000, 0),
+        (-15, 1),
+        (0, 0),
+        (0, 3),
+        (15, 1),
+        (150, 2),
+        (2, 0),
+    ];
+    let scaled = numbers.map(|(m, s): (i128, u32)| m * 10i128.pow(4 - s));
+    let number_terms = runtime.block_on(terms_of(
+        &keyset,
+        "NumericOrdOre",
+        numbers.map(|(m, s)| Decimal::new(m, s as u8).unwrap()),
+    ));
+    assert_agree::<Decimal, _>(&mut db, "NumericOrdOre", &scaled, &number_terms);
 }
 
 /// Needs an EQL v4 installation.
@@ -506,23 +657,24 @@ fn postgres_refuses_malformed_and_mismatched_terms() {
     let message = raises(&mut db, &text, &unpadded, "two padding policies");
     assert!(message.contains("different policies"), "{message}");
 
-    // A value holds exactly one term.
+    // A value holds one term, the hex string `ob` carries: the extractor
+    // reads it, and refuses an EQL v3 array as a value with no `ob`.
+    let extracted: Vec<u8> = db
+        .query_one(
+            "SELECT (eql_v4_internal.ore_block_v2(jsonb_build_object('ob', $1::text))).term.bytes",
+            &[&hex(&int)],
+        )
+        .unwrap()
+        .get(0);
+    assert_eq!(extracted, int);
     let error = db
         .query_one(
-            "SELECT eql_v4_internal.compare_ore_block_v2_terms(\
-               ARRAY[ROW($1::bytea), ROW($1::bytea)]::eql_v4_internal.ore_block_v2_term[], \
-               ARRAY[ROW($1::bytea)]::eql_v4_internal.ore_block_v2_term[])",
-            &[&int],
+            "SELECT eql_v4_internal.ore_block_v2(jsonb_build_object('ob', jsonb_build_array($1::text)))",
+            &[&hex(&int)],
         )
         .unwrap_err();
-    assert!(
-        error
-            .as_db_error()
-            .unwrap()
-            .message()
-            .contains("exactly one term"),
-        "{error}"
-    );
+    let message = error.as_db_error().unwrap().message().to_owned();
+    assert!(message.contains("Expected an ore index (ob)"), "{message}");
 }
 
 /// The longest chained term EQL v4 admits: 1366 blocks, a 1,024-byte string
@@ -612,7 +764,7 @@ fn postgres_admits_the_block_counts_ore_rs_does_up_to_the_bound() {
     let mut both = 0;
     for (&(kind, policy, count), &sql) in cases.iter().zip(&admitted) {
         let term = zero_term(&chained_header(kind, policy, count), count);
-        let ore_rs = OreBlockTerm::<String>::from_bytes(&term).is_ok();
+        let ore_rs = OreBlockTerm::<String>::try_from(term.as_slice()).is_ok();
         let expected = ore_rs && (1..=MAX_CHAINED_BLOCKS).contains(&count);
         assert_eq!(
             sql, expected,
@@ -627,11 +779,8 @@ fn postgres_admits_the_block_counts_ore_rs_does_up_to_the_bound() {
         .zip(&admitted)
         .any(|(&(_, _, count), &sql)| count > MAX_CHAINED_BLOCKS
             && !sql
-            && OreBlockTerm::<String>::from_bytes(&zero_term(
-                &chained_header(0, 0, count),
-                count
-            ))
-            .is_ok()));
+            && OreBlockTerm::<String>::from_bytes(zero_term(&chained_header(0, 0, count), count))
+                .is_ok()));
 
     for count in 0..=20usize {
         let header = [2, 2, 0, u8::try_from(count).unwrap()];
@@ -640,7 +789,7 @@ fn postgres_admits_the_block_counts_ore_rs_does_up_to_the_bound() {
             .query_one("SELECT pg_temp.admits($1)", &[&term])
             .unwrap()
             .get(0);
-        let ore_rs = OreBlockTerm::<u64>::from_bytes(&term).is_ok();
+        let ore_rs = OreBlockTerm::<u64>::try_from(term.as_slice()).is_ok();
         assert_eq!(sql, ore_rs, "fixed-width, {count} blocks");
     }
 }
@@ -680,7 +829,7 @@ fn postgres_compares_the_longest_term_and_refuses_one_past_it() {
     let count = MAX_CHAINED_BLOCKS + 1;
     let over = zero_term(&chained_header(0, 0, count), count);
     assert!(
-        OreBlockTerm::<String>::from_bytes(&over).is_ok(),
+        OreBlockTerm::<String>::try_from(over.as_slice()).is_ok(),
         "ore-rs admits it"
     );
     let unpadded = zero_term(
@@ -793,5 +942,94 @@ fn postgres_answers_the_orderings_through_a_btree_index() {
             .map(|r| r.get(0))
             .collect();
         assert_eq!(ordered, [1, 2, 3, 4, 5, 6], "{column}: ORDER BY");
+    }
+}
+
+/// SQLSTATE `check_violation`.
+const CHECK_VIOLATION: &str = "23514";
+
+/// Needs an EQL v4 installation. A domain takes an order term only as one
+/// hex string with its scheme's prefix, so the CHECK refuses an EQL v3
+/// array, a term of another scheme or engine, an OPE carry other than 0 or
+/// 1, and a value that is not a string, at the cast and before any
+/// comparison. What Stack Encrypt writes passes, stored, queried and as a
+/// range bound.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_domains_take_an_order_term_only_as_its_hex_string() {
+    use serde_json::{json, Value};
+    let runtime = runtime();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    let ore = runtime.block_on(stored(&keyset, "IntegerOrdOre", frame(7i32)));
+    let ope = runtime.block_on(stored(&keyset, "IntegerOrd", frame(7i32)));
+    let ob = ore["ob"].as_str().unwrap().to_owned();
+    let op = ope["op"].as_str().unwrap().to_owned();
+    let query = |key: &str, term: Value| json!({"v": 4, "i": ore["i"], key: term});
+    let range = |lo: Value, hi: Value| json!({"v": 4, "i": ore["i"], "lo": lo, "hi": hi});
+    let with = |base: &Value, key: &str, term: Value| {
+        let mut value = base.clone();
+        value[key] = term;
+        value
+    };
+    let cast = |db: &mut postgres::Client, domain: &str, value: &Value| {
+        db.query_one(
+            &format!("SELECT $1::text::jsonb::{domain} IS NOT NULL"),
+            &[&value.to_string()],
+        )
+        .map(drop)
+    };
+
+    let stored_ore = "public.eql_v4_integer_ord_ore";
+    let stored_ope = "public.eql_v4_integer_ord";
+    let query_ore = "eql_v4.query_integer_ord_ore";
+    let query_ope = "eql_v4.query_integer_ord";
+    let range_ore = "eql_v4.query_integer_range_ore";
+    let range_ope = "eql_v4.query_integer_range_ope";
+    for (domain, value) in [
+        (stored_ore, ore.clone()),
+        (stored_ope, ope.clone()),
+        (query_ore, query("ob", json!(ob))),
+        (query_ope, query("op", json!(op))),
+        (range_ore, range(json!(ob), json!(ob))),
+        (range_ope, range(json!(op), json!(op))),
+    ] {
+        cast(&mut db, domain, &value).unwrap_or_else(|e| panic!("{domain}: {e}"));
+    }
+
+    let engine = format!("0204{}", &ob[4..]);
+    let version = format!("01{}", &ob[2..]);
+    let carry = format!("02{}", &op[2..]);
+    for (what, domain, value) in [
+        ("an EQL v3 array", stored_ore, with(&ore, "ob", json!([ob]))),
+        (
+            "an unknown engine",
+            stored_ore,
+            with(&ore, "ob", json!(engine)),
+        ),
+        (
+            "wire version 1",
+            stored_ore,
+            with(&ore, "ob", json!(version)),
+        ),
+        ("an OPE term", stored_ore, with(&ore, "ob", json!(op))),
+        ("a number", stored_ore, with(&ore, "ob", json!(7))),
+        ("an OPE array", stored_ope, with(&ope, "op", json!([op]))),
+        ("a carry of 2", stored_ope, with(&ope, "op", json!(carry))),
+        ("a block ORE term", stored_ope, with(&ope, "op", json!(ob))),
+        ("a query's v3 array", query_ore, query("ob", json!([ob]))),
+        ("a query's carry of 2", query_ope, query("op", json!(carry))),
+        ("a v3 array bound", range_ore, range(json!([ob]), json!(ob))),
+        ("an OPE bound", range_ore, range(json!(ob), json!(op))),
+        (
+            "a carry of 2 bound",
+            range_ope,
+            range(json!(op), json!(carry)),
+        ),
+    ] {
+        let error = cast(&mut db, domain, &value).expect_err(what);
+        let state = error.code().map_or("", |code| code.code());
+        assert_eq!(state, CHECK_VIOLATION, "{what}: {error}");
     }
 }

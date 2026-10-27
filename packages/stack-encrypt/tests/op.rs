@@ -944,7 +944,9 @@ async fn verify_is_a_token_test_not_a_substring_test() {
     );
 }
 
-/// EQL v4's match parameters, with a notes column's prior.
+/// EQL v4's filter size and slices (`k = 6`, `m = 2048`; its match types
+/// also turn on short words, which this prior's arithmetic does not need),
+/// with a notes column's prior.
 struct Notes;
 impl MatchConfig for Notes {
     fn options() -> MatchOptions {

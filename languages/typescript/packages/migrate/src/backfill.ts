@@ -1,12 +1,13 @@
 import { isEncryptedPayload } from '@cipherstash/stack'
 import type { ClientBase, PoolClient } from 'pg'
+import type { ForcedBy } from './column-migration.js'
 import {
   countUnencrypted,
   fetchUnencryptedPage,
   qualifyTable,
 } from './cursor.js'
+import { runChunkedMigration } from './engine.js'
 import { quoteIdent } from './sql.js'
-import { appendEvent, type MigrationPhase, progress } from './state.js'
 
 // Loose structural types — keep this library decoupled from @cipherstash/stack
 // so @cipherstash/migrate can be built and tested without pulling the full
@@ -212,9 +213,12 @@ export interface BackfillOptions {
    * Not destructive (overwriting a correctly-encrypted value with a
    * fresh encryption of the same plaintext is wasted work, not data
    * loss), but expensive: every row is re-encrypted even if it didn't
-   * need to be. The CLI also appends `details: { force: true }` to the
-   * `backfill_started` event so audit queries can spot the recovery
-   * runs in `cs_migrations` history.
+   * need to be. Every event of the run records `details.force`, so audit
+   * queries can spot the recovery runs in `cs_migrations` history.
+   *
+   * Once a forced pass has started it is owed: until one completes, every
+   * run is forced whatever this says, and {@link BackfillResult.forcedBy}
+   * says why. An interrupted forced pass is therefore always finished as one.
    */
   force?: boolean
 }
@@ -225,8 +229,9 @@ export interface BackfillOptions {
 export interface BackfillResult {
   /**
    * `true` if the run began from a previously-recorded checkpoint rather
-   * than starting fresh. Determined by the most recent event for this
-   * column being a `backfill_checkpoint`.
+   * than starting fresh: the most recent event for this column is a
+   * `backfill_checkpoint`, or an `error` carrying the last committed cursor,
+   * of a pass in the same mode.
    */
   resumed: boolean
   /**
@@ -245,6 +250,13 @@ export interface BackfillResult {
    * paused and should be resumed by re-invoking with the same options.
    */
   completed: boolean
+  /** Whether this run was a forced pass. */
+  force: boolean
+  /**
+   * Why: `caller` (`force` was passed), `forced-pass` (an earlier forced pass
+   * had not completed, so this one finishes it), or `null` when unforced.
+   */
+  forcedBy: ForcedBy
 }
 
 /**
@@ -297,61 +309,39 @@ export async function runBackfill(
 ): Promise<BackfillResult> {
   const chunkSize = options.chunkSize ?? 1000
   const { db, tableName, pkColumn, plaintextColumn, encryptedColumn } = options
+  const coerce = options.transformPlaintext ?? ((v: unknown) => v)
 
-  const force = options.force ?? false
-  const rowsTotal = await countUnencrypted(
+  const result = await runChunkedMigration({
     db,
     tableName,
-    plaintextColumn,
-    encryptedColumn,
-    force,
-  )
-
-  const last = await progress(db, tableName, plaintextColumn)
-  const resumeCursor =
-    last?.event === 'backfill_checkpoint' ? last.cursorValue : null
-  const resumed = resumeCursor !== null
-  const priorProcessed =
-    last?.event === 'backfill_checkpoint' ? (last.rowsProcessed ?? 0) : 0
-
-  await appendEvent(db, {
-    tableName,
-    columnName: plaintextColumn,
-    event: 'backfill_started',
-    phase: 'backfilling',
-    cursorValue: resumeCursor,
-    rowsProcessed: priorProcessed,
-    rowsTotal: priorProcessed + rowsTotal,
-    details: { chunkSize, resumed, ...(force ? { force: true } : {}) },
-  })
-
-  let cursor = resumeCursor
-  let rowsProcessed = priorProcessed
-  const rowsTotalWithResumed = priorProcessed + rowsTotal
-  let chunkIndex = 0
-  let completed = false
-
-  try {
-    while (true) {
-      if (options.signal?.aborted) break
-
-      const page = await fetchUnencryptedPage(db, {
+    stateColumn: plaintextColumn,
+    twinColumn: encryptedColumn,
+    direction: 'forward',
+    chunkSize,
+    signal: options.signal,
+    force: options.force,
+    baseDetails: { encryptedColumn },
+    countPending: (after, { force }) =>
+      countUnencrypted(
+        db,
+        tableName,
+        plaintextColumn,
+        encryptedColumn,
+        force,
+        after === null ? null : { pkColumn, pk: after },
+      ),
+    fetchPage: (after, limit, { force }) =>
+      fetchUnencryptedPage(db, {
         tableName,
         pkColumn,
         plaintextColumn,
         encryptedColumn,
-        after: cursor,
-        limit: chunkSize,
+        after,
+        limit,
         force,
-      })
-
-      if (page.rows.length === 0) {
-        completed = true
-        break
-      }
-
-      const coerce = options.transformPlaintext ?? ((v: unknown) => v)
-      const models = page.rows.map((row) => ({
+      }),
+    prepareChunk: async (rows, { force }) => {
+      const models = rows.map((row) => ({
         __pk: row.pk,
         [options.schemaColumnKey]: coerce(row.plaintext),
       }))
@@ -377,7 +367,7 @@ export async function runBackfill(
       for (const [i, row] of encryptResult.data.entries()) {
         const value = row[options.schemaColumnKey]
         if (!isEncryptedPayload(value)) {
-          const pk = row.__pk ?? page.rows[i]?.pk
+          const pk = row.__pk ?? rows[i]?.pk
           // Only the *type* of the offender goes into the error — never the
           // value. The path that hits this branch is precisely the one
           // where the encryption client passed plaintext through, so the
@@ -391,78 +381,37 @@ export async function runBackfill(
         }
       }
 
-      await db.query('BEGIN')
-      try {
-        await writeEncryptedChunk(db, {
-          tableName,
-          pkColumn,
-          encryptedColumn,
-          schemaColumnKey: options.schemaColumnKey,
-          encryptedRows: encryptResult.data,
-          force,
-        })
-        rowsProcessed += page.rows.length
-        cursor = page.lastPk
-        await appendEvent(db, {
-          tableName,
-          columnName: plaintextColumn,
-          event: 'backfill_checkpoint',
-          phase: 'backfilling',
-          cursorValue: cursor,
-          rowsProcessed,
-          rowsTotal: rowsTotalWithResumed,
-          details: { chunkIndex, chunkRows: page.rows.length },
-        })
-        await db.query('COMMIT')
-      } catch (err) {
-        await db.query('ROLLBACK').catch(() => {})
-        throw err
+      return {
+        write: (client) =>
+          writeEncryptedChunk(client, {
+            tableName,
+            pkColumn,
+            encryptedColumn,
+            schemaColumnKey: options.schemaColumnKey,
+            encryptedRows: encryptResult.data,
+            force,
+          }),
       }
-
-      options.onProgress?.({
-        rowsProcessed,
-        rowsTotal: rowsTotalWithResumed,
-        lastPk: cursor,
-        chunkSize,
-        chunkIndex,
-      })
-      chunkIndex += 1
-    }
-
-    if (completed) {
-      await appendEvent(db, {
-        tableName,
-        columnName: plaintextColumn,
-        event: 'backfilled',
-        phase: 'backfilled',
-        cursorValue: cursor,
-        rowsProcessed,
-        rowsTotal: rowsTotalWithResumed,
-        details: { chunkCount: chunkIndex },
-      })
-    }
-  } catch (err) {
-    await appendEvent(db, {
-      tableName,
-      columnName: plaintextColumn,
-      event: 'error',
-      phase: 'backfilling',
-      cursorValue: cursor,
-      rowsProcessed,
-      rowsTotal: rowsTotalWithResumed,
-      details: {
-        message: err instanceof Error ? err.message : String(err),
-        chunkIndex,
-      },
-    })
-    throw err
-  }
+    },
+    onProgress: options.onProgress
+      ? (progress) =>
+          options.onProgress?.({
+            rowsProcessed: progress.rowsProcessed,
+            rowsTotal: progress.rowsTotal,
+            lastPk: progress.lastPk,
+            chunkSize: progress.chunkSize,
+            chunkIndex: progress.chunkIndex,
+          })
+      : undefined,
+  })
 
   return {
-    resumed,
-    rowsProcessed,
-    rowsTotal: rowsTotalWithResumed,
-    completed,
+    resumed: result.resumed,
+    rowsProcessed: result.rowsProcessed,
+    rowsTotal: result.rowsTotal,
+    completed: result.completed,
+    force: result.force,
+    forcedBy: result.forcedBy,
   }
 }
 

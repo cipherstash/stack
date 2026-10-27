@@ -26,10 +26,10 @@ note: there are multiple different versions of crate `vitaminc_aead` in the depe
             &&'b T
             &'a BTreeMap<K, V>
             &'a HashMap<K, V>
+            &'a Protected<T>
             &'a Vec<T>
             &'a [T]
             &'a std::option::Option<T>
-            &'a vitaminc_protected::protected::Protected<T>
             &PassthroughFrame
           and $N others
   = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptFrom<SerdeOnly>`

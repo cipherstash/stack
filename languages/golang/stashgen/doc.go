@@ -11,7 +11,7 @@
 // It ignores its own output file when it loads the package, so a stale
 // generated file does not stop it. The same input always gives the same file:
 // fields keep their declared order, and the file carries no version and no
-// time beyond the gensupport.GeneratedVersion1 constant it names.
+// time beyond the gensupport.GeneratedVersion2 constant it names.
 //
 // [Generate] writes the same file for a type that cannot carry tags, from a
 // policy in package encrypt/policy: a source gives the facts about each field

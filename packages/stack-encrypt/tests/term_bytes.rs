@@ -32,6 +32,14 @@
 //! these (the CHANGELOG says so). Floats are ordered by the same path:
 //! `F64`'s encoding folds `-0.0` into `0.0` and every NaN into one, which
 //! cllw-ore's own float encoding did not.
+//!
+//! The ORE and OPE pins moved again, with no label of this crate's moving,
+//! when cllw-ore became `clww-ore` 0.6 on vitaminc 0.8. Its keystream was
+//! fixed and its schemes' names, which every term's salt binds, became
+//! `clww-ore` and `clww-ope`, so every order term changed. The marker byte
+//! in front of text moved from the scheme to `vitaminc-ore` without
+//! changing the bytes encrypted. As with vitaminc 0.5, nothing of this
+//! crate's own derivation moved, so the `/v2` suffixes stay.
 
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
@@ -124,7 +132,7 @@ async fn ore_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "b8291f846d8028ad4e3a67ef95e541ca3c6d1a2b145f49af3135876ae75c5d7b"
+        "1ba4d59ccb15d505519ad854229ec0c106644fa8b8944ec54c68a1f324499d82"
     );
 }
 
@@ -142,7 +150,7 @@ async fn ope_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "00d7a25b801c909f3cb9d177315ba4da7802b9e62eba8c07aab2ad9d64e1a0cfa7"
+        "00a77ed973ff1af2e5d5e3779471df246d17a515f0131eb87e35e02e7a80aa5292"
     );
 }
 
@@ -181,7 +189,7 @@ async fn match_term_positions_are_pinned_for_a_wide_filter() {
 }
 
 /// Text orders by the system ADR-0002's fold (`Ab` is encoded as `ab`,
-/// behind cllw-ore's marker byte, so three bytes), under the column salt
+/// behind `vitaminc-ore`'s marker byte, so three bytes), under the column salt
 /// of the `Text` target. Pins the fold, the salt and the CLLW encryption
 /// together.
 #[tokio::test]
@@ -198,11 +206,11 @@ async fn text_order_term_bytes_are_pinned() {
         .unwrap();
     assert_eq!(
         hex(ore.as_ref()),
-        "bc164005ea4d0f86e537d6829de90b2809ac20f460beffeb"
+        "b05ac63e0d2816d83868f90110b5226ad3c976f75e3a4b24"
     );
     assert_eq!(
         hex(ope.as_ref()),
-        "00ff16eecb69b4f14c05a50b5a1249b8ad7cb63f376cbbb998"
+        "00bfac54f18ed40b78b19468df90f4e3550a5c046f3f283e89"
     );
 }
 
@@ -256,7 +264,7 @@ async fn text_with_no_fold_has_no_order_term() {
         .is_err());
 }
 
-/// A float's order term: cllw-ore's encryption of its ADR-0002 order key,
+/// A float's order term: clww-ore's encryption of its ADR-0002 order key,
 /// the `f64` with zero signs and NaN payloads folded, under the column salt
 /// of the `F64` target. Pins the key, the salt and the encryption.
 #[tokio::test]
@@ -271,8 +279,8 @@ async fn float_order_term_bytes_are_pinned() {
         .ope_term(1.5f64, nonempty!("users/score"))
         .await
         .unwrap();
-    assert_eq!(hex(ore.as_ref()), "f591a4bf7663b9ffcaf021d87de0d10dad925b7663e33de47966c05dab4f76ff1e8bc5537162088c01be03b4db4d3fe980b111f46e7d4da445ec19d2f7445ef0");
-    assert_eq!(hex(ope.as_ref()), "01501c6dd5f9a769811461eadfd54631ea58f3f051e7603117396add6c79e5fe4fd2f549c92f0afeaf94cd6c49fc33a9a0657c812132bea46779b2f19f10ce36ae");
+    assert_eq!(hex(ore.as_ref()), "6c487f77b33ab3b4e0d37e79f84b24b92843d9cb591d492fd8d092afebba96e50e7d6733935a6e94faa8e7945f04471385553a35aa00ca30fb77d0b7a7a9a9a3");
+    assert_eq!(hex(ope.as_ref()), "00836260f898d58c06c8e23b8754e05d7d352c676b714e8523582c930f9e83640ad87d56aa35b7c3ecdc44dfb29a7378fb95738bca93f5ee9ca2a066c63ecb6aaf");
 }
 
 /// Floats order as Postgres's `float8` does: `-0.0` ties `0.0`, every NaN is
@@ -392,3 +400,44 @@ async fn every_integer_width_orders_by_its_own_key() {
     }
     width!(u16, u32, u64, u128, i16, i32, i64, i128);
 }
+
+/// Short-word tokens under a 65536-bit filter: the word domain
+/// (`stack-encrypt/sem/match/word/v1`) and its framing, pinned. "ng" alone is
+/// the word's token and nothing else; "Mike Ng" is its trigrams and the same
+/// word, so it holds every one of "ng"'s positions.
+struct WideShortWords;
+
+impl MatchConfig for WideShortWords {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            short_words: true,
+            m: 65536,
+            ..Default::default()
+        }
+    }
+}
+
+#[tokio::test]
+async fn short_word_positions_are_pinned() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let word = keyset
+        .match_terms::<WideShortWords>("Ng", nonempty!("users/name"))
+        .await
+        .unwrap();
+    assert_eq!(
+        word.positions(),
+        PINNED_NG,
+        "the word token's positions are frozen"
+    );
+    let whole = keyset
+        .match_terms::<WideShortWords>("Mike Ng", nonempty!("users/name"))
+        .await
+        .unwrap();
+    assert!(
+        whole.contains(&word),
+        "\"Mike Ng\" carries the word token of \"Ng\""
+    );
+}
+
+const PINNED_NG: [u16; 3] = [47881, 55268, 60379];

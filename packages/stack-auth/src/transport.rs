@@ -493,16 +493,33 @@ fn http_client() -> reqwest::Client {
     not(any(test, feature = "test-utils")),
     not(target_arch = "wasm32")
 ))]
+#[allow(
+    clippy::panic,
+    reason = "fails closed: the only alternative is a client that trusts the compromised CAs"
+)]
 fn http_client() -> reqwest::Client {
     use std::time::Duration;
 
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .pool_idle_timeout(Duration::from_secs(5))
-        .pool_max_idle_per_host(10)
+        .pool_max_idle_per_host(10);
+    // The platform verifier with the compromised-CA blocklist around it
+    // (`crate::tls`). This crate's reqwest has no `http2` feature of its
+    // own, so it offers `http/1.1` only. This fails closed: a client
+    // without the blocklist would trust the compromised CAs, so either
+    // failure panics rather than falling back to reqwest's default
+    // verifier. `Client::new()` panicked in the same places before.
+    // `tls::tests::reqwest_accepts_the_config` pins that reqwest takes the
+    // config.
+    let tls = crate::tls::client_config(false).unwrap_or_else(|error| {
+        panic!("could not configure TLS for the bundled HTTP client: {error}")
+    });
+    builder
+        .tls_backend_preconfigured(tls)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .unwrap_or_else(|error| panic!("could not build the bundled HTTP client: {error}"))
 }
 
 #[cfg(all(

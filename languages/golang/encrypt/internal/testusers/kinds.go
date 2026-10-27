@@ -79,9 +79,8 @@ type Kinds struct {
 // context, identities and indexes of the plan in
 // packages/stack-encrypt/tests/fixtures/value_kinds.json, so the generated
 // code opens the record Rust sealed there and derives the same terms. Every
-// integer seals at its own width; an 8-bit integer has no order term, and
-// the order indexes of a date, timestamp or decimal wait for #1236, so
-// those five carry equality alone.
+// integer seals at its own width, and an 8-bit integer has no order term,
+// so those two carry equality alone.
 type ValueKinds struct {
 	_      struct{}        `stash:"context=value_kinds"`
 	I8     int8            `stash:"i8,encrypt,index=equality"`
@@ -90,9 +89,9 @@ type ValueKinds struct {
 	U16    uint16          `stash:"u16,encrypt,index=equality;ope"`
 	I128   encrypt.Int128  `stash:"i128,encrypt,index=equality;ore"`
 	U128   encrypt.Uint128 `stash:"u128,encrypt,index=equality;ope"`
-	Date   encrypt.Date    `stash:"date,encrypt,index=equality"`
-	At     time.Time       `stash:"at,encrypt,index=equality"`
-	Amount encrypt.Decimal `stash:"amount,encrypt,index=equality"`
+	Date   encrypt.Date    `stash:"date,encrypt,index=equality;ore"`
+	At     time.Time       `stash:"at,encrypt,index=equality;ope"`
+	Amount encrypt.Decimal `stash:"amount,encrypt,index=equality;ore"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Lookup -name Lookup
@@ -109,8 +108,9 @@ type Lookup struct {
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Everything -name Everything
 
-// Everything is an opaque struct with a field of every type JSON carries
-// both ways. It crosses as one document and comes back as it was.
+// Everything is an opaque struct with a field of every type the storage
+// profile and JSON carry both ways. It crosses as one storage blob and comes
+// back as it was, save that a nil slice or map comes back empty.
 type Everything struct {
 	_      struct{} `stash:"context=everything,opaque"`
 	S      string

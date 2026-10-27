@@ -12,9 +12,13 @@ edition = "2021"
 publish = false
 
 [dependencies]
-# The 6-bit fixed-width and chained schemes behind EQL v4's `ore_block_v2`;
-# the same version as the root Cargo.lock.
-ore-rs = { version = "=0.9.0", default-features = false }
+# ore-rs's `BlockOre`, whose 6-bit fixed-width and chained engines are what
+# EQL v4's `ore_block_v2` compares; the same version as the root Cargo.lock.
+# Since 0.10 a value reaches the engines only through vitaminc-ore, as it
+# does in stack-encrypt.
+ore-rs = { version = "=0.10.0", default-features = false }
+vitaminc-ore = "=0.8.0"
+vitaminc-protected = "=0.8.0"
 rand = "0.8"
 hex = "0.4"
 

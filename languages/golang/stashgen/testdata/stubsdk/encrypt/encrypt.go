@@ -8,6 +8,7 @@ package encrypt
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -119,3 +120,39 @@ type (
 		Negative    bool
 	}
 )
+
+// JSONSelector is the selector `col -> $1::text` binds.
+type JSONSelector string
+
+// JSONToken is one node's token.
+type JSONToken string
+
+// JSONTokens are a subtree read's tokens.
+type JSONTokens []string
+
+// JSONValue is one value a read reached, or none.
+type JSONValue struct {
+	Found bool
+	JSON  []byte
+}
+
+// DecodeJSON reads JSON text a read opened into a value of type T.
+func DecodeJSON[T any](json.RawMessage) (T, error) { var z T; return z, nil }
+
+// JSONReadOptions are a subtree read's options.
+type JSONReadOptions struct{ WildcardBound uint32 }
+
+// JSONRange is both bounds of a between at a path.
+type JSONRange[Q ~[]byte] struct{ Low, High Q }
+
+// JSONSelection is a prepared `->` on a JSONSearch field.
+type JSONSelection[E ~[]byte] struct{ _ E }
+
+func (JSONSelection[E]) Selector() JSONSelector                          { return "" }
+func (JSONSelection[E]) Open(context.Context, []*E) ([]JSONValue, error) { return nil, nil }
+
+// JSONRead is a prepared subtree read on a JSONSearch field.
+type JSONRead[E ~[]byte] struct{ _ E }
+
+func (JSONRead[E]) Tokens() JSONTokens                              { return nil }
+func (JSONRead[E]) OpenOne(context.Context, []E) (JSONValue, error) { return JSONValue{}, nil }

@@ -58,11 +58,13 @@ impl TargetResolver for EqlTargets {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        options: Option<&stack_encrypt::dynamic::TargetOptions>,
         keyset: &'a stack_encrypt::KeysetCipher<'_, K>,
         label: &stack_encrypt::Label,
         plaintext: stack_encrypt::dynamic::ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, TargetError> {
-        eql_bindings::encryption::targets::encrypt(name, keyset, label, plaintext).map_err(convert)
+        eql_bindings::encryption::targets::encrypt_with(name, options, keyset, label, plaintext)
+            .map_err(convert)
     }
 
     fn decrypt<'a, K: 'static>(
@@ -108,8 +110,13 @@ fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescrip
     );
     // A type with a match index answers `matches` through its twin only
     // when the engine knows the options its filter is built under.
-    match target.match_options() {
+    let descriptor = match target.match_options() {
         Some(options) => descriptor.with_match_options(options),
+        None => descriptor,
+    };
+    // A document's orderings at a path bind as its leaf operand.
+    match target.leaf_query_sql_domain() {
+        Some(domain) => descriptor.with_leaf_query_sql_domain(domain),
         None => descriptor,
     }
 }
@@ -142,6 +149,13 @@ fn convert(error: eql_bindings::encryption::targets::TargetError) -> TargetError
             target: target.to_owned(),
             expected: Some(expected),
             found,
+        },
+        // The engine's code for what was wrong with the document, never
+        // the document.
+        Eql::Json { target, source } => TargetError::Json {
+            name: String::new(),
+            target: target.to_owned(),
+            reason: source.code(),
         },
         // The parser's kind and position, never its message: serde_json
         // quotes the input it refused, and the input is stored ciphertext.
@@ -208,10 +222,19 @@ mod tests {
                 "BigintOrdOpe",
                 "Date",
                 "DateEq",
+                "DateOrdOre",
+                "DateOrd",
+                "DateOrdOpe",
                 "Timestamp",
                 "TimestampEq",
+                "TimestampOrdOre",
+                "TimestampOrd",
+                "TimestampOrdOpe",
                 "Numeric",
                 "NumericEq",
+                "NumericOrdOre",
+                "NumericOrd",
+                "NumericOrdOpe",
                 "Text",
                 "TextEq",
                 "TextMatch",
@@ -230,12 +253,13 @@ mod tests {
                 "DoubleEq",
                 "DoubleOrdOre",
                 "DoubleOrd",
-                "DoubleOrdOpe"
+                "DoubleOrdOpe",
+                "JsonSearch"
             ],
             "the engine's producible types, in catalog order"
         );
         assert!(matches!(
-            resolver().resolve("DateOrdOre"),
+            resolver().resolve("Json"),
             Err(TargetError::Unproducible { .. })
         ));
         assert!(matches!(

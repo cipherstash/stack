@@ -18,10 +18,22 @@ BEGIN
         {%- for k in d.keys %}
         AND VALUE ? '{{ k }}'
         {%- endfor %}
+        {%- if d.nonempty_array_keys %}
+{{ v3_only }}
         {%- for k in d.nonempty_array_keys %}
         AND jsonb_typeof(VALUE -> '{{ k }}') = 'array'
         AND jsonb_array_length(VALUE -> '{{ k }}') > 0
         {%- endfor %}
+{{ v3_end }}
+        {%- endif %}
+        {%- if d.v4_hex_terms %}
+{{ v4_only }}
+        {%- for t in d.v4_hex_terms %}
+        AND jsonb_typeof(VALUE -> '{{ t.key }}') = 'string'
+        AND left(VALUE ->> '{{ t.key }}', {{ t.prefix_len }}) IN ({{ t.prefixes }})
+        {%- endfor %}
+{{ v4_end }}
+        {%- endif %}
         AND VALUE->>'v' = '{{ eql_version }}'
       );
   END IF;

@@ -13,6 +13,7 @@
 --! deliberately avoid naming eql_v2 symbols so the self-containment grep stays
 --! clean.)
 
+-- {{#v3}}
 --! @brief Convert JSONB array to ORE block composite type
 --! @internal
 --! @param val jsonb Array of hex-encoded ORE block terms
@@ -64,6 +65,7 @@ $$ LANGUAGE plpgsql;
 --! this marker is the documented manual opt-in.
 COMMENT ON FUNCTION {{prefix}}_internal.jsonb_array_to_{{ore_block}}(jsonb) IS
   'eql-inline-critical: per-encrypted-value ORE opclass-path helper; must stay unpinned (SET search_path adds per-call overhead)';
+-- {{/v3}}
 
 
 --! @brief Extract ORE block index term from JSONB payload
@@ -79,7 +81,16 @@ AS $$
     -- Declared STRICT: PostgreSQL returns NULL for a NULL argument without
     -- entering the body, so no explicit `val IS NULL` guard is needed.
     IF {{prefix}}_internal.has_{{ore_block}}(val) THEN
+-- {{#v3}}
       RETURN {{prefix}}_internal.jsonb_array_to_{{ore_block}}(val->'ob');
+-- {{/v3}}
+-- {{#v4}}
+      -- One term, the hex of the whole ore-rs ciphertext. The domain CHECK
+      -- has refused anything that is not a string with a block ORE prefix;
+      -- decode() raises on a character that is not hex, and the comparator
+      -- checks the rest of the structure.
+      RETURN ROW(ROW(decode(val->>'ob', 'hex'))::{{prefix}}_internal.{{ore_block}}_term)::{{prefix}}_internal.{{ore_block}};
+-- {{/v4}}
     END IF;
     RAISE 'Expected an ore index (ob) value in json: %', val;
   END;
@@ -88,6 +99,7 @@ $$ LANGUAGE plpgsql;
 
 --! @brief Check if JSONB payload contains an ORE block index term
 --! @param val jsonb containing encrypted EQL payload
+-- {{#v3}}
 --! @return boolean True only if the 'ob' field is present and is a JSON array
 --! @note A well-formed ORE index term is always a JSON array of block terms, so
 --!   this guard treats a present-but-non-array `ob` (a scalar or object) as
@@ -97,13 +109,27 @@ $$ LANGUAGE plpgsql;
 --!   previous `val ->> 'ob' IS NOT NULL` form stringified scalars/objects and so
 --!   reported them as present. `{}` (absent `ob`) and `{"ob": null}` (JSON null)
 --!   both remain `false`.
+-- {{/v3}}
+-- {{#v4}}
+--! @return boolean True only if the 'ob' field is present and is a JSON string
+--! @note A well-formed ORE index term is one hex string, the whole ore-rs
+--!   ciphertext, so this guard treats a present `ob` of any other JSON type
+--!   (an EQL v3 array, a number, an object) as absent, and the extractor
+--!   `{{ore_block}}(val)` RAISEs on it. `{}` (absent `ob`) and
+--!   `{"ob": null}` (JSON null) are `false`.
+-- {{/v4}}
 CREATE FUNCTION {{prefix}}_internal.has_{{ore_block}}(val jsonb)
   RETURNS boolean
   IMMUTABLE STRICT PARALLEL SAFE
   SET search_path = pg_catalog, extensions, public
 AS $$
   BEGIN
+-- {{#v3}}
     RETURN COALESCE(jsonb_typeof(val -> 'ob') = 'array', false);
+-- {{/v3}}
+-- {{#v4}}
+    RETURN COALESCE(jsonb_typeof(val -> 'ob') = 'string', false);
+-- {{/v4}}
   END;
 $$ LANGUAGE plpgsql;
 
@@ -470,34 +496,6 @@ AS $$
          + (latch > 0)::int * (2 * indicator - 1);
   END;
 $$ LANGUAGE plpgsql;
-
-
---! @brief Compare two EQL v4 ORE block values
---! @internal
---! @param a {{prefix}}_internal.{{ore_block}}_term[] First value's terms
---! @param b {{prefix}}_internal.{{ore_block}}_term[] Second value's terms
---! @return integer -1/0/1, or NULL if either array is NULL
---! @throws Exception unless each value holds exactly one term: Stack
---!   Encrypt writes one 6-bit block ORE term per value, text included, where
---!   EQL v3's text held up to six 8-bit terms
-CREATE FUNCTION {{prefix}}_internal.compare_{{ore_block}}_terms(a {{prefix}}_internal.{{ore_block}}_term[], b {{prefix}}_internal.{{ore_block}}_term[])
-RETURNS integer
-  IMMUTABLE
-  SET search_path = pg_catalog, extensions, public
-AS $$
-  BEGIN
-    IF a IS NULL OR b IS NULL THEN
-      RETURN NULL;
-    END IF;
-
-    IF cardinality(a) <> 1 OR cardinality(b) <> 1 THEN
-      RAISE EXCEPTION 'An ORE block value holds exactly one term, not % and %',
-        cardinality(a), cardinality(b);
-    END IF;
-
-    RETURN {{prefix}}_internal.compare_{{ore_block}}_term(a[1], b[1]);
-  END
-$$ LANGUAGE plpgsql;
 -- {{/v4}}
 
 
@@ -512,6 +510,11 @@ RETURNS integer
   SET search_path = pg_catalog, extensions, public
 AS $$
   BEGIN
+-- {{#v3}}
     RETURN {{prefix}}_internal.compare_{{ore_block}}_terms(a.terms, b.terms);
+-- {{/v3}}
+-- {{#v4}}
+    RETURN {{prefix}}_internal.compare_{{ore_block}}_term(a.term, b.term);
+-- {{/v4}}
   END
 $$ LANGUAGE plpgsql;

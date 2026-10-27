@@ -19,7 +19,7 @@ default = ["profile", "http"]
 # no TLS stack in its graph; a host that provides its own transport (the
 # WASI/wazero guest, where HTTP is a host import) implements
 # `ZeroKMSConnection` itself and builds the client with `StackKms::connect`.
-http = ["dep:reqwest", "dep:lazy_static", "stack-auth/http"]
+http = ["dep:reqwest", "dep:lazy_static", "dep:rustls", "stack-auth/http"]
 # Loads the client key from the CLI's on-disk profile (`secretkey.json`, via
 # `stack-profile`): `SecretKey: ProfileData` and `KeyProvider for ProfileStore`.
 # Disable for consumers that only ever source the key in-memory or from the
@@ -77,6 +77,9 @@ sha2 = "0.10.6"
 # the client key in-memory instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 stack-profile = { workspace = true, optional = true }
+# Named only for the error `stack_auth::tls::client_config` returns, which
+# `ConnectionInitError` carries as its source. Behind `http`.
+rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-mutex = "1.4.0"

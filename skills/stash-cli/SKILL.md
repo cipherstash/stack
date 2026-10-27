@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/verify/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/verify/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `decrypt status/plan/backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, the staged EQL v3 rollout lifecycle, and its reverse (moving encrypted columns back to plaintext).
 ---
 
 # CipherStash CLI (`stash`)
@@ -133,7 +133,7 @@ There is **no global `--non-interactive` or `--json` flag** (and no global `--ye
 | Database URL (all `db` / `eql` / `schema` commands) | `--database-url <url>` or `DATABASE_URL` |
 | Agent target (`plan`, `impl`) | `--target <claude-code\|codex\|agents-md\|lovable\|wizard>` |
 | Skills destination (`init`) | `--target <claude-code\|codex>` — selects the destination only; `init` performs no handoff |
-| Dual-write confirmation (`encrypt backfill`) | `--confirm-dual-writes-deployed` |
+| Dual-write confirmation (`encrypt backfill`, `decrypt backfill`) | `--confirm-dual-writes-deployed` |
 | Machine-readable output | `--json` on `status`, `manifest`, `auth login`, `auth regions` |
 
 When a required value is missing in a non-TTY context, the command exits non-zero with an actionable message naming the flag and env var — it never hangs.
@@ -213,7 +213,7 @@ export default defineConfig({
 | Option | Required | Default | Purpose |
 |---|---|---|---|
 | `databaseUrl` | yes | — | PostgreSQL connection string |
-| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `eql validate` and `encrypt backfill` (`schema build` only writes here; `encrypt drop` resolves against the database). **Not required in Prisma Next projects** — see below. |
+| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `eql validate`, `encrypt backfill` and `decrypt backfill` (`schema build` only writes here; `encrypt drop` and the other `decrypt` commands resolve against the database). **Not required in Prisma Next projects** — see below. |
 
 In a **Prisma Next** project there is deliberately no client file: encrypted columns are declared in the PSL contract. When the configured `client` path is missing, `encrypt backfill` — the only command that loads it — detects Prisma Next, reads the emitted `contract.json` (searched at `src/prisma/`, `prisma/`, then the project root), and derives the schemas with the adapter's own `deriveStackSchemasV3`, so the CLI's schema view matches the application's. (`encrypt status` and `encrypt drop` never read the client file; they resolve against the database.) Both `@cipherstash/stack-prisma` and `@cipherstash/stack` are resolved from *your* project, not the CLI's dependency tree. Run `prisma-next contract emit` first; if the contract declares no `cipherstash.*()` column, the command says so rather than reporting a missing client file.
 
@@ -613,7 +613,7 @@ stash encrypt backfill --table users --column email
 stash encrypt backfill --table users --column email --chunk-size 5000
 ```
 
-Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes concurrent runners and re-runs converge.
+Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes, from the last checkpoint or, after a failed run, from the last committed position. A failure is recorded in `cs_migrations` by error class and safe details only, never the error message, which can carry row data. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes re-runs converge. Run one backfill per column at a time: nothing serializes two runners, and the slower one's events can leave `cs_migrations` reporting stale progress.
 
 Backfill requires a `public.eql_v3_*` target column, records version 3 and the `dropped` target phase in `.cipherstash/migrations.json`, then prints the next steps: switch the application to the encrypted column by name and run `stash encrypt drop`. A missing, plaintext, or legacy v2 target is rejected before encryption begins.
 
@@ -631,7 +631,7 @@ Backfill requires a `public.eql_v3_*` target column, records version 3 and the `
 | `--encrypted-column <name>` | Override the `<col>_encrypted` target name |
 | `--schema-column-key <key>` | Override the schema lookup key |
 | `--confirm-dual-writes-deployed` | Non-interactive equivalent of the prompt |
-| `--force` | Re-encrypt every plaintext row, including ones with existing ciphertext. Recovery path for drift. Expensive, not destructive. Flagged in the audit trail. |
+| `--force` | Re-encrypt every plaintext row, including ones with existing ciphertext. Recovery path for drift. Expensive, not destructive. Flagged in the audit trail. An interrupted `--force` run is finished as one: the next run is forced, with or without the flag, until a forced pass completes. |
 
 #### `encrypt drop`
 
@@ -642,6 +642,83 @@ stash encrypt drop --table users --column email
 Runs from the `backfilled` phase and drops the original plaintext `<col>`. It verifies live coverage first and refuses if any row still has plaintext set with the encrypted column NULL. Legacy EQL v2 targets are rejected; the old rename/drop lifecycle is no longer automated. The command generates a migration but does not apply it.
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
+
+### Decrypt
+
+The reverse lifecycle: moving encrypted columns back to plaintext, for leaving CipherStash or un-encrypting a column. It mirrors `encrypt` step for step, on the same `@cipherstash/migrate` engine, and records its own events in `cipherstash.cs_migrations` — keyed by the **encrypted** column, so they never mix with the forward history kept under the plaintext name. Decryption is never charged.
+
+`decrypt-dual-writing → decrypting → decrypted → encrypted-dropped`. As with v3 encryption there is no cut-over command: the application switches reads to the plaintext column by name.
+
+**Keep dual-writing until the drop migration is applied.** From the deploy before `decrypt backfill` until the `decrypt drop` migration has run, the application writes BOTH the encrypted column and its plaintext twin on every insert and update, including after reads move to the plaintext column. This is the opposite of the forward rollout, where dual-write code is removed once reads move to the encrypted column. The backfill, `--force` and the drop's coverage check all assume both columns stay in step. If writes to the encrypted column stop early, a value cleared in the plaintext column (an erasure request, say) leaves its old ciphertext behind: `decrypt drop` refuses, and re-running the backfill, or `--force`, writes the old value back. Stop writing the encrypted column only after the drop is applied.
+
+**`--column` names the column being migrated away from — the encrypted one.** The plaintext twin is resolved in this order: `--plaintext-column`; the pairing recorded by the reverse migration in progress (a flag that contradicts it is refused; a pairing from an earlier reverse migration that finished, before the column was encrypted again, is not binding); the original name in `.cipherstash/migrations.json`; the name without its `_encrypted` suffix; `<column>_plaintext`. `decrypt status`, `decrypt plan` and `decrypt backfill` apply the same rules, so they always show the same name.
+
+#### `decrypt status` / `decrypt plan`
+
+`status` lists every EQL v3 column in the current schema plus any reverse lifecycle on record, with the plaintext twin, phase, progress, and the count of values the backfill could not decrypt (`UNDECRYPTABLE`). Its `FLAGS` column names what the other commands would refuse or warn about, from the same rules: `plaintext-col-is-eql` (the twin name is taken by an EQL column), `forward-open` (the twin is the source of a forward encryption not yet dropped), `twin-has-values` (the twin holds values and no reverse migration has started), `forced-pass-owed` (every backfill run is forced until one completes, see below). Read-only.
+
+`plan` with no flags is the read-only overview: each encrypted column, its proposed twin and type, and the next command. With `--table` (optionally `--column`, `--plaintext-column`) it generates the change that adds the twins, **nullable**:
+
+- **Drizzle:** prints the schema lines (`email: text('email'),`, `bigint(…, { mode: 'bigint' })`, `timestamp(…, { withTimezone: true })`, …) for `drizzle-kit generate`. It writes no file on purpose — a `--custom` ADD COLUMN never reaches drizzle-kit's snapshot, so the next `generate` would emit it again and fail with "column already exists".
+- **Everything else:** writes `<ts>_add_plaintext_<table>_<cols>.sql` (`ADD COLUMN IF NOT EXISTS`) into `--migrations-dir`. Prisma Next projects also get the contract change to make. `--dry-run` prints it instead.
+
+When the twin already exists, `plan` adds nothing for it. If it already holds values, `plan` warns with the same text `decrypt backfill` refuses with (see below) and shows the backfill command with the flag still to choose. If it is the source column of a forward encryption that has not reached `dropped`, `plan` warns that the backfill will refuse it outright (see below).
+
+When the twin does NOT exist but a forward encryption under its name is still open, the original plaintext column was removed outside stash (an ORM migration rather than `encrypt drop`). `plan` is the only step that can see this, because once the twin is added back the column looks like a forward source that was never dropped. So `plan --table` records that forward migration as `dropped`, marked as observed rather than generated, and plans the twin as usual; `--dry-run` only reports it. If you already re-added the column by hand, that record is missing and `decrypt backfill` refuses: drop the re-added empty column, run `decrypt plan`, and add it through the plan.
+
+Type mapping (the inverse of the forward ladder; suffixes like `_eq`/`_ord`/`_search` only add query terms and are dropped): `text*` → `text`; `integer*`, `smallint*`, `bigint*`, `numeric*`, `real*` → the same; `double*` → `double precision`; `boolean` → `boolean`; `date*` → `date`; `timestamp*` → `timestamptz` (EQL timestamps are UTC instants); `json`, `json_search` → `jsonb`. A domain the CLI does not know is refused rather than guessed — add that twin by hand.
+
+#### `decrypt backfill`
+
+```bash
+stash decrypt backfill --table users --column email_encrypted
+stash decrypt backfill --table users --column email_encrypted --plaintext-column email --chunk-size 200
+```
+
+Same engine as `encrypt backfill`: keyset pagination, one transaction per chunk with its checkpoint, SIGINT/SIGTERM finishes the chunk, and the `<encrypted> IS NOT NULL AND <plaintext> IS NULL` guard makes re-runs converge. Re-running resumes from the last checkpoint, and also after a failed run: the failure is recorded with the last committed position, so a fix-and-rerun does not start again from the first row. Each chunk is **one `bulkDecrypt` call — one ZeroKMS request** (default 500 rows, at most 32767: each row binds two parameters in the chunk's write, and Postgres allows 65535 per statement). Values are cast to the twin's *declared* type, so a `varchar(255)` twin works as well as the suggested `text`; a value that does not fit stops the run with its SQLSTATE, column and type, never the value. The twin must already exist; the command points at `decrypt plan` if not.
+
+**A forward encryption still in progress cannot be reversed.** If the twin is the source column of a forward encryption that has not reached `dropped`, `decrypt backfill` refuses, whatever flags are passed: only one migration may be open on a pair of columns at a time. Finish the forward one with `encrypt drop` first (if the original column is already gone, see `decrypt plan` above). To abandon encryption instead, stop writing the encrypted column, switch reads back to the plaintext column and drop the encrypted column. While dual-writes are live the plaintext column is still current, so there is nothing to decrypt.
+
+**A twin that already holds values is refused on the first run.** The backfill only fills rows where the twin is NULL, so existing values would be kept as they are, the column marked `decrypted`, and `decrypt drop` would then remove the only current copy. So before recording anything, the first run refuses a twin that holds values until you choose:
+
+- `--force` overwrites every row of the twin with the decrypted ciphertext. Use this when in doubt.
+- `--confirm-plaintext-current` keeps the existing values and fills only the NULLs. Use it only when the application has written the plaintext column on every insert and update for the whole time the encrypted column existed.
+
+The choice is recorded in `cs_migrations`. Later runs of the same reverse migration do not ask again: the twin's values are then its own. Choosing `--force` makes a forced pass owed from that moment, and so does starting any `--force` run: every later run is forced, with or without `--force`, until one completes, so an interrupted `--force` run is always finished as one, even if it failed before writing anything. The run says when it is forced for this reason. `--confirm-plaintext-current` is accepted on a later run too, as long as no forced pass has started; while a started one is owed, it is refused, because rows already overwritten cannot be un-overwritten. Once that pass completes there is nothing left to confirm, and the waiver has no effect. A `--force` run after an interrupted plain one starts again from the first row.
+
+**Lock contexts — known limitation, no bypass.** A value encrypted with an end-user lock context can only be decrypted as that user (see `stash-auth`). With workspace credentials it fails *on its own row* (`bulkDecrypt` reports per row), so the backfill **skips it, counts it, leaves the twin NULL** (a `--force` pass sets a skipped row's twin to NULL, so a stale value is never left behind), and reports the count and error codes; the count is also recorded in `cs_migrations` and shown by `decrypt status`. Decrypt those rows in your application on each user's behalf (writing the plaintext column), then re-run without `--force`. Do this only after the last forced pass has completed: a forced pass (including a plain run that finishes an interrupted one) sets the twin back to NULL on every row it cannot decrypt, an application-written value included. `decrypt drop` refuses while any remain.
+
+**Ciphertext that decrypts to null.** A non-JSON twin can only store an empty value as NULL, which is also what "not decrypted yet" looks like, so these rows are skipped as `NULL_PLAINTEXT` and reported separately, with their primary keys. They are not a credentials or lock-context problem and a re-run will not change them. `decrypt drop` refuses while they hold ciphertext: once you have confirmed the values really are empty, set their encrypted column to NULL, then generate the drop.
+
+**Whole first batch undecryptable → stop.** If the first chunk of a run decrypts nothing, the command stops before writing anything (`UndecryptableBatchError`): that is almost always credentials resolving to a different workspace or keyset. Re-run with `--continue-on-undecryptable` only when those rows really are lock-bound (or are the leftovers of an earlier run).
+
+**Credentials.** The backfill loads your encryption client exactly as `encrypt backfill` does — the client file, or the Prisma Next contract — so the **keyset precondition** above applies unchanged: export the `CS_*` values of the environment that wrote the data. Proxy-only deployments with no SDK client in the project cannot run it, exactly as they cannot run `encrypt backfill`.
+
+| Flag | Description |
+|---|---|
+| `--table` / `--column` | Required. `--column` is the encrypted column. |
+| `--plaintext-column <name>` | The twin (see resolution order above) |
+| `--chunk-size <n>` | Default 500 — rows per `bulkDecrypt` / ZeroKMS request. A whole number from 1 to 32767 |
+| `--pk-column <name>` | Override primary-key detection |
+| `--confirm-dual-writes-deployed` | Non-interactive equivalent of the prompt: the app writes the encrypted column **and** its plaintext twin on every insert and update |
+| `--force` | Re-decrypt rows whose plaintext is already set and overwrite it: drift recovery, or replacing a twin that held values before the first run. Safe only while dual-writes are live: any row the application wrote to the plaintext column alone (a newer value, or one cleared on purpose) gets the older ciphertext's value back. |
+| `--confirm-plaintext-current` | Keep the values a twin already holds, asserting they are current (see above). Refused while a started forced pass is owed. On a run with nothing to confirm it has no effect, and the backfill says so |
+| `--continue-on-undecryptable` | Do not stop when the first batch decrypts nothing |
+
+#### `decrypt drop`
+
+```bash
+stash decrypt drop --table users --column email_encrypted
+stash decrypt drop --table users --column email_encrypted --uninstall-eql
+```
+
+Runs from `decrypted`, against the plaintext twin the backfill **recorded** (a fully-populated but different column would make the coverage check pass vacuously). It verifies live coverage — no row with ciphertext set and plaintext NULL — then writes a migration that re-checks coverage at apply time under `ACCESS EXCLUSIVE`, **drops every index built on the encrypted column** (the EQL-term functional indexes; listed in the output), and drops the column, all in one `DO` block. Not applied for you; Drizzle projects get a journaled `drizzle-kit generate --custom` file.
+
+Generating records `encrypted-dropped`, which stops a second drop being generated for the same column. It leaves the column's entry in `.cipherstash/migrations.json`: `encrypt status` shows it as `reversed` rather than as drift, which is its final state. Do not edit the file by hand. If the apply-time check aborts, re-run `decrypt backfill`, then `decrypt drop` again. Keep dual-writing until the migration is applied.
+
+`--uninstall-eql` appends the EQL v3 uninstall (`@cipherstash/eql`'s script: `DROP SCHEMA eql_v3, eql_v3_internal … CASCADE`) to the same block, plus the `public.eql_v3_*` column domains that script deliberately leaves behind (they live outside the disposable schemas so upgrades never touch encrypted columns). Only when this is the **last** EQL v3 column in the whole database — checked now and again at apply time, because the cascade would delete any other encrypted column. `cipherstash.cs_migrations` is kept.
+
+Flags: `--table`, `--column`, `--plaintext-column`, `--migrations-dir <path>`, `--uninstall-eql`.
 
 ### Deployment
 

@@ -86,7 +86,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "lt",
-        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d12f636d8b78"
+        "term": "f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b73fbd5bd75a8d17"
       }
     },
     {
@@ -98,7 +98,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "lte",
-        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d12f636d8b78"
+        "term": "f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b73fbd5bd75a8d17"
       }
     },
     {
@@ -110,7 +110,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "gt",
-        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d060dbfcceb5"
+        "term": "f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b73fbcbb958af97f"
       }
     },
     {
@@ -122,7 +122,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "gte",
-        "term": "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d060dbfcceb5"
+        "term": "f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b73fbcbb958af97f"
       }
     },
     {
@@ -138,8 +138,8 @@
         "index": "ore",
         "operator": "between",
         "term": [
-          "758821c792265d942f89fa1dad016fb71b326f756e62950367e5d060dbfcceb5",
-          "758821c792265d942f89fa1dad016fb71b326f756e62950367e6377200eec06b"
+          "f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b73fbcbb958af97f",
+          "f18256adef15adefb7ed6dea76d0de5418257a7406b06cb9b7404de8dd94a9f9"
         ]
       }
     },
@@ -176,7 +176,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "lt",
-        "term": "d86769e4203df9a878dfb084014ea9df2ac9e74b1cef394f5042a6a88e4b81ab7d678eb59f8d27089e5e988fe8130bf9ea2707ab35e341d60c19c9836360eb21"
+        "term": "9129fe70c2594324aa169a5a9b5a5cbb6069d6574e65017fd005c8bd524bc9d72b923c40c2ec4b3b0e7505ebe58dc929288e836aade49c2680591d17ca9c9989"
       }
     },
     {
@@ -192,8 +192,8 @@
         "index": "ore",
         "operator": "between",
         "term": [
-          "d73ffdebc829eff390b70c5e169f58bf4b2aa664817584cc01f5e114eb7d91d2b6fe729db0f85f0df93d0487a2888f0a1865ca8946912ec33493cb18c5abb183",
-          "d8688e0201b46fefe8147f16e4011433e428361b12b70e40fed58a526bcdad72208619a7f90e617d22ddda3df8de4ccc224672bc0ea650ad64e30fb253851039"
+          "90a140c66cc77328cd49e57126a8802c821b5a85713adc8aa79f5ceb311703b3cb788a110494d03fa232c37a2da71ba7f0c20c1f67265dd39b770131ff52ef69",
+          "912aa94b90269735f38220cfde3773a20658a7990105503ac2d01974a3fb247193566f5cca1bad36337511634befbf6068bd264336df7ea45bf3665bfbe0c124"
         ]
       }
     }

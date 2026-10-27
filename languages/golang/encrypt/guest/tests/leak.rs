@@ -24,6 +24,8 @@ use std::future::IntoFuture;
 use stack_auth::{SecretToken, ServiceToken};
 mod support;
 
+use stack_encrypt::dynamic::frame::encode_ciphertext;
+use stack_encrypt::dynamic::plaintext::Logical;
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::{CipherText, Descriptor, Node, PassthroughFrame, StackCipher};
 use stack_encrypt_guest::options::{parse_options, Side};
@@ -36,8 +38,6 @@ use stack_kms::{
 };
 use support::Tree;
 use uuid::Uuid;
-use vitaminc_aead::plaintext::Logical;
-use vitaminc_aead_frame::encode_ciphertext;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext, ViturRequestError};
 
 const PLAINTEXT: &str = "leak-marker-plaintext";
@@ -132,7 +132,7 @@ fn failing() -> StackCipher<Failing> {
 // =============================================================================
 
 fn encode(value: Tree) -> Vec<u8> {
-    use vitaminc_protected::Controlled;
+    use stack_encrypt::Controlled;
     value.to_frame().expect("encode").risky_unwrap()
 }
 

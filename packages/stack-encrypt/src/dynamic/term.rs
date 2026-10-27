@@ -16,14 +16,13 @@
 //!   a domain of its own. A boolean has none.
 //! - **Match** takes text only, cut in Unicode 16 NFC.
 //! - **ORE, OPE and block ORE** take an integer of 16 bits or wider, a
-//!   float, text or bytes, each handed to cllw-ore (ORE, OPE) or ore-rs
-//!   (block ORE) as the Rust type the typed path would have named: an `i16`
-//!   as an `i16`, a `u128` as a `u128`. A boolean, a `u8` and an `i8` have
-//!   no order term: over a domain that small (two values, or 256) it would
-//!   tell anyone holding the column which rows are `true`, or rank every
-//!   row among 256. A decimal, a date and a timestamp
-//!   have none yet: cllw-ore 0.5 does not encode them the ADR-0002 way, and
-//!   their order terms wait for new cllw-ore and ore-rs releases (#1236).
+//!   float, text, bytes, a date, a timestamp or a decimal, each handed to
+//!   clww-ore (ORE, OPE) or ore-rs (block ORE) as the Rust type the typed
+//!   path would have named: an `i16` as an `i16`, a `u128` as a `u128`, a
+//!   date as a [`value::Date`](crate::value::Date). A boolean, a `u8` and an
+//!   `i8` have no order term: over a domain that small (two values, or 256)
+//!   it would tell anyone holding the column which rows are `true`, or rank
+//!   every row among 256.
 //!
 //! # These are the query-probe path
 //!
@@ -32,22 +31,26 @@
 //! going to be **stored** should come from the record path, where it shares
 //! one context with the ciphertext beside it (ADR-0004).
 
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use super::ValueFrame;
-use stack_kms::DataKeySource;
+use stack_kms::{DataKeySource, IndexKeySource};
 use vitaminc_aead::plaintext::{
-    Error as SinkError, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
+    SourceError,
 };
+use vitaminc_aead::FromScalar;
 use vitaminc_normalize::{domain_of, normalize, NormalizeError};
 
 use serde::{Deserialize, Serialize, Serializer};
 
 use super::{Error, Reason};
-use crate::json::JsonOptions;
+use crate::json::{JsonOptions, JsonPath};
 use crate::sem::{DefaultMatch, MatchOptions, Orderable, QueryTokens, TermError, Tokenizer};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
+use crate::value::{Date, Decimal, Timestamp};
 use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 
 /// The runtime half of [`IndexSpec`]: the domain table, and the index's wire
@@ -66,13 +69,15 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 ///
 /// ```text
 /// { "match": { "tokenizer": "standard" | { "ngram": <length> },
-///              "downcase": <bool>, "k": <int>, "m": <int> } }
+///              "downcase": <bool>, "short_words": <bool>,
+///              "k": <int>, "m": <int> } }
 /// ```
 ///
 /// Every option is optional and defaults to [`MatchOptions::default`]'s
 /// value; an unknown option, an option given twice, or options that fail
 /// the match scheme's bounds (`k` in `3..=16`, `m` a power of two in
-/// `[32, 65536]`, a non-zero n-gram length) are refused.
+/// `[32, 65536]`, a non-zero n-gram length, `short_words` only beside an
+/// n-gram length of at least 3) are refused.
 ///
 /// A JSON index is `"json"`, or an object mapping `"json"` to its options:
 ///
@@ -91,9 +96,10 @@ use crate::{Encrypt, IntoPrfContext, KeysetCipher, NonEmpty};
 /// indexes have no options and no object form.
 ///
 /// Serialized (it is `Serialize`), an index writes the string whenever the
-/// options are the defaults and the object, with every option, otherwise,
-/// so a default plan is byte-for-byte what it was before options had a
-/// wire form.
+/// options are the defaults and the object otherwise, with every option but
+/// `short_words`, which it writes only when it is on. So a default plan is
+/// byte-for-byte what it was before options had a wire form, and a plan with
+/// other options is what it was before `short_words` existed.
 impl IndexSpec {
     /// The index a bare key names, under default options, or `None` for a
     /// string that is not an index key.
@@ -127,12 +133,12 @@ impl IndexSpec {
 
     /// Whether the scheme defines this index's term for `value`: whether it
     /// is one scalar the index takes. Equality takes every scalar vitaminc
-    /// gives an equality domain (an integer, a float, text, bytes, and a
-    /// date, timestamp, decimal or uuid), not a boolean or a null. Match
-    /// takes text. ORE, OPE and block ORE take an integer of any width, a
-    /// float, text or bytes; not a boolean, and not yet a decimal, date or
-    /// timestamp (#1236). A match index's options do not change what it
-    /// takes.
+    /// gives an equality domain (an integer, a float, text, bytes, a date,
+    /// timestamp, decimal or uuid, and a null), not a boolean. Match
+    /// takes text. ORE, OPE and block ORE take an integer of 16 bits or
+    /// wider, a float, text, bytes, a date, a timestamp or a decimal; not a
+    /// boolean, an 8-bit integer or a uuid. A match index's options do not
+    /// change what it takes.
     ///
     /// This is the one table: [`term`] refuses exactly what it refuses, and
     /// checking it first is how a binding refuses a bad request at its
@@ -166,10 +172,11 @@ impl IndexSpec {
     /// The table [`defines`](Self::defines) reads, over one scalar.
     pub(super) fn takes(&self, ty: Option<Logical>, value: &Physical<'_>) -> bool {
         match self {
-            // vitaminc's table: a kind with an equality domain.
+            // vitaminc's table: a kind with an equality domain, a null's
+            // among them (`vitaminc-normalize` 0.8).
             IndexSpec::Equality => domain_of(ty, value).is_some(),
             IndexSpec::Match(_) => ty.is_none() && matches!(value, Physical::Text(_)),
-            IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => ty.is_none() && ordered(value),
+            IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => ordered(ty, value),
             // A document, not a scalar: the dynamic path has no term for it
             // yet, and the typed path takes a `serde_json::Value`.
             IndexSpec::Json(_) => false,
@@ -178,27 +185,33 @@ impl IndexSpec {
 }
 
 /// Whether the order indexes (CLLW ORE and OPE, and block ORE) order this
-/// scalar: an integer of 16 bits or wider, a float, text or bytes. Not a
-/// boolean, and not an 8-bit integer: an order term over so small a domain
-/// reveals too much, which rows hold `true`, or each row's rank among 256
-/// values, which a few known rows resolve to the values. Not a null. The
-/// caller has already refused a scalar under a logical type: a decimal,
-/// date or timestamp's order term waits for a later release.
-fn ordered(value: &Physical<'_>) -> bool {
-    match value {
-        Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
-        Physical::Int(_) | Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
+/// scalar: an integer of 16 bits or wider, a float, text, bytes, or a date,
+/// timestamp or decimal in range. Not a boolean, and not an 8-bit integer:
+/// an order term over so small a domain reveals too much, which rows hold
+/// `true`, or each row's rank among 256 values, which a few known rows
+/// resolve to the values. Not a null, and not a uuid or any other logical
+/// type.
+fn ordered(ty: Option<Logical>, value: &Physical<'_>) -> bool {
+    match ty {
+        None => match value {
+            Physical::Int(Int::I8(_) | Int::U8(_)) | Physical::Null | Physical::Bool(_) => false,
+            Physical::Int(_) | Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
+        },
+        Some(Logical::Date) => Date::from_scalar(ty, *value).is_some(),
+        Some(Logical::Timestamp(_)) => Timestamp::from_scalar(ty, *value).is_some(),
+        Some(Logical::Decimal { .. }) => Decimal::from_scalar(ty, *value).is_some(),
+        Some(_) => false,
     }
 }
 
 /// An index in its wire form: its key, or for a match index under options
-/// other than the defaults, a one-entry object mapping `"match"` to all four
-/// of them (see [`IndexSpec`'s docs](IndexSpec#wire-form)).
+/// other than the defaults, a one-entry object mapping `"match"` to them,
+/// `short_words` only when it is on (see [`IndexSpec`'s docs](IndexSpec#wire-form)).
 impl Serialize for IndexSpec {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "lowercase")]
-        enum Out {
+        enum Out<'a> {
             Eq,
             #[serde(rename = "match")]
             DefaultMatch,
@@ -209,17 +222,19 @@ impl Serialize for IndexSpec {
             OreBlock,
             #[serde(rename = "json")]
             DefaultJson,
-            Json(JsonOut),
+            Json(JsonOut<'a>),
         }
         #[derive(Serialize)]
-        struct JsonOut {
+        struct JsonOut<'a> {
             sealed_root: bool,
-            ordered: Vec<String>,
+            ordered: &'a BTreeSet<JsonPath>,
         }
         #[derive(Serialize)]
         struct MatchOut {
             tokenizer: TokenizerOut,
             downcase: bool,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            short_words: bool,
             k: u64,
             m: u64,
         }
@@ -238,6 +253,7 @@ impl Serialize for IndexSpec {
                     Tokenizer::Ngram { length } => TokenizerOut::Ngram(length as u64),
                 },
                 downcase: options.downcase,
+                short_words: options.short_words,
                 k: options.k as u64,
                 m: u64::from(options.m),
             }),
@@ -247,7 +263,7 @@ impl Serialize for IndexSpec {
             IndexSpec::Json(options) if *options == JsonOptions::default() => Out::DefaultJson,
             IndexSpec::Json(options) => Out::Json(JsonOut {
                 sealed_root: options.sealed_root,
-                ordered: options.ordered.iter().map(ToString::to_string).collect(),
+                ordered: &options.ordered,
             }),
         }
         .serialize(s)
@@ -294,26 +310,29 @@ pub(super) struct JsonWire(pub(super) JsonOptions);
 #[serde(deny_unknown_fields, default)]
 struct JsonOptionsWire {
     sealed_root: bool,
-    ordered: Vec<String>,
+    ordered: BTreeSet<JsonPath>,
 }
 
 impl Default for JsonOptionsWire {
     fn default() -> Self {
         Self {
             sealed_root: JsonOptions::default().sealed_root,
-            ordered: Vec::new(),
+            ordered: BTreeSet::new(),
         }
     }
 }
 
+/// Each ordered path was parsed as it was read ([`JsonPath`]'s
+/// `Deserialize`); what is left to refuse is a path naming a position,
+/// which no ordering reaches.
 impl TryFrom<JsonOptionsWire> for JsonWire {
     type Error = crate::sem::TermError;
     fn try_from(wire: JsonOptionsWire) -> Result<Self, Self::Error> {
         let options = JsonOptions {
             sealed_root: wire.sealed_root,
-            ..JsonOptions::new()
-        }
-        .ordering(wire.ordered)?;
+            ordered: wire.ordered,
+        };
+        options.check()?;
         Ok(JsonWire(options))
     }
 }
@@ -330,6 +349,7 @@ pub(super) struct MatchWire(pub(super) MatchOptions);
 struct MatchOptionsWire {
     tokenizer: TokenizerWire,
     downcase: bool,
+    short_words: bool,
     k: usize,
     m: u32,
 }
@@ -339,6 +359,7 @@ impl Default for MatchOptionsWire {
         let MatchOptions {
             tokenizer,
             downcase,
+            short_words,
             k,
             m,
         } = MatchOptions::default();
@@ -348,6 +369,7 @@ impl Default for MatchOptionsWire {
                 Tokenizer::Ngram { length } => TokenizerWire::Ngram(length),
             },
             downcase,
+            short_words,
             k,
             m,
         }
@@ -372,6 +394,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
                 TokenizerWire::Ngram(length) => Tokenizer::Ngram { length },
             },
             downcase: wire.downcase,
+            short_words: wire.short_words,
             k: wire.k,
             m: wire.m,
         };
@@ -433,7 +456,7 @@ pub async fn term<'c, K, P, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
     P: Encrypt,
     D: IntoPrfContext<'c>,
 {
@@ -558,9 +581,11 @@ where
                 .match_terms_under::<DefaultMatch>(text, context, options.clone())
                 .map(|terms| TermBytes(terms.to_bytes())))
         }
-        IndexSpec::Ore => order_of(cipher, OrderIndex::Ore, value, context).ok_or(None),
-        IndexSpec::Ope => order_of(cipher, OrderIndex::Ope, value, context).ok_or(None),
-        IndexSpec::OreBlock => order_of(cipher, OrderIndex::OreBlock, value, context).ok_or(None),
+        IndexSpec::Ore => order_of(cipher, OrderIndex::Ore, ty, value, context).ok_or(None),
+        IndexSpec::Ope => order_of(cipher, OrderIndex::Ope, ty, value, context).ok_or(None),
+        IndexSpec::OreBlock => {
+            order_of(cipher, OrderIndex::OreBlock, ty, value, context).ok_or(None)
+        }
         // `takes` refused it above: no scalar is a document.
         IndexSpec::Json(_) => Err(None),
     }
@@ -588,15 +613,41 @@ enum OrderIndex {
 /// Each scalar is encoded at the target of the Rust type named here
 /// ([`Orderable`]), as on the typed path: text by the system ADR-0002's
 /// fold, so `café` precomposed or with a combining accent, and `Café`, tie.
+/// A date, timestamp or decimal is read into its [`value`](crate::value)
+/// type, so it is ordered as one, never as the bare integer it is held as.
 fn order_of<'a, 'c, K: 'static, D>(
     cipher: &'a KeysetCipher<'_, K>,
     index: OrderIndex,
+    ty: Option<Logical>,
     value: Physical<'_>,
     context: NonEmpty<D>,
 ) -> Option<Pending<'a, TermBytes, K>>
 where
     D: IntoPrfContext<'c>,
 {
+    match ty {
+        None => {}
+        Some(Logical::Date) => {
+            return Some(order(cipher, index, Date::from_scalar(ty, value)?, context))
+        }
+        Some(Logical::Timestamp(_)) => {
+            return Some(order(
+                cipher,
+                index,
+                Timestamp::from_scalar(ty, value)?,
+                context,
+            ))
+        }
+        Some(Logical::Decimal { .. }) => {
+            return Some(order(
+                cipher,
+                index,
+                Decimal::from_scalar(ty, value)?,
+                context,
+            ))
+        }
+        Some(_) => return None,
+    }
     Some(match value {
         Physical::Int(Int::I16(v)) => order(cipher, index, v, context),
         Physical::Int(Int::I32(v)) => order(cipher, index, v, context),
@@ -676,6 +727,12 @@ where
         (self.0)(ty, value).map_err(Refused)
     }
 
+    /// A typed null is a null to a term: its type hides its length when
+    /// sealed, which a term does not seal.
+    fn typed_null(self, _: FixedType) -> Result<T, Refused> {
+        self.scalar(None, Physical::Null)
+    }
+
     fn seq(self, _: Option<usize>) -> Result<NoContainer<T>, Refused> {
         Err(Refused(None))
     }
@@ -712,6 +769,10 @@ impl<T> Sink for NoContainer<T> {
     type Map = Self;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<T, Refused> {
+        self.unreachable()
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<T, Refused> {
         self.unreachable()
     }
 
@@ -825,6 +886,30 @@ mod tests {
             .init()
             .await
             .expect("build cipher")
+    }
+
+    /// A JSON index's ordered paths are `JsonPath`s on both sides of the
+    /// wire: written as their text, read back parsed, and a text that is
+    /// not a path, or a path naming a position, refuses the index.
+    #[test]
+    fn json_ordered_paths_round_trip_typed() {
+        let options = JsonOptions::default()
+            .ordering(["$.orders[*].total", r#"$["a.b"]"#])
+            .unwrap();
+        let spec = IndexSpec::Json(options);
+        let wire = serde_json::to_value(&spec).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({"json": {"sealed_root": true, "ordered": [r#"$["a.b"]"#, "$.orders[*].total"]}})
+        );
+        let back = IndexSpec::from(serde_json::from_value::<IndexWire>(wire).unwrap());
+        assert_eq!(back, spec);
+        for refused in [
+            serde_json::json!({"json": {"ordered": ["orders"]}}),
+            serde_json::json!({"json": {"ordered": ["$.scores[2]"]}}),
+        ] {
+            assert!(serde_json::from_value::<IndexWire>(refused).is_err());
+        }
     }
 
     /// A pair the scheme refuses fails the run of `IndexSpec`'s public
@@ -1085,6 +1170,9 @@ mod tests {
                     );
                 };
             }
+            // A null: the one term every null shares (#1298), typed or not.
+            equal!(None::<u32>, Tree::Null, "null");
+            equal!(None::<String>, Tree::Null, "null as text");
             equal!(-3i32, Tree::Int32(-3), "i32");
             equal!(-4i64, Tree::Int64(-4), "i64");
             equal!(34u32, Tree::UInt32(34), "u32");
@@ -1134,6 +1222,28 @@ mod tests {
             ordered!(2.5f64, Tree::Float64(2.5), "f64");
             ordered!("alice".to_string(), s("alice"), "text");
             ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
+            // A date, a timestamp and a decimal, as their `value` types.
+            ordered!(
+                crate::value::Date::from_days_since_epoch(19_782).expect("in range"),
+                Tree::Typed(Logical::Date, Box::new(Tree::Int32(19_782))),
+                "date"
+            );
+            ordered!(
+                crate::value::Timestamp::new(1_700_000_000, 123_456_789).expect("in range"),
+                Tree::Typed(
+                    Logical::Timestamp(vitaminc_aead::plaintext::TimeUnit::Nanos),
+                    Box::new(Tree::Int128(1_700_000_000_123_456_789))
+                ),
+                "timestamp"
+            );
+            ordered!(
+                crate::value::Decimal::new(-123_450, 2).expect("in range"),
+                Tree::Typed(
+                    Logical::Decimal { scale: 2 },
+                    Box::new(Tree::Int128(-123_450))
+                ),
+                "decimal"
+            );
 
             // A float32 is ordered as the f64 it widens to: `f32`'s target
             // is `F64`, so a dynamic `f32` and the typed `f64` it widens to
@@ -1403,28 +1513,40 @@ mod tests {
             }
         }
 
-        /// A decimal, a date and a timestamp have an equality term, from
-        /// vitaminc, and no order term yet: their order encodings wait for
-        /// new cllw-ore and ore-rs releases (#1236), and the engine does not
-        /// shim around cllw-ore 0.5.
+        /// A decimal, a date and a timestamp have order terms, which order
+        /// by value: a decimal whatever its scale, so `1.5` ties `1.50`; a
+        /// timestamp by the microsecond, floored, so instants in one
+        /// microsecond tie and one nanosecond before the epoch is a
+        /// microsecond before it. OPE terms compare as bytes, so the order
+        /// is read off them directly.
         #[tokio::test]
-        async fn a_decimal_date_or_timestamp_has_no_order_term_yet() {
+        async fn a_decimal_date_or_timestamp_orders_by_value() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
             for leaf in [decimal(150, 2), date(19_782), instant(7)] {
-                for kind in [IndexSpec::Ore, IndexSpec::Ope] {
-                    assert!(!kind.defines(&leaf), "{kind}");
-                    assert!(matches!(
-                        term(&keyset, &leaf, &kind, ctx.clone()).await,
-                        Err(Error::Term { .. })
-                    ));
+                for kind in [IndexSpec::Ore, IndexSpec::Ope, IndexSpec::OreBlock] {
+                    assert!(kind.defines(&leaf), "{kind}");
                 }
-                assert!(IndexSpec::Equality.defines(&leaf));
-                assert!(term(&keyset, &leaf, &IndexSpec::Equality, ctx.clone())
-                    .await
-                    .is_ok());
             }
+            let ope = |leaf: ValueFrame| {
+                let ctx = ctx.clone();
+                let keyset = &keyset;
+                async move {
+                    term(keyset, &leaf, &IndexSpec::Ope, ctx)
+                        .await
+                        .expect("derives")
+                }
+            };
+            assert_eq!(ope(decimal(15, 1)).await, ope(decimal(150, 2)).await);
+            assert!(ope(decimal(-1, 0)).await < ope(decimal(15, 1)).await);
+            assert!(ope(decimal(15, 1)).await < ope(decimal(2, 0)).await);
+            assert!(ope(date(-1)).await < ope(date(0)).await);
+            assert!(ope(date(0)).await < ope(date(19_782)).await);
+            assert_eq!(ope(instant(1_000)).await, ope(instant(1_999)).await);
+            assert!(ope(instant(1_999)).await < ope(instant(2_000)).await);
+            assert!(ope(instant(-1)).await < ope(instant(0)).await);
+            assert_eq!(ope(instant(-1)).await, ope(instant(-1_000)).await);
         }
 
         /// Text with a code point unassigned in Unicode 16 has a domain but
@@ -1460,7 +1582,6 @@ mod tests {
             let keyset = cipher.default_keyset();
             let ctx = ctx("users/x");
             let not_scalars = [
-                ("null", Tree::Null),
                 ("undefined", Tree::Undefined),
                 ("an array", Tree::Array(vec![Tree::UInt32(1)])),
                 (
@@ -1490,6 +1611,38 @@ mod tests {
         }
     }
 
+    mod given_a_null {
+        use super::*;
+
+        /// A null has an equality term (`vitaminc-normalize` 0.8, #1298) and
+        /// no other: nothing orders or tokenizes an absent value.
+        #[tokio::test]
+        async fn it_has_an_equality_term_and_no_other() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let ctx = ctx("users/x");
+            assert!(IndexSpec::Equality.defines(&Tree::Null));
+            assert!(
+                term(&keyset, &Tree::Null, &IndexSpec::Equality, ctx.clone())
+                    .await
+                    .is_ok()
+            );
+            for kind in [
+                default_match(),
+                IndexSpec::Ore,
+                IndexSpec::Ope,
+                IndexSpec::OreBlock,
+            ] {
+                assert!(!kind.defines(&Tree::Null), "a null has no {kind} term");
+                let result = term(&keyset, &Tree::Null, &kind, ctx.clone()).await;
+                assert!(
+                    matches!(&result, Err(Error::Term { kind: k, .. }) if *k == kind),
+                    "{kind}: {result:?}"
+                );
+            }
+        }
+    }
+
     mod given_an_index_spec {
         use super::*;
 
@@ -1497,6 +1650,7 @@ mod tests {
             MatchOptions {
                 tokenizer: crate::sem::Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 6,
                 m: 1024,
             }
@@ -1578,6 +1732,15 @@ mod tests {
                     m: 512,
                     ..MatchOptions::default()
                 },
+                MatchOptions {
+                    short_words: true,
+                    ..MatchOptions::default()
+                },
+                MatchOptions {
+                    tokenizer: crate::sem::Tokenizer::Ngram { length: 4 },
+                    short_words: true,
+                    ..MatchOptions::default()
+                },
             ];
             for options in cases {
                 let spec = IndexSpec::Match(options.clone());
@@ -1592,6 +1755,64 @@ mod tests {
                     "{options:?} round-trips"
                 );
             }
+        }
+
+        /// `short_words` is written only when it is on, so a plan under
+        /// other options is the bytes it was before the option existed, and
+        /// read as `"short_words": true`, with every other option defaulted.
+        #[test]
+        fn short_words_is_written_only_when_on() {
+            let obj = |entries: Vec<(&str, Tree)>| {
+                Tree::Object(
+                    entries
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v))
+                        .collect(),
+                )
+            };
+            let keys = |spec: &IndexSpec| match crate::dynamic::test_frame::value_of(spec) {
+                Tree::Object(mut entries) => match entries.pop() {
+                    Some((_, Tree::Object(options))) => {
+                        options.into_iter().map(|(k, _)| k).collect::<Vec<_>>()
+                    }
+                    other => panic!("a match options object, got {other:?}"),
+                },
+                other => panic!("an object, got {other:?}"),
+            };
+            assert_eq!(
+                keys(&IndexSpec::Match(non_default_match())),
+                ["tokenizer", "downcase", "k", "m"],
+                "off, the option is not written"
+            );
+            assert_eq!(
+                keys(&IndexSpec::Match(MatchOptions {
+                    short_words: true,
+                    ..MatchOptions::default()
+                })),
+                ["tokenizer", "downcase", "short_words", "k", "m"],
+                "on, it is written beside the others"
+            );
+            assert_eq!(
+                index_of(&obj(vec![(
+                    "match",
+                    obj(vec![("short_words", Tree::Bool(true))])
+                )]))
+                .expect("reads"),
+                IndexSpec::Match(MatchOptions {
+                    short_words: true,
+                    ..MatchOptions::default()
+                }),
+                "the option alone is the defaults with short words"
+            );
+            assert_eq!(
+                index_of(&obj(vec![(
+                    "match",
+                    obj(vec![("short_words", Tree::Bool(false))])
+                )]))
+                .expect("reads"),
+                default_match(),
+                "the option off is the default index"
+            );
         }
 
         /// The object form spells each option by name and defaults the
@@ -1691,6 +1912,24 @@ mod tests {
                     opts(vec![("tokenizer", obj(vec![("ngram", Tree::UInt32(0))]))]),
                 ),
                 ("a mistyped downcase", opts(vec![("downcase", s("yes"))])),
+                (
+                    "a mistyped short_words",
+                    opts(vec![("short_words", Tree::UInt32(1))]),
+                ),
+                (
+                    "short_words beside the standard tokenizer",
+                    opts(vec![
+                        ("tokenizer", s("standard")),
+                        ("short_words", Tree::Bool(true)),
+                    ]),
+                ),
+                (
+                    "short_words beside 2-grams",
+                    opts(vec![
+                        ("tokenizer", obj(vec![("ngram", Tree::UInt32(2))])),
+                        ("short_words", Tree::Bool(true)),
+                    ]),
+                ),
                 ("a negative k", opts(vec![("k", Tree::Int32(-3))])),
                 ("a float k", opts(vec![("k", Tree::Float64(3.0))])),
                 ("k out of bounds", opts(vec![("k", Tree::UInt32(17))])),
@@ -1724,6 +1963,7 @@ mod tests {
                     MatchOptions {
                         tokenizer: crate::sem::Tokenizer::Standard,
                         downcase: false,
+                        short_words: false,
                         k: 6,
                         m: 1024,
                     }
@@ -1751,6 +1991,48 @@ mod tests {
                 .expect("default");
             assert_ne!(wide, default, "other options derive other terms");
         }
+
+        /// The data path derives a short-word index's term as the typed
+        /// path does, and "Ng", which cuts nothing under the default
+        /// options, is one token under them.
+        #[tokio::test]
+        async fn short_words_drive_the_derivation() {
+            struct ShortWords;
+            impl crate::sem::MatchConfig for ShortWords {
+                fn options() -> MatchOptions {
+                    MatchOptions {
+                        short_words: true,
+                        ..MatchOptions::default()
+                    }
+                }
+            }
+            let options = <ShortWords as crate::sem::MatchConfig>::options();
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for text in ["Ng", "Mike Ng"] {
+                let data = term(
+                    &keyset,
+                    &s(text),
+                    &IndexSpec::Match(options.clone()),
+                    ctx("users/x"),
+                )
+                .await
+                .expect("a short word is a query");
+                let typed = keyset
+                    .match_terms::<ShortWords>(text, nonempty!("users/x"))
+                    .await
+                    .expect("typed");
+                assert_eq!(data, typed.to_bytes(), "{text:?}: the typed config's bytes");
+            }
+            let refused = term(&keyset, &s("Ng"), &default_match(), ctx("users/x")).await;
+            assert!(
+                matches!(
+                    refused,
+                    Err(Error::Cipher(crate::Error::Term(TermError::EmptyTermText)))
+                ),
+                "without the option, \"Ng\" is no query: {refused:?}"
+            );
+        }
     }
 }
 
@@ -1774,6 +2056,7 @@ mod wire_form {
             MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }

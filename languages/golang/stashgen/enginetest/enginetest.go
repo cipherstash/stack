@@ -186,8 +186,9 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 
 // answeredBy mirrors OpSpec::answered_by in stack-encrypt: eq through an
 // equality index, matches through a match index, and the orderings through
-// ORE, else block ORE, else OPE, over an integer or text; each only
-// where the index applies to the type.
+// ORE, else block ORE, else OPE, over an integer of 16 bits or wider, a
+// float, text, a decimal, a date or a timestamp; each only where the index
+// applies to the type.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
 		for _, idx := range indexes {
@@ -203,7 +204,8 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	orderable := (integer(t) && !eightBit(t)) || t.Kind == stashgen.KindFloat || t.Kind == stashgen.KindString
+	orderable := (integer(t) && !eightBit(t)) || logical(t) ||
+		t.Kind == stashgen.KindFloat || t.Kind == stashgen.KindString
 	if !orderable {
 		return "", false
 	}
@@ -224,6 +226,15 @@ func integer(t stashgen.GoType) bool {
 	return false
 }
 
+// logical reports whether the type is a decimal, a date or a timestamp.
+func logical(t stashgen.GoType) bool {
+	switch t.Kind {
+	case stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
+		return true
+	}
+	return false
+}
+
 // eightBit reports whether the type is an 8-bit integer (int8, uint8 or
 // byte, or a type defined over one), which has no order term.
 func eightBit(t stashgen.GoType) bool {
@@ -238,11 +249,10 @@ func eightBit(t stashgen.GoType) bool {
 // every kind vitaminc gives an equality domain (integers of every width,
 // floats, decimals, dates, timestamps, text and bytes; a boolean has none),
 // match over text alone, ORE and OPE over integers of 16 bits and wider,
-// floats, text and bytes. Not over a boolean or an 8-bit integer, whose
-// order term would reveal which rows are true, or each row's rank among 256
-// values; and not yet over a decimal, date or timestamp, whose order terms
-// wait for new cllw-ore and ore-rs releases (#1236). The JSON index is not
-// in the engine yet.
+// floats, text, bytes, decimals, dates and timestamps. Not over a boolean
+// or an 8-bit integer, whose order term would reveal which rows are true,
+// or each row's rank among 256 values. The JSON index is not in the engine
+// yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
@@ -260,16 +270,15 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 		return fmt.Errorf("match applies to a string, not to %s", t)
 	case stashgen.IndexOre, stashgen.IndexOpe, stashgen.IndexOreBlock:
 		switch t.Kind {
-		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat:
+		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat,
+			stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
 			return nil
-		case stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
-			return fmt.Errorf("an order index on a decimal, date or timestamp waits for new cllw-ore and ore-rs releases (#1236)")
 		}
 		if integer(t) && !eightBit(t) {
 			return nil
 		}
 	case stashgen.IndexJSON:
-		return fmt.Errorf("the engine cannot derive the json index yet")
+		return fmt.Errorf("the json index is not an output beside a ciphertext: store a JSON document with encrypt_into=JsonSearch")
 	}
 	return fmt.Errorf("%s does not apply to %s", name, t)
 }

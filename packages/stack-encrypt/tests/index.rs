@@ -226,6 +226,7 @@ mod given_a_set_of_indexes {
             MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }
@@ -611,6 +612,7 @@ mod given_encrypted_terms_as_a_target {
             MatchOptions {
                 tokenizer: Tokenizer::Standard,
                 downcase: false,
+                short_words: false,
                 k: 4,
                 m: 512,
             }

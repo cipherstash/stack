@@ -9,8 +9,8 @@
 
 use vitaminc_aead::frame::{FrameError, FrameWriteError};
 use vitaminc_aead::plaintext::{
-    visit_map, visit_seq, Error as _, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
-    SourceError,
+    visit_map, visit_seq, Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink,
+    Sink, SourceError,
 };
 use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, Frame};
 use vitaminc_protected::{Controlled, Protected};
@@ -269,6 +269,10 @@ impl<O: Put> Sink for TreeSink<O> {
             Some(ty) => Tree::Typed(ty, Box::new(physical(value))),
         };
         Ok(self.0.put(value))
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<O::Ok, DecodeError> {
+        Ok(self.0.put(Tree::Null))
     }
 
     fn seq(self, _: Option<usize>) -> Result<TreeSeq<O>, DecodeError> {

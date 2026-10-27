@@ -410,7 +410,13 @@ async fn a_leaf_sealed_from_a_frame_opens_as_the_typed_plaintext() {
 async fn every_producible_type_dispatches_by_name() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let producible: Vec<_> = targets::targets().iter().filter(|t| t.producible).collect();
+    // A type that stores a JSON document takes JSON text and answers the
+    // JSON operators, not one query per index: tests/json_tree_data_plan.rs
+    // runs it by name.
+    let producible: Vec<_> = targets::targets()
+        .iter()
+        .filter(|t| t.producible && t.plaintext != Some("json"))
+        .collect();
     assert!(!producible.is_empty());
     for target in producible {
         let name = target.name;
@@ -472,18 +478,13 @@ async fn every_producible_type_dispatches_by_name() {
                     let term = term_of(key);
                     assert!(json[term].is_string() || json[term].is_array(), "{name}");
                     if term == "ob" {
-                        let one_hex = |value: &serde_json::Value| {
-                            value
-                                .as_array()
-                                .is_some_and(|a| a.len() == 1 && a[0].is_string())
-                        };
                         assert!(
-                            one_hex(&json[term]) && one_hex(&query[term]),
-                            "{name} via {key}: one block ORE term each"
+                            json[term].is_string() && query[term].is_string(),
+                            "{name} via {key}: one block ORE term each, as hex"
                         );
                         assert_eq!(
-                            query[term][0].as_str().unwrap().len(),
-                            json[term][0].as_str().unwrap().len(),
+                            query[term].as_str().unwrap().len(),
+                            json[term].as_str().unwrap().len(),
                             "{name} via {key}: the query's term is the stored one's length"
                         );
                     } else {
@@ -589,16 +590,73 @@ async fn text_match_filters_contain_their_substrings() {
     let named: text::TextMatch = by_name(&keyset, "TextMatch", frame("Alice@Example.com")).await;
     assert_eq!(named.bf, stored.bf);
 
-    // Text shorter than a 3-gram has no tokens. eql-bindings refuses it for a
-    // stored value as well as a query: one filter type builds both, and an
-    // empty filter as a query would match every row. So a short value cannot
-    // be written to a TextMatch column yet.
-    let short: Result<text::TextMatch, _> = keyset.encrypt_as(&"ab".to_owned(), column()).await;
-    assert!(short.is_err());
-    let short_query: Result<text::TextMatchQuery, _> =
-        keyset.encrypt_as(&"ab".to_owned(), column()).await;
-    assert!(short_query.is_err(), "a short query would match every row");
+    // Text that cuts no token (one letter, or none) has no filter.
+    // eql-bindings refuses it for a stored value as well as a query: one
+    // filter type builds both, and an empty filter as a query would match
+    // every row. A two-letter word is a token of its own, so it stores.
+    for short in ["a", "", " "] {
+        let stored: Result<text::TextMatch, _> =
+            keyset.encrypt_as(&short.to_owned(), column()).await;
+        assert!(stored.is_err(), "{short:?} cuts no token");
+        let query: Result<text::TextMatchQuery, _> =
+            keyset.encrypt_as(&short.to_owned(), column()).await;
+        assert!(
+            query.is_err(),
+            "{short:?}: a query with no token would match every row"
+        );
+    }
 }
+
+/// Two-letter surnames, which cut no 3-gram: each is one short-word token
+/// (`EqlMatch` turns `short_words` on), so it stores into `TextMatch`, and the
+/// query of the surname finds the bare value and a full name holding it,
+/// whatever its case, but not a longer name it begins.
+#[tokio::test]
+async fn two_letter_surnames_store_and_are_found() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    for &surname in SURNAMES {
+        let bare: text::TextMatch = keyset
+            .encrypt_as(&surname.to_owned(), column())
+            .await
+            .unwrap_or_else(|error| panic!("{surname:?} stores: {error}"));
+        assert!(!bare.bf.0.is_empty(), "{surname:?} stores a token");
+        let query: text::TextMatchQuery = keyset
+            .encrypt_as(&surname.to_lowercase(), column())
+            .await
+            .unwrap_or_else(|error| panic!("{surname:?} is a query: {error}"));
+        assert_eq!(
+            query.bf, bare.bf,
+            "{surname:?}: the query's filter is the stored one's"
+        );
+        let full: text::TextMatch = keyset
+            .encrypt_as(&format!("Mike {surname}"), column())
+            .await
+            .unwrap();
+        assert!(
+            positions(&query.bf).is_subset(&positions(&full.bf)),
+            "{surname:?} is found in \"Mike {surname}\""
+        );
+        let longer: text::TextMatch = keyset
+            .encrypt_as(&format!("Mike {surname}ward"), column())
+            .await
+            .unwrap();
+        assert!(
+            !positions(&query.bf).is_subset(&positions(&longer.bf)),
+            "{surname:?} is not found in \"Mike {surname}ward\""
+        );
+        let named: text::TextMatch = by_name(&keyset, "TextMatch", frame(surname)).await;
+        assert_eq!(
+            named.bf, bare.bf,
+            "{surname:?}: the dispatch derives the same filter"
+        );
+    }
+}
+
+/// Common two-letter surnames.
+const SURNAMES: &[&str] = &[
+    "Ng", "Li", "Wu", "Le", "Do", "Ho", "Yu", "Lu", "Ma", "Xu", "Hu", "Su", "Oh", "Ko", "An", "Ye",
+];
 
 /// The filter bits for one query under the test key source. The
 /// configuration is part of the stored format (`EqlMatch`): if these move,
@@ -686,6 +744,102 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     };
     let opened: Result<i32, _> = cipher.decrypt_as(moved, column().into()).await;
     assert!(opened.is_err(), "a bool is not an integer");
+}
+
+/// Needs an EQL v4 installation. Two-letter surnames in a `TextMatch` and a
+/// `TextSearch` column: `@@` with the query of the surname finds the rows
+/// holding it as a word, bare or in a full name, and not a longer name it
+/// begins; a full-name query needs its two-letter word whole.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_finds_two_letter_surnames() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = postgres::Client::connect(
+        &std::env::var("EQL_TEST_DATABASE_URL").expect("EQL_TEST_DATABASE_URL"),
+        postgres::NoTls,
+    )
+    .unwrap();
+    db.batch_execute(
+        "CREATE TEMP TABLE v4_surnames (
+            id int PRIMARY KEY,
+            name public.eql_v4_text_match,
+            search public.eql_v4_text_search
+        );",
+    )
+    .unwrap();
+    let names = [
+        (1, "Ng"),
+        (2, "Mike Ng"),
+        (3, "Nguyen"),
+        (4, "Mike Nguyen"),
+        (5, "Li Wei"),
+        (6, "NG, Anna"),
+    ];
+    for (id, name) in names {
+        let (matched, search) = runtime.block_on(async {
+            let matched: text::TextMatch =
+                keyset.encrypt_as(&name.to_owned(), column()).await.unwrap();
+            let search: text::TextSearch =
+                keyset.encrypt_as(&name.to_owned(), column()).await.unwrap();
+            (matched, search)
+        });
+        db.execute(
+            "INSERT INTO v4_surnames VALUES ($1,
+                $2::text::jsonb::public.eql_v4_text_match,
+                $3::text::jsonb::public.eql_v4_text_search)",
+            &[
+                &id,
+                &serde_json::to_string(&matched).unwrap(),
+                &serde_json::to_string(&search).unwrap(),
+            ],
+        )
+        .unwrap();
+    }
+    let mut found = |needle: &str| -> (Vec<i32>, Vec<i32>) {
+        let (matched, search) = runtime.block_on(async {
+            let matched: text::TextMatchQuery = keyset
+                .encrypt_as(&needle.to_owned(), column())
+                .await
+                .unwrap();
+            let search: text::TextSearchMatchQuery = keyset
+                .encrypt_as(&needle.to_owned(), column())
+                .await
+                .unwrap();
+            (matched, text::TextSearchQuery::from(search))
+        });
+        let ids = |rows: Vec<postgres::Row>| rows.iter().map(|r| r.get(0)).collect();
+        (
+            ids(db
+                .query(
+                    "SELECT id FROM v4_surnames WHERE name @@ $1::text::jsonb::eql_v4.query_text_match ORDER BY id",
+                    &[&serde_json::to_string(&matched).unwrap()],
+                )
+                .unwrap()),
+            ids(db
+                .query(
+                    "SELECT id FROM v4_surnames WHERE search @@ $1::text::jsonb::eql_v4.query_text_search ORDER BY id",
+                    &[&serde_json::to_string(&search).unwrap()],
+                )
+                .unwrap()),
+        )
+    };
+    for (needle, want) in [
+        ("ng", vec![1, 2, 6]),
+        ("Ng", vec![1, 2, 6]),
+        ("Mike Ng", vec![2]),
+        ("Nguyen", vec![3, 4]),
+        ("li", vec![5]),
+        ("Wei", vec![5]),
+    ] {
+        let (matched, search) = found(needle);
+        assert_eq!(matched, want, "TextMatch @@ {needle:?}");
+        assert_eq!(search, want, "TextSearch @@ {needle:?}");
+    }
 }
 
 /// Needs an EQL v4 installation; uses fresh real ciphertext with a fake key

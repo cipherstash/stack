@@ -13,8 +13,8 @@
 pub use stack_kms::DeterministicSource;
 
 use serde::Deserialize;
+use stack_encrypt::dynamic::frame::serde::from_slice;
 use stack_guest_abi::last_error::malformed;
-use vitaminc_aead_frame::serde::from_slice;
 use zeroize::Zeroize;
 
 /// The `deterministic-kms` build's whole config: the source's 32-byte seed,
@@ -57,7 +57,7 @@ impl Seed {
 mod tests {
     use super::Seed;
     use crate::test_frame::{frame, V};
-    use vitaminc_aead_frame::serde::from_slice;
+    use stack_encrypt::dynamic::frame::serde::from_slice;
 
     /// A seed is 32 bytes, and only bytes: 32 characters of text are refused.
     #[test]

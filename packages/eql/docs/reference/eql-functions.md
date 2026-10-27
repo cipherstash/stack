@@ -140,10 +140,10 @@ Every ordered family has a **range query domain** per ordering term, beside its 
 
 | Range domain | Bounds | Column domains it applies to |
 |---|---|---|
-| `eql_v4.query_<T>_range_ore` | two block-ORE terms (`ob` arrays) | `public.eql_v4_<T>_ord_ore`, `public.eql_v4_text_search_ore` |
+| `eql_v4.query_<T>_range_ore` | two block-ORE terms (`ob` hex strings) | `public.eql_v4_<T>_ord_ore`, `public.eql_v4_text_search_ore` |
 | `eql_v4.query_<T>_range_ope` | two CLLW-OPE terms (`op` hex strings) | `public.eql_v4_<T>_ord`, `public.eql_v4_<T>_ord_ope`, `public.eql_v4_text_search` |
 
-`<T>` is any ordered family: `integer`, `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `text`, `real`, `double`. A range value is `{"v": 4, "i": {...}, "lo": <term>, "hi": <term>}`: each bound is the single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a `{v, i, lo, hi}` envelope, with no ciphertext `c`. Stack Encrypt does not build this envelope yet; it will when the ordered EQL types become producible.
+`<T>` is any ordered family: `integer`, `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `text`, `real`, `double`. A range value is `{"v": 4, "i": {...}, "lo": <term>, "hi": <term>}`: each bound is the single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a `{v, i, lo, hi}` envelope, with no ciphertext `c`. Both are one lowercase hex string: a block ORE bound starts `0202` or `0203` and an OPE bound `00` or `01`, and the range domain refuses any other bound with `check_violation` (an EQL v3 `ob` array among them; see [U-003](../upgrading/v3.1.md#u-003-an-order-term-is-one-hex-string-checked-when-it-is-written)). Stack Encrypt does not build this envelope yet: build it from the `ob` or `op` of two single-bound queries of the column's type.
 
 ```sql
 -- true when lo <= column <= hi, both bounds included

@@ -140,6 +140,78 @@ impl Term {
     }
 }
 
+/// How EQL v4 stores an order term: as the lowercase hex of a Stack Encrypt
+/// term, one JSON string, where EQL v3 stores cipherstash-client's terms.
+///
+/// One entry per term, read by both halves of the generated surface: the
+/// bindings type the field with [`rust_type`](Self::rust_type) over the
+/// family's plaintext and describe it to TypeScript and JSON Schema as
+/// [`json_shape`](Self::json_shape), and the domain CHECKs refuse a value
+/// that is not a string starting with one of [`prefixes`](Self::prefixes).
+/// The same prefixes and [`unit_digits`](Self::unit_digits) make the JSON
+/// Schema pattern, so the schema and the CHECK cannot disagree about which
+/// strings are terms.
+///
+/// The CHECK reads only the prefix and the type of the JSON value: cheap,
+/// and enough to refuse an EQL v3 array or a term of another scheme. The
+/// full structure (block count, length, padding) is checked where the term
+/// is read: by `from_bytes` in Rust and by the comparator in SQL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V4TermFormat {
+    /// The Stack Encrypt type of the field, under `stack_encrypt::sem`,
+    /// generic over the plaintext it orders: `OreBlockTerm`, `OpeTerm`.
+    pub rust_type: &'static str,
+    /// The schema-only type naming the field's JSON in TypeScript and JSON
+    /// Schema: `OreBlockHex`, `OpeHex`.
+    pub json_shape: &'static str,
+    /// What the term is, for the schema's description.
+    pub description: &'static str,
+    /// The hex every term starts with, one of these: block ORE's wire
+    /// version and engine (`0202` fixed width, `0203` chained), OPE's carry
+    /// byte (`00`, `01`).
+    pub prefixes: &'static [&'static str],
+    /// The hex digits of the unit the rest of a term repeats: a byte for
+    /// block ORE, whose length the comparator checks, an 8-byte block for
+    /// OPE, one byte per bit of the value.
+    pub unit_digits: usize,
+}
+
+impl V4TermFormat {
+    /// The JSON Schema pattern of a term: a prefix, then whole units of
+    /// lowercase hex, at least one.
+    pub fn pattern(&self) -> String {
+        format!(
+            "^({})([0-9a-f]{{{}}})+$",
+            self.prefixes.join("|"),
+            self.unit_digits
+        )
+    }
+}
+
+impl Term {
+    /// How EQL v4 stores this term, or `None` for a term v4 stores as v3
+    /// does (`hm`, `bf`). See [`V4TermFormat`].
+    pub const fn v4_format(self) -> Option<V4TermFormat> {
+        match self {
+            Term::Ore => Some(V4TermFormat {
+                rust_type: "OreBlockTerm",
+                json_shape: "OreBlockHex",
+                description: "An ore-rs 6-bit block ORE ciphertext (wire version 2), as lowercase hex.",
+                prefixes: &["0202", "0203"],
+                unit_digits: 2,
+            }),
+            Term::Ope => Some(V4TermFormat {
+                rust_type: "OpeTerm",
+                json_shape: "OpeHex",
+                description: "A clww-ore CLWW OPE ciphertext, as lowercase hex: a carry byte, then 8 bytes per byte of the value.",
+                prefixes: &["00", "01"],
+                unit_digits: 16,
+            }),
+            Term::Hm | Term::Bloom => None,
+        }
+    }
+}
+
 impl Term {
     /// Stable dedupe — first occurrence wins.
     fn dedupe_preserving_order<'a>(items: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {

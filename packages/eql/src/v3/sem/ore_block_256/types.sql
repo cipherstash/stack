@@ -15,6 +15,7 @@ CREATE TYPE {{prefix}}_internal.{{ore_block}}_term AS (
 );
 
 
+-- {{#v3}}
 --! @brief ORE block index term type for range queries
 --!
 --! Composite type containing an array of ORE block terms. The array is stored
@@ -24,3 +25,15 @@ CREATE TYPE {{prefix}}_internal.{{ore_block}}_term AS (
 CREATE TYPE {{prefix}}_internal.{{ore_block}} AS (
   terms {{prefix}}_internal.{{ore_block}}_term[]
 );
+-- {{/v3}}
+-- {{#v4}}
+--! @brief ORE block index term type for range queries
+--!
+--! Composite type holding one ORE block term: the ore-rs ciphertext that
+--! the 'ob' field of an encrypted payload stores as one hex string.
+--!
+--! @note Transient type used only during query execution.
+CREATE TYPE {{prefix}}_internal.{{ore_block}} AS (
+  term {{prefix}}_internal.{{ore_block}}_term
+);
+-- {{/v4}}

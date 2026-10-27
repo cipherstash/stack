@@ -178,3 +178,45 @@ func TestParseContext(t *testing.T) {
 		t.Fatalf("CheckSegment: %v", err)
 	}
 }
+
+// A target with options is the object {"name", "options"}, with only the
+// options set; a target with none is its name.
+func TestWireGivesATargetItsOptions(t *testing.T) {
+	sealed := false
+	p := &Plan{Context: []string{"users"}, Fields: []Field{
+		{Name: "profile", Kind: JSON, Target: "JsonSearch", Null: SQLNull, TargetOptions: &TargetOptions{SealedRoot: &sealed, Ordered: []string{"$.age"}}},
+		{Name: "prefs", Kind: JSON, Target: "JsonSearch", Null: SQLNull, TargetOptions: &TargetOptions{}},
+		{Name: "notes", Kind: JSON, Target: "JsonSearch"},
+	}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	wire := p.Wire()
+	target := func(i int) any { return wire[i].Value.(vcvalue.Object)[1].Value }
+	want := vcvalue.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: vcvalue.Object{
+		{Key: "sealed_root", Value: false}, {Key: "ordered", Value: []any{"$.age"}},
+	}}}
+	if !reflect.DeepEqual(target(0), want) {
+		t.Fatalf("target = %#v", target(0))
+	}
+	if !reflect.DeepEqual(target(1), vcvalue.Object{{Key: "name", Value: "JsonSearch"}, {Key: "options", Value: vcvalue.Object{}}}) {
+		t.Fatalf("empty options = %#v", target(1))
+	}
+	if target(2) != "JsonSearch" {
+		t.Fatalf("no options = %#v", target(2))
+	}
+	if typ := wire[0].Value.(vcvalue.Object)[2]; typ.Key != "type" || typ.Value != "json" {
+		t.Fatalf("type = %#v", typ)
+	}
+	bad := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "a", Kind: String, Outputs: []Output{Ciphertext}, TargetOptions: &TargetOptions{}}}}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "no target") {
+		t.Fatalf("options with no target: %v", err)
+	}
+	noTarget := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "profile", Kind: JSON, Outputs: []Output{Ciphertext}}}}
+	if err := noTarget.Validate(); err == nil || !strings.Contains(err.Error(), `"profile" is a JSON document and names no target`) {
+		t.Fatalf("a json field with no target: %v", err)
+	}
+	if !JSON.Known() {
+		t.Fatal("json is a kind")
+	}
+}

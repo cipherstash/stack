@@ -86,7 +86,7 @@ assert_eq!(plaintext, "secret message");
 //! id) so it cannot be replayed elsewhere:
 //!
 //! ```no_run
-//! # async fn example<K: stack_encrypt::kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
+//! # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
 //! let ct = keyset.encrypt("4111 1111 1111 1111", "users/42/card").await?;
 //! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok
@@ -280,6 +280,7 @@ pub mod op;
 pub mod plan;
 pub mod sem;
 pub mod target;
+pub mod value;
 
 pub use cipher::{
     Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
@@ -312,8 +313,8 @@ pub use target::{
 // `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
 // derivations see the same bytes.
 pub use vitaminc_aead::{
-    CipherText, Context, ContextPiece, ContextTag, Decrypt, Encrypt, IntoAad, IntoContext, Node,
-    PassthroughFrame, Unspecified,
+    CipherText, Context, ContextPiece, ContextTag, DecodeError, Decrypt, Encrypt, IntoAad,
+    IntoContext, Node, PassthroughFrame, Unspecified,
 };
 // The vitaminc 0.4 names, deprecated there; re-exported for one transition so
 // a caller that spelled them keeps compiling with a warning.
@@ -332,3 +333,7 @@ pub use vitaminc_prf::PrfContext;
 // checked once); `MaybeEmpty` is what a context type of your own implements
 // to be wrapped. `#[derive(EncryptFrom)]` names these through this crate.
 pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};
+
+// And the wrapper plaintext comes back in (`ValueFrame::into_inner`, a
+// decrypted `Protected<T>`), with the trait that reads it.
+pub use vitaminc_protected::{Controlled, Protected};
