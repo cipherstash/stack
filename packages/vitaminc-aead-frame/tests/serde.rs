@@ -1454,3 +1454,111 @@ fn a_string_reads_only_text_and_bytes_only_bytes() {
         from_slice::<BTreeMap<String, serde_bytes::ByteBuf>>(&passthrough).expect_err("refused");
     assert!(error.message().contains("passthrough"), "{error}");
 }
+
+/// A key or a value written through `Display` (`collect_str`) is the text
+/// it formats to, and a `Display` that fails is the type's refusal.
+#[test]
+fn a_displayed_key_or_value_is_its_text() {
+    use serde::ser::SerializeMap;
+
+    struct Shown<T>(T);
+    impl<T: fmt::Display> Serialize for Shown<T> {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.collect_str(&format_args!("<{}>", self.0))
+        }
+    }
+    /// One entry, written as given.
+    struct Entry<K, V>(K, V);
+    impl<K: Serialize, V: Serialize> Serialize for Entry<K, V> {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(Some(1))?;
+            map.serialize_entry(&self.0, &self.1)?;
+            map.end()
+        }
+    }
+
+    assert_eq!(
+        to_vec(&Shown("a")).expect("writes"),
+        to_vec("<a>").expect("writes"),
+        "a displayed value is a text scalar of its text"
+    );
+    assert_eq!(
+        to_vec(&Entry(Shown("k"), Shown("v"))).expect("writes"),
+        to_vec(&Entry("<k>", "<v>")).expect("writes"),
+        "a displayed key is the key of its text"
+    );
+    let long = "x".repeat(300);
+    assert_eq!(
+        to_vec(&Shown(&long)).expect("writes"),
+        to_vec(&format!("<{long}>")).expect("writes"),
+        "a display that grows the buffer is counted in full"
+    );
+
+    struct Fails;
+    impl fmt::Display for Fails {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("s3cr3t")?;
+            Err(fmt::Error)
+        }
+    }
+    struct Failing;
+    impl Serialize for Failing {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.collect_str(&Fails)
+        }
+    }
+    for (place, error) in [
+        ("value", to_vec(&Failing).expect_err("refused")),
+        ("key", to_vec(&Entry(Failing, 1u8)).expect_err("refused")),
+    ] {
+        assert_eq!(
+            error.message(),
+            "a value its type could not write",
+            "a failing display as a {place} is the type's refusal"
+        );
+        let text = format!("{error} {error:?}");
+        assert!(
+            !text.contains("s3cr3t"),
+            "a failing display as a {place} is not echoed: {text}"
+        );
+    }
+}
+
+/// A map written with a key twice, or a struct with a field twice, is
+/// refused as a repeat, at the root, without naming the key.
+#[test]
+fn writing_a_repeated_key_or_field_is_refused_without_naming_it() {
+    use serde::ser::{SerializeMap, SerializeStruct};
+
+    struct Twice;
+    impl Serialize for Twice {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(None)?;
+            map.serialize_entry("secret_key", &1u8)?;
+            map.serialize_entry("other", &2u8)?;
+            map.serialize_entry("secret_key", &3u8)?;
+            map.end()
+        }
+    }
+    struct FieldTwice;
+    impl Serialize for FieldTwice {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut object = s.serialize_struct("FieldTwice", 2)?;
+            object.serialize_field("secret_key", &1u8)?;
+            object.serialize_field("secret_key", &2u8)?;
+            object.end()
+        }
+    }
+    for (what, error) in [
+        ("key", to_vec(&Twice).expect_err("a repeated key")),
+        ("field", to_vec(&FieldTwice).expect_err("a repeated field")),
+    ] {
+        assert_eq!(error.message(), "duplicate key", "a repeated {what}");
+        assert!(error.path().is_empty(), "a repeated {what} is at the root");
+        let text = format!("{error} {error:?}");
+        assert!(
+            !text.contains("secret_key"),
+            "a repeated {what} is not named: {text}"
+        );
+    }
+}

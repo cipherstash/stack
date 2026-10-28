@@ -119,6 +119,29 @@ fn writing_frees_no_block_with_the_value_in_it() {
         "a displayed key or value was left in a freed block"
     );
 
+    // A `Display` that writes the marker and then fails, as a value and
+    // as a key, is refused, and what it wrote is wiped.
+    struct FailsAfterMarker;
+    impl core::fmt::Display for FailsAfterMarker {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str(core::str::from_utf8(MARKER).expect("ASCII"))?;
+            Err(core::fmt::Error)
+        }
+    }
+    struct FailsShown;
+    impl Serialize for FailsShown {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.collect_str(&FailsAfterMarker)
+        }
+    }
+    let (left, failed) = left_behind(|| to_vec(&FailsShown).is_err());
+    assert!(failed, "a failing display as a value is refused");
+    assert_eq!(left, 0, "a failing display left its value in a freed block");
+    let as_key = Entries(vec![(FailsShown, 1u8)]);
+    let (left, failed) = left_behind(|| to_vec(&as_key).is_err());
+    assert!(failed, "a failing display as a key is refused");
+    assert_eq!(left, 0, "a failing display left its key in a freed block");
+
     // A repeated key is refused, and what was written is wiped.
     let repeated = Entries(vec![(marked(1), marked(2)), (marked(1), marked(3))]);
     let (left, written) = left_behind(|| to_vec(&repeated).is_err());
