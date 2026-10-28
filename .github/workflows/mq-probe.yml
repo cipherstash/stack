@@ -1,0 +1,75 @@
+# Throwaway merge queue probe. Delete with the branch ci/merge-queue-test.
+#
+# In the merge queue, the job prints the merge group facts. It fails after 60
+# seconds if this entry adds mq-test/fail-in-queue, and otherwise passes after
+# 300 seconds, so that entries overlap.
+#
+# On a pull request, the job fails if the pull request adds
+# mq-test/fail-on-push. Adding the label question makes it pass. Adding the
+# label invalid skips the job.
+name: Merge queue probe
+
+on:
+  pull_request:
+    branches: [ci/merge-queue-test]
+    types: [opened, synchronize, reopened, labeled]
+  merge_group:
+    branches: [ci/merge-queue-test]
+
+permissions:
+  contents: read
+
+jobs:
+  mq-probe:
+    name: mq-probe
+    if: github.event.action != 'labeled' || github.event.label.name != 'invalid'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - name: Print the merge group facts
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          echo "event=$EVENT action=$ACTION"
+          echo "merge_group.base_sha=$BASE_SHA"
+          echo "merge_group.head_sha=$HEAD_SHA"
+          echo "merge_group.head_ref=$HEAD_REF"
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "HEAD^1=$(git rev-parse HEAD^1)"
+          echo "HEAD^2=$(git rev-parse HEAD^2 2>/dev/null || echo none)"
+          git log --format='%H parents=%P %s' -n 4
+      - name: Pass or fail
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          echo "$changed"
+          if [ "$EVENT" = "merge_group" ]; then
+            if echo "$changed" | grep -qx 'mq-test/fail-in-queue'; then
+              echo "This entry adds mq-test/fail-in-queue. Failing after 60 seconds."
+              sleep 60
+              exit 1
+            fi
+            echo "Passing after 300 seconds."
+            sleep 300
+            exit 0
+          fi
+          if [ "$ACTION" = "labeled" ] && [ "$LABEL" = "question" ]; then
+            echo "The label question was added. Passing."
+            exit 0
+          fi
+          if echo "$changed" | grep -qx 'mq-test/fail-on-push'; then
+            echo "This pull request adds mq-test/fail-on-push. Failing."
+            exit 1
+          fi
+          echo "Passing."
