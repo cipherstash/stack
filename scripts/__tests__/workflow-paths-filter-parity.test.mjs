@@ -1,4 +1,11 @@
+import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
+import { REPO_ROOT } from './lib/repo-root.mjs'
+import {
+  dornyFilterMatches,
+  pathsListSelects,
+  readSelectorJob,
+} from './lib/selector.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -57,6 +64,14 @@ function pathsFilters(relPath) {
   )
 }
 
+/** Every tracked file: what a `paths:` list or a filter can select. */
+const TRACKED = execFileSync('git', ['ls-files', '-z'], {
+  cwd: REPO_ROOT,
+  encoding: 'utf8',
+})
+  .split('\0')
+  .filter(Boolean)
+
 const CLASSIFIED = workflowFiles().map((relPath) => {
   const filters = pathsFilters(relPath)
   const declared = FILTERED_EVENTS.filter((event) => filters[event] !== null)
@@ -66,8 +81,23 @@ const CLASSIFIED = workflowFiles().map((relPath) => {
 /** Workflows writing the list twice — the ones the parity check applies to. */
 const PARITY = CLASSIFIED.filter((entry) => entry.declared.length === 2)
 
+/**
+ * Workflows whose selector job decides what a pull request runs, and whose
+ * `push` keeps a `paths:` list. Their `pull_request` has no filter, by design
+ * (ADR 0003), so the second copy of the list is the selector's filters. The
+ * check below compares the two by what they select.
+ */
+const SELECTOR_PUSH = CLASSIFIED.filter(
+  (entry) =>
+    entry.filters.push !== null &&
+    entry.filters.pull_request === null &&
+    readSelectorJob(entry.relPath) !== null,
+)
+
 /** Workflows filtering one event and not the other. */
-const ASYMMETRIC = CLASSIFIED.filter((entry) => entry.declared.length === 1)
+const ASYMMETRIC = CLASSIFIED.filter(
+  (entry) => entry.declared.length === 1 && !SELECTOR_PUSH.includes(entry),
+)
 
 /**
  * The guard on the scan, in the shape the rest of this directory uses. Every
@@ -114,15 +144,6 @@ const EXPECTED_ASYMMETRIES = new Map([
     'push is the only trigger; a pull_request copy would make a crates.io publisher reachable from a fork',
   ],
   [
-    '.github/workflows/tests-rust.yml',
-    // `push:` is `branches: [main]` with no `paths:`, so every push to main runs
-    // the Rust checks and only pull requests are filtered. There is no second
-    // list to drift from, and the direction that would hurt — a `push` filter
-    // narrower than the `pull_request` one, letting a change land on main
-    // unchecked — is unreachable when `push` is unfiltered.
-    'push is deliberately unfiltered (branches: [main]), so main runs a superset of what PRs run',
-  ],
-  [
     '.github/workflows/tests.yml',
     // `push: branches: [main]` has no `paths:`, so main runs everything and only
     // pull requests skip `docs/plans/**`. A `push` filter narrower than the
@@ -146,24 +167,6 @@ const EXPECTED_ASYMMETRIES = new Map([
     'pull_request is the only trigger; the check diffs a pull request against its base, which a push does not have',
   ],
   [
-    '.github/workflows/test-eql.yml',
-    // `pull_request` is deliberately UNFILTERED and `push: branches: [main]`
-    // carries the list, which is the same shape as tests-rust.yml with the two
-    // events swapped. Unfiltered on the PR side because this workflow's
-    // `ci-required` is the check branch protection is meant to reference, and a
-    // workflow skipped by a path filter leaves a required check stuck Pending;
-    // relevance is applied per-job via `if:` instead. Filtered on the push side
-    // because nothing waits on a push run, so skipping one costs nothing.
-    //
-    // The direction that would hurt — a `pull_request` filter narrower than the
-    // `push` one, so the PR introducing a change never runs the suite — is
-    // unreachable when `pull_request` has no filter at all. The push list is
-    // not unchecked: `eql-workflow-filters.test.mjs` compares it against the
-    // union of the selector job's filters, which is the second copy of the
-    // same list and the one this file cannot see.
-    'pull_request is deliberately unfiltered (per-job relevance instead), so PRs run a superset of what push runs; the push list is compared against the selector job filters by eql-workflow-filters.test.mjs',
-  ],
-  [
     '.github/workflows/bench-eql.yml',
     // The mirror image of lint-release.yml: `push: branches: [main]` with a
     // `paths:` list, and no `pull_request:` trigger at all. Deliberate upstream
@@ -174,25 +177,13 @@ const EXPECTED_ASYMMETRIES = new Map([
     // PR filter) does not exist because PRs never run it.
     'push to main and a nightly schedule are the only triggers; a 60-minute bench deliberately stays off the PR path',
   ],
-  // The four PR gates ported with the stack-* crates. Each has no `push:`
+  // The PR gates ported with the stack-* crates. Each has no `push:`
   // trigger, as in cipherstash-suite: they gate a change before it merges,
   // and the post-merge coverage of the same crates is tests-crates.yml and
   // tests-golang.yml, which filter both events and are parity-checked.
   [
-    '.github/workflows/crap-crates.yml',
-    'pull_request is the only filtered trigger; a CRAP gate on a merged change reports too late to block it',
-  ],
-  [
     '.github/workflows/mutants.yml',
     'pull_request is the only filtered trigger; `--in-diff` needs a PR base to diff against, and a dispatch sweeps unfiltered',
-  ],
-  [
-    '.github/workflows/fuzz.yml',
-    'pull_request (corpus regression) is the only filtered trigger; the campaign runs on a nightly schedule, which takes no paths',
-  ],
-  [
-    '.github/workflows/miri.yml',
-    'pull_request is the only filtered trigger; Miri is deterministic, so a post-merge run would repeat the PR result',
   ],
 ])
 
@@ -234,6 +225,27 @@ describe('paths filters are written twice, identically', () => {
       'These EXPECTED_ASYMMETRIES entries no longer match a workflow that filters exactly one event. If the workflow gained the second filter, delete the entry — it now belongs to the parity check above. If it was renamed or removed, fix the key.',
     ).toEqual([])
   })
+
+  for (const { relPath, filters } of SELECTOR_PUSH) {
+    it(`${relPath} selects on push what its selector selects on a pull request`, () => {
+      // A selector workflow writes its list twice as well: as the `push`
+      // `paths:` list, and split across the selector job's filters. The two
+      // are written in different syntaxes, so they are compared by what they
+      // select from the tracked files, not by their text.
+      const selector = readSelectorJob(relPath)
+      const differ = TRACKED.filter(
+        (file) =>
+          pathsListSelects(filters.push, file) !==
+          Object.values(selector.filters).some((rules) =>
+            dornyFilterMatches(rules, selector.quantifier, file),
+          ),
+      )
+      expect(
+        differ,
+        `In ${relPath}, the \`push\` \`paths:\` list and the union of the selector job's filters disagree about these files. Change both in the same edit.`,
+      ).toEqual([])
+    })
+  }
 
   for (const { relPath } of PARITY) {
     it(`${relPath} filters push and pull_request identically`, () => {

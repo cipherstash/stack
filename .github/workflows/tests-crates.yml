@@ -10,35 +10,22 @@ name: Tests (crates)
 # `scripts/__tests__/crates-ci.test.mjs` pins that, and that every mise task in
 # the five crate `tasks.toml` files is reached from a root workflow.
 #
-# The filter keeps Markdown in: `stack-auth`'s crate docs are its README
+# The filters keep Markdown in: `stack-auth`'s crate docs are its README
 # (`#![doc = include_str!("../README.md")]`), so a README edit changes the
 # doctests. The suite's `!**.md` exclude would have skipped that change.
+#
+# The `selector` job decides which jobs a pull request runs, and `summary`
+# reports the result (ADR 0003).
 
 on:
-  pull_request:
-    paths:
-      - packages/stack-auth/**
-      - packages/stack-profile/**
-      - packages/stack-kms/**
-      - packages/stack-encrypt/**
-      - packages/stack-encrypt-derive/**
-      - packages/stack-guest-abi/**
-      - languages/typescript/packages/auth/**
-      - languages/typescript/packages/profile/**
-      - languages/typescript/packages/stack-auth-wasm/**
-      # Root manifest, lockfile, toolchain pin and cargo config: each can
-      # change what compiles without touching a crate. The toolchain pin in
-      # particular changes the trybuild UI snapshots.
-      - Cargo.toml
-      - Cargo.lock
-      - mise.toml
-      - mise.test.toml
-      - .cargo/config.toml
-      - .config/nextest.toml
-      - pnpm-lock.yaml
-      - .github/workflows/tests-crates.yml
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
+  pull_request: {}
   push:
     branches: [main]
+    # The union of the `selector` job's filters.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       - packages/stack-auth/**
       - packages/stack-profile/**
@@ -55,7 +42,9 @@ on:
       - mise.test.toml
       - .cargo/config.toml
       - .config/nextest.toml
+      - package.json
       - pnpm-lock.yaml
+      - pnpm-workspace.yaml
       - .github/workflows/tests-crates.yml
   workflow_dispatch: {}
 
@@ -77,8 +66,113 @@ env:
   NEXTEST_PROFILE: ci
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      rust: ${{ steps.decide.outputs.rust }}
+      node_bindings: ${{ steps.decide.outputs.node_bindings }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            # Cargo over the whole root workspace. Root manifest, lockfile,
+            # toolchain pin and cargo config each change what compiles without
+            # touching a crate. The toolchain pin in particular changes the
+            # trybuild UI snapshots.
+            rust:
+              - "packages/stack-auth/**"
+              - "packages/stack-profile/**"
+              - "packages/stack-kms/**"
+              - "packages/stack-encrypt/**"
+              - "packages/stack-encrypt-derive/**"
+              - "packages/stack-guest-abi/**"
+              - "languages/typescript/packages/auth/**"
+              - "languages/typescript/packages/profile/**"
+              - "languages/typescript/packages/stack-auth-wasm/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "mise.toml"
+              - "mise.test.toml"
+              - ".cargo/config.toml"
+              - ".config/nextest.toml"
+              - ".github/workflows/tests-crates.yml"
+            # The node bindings and stack-auth-wasm, the two crates they wrap, and
+            # the pnpm install that runs their vitest suites. .cargo/config.toml
+            # carries the wasm32 rustflags the stack-auth-wasm build needs.
+            node_bindings:
+              - "packages/stack-auth/**"
+              - "packages/stack-profile/**"
+              - "languages/typescript/packages/auth/**"
+              - "languages/typescript/packages/profile/**"
+              - "languages/typescript/packages/stack-auth-wasm/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "mise.toml"
+              - ".cargo/config.toml"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".github/workflows/tests-crates.yml"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUST: ${{ steps.filter.outputs.rust }}
+          NODE_BINDINGS: ${{ steps.filter.outputs.node_bindings }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            RUST=true
+            NODE_BINDINGS=true
+          fi
+          answers=(
+            "rust=$RUST"
+            "node_bindings=$NODE_BINDINGS"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   rust:
     name: fmt, clippy, nextest, doctests, rustdoc
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.rust == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 60
     env:
@@ -158,6 +252,12 @@ jobs:
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.node_bindings == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 45
     steps:
@@ -234,3 +334,31 @@ jobs:
 
       - name: wasm-pack test stack-auth-wasm
         run: mise x -- wasm-pack test --node languages/typescript/packages/stack-auth-wasm
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: Tests (crates) summary
+    needs: [selector, rust, node-bindings]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done

@@ -9,20 +9,14 @@ name: Miri (guest ABI)
 # deterministic, so a red run is a real defect or a harness that stopped
 # compiling, never flake.
 #
-# Pull requests only, so `push` has no filter to mirror; recorded in
-# scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+# The `selector` job decides whether a pull request runs Miri, and `summary`
+# reports the result (ADR 0003).
 
 on:
-  pull_request:
-    paths:
-      - packages/stack-guest-abi/**
-      - Cargo.toml
-      - Cargo.lock
-      - mise.toml
-      - .github/workflows/miri.yml
-      # Keep these excludes last so docs-only changes are skipped.
-      - "!**.md"
-      - "!**.example"
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
+  pull_request: {}
   workflow_dispatch: {}
 
 defaults:
@@ -38,8 +32,88 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      miri: ${{ steps.decide.outputs.miri }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      #
+      # `every` makes a file count only when it matches every rule. That is
+      # what makes the `!` rules exclude documentation: under dorny's default,
+      # `some`, a `!` rule matches every other file in the repository. So each
+      # filter's trigger paths are one brace pattern, written across lines:
+      # YAML drops a line break that ends in `\`, with the next line's indent.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            miri:
+              - "{\
+                packages/stack-guest-abi/**,\
+                Cargo.toml,\
+                Cargo.lock,\
+                mise.toml,\
+                .github/workflows/miri.yml\
+                }"
+              - "!**/*.md"
+              - "!**/*.example"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MIRI: ${{ steps.filter.outputs.miri }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            MIRI=true
+          fi
+          answers=(
+            "miri=$MIRI"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   miri-stack-guest-abi:
     name: Miri (stack-guest-abi)
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.miri == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
@@ -66,3 +140,31 @@ jobs:
 
       - name: Miri
         run: mise run miri:stack-guest-abi
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: Miri summary
+    needs: [selector, miri-stack-guest-abi]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done
