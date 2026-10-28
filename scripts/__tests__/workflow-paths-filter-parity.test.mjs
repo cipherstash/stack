@@ -144,15 +144,6 @@ const EXPECTED_ASYMMETRIES = new Map([
     'push is the only trigger; a pull_request copy would make a crates.io publisher reachable from a fork',
   ],
   [
-    '.github/workflows/tests-rust.yml',
-    // `push:` is `branches: [main]` with no `paths:`, so every push to main runs
-    // the Rust checks and only pull requests are filtered. There is no second
-    // list to drift from, and the direction that would hurt — a `push` filter
-    // narrower than the `pull_request` one, letting a change land on main
-    // unchecked — is unreachable when `push` is unfiltered.
-    'push is deliberately unfiltered (branches: [main]), so main runs a superset of what PRs run',
-  ],
-  [
     '.github/workflows/tests.yml',
     // `push: branches: [main]` has no `paths:`, so main runs everything and only
     // pull requests skip `docs/plans/**`. A `push` filter narrower than the
@@ -186,25 +177,13 @@ const EXPECTED_ASYMMETRIES = new Map([
     // PR filter) does not exist because PRs never run it.
     'push to main and a nightly schedule are the only triggers; a 60-minute bench deliberately stays off the PR path',
   ],
-  // The four PR gates ported with the stack-* crates. Each has no `push:`
+  // The PR gates ported with the stack-* crates. Each has no `push:`
   // trigger, as in cipherstash-suite: they gate a change before it merges,
   // and the post-merge coverage of the same crates is tests-crates.yml and
   // tests-golang.yml, which filter both events and are parity-checked.
   [
-    '.github/workflows/crap-crates.yml',
-    'pull_request is the only filtered trigger; a CRAP gate on a merged change reports too late to block it',
-  ],
-  [
     '.github/workflows/mutants.yml',
     'pull_request is the only filtered trigger; `--in-diff` needs a PR base to diff against, and a dispatch sweeps unfiltered',
-  ],
-  [
-    '.github/workflows/fuzz.yml',
-    'pull_request (corpus regression) is the only filtered trigger; the campaign runs on a nightly schedule, which takes no paths',
-  ],
-  [
-    '.github/workflows/miri.yml',
-    'pull_request is the only filtered trigger; Miri is deterministic, so a post-merge run would repeat the PR result',
   ],
 ])
 

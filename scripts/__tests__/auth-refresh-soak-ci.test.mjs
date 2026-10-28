@@ -29,10 +29,10 @@ describe('auth refresh cancellation soak gates', () => {
       "github.head_ref == 'changeset-release/main'",
     )
     expect(prs.jobs.long.if).toContain(
-      "needs.changes.outputs.refresh == 'true'",
+      "needs.selector.outputs.refresh == 'true'",
     )
-    const paths = prs.jobs.changes.steps.find((step) => step.id === 'paths')
-    expect(paths.with.filters).toContain("'packages/stack-auth/**'")
+    const paths = prs.jobs.selector.steps.find((step) => step.id === 'filter')
+    expect(paths.with.filters).toContain('"packages/stack-auth/**"')
   })
 
   it('requires a successful long soak before publishing stack-auth', () => {
