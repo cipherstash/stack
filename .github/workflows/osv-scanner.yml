@@ -1,9 +1,13 @@
 name: OSV-Scanner
 
+# The `selector` job decides whether a pull request runs the scan, and
+# `summary` reports the result (ADR 0003).
+
 on:
   push:
     branches:
       - main
+  # The trigger paths are in the `selector` job.
   pull_request:
     branches:
       - main
@@ -17,11 +21,117 @@ permissions:
   actions: read
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Not the workflow's `security-events: write`: this job writes nothing.
+    permissions:
+      contents: read
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      dependencies: ${{ steps.decide.outputs.dependencies }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            # The lockfiles and manifests OSV-Scanner reads dependencies from,
+            # and its config. A change to other files cannot change what it
+            # finds. The weekday schedule catches new advisories.
+            dependencies:
+              - "**/{pnpm-lock.yaml,package-lock.json,npm-shrinkwrap.json,yarn.lock,bun.lock,deno.lock}"
+              - "**/{Cargo.lock,go.mod,requirements*.txt,poetry.lock,Pipfile.lock,uv.lock,pdm.lock}"
+              - "**/{Gemfile.lock,composer.lock,pom.xml,gradle.lockfile,pubspec.lock,mix.lock}"
+              - "**/{packages.lock.json,renv.lock,osv-scanner.toml}"
+              - ".github/workflows/osv-scanner.yml"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEPENDENCIES: ${{ steps.filter.outputs.dependencies }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            DEPENDENCIES=true
+          fi
+          answers=(
+            "dependencies=$DEPENDENCIES"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   osv-scan:
     name: OSV Vulnerability Scan
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.dependencies == 'true'
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.6.0
     with:
       fail-on-vuln: false
       scan-args: |-
         --recursive
         ./
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: OSV-Scanner summary
+    needs: [selector, osv-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Not the workflow's `security-events: write`: this job writes nothing.
+    permissions:
+      contents: read
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done

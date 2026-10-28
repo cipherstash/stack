@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { jobTriggerLists } from './lib/selector.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -238,8 +239,12 @@ describe('keeping the image current', () => {
     const wf = readWorkflow(relPath)
     const on = wf?.on ?? wf?.[true]
     expect(on?.schedule).toEqual([{ cron: '0 7 * * 1' }])
-    for (const trigger of ['push', 'pull_request']) {
-      expect(on?.[trigger]?.paths).toEqual(
+    // `push` lists the paths itself; a pull request takes them from the
+    // selector job's filter.
+    const lists = jobTriggerLists(relPath, 'build').map(({ source }) => source)
+    expect(lists).toEqual(['on.push.paths', 'selector filter "musl_image"'])
+    for (const { paths } of jobTriggerLists(relPath, 'build')) {
+      expect(paths).toEqual(
         expect.arrayContaining([`${DOCKERFILE_DIR}/**`, relPath]),
       )
     }

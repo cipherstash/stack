@@ -4,17 +4,22 @@ name: musl build image
 # version from its index when it publishes the next one. Nothing else builds
 # the image between releases, so without this a pin that stopped resolving
 # would first be seen by a release.
+#
+# The `selector` job decides whether a pull request builds the image, and
+# `summary` reports the result (ADR 0003).
 on:
   push:
     branches:
       - main
+    # The same files as the `selector` job's filter.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       - ".github/docker/musl-build/**"
       - ".github/workflows/musl-build-image.yml"
-  pull_request:
-    paths:
-      - ".github/docker/musl-build/**"
-      - ".github/workflows/musl-build-image.yml"
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
+  pull_request: {}
   schedule:
     - cron: "0 7 * * 1"
   workflow_dispatch:
@@ -23,8 +28,74 @@ permissions:
   contents: read
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      musl_image: ${{ steps.decide.outputs.musl_image }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            musl_image:
+              - ".github/docker/musl-build/**"
+              - ".github/workflows/musl-build-image.yml"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MUSL_IMAGE: ${{ steps.filter.outputs.musl_image }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            MUSL_IMAGE=true
+          fi
+          answers=(
+            "musl_image=$MUSL_IMAGE"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   build:
     name: Build the Alpine musl image
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.musl_image == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # `issues: write` for the last step alone; see there.
@@ -61,3 +132,31 @@ jobs:
             --title "The musl build image no longer builds" \
             --label "github-actions" \
             --body "The weekly build of .github/docker/musl-build/Dockerfile failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. An apk pin has most likely stopped resolving; re-pin with the command in the Dockerfile's comment."
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: musl build image summary
+    needs: [selector, build]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done

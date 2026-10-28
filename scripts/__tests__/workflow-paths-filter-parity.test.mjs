@@ -160,16 +160,6 @@ const EXPECTED_ASYMMETRIES = new Map([
     'push is deliberately unfiltered (branches: [main]), so main runs a superset of what PRs run',
   ],
   [
-    '.github/workflows/lint-release.yml',
-    // There is no `push:` trigger at all — this gate exists to catch a broken
-    // release workflow BEFORE it merges, and a copy running after the merge
-    // would report the same finding at the moment it is no longer useful. With
-    // one event there is no second list to drift from, and the direction that
-    // would hurt (a narrower `pull_request` filter, so the PR that breaks the
-    // release machinery never runs the check) is what the single list IS.
-    'pull_request is the only trigger; a post-merge copy would report a release-blocking finding too late to act on',
-  ],
-  [
     '.github/workflows/require-auth-npm-changeset.yml',
     // Its list is held to the job's own `git diff` pathspec by
     // check-auth-npm-changeset.test.mjs, which is the second copy here.
