@@ -325,8 +325,9 @@ jobs:
   build-archive:
     name: "Build test archive"
     needs: [selector]
-    # This repo is PUBLIC and accepts fork PRs (the approval policy only gates
-    # first-time contributors). build-archive is the sole holder of the CS_*
+    # This repo is PUBLIC and accepts fork PRs (a maintainer approves each
+    # outside contributor's run, and an approved run executes the fork's
+    # code). build-archive is the sole holder of the CS_*
     # credentials below, so it must never run on a fork PR. The trailing clause
     # is the only thing that skips it: a fork pull request. Every other event —
     # push, schedule, merge_group, dispatch, and a same-repo branch PR — runs;
