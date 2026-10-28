@@ -444,6 +444,111 @@ fn every_part_of_every_reading_rule_has_a_row() {
     assert!(gaps.is_empty(), "no row shows {gaps:#?}");
 }
 
+/// The rule the reference names for a refused blob is what decides which
+/// part of which rule a corpus row covers, so it is checked here against
+/// small blobs made by hand, one for every part of every rule.
+#[test]
+fn the_reference_reader_names_the_rule_each_blob_breaks() {
+    // A null inside 129 nested `Some`, one more than the deepest allowed.
+    let too_deep = format!("56435301{}00", "f5".repeat(129));
+    let cases: Vec<(&str, &str, Refusal)> = vec![
+        ("three bytes", "564353", Refusal::NotABlob),
+        ("no VCS", "5843530100", Refusal::NotABlob),
+        ("version 2", "5643530200", Refusal::UnsupportedVersion),
+        (
+            "an i32 cut short",
+            "56435301040100",
+            Refusal::Malformed(Broken::NotOneNode(Ends::Early)),
+        ),
+        (
+            "a byte after the node",
+            "564353010000",
+            Refusal::Malformed(Broken::NotOneNode(Ends::Late)),
+        ),
+        (
+            "tag 0x01 as a node",
+            "5643530101",
+            Refusal::Malformed(Broken::Tag {
+                byte: 0x01,
+                at: Place::Node,
+            }),
+        ),
+        (
+            "null as a map key",
+            "56435301f6010000000000",
+            Refusal::Malformed(Broken::Tag {
+                byte: 0x00,
+                at: Place::Key,
+            }),
+        ),
+        (
+            "text longer than the blob",
+            "564353010a05000000",
+            Refusal::Malformed(Broken::PastTheEnd(Prefix::Length)),
+        ),
+        (
+            "an array counting more than the blob holds",
+            "56435301f005000000",
+            Refusal::Malformed(Broken::PastTheEnd(Prefix::Count)),
+        ),
+        (
+            "an object key that is not UTF-8",
+            "56435301f10100000001000000ff00",
+            Refusal::Malformed(Broken::NotUtf8(Text::Key)),
+        ),
+        (
+            "a text scalar that is not UTF-8",
+            "564353010a01000000ff",
+            Refusal::Malformed(Broken::NotUtf8(Text::Scalar)),
+        ),
+        (
+            "an object with the field a twice",
+            "56435301f102000000010000006100010000006100",
+            Refusal::Malformed(Broken::RepeatedField),
+        ),
+        (
+            "a map with the keys u8 1 and i32 1",
+            "56435301f6020000000d0100040100000000",
+            Refusal::Malformed(Broken::RepeatedKey {
+                first: 0x0D,
+                second: 0x04,
+            }),
+        ),
+        (
+            "129 nested Some",
+            &too_deep,
+            Refusal::Malformed(Broken::TooDeep),
+        ),
+    ];
+
+    for (what, hex, want) in &cases {
+        assert_eq!(
+            decode(&unhex(hex)).err(),
+            Some(*want),
+            "the reference refuses {what} for the rule it breaks"
+        );
+    }
+
+    // A new `Broken` part fails to compile here, so whoever adds it is
+    // sent to add a blob for it above.
+    for (_, _, refusal) in &cases {
+        if let Refusal::Malformed(broken) = refusal {
+            match broken {
+                Broken::NotOneNode(Ends::Early | Ends::Late)
+                | Broken::Tag {
+                    at: Place::Node | Place::Key,
+                    ..
+                }
+                | Broken::PastTheEnd(Prefix::Length | Prefix::Count)
+                | Broken::NotUtf8(Text::Key | Text::Scalar)
+                | Broken::RepeatedField
+                | Broken::RepeatedKey { .. }
+                | Broken::TooDeep => {}
+            }
+        }
+    }
+}
+
 /// The sentence in *Layout* that names the tags the profile refuses, which
 /// `REFUSED_TAGS` spells out.
 const REFUSED_SENTENCE: &str = "In particular the tags the frame and the sealed leaf know but this profile does not are refused: `0x01` (JavaScript `undefined`), `0x12` to `0x15` (date, timestamp, decimal, typed null), `0xF2` (passthrough), `0xF3` and `0xF4` (logical-type envelopes).";
