@@ -46,6 +46,12 @@ properties that are fine in flight and wrong at rest:
    deserializer, and has its own validator, writer and error type. `to_vec`
    returns the blob `Protected`, since it is the value's plaintext.
 
+   *Amended 2026-10-28 (#559):* `to_vec` now returns the blob in a
+   `vitaminc_protected::Buffer` rather than a `Protected<Vec<u8>>`. It is
+   still the value's plaintext and still read through `risky_ref` and
+   wiped when dropped; a `Buffer` also grows without leaving copies of its
+   bytes behind. The blob's bytes are unchanged.
+
 2. **A header.** `"VCS"`, then a version byte, `0x01`. No header byte is a
    node tag, so a transport frame never reads as a blob, nor a blob as a
    frame. A version the reader does not read gets its own `ErrorKind`,
