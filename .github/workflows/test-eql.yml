@@ -313,7 +313,7 @@ jobs:
        || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     env:
       # test:sqlx:archive depends on test:sqlx:prep, which copies the built EQL
       # into migrations/, applies it to a live Postgres, and regenerates the
@@ -397,7 +397,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     strategy:
       fail-fast: false
       matrix:
@@ -459,7 +459,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     strategy:
       fail-fast: false
       matrix:
@@ -518,7 +518,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -547,7 +547,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     services:
       encryption-postgres:
         image: postgres:17
@@ -675,7 +675,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -707,7 +707,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -743,7 +743,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -785,7 +785,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     env:
       POSTGRES_VERSION: "17"
     steps:
@@ -845,7 +845,7 @@ jobs:
   # per-version `validate` job).
   docs-static:
     name: "SQL doc validation"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -955,7 +955,7 @@ jobs:
        || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     env:
       POSTGRES_VERSION: "17"
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
