@@ -39,6 +39,7 @@ jobs:
   fta:
     name: Analyze v3 complexity
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Repo
