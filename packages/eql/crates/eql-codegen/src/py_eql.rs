@@ -61,33 +61,13 @@ fn py_tuple(items: &[&str]) -> String {
     }
 }
 
-/// The first docstring line and the status line, in the Go emitter's words.
+/// The class docstring: the summary and the status line the Go emitter
+/// writes too ([`Row::summary`], [`Row::status`]).
 fn docstring(row: &Row) -> String {
-    let indexes = if row.indexes.is_empty() {
-        "no index".to_owned()
-    } else {
-        format!(
-            "the {} index{}",
-            row.indexes.join(" and "),
-            if row.indexes.len() > 1 { "es" } else { "" }
-        )
-    };
-    let status = match (row.reason, row.plaintext) {
-        (None, Some(kind)) => {
-            let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
-                "an"
-            } else {
-                "a"
-            };
-            format!("The engine produces it from {article} {kind}.")
-        }
-        (None, None) => "The engine produces it.".to_owned(),
-        (Some(reason), _) => format!("The engine cannot produce it yet: {reason}."),
-    };
     let text = format!(
-        "The EQL type stored in {domain}: the {family} family with {indexes}.\n\n    {status}\n    ",
-        domain = row.sql_domain,
-        family = row.family,
+        "The EQL type {summary}.\n\n    {status}\n    ",
+        summary = row.summary(),
+        status = row.status(),
     );
     assert!(!text.contains("\"\"\""), "catalog text ends the docstring");
     format!("\"\"\"{}\"\"\"", text.replace('\\', "\\\\"))

@@ -160,9 +160,10 @@ pub fn target_gap(family: &DomainFamily, domain: &Domain) -> Option<&'static str
     encryption_gap(TARGET_VERSION, family, domain)
 }
 
-/// One row of the generated table, computed from the catalog: what both
-/// the Rust `TARGETS` table and the Go `encrypt/eql` package
-/// ([`crate::go_eql`]) are rendered from, so the two cannot disagree.
+/// One row of the generated table, computed from the catalog: what the Rust
+/// `TARGETS` table, the Go `encrypt/eql` package ([`crate::go_eql`]) and the
+/// Python `stackencrypt._eql` module ([`crate::py_eql`]) are rendered from,
+/// so the three cannot disagree.
 pub(crate) struct Row {
     pub(crate) name: String,
     pub(crate) family: &'static str,
@@ -187,6 +188,45 @@ pub(crate) struct Row {
     /// generated dispatch has no arm for it and
     /// `encryption::targets` runs it by hand.
     pub(crate) document: bool,
+}
+
+impl Row {
+    /// Where the type is stored and what it indexes, as the Go and Python
+    /// emitters both describe it: "stored in public.eql_v4_text_eq: the text
+    /// family with the eq index". One copy, so the two cannot word it apart.
+    pub(crate) fn summary(&self) -> String {
+        let indexes = if self.indexes.is_empty() {
+            "no index".to_owned()
+        } else {
+            format!(
+                "the {} index{}",
+                self.indexes.join(" and "),
+                if self.indexes.len() > 1 { "es" } else { "" }
+            )
+        };
+        format!(
+            "stored in {}: the {} family with {indexes}",
+            self.sql_domain, self.family
+        )
+    }
+
+    /// Whether the engine produces the type, as one sentence for the same
+    /// two emitters.
+    pub(crate) fn status(&self) -> String {
+        match (self.reason, self.plaintext) {
+            (None, Some(kind)) => {
+                // The kinds are read as words: "an int32", "a float64".
+                let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                    "an"
+                } else {
+                    "a"
+                };
+                format!("The engine produces it from {article} {kind}.")
+            }
+            (None, None) => "The engine produces it.".to_owned(),
+            (Some(reason), _) => format!("The engine cannot produce it yet: {reason}."),
+        }
+    }
 }
 
 /// The catalog domains that are targets, in catalog order: every stored
