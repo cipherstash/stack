@@ -180,7 +180,11 @@ function extractForkClause(condition) {
  * run.
  */
 const PERMISSIVE_NEEDS = {
-  selector: { outputs: { eql: 'true', rust_crates: 'true' } },
+  // Every selector output, whatever its name: each workflow's selector names
+  // its outputs after its own filters.
+  selector: {
+    outputs: new Proxy({}, { has: () => true, get: () => 'true' }),
+  },
   // The release workflows' gates, none of which is about how the run was
   // triggered. Held open, or "skips because there is nothing to publish" would
   // be indistinguishable from "skips on a dispatch".
