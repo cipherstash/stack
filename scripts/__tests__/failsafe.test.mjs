@@ -41,6 +41,8 @@ const NOT_CHECKS = {
     'Review bot, not a check. No branch rule requires it.',
   '.github/workflows/code-review.yml':
     'Review bot, not a check. No branch rule requires it.',
+  '.github/workflows/impact.yml':
+    'Advisory report, not a check. No branch rule requires it.',
 }
 
 /**
@@ -53,7 +55,6 @@ const NOT_YET_CONVERTED = Object.fromEntries(
     'crap-crates.yml',
     'fta-v3.yml',
     'fuzz.yml',
-    'impact.yml',
     'integration-drizzle.yml',
     'integration-prisma-next.yml',
     'integration-protect-ffi.yml',
