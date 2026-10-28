@@ -25,10 +25,12 @@ set -euo pipefail
 # the Rust tests link. A `.venv` made for another interpreter version is
 # recreated, so a change to `[tools]` cannot leave the tests on the old one.
 # No lockfile is written: `uv pip install` resolves against the index each
-# time. The package has no runtime dependency, and the only thing resolved
-# here is the `test` extra (pytest) plus maturin as the build backend, so a
-# lockfile would fix test tooling versions alone. One comes, with its Dependabot
-# entry, when the package gains a runtime dependency.
+# time. The package has no runtime dependency. The only things resolved here
+# are maturin, as the build backend, and the `test` extra: pytest, plus attrs,
+# Pydantic and SQLAlchemy for the declaration tests. So a lockfile would fix
+# test tooling versions alone. One comes, with its Dependabot entry, when the
+# package gains a runtime dependency. See pyproject.toml for why the extra has
+# no upper bounds.
 want="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 have="$([ -x .venv/bin/python ] && .venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])' || true)"
 if [ "$have" != "$want" ]; then

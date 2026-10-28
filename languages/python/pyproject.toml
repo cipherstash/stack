@@ -11,7 +11,12 @@ dynamic = ["version"]
 classifiers = ["Private :: Do Not Upload"]
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+# attrs, Pydantic and SQLAlchemy only for the tests that declare a model of
+# each kind; the package itself imports none of them. They have lower bounds
+# and no upper bounds on purpose. They are the libraries users build their
+# classes with, so the tests meet each new release when users do. A new
+# release that fails a test is a finding about users' classes.
+test = ["pytest>=8", "attrs>=23", "pydantic>=2", "sqlalchemy>=2"]
 
 [tool.maturin]
 # The pure-Python package is the distribution; the Rust extension is its
