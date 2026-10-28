@@ -1,0 +1,37 @@
+# Throwaway test. Do not merge.
+#
+# This workflow checks whether a run started by adding a label replaces an
+# earlier failed result that has the same check name on the same commit.
+# Every run reports the check name `label-run-check`.
+#
+# - opened, synchronize, reopened: the job fails.
+# - the label `question` is added: the job passes.
+# - the label `invalid` is added: the job is skipped by its `if:` condition.
+name: Label run check test
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions: {}
+
+jobs:
+  label-run-check:
+    name: label-run-check
+    if: github.event.action != 'labeled' || github.event.label.name != 'invalid'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fail on a push, pass on the label question
+        env:
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "action=$ACTION label=$LABEL head_sha=$HEAD_SHA"
+          if [ "$ACTION" = "labeled" ] && [ "$LABEL" = "question" ]; then
+            echo "This run passes."
+            exit 0
+          fi
+          echo "This run fails."
+          exit 1
