@@ -13,6 +13,10 @@ each job. Heavy jobs use c8a machines with 8 vCPUs. Mutants uses a
 c8a machine with 16 vCPUs. The other repositories that share the CI budget
 move their Blacksmith jobs to RunsOn too.
 
+Heavy jobs stay on x64, because arm64 machines were slower and not cheaper in
+the trial. Jobs that must run on arm64, such as native arm64 container image
+builds, are the exception. They run on RunsOn's arm64 machines.
+
 We made the change because of cost. CI for this repository cost about $3,865 a
 month on Blacksmith at October 2026's pace. That was 20 times September's
 cost. The CI budget for this repository and the others that share it is
@@ -35,6 +39,10 @@ flowchart LR
 - **Run every job on GitHub-hosted runners.** In the runner trial in pull
   request #1297, jobs took 2.46 times as long overall. The integration suites
   took up to 4.8 times as long.
+- **Build arm64 images on x64 machines.** Cross-compiling Rust for another
+  architecture is slow.
+- **Run arm64 jobs on GitHub-hosted arm64 runners.** Those runners cost money
+  for private repositories.
 
 ## Consequences
 
@@ -50,6 +58,6 @@ flowchart LR
 - Every job sets `timeout-minutes`. In the trial, one job without a limit ran
   for over 2 hours.
 - We maintain the RunsOn resources in AWS. They cost $40 to $60 a month.
-- RunsOn's pricing page limits its free licence to non-commercial use. The
-  trial licence ends in November 2026. Buying a licence is a separate
-  decision.
+- A pull request from a fork would run its code on a machine in our AWS
+  account. So this repository requires approval before any outside
+  contributor's workflows run, not only a first-time contributor's.
