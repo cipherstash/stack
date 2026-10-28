@@ -6,11 +6,16 @@ name: "FTA Complexity"
 # the check when any file exceeds the score cap (`--score-cap` in the
 # `analyze:complexity` script). FTA is pure static source analysis, so this job
 # needs no build step, database, or credentials.
+#
+# The `selector` job decides whether a pull request runs the gate, and
+# `summary` reports the result (ADR 0003).
 
 on:
   push:
     branches:
       - 'main'
+    # The same files as the `selector` job's filter.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       - 'languages/typescript/packages/stack/src/eql/v3/**'
       - 'languages/typescript/packages/stack-drizzle/**'
@@ -21,23 +26,92 @@ on:
       - 'languages/typescript/packages/stack/src/schema/match-defaults.ts'
       - 'languages/typescript/packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
   pull_request:
     branches:
       - "**"
-    paths:
-      - 'languages/typescript/packages/stack/src/eql/v3/**'
-      - 'languages/typescript/packages/stack-drizzle/**'
-      - 'languages/typescript/packages/stack-supabase/**'
-      - 'languages/typescript/packages/stack/src/schema/match-defaults.ts'
-      - 'languages/typescript/packages/stack/package.json'
-      - '.github/workflows/fta-v3.yml'
 
 permissions:
   contents: read
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      fta: ${{ steps.decide.outputs.fta }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            # The sources each `analyze:complexity` step scores. Shared
+            # match-index defaults live outside src/eql/v3 but shape every
+            # emitted v3 match block, so edits there trigger the gate too.
+            fta:
+              - "languages/typescript/packages/stack/src/eql/v3/**"
+              - "languages/typescript/packages/stack-drizzle/**"
+              - "languages/typescript/packages/stack-supabase/**"
+              - "languages/typescript/packages/stack/src/schema/match-defaults.ts"
+              - "languages/typescript/packages/stack/package.json"
+              - ".github/workflows/fta-v3.yml"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FTA: ${{ steps.filter.outputs.fta }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            FTA=true
+          fi
+          answers=(
+            "fta=$FTA"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   fta:
     name: Analyze v3 complexity
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.fta == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
@@ -89,3 +163,31 @@ jobs:
 
       - name: Analyze stack-supabase complexity
         run: pnpm exec turbo run analyze:complexity --filter @cipherstash/stack-supabase
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: FTA Complexity summary
+    needs: [selector, fta]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done

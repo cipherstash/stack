@@ -17,11 +17,16 @@ name: Test supply chain security
 # - contents:read only
 # - no secrets
 # - no caching
+#
+# The `selector` job decides whether a pull request runs the gate, and
+# `summary` reports the result (ADR 0003).
 
 on:
   push:
     branches:
       - main
+    # The same files as the `selector` job's filter.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       - '.github/workflows/release.yml'
       # The reusable workflows release.yml calls for the two native-binary
@@ -34,28 +39,94 @@ on:
       - 'scripts/lint-no-workflow-caching.mjs'
       - 'scripts/__tests__/lint-no-workflow-caching.test.mjs'
       - 'scripts/__tests__/fixtures/lint-no-workflow-caching/**'
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
   pull_request:
     branches:
       - '**'
-    paths:
-      - '.github/workflows/release.yml'
-      # The reusable workflows release.yml calls for the two native-binary
-      # lines: everything they build is packed and published, and they are on
-      # the lint's target list for that reason, so an edit to either has to run
-      # this gate too.
-      - '.github/workflows/_build-ffi-artifacts.yml'
-      - '.github/workflows/_build-auth-artifacts.yml'
-      - '.github/workflows/tests-supply-chain.yml'
-      - 'scripts/lint-no-workflow-caching.mjs'
-      - 'scripts/__tests__/lint-no-workflow-caching.test.mjs'
-      - 'scripts/__tests__/fixtures/lint-no-workflow-caching/**'
 
 permissions:
   contents: read
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      supply_chain: ${{ steps.decide.outputs.supply_chain }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            # The workflows the lint targets, and the lint itself. The
+            # reusable workflows release.yml calls for the two native-binary
+            # lines are on the target list: everything they build is packed
+            # and published.
+            supply_chain:
+              - ".github/workflows/release.yml"
+              - ".github/workflows/_build-ffi-artifacts.yml"
+              - ".github/workflows/_build-auth-artifacts.yml"
+              - ".github/workflows/tests-supply-chain.yml"
+              - "scripts/lint-no-workflow-caching.mjs"
+              - "scripts/__tests__/lint-no-workflow-caching.test.mjs"
+              - "scripts/__tests__/fixtures/lint-no-workflow-caching/**"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SUPPLY_CHAIN: ${{ steps.filter.outputs.supply_chain }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            SUPPLY_CHAIN=true
+          fi
+          answers=(
+            "supply_chain=$SUPPLY_CHAIN"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   verify-no-caching-in-release-workflows:
     name: Verify no caching in release workflows
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.supply_chain == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -90,3 +161,31 @@ jobs:
 
       - name: Verify no caching in the release and supply-chain workflows
         run: pnpm run lint:workflow-cache
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: Test supply chain security summary
+    needs: [selector, verify-no-caching-in-release-workflows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done

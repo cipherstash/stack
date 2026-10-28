@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { isShipped } from '../check-auth-npm-changeset.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { jobTriggerLists } from './lib/selector.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
 /**
@@ -227,8 +228,9 @@ describe('check-auth-npm-changeset.mjs --shipped', () => {
 })
 
 describe('require-auth-npm-changeset.yml', () => {
+  const JOB = 'require-npm-changeset'
   const workflow = readWorkflow(WORKFLOW)
-  const [job] = Object.values(workflow?.jobs ?? {})
+  const job = workflow?.jobs?.[JOB]
   const check = job?.steps?.find((step) => step.run?.includes(`node ${SCRIPT}`))
 
   /** The pathspec of the job's first `git diff`: what counts as shipped. */
@@ -241,7 +243,12 @@ describe('require-auth-npm-changeset.yml', () => {
     .map((line) => line.trim().replace(/\s*\\$/, ''))
     .filter(Boolean)
 
-  const filters = workflow?.on?.pull_request?.paths ?? []
+  // The selector job's filter: the paths that start the job on a pull request.
+  const filters = jobTriggerLists(WORKFLOW, JOB).flatMap(({ paths }) => paths)
+
+  it('reads a selector filter', () => {
+    expect(filters).not.toEqual([])
+  })
 
   it('diffs the crate and both binding folders', () => {
     expect(shipped).toEqual([

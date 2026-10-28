@@ -4,7 +4,7 @@ import {
   negationRemovesAll,
   negationSubtracts,
 } from './lib/paths-filter.mjs'
-import { readWorkflow } from './lib/workflows.mjs'
+import { jobTriggerLists } from './lib/selector.mjs'
 
 const exact = (entry, input) => entry === input
 const IN = 'languages/typescript/packages/protect-ffi/crates/**'
@@ -92,10 +92,12 @@ describe('negationRemovesAll subtracts only a whole-tree negation', () => {
   })
 })
 
-describe('tests.yml pull_request filter', () => {
-  const workflow = readWorkflow('.github/workflows/tests.yml')
-  // `on:` parses as the boolean `true` under YAML 1.1.
-  const { paths } = (workflow.on ?? workflow[true]).pull_request
+describe('tests.yml selector filter', () => {
+  // As a `paths:` list. Every job in the workflow reads the same filter.
+  const [{ paths }] = jobTriggerLists(
+    '.github/workflows/tests.yml',
+    'run-tests',
+  )
 
   it('skips plan-only pull requests and runs on everything else', () => {
     expect(filterCovers(paths, 'docs/plans/nested/example.md', exact)).toBe(
