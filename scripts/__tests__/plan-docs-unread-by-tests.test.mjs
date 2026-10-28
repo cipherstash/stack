@@ -40,7 +40,7 @@ describe('tests.yml skips pull requests that change only docs/plans/', () => {
   it('no test names a file under docs/plans/', () => {
     expect(
       filesNamingAPlan(TESTS),
-      'A test that reads a plan is skipped on a plan-only pull request, because `tests.yml` ignores `docs/plans/**`. Move the fact the test needs out of the plan, or drop the negation from the `pull_request` filter.',
+      'A test that reads a plan is skipped on a plan-only pull request, because `tests.yml` ignores `docs/plans/**`. Move the fact the test needs out of the plan, or drop the negation from the selector filter.',
     ).toEqual([])
   })
   it('the scan finds a plan name when there is one', () => {

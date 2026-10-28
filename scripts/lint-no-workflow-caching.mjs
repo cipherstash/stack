@@ -169,6 +169,12 @@ const AUDITED_ACTIONS = new Map([
   // per-run store with no cross-run key.
   ['actions/upload-artifact', { cacheInput: null }],
   ['actions/download-artifact', { cacheInput: null }],
+  // The selector job's path filter (tests-supply-chain.yml). Read at the
+  // pinned v3.0.4: on a pull request it lists the changed files through the
+  // GitHub REST API and matches them with picomatch. Its dependencies are
+  // @actions/core, @actions/exec, @actions/github and picomatch. No cache, no
+  // cache input.
+  ['dorny/paths-filter', { cacheInput: null }],
   // Supplies zig + cargo-zigbuild (the glibc-pinned gnu builds) and wasm-pack,
   // all pinned in languages/typescript/packages/protect-ffi/mise.toml. `cache` DEFAULTS TO TRUE, so
   // an omitted key is a cache restore — and the generic `with.cache` rule below
