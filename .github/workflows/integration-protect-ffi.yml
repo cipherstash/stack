@@ -34,6 +34,8 @@ name: Integration — protect-ffi (native + WASM)
 on:
   push:
     branches: [main]
+    # The same files as the `selector` job's filter.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       # The suite itself: tests, fixtures, its compose file, its `tasks.toml`
       # and its manifest.
@@ -99,45 +101,11 @@ on:
       - 'languages/typescript/packages/auth/**'
       - 'languages/typescript/packages/stack-auth-wasm/**'
       - '.github/actions/require-cs-secrets/**'
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
   pull_request:
     branches: ['**']
-    # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
-    # A one-sided edit disables the job on pull requests while leaving it green
-    # on `main` — the exact inversion of what you want.
-    paths:
-      - 'languages/typescript/packages/protect-ffi/integration-tests/**'
-      - 'pnpm-workspace.yaml'
-      - 'packages/eql/packages/eql/**'
-      - 'languages/typescript/packages/protect-ffi/crates/**'
-      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
-      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
-      - 'languages/typescript/packages/protect-ffi/src/**'
-      - 'languages/typescript/packages/protect-ffi/scripts/**'
-      - 'languages/typescript/packages/protect-ffi/tsconfig.wasm-errors.json'
-      - 'languages/typescript/packages/protect-ffi/package.json'
-      - 'languages/typescript/packages/protect-ffi/mise.toml'
-      # Out of this package, and a real compile input: the cdylib crate carries
-      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
-      # EQL wire types are linked into `index.node` AND into the wasm32 build
-      # this suite's `wasm-round-trip` test loads. Both cache keys in
-      # `.github/actions/build-ffi-binding` hash these, so an edit misses the
-      # cache and rebuilds the binding — without these entries it would be
-      # rebuilt and no suite that loads it would start. Pinned by
-      # scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/eql/crates/**'
-      - 'packages/eql/Cargo.toml'
-      - '.github/workflows/integration-protect-ffi.yml'
-      - '.github/actions/build-ffi-binding/**'
-      - '.github/actions/build-auth-binding/**'
-      # `@cipherstash/auth` is a workspace package, and the SDK loads its napi
-      # module (and, for `wasm-inline`, its wasm) on import, so a change to what
-      # it ships arrives here rather than in `pnpm-workspace.yaml`. The paths of
-      # require-auth-npm-changeset.yml.
-      - 'packages/stack-auth/Cargo.toml'
-      - 'packages/stack-auth/src/**'
-      - 'languages/typescript/packages/auth/**'
-      - 'languages/typescript/packages/stack-auth-wasm/**'
-      - '.github/actions/require-cs-secrets/**'
   workflow_dispatch: {}
 
 permissions:
@@ -158,6 +126,87 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      protect_ffi: ${{ steps.decide.outputs.protect_ffi }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            # The same list as `on.push.paths`, which says why each entry
+            # is there.
+            protect_ffi:
+              - "languages/typescript/packages/protect-ffi/integration-tests/**"
+              - "pnpm-workspace.yaml"
+              - "packages/eql/packages/eql/**"
+              - "languages/typescript/packages/protect-ffi/crates/**"
+              - "languages/typescript/packages/protect-ffi/Cargo.toml"
+              - "languages/typescript/packages/protect-ffi/Cargo.lock"
+              - "languages/typescript/packages/protect-ffi/src/**"
+              - "languages/typescript/packages/protect-ffi/scripts/**"
+              - "languages/typescript/packages/protect-ffi/tsconfig.wasm-errors.json"
+              - "languages/typescript/packages/protect-ffi/package.json"
+              - "languages/typescript/packages/protect-ffi/mise.toml"
+              - "packages/eql/crates/**"
+              - "packages/eql/Cargo.toml"
+              - ".github/workflows/integration-protect-ffi.yml"
+              - ".github/actions/build-ffi-binding/**"
+              - ".github/actions/build-auth-binding/**"
+              - "packages/stack-auth/Cargo.toml"
+              - "packages/stack-auth/src/**"
+              - "languages/typescript/packages/auth/**"
+              - "languages/typescript/packages/stack-auth-wasm/**"
+              - ".github/actions/require-cs-secrets/**"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PROTECT_FFI: ${{ steps.filter.outputs.protect_ffi }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            PROTECT_FFI=true
+          fi
+          answers=(
+            "protect_ffi=$PROTECT_FFI"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   integration:
     name: protect-ffi integration suite
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -181,7 +230,14 @@ jobs:
     # unrelated commit will not start it either. An allowlist of event names
     # would break again the day someone adds `schedule:`.
     # Enforced by scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [selector]
+    # The first clause is the selector's answer; both are exclusions of
+    # pull_request, not lists of events.
+    if: >-
+      (github.event_name != 'pull_request'
+       || needs.selector.outputs.protect_ffi == 'true')
+      && (github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository)
 
     env:
       # Same split as the other integration workflows: the workspace CRN and
@@ -389,3 +445,31 @@ jobs:
         if: always()
         working-directory: languages/typescript/packages/protect-ffi/integration-tests
         run: docker compose down -v
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: Integration (protect-ffi) summary
+    needs: [selector, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done

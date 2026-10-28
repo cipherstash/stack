@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { jobTriggerLists } from './lib/selector.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -40,9 +41,6 @@ const STACK_SRC = 'languages/typescript/packages/stack/src'
 const STACK_MANIFEST = 'languages/typescript/packages/stack/package.json'
 const CATALOG_MANIFEST = 'pnpm-workspace.yaml'
 
-/** Both trigger events, in the order GitHub evaluates them. */
-const TRIGGER_EVENTS = ['push', 'pull_request']
-
 /**
  * The integration workflows, discovered rather than listed: any workflow whose
  * `CS_IT_SUITE` globs select suites out of `languages/typescript/packages/stack/` is in scope. A
@@ -56,14 +54,21 @@ function discoverWorkflows() {
 }
 
 /**
- * `on:` parses as the boolean `true` under YAML 1.1 (the "Norway problem"),
- * which is why this reads both keys rather than `wf.on`.
+ * The path lists that decide whether the jobs running a suite run, once each:
+ * the workflow's `push` and `pull_request` `paths:` lists, and the selector
+ * filter each such job reads.
  */
-function triggerBlocks(wf) {
-  const on = wf.on ?? wf[true]
-  return TRIGGER_EVENTS.map((event) => on?.[event]).filter(
-    (block) => block && Array.isArray(block.paths),
-  )
+function triggerBlocks(relPath) {
+  const lists = new Map()
+  for (const [jobId, job] of Object.entries(
+    readWorkflow(relPath)?.jobs ?? {},
+  )) {
+    if (!job?.env?.CS_IT_SUITE) continue
+    for (const { source, paths } of jobTriggerLists(relPath, jobId)) {
+      lists.set(source, { source, paths })
+    }
+  }
+  return [...lists.values()]
 }
 
 /** Every `CS_IT_SUITE` glob set declared anywhere in the workflow. */
@@ -190,8 +195,9 @@ describe('integration workflow paths filters', () => {
   for (const relPath of WORKFLOWS) {
     it(`${relPath} triggers on the manifests pinning its suites' dependencies`, () => {
       const wf = readWorkflow(relPath)
-      const blocks = triggerBlocks(wf)
-      expect(blocks.length).toBe(TRIGGER_EVENTS.length)
+      const blocks = triggerBlocks(relPath)
+      // A `push` list, and a `pull_request` list or a selector filter.
+      expect(blocks.length).toBe(2)
 
       const deps = stackDependencies()
       const files = suiteFiles(suiteGlobs(wf))
@@ -215,7 +221,7 @@ describe('integration workflow paths filters', () => {
 
     it(`${relPath} triggers on every source path its suites import`, () => {
       const wf = readWorkflow(relPath)
-      const blocks = triggerBlocks(wf)
+      const blocks = triggerBlocks(relPath)
       expect(blocks.length).toBeGreaterThan(0)
 
       const files = suiteFiles(suiteGlobs(wf))

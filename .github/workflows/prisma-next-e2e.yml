@@ -14,6 +14,8 @@ on:
   push:
     branches:
       - main
+    # The same files as the `selector` job's filter.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       - 'languages/typescript/packages/stack-prisma/**'
       - 'languages/typescript/examples/prisma/**'
@@ -21,9 +23,9 @@ on:
       # This suite encrypts against the live service, so the native binding and
       # the action that builds it are inputs to it. Added with that build step:
       # without them a protect-ffi change would reach main having never run this
-      # suite. They are repeated verbatim under `pull_request` below, which is
-      # what makes that a gate rather than a report — a PR touching any of these
-      # runs the suite before the change lands, not after.
+      # suite. The `selector` job's filter repeats them for `pull_request`,
+      # which is what makes that a gate rather than a report — a PR touching
+      # any of these runs the suite before the change lands, not after.
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/build-auth-binding/**'
       - 'languages/typescript/packages/protect-ffi/crates/**'
@@ -44,42 +46,87 @@ on:
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
       - 'packages/eql/crates/**'
       - 'packages/eql/Cargo.toml'
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
   pull_request:
     branches:
       - '**'
-    paths:
-      - 'languages/typescript/packages/stack-prisma/**'
-      - 'languages/typescript/examples/prisma/**'
-      - '.github/workflows/prisma-next-e2e.yml'
-      # The same entries as under `push` above, and the copy that does the
-      # work: a PR touching the native binding or the action that builds it
-      # runs this suite on the PR, so a protect-ffi change is gated by it
-      # rather than reaching main unexercised. (GitHub Actions has no YAML
-      # anchors, so the list is written twice;
-      # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares the
-      # two copies.)
-      - '.github/actions/build-ffi-binding/**'
-      - '.github/actions/build-auth-binding/**'
-      - 'languages/typescript/packages/protect-ffi/crates/**'
-      - 'languages/typescript/packages/protect-ffi/src/**'
-      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
-      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
-      - 'languages/typescript/packages/protect-ffi/package.json'
-      - 'languages/typescript/packages/protect-ffi/mise.toml'
-      # Out of that package, and a compile input all the same: the cdylib
-      # crate carries
-      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
-      # EQL wire types are linked into the `index.node` this job encrypts
-      # through. The native cache key in `.github/actions/build-ffi-binding`
-      # hashes both, so an edit here misses that cache and the binding gets
-      # rebuilt — correctly. Without these two entries the miss never happens,
-      # because the workflow does not trigger at all: a payload-encoding change
-      # under packages/eql/crates merges with this suite green by absence.
-      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/eql/crates/**'
-      - 'packages/eql/Cargo.toml'
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      prisma_next_e2e: ${{ steps.decide.outputs.prisma_next_e2e }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            # The same list as `on.push.paths`, which says why each entry
+            # is there.
+            prisma_next_e2e:
+              - "languages/typescript/packages/stack-prisma/**"
+              - "languages/typescript/examples/prisma/**"
+              - ".github/workflows/prisma-next-e2e.yml"
+              - ".github/actions/build-ffi-binding/**"
+              - ".github/actions/build-auth-binding/**"
+              - "languages/typescript/packages/protect-ffi/crates/**"
+              - "languages/typescript/packages/protect-ffi/src/**"
+              - "languages/typescript/packages/protect-ffi/Cargo.toml"
+              - "languages/typescript/packages/protect-ffi/Cargo.lock"
+              - "languages/typescript/packages/protect-ffi/package.json"
+              - "languages/typescript/packages/protect-ffi/mise.toml"
+              - "packages/eql/crates/**"
+              - "packages/eql/Cargo.toml"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PRISMA_NEXT_E2E: ${{ steps.filter.outputs.prisma_next_e2e }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            PRISMA_NEXT_E2E=true
+          fi
+          answers=(
+            "prisma_next_e2e=$PRISMA_NEXT_E2E"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   e2e:
     name: Run Prisma Next E2E
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -93,7 +140,14 @@ jobs:
     # the job on `workflow_dispatch` in integration-protect-ffi.yml, making a
     # declared manual trigger do nothing. Enforced by
     # scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [selector]
+    # The first clause is the selector's answer; both are exclusions of
+    # pull_request, not lists of events.
+    if: >-
+      (github.event_name != 'pull_request'
+       || needs.selector.outputs.prisma_next_e2e == 'true')
+      && (github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository)
 
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
@@ -201,3 +255,31 @@ jobs:
         if: always()
         working-directory: languages/typescript/examples/prisma
         run: docker compose -f test/e2e/docker-compose.yml down -v
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: Prisma Next E2E summary
+    needs: [selector, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done
