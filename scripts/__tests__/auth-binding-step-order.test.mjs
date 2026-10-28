@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { filterCovers } from './lib/paths-filter.mjs'
+import { jobTriggerLists } from './lib/selector.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -84,13 +85,20 @@ describe('the @cipherstash/auth binding is built wherever the SDK runs', () => {
 
 const same = (entry, input) => entry === input
 
-/** The `paths:` lists of a workflow's filtered events. */
-const filters = (relPath) => {
-  const wf = readWorkflow(relPath)
-  const on = wf?.on ?? wf?.[true]
-  return ['push', 'pull_request']
-    .map((event) => on?.[event]?.paths)
-    .filter(Array.isArray)
+/**
+ * The path lists that decide whether the given jobs run, once each: the
+ * workflow's `push` and `pull_request` `paths:` lists, and the selector filter
+ * each job reads. Every job of the workflow when none are given.
+ */
+const filters = (relPath, jobNames) => {
+  const lists = new Map()
+  for (const jobName of jobNames ??
+    Object.keys(readWorkflow(relPath)?.jobs ?? {})) {
+    for (const { source, paths } of jobTriggerLists(relPath, jobName)) {
+      lists.set(source, paths)
+    }
+  }
+  return [...lists.values()]
 }
 
 /**
@@ -105,14 +113,19 @@ const AUTH_SOURCE_WORKFLOWS = [
 ]
 
 describe('a change to the auth binding starts the jobs that load it', () => {
-  const users = [
-    ...new Set(
-      JOBS.filter((job) => job.auth).map((job) => job.id.split(' / ')[0]),
-    ),
-  ]
+  /** Each workflow with a job that builds the binding, and those jobs. */
+  const usersByWorkflow = new Map()
+  for (const job of JOBS.filter((entry) => entry.auth)) {
+    const [relPath, jobName] = job.id.split(' / ')
+    usersByWorkflow.set(relPath, [
+      ...(usersByWorkflow.get(relPath) ?? []),
+      jobName,
+    ])
+  }
+  const users = [...usersByWorkflow.keys()]
 
   it.each(users)('%s filters on the action', (relPath) => {
-    for (const paths of filters(relPath)) {
+    for (const paths of filters(relPath, usersByWorkflow.get(relPath))) {
       expect(
         filterCovers(paths, '.github/actions/build-auth-binding/**', same),
       ).toBe(true)
@@ -133,7 +146,7 @@ describe('a change to the auth binding starts the jobs that load it', () => {
     '%s filters on the auth sources',
     (relPath) => {
       expect(shipped.length).toBeGreaterThanOrEqual(4)
-      const lists = filters(relPath)
+      const lists = filters(relPath, usersByWorkflow.get(relPath))
       expect(lists.length).toBe(2)
       for (const paths of lists) {
         expect(
