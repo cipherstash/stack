@@ -88,12 +88,28 @@ const DECIMAL_RESERVED: u32 = 0x7F00_FFFF;
 /// Where [`write()`] puts a scalar's bytes: a `Vec<u8>` for a sealed leaf's
 /// plaintext, sized up front with [`max_len`] so it never grows, or a
 /// [`Buffer`] for a frame, which grows without leaving copies behind.
-pub trait Out {
+///
+/// It is sealed: a scalar is written only into these two, so the trait is
+/// not a way to add a third, and can change without breaking anyone.
+pub trait ByteSink: sealed::Sealed {
+    /// Append one byte.
     fn push(&mut self, byte: u8);
+    /// Append `bytes`.
     fn extend_from_slice(&mut self, bytes: &[u8]);
 }
 
-impl Out for Vec<u8> {
+mod sealed {
+    use vitaminc_protected::Buffer;
+
+    /// Implemented only here, so [`ByteSink`](super::ByteSink) cannot be
+    /// implemented outside this crate.
+    pub trait Sealed {}
+
+    impl Sealed for Vec<u8> {}
+    impl Sealed for Buffer {}
+}
+
+impl ByteSink for Vec<u8> {
     fn push(&mut self, byte: u8) {
         Vec::push(self, byte);
     }
@@ -102,7 +118,7 @@ impl Out for Vec<u8> {
     }
 }
 
-impl Out for Buffer {
+impl ByteSink for Buffer {
     fn push(&mut self, byte: u8) {
         Buffer::push(self, byte);
     }
@@ -118,7 +134,7 @@ impl Out for Buffer {
 /// that call it for every scalar measured 10% to 15% slower with its body
 /// inlined into them than with a call.
 #[inline(never)]
-pub fn write<O: Out>(
+pub fn write<O: ByteSink>(
     ty: Option<Logical>,
     v: Physical<'_>,
     form: Form,
@@ -323,7 +339,11 @@ fn length_prefix(form: Form, len: usize) -> Result<Option<u32>, ScalarError> {
     }
 }
 
-fn write_physical<O: Out>(v: Physical<'_>, form: Form, out: &mut O) -> Result<(), ScalarError> {
+fn write_physical<O: ByteSink>(
+    v: Physical<'_>,
+    form: Form,
+    out: &mut O,
+) -> Result<(), ScalarError> {
     let mut variable = |tag, bytes: &[u8]| {
         out.push(tag);
         if let Some(len) = length_prefix(form, bytes.len())? {
@@ -351,7 +371,7 @@ fn write_physical<O: Out>(v: Physical<'_>, form: Form, out: &mut O) -> Result<()
     Ok(())
 }
 
-fn write_int<O: Out>(i: Int, out: &mut O) {
+fn write_int<O: ByteSink>(i: Int, out: &mut O) {
     macro_rules! le {
         ($tag:ident, $v:expr) => {{
             out.push(tags::$tag);
