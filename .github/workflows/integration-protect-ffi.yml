@@ -160,7 +160,7 @@ concurrency:
 jobs:
   integration:
     name: protect-ffi integration suite
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     # Generous, because a cold `build-ffi-binding` compiles the cipherstash
     # client graph from scratch. It is also the backstop for `mise run
     # start-db`, whose readiness loop retries `pg_isready` forever rather than
