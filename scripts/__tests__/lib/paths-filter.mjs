@@ -1,3 +1,28 @@
+// Approximates picomatch, the matcher behind dorny/paths-filter and GitHub's
+// `paths:`: `*` stops at a separator and `**` does not. A bare directory name
+// is not a prefix match, so `.../require-cs-secrets` without `/**` covers
+// nothing.
+export function pathsGlobToRegExp(pattern) {
+  let source = '^'
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i]
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        source += '.*'
+        i += 1
+        if (pattern[i + 1] === '/') i += 1
+      } else {
+        source += '[^/]*'
+      }
+    } else if (ch === '?') {
+      source += '[^/]'
+    } else {
+      source += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    }
+  }
+  return new RegExp(`${source}$`)
+}
+
 const globPrefix = (pattern) => {
   const segments = pattern.split('/')
   const at = segments.findIndex((segment) => /[*?[]/.test(segment))
