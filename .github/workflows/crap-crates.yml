@@ -59,7 +59,7 @@ env:
 jobs:
   crap-stack-auth:
     name: CRAP (stack-auth)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -83,7 +83,7 @@ jobs:
 
   crap-stack-encrypt:
     name: CRAP (stack-encrypt)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
