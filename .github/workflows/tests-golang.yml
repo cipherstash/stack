@@ -23,34 +23,20 @@ name: Tests (Go)
 # Every job except go-binding-cross runs mise at the repository root. The
 # macOS and Windows jobs install only Go, reading the version from the root
 # mise.toml, so they need no Rust.
+#
+# The `selector` job decides which jobs a pull request runs, and `summary`
+# reports the result (ADR 0003). go-binding-cross and live need wasi-check,
+# so they run when it runs.
 
 on:
-  pull_request:
-    paths:
-      - packages/stack-auth/**
-      - packages/stack-profile/**
-      - packages/stack-kms/**
-      - packages/stack-encrypt/**
-      - packages/stack-encrypt-derive/**
-      - packages/stack-guest-abi/**
-      # The eql guest build links eql-bindings.
-      - packages/eql/crates/eql-bindings/**
-      - packages/eql/crates/eql-domains/**
-      - languages/golang/**
-      - scripts/check-wasm-imports.py
-      - scripts/go-binding-test.sh
-      - Cargo.toml
-      - Cargo.lock
-      - .cargo/**
-      - mise.toml
-      - mise.test.toml
-      - .github/actions/require-cs-secrets/**
-      - .github/workflows/tests-golang.yml
-      # Keep these excludes last so docs-only changes are skipped.
-      - "!**.md"
-      - "!**.example"
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
+  pull_request: {}
   push:
     branches: [main]
+    # The union of the `selector` job's filters.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       - packages/stack-auth/**
       - packages/stack-profile/**
@@ -93,8 +79,120 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      go: ${{ steps.decide.outputs.go }}
+      go_lint: ${{ steps.decide.outputs.go_lint }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      #
+      # `every` makes a file count only when it matches every rule. That is
+      # what makes the `!` rules exclude documentation: under dorny's default,
+      # `some`, a `!` rule matches every other file in the repository. So each
+      # filter's trigger paths are one brace pattern, written across lines:
+      # YAML drops a line break that ends in `\`, with the next line's indent.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            # wasi-check builds the stack crates and both guests, and runs the Go
+            # tests against them. The eql guest build links eql-bindings, which
+            # builds eql-domains. live needs wasi-check, and also runs the
+            # require-cs-secrets action.
+            go:
+              - "{\
+                packages/stack-auth/**,\
+                packages/stack-profile/**,\
+                packages/stack-kms/**,\
+                packages/stack-encrypt/**,\
+                packages/stack-encrypt-derive/**,\
+                packages/stack-guest-abi/**,\
+                packages/eql/crates/eql-bindings/**,\
+                packages/eql/crates/eql-domains/**,\
+                languages/golang/**,\
+                scripts/check-wasm-imports.py,\
+                scripts/go-binding-test.sh,\
+                Cargo.toml,\
+                Cargo.lock,\
+                .cargo/**,\
+                mise.toml,\
+                mise.test.toml,\
+                .github/actions/require-cs-secrets/**,\
+                .github/workflows/tests-golang.yml\
+                }"
+              - "!**/*.md"
+              - "!**/*.example"
+            # golangci-lint over the Go module, with its config in
+            # languages/golang/.golangci.yaml. mise.toml pins go and golangci-lint.
+            # It needs no guests.
+            go_lint:
+              - "{\
+                languages/golang/**,\
+                mise.toml,\
+                .github/workflows/tests-golang.yml\
+                }"
+              - "!**/*.md"
+              - "!**/*.example"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GO: ${{ steps.filter.outputs.go }}
+          GO_LINT: ${{ steps.filter.outputs.go_lint }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            GO=true
+            GO_LINT=true
+          fi
+          answers=(
+            "go=$GO"
+            "go_lint=$GO_LINT"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   wasi-check:
     name: WASI check, guests and Go (Linux)
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.go == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 60
     env:
@@ -242,6 +340,12 @@ jobs:
   # guests: the packages embed a directory and compile without them.
   go-lint:
     name: Go lint
+    needs: [selector]
+    # Written as an exclusion, not a list of events: every event other
+    # than a pull request runs this job.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.selector.outputs.go_lint == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
@@ -400,4 +504,32 @@ jobs:
           for example in encrypted_record mixed_user search_terms zerokms_auth; do
             echo "==> $example"
             cargo run --locked -p stack-encrypt --example "$example"
+          done
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: Tests (Go) summary
+    needs: [selector, wasi-check, go-lint, go-binding-cross, live]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
           done
