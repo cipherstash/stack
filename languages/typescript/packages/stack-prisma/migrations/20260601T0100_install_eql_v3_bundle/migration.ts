@@ -65,11 +65,14 @@
  *      stack-prisma had 481 npm downloads in the 30 days to 3 October 2026
  *      (384 in the last week, 305 on the 1.2.0 release day), against the
  *      ~253/month at which (2) was judged small and knowable. The team
- *      chose the re-emit on those numbers. 3.1.0 is a Rust-only minor
- *      release whose SQL changes only the version stamp, so a second
- *      genesis edge would again add a permanent ~2.6 MB bundle copy for no
- *      change in behaviour. A 1.2.x database walks the 3.1.0 self-edge
- *      only; a 1.0.0 / 1.1.x one walks 3.0.5, 3.0.6 and 3.1.0.
+ *      chose the re-emit on those numbers, when 3.1.0's SQL changed only
+ *      the version stamp, so a second genesis edge would again have added
+ *      a permanent ~2.6 MB bundle copy for no change in behaviour. Before
+ *      3.1.0 shipped, its SQL also took the constant-operation ORE block
+ *      comparator, and both 3.1.0 directories were re-emitted unpublished
+ *      to bake it (`f92f5be5…` → the current hash). A 1.2.x database walks
+ *      the 3.1.0 self-edge only; a 1.0.0 / 1.1.x one walks 3.0.5, 3.0.6
+ *      and 3.1.0.
  *
  * Every re-emit changed the `migrationHash` and the baked
  * `installSqlSha256`. Consumers must delete `migrations/cipherstash/` and

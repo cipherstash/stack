@@ -41,6 +41,14 @@ eql-tests-macros = { path = "../../crates/eql-tests-macros" }
 # test targets (`tests/encrypted_domain`), not just under `cfg(test)`.
 proptest = "1"
 
+[dev-dependencies]
+# Creds-free ORE comparator ordering test (tests/encrypted_domain/family/sem.rs):
+# encrypts u64 arrays in-process under a throwaway key, so the comparator is
+# checked against real ciphertexts without CipherStash credentials. ore-rs is
+# the version cipherstash-client already pulls in; rand matches its rand 0.8.
+ore-rs = "=0.8.3"
+rand = "0.8"
+
 [lints]
 workspace = true
 

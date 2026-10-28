@@ -107,7 +107,7 @@ const STALE_1_2_BASELINE_HASH =
  * only to show the fixtures are NOT the current artefact.
  */
 const SHIPPED_BASELINE_HASH =
-  'f92f5be5239f3388239dfacb006420452003928ce9dc589a5a934486ada7ba22'
+  'cd203837545c166b28762675b69591310ef35c4ad3783660b1bd7277e40d075c'
 
 /**
  * What `@cipherstash/stack-prisma@1.0.0` stored for the same directory, under

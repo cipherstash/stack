@@ -2,10 +2,13 @@
 /**
  * Upgrade an existing EQL v3 installation to the pinned 3.1.0 bundle.
  *
- * 3.1.0 is a minor release for the Rust `eql-bindings` crate. Its install
- * SQL changes only the version stamp (`eql_v3.version()` and the `eql_v3`
- * schema comment), but the bundle digest still moves, so it is still a new
- * bundle to install.
+ * 3.1.0's install SQL changes the version stamp (`eql_v3.version()` and
+ * the `eql_v3` schema comment) and the ORE block comparator, which now runs
+ * a constant number of operations whatever two values share. Ordering
+ * results are unchanged for well-formed values; a block-ORE text value with
+ * a malformed term now raises on every comparison (EQL's upgrade note
+ * U-001). This edge was first emitted when only the stamp changed, and
+ * re-emitted before publication to bake the comparator.
  *
  * A database that already recorded the earlier upgrade invariants must
  * still traverse this edge, or it stays on an older EQL surface. Fresh
