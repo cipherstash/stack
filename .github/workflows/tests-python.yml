@@ -304,11 +304,28 @@ jobs:
         id: clock
         run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      # The commit `stackencrypt.__engine__` reports. The core crate's build
+      # script reads it from git. The three Linux legs build in a container,
+      # as root, on a bind mount the runner user owns, and there git refused
+      # to answer: the first run failed on all three with "no engine commit".
+      # So the host reads the commit and hands it over in the variable the
+      # build script accepts instead of git. All six legs get it, so every
+      # wheel names its engine the same way. The checkout is clean here, so
+      # the `-dirty` check the script skips with the override has nothing to
+      # add. python-ci.test.mjs holds the variable name to build.rs.
+      - name: Read the engine commit
+        id: engine
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # `--locked`: the Cargo.lock in the tree is the one built, as in every
       # other check of this workspace. `--out dist` puts the wheel where the
-      # steps below and the artifact upload look.
+      # steps below and the artifact upload look. maturin-action forwards
+      # only variables on its own prefix list (CARGO_, RUST, PYO3_, and so
+      # on) into the container, so `docker-options` names this one.
       - name: Build the wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          STACKENCRYPT_ENGINE_COMMIT: ${{ steps.engine.outputs.commit }}
         with:
           working-directory: languages/python
           command: build
@@ -316,6 +333,7 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           rust-toolchain: ${{ steps.rust.outputs.version }}
+          docker-options: -e STACKENCRYPT_ENGINE_COMMIT
 
       # The build time is the number this job exists to record. The spec's
       # scorecard asks for it per platform. It is written here, to this leg's
