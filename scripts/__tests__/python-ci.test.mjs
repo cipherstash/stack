@@ -240,6 +240,39 @@ describe('tests-python.yml', () => {
     expect([...listed].sort()).toEqual([...matrix].sort())
   })
 
+  it('hands the engine commit to every container build, under the name build.rs reads', () => {
+    // maturin-action runs the Linux legs in a manylinux container, as root,
+    // on a bind mount the runner user owns. There the core crate's build
+    // script cannot read the commit from git, and the first run of this
+    // workflow failed on all three container legs with its "no engine
+    // commit" panic. The script reads one override variable instead; the
+    // name comes from build.rs so a rename there fails here. maturin-action
+    // forwards only the variables on its own prefix allowlist, so the step
+    // must name this one in `docker-options` as well as set it.
+    const override = /^const ENV_OVERRIDE: &str = "([A-Z0-9_]+)";/m.exec(
+      read(`${PYTHON_ROOT}/crates/core/build.rs`),
+    )?.[1]
+    expect(override, 'ENV_OVERRIDE in crates/core/build.rs').toBeTruthy()
+
+    const wf = readWorkflow(WORKFLOW)
+    const steps = Object.values(wf.jobs).flatMap((job) =>
+      job.steps.filter((step) =>
+        /^PyO3\/maturin-action@/.test(step.uses ?? ''),
+      ),
+    )
+    expect(steps.length, 'maturin-action steps').toBeGreaterThan(0)
+    for (const step of steps) {
+      expect(
+        step.env?.[override],
+        `the maturin-action step must set ${override}`,
+      ).toBeTruthy()
+      expect(
+        String(step.with?.['docker-options'] ?? '').split(/\s+/),
+        `docker-options must forward ${override} into the container`,
+      ).toEqual(expect.arrayContaining(['-e', override]))
+    }
+  })
+
   it('gives no job a CipherStash credential', () => {
     // The live job (credentials, Postgres) is #1389's and lands as its own
     // job. Until then nothing in this file may read a CS_* variable or
