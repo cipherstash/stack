@@ -205,6 +205,7 @@ jobs:
   integration:
     name: Drizzle v3 integration (db=${{ matrix.db }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 35
     # No concurrency group: `integration-db` gives each job its own compose
     # project and ephemeral host ports, so live-DB jobs no longer contend and do
     # not need serialising. See that action for why the old

@@ -154,6 +154,7 @@ jobs:
   changes:
     name: "Detect relevant changes"
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     outputs:
       relevant: ${{ steps.r.outputs.relevant }}
     steps:
@@ -243,6 +244,7 @@ jobs:
   setup:
     name: "Compute matrix"
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     # Opts out of the workflow-level `working-directory: packages/eql`. This job
     # deliberately does not check out — it is pure bash deriving a matrix — so
     # `packages/eql` does not exist on the runner and every `run:` step fails
@@ -314,6 +316,7 @@ jobs:
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 45
     env:
       # test:sqlx:archive depends on test:sqlx:prep, which copies the built EQL
       # into migrations/, applies it to a live Postgres, and regenerates the
@@ -398,6 +401,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -460,6 +464,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -519,6 +524,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -548,6 +554,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
     services:
       encryption-postgres:
         image: postgres:17
@@ -676,6 +683,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -708,6 +716,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -744,6 +753,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -786,6 +796,7 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     env:
       POSTGRES_VERSION: "17"
     steps:
@@ -846,6 +857,7 @@ jobs:
   docs-static:
     name: "SQL doc validation"
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -885,6 +897,7 @@ jobs:
   known-failures:
     name: "known-failure markers"
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: read
@@ -923,6 +936,7 @@ jobs:
   doc-anchors:
     name: "doc anchor links"
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -956,6 +970,7 @@ jobs:
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 40
     env:
       POSTGRES_VERSION: "17"
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
@@ -1007,6 +1022,7 @@ jobs:
             known-failures, doc-anchors, e2e]
     if: always()
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
     # Same opt-out as `setup`, and this is the worse of the two to get wrong:
     # this job is the required check. It reads `needs.*.result` and checks out
     # nothing, so under the workflow-level `working-directory` it fails for a
