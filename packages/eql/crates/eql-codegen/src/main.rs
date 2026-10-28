@@ -14,6 +14,41 @@ fn out_root() -> PathBuf {
     }
 }
 
+/// The root for `go-eql` and `py-eql`, whose output lives outside the EQL
+/// subtree (`../../languages/...`). Those paths are relative to the subtree
+/// root, so under an `EQL_CODEGEN_OUT_ROOT` override they would resolve
+/// outside the throwaway tree, at its grandparent. The override is refused
+/// for them rather than followed there.
+fn cross_tree_root(command: &str) -> Result<PathBuf, String> {
+    if std::env::var_os("EQL_CODEGEN_OUT_ROOT").is_some() {
+        return Err(format!(
+            "{command} writes outside the EQL subtree and cannot honour EQL_CODEGEN_OUT_ROOT; unset it"
+        ));
+    }
+    Ok(repo_root())
+}
+
+/// Run one cross-tree emitter at [`cross_tree_root`].
+fn cross_tree(command: &str, emit: fn(&std::path::Path) -> std::io::Result<PathBuf>) -> ExitCode {
+    let root = match cross_tree_root(command) {
+        Ok(root) => root,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    match emit(&root) {
+        Ok(path) => {
+            println!("generated {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
 
@@ -92,16 +127,7 @@ fn main() -> ExitCode {
     // the query types, and the Types table. Wired into `mise run
     // types:generate` beside `bindings`; `types:check` diffs the file.
     if args.len() == 2 && args[1] == "go-eql" {
-        match eql_codegen::go_eql::generate_go_eql(&out_root()) {
-            Ok(path) => {
-                println!("generated {}", path.display());
-                return ExitCode::SUCCESS;
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
+        return cross_tree("go-eql", eql_codegen::go_eql::generate_go_eql);
     }
 
     // `py-eql`: regenerate the committed Python module stackencrypt._eql in
@@ -109,16 +135,7 @@ fn main() -> ExitCode {
     // `go-eql`: one marker class per EQL type, and the TYPES tuple. Wired
     // into `mise run types:generate`; `types:check` diffs the file.
     if args.len() == 2 && args[1] == "py-eql" {
-        match eql_codegen::py_eql::generate_py_eql(&out_root()) {
-            Ok(path) => {
-                println!("generated {}", path.display());
-                return ExitCode::SUCCESS;
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
+        return cross_tree("py-eql", eql_codegen::py_eql::generate_py_eql);
     }
 
     // `order`: print the install order of the whole src/v3 SQL surface, one

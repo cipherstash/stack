@@ -1,4 +1,4 @@
-//! The Python `stackencrypt._eql` parity gates.
+//! The Python `stackencrypt._eql` parity checks.
 //!
 //! The first is the twin of `go_eql_parity.rs`: the committed
 //! `languages/python/python/stackencrypt/_eql.py` must be byte for byte what
@@ -134,13 +134,34 @@ fn go_rows() -> Vec<Vec<(String, Value)>> {
         .collect()
 }
 
+/// A class body after its docstring. The docstring quotes catalog text, so
+/// a reason containing ` = ` would otherwise read as an attribute.
+fn after_docstring(class: &str) -> &str {
+    let body = class
+        .strip_prefix("    \"\"\"")
+        .expect("every marker class opens with a docstring");
+    let end = body.find("\"\"\"").expect("a closed docstring");
+    &body[end + 3..]
+}
+
+#[test]
+fn a_docstring_line_with_an_equals_sign_is_not_an_attribute() {
+    let class = "    \"\"\"The EQL type ...\n\n    The engine cannot produce it yet: a = b.\n    \"\"\"\n\n    name = \"X\"\n";
+    let attributes: Vec<&str> = after_docstring(class)
+        .lines()
+        .filter_map(|line| line.strip_prefix("    "))
+        .filter_map(|line| line.split_once(" = ").map(|(key, _)| key))
+        .collect();
+    assert_eq!(attributes, ["name"]);
+}
+
 /// Every marker class of the Python module, as (attribute, value) pairs.
 fn py_rows() -> Vec<Vec<(String, Value)>> {
     let py = render_py_eql();
     py.split("(Marker):\n")
         .skip(1)
         .map(|class| {
-            class
+            after_docstring(class)
                 .lines()
                 .filter_map(|line| line.strip_prefix("    "))
                 .filter_map(|line| line.split_once(" = "))
