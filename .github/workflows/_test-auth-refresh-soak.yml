@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   soak:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 30
     env:
       MISE_ENV: test
