@@ -3,6 +3,7 @@
 These principles apply when you architect, design or build a language SDK for Stack Encrypt.
 The first part applies to every language.
 The second part applies to the Go SDK.
+The third part applies to the Python SDK and is a start, not a complete set.
 [ADR-0008](../packages/stack-encrypt/docs/adr/0008-language-sdk-design-principles.md) records the decision to adopt them.
 
 ## Terms
@@ -10,6 +11,9 @@ The second part applies to the Go SDK.
 - **Engine:** the Rust code that encrypts, decrypts and derives search terms.
 - **Binding:** the FFI or WASI interface between the engine and a target language.
 - **Language SDK:** what users of the target language work with day to day.
+- **Extension:** the Python SDK's binding, the module `stackencrypt._engine` in the crate `stackencrypt-engine`.
+  The spec #1341 fixes both names, so "engine" in them names the binding, not Stack Encrypt.
+  `stackencrypt.__engine__` reports the Stack Encrypt commit, the engine in this list's sense.
 - **Declaration:** the statement of how each field is encrypted: its context, and its indexes.
   The engine calls a saved declaration a plan.
 
@@ -214,4 +218,48 @@ The generator does not guess a plural.
 
 - Query building in Go.
 - The design of the `go vet` check.
+- A change to a declaration over time.
+
+## Principles for the Python SDK
+
+The Python SDK is the package `stackencrypt` under `languages/python`.
+Its binding is the extension module `stackencrypt._engine`, named under Terms above.
+Do not call the extension the SDK, and do not call the SDK the binding.
+[ADR-0001](../languages/python/docs/adr/0001-a-declaration-is-checked-when-the-class-is-defined.md) under `languages/python/docs/adr/` records the first decision below.
+No code demonstrates these yet: the walking skeleton exposes only build metadata, and the tickets under spec #1341 build the rest.
+
+### 1. Find mistakes at the earliest stage
+
+The stages for Python are: the class statement, the cipher build, and the running program.
+Python has no compiler stage, so the class statement is the earliest.
+The running program finds only a mistake that depends on data.
+
+### 2. A declaration is checked when the class is defined, by construction
+
+One class decorator carries the context, reads the `Annotated` hints, and asks the engine to check the plan.
+The check runs as the `class` statement finishes, wherever the class is defined.
+The call site takes the class, as in `Cipher(User)`.
+No public name is a plan or returns one.
+
+### 3. The extension never changes a value
+
+A value is checked by exact type, so a `bool` is never an `int`.
+A value that does not fit its kind is refused, never narrowed or rounded.
+The kind comes from the field's marker, never from the Python type.
+
+### 4. Fit the way Python code reaches a database
+
+The SDK does not own a connection.
+It encrypts a model into the column values a psycopg statement takes, and decrypts the rows psycopg returns.
+Calls are synchronous and release the GIL while the engine works.
+
+### 5. Never put plaintext in an error or a print
+
+Every error names the field and the reason, and never the value.
+A declared model's `__repr__` and `__str__` show `[sealed]` for encrypted fields by default.
+
+### Not yet decided for Python
+
+- The SQLAlchemy layer, which is its own distribution and its own spec.
+- An async surface.
 - A change to a declaration over time.

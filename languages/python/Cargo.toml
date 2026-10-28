@@ -1,0 +1,36 @@
+# The Python SDK's Cargo workspace: the fourth in the repository, beside the
+# root (the stack-* crates), protect-ffi and EQL. The root `Cargo.toml`
+# excludes it, as it excludes the Go guests and the fuzz crates, so its
+# pyo3 graph and its own Cargo.lock never enter a stack-* build.
+#
+# Two crates, by design (the Python SDK spec, "Layout"):
+#
+# - `crates/core` holds everything that is not pyo3. It depends on
+#   `stack-encrypt` by path, and is linked and tested with no interpreter on
+#   the loader path.
+# - `crates/engine` is the pyo3 glue: the `_engine` cdylib maturin builds into
+#   the `stackencrypt` wheel. It depends on core.
+#
+# Build the wheel with `mise run build` from this directory (see mise.toml);
+# `cargo test --locked` from here runs both crates' Rust tests, and needs a
+# Python interpreter because the engine crate links libpython outside a wheel.
+[workspace]
+resolver = "2"
+# Listed by name, not by glob: scripts/__tests__/dependabot-cargo-cross-workspace.test.mjs
+# reads this list and expands no globs.
+members = ["crates/core", "crates/engine"]
+
+[workspace.package]
+edition = "2021"
+# Nothing in this workspace is published to crates.io: each crate carries
+# `publish = false`. The wheel is the artefact, and it is not released either
+# (the spec puts PyPI out of scope).
+repository = "https://github.com/cipherstash/stack"
+
+[workspace.dependencies]
+# `default-features = false`: no `http` yet. The skeleton makes no request;
+# the ticket that turns `encrypt` live names `http` explicitly on the engine
+# crate so a later `default-features = false` cannot remove it silently.
+# `dynamic` is the runtime value model every binding speaks (frames, plans
+# read at run time), and the only stack-encrypt surface the spec has core use.
+stack-encrypt = { path = "../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }

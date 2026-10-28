@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "stackencrypt"
+description = "Searchable encryption for Python over the CipherStash Stack engine. Not released."
+requires-python = ">=3.9"
+# The version lives in crates/engine/Cargo.toml; maturin reads it from there.
+dynamic = ["version"]
+classifiers = ["Private :: Do Not Upload"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.maturin]
+# The pure-Python package is the distribution; the Rust extension is its
+# `_engine` submodule, so the Python side can change without a recompile.
+module-name = "stackencrypt._engine"
+python-source = "python"
+# The engine crate, not the workspace root: maturin builds one cdylib.
+manifest-path = "crates/engine/Cargo.toml"
+# The one place `extension-module` is set. See crates/engine/Cargo.toml for
+# why it is not in the crate manifest.
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

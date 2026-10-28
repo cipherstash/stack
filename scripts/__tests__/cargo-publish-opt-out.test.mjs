@@ -6,7 +6,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 /**
  * Every crate in every Cargo workspace must opt out of crates.io unless it is
  * deliberately allowlisted below: the root workspace (the stack-* crates),
- * EQL, protect-ffi, and the single-package workspaces the root excludes (the
+ * EQL, protect-ffi, the Python SDK, and the single-package workspaces the root excludes (the
  * three cargo-fuzz crates and the two Go WASI guests).
  *
  * A crate with no `publish` key is publishable BY DEFAULT, and release-plz
@@ -51,6 +51,14 @@ const WORKSPACES = [
     root: 'languages/typescript/packages/protect-ffi',
     publishable: new Set(),
     expects: 'crates/protect-ffi',
+  },
+  {
+    // The Python SDK's workspace. Nothing in it is published: the wheel
+    // maturin builds from `crates/engine` is the artefact, and it is not
+    // released either.
+    root: 'languages/python',
+    publishable: new Set(),
+    expects: 'crates/engine',
   },
   {
     // The root workspace. The stack-* crates' release-plz step publishes
