@@ -19,9 +19,31 @@ fn build_info() -> (&'static str, &'static str) {
     )
 }
 
+/// Gate fact 2 (#1384): block for `millis` on a multi-thread tokio runtime
+/// with the GIL released, the way an engine call will. Returns the
+/// milliseconds the call blocked for, measured in Rust.
+#[cfg(feature = "gate-probe")]
+#[pyfunction]
+fn _probe_detached_sleep(py: Python<'_>, millis: u64) -> u64 {
+    py.detach(|| {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_time()
+            .build()
+            .expect("a tokio runtime builds");
+        let started = std::time::Instant::now();
+        // The sleep is made inside the runtime: tokio's timer needs one.
+        runtime.block_on(async {
+            tokio::time::sleep(std::time::Duration::from_millis(millis)).await;
+        });
+        started.elapsed().as_millis() as u64
+    })
+}
+
 #[pymodule]
 fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_info, module)?)?;
+    #[cfg(feature = "gate-probe")]
+    module.add_function(wrap_pyfunction!(_probe_detached_sleep, module)?)?;
     Ok(())
 }
 
