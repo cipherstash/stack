@@ -21,7 +21,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * - It needs a job that passes by the rule above, and its `if:` calls no
  *   `always()`, `failure()` or `cancelled()`. GitHub then skips it whenever
  *   that job is skipped, so the selector decides it too.
- * - It has a written reason in `RUNS_ON_EVERY_CHANGE`.
+ * - It has a written reason in `EXEMPT_JOBS`.
  *
  * A whole workflow can be exempt, with a written reason, in `NOT_CHECKS` or
  * `NOT_YET_CONVERTED`. An exemption that matches nothing, or is no longer
@@ -82,10 +82,11 @@ const NOT_YET_CONVERTED = Object.fromEntries(
 )
 
 /**
- * Jobs in a workflow with a selector job that run on every change, on
- * purpose. Keyed `<workflow>#<job id>`.
+ * Jobs in a workflow with a selector job that the selector job does not
+ * decide, on purpose. Most run on every change. Some never run on a pull
+ * request at all. Keyed `<workflow>#<job id>`.
  */
-const RUNS_ON_EVERY_CHANGE = {
+const EXEMPT_JOBS = {
   '.github/workflows/test-eql.yml#setup':
     'Sets the Postgres versions and shard count that the gated jobs read. It is a bash step with no checkout.',
   '.github/workflows/test-eql.yml#docs-static':
@@ -209,11 +210,11 @@ describe('the failsafe', () => {
         .filter((id) => id !== SELECTOR && id !== summary)
         .filter((id) => !decided.has(id))
         .map((id) => `${file}#${id}`)
-        .filter((ref) => !(ref in RUNS_ON_EVERY_CHANGE)),
+        .filter((ref) => !(ref in EXEMPT_JOBS)),
     )
     expect(
       undecided,
-      `The selector job does not decide whether these jobs run, so they run on every change. Give each one \`needs: [${SELECTOR}]\` and an \`if:\` that reads an output the selector job declares. If a job must run on every change, add it to RUNS_ON_EVERY_CHANGE with the reason. If the summary job is listed, make it the last job, with \`if: always()\` and every other job in its \`needs:\`.`,
+      `The selector job does not decide whether these jobs run, so they can run on every change. Give each one \`needs: [${SELECTOR}]\` and an \`if:\` that reads an output the selector job declares. If the selector job must not decide a job, add it to EXEMPT_JOBS with the reason. If the summary job is listed, make it the last job, with \`if: always()\` and every other job in its \`needs:\`.`,
     ).toEqual([])
   })
 
@@ -231,7 +232,7 @@ describe('the failsafe', () => {
     expect([
       ...reasonMissing(NOT_CHECKS),
       ...reasonMissing(NOT_YET_CONVERTED),
-      ...reasonMissing(RUNS_ON_EVERY_CHANGE),
+      ...reasonMissing(EXEMPT_JOBS),
     ]).toEqual([])
   })
 
@@ -272,7 +273,7 @@ describe('the failsafe', () => {
           .map((id) => `${file}#${id}`),
       ),
     )
-    const stale = Object.keys(RUNS_ON_EVERY_CHANGE).filter(
+    const stale = Object.keys(EXEMPT_JOBS).filter(
       (ref) => !undecidedRefs.has(ref),
     )
     expect(
