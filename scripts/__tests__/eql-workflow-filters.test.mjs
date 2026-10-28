@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
-import { readWorkflow } from './lib/workflows.mjs'
+import { readWorkflow, triggers } from './lib/workflows.mjs'
 
 /**
  * The two EQL workflows decide what to run from a list of path globs, and both
@@ -58,12 +58,6 @@ import { readWorkflow } from './lib/workflows.mjs'
 
 const TEST_EQL = '.github/workflows/test-eql.yml'
 const BENCH_EQL = '.github/workflows/bench-eql.yml'
-
-/** `on:` parses as the boolean `true` under YAML 1.1 — the "Norway problem". */
-function triggers(wf) {
-  const on = wf?.on ?? wf?.[true]
-  return on && typeof on === 'object' ? on : {}
-}
 
 /** A workflow's `on.push.paths` list, or `[]`. */
 function pushPaths(relPath) {

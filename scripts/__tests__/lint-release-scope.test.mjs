@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
-import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
+import {
+  readWorkflow,
+  triggers,
+  WORKFLOW_DIR,
+  workflowFiles,
+} from './lib/workflows.mjs'
 
 /**
  * `lint-release.yml` states its scope TWICE — once as the `pull_request` paths
@@ -23,10 +28,7 @@ import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
 const LINT_RELEASE = `${WORKFLOW_DIR}/lint-release.yml`
 
 const workflow = readWorkflow(LINT_RELEASE)
-// `on:` parses as the boolean `true` under YAML 1.1 — the Norway problem.
-const triggers = workflow.on ?? workflow[true]
-
-const filtered = triggers.pull_request.paths.filter((path) =>
+const filtered = triggers(workflow).pull_request.paths.filter((path) =>
   path.startsWith(`${WORKFLOW_DIR}/`),
 )
 

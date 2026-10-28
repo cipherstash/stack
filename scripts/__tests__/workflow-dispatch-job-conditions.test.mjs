@@ -5,7 +5,7 @@ import {
   UnsupportedExpression,
   unwrap,
 } from './lib/expressions.mjs'
-import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
+import { readWorkflow, triggers, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * A workflow that declares `workflow_dispatch:` must actually run when someone
@@ -298,16 +298,6 @@ const EVENT_OF = {
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------
-
-/**
- * `on:` parses as the boolean `true` under YAML 1.1 (the "Norway problem"),
- * hence the two keys. `workflow_dispatch:` with no value parses as null, so
- * membership — not truthiness — is what says the trigger is declared.
- */
-function triggers(wf) {
-  const on = wf?.on ?? wf?.[true]
-  return on && typeof on === 'object' ? on : {}
-}
 
 function declaresDispatch(wf) {
   return 'workflow_dispatch' in triggers(wf)

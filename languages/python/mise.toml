@@ -4,13 +4,14 @@
 #
 # Tasks live here and not in the root mise.toml on purpose:
 # scripts/__tests__/crates-ci.test.mjs fails a root task no workflow runs,
-# and the CI ticket (#1383) is what gives these a caller. Run them from this
+# and .github/workflows/tests-python.yml is their caller. Run them from this
 # directory: `mise run build`, `mise run test`, `mise run test:cargo`.
 
 [tools]
-# The interpreter the build task links and tests against; the oldest
-# supported (3.9) is covered in CI (#1383). uv makes the virtualenv and
-# installs the package.
+# The interpreter the build task links and tests against locally. CI
+# (tests-python.yml) runs the same tasks on this version and on the oldest
+# supported one, 3.9, by setting MISE_PYTHON_VERSION over this version. uv makes
+# the virtualenv and installs the package.
 python = "3.14"
 uv = "0.8.24"
 
@@ -22,9 +23,12 @@ set -euo pipefail
 # The interpreter is named: uv prefers its own managed interpreters over the
 # one on PATH, and the one on PATH is the python3 `[tools]` names, the one
 # the Rust tests link. A `.venv` made for another interpreter version is
-# recreated, so a change to `[tools]` cannot leave the tests on the old one. No lockfile is written: `uv pip install` resolves against the
-# index each time. The lockfile, and the Dependabot entry a tracked lockfile
-# needs, come with the CI ticket.
+# recreated, so a change to `[tools]` cannot leave the tests on the old one.
+# No lockfile is written: `uv pip install` resolves against the index each
+# time. The package has no runtime dependency, and the only thing resolved
+# here is the `test` extra (pytest) plus maturin as the build backend, so a
+# lockfile would fix test tooling versions alone. One comes, with its Dependabot
+# entry, when the package gains a runtime dependency.
 want="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 have="$([ -x .venv/bin/python ] && .venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])' || true)"
 if [ "$have" != "$want" ]; then
@@ -33,7 +37,8 @@ if [ "$have" != "$want" ]; then
 fi
 # The dev profile for the local loop: maturin builds release by default, and
 # a release build of the stack-encrypt graph takes minutes per rebuild. The
-# CI ticket decides the release profile for the wheel it builds and times.
+# `wheels` job in tests-python.yml builds release, because the time it records
+# is the cost of the wheel a user would install.
 export MATURIN_PEP517_ARGS="${MATURIN_PEP517_ARGS:---profile dev}"
 # The package itself, built by maturin through the PEP 517 backend, plus the
 # `test` extra. Always reinstall the package so a Rust change is picked up.

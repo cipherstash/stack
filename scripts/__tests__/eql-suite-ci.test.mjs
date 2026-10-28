@@ -4,7 +4,12 @@ import { dirname, join, relative, sep } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
-import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
+import {
+  readWorkflow,
+  runWorkingDirectory,
+  WORKFLOW_DIR,
+  workflowFiles,
+} from './lib/workflows.mjs'
 
 /**
  * Guards that the EQL suite is RUN, not merely present.
@@ -68,21 +73,37 @@ const SUITE_TASKS = [
 ]
 
 /**
- * The part of a workflow that actually does something: `jobs:` and everything
- * under it, with comment lines stripped.
+ * The part of a workflow that runs an EQL task: the `run:` bodies of the steps
+ * that execute inside `packages/eql`, with shell comment lines stripped.
  *
- * Lifted from `integrationSuiteCi.test.ts`, and for the reason recorded there —
- * a claim satisfied by prose rather than by a step. Every assertion below is a
- * substring search, and this file's own header names all three suite tasks. Cut
- * at `jobs:` and the `on:`/`paths:` block goes too, which is what makes "a
- * `paths:` filter naming the suite is a trigger, not a run" true rather than
- * merely intended.
+ * Only `run:` bodies, so a claim is satisfied by a step and not by prose (the
+ * reason `integrationSuiteCi.test.ts` cuts at `jobs:`); this file's own header
+ * names all three suite tasks, and so does a `paths:` filter, which is a
+ * trigger and not a run.
+ *
+ * Only the steps whose working directory is under `packages/eql`. A mise
+ * task name is scoped to the config mise finds from the current directory,
+ * and to nothing else. `mise run test` from `languages/python` runs THAT
+ * workspace's `test` task. Read without the directory, it counted as EQL's
+ * `test`, and EQL's `test` depends on `test:sqlx` and `test:lint`. So the
+ * two exemptions below were wrong from the first commit of
+ * `tests-python.yml`: a false "CI runs this", in the direction this file
+ * exists to rule out. The directory is resolved by `runWorkingDirectory`.
+ * AGENTS.md records that every EQL task must run that way, and every EQL
+ * workflow does. A composite action's bodies are appended by the caller
+ * unscoped, as before. An action is reached by `uses:`, and `uses:` has no
+ * working directory of its own.
  */
-function executablePart(body) {
-  const jobsAt = body.search(/^jobs:/m)
-  // No `jobs:` key means nothing runs, so nothing can match. Returning the
-  // whole body here would hand every assertion the header comments instead.
-  return jobsAt === -1 ? '' : body.slice(jobsAt).replace(/^[ \t]*#.*$/gm, '')
+const EQL_DIR = EQL_PREFIX.slice(0, -1)
+const insideEql = (dir) =>
+  dir !== undefined &&
+  (String(dir) === EQL_DIR || String(dir).startsWith(EQL_PREFIX))
+function eqlRunBodies(wf) {
+  return Object.values(wf?.jobs ?? {}).flatMap((job) =>
+    (Array.isArray(job?.steps) ? job.steps : [])
+      .filter((step) => insideEql(runWorkingDirectory(wf, job, step)))
+      .map((step) => String(step?.run ?? '').replace(/^[ \t]*#.*$/gm, '')),
+  )
 }
 
 /** The two spellings GitHub accepts for a composite action's manifest. */
@@ -157,16 +178,81 @@ const workflowSteps = (wf) =>
  * makes the mutation test below report a workflow as its own sole caller.
  */
 const rootWorkflows = workflowFiles().map((relPath) => {
-  const actions = workflowSteps(readWorkflow(relPath))
+  const wf = readWorkflow(relPath)
+  const actions = workflowSteps(wf)
     .map((step) => String(step?.uses ?? ''))
     .map((uses) => actionRunBodies(uses))
   return {
     relPath,
-    body: [
-      executablePart(readFileSync(join(REPO_ROOT, relPath), 'utf8')),
-      ...actions,
-    ].join('\n'),
+    body: [...eqlRunBodies(wf), ...actions].join('\n'),
   }
+})
+
+describe('a `mise run` counts as an EQL task only from inside packages/eql', () => {
+  const step = (run, dir) =>
+    dir === undefined ? { run } : { run, 'working-directory': dir }
+  const workflow = (jobs, defaults) => ({ defaults, jobs })
+
+  it('reads the step, the job default and the workflow default, in that order', () => {
+    const wf = workflow(
+      {
+        own: { steps: [step('mise run test:schema', 'packages/eql')] },
+        job: {
+          defaults: { run: { 'working-directory': 'packages/eql' } },
+          steps: [step('mise run test:crates')],
+        },
+        nested: {
+          steps: [step('mise run build', 'packages/eql/packages/eql')],
+        },
+        overridden: {
+          defaults: { run: { 'working-directory': 'packages/eql' } },
+          steps: [step('mise run test:cargo', 'languages/python')],
+        },
+      },
+      { run: { 'working-directory': 'packages/eql' } },
+    )
+    expect(eqlRunBodies(wf)).toEqual([
+      'mise run test:schema',
+      'mise run test:crates',
+      'mise run build',
+    ])
+  })
+
+  it("does not read another workspace's task of the same name as EQL's", () => {
+    // tests-python.yml's `python` job: `mise run test` and `mise run
+    // test:cargo` under languages/python. EQL has a `test` task too, and it
+    // depends on `test:sqlx` and `test:lint`; counted here, both read as run
+    // by CI and their exemptions below as stale.
+    const wf = workflow({
+      python: {
+        defaults: { run: { 'working-directory': 'languages/python' } },
+        steps: [step('mise run test:cargo'), step('mise run test')],
+      },
+      root: { steps: [step('mise run test:doc')] },
+    })
+    expect(eqlRunBodies(wf)).toEqual([])
+  })
+
+  it('strips shell comment lines, so a mention in a comment is not a run', () => {
+    const wf = workflow({
+      eql: {
+        steps: [
+          step(
+            '# run mise run test:sqlx first\nmise run test:schema',
+            'packages/eql',
+          ),
+        ],
+      },
+    })
+    expect(eqlRunBodies(wf)).toEqual(['\nmise run test:schema'])
+  })
+
+  it('finds a real step this way, so the scan is not fixture-only', () => {
+    const real = rootWorkflows.find(
+      ({ relPath }) => relPath === `${WORKFLOW_DIR}/test-eql.yml`,
+    )
+    expect(real?.body).toContain('test:sqlx:partition')
+  })
 })
 
 describe('a root workflow runs the EQL SQLx suite', () => {

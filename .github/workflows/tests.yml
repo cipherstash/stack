@@ -96,10 +96,12 @@ jobs:
               # Plans and ADRs; plan-docs-unread-by-tests.test.mjs holds the
               # plans half for the `paths:` filter above.
               - '!docs/**'
-              # The Go module, and the Rust crates no binding these jobs build
+              # The Go module, the Python SDK (tests-python.yml runs its
+              # checks), and the Rust crates no binding these jobs build
               # depends on. The auth and profile bindings compile stack-auth and
               # stack-profile, which stay in.
               - '!languages/golang/**'
+              - '!languages/python/**'
               - '!packages/stack-encrypt/**'
               - '!packages/stack-encrypt-derive/**'
               - '!packages/stack-kms/**'
