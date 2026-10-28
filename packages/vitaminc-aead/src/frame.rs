@@ -777,6 +777,12 @@ mod tests {
             Err(FrameWriteError::DuplicateKey)
         ));
         assert!(to_frame(Keys(&["k", "kk", "", "a"])).is_ok());
+        // An empty key is an empty range in the frame, and two are still
+        // a repeat.
+        assert!(matches!(
+            to_frame(Keys(&["", "a", ""])),
+            Err(FrameWriteError::DuplicateKey)
+        ));
     }
 
     #[test]
