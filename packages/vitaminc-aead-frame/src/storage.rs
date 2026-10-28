@@ -435,9 +435,9 @@ fn distinct<'a>(keys: impl ExactSizeIterator<Item = MapKey<'a>>) -> Result<(), I
 
 /// Write `value` as a blob: [`HEADER`], then its node.
 ///
-/// The blob is the value's plaintext, so it is returned as a [`Buffer`], and wiped when it is dropped. It grows without
-/// leaving copies of what it held behind, and is wiped if writing fails
-/// part way. The writer
+/// The blob is the value's plaintext, so it is returned as a [`Buffer`],
+/// and wiped when it is dropped. It grows without leaving copies of what
+/// it held behind, and is wiped if writing fails part way. The writer
 /// checks each rule a reader checks as it writes, so a blob this returns
 /// always reads; a debug build reads it back to make sure.
 ///

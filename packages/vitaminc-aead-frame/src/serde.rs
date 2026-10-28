@@ -1084,11 +1084,11 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 ///
 /// What a host and Rust exchange this way is not plaintext to seal, but may
 /// still be secret (a credential in a configuration, say). So the frame is
-/// returned as a [`Buffer`], and wiped when it is
-/// dropped. The buffer grows without leaving copies of what it held
-/// behind, as every frame vitaminc writes does, and is wiped if writing
-/// fails part way. A value written through `Display` (`collect_str`) is
-/// formatted into a buffer that is wiped too.
+/// returned as a [`Buffer`], and wiped when it is dropped. The buffer
+/// grows without leaving copies of what it held behind, as every frame
+/// vitaminc writes does, and is wiped if writing fails part way. A value
+/// written through `Display` (`collect_str`) is formatted into a buffer
+/// that is wiped too.
 ///
 /// # Errors
 ///

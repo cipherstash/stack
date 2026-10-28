@@ -359,8 +359,9 @@ impl Error for FrameWriteError {
     }
 }
 
-/// Write any source as a frame. The result is a [`Buffer`], since a frame of plaintext is plaintext: it grows without
-/// leaving copies behind, and is wiped when it is dropped.
+/// Write any source as a frame. The result is a [`Buffer`], since a frame
+/// of plaintext is plaintext: it grows without leaving copies behind, and
+/// is wiped when it is dropped.
 ///
 /// The result is checked with [`Frame::parse`] before it is returned, so a
 /// source that opens a container and never ends it is refused here, not by
