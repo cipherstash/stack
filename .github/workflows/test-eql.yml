@@ -159,6 +159,7 @@ jobs:
   selector:
     name: "Selector"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Each output is named after the filter that decides it;
     # `scripts/__tests__/eql-selector.test.mjs` follows a job's `if:` to its
     # filter by that name.
