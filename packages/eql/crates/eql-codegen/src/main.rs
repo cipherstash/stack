@@ -104,6 +104,23 @@ fn main() -> ExitCode {
         }
     }
 
+    // `py-eql`: regenerate the committed Python module stackencrypt._eql in
+    // the Python workspace (languages/python) from the same catalog rows as
+    // `go-eql`: one marker class per EQL type, and the TYPES tuple. Wired
+    // into `mise run types:generate`; `types:check` diffs the file.
+    if args.len() == 2 && args[1] == "py-eql" {
+        match eql_codegen::py_eql::generate_py_eql(&out_root()) {
+            Ok(path) => {
+                println!("generated {}", path.display());
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     // `order`: print the install order of the whole src/v3 SQL surface, one
     // repo-relative path per line, dependency before dependent. Consumed by
     // tasks/build.sh (`> src/deps-ordered-v3.txt`), which concatenates the files
@@ -259,5 +276,6 @@ fn main() -> ExitCode {
     eprintln!("       eql-codegen dump-catalog (print catalog surface as JSON)");
     eprintln!("       eql-codegen bindings   (regenerate eql-bindings Rust payload types)");
     eprintln!("       eql-codegen go-eql     (regenerate the Go package encrypt/eql)");
+    eprintln!("       eql-codegen py-eql     (regenerate the Python module stackencrypt._eql)");
     ExitCode::from(2)
 }
