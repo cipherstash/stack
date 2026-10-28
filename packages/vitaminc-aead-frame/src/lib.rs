@@ -34,6 +34,9 @@ pub mod serde;
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub mod storage;
 
+#[cfg(feature = "serde")]
+mod write;
+
 pub use transport::{decode_ciphertext, encode_ciphertext, CodecError};
 /// The frame: a value as transport bytes, and back. These live in
 /// `vitaminc-aead` next to the leaf codec they share, and are re-exported
