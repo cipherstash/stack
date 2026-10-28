@@ -163,7 +163,12 @@ describe('every EQL publish job reads it', () => {
  */
 const CRATES_PACKAGE = '@cipherstash/auth'
 const CRATES_WORKFLOW = '.github/workflows/release-plz.yml'
-const CRATES_GATED_JOBS = [`${CRATES_WORKFLOW} / release-crates`]
+// The publish job, and the auth refresh soak it needs: an unarmed line has
+// nothing to publish, so it has nothing to soak either.
+const CRATES_GATED_JOBS = [
+  `${CRATES_WORKFLOW} / auth-refresh-soak`,
+  `${CRATES_WORKFLOW} / release-crates`,
+]
 
 describe('the stack-* crates line', () => {
   it('keys on the @cipherstash/auth entry', () => {
@@ -212,7 +217,7 @@ describe('the stack-* crates line', () => {
     }
   })
 
-  it('is computed by release-plz.yml and gates exactly the crates publish job', () => {
+  it('is computed by release-plz.yml and gates exactly the crates publish job and its soak', () => {
     const job = readWorkflow(CRATES_WORKFLOW)?.jobs?.['crates-armed']
     const runsIt = (job?.steps ?? []).some((step) =>
       String(step?.run ?? '').includes('scripts/eql-pipeline-armed.mjs crates'),
