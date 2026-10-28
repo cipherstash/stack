@@ -204,7 +204,7 @@ on:
 jobs:
   integration:
     name: Drizzle v3 integration (db=${{ matrix.db }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     # No concurrency group: `integration-db` gives each job its own compose
     # project and ephemeral host ports, so live-DB jobs no longer contend and do
     # not need serialising. See that action for why the old
