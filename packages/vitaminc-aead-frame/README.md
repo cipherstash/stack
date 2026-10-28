@@ -134,7 +134,7 @@ The storage profile and the transport serde format were measured against `serde_
 
 MessagePack is written with field names (`rmp_serde::to_vec_named`), since the storage profile, the transport format and JSON all carry them. Borsh carries no field names and no kinds, only the values in order, so it shows what a format costs that carries nothing else. The storage profile and the transport format wipe their buffers as they grow and when they are dropped. The other three wipe nothing: they write into a plain `Vec<u8>`, so each time the buffer grows the old one is freed with its bytes still in it, and the result is freed unwiped when it is dropped. Wrapping their output in `Zeroizing` would cover only the drop, not the copies left as the buffer grows.
 
-These results are from an Apple M4 (4 performance and 6 efficiency cores, 24 GB) on macOS 26.5 with rustc 1.98.1, on 2026-10-26, using Criterion's default settings. Each time is the median of 100 samples. A write includes dropping the result.
+These results are from an Apple M4 (4 performance and 6 efficiency cores, 24 GB) on macOS 26.5 with rustc 1.98.1, on 2026-10-29, on mains power, using Criterion's default settings. The bench was run three times, and each time is the median of the three runs' medians of 100 samples. A write includes dropping the result.
 
 The record is an integer id, a name, an email, a flag, a float, a list of two tags and an optional integer.
 
@@ -152,31 +152,31 @@ Time to write:
 
 | Value | Storage | Transport | JSON | MessagePack | Borsh |
 | --- | --- | --- | --- | --- | --- |
-| One record of 7 fields | 986 ns | 1.09 µs | 198 ns | 337 ns | 72 ns |
-| 1,000 records | 937 µs | 741 µs | 217 µs | 139 µs | 30.3 µs |
-| Map of 1,000 text keys | 115 µs | 80.0 µs | 18.0 µs | 13.6 µs | 6.21 µs |
-| 64 KiB of text | 35.5 µs | 33.8 µs | 33.8 µs | 1.93 µs | 2.03 µs |
-| 64 KiB of bytes | 33.7 µs | 33.7 µs | 280 µs | 1.87 µs | 1.99 µs |
+| One record of 7 fields | 215 ns | 245 ns | 108 ns | 189 ns | 35 ns |
+| 1,000 records | 141 µs | 139 µs | 111 µs | 70.2 µs | 15.4 µs |
+| Map of 1,000 text keys | 28.8 µs | 16.5 µs | 9.77 µs | 7.15 µs | 3.21 µs |
+| 64 KiB of text | 1.92 µs | 1.89 µs | 17.8 µs | 1.11 µs | 1.17 µs |
+| 64 KiB of bytes | 1.93 µs | 1.90 µs | 145 µs | 1.10 µs | 1.16 µs |
 
 Time to read:
 
 | Value | Storage | Transport | JSON | MessagePack | Borsh |
 | --- | --- | --- | --- | --- | --- |
-| One record of 7 fields | 1.35 µs | 1.41 µs | 440 ns | 313 ns | 196 ns |
-| 1,000 records | 1.48 ms | 1.47 ms | 489 µs | 467 µs | 230 µs |
-| Map of 1,000 text keys | 268 µs | 303 µs | 216 µs | 202 µs | 85.4 µs |
-| 64 KiB of text | 8.48 µs | 8.49 µs | 11.6 µs | 4.14 µs | 6.16 µs |
-| 64 KiB of bytes | 1.91 µs | 1.99 µs | 881 µs | 1.88 µs | 2.85 µs |
+| One record of 7 fields | 488 ns | 472 ns | 244 ns | 196 ns | 132 ns |
+| 1,000 records | 526 µs | 493 µs | 267 µs | 204 µs | 134 µs |
+| Map of 1,000 text keys | 138 µs | 144 µs | 99.6 µs | 93.3 µs | 31.4 µs |
+| 64 KiB of text | 3.24 µs | 3.34 µs | 6.39 µs | 2.13 µs | 3.04 µs |
+| 64 KiB of bytes | 1.06 µs | 1.06 µs | 438 µs | 1.02 µs | 1.64 µs |
 
-Most results held within a few percent of their median. Two did not: the MessagePack read of 1,000 records ranged from 387 to 567 µs, and the transport write of 1,000 records from 724 to 773 µs.
+The three runs' medians were within 3% of each other for every result but the JSON write of the map, which ranged from 9.24 to 9.77 µs.
 
 What the numbers show:
 
-- Writing a large value is limited by the wipe, not by the format. MessagePack and Borsh write 64 KiB in about 2 µs; the storage profile takes 33.7 µs, and wiping the 64 KiB buffer is 31.5 µs of that, because `zeroize` wipes one byte at a time with volatile stores, so the compiler cannot remove the wipe. The transport format has the same cost. JSON writes no wipe, but writes bytes as a list of numbers, 3.6 times as large and 8 times as slow.
-- Reading text or bytes costs little more than copying them out: 64 KiB of bytes reads at about 32 GiB/s, as fast as MessagePack.
-- On values with many small parts, the storage profile is the slowest of the five. It writes 1,000 records 6.7 times as slowly as MessagePack and 31 times as slowly as Borsh, and reads them 3.2 and 6.4 times as slowly. MessagePack carries the same field names, so the names are not the cost; each element or field costs the storage writer about 40 to 90 ns more.
+- Writing a large value costs the format little more than the wipe. MessagePack and Borsh write 64 KiB in about 1.1 µs; the storage profile and the transport format take 1.9 µs, and the difference is wiping the buffer, sixteen bytes at a time, when it is dropped. JSON writes no wipe, but writes bytes as a list of numbers, 3.6 times as large and 75 times as slow.
+- Reading text or bytes costs little more than copying them out: 64 KiB of bytes reads in 1.06 µs, as fast as MessagePack.
+- On values with many small parts, the storage profile and the transport format are the slowest of the five, with JSON close behind. The storage profile writes 1,000 records twice as slowly as MessagePack and 9 times as slowly as Borsh, and reads them 2.6 and 3.9 times as slowly. MessagePack carries the same field names, so the names are not the cost; each record costs the storage writer about 70 ns more and the reader about 320 ns more.
+- The storage profile and the transport format are written by one writer, and read by one reader, so their times differ only where the formats do: the transport map is written faster because its repeated-key check compares the keys' text where it lies in the buffer, where the storage profile works out each key's identity from its node first.
 - The storage profile is also the largest: 1,000 records take 57% more bytes than in MessagePack, and the map 89% more. Every length and count is a fixed four bytes and every value has a kind byte, where MessagePack packs small lengths and integers into one byte. Borsh is the smallest for records, but writes an integer at its full width, so the map of `u64` values is nearly as large as in the storage profile.
-- The tables predate a change to the storage writer. It used to read the whole blob back before returning it, to find a repeated key, and that pass was 55% of a 1,000-record write. It now refuses a repeated field name as it writes, comparing the names an object has written on the stack, and checks a map's keys where they lie in the blob when the map ends. Measured against the tables' code on the same machine, that made a 1,000-record write 47% faster, a single record 41% faster and the map 28% faster, and left reads unchanged. The tables also predate later changes to the writer and the reader: the blob is now written into a `Buffer` that is wiped sixteen bytes at a time, and the reader tells a value's kind from its tag. They have not been measured again since.
 
 ## Cargo features
 
