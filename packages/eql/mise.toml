@@ -411,6 +411,9 @@ cargo run -q -p eql-codegen -- bindings
 # The Go package encrypt/eql in the Go module, from the same catalog rows
 # as the Rust target table (crates/eql-codegen/src/go_eql.rs).
 cargo run -q -p eql-codegen -- go-eql
+# The Python markers module stackencrypt._eql, from the same rows
+# (crates/eql-codegen/src/py_eql.rs).
+cargo run -q -p eql-codegen -- py-eql
 TS_RS_EXPORT_DIR="$tmp/bindings" EQL_TYPES_SCHEMA_DIR="$tmp/schema" cargo test -p eql-bindings
 rm -rf "$bindings" "$schema"
 mv "$tmp/bindings" "$bindings"
@@ -429,12 +432,12 @@ set -euo pipefail
 # runs in contexts (test-eql.yml's Rust job, the pre-commit hook) that
 # provision mise tools but not pnpm/node_modules.
 node packages/eql/scripts/sync-generated.mjs
-git diff --exit-code -- crates/eql-bindings/src/v3 crates/eql-bindings/src/v4 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go || {
-  echo "eql-bindings generated Rust/TS/JSON, the Go package encrypt/eql or @cipherstash/eql package output is stale — run 'mise run types:generate' and 'mise run typescript:generate' and commit the result" >&2
+git diff --exit-code -- crates/eql-bindings/src/v3 crates/eql-bindings/src/v4 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go ../../languages/python/python/stackencrypt/_eql.py || {
+  echo "eql-bindings generated Rust/TS/JSON, the Go package encrypt/eql, the Python module stackencrypt._eql or @cipherstash/eql package output is stale — run 'mise run types:generate' and 'mise run typescript:generate' and commit the result" >&2
   exit 1
 }
 # git diff is blind to brand-new files; untracked output is stale too.
-untracked=$(git ls-files --others --exclude-standard -- crates/eql-bindings/src/v3 crates/eql-bindings/src/v4 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go)
+untracked=$(git ls-files --others --exclude-standard -- crates/eql-bindings/src/v3 crates/eql-bindings/src/v4 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated ../../languages/golang/encrypt/eql/eql_gen.go ../../languages/python/python/stackencrypt/_eql.py)
 if [ -n "$untracked" ]; then
   echo "eql-bindings has uncommitted generated files:" >&2
   echo "$untracked" >&2
