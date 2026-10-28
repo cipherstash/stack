@@ -393,12 +393,15 @@ choice, and needs nothing from this profile.
 
 The writer grows its buffer into a fresh allocation and wipes the old one,
 formats a `Display` value straight into the blob, keeps no copy of a key,
-and wipes everything if writing fails. The blob it returns is a `Buffer`:
-its bytes are read through `risky_ref`, and it is wiped when dropped. The
-reader borrows text and bytes from the blob rather than copying them, and
-finds a repeated map key by comparing keys where they lie in the blob. The
-writer frees no heap block that still holds the value, and a zeroize audit
-checked in LLVM IR and assembly that every wipe survives optimization.
+and wipes everything if writing fails. The wipes run when a `Buffer` is
+dropped, so under `panic = "unwind"` a panic still wipes a partly written
+blob, and under `panic = "abort"` nothing is wiped when the process aborts.
+The blob it returns is a `Buffer`: its bytes are read through `risky_ref`,
+and it is wiped when dropped. The reader borrows text and bytes from the
+blob rather than copying them, and finds a repeated map key by comparing
+keys where they lie in the blob. The writer frees no heap block that still
+holds the value, and a zeroize audit checked in LLVM IR and assembly that
+every wipe survives optimization.
 
 Copies on the stack and in registers are not wiped:
 
