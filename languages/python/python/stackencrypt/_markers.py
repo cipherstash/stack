@@ -8,9 +8,28 @@ A marker is used as a class, in ``Annotated`` metadata, and is found there by
 identity: ``Annotated[str, TextEq]``.
 """
 
+from typing import ClassVar, Optional, Tuple
+
 
 class Marker:
-    """The base of every stash marker."""
+    """The base of every stash marker.
+
+    The ten attributes are declared here, with their types, so that type
+    checkers accept them on a value typed ``type[Marker]``. The generated
+    markers set all ten. ``Passthrough`` and ``Ignore`` name no EQL type and
+    set none of them.
+    """
+
+    name: ClassVar[str]
+    family: ClassVar[str]
+    suffix: ClassVar[str]
+    plaintext: ClassVar[Optional[str]]
+    sql_domain: ClassVar[str]
+    indexes: ClassVar[Tuple[str, ...]]
+    query: ClassVar[Optional[str]]
+    query_sql_domain: ClassVar[Optional[str]]
+    producible: ClassVar[bool]
+    reason: ClassVar[Optional[str]]
 
 
 class Passthrough(Marker):

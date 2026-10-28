@@ -388,15 +388,21 @@ tmp="$(mktemp -d)"
 # restores the snapshot so the working tree is left exactly as it was — never
 # fresh structs against stale committed TS/JSON that an automated commit could
 # capture. The snapshot is a filesystem copy (not `git checkout`) so a dev's
-# legitimate uncommitted edits survive a failed run.
+# legitimate uncommitted edits survive a failed run. The Go and Python files
+# the same rows generate outside the subtree are snapshotted too, so a failed
+# run cannot leave them regenerated against rolled-back bindings.
 v3="crates/eql-bindings/src/v3"
 v4="crates/eql-bindings/src/v4"
 bindings="crates/eql-bindings/bindings"
 schema="crates/eql-bindings/schema"
+go_gen="../../languages/golang/encrypt/eql/eql_gen.go"
+py_gen="../../languages/python/python/stackencrypt/_eql.py"
 cp -R "$v3" "$tmp/v3-snapshot"
 cp -R "$v4" "$tmp/v4-snapshot"
 cp -R "$bindings" "$tmp/bindings-snapshot"
 cp -R "$schema" "$tmp/schema-snapshot"
+cp "$go_gen" "$tmp/go-gen-snapshot"
+cp "$py_gen" "$tmp/py-gen-snapshot"
 ok=0
 trap 'if [ "$ok" != 1 ]; then
   rm -rf "$v3" "$v4" "$bindings" "$schema"
@@ -404,6 +410,8 @@ trap 'if [ "$ok" != 1 ]; then
   mv "$tmp/v4-snapshot" "$v4"
   mv "$tmp/bindings-snapshot" "$bindings"
   mv "$tmp/schema-snapshot" "$schema"
+  mv -f "$tmp/go-gen-snapshot" "$go_gen"
+  mv -f "$tmp/py-gen-snapshot" "$py_gen"
 fi
 rm -rf "$tmp"' EXIT
 # Default no-arg eql-codegen stays SQL-only; `bindings` is the Rust-only subcommand.
