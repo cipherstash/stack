@@ -1403,6 +1403,44 @@ fn a_struct_or_map_reads_only_an_object() {
     assert_eq!((read.x, read.y), (1, 2));
 }
 
+/// A null, a boolean or a float where a string, bytes or an object belongs
+/// is refused, and the error names the kind that was there.
+#[test]
+fn a_scalar_of_the_wrong_kind_is_refused_by_its_kind() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Point {
+        x: u8,
+    }
+    let cases = [
+        (to_vec(&()).expect("writes"), "null"),
+        (to_vec(&false).expect("writes"), "a boolean"),
+        (to_vec(&true).expect("writes"), "a boolean"),
+        (to_vec(&1.5f32).expect("writes"), "a float"),
+        (to_vec(&1.5f64).expect("writes"), "a float"),
+    ];
+    for (frame, kind) in cases {
+        let error = from_slice::<String>(&frame).expect_err("refused");
+        assert_eq!(
+            error.message(),
+            format!("expected a string, found {kind}"),
+            "a string reads only text"
+        );
+        let error = from_slice::<serde_bytes::ByteBuf>(&frame).expect_err("refused");
+        assert_eq!(
+            error.message(),
+            format!("expected byte array, found {kind}"),
+            "bytes read only bytes"
+        );
+        let error = from_slice::<Point>(&frame).expect_err("refused");
+        assert_eq!(
+            error.message(),
+            format!("expected struct Point, found {kind}"),
+            "a struct reads only an object"
+        );
+    }
+}
+
 /// Text and bytes are kept apart: a string reads only text, and bytes read
 /// only bytes, though serde's own visitors would take either.
 #[test]
