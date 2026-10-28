@@ -111,12 +111,6 @@ const ASYMMETRIC = CLASSIFIED.filter(
  */
 const EXPECTED_PARITY_WORKFLOWS = [
   '.github/workflows/fta-v3.yml',
-  '.github/workflows/integration-drizzle.yml',
-  '.github/workflows/integration-prisma-next.yml',
-  '.github/workflows/integration-protect-ffi.yml',
-  '.github/workflows/integration-supabase.yml',
-  '.github/workflows/prisma-example-readme-e2e.yml',
-  '.github/workflows/prisma-next-e2e.yml',
   '.github/workflows/tests-bench.yml',
   '.github/workflows/tests-supply-chain.yml',
 ]

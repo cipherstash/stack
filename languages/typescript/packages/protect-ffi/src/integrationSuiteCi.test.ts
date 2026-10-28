@@ -80,7 +80,8 @@ function stripJsonComments(raw: string): string {
  *
  * Cutting at `jobs:` is what removes the `on:` / `paths:` block, and that is
  * also what makes the discovery filter below mean what its comment says: a
- * `paths:` filter naming the suite is a trigger, not a run.
+ * `paths:` filter naming the suite is a trigger, not a run. A selector job's
+ * `filters:` block is the same kind of list inside `jobs:`, so it is cut too.
  *
  * `nativeLoading.test.ts` strips comments from the emitted entry for the same
  * reason — a comment describing a thing is indistinguishable from the thing.
@@ -89,7 +90,22 @@ function executablePart(body: string): string {
   const jobsAt = body.search(/^jobs:/m)
   // No `jobs:` key means nothing runs, so nothing can match. Returning the
   // whole body here would hand every assertion the header comments instead.
-  return jobsAt === -1 ? '' : body.slice(jobsAt).replace(/^[ \t]*#.*$/gm, '')
+  if (jobsAt === -1) return ''
+  const kept: string[] = []
+  let filtersIndent = -1
+  for (const line of body.slice(jobsAt).split('\n')) {
+    const indent = line.length - line.trimStart().length
+    if (filtersIndent >= 0) {
+      if (line.trim() === '' || indent > filtersIndent) continue
+      filtersIndent = -1
+    }
+    if (/^\s*filters:\s*\|/.test(line)) {
+      filtersIndent = indent
+      continue
+    }
+    kept.push(line)
+  }
+  return kept.join('\n').replace(/^[ \t]*#.*$/gm, '')
 }
 
 /** Every workflow GitHub actually executes, read from the repository root. */

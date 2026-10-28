@@ -15,6 +15,8 @@ name: Integration — Drizzle (EQL v3)
 on:
   push:
     branches: [main]
+    # The same files as the `selector` job's filter.
+    # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares them.
     paths:
       - 'languages/typescript/packages/stack/src/eql/v3/**'
       - 'languages/typescript/packages/stack-drizzle/**'
@@ -106,102 +108,108 @@ on:
       # load. Same argument as the two entries above, same guard.
       - 'packages/eql/crates/**'
       - 'packages/eql/Cargo.toml'
+  # No path filter: a workflow that a path filter skips leaves its required
+  # checks pending, and GitHub's documentation on required status checks says
+  # that blocks a merge. The trigger paths are in the `selector` job instead.
   pull_request:
     branches: ['**']
-    # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
-    paths:
-      - 'languages/typescript/packages/stack/src/eql/v3/**'
-      - 'languages/typescript/packages/stack-drizzle/**'
-      # Source layers the adapter's encoding/round-trip rests on: a break here
-      # (not just under src/eql/v3) can produce wrong rows, so trigger the live
-      # suite that would catch it.
-      - 'languages/typescript/packages/stack/src/encryption/**'
-      - 'languages/typescript/packages/stack/src/schema/**'
-      - 'languages/typescript/packages/stack/integration/**'
-      # The WASM family suite (integration/wasm/**) exercises this entry:
-      - 'languages/typescript/packages/stack/src/wasm-inline.ts'
-      # The DynamoDB adapter, and the entry/type modules the suites import
-      # directly. `integration/shared/v2-decrypt-compat` and its
-      # `integration/wasm/` twin (both selected below) are the repo's only live
-      # EQL v2 read coverage, and they exercise the DynamoDB legacy path, so a
-      # change here must run them. Pinned by
-      # scripts/__tests__/integration-workflow-paths.test.mjs.
-      - 'languages/typescript/packages/stack/src/dynamodb/**'
-      - 'languages/typescript/packages/stack/src/index.ts'
-      - 'languages/typescript/packages/stack/src/types.ts'
-      # Those same v2 suites mint their fixtures by importing
-      # `@cipherstash/protect-ffi` directly. A native-module bump is the change
-      # most able to break v2 payload deserialization and it touches NO source
-      # directory, so without these two entries the only suites that would catch
-      # it never start. They are the files a bump actually edits: exact pins
-      # (`protect-ffi`, `@cipherstash/eql`) live in the package manifest,
-      # `catalog:` ones in the workspace catalog.
-      #
-      # `pnpm-lock.yaml` is deliberately NOT listed. It changes on roughly every
-      # dependency bump in the monorepo — far more often than either file here —
-      # and these are credentialed, database-backed jobs. Nothing is lost: a
-      # protect-ffi version change cannot reach the lockfile without editing
-      # one of the two manifests below first, and an auth one edits its own
-      # manifest, under the auth paths below.
-      - 'languages/typescript/packages/stack/package.json'
-      - 'pnpm-workspace.yaml'
-      - 'languages/typescript/packages/test-kit/**'
-      - 'languages/typescript/packages/cli/src/installer/**'
-      - 'local/docker-compose.postgres.yml'
-      - 'local/docker-compose.supabase.yml'
-      - 'local/supabase-init.sql'
-      - '.github/workflows/integration-drizzle.yml'
-      - '.github/actions/integration-setup/**'
-      - '.github/actions/integration-db/**'
-      - '.github/actions/build-ffi-binding/**'
-      - '.github/actions/build-auth-binding/**'
-      # `@cipherstash/auth` is a workspace package, and the SDK loads its napi
-      # module (and, for `wasm-inline`, its wasm) on import, so a change to what
-      # it ships arrives here rather than in `pnpm-workspace.yaml`. The paths of
-      # require-auth-npm-changeset.yml.
-      - 'packages/stack-auth/Cargo.toml'
-      - 'packages/stack-auth/src/**'
-      - 'languages/typescript/packages/auth/**'
-      - 'languages/typescript/packages/stack-auth-wasm/**'
-      # The Rust that produces every EQL payload these suites round-trip.
-      # Absorbing protect-ffi put it in-tree, so a crate change can now
-      # break them in a PR that touches no TypeScript at all.
-      #
-      # The manifests are here for the same reason as the sources: a
-      # dependency bump in Cargo.lock changes the compiled encryption core
-      # without touching a .rs file, and package.json / mise.toml carry the
-      # build scripts and the toolchain pin. Matching the filter in
-      # tests-rust.yml, which already covers all four.
-      - 'languages/typescript/packages/protect-ffi/crates/**'
-      - 'languages/typescript/packages/protect-ffi/src/**'
-      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
-      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
-      - 'languages/typescript/packages/protect-ffi/package.json'
-      - 'languages/typescript/packages/protect-ffi/mise.toml'
-      # The non-cargo half of `build:wasm`, and the reason this job passes
-      # `wasm: 'true'`: `tsc -p tsconfig.wasm-errors.json`, then a
-      # `postbuild:wasm` hook running `scripts/inline-wasm.mjs`, which is what
-      # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
-      # `integration/wasm/**` suites selected below actually load. Both files
-      # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
-      # edit to either misses that cache and REBUILDS the bundle. Without these
-      # two entries the workflow does not trigger at all, so neither the rebuild
-      # nor the only suite that loads it ever runs.
-      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'languages/typescript/packages/protect-ffi/tsconfig.wasm-errors.json'
-      - 'languages/typescript/packages/protect-ffi/scripts/inline-wasm.mjs'
-      # Out of that package, and compiled into the same two artifacts: the
-      # cdylib crate carries
-      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
-      # EQL wire types are linked into `index.node` and into
-      # `protect_ffi_inline.js`. Both cache keys in
-      # `.github/actions/build-ffi-binding` hash them, so an edit here misses
-      # that cache and rebuilds the bundle the `integration/wasm/**` suites
-      # load. Same argument as the two entries above, same guard.
-      - 'packages/eql/crates/**'
-      - 'packages/eql/Cargo.toml'
 
 jobs:
+  # The selector job: it decides which jobs a pull request runs. It runs on
+  # every event and is never skipped, because the gated jobs need it. When it
+  # cannot decide it fails, and that fails the summary job: a selector that
+  # answered nothing would skip every gated job, and the summary job counts a
+  # skipped job as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because the gated jobs wait for it. No checkout:
+  # on a pull request, dorny/paths-filter lists the changed files through the
+  # GitHub API.
+  selector:
+    name: Selector
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it.
+    # `scripts/__tests__/workflow-selectors.test.mjs` follows a job's `if:` to
+    # its filter by that name.
+    outputs:
+      drizzle: ${{ steps.decide.outputs.drizzle }}
+    steps:
+      # Only on a pull request, which has a base to compare with. Other events
+      # select every job in the step below.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            # The same list as `on.push.paths`, which says why each entry
+            # is there.
+            drizzle:
+              - "languages/typescript/packages/stack/src/eql/v3/**"
+              - "languages/typescript/packages/stack-drizzle/**"
+              - "languages/typescript/packages/stack/src/encryption/**"
+              - "languages/typescript/packages/stack/src/schema/**"
+              - "languages/typescript/packages/stack/integration/**"
+              - "languages/typescript/packages/stack/src/wasm-inline.ts"
+              - "languages/typescript/packages/stack/src/dynamodb/**"
+              - "languages/typescript/packages/stack/src/index.ts"
+              - "languages/typescript/packages/stack/src/types.ts"
+              - "languages/typescript/packages/stack/package.json"
+              - "pnpm-workspace.yaml"
+              - "languages/typescript/packages/test-kit/**"
+              - "languages/typescript/packages/cli/src/installer/**"
+              - "local/docker-compose.postgres.yml"
+              - "local/docker-compose.supabase.yml"
+              - "local/supabase-init.sql"
+              - ".github/workflows/integration-drizzle.yml"
+              - ".github/actions/integration-setup/**"
+              - ".github/actions/integration-db/**"
+              - ".github/actions/build-ffi-binding/**"
+              - ".github/actions/build-auth-binding/**"
+              - "packages/stack-auth/Cargo.toml"
+              - "packages/stack-auth/src/**"
+              - "languages/typescript/packages/auth/**"
+              - "languages/typescript/packages/stack-auth-wasm/**"
+              - "languages/typescript/packages/protect-ffi/crates/**"
+              - "languages/typescript/packages/protect-ffi/src/**"
+              - "languages/typescript/packages/protect-ffi/Cargo.toml"
+              - "languages/typescript/packages/protect-ffi/Cargo.lock"
+              - "languages/typescript/packages/protect-ffi/package.json"
+              - "languages/typescript/packages/protect-ffi/mise.toml"
+              - "languages/typescript/packages/protect-ffi/tsconfig.wasm-errors.json"
+              - "languages/typescript/packages/protect-ffi/scripts/inline-wasm.mjs"
+              - "packages/eql/crates/**"
+              - "packages/eql/Cargo.toml"
+
+      # Explicit default, not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'. On a pull request, an answer other than
+      # `true` or `false` means the filter did not decide, so the step fails
+      # rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # in the script. That lets `scripts/__tests__/workflow-selectors.test.mjs`
+      # run this script and read back what it wrote.
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DRIZZLE: ${{ steps.filter.outputs.drizzle }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            DRIZZLE=true
+          fi
+          answers=(
+            "drizzle=$DRIZZLE"
+          )
+          for answer in "${answers[@]}"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
+
   integration:
     name: Drizzle v3 integration (db=${{ matrix.db }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -218,7 +226,14 @@ jobs:
     # the job on `workflow_dispatch` in integration-protect-ffi.yml, making a
     # declared manual trigger do nothing. Enforced by
     # scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [selector]
+    # The first clause is the selector's answer; both are exclusions of
+    # pull_request, not lists of events.
+    if: >-
+      (github.event_name != 'pull_request'
+       || needs.selector.outputs.drizzle == 'true')
+      && (github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository)
 
     strategy:
       fail-fast: false
@@ -344,3 +359,31 @@ jobs:
       - name: Stop ${{ matrix.db }}
         if: always() && env.CS_COMPOSE_PROJECT != ''
         run: docker compose -p "$CS_COMPOSE_PROJECT" -f "$CS_COMPOSE_FILE" down -v
+
+  # The summary job: the one job of this workflow that branch rules require.
+  # It has the same name on every event. It passes when every needed job
+  # passed or was skipped. Skipped counts as passed because the selector skips
+  # a job whose trigger paths a change does not touch. A failed job still
+  # fails this one, because it is in `needs` and reports its failure.
+  summary:
+    name: Integration (Drizzle) summary
+    needs: [selector, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check that every needed job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "Needed results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "::error::A needed job reported '$result'."
+                exit 1
+                ;;
+            esac
+          done
