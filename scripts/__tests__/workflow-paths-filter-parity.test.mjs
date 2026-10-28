@@ -159,9 +159,9 @@ const EXPECTED_ASYMMETRIES = new Map([
     // `push` one, so the PR introducing a change never runs the suite — is
     // unreachable when `pull_request` has no filter at all. The push list is
     // not unchecked: `eql-workflow-filters.test.mjs` compares it against the
-    // `relevant:` filter in the `changes` job, which is the second copy of the
+    // union of the selector job's filters, which is the second copy of the
     // same list and the one this file cannot see.
-    'pull_request is deliberately unfiltered (per-job relevance instead), so PRs run a superset of what push runs; the push list is compared against the `changes` job filter by eql-workflow-filters.test.mjs',
+    'pull_request is deliberately unfiltered (per-job relevance instead), so PRs run a superset of what push runs; the push list is compared against the selector job filters by eql-workflow-filters.test.mjs',
   ],
   [
     '.github/workflows/bench-eql.yml',
