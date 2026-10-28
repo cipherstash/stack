@@ -1,5 +1,5 @@
 //! How fast the storage profile writes and reads, next to the transport
-//! serde format and JSON.
+//! serde format, JSON, MessagePack and Borsh.
 //!
 //! Each workload is written and read by five formats: `storage`
 //! (`storage::to_vec` and `storage::from_slice`), `transport`
@@ -71,7 +71,7 @@ where
     let carried = transport::to_vec(value).expect("transport writes");
     let json = serde_json::to_vec(value).expect("json writes");
     let msgpack = rmp_serde::to_vec_named(value).expect("msgpack writes");
-    let borsh = borsh::to_vec(value).expect("borsh writes");
+    let borsh_bytes = borsh::to_vec(value).expect("borsh writes");
 
     // A bench is only worth reading if the format gives the value back.
     assert_eq!(
@@ -90,7 +90,10 @@ where
         &rmp_serde::from_slice::<T>(&msgpack).expect("msgpack reads"),
         value
     );
-    assert_eq!(&borsh::from_slice::<T>(&borsh).expect("borsh reads"), value);
+    assert_eq!(
+        &borsh::from_slice::<T>(&borsh_bytes).expect("borsh reads"),
+        value
+    );
 
     let mut group = c.benchmark_group(name);
     pair(
@@ -124,7 +127,7 @@ where
     pair(
         &mut group,
         "borsh",
-        &borsh,
+        &borsh_bytes,
         || borsh::to_vec(black_box(value)).expect("borsh writes"),
         |bytes| borsh::from_slice::<T>(black_box(bytes)).expect("borsh reads"),
     );
