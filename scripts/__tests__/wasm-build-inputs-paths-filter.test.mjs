@@ -4,6 +4,7 @@ import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { jobTriggerLists } from './lib/selector.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -56,9 +57,6 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 const ACTION = '.github/actions/build-ffi-binding/action.yml'
 const ACTION_USES = './.github/actions/build-ffi-binding'
 const CACHE_ACTION = /^actions\/cache(\/(restore|save))?@/
-
-/** Both trigger events that carry a `paths:` filter, in GitHub's own order. */
-const FILTERED_EVENTS = ['push', 'pull_request']
 
 /** The package whose Rust both cache keys are about. */
 const FFI_PACKAGE = 'languages/typescript/packages/protect-ffi'
@@ -276,20 +274,33 @@ function stepDir(wf, job, step) {
 
 /** Every job step of a workflow, paired with the job that owns it. */
 function steps(wf) {
-  return Object.values(wf?.jobs ?? {}).flatMap((job) =>
-    (Array.isArray(job?.steps) ? job.steps : []).map((step) => ({ job, step })),
+  return Object.entries(wf?.jobs ?? {}).flatMap(([jobId, job]) =>
+    (Array.isArray(job?.steps) ? job.steps : []).map((step) => ({
+      jobId,
+      job,
+      step,
+    })),
   )
 }
 
-/** Runs `./.github/actions/build-ffi-binding`, optionally with `wasm: 'true'`. */
-function usesAction(relPath, { wasmOnly = false } = {}) {
-  return steps(readWorkflow(relPath)).some(
-    ({ step }) =>
-      typeof step?.uses === 'string' &&
-      step.uses.trim() === ACTION_USES &&
-      (!wasmOnly || String(step?.with?.wasm) === 'true'),
+const jobIdsOf = (entries) => [...new Set(entries.map(({ jobId }) => jobId))]
+
+/**
+ * The jobs that run `./.github/actions/build-ffi-binding`, optionally with
+ * `wasm: 'true'`.
+ */
+function actionJobs(relPath, { wasmOnly = false } = {}) {
+  return jobIdsOf(
+    steps(readWorkflow(relPath)).filter(
+      ({ step }) =>
+        typeof step?.uses === 'string' &&
+        step.uses.trim() === ACTION_USES &&
+        (!wasmOnly || String(step?.with?.wasm) === 'true'),
+    ),
   )
 }
+
+const usesAction = (relPath, options) => actionJobs(relPath, options).length > 0
 
 /**
  * Compiles this package's Rust — through the action, or directly.
@@ -300,10 +311,9 @@ function usesAction(relPath, { wasmOnly = false } = {}) {
  * EQL workspace has its own, with its own workflows — is not mistaken for this
  * one.
  */
-function compilesFfiRust(relPath) {
-  if (usesAction(relPath)) return true
+function ffiRustJobs(relPath) {
   const wf = readWorkflow(relPath)
-  return steps(wf).some(({ job, step }) => {
+  const direct = steps(wf).filter(({ job, step }) => {
     const run = String(step?.run ?? '')
     if (!run) return false
     const targetsPackage =
@@ -316,24 +326,28 @@ function compilesFfiRust(relPath) {
       (inPackage && mentionsAny(run, CARGO_TASKS))
     )
   })
+  return [...new Set([...actionJobs(relPath), ...jobIdsOf(direct)])]
 }
 
+const compilesFfiRust = (relPath) => ffiRustJobs(relPath).length > 0
+
 /**
- * The `paths:` filters a workflow declares, one entry per filtered event.
+ * The path lists that decide whether the given jobs run: the workflow's `push`
+ * and `pull_request` `paths:` lists, and the selector filter each job reads.
+ * One entry per list, labelled with where it comes from.
  *
- * `on:` parses as the boolean `true` under YAML 1.1 (the "Norway problem"),
- * hence `wf.on ?? wf[true]`. An event with no `paths:` is UNFILTERED and is
- * skipped rather than failed — it already runs on every diff, so it cannot miss
- * one. `tests.yml` and `tests-rust.yml` are both half-cases: `push` is
- * `branches: [main]` with no filter, so only their `pull_request` lists are
- * here. `tests.yml`'s is `'**'` with one negation, which `filterCovers` reads.
+ * A job that no list decides is skipped rather than failed: it runs on every
+ * diff, so it cannot miss one. A selector filter is read as a `paths:` list,
+ * so a `'**'` with negations is read the same way in either.
  */
-function filteredEvents(relPath) {
-  const wf = readWorkflow(relPath)
-  const on = wf?.on ?? wf?.[true]
-  return FILTERED_EVENTS.filter((event) =>
-    Array.isArray(on?.[event]?.paths),
-  ).map((event) => ({ relPath, event, paths: on[event].paths }))
+function filteredEvents(relPath, jobIds) {
+  const lists = new Map()
+  for (const jobId of jobIds) {
+    for (const { source, paths } of jobTriggerLists(relPath, jobId)) {
+      lists.set(source, { relPath, event: source, paths })
+    }
+  }
+  return [...lists.values()]
 }
 
 const ALL_WORKFLOWS = workflowFiles()
@@ -381,6 +395,7 @@ const KEYS = [
     what: '`index.node`, the binding every credentialed suite encrypts through',
     reaches: 'compiles the crate graph behind `index.node`',
     workflows: ALL_WORKFLOWS.filter(compilesFfiRust),
+    jobs: ffiRustJobs,
     expected: [
       '.github/workflows/_build-ffi-artifacts.yml',
       '.github/workflows/integration-drizzle.yml',
@@ -401,6 +416,7 @@ const KEYS = [
     workflows: ALL_WORKFLOWS.filter((relPath) =>
       usesAction(relPath, { wasmOnly: true }),
     ),
+    jobs: (relPath) => actionJobs(relPath, { wasmOnly: true }),
     expected: [
       '.github/workflows/integration-drizzle.yml',
       '.github/workflows/integration-protect-ffi.yml',
@@ -447,7 +463,9 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
 
   for (const key of KEYS) {
     const inputs = buildInputs(key.step)
-    const filtered = key.workflows.flatMap(filteredEvents)
+    const filtered = key.workflows.flatMap((relPath) =>
+      filteredEvents(relPath, key.jobs(relPath)),
+    )
 
     describe(`the ${key.id} key`, () => {
       it('hashes build inputs that name real files', () => {
@@ -506,7 +524,7 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
           )
           expect(
             uncovered,
-            `These files are hashed into the ${key.id} cache key of \`${ACTION}\`, so an edit to one MISSES the cache and rebuilds ${key.what}. ${relPath} ${key.reaches}, but its \`${event}\` \`paths:\` filter does not list them, so a PR touching only one of them rebuilds the artifact and starts no suite that exercises it. Nothing goes red; nothing ran.\nAdd each to BOTH copies of the filter — GitHub Actions has no YAML anchors, and \`workflow-paths-filter-parity.test.mjs\` fails a one-sided edit.`,
+            `These files are hashed into the ${key.id} cache key of \`${ACTION}\`, so an edit to one MISSES the cache and rebuilds ${key.what}. ${relPath} ${key.reaches}, but its \`${event}\` \`paths:\` filter does not list them, so a PR touching only one of them rebuilds the artifact and starts no suite that exercises it. Nothing goes red; nothing ran.\nAdd each to every copy of the list — GitHub Actions has no YAML anchors, and \`workflow-paths-filter-parity.test.mjs\` fails a one-sided edit.`,
           ).toEqual([])
         })
       }
@@ -521,7 +539,7 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
       KEYS.flatMap((key) => {
         const inputs = buildInputs(key.step)
         return key.workflows
-          .flatMap(filteredEvents)
+          .flatMap((relPath) => filteredEvents(relPath, key.jobs(relPath)))
           .flatMap(({ relPath, paths }) =>
             inputs
               .filter((pattern) => !filterCovers(paths, pattern, entryCovers))
