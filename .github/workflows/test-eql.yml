@@ -31,8 +31,8 @@ name: "Test EQL"
 # in every shard instead of saying what was missing.
 #
 # NB: NO path filter on `pull_request`. A workflow skipped by a path filter
-# leaves its required checks stuck Pending and blocks merge. Relevance is
-# computed by the `changes` job and applied per-job via `if:` instead. `push`
+# leaves its required checks stuck Pending and blocks merge. The `selector` job
+# decides which jobs a pull request needs, and each job's `if:` reads it. `push`
 # carries one because nothing waits on a push run, so a skipped one costs
 # nothing — and the two lists are kept identical by
 # `scripts/__tests__/eql-workflow-filters.test.mjs`.
@@ -70,7 +70,7 @@ on:
   pull_request: {}
   push:
     branches: [main]
-    # Identical to the `relevant:` filter in the `changes` job below. GitHub
+    # Identical to the union of the `selector` job's filters below. GitHub
     # Actions has no YAML anchors, so the list is written twice; the guard named
     # above fails a one-sided edit.
     #
@@ -148,14 +148,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Runs on EVERY event and MUST always succeed (never skipped, never failed) —
-  # downstream heavy jobs `needs: [changes]`, and a skipped/failed `changes`
-  # would either skip the merge-queue matrix or deadlock `ci-required`.
-  changes:
-    name: "Detect relevant changes"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+  # The selector job: it decides which gated jobs a pull request needs. It runs
+  # on EVERY event and is never skipped, because every gated job `needs:` it.
+  # When it cannot decide it FAILS, which fails `ci-required`: a selector that
+  # answered nothing would skip every gated job, and `ci-required` counts
+  # skipped as passed (ADR 0003).
+  #
+  # On a GitHub-hosted runner because every gated job waits for it, and a
+  # self-provisioned machine takes longer to start.
+  selector:
+    name: "Selector"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Each output is named after the filter that decides it;
+    # `scripts/__tests__/eql-selector.test.mjs` follows a job's `if:` to its
+    # filter by that name.
     outputs:
-      relevant: ${{ steps.r.outputs.relevant }}
+      eql: ${{ steps.r.outputs.eql }}
+      rust_crates: ${{ steps.r.outputs.rust_crates }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -177,8 +187,9 @@ jobs:
           # matrix on changes that cannot affect EQL, and (worse) NOT firing on
           # EQL's own `src/`, since nothing at the repo root is called that.
           #
-          # Identical to the `push` `paths:` list at the top of this file — the
-          # same question asked of two mechanisms GitHub gives no way to share.
+          # The union of the two filters is identical to the `push` `paths:`
+          # list at the top of this file — the same question asked of two
+          # mechanisms GitHub gives no way to share.
           # `scripts/__tests__/eql-workflow-filters.test.mjs` compares them, and
           # also fails any entry here that matches no tracked file (a dead
           # `packages/eql/sql/**` sat in this list from the port: there is no
@@ -191,8 +202,14 @@ jobs:
           # copies are held EQUAL — see the note above the `push` list, and the
           # reasoning on `bench-eql.yml`'s own filter for why equal beats
           # minimal.
+          #
+          # `rust_crates` adds the stack-* crates to `eql`. Only `rust-crates`
+          # compiles them, through eql-bindings' `stack-encrypt` feature;
+          # `tests/sqlx` and the codegen crates never enable it. With the crates
+          # on one shared list, a change to stack-encrypt alone ran the whole
+          # Postgres suite. dorny flattens the `*eql` alias into the list.
           filters: |
-            relevant:
+            eql: &eql
               - ".github/workflows/test-eql.yml"
               - ".github/actions/require-cs-secrets/**"
               - "packages/eql/src/**"
@@ -207,6 +224,8 @@ jobs:
               - "packages/eql/docker/**"
               - "packages/eql/README.md"
               - "packages/eql/SUPABASE.md"
+            rust_crates:
+              - *eql
               - "packages/stack-encrypt/**"
               - "packages/stack-encrypt-derive/**"
               - "packages/stack-kms/**"
@@ -217,25 +236,38 @@ jobs:
       # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
       # treatment of the string 'false'). push/schedule/merge_group/dispatch
       # never run the filter above — it needs a base ref that only a pull
-      # request has — so they take the default, and `push` is already narrowed
+      # request has — so they select every job, and `push` is already narrowed
       # by its own `on:`-level `paths:`.
       #
-      # The event arrives through `env:`, not through a `${{ }}` interpolated
-      # into the body. That is what lets
+      # On a pull request, an answer other than `true` or `false` means the
+      # filter did not decide, so the step fails rather than write it.
+      #
+      # The event and the answers arrive through `env:`, not through a `${{ }}`
+      # interpolated into the body. That is what lets
+      # `scripts/__tests__/eql-selector.test.mjs` and
       # `scripts/__tests__/eql-matrix-triggers.test.mjs` EXECUTE this script
-      # once per event and read back what it wrote, rather than reimplementing
-      # the branch and agreeing with a rewritten one by luck.
+      # and read back what it wrote, rather than reimplementing the branch and
+      # agreeing with a rewritten one by luck.
       - id: r
         env:
           EVENT_NAME: ${{ github.event_name }}
-          FILTER_RELEVANT: ${{ steps.f.outputs.relevant }}
+          EQL: ${{ steps.f.outputs.eql }}
+          RUST_CRATES: ${{ steps.f.outputs.rust_crates }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            echo "relevant=$FILTER_RELEVANT" >> "$GITHUB_OUTPUT"
-          else
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            EQL=true
+            RUST_CRATES=true
           fi
+          for answer in "eql=$EQL" "rust_crates=$RUST_CRATES"; do
+            case "${answer#*=}" in
+              true|false) echo "$answer" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::The path filter answered '${answer#*=}' for ${answer%%=*}. The selector cannot decide which jobs to run."
+                exit 1
+                ;;
+            esac
+          done
 
   # Pure bash; no checkout/toolchain. Derives the PG-version + shard fan-out
   # from the event: PR and manual dispatch -> PG17 x 4 shards (latency lane);
@@ -292,9 +324,10 @@ jobs:
   # when relevant files changed (docs-only PRs never pay the ~4-min compile).
   build-archive:
     name: "Build test archive"
-    needs: [changes]
-    # This repo is PUBLIC and accepts fork PRs (the approval policy only gates
-    # first-time contributors). build-archive is the sole holder of the CS_*
+    needs: [selector]
+    # This repo is PUBLIC and accepts fork PRs (a maintainer approves each
+    # outside contributor's run, and an approved run executes the fork's
+    # code). build-archive is the sole holder of the CS_*
     # credentials below, so it must never run on a fork PR. The trailing clause
     # is the only thing that skips it: a fork pull request. Every other event —
     # push, schedule, merge_group, dispatch, and a same-repo branch PR — runs;
@@ -310,7 +343,7 @@ jobs:
     # `scripts/__tests__/workflow-dispatch-job-conditions.test.mjs`.
     if: >-
       (github.event_name != 'pull_request'
-       || needs.changes.outputs.relevant == 'true')
+       || needs.selector.outputs.eql == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -392,11 +425,11 @@ jobs:
   # shards start right after build-archive.
   test:
     name: "Shard PG${{ matrix.postgres-version }} ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}"
-    needs: [changes, setup, build-archive]
+    needs: [selector, setup, build-archive]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     strategy:
       fail-fast: false
@@ -454,11 +487,11 @@ jobs:
   # of the old per-version test job so they run ONCE per version, not per shard.
   validate:
     name: "Validate (Postgres ${{ matrix.postgres-version }})"
-    needs: [changes, setup]
+    needs: [selector, setup]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     strategy:
       fail-fast: false
@@ -513,11 +546,11 @@ jobs:
 
   schema:
     name: "JSON Schema validation"
-    needs: [changes]
+    needs: [selector]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -542,11 +575,13 @@ jobs:
 
   rust-crates:
     name: "Rust workspace crates"
-    needs: [changes]
-    # Exclusion, not an allowlist — see the note on `build-archive`.
+    needs: [selector]
+    # Exclusion, not an allowlist — see the note on `build-archive`. Reads
+    # `rust_crates`, not `eql`: this is the one job that compiles the stack-*
+    # crates.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.rust_crates == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     services:
       encryption-postgres:
@@ -670,11 +705,11 @@ jobs:
 
   codegen:
     name: "Encrypted-domain codegen"
-    needs: [changes]
+    needs: [selector]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -702,11 +737,11 @@ jobs:
 
   self-contained-v3:
     name: "eql_v3 self-containment"
-    needs: [changes]
+    needs: [selector]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -738,11 +773,11 @@ jobs:
 
   matrix-coverage:
     name: "Matrix coverage inventory"
-    needs: [changes]
+    needs: [selector]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -780,11 +815,11 @@ jobs:
 
   splinter:
     name: "Supabase splinter"
-    needs: [changes]
+    needs: [selector]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
-      || needs.changes.outputs.relevant == 'true'
+      || needs.selector.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     env:
       POSTGRES_VERSION: "17"
@@ -947,12 +982,12 @@ jobs:
   # fork-PR guard to keep the secrets off fork runs.
   e2e:
     name: "e2e property suite (fresh encryption)"
-    needs: [changes, setup]
+    needs: [selector, setup]
     # Exclusion, not an allowlist — see the note on `build-archive`, which
     # carries the same two clauses for the same two reasons.
     if: >-
       (github.event_name != 'pull_request'
-       || needs.changes.outputs.relevant == 'true')
+       || needs.selector.outputs.eql == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -1002,7 +1037,7 @@ jobs:
   # source job is itself in `needs` and reports failure.
   ci-required:
     name: "ci-required"
-    needs: [changes, setup, build-archive, test, validate, schema, rust-crates,
+    needs: [selector, setup, build-archive, test, validate, schema, rust-crates,
             codegen, self-contained-v3, matrix-coverage, splinter, docs-static,
             known-failures, doc-anchors, e2e]
     if: always()

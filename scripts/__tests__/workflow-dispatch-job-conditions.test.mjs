@@ -174,13 +174,13 @@ function extractForkClause(condition) {
  * held open — otherwise a job that skips for an unrelated reason reads as a
  * job the fork guard skipped, and the assertion below would be satisfied by
  * the wrong mechanism. `test-eql.yml`'s two credentialed jobs are `&&`-ed with
- * `needs.changes.outputs.relevant == 'true'`, which is that unrelated reason:
+ * `needs.selector.outputs.eql == 'true'`, which is that unrelated reason:
  * with `needs` absent the path resolves to null, `null == 'true'` is false,
  * and both jobs read as skipped on EVERY event including the ones that must
  * run.
  */
 const PERMISSIVE_NEEDS = {
-  changes: { outputs: { relevant: 'true' } },
+  selector: { outputs: { eql: 'true', rust_crates: 'true' } },
   // The release workflows' gates, none of which is about how the run was
   // triggered. Held open, or "skips because there is nothing to publish" would
   // be indistinguishable from "skips on a dispatch".
@@ -447,7 +447,7 @@ describe('the fork-PR guard keeps its meaning', () => {
 
       expect(
         verdicts,
-        `  if: ${condition}\nEvaluated with every OTHER gate held open (needs.changes.outputs.relevant = 'true'), so a false here is the fork guard's doing and nothing else.`,
+        `  if: ${condition}\nEvaluated with every OTHER gate held open (needs.selector.outputs.* = 'true'), so a false here is the fork guard's doing and nothing else.`,
       ).toEqual(expected)
     })
   }

@@ -209,13 +209,15 @@ describe('the relevance filter still selects the imported tree', () => {
    * parsed rather than pattern-matched — a regex over the raw block would also
    * match the surrounding commentary.
    */
-  const filterPaths = Object.values(wf?.jobs ?? {})
-    .flatMap((job) => job?.steps ?? [])
-    .filter((step) => (step?.uses ?? '').startsWith('dorny/paths-filter@'))
-    .flatMap((step) => {
-      const filters = yaml.load(step?.with?.filters ?? '')
-      return Object.values(filters ?? {}).flat()
-    })
+  const filters = Object.assign(
+    {},
+    ...Object.values(wf?.jobs ?? {})
+      .flatMap((job) => job?.steps ?? [])
+      .filter((step) => (step?.uses ?? '').startsWith('dorny/paths-filter@'))
+      .map((step) => yaml.load(step?.with?.filters ?? '') ?? {}),
+  )
+  // A filter that includes an anchored list parses to a nested list.
+  const filterPaths = [...new Set(Object.values(filters).flat(Infinity))]
 
   it('finds the paths-filter step', () => {
     // Without this the check below iterates an empty list and passes having
@@ -395,17 +397,29 @@ describe('the relevance filter still selects the imported tree', () => {
     // The other direction: a path dependency outside the subtree that the
     // filter does NOT select is a job that compiles a crate and never runs on
     // a change to it — the gap commit 7219ea1ad repaired by hand, now derived.
+    //
+    // Checked against the filter the `rust-crates` job reads, not the union:
+    // that job is the one that compiles them, and the other jobs' filter
+    // leaves them out on purpose (eql-selector.test.mjs).
+    const filterName = /needs\.selector\.outputs\.([A-Za-z0-9_-]+)/.exec(
+      String(wf?.jobs?.['rust-crates']?.if ?? ''),
+    )?.[1]
+    const rustCratesPaths = [filters[filterName] ?? []].flat(Infinity)
+    expect(
+      rustCratesPaths,
+      `The \`rust-crates\` job in ${EQL_WORKFLOW} reads no selector filter, so this check has nothing to compare.`,
+    ).not.toEqual([])
     const missing = externalPathDependencies.dirs
       .map((dir) => `${dir}/**`)
-      .filter((glob) => !filterPaths.includes(glob))
+      .filter((glob) => !rustCratesPaths.includes(glob))
     if (
       externalPathDependencies.inherits &&
-      !filterPaths.includes('Cargo.toml')
+      !rustCratesPaths.includes('Cargo.toml')
     )
       missing.push('Cargo.toml')
     expect(
       missing,
-      `The EQL workspace compiles these by path and the relevance filter in ${EQL_WORKFLOW} does not select them, so the \`rust-crates\` job skips on a change that can break it. Add each to the filter — and, because the three copies are held equal, to the \`push: paths:\` list and to bench-eql.yml in the same edit.\n${missing.map((p) => `  ${p}`).join('\n')}`,
+      `The EQL workspace compiles these by path and the \`${filterName}\` filter in ${EQL_WORKFLOW} does not select them, so the \`rust-crates\` job skips on a change that can break it. Add each to that filter — and, because the copies are held equal, to the \`push: paths:\` list and to bench-eql.yml in the same edit.\n${missing.map((p) => `  ${p}`).join('\n')}`,
     ).toEqual([])
   })
 })
