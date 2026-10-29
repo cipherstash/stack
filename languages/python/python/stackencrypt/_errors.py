@@ -36,3 +36,10 @@ class StashError(Exception):
 
 class DeclarationError(StashError):
     """A model class that cannot be declared, raised at its class statement."""
+
+
+class AuthenticationError(StashError):
+    """The credentials are missing, malformed or refused.
+
+    The code is the engine's, such as ``stack_auth_not_authenticated``.
+    """
