@@ -171,6 +171,24 @@ jobs:
       - name: Build the @cipherstash/auth binding
         uses: ./.github/actions/build-auth-binding
 
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
+
       # No pre-`up` cleanup step any more: the project name is unique per job, so
       # a container leaked by a hard-killed prior run cannot hold this job's
       # name or its (ephemeral) port. Blanket-pruning would now be actively
