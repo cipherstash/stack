@@ -1083,10 +1083,10 @@ fn a_types_own_message_is_never_printed() {
     );
 }
 
-/// A tuple or struct variant writes each part to a buffer of its own, and
-/// still counts its depth from the top of the document: a value nested too
-/// deep is refused where the limit is crossed, not after the whole value
-/// has been descended.
+/// A tuple or struct variant's parts are written in place, under the
+/// variant's level, and count their depth from the top of the document: a
+/// value nested too deep is refused where the limit is crossed, not after
+/// the whole value has been descended.
 #[test]
 fn a_variant_part_counts_its_depth_from_the_top() {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
