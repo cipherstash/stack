@@ -21,7 +21,9 @@ class Cipher:
     """
 
     def __init__(self, cls: type) -> None:
-        declaration = declaration_of(cls)
+        # The type check comes first: declaration_of reads the class's own
+        # __dict__, and a string or an instance with __slots__ has none.
+        declaration = declaration_of(cls) if isinstance(cls, type) else None
         if declaration is None:
             raise _not_decorated(cls)
         check_unchanged(cls, declaration)

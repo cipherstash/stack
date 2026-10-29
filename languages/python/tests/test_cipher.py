@@ -1,6 +1,7 @@
 """``Cipher(cls)``: the class checks and the credentials. No request is made."""
 
 import dataclasses
+import math
 from typing import Annotated
 
 import pytest
@@ -80,11 +81,35 @@ def test_a_subclass_of_a_declared_class_is_refused():
     assert "subclass of 'User'" in str(error)
 
 
+@pytest.mark.parametrize("value", ["users", None, 42])
+def test_a_value_that_is_not_a_class_is_refused(value):
+    error = refusal(lambda: Cipher(value))
+    assert error.code == "declaration_not_decorated"
+    assert repr(value) in str(error)
+
+
 def test_an_instance_is_refused():
     User = declared()
 
     error = refusal(lambda: Cipher(User(email="a", age=1)))
     assert error.code == "declaration_not_decorated"
+
+
+def test_a_slotted_instance_is_refused():
+    class Slotted:
+        __slots__ = ()
+
+    assert refusal(lambda: Cipher(Slotted())).code == "declaration_not_decorated"
+
+
+def test_a_default_that_is_not_equal_to_itself_is_still_unchanged(credentials):
+    @stackencrypt.model("users")
+    @dataclasses.dataclass
+    class User:
+        email: Annotated[str, TextEq]
+        score: Annotated[float, Passthrough] = math.nan
+
+    assert Cipher(User).declaration.table == "users"
 
 
 def test_the_class_checks_come_before_the_credentials():
@@ -113,6 +138,17 @@ def test_a_replaced_repr_is_refused(credentials):
     error = refusal(lambda: Cipher(User))
     assert error.code == "declaration_class_changed"
     assert error.reason == "methods"
+    assert "__repr__ replaced" in str(error)
+
+
+def test_a_hint_that_no_longer_resolves_names_the_name(credentials):
+    User = declared()
+    User.__annotations__["posts"] = "List[Undefined]"
+
+    error = refusal(lambda: Cipher(User))
+    assert error.code == "declaration_class_changed"
+    assert error.reason == "fields"
+    assert "Undefined" in str(error) or "List" in str(error)
 
 
 def test_a_replaced_constructor_is_refused(credentials):
@@ -135,6 +171,45 @@ def test_no_credentials_is_an_authentication_error_from_the_engine():
     assert isinstance(error, AuthenticationError)
     assert error.code == "stack_auth_not_authenticated"
     assert "CS_CLIENT_ACCESS_KEY" in error.message
+    assert "AutoStrategy" not in error.message
+
+
+def test_a_bad_cts_host_names_the_variable(monkeypatch, credentials):
+    monkeypatch.setenv("CS_CTS_HOST", "not a url")
+    User = declared()
+
+    error = refusal(lambda: Cipher(User))
+    assert isinstance(error, AuthenticationError)
+    assert "CS_CTS_HOST" in error.message
+
+
+def test_a_corrupt_profile_names_the_remedy(monkeypatch, tmp_path):
+    # No access key, and a profile whose token file is not JSON. The layout
+    # is the profile store's: a current_workspace file, and the workspace's
+    # own directory with auth.json in it.
+    profile = tmp_path / "profile"
+    workspace = profile / "workspaces" / "ZVATKW3VHMFG27DY"
+    workspace.mkdir(parents=True)
+    (profile / "current_workspace").write_text("ZVATKW3VHMFG27DY")
+    (workspace / "auth.json").write_text("{not json")
+    monkeypatch.setenv("CS_CONFIG_PATH", str(profile))
+    User = declared()
+
+    error = refusal(lambda: Cipher(User))
+    assert isinstance(error, AuthenticationError)
+    assert error.code != "stack_auth_not_authenticated"
+    assert "CS_CONFIG_PATH" in error.message
+    assert "stash auth login" in error.message
+
+
+def test_a_missing_workspace_crn_names_the_variable(monkeypatch):
+    monkeypatch.setenv("CS_CLIENT_ACCESS_KEY", ACCESS_KEY)
+    User = declared()
+
+    error = refusal(lambda: Cipher(User))
+    assert error.code == "stack_auth_missing_workspace_crn"
+    assert "CS_WORKSPACE_CRN" in error.message
+    assert "AutoStrategy" not in error.message
 
 
 def test_a_malformed_access_key_is_an_authentication_error(monkeypatch):
