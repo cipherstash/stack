@@ -9,12 +9,15 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "stash": "workspace:*",
     "@cipherstash/stack": "workspace:*",
-    "@cipherstash/wizard": "workspace:*"
+    "@cipherstash/wizard": "workspace:*",
+    "stash": "workspace:*"
   },
   "devDependencies": {
+    "@cipherstash/protect": "10.2.1",
+    "@cipherstash/protect-dynamodb": "6.0.1",
     "@types/semver": "7.8.0",
+    "dotenv": "17.4.2",
     "semver": "^7.8.0",
     "typescript": "catalog:repo",
     "vitest": "catalog:repo",

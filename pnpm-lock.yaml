@@ -87,9 +87,18 @@ importers:
         specifier: workspace:*
         version: link:../languages/typescript/packages/cli
     devDependencies:
+      '@cipherstash/protect':
+        specifier: 10.2.1
+        version: 10.2.1
+      '@cipherstash/protect-dynamodb':
+        specifier: 6.0.1
+        version: 6.0.1(@cipherstash/protect@10.2.1)
       '@types/semver':
         specifier: 7.8.0
         version: 7.8.0
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
       semver:
         specifier: ^7.8.0
         version: 7.8.5
@@ -1068,6 +1077,53 @@ packages:
   '@cipherstash/eql@3.0.2':
     resolution: {integrity: sha512-E85o0aoOqgCW6RReLtJ0YLh/ExRlmDJo7LlJGpWPoMTVaw+CW8o11DJ4oJIF1vFtuxSVxNULuPzzBuVmpTvvcA==}
 
+  '@cipherstash/protect-dynamodb@6.0.1':
+    resolution: {integrity: sha512-AjlV0jLbD3DivFMiEtS+En3457pH7Ywrnk8S6f4l35F/NnXt1PQer033G/G8SqvVTAymrPysgoENKi5ZxrVnTA==}
+    deprecated: EQL v2-only package, no longer maintained. Use @cipherstash/stack/dynamodb instead.
+    peerDependencies:
+      '@cipherstash/protect': 10.2.1
+
+  '@cipherstash/protect-ffi-darwin-arm64@0.18.1':
+    resolution: {integrity: sha512-kTkshWuGG07X9m4Ug0mPXIglfZopVFCJy55/B2yy9Z+hhNP95d4Zjq6AXlRYAHsnxgcp0SnynC8LaVTcXsEx8w==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cipherstash/protect-ffi-darwin-x64@0.18.1':
+    resolution: {integrity: sha512-VdoTOIF5hmS7sQUR/w6FQKAj7aJOhOD2lo2wlV3hxG0PNd2pWiB1HvE9wvrGY2VAPqBU97Cp+S8IFkf5ckqQ2A==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.18.1':
+    resolution: {integrity: sha512-DcGIgoTkRDaBqqXs3X4fB7XCOMtleSLd+kMAStS1uEq6agVHp2P/9Y+ag30MQ7Ypm0xTJBZVwl8ClDXDSklQcw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.18.1':
+    resolution: {integrity: sha512-I5Cg7vlkVX2qL3hKYiYEx1C1lTQ+uGt2YrAxaqSs09gpvpa6xC2/2QMpV9UvKnJ9uLlxVly8jycnzp7TyvS9pA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-linux-x64-musl@0.18.1':
+    resolution: {integrity: sha512-Ol9dYVNXIaoYrhpsJv90PX5pHg1mmWKqnpnhh2ofA+NNZqEAdolo4BeTsQc10sCE6WogcM8FFJ9OcOrk79N8lA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.18.1':
+    resolution: {integrity: sha512-j9mqXQDHu3vdLJx93g2lAuKDeOh+XuC1FBvsrr2FTjgzBqrZAHH60QFPXjvFT1/U1oWjV8nAgTZQ4cUMJSDa9Q==}
+    cpu: [x64]
+    os: [win32]
+
+  '@cipherstash/protect-ffi@0.18.1':
+    resolution: {integrity: sha512-rDYIRIWo7EvJ+ytGEwzeb0D/4j3tQ8w+5Kpz089IEhxIVxOzavsR+f5HyMXohAKYkH+19RpD+2X+v1P8rwmiUA==}
+
+  '@cipherstash/protect@10.2.1':
+    resolution: {integrity: sha512-SCGOGpLWhwa9+hotbA11tPNGhKBZYspa5NWBtwBiHv/EgEKCQvaLDc0MAwzyT5cv7xDwbQESkhxyD9oqHnIMfg==}
+    deprecated: Deprecated in favour of @cipherstash/stack. Install @cipherstash/stack instead.
+
+  '@cipherstash/schema@2.0.2':
+    resolution: {integrity: sha512-3DpGvJ3sbhPpAGTQFf1St+WU6AlNR0S/rumSFHG0ghwDGzNV7PjnLHCzzZcMQX8UVw9KYwDz5+n/SAZAuDQczg==}
+    deprecated: EQL v2-only package, no longer maintained. Use @cipherstash/stack instead.
+
   '@clack/core@1.5.1':
     resolution: {integrity: sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ==}
     engines: {node: '>= 20.12.0'}
@@ -1666,6 +1722,9 @@ packages:
     resolution: {integrity: sha512-SC8xYNOH1dTnDiB2pykFhREl74gs6TF4jr2qFp0h9fwriRSoxic/CnVN2d7ikpc3XatOK1QnwfQCCmyv31x9/A==}
     hasBin: true
 
+  '@neon-rs/load@0.1.82':
+    resolution: {integrity: sha512-H4Gu2o5kPp+JOEhRrOQCnJnf7X6sv9FBLttM/wSbb4efsgFWeHzfU/ItZ01E5qqEk+U6QGdeVO7lxXIAtYHr5A==}
+
   '@neon-rs/load@0.2.6':
     resolution: {integrity: sha512-7p8j+guEhGTJNJISgmHO0homqGYAc0SDfmgGZfluMcQnimcceMY87b4hdqufp+7YmsOVC4W/JvT3/Tpi3/gy+Q==}
 
@@ -1983,6 +2042,12 @@ packages:
   '@rollup/rollup-linux-s390x-gnu@4.64.12':
     resolution: {integrity: sha512-pjmDTFStvwFE3shTeUDvSDiSp8/qAf5bQXejcEUDDavWz4jEhTIpCdpS06G0PEwSCSNK0Lngjz2v9l4hk3Z74A==}
     cpu: [s390x]
+    os: [linux]
+    libc: [glibc]
+
+  '@rollup/rollup-linux-x64-gnu@4.24.0':
+    resolution: {integrity: sha512-ZXFk7M72R0YYFN5q13niV0B7G8/5dcQ9JDp8keJSfr3GoZeXEoMHP/HlvqROA3OMbMdfr19IjCeNAnPUG93b6A==}
+    cpu: [x64]
     os: [linux]
     libc: [glibc]
 
@@ -4226,6 +4291,53 @@ snapshots:
 
   '@cipherstash/eql@3.0.2': {}
 
+  '@cipherstash/protect-dynamodb@6.0.1(@cipherstash/protect@10.2.1)':
+    dependencies:
+      '@byteslice/result': 0.2.0
+      '@cipherstash/protect': 10.2.1
+
+  '@cipherstash/protect-ffi-darwin-arm64@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-darwin-x64@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-x64-musl@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi@0.18.1':
+    dependencies:
+      '@neon-rs/load': 0.1.82
+    optionalDependencies:
+      '@cipherstash/protect-ffi-darwin-arm64': 0.18.1
+      '@cipherstash/protect-ffi-darwin-x64': 0.18.1
+      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.18.1
+      '@cipherstash/protect-ffi-linux-x64-gnu': 0.18.1
+      '@cipherstash/protect-ffi-linux-x64-musl': 0.18.1
+      '@cipherstash/protect-ffi-win32-x64-msvc': 0.18.1
+
+  '@cipherstash/protect@10.2.1':
+    dependencies:
+      '@byteslice/result': 0.2.0
+      '@cipherstash/protect-ffi': 0.18.1
+      '@cipherstash/schema': 2.0.2
+      zod: 3.25.76
+    optionalDependencies:
+      '@rollup/rollup-linux-x64-gnu': 4.24.0
+
+  '@cipherstash/schema@2.0.2':
+    dependencies:
+      zod: 3.25.76
+
   '@clack/core@1.5.1':
     dependencies:
       fast-wrap-ansi: 0.2.2
@@ -4640,6 +4752,8 @@ snapshots:
 
   '@neon-rs/cli@0.2.6': {}
 
+  '@neon-rs/load@0.1.82': {}
+
   '@neon-rs/load@0.2.6': {}
 
   '@next/env@15.5.28': {}
@@ -4945,6 +5059,9 @@ snapshots:
     optional: true
 
   '@rollup/rollup-linux-s390x-gnu@4.64.12':
+    optional: true
+
+  '@rollup/rollup-linux-x64-gnu@4.24.0':
     optional: true
 
   '@rollup/rollup-linux-x64-gnu@4.60.4':
