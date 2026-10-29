@@ -127,9 +127,9 @@ def test_a_field_without_a_marker_is_refused():
             age: int
 
     error = refusal(build)
-    assert error.code == "DECLARATION_NO_MARKER"
+    assert error.code == "declaration_no_marker"
     assert error.field == "age"
-    assert "DECLARATION_NO_MARKER" in str(error)
+    assert "declaration_no_marker" in str(error)
     assert "'age'" in str(error)
 
 
@@ -140,7 +140,7 @@ def test_annotated_metadata_from_another_library_is_not_a_marker():
         class User:
             email: Annotated[str, "not a marker"]
 
-    assert refusal(build).code == "DECLARATION_NO_MARKER"
+    assert refusal(build).code == "declaration_no_marker"
 
 
 def test_a_field_with_two_markers_is_refused():
@@ -151,9 +151,9 @@ def test_a_field_with_two_markers_is_refused():
             email: Annotated[str, TextEq, Text]
 
     error = refusal(build)
-    assert error.code == "DECLARATION_TWO_MARKERS"
+    assert error.code == "declaration_two_markers"
     assert error.field == "email"
-    assert "DECLARATION_TWO_MARKERS" in str(error)
+    assert "declaration_two_markers" in str(error)
     assert "'email'" in str(error)
 
 
@@ -164,7 +164,7 @@ def test_ignore_with_another_marker_is_two_markers():
         class User:
             email: Annotated[str, TextEq, Ignore]
 
-    assert refusal(build).code == "DECLARATION_TWO_MARKERS"
+    assert refusal(build).code == "declaration_two_markers"
 
 
 def test_a_wrapper_inside_the_marker_annotated_is_refused():
@@ -177,9 +177,9 @@ def test_a_wrapper_inside_the_marker_annotated_is_refused():
             email: Annotated[Mapped[str], TextEq]
 
     error = refusal(build)
-    assert error.code == "DECLARATION_MARKER_NOT_OUTERMOST"
+    assert error.code == "declaration_marker_not_outermost"
     assert error.field == "email"
-    assert error.reason == "rule-a"
+    assert error.reason == "rule_a"
     assert "Mapped[Annotated[str, TextEq]]" in str(error)
 
 
@@ -225,8 +225,8 @@ def test_a_marker_inside_a_list_or_final_is_refused(kind):
 
     for build in (build_list, build_final):
         error = refusal(build)
-        assert error.code == "DECLARATION_MARKER_NOT_OUTERMOST"
-        assert error.reason == "rule-a"
+        assert error.code == "declaration_marker_not_outermost"
+        assert error.reason == "rule_a"
 
 
 def test_a_marker_inside_another_type_is_refused():
@@ -237,7 +237,7 @@ def test_a_marker_inside_another_type_is_refused():
             email: Optional[Annotated[str, TextEq]]
 
     error = refusal(build)
-    assert error.code == "DECLARATION_MARKER_NOT_OUTERMOST"
+    assert error.code == "declaration_marker_not_outermost"
     assert error.field == "email"
 
 
@@ -252,7 +252,7 @@ def test_a_subclass_of_a_marker_is_not_a_marker():
         class User:
             email: Annotated[str, MyText]
 
-    assert refusal(build).code == "DECLARATION_NO_MARKER"
+    assert refusal(build).code == "declaration_no_marker"
 
 
 def test_an_unresolved_hint_is_refused_with_its_field():
@@ -268,7 +268,7 @@ def test_an_unresolved_hint_is_refused_with_its_field():
             )
 
     error = refusal(build)
-    assert error.code == "DECLARATION_HINTS_UNRESOLVED"
+    assert error.code == "declaration_hints_unresolved"
     assert error.field == "posts"
     assert "'posts'" in str(error)
     assert isinstance(error.__cause__, NameError)
@@ -283,23 +283,23 @@ def test_a_class_is_declared_once():
             email: Annotated[str, TextEq]
 
     error = refusal(build)
-    assert error.code == "DECLARATION_ALREADY_DECLARED"
+    assert error.code == "declaration_already_declared"
     assert "'accounts'" in str(error)
 
 
 def test_a_declaration_error_survives_pickle():
-    error = DeclarationError("DECLARATION_NO_MARKER", "no marker", field="age", reason="rule-a")
+    error = DeclarationError("declaration_no_marker", "no marker", field="age", reason="rule_a")
 
     copy = pickle.loads(pickle.dumps(error))
 
     assert type(copy) is DeclarationError
     assert (copy.code, copy.message, copy.field, copy.reason) == (
-        "DECLARATION_NO_MARKER",
+        "declaration_no_marker",
         "no marker",
         "age",
-        "rule-a",
+        "rule_a",
     )
-    assert str(copy) == str(error) == "DECLARATION_NO_MARKER: no marker"
+    assert str(copy) == str(error) == "declaration_no_marker: no marker"
 
 
 def test_class_level_names_are_not_fields():

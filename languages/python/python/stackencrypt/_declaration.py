@@ -91,7 +91,7 @@ def model(table: str) -> Callable[[T], T]:
         existing = declaration_of(cls)
         if existing is not None:
             raise DeclarationError(
-                "DECLARATION_ALREADY_DECLARED",
+                "declaration_already_declared",
                 f"class {cls.__name__!r} is already declared, with table "
                 f"{existing.table!r}. Apply stackencrypt.model once.",
             )
@@ -158,7 +158,7 @@ def _hints_unresolved(cls: type, error: Exception) -> DeclarationError:
     field = _unresolved_field(cls)
     where = f"field {field!r}" if field else f"a type hint of class {cls.__name__!r}"
     return DeclarationError(
-        "DECLARATION_HINTS_UNRESOLVED",
+        "declaration_hints_unresolved",
         f"{where} cannot be resolved ({error}). Define or import every name in "
         "it before the decorator runs, or declare the class after those names "
         'exist: stackencrypt.model("users")(User).',
@@ -264,23 +264,23 @@ def _marker_of(name: str, hint: Any, *, from_hints: bool) -> Type[Marker]:
     if len(markers) > 1:
         names = ", ".join(marker.__name__ for marker in markers)
         raise DeclarationError(
-            "DECLARATION_TWO_MARKERS",
+            "declaration_two_markers",
             f"field {name!r} has more than one stash marker ({names}). "
             "Give each field exactly one.",
             field=name,
-            reason="rule-a",
+            reason="rule_a",
         )
     return markers[0]
 
 
 def _no_marker(name: str) -> DeclarationError:
     return DeclarationError(
-        "DECLARATION_NO_MARKER",
+        "declaration_no_marker",
         f"field {name!r} has no stash marker. Every field needs one: an EQL "
         "type such as TextEq to encrypt it, Passthrough to store it as it is, "
         "or Ignore if it is not a column.",
         field=name,
-        reason="rule-a",
+        reason="rule_a",
     )
 
 
@@ -297,10 +297,10 @@ def _marker_not_outermost(
     else:
         fix = "Put the marker in the Annotated around the field's own type."
     return DeclarationError(
-        "DECLARATION_MARKER_NOT_OUTERMOST",
+        "declaration_marker_not_outermost",
         f"field {name!r} has its stash marker in the wrong place. {fix}",
         field=name,
-        reason="rule-a",
+        reason="rule_a",
     )
 
 
