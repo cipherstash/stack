@@ -606,12 +606,16 @@ jobs:
       encryption-postgres:
         image: postgres:17
         # Docker Hub refuses pulls without a login after too many from one
-        # address, and RunsOn machines reach that limit. The runner skips the
-        # login when either value is empty, as on a fork's pull request, and
-        # then pulls anonymously.
-        credentials:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        # address, and RunsOn machines reach that limit. One expression, not
+        # `username:` and `password:` keys: GitHub rejects an empty value for
+        # either key ("Unexpected value ''"), which fails the job on a fork's
+        # pull request. With either secret empty this gives `{}`, and the
+        # runner then pulls without a login.
+        credentials: >-
+          ${{ secrets.DOCKER_HUB_USERNAME != '' && secrets.DOCKER_HUB_PASSWORD != ''
+          && fromJSON(format('{{"username":{0},"password":{1}}}',
+          toJSON(secrets.DOCKER_HUB_USERNAME), toJSON(secrets.DOCKER_HUB_PASSWORD)))
+          || fromJSON('{}') }}
         env:
           POSTGRES_PASSWORD: postgres
         # Container port only: Docker picks the host port, and the test step
