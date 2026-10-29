@@ -8,7 +8,8 @@ pub struct Refusal {
     /// The engine's diagnostic code, with `::` replaced by `_`:
     /// `stack_encrypt_dynamic_plan`.
     pub code: String,
-    /// The engine's message, with its help after it where it gives one.
+    /// The engine's message, with its help after it where it gives one. A
+    /// caller whose engine help names a Rust API writes its own message.
     pub message: String,
     /// The plan field at fault, where the engine names one.
     pub field: Option<String>,
