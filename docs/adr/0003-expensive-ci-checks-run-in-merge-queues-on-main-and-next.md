@@ -81,6 +81,12 @@ An author can add the `ci:full` label to run the gate checks early on the pull
 request. A job removes the label when the early run starts. So each early run
 is a deliberate request. The queue still runs the gate checks again.
 
+GitHub cannot start a workflow on one label only, so every workflow starts
+when any label is added. On every such run, the selector job selects the push
+checks again, and the gate checks too for `ci:full`. GitHub counts the newest
+result for a check name. So a label run gives fresh results and cannot hide an
+earlier failure.
+
 ## Mutants
 
 - Mutants is a required gate check. It tests only the lines that the pull
@@ -128,6 +134,12 @@ is a deliberate request. The queue still runs the gate checks again.
   its required checks pass.
 - **Keep the `ci:full` label until the author removes it.** A forgotten label
   would run every gate check on every later push.
+- **Select nothing on a label other than `ci:full`.** Every job would be
+  skipped, and GitHub counts a skipped job as a pass. A test on 28 October
+  2026 showed that this run then replaces an earlier failure.
+- **Give the summary job a different name on label runs, or run early runs
+  in separate workflows.** Either way, a failed early run would no longer stop
+  a pull request joining the queue.
 
 ## Consequences
 
@@ -142,15 +154,18 @@ is a deliberate request. The queue still runs the gate checks again.
   it, a pull request that failed could merge with the one behind it.
 - The smallest group the queue merges is 1 pull request. So a lone pull
   request never waits for others.
-- Workflows must start when any label is added, because GitHub cannot filter
-  that event by label name. That run reports under the same check names as
-  the push run. A test branch must show that it cannot replace an earlier
-  failure.
-- Commits made by the merge queue must pass the rule that requires signed
-  commits. A test branch must show this before the queues start.
-- A test branch must also confirm that a queue commit's parent is the entry
-  ahead of it. GitHub's webhook schema calls `base_sha` the merge group's
-  parent commit. It does not say which commit that is.
+- Every label added to a pull request runs its push checks again. In October
+  2026, 74 labels were added to 53 pull requests. Most were Dependabot's,
+  added as the pull request opened, so they cost almost nothing extra.
+- A test of a merge queue on 28 October 2026 confirmed three behaviours:
+  - Commits made by the merge queue pass the rule that requires signed
+    commits.
+  - A queue commit's parent is the entry ahead of it. `merge_group.base_sha`
+    is that parent.
+  - GitHub does not cancel a running workflow when its entry leaves the
+    queue. The run continues to the end.
+- A failed entry stays in the queue until the entry ahead of it finishes.
+  Meanwhile, the entry behind it builds on top of the failure.
 - After a flaky push check on an early run, the author must re-run Mutants as
   well.
 - While it waits, the watcher holds one of the organisation's 60
