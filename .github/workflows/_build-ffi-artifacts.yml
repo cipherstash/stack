@@ -114,12 +114,15 @@ jobs:
       # a native x86_64 build — so the other two legs were paying an
       # `apt-get update` (full package indexes) plus a ~200MB toolchain they do
       # not link against.
+      #
+      # A fresh RunsOn machine can still be running apt from boot, and apt-get
+      # fails at once on a held lock unless told to wait for it.
       - name: Install cross-compile toolchain (linux-arm64-gnu)
         if: ${{ matrix.cfg.platform == 'linux-arm64-gnu' }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y gcc-13-aarch64-linux-gnu
+          sudo apt-get -o DPkg::Lock::Timeout=300 update
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y gcc-13-aarch64-linux-gnu
           sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-13 /usr/bin/aarch64-linux-gnu-gcc
 
       # Rust comes from the runner image; only the TARGET has to be added. This
