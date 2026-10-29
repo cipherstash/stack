@@ -45,6 +45,16 @@ assert_eq!(again, bytes);
 cargo add vitaminc-aead-frame
 ```
 
+## Why a format of its own, and not MessagePack or Borsh
+
+On small values the storage profile is slower and larger than MessagePack and Borsh (the tables under Performance). It is used anyway, for what those formats do not do:
+
+- **It wipes.** A blob comes back in a `Buffer`, wiped sixteen bytes at a time as it grows and when it is dropped. MessagePack and Borsh write into a plain `Vec<u8>`: each time it grows, the old allocation is freed with the plaintext still in it, and the result is freed unwiped.
+- **It is checked whole before anything is built.** The reader validates every length and count against the end of the blob, bounds nesting at 128 and refuses a repeated key, and only then walks the blob again to build the value, so hostile bytes are refused before anything is allocated for them. MessagePack and Borsh build the value as they read it.
+- **It keeps what serde said.** An integer carries its width, where MessagePack packs a `u64` of 42 into one byte and a reader cannot tell what it was. `None`, `Some(())` and `Some(None)` are three blobs, where MessagePack writes all three as `nil`. A map key keeps its kind. Borsh keeps none of this in the bytes: it carries only the values in order, so a blob cannot be checked, or even walked, without the type that wrote it.
+- **It is versioned and proved.** The header names the version, [STORAGE.md](https://github.com/cipherstash/vitaminc/blob/main/packages/aead-frame/STORAGE.md) specifies version 1, a golden corpus pins it, the validator has Kani proofs, and a refusal has a stable kind, so a reader can tell a blob it is too old to read from a corrupt one. Neither MessagePack nor Borsh carries a version.
+- **It is the format the stack already has.** The profile is the frame that crosses every FFI boundary, with a header and two tags, over the leaf codec whose tag table is the sealed leaf's. A third format would be a new dependency in a cryptography crate and a second meaning for every scalar kind.
+
 ## Transport, and one storage profile
 
 The frame, the ciphertext codec and the serde format in `serde` are
@@ -130,15 +140,7 @@ carry no detail about the bytes.
 
 ## Performance
 
-The storage profile is neither the fastest nor the smallest format in the tables below, and is not meant to be. It is for bytes that are kept, and what it buys is paid for in bytes and time:
-
-- The blob is checked whole before any value is built. Every length and count is checked against the end of the blob, nesting is bounded at 128, a repeated key is refused and a reservation is clamped, so hostile bytes are refused before anything is allocated for them. The reader then walks the blob a second time to build the value.
-- The output is wiped. It comes back in a `Buffer`, wiped sixteen bytes at a time as it grows and when it is dropped, so no copy of the plaintext is left behind in freed memory.
-- A value has one encoding. Every length and count is four bytes and every integer and float is its full width, with no packing of small values, so the size of a blob follows the shape of the value rather than its contents, and the writer does the same work for any integer.
-- Every node carries its kind. An integer reads back at its exact width, a map key keeps its kind, and `None`, `Some(())` and `Some(None)` are three different blobs.
-- The format is versioned and frozen. The header names the version, `STORAGE.md` specifies version 1, the golden corpus pins it, the validator has Kani proofs, and a refusal has a stable kind, so a reader can tell a blob it is too old to read from a corrupt one.
-
-The benches put a price on those properties.
+The storage profile is neither the fastest nor the smallest format in the tables below, and is not meant to be: what it is for is under "Why a format of its own" above. The benches put a price on those properties.
 
 The storage profile and the transport serde format were measured against `serde_json`, MessagePack (`rmp_serde`) and Borsh, writing and reading five values with Criterion.
 
