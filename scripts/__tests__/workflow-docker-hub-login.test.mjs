@@ -17,9 +17,11 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * The login must do nothing when either secret is empty. That is the case on a
  * fork's pull request, and on Dependabot's, and the job must still run there.
  *
- * - A service or job container from Docker Hub sets `credentials` from the
- *   two secrets. The runner skips that login when either value is empty
- *   (`ContainerRegistryLogin` in actions/runner).
+ * - A service or job container from Docker Hub sets `credentials` to one
+ *   expression that reads both secrets and falls back to `fromJSON('{}')`.
+ *   `username:` and `password:` keys do not work: GitHub rejects an empty
+ *   value for either ("Unexpected value ''"), so the job fails at "Set up
+ *   job". With `{}`, the runner pulls without a login.
  * - Any other pull needs a `run:` step before it that pipes the password to
  *   `docker login --password-stdin`, and exits early when either secret is
  *   empty.
@@ -251,6 +253,22 @@ export function loginFinding(step) {
   return null
 }
 
+/** Whether a container's `credentials` log in, and still work without the secrets. */
+export function credentialsFinding(credentials) {
+  if (credentials === undefined) return 'sets no credentials'
+  if (typeof credentials !== 'string')
+    return "sets username and password keys, which fail at 'Set up job' when a secret is empty; use one expression with a fromJSON('{}') fallback"
+  const flat = credentials.replace(/\s+/g, ' ')
+  if (
+    !flat.includes('secrets.DOCKER_HUB_USERNAME') ||
+    !flat.includes('secrets.DOCKER_HUB_PASSWORD')
+  )
+    return 'does not read secrets.DOCKER_HUB_USERNAME and secrets.DOCKER_HUB_PASSWORD'
+  if (!flat.includes("|| fromJSON('{}')"))
+    return "has no || fromJSON('{}') fallback for when a secret is empty"
+  return null
+}
+
 const isRunsOn = (job) => String(job?.['runs-on'] ?? '').startsWith('runs-on=')
 
 /** Every finding for one job, or [] when it is correct. */
@@ -267,12 +285,10 @@ export function jobFindings(where, job) {
   for (const [what, def] of containers) {
     const image = typeof def === 'string' ? def : def?.image
     if (!image || !onDockerHub(image)) continue
-    if (
-      def?.credentials?.username !== USERNAME ||
-      def?.credentials?.password !== PASSWORD
-    )
+    const finding = credentialsFinding(def?.credentials)
+    if (finding)
       findings.push(
-        `${where}: ${what} pulls ${image} from Docker Hub without credentials: { username: ${USERNAME}, password: ${PASSWORD} }`,
+        `${where}: ${what} pulls ${image} from Docker Hub, and ${finding}`,
       )
   }
   const steps = job.steps ?? []
@@ -370,11 +386,21 @@ describe('Docker Hub login on RunsOn', () => {
       steps: [],
     })
     expect(jobFindings('w j', job(undefined))).toEqual([
-      expect.stringMatching(/service pg pulls postgres:17/),
+      expect.stringMatching(
+        /service pg pulls postgres:17.*sets no credentials/,
+      ),
     ])
+    // The form GitHub rejects when a secret is empty.
     expect(
       jobFindings('w j', job({ username: USERNAME, password: PASSWORD })),
-    ).toEqual([])
+    ).toEqual([expect.stringMatching(/fail at 'Set up job'/)])
+    const flat = `secrets.DOCKER_HUB_USERNAME != '' && secrets.DOCKER_HUB_PASSWORD != '' && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.DOCKER_HUB_USERNAME), toJSON(secrets.DOCKER_HUB_PASSWORD)))`
+    expect(jobFindings('w j', job(expr(flat)))).toEqual([
+      expect.stringMatching(/no \|\| fromJSON\('\{\}'\) fallback/),
+    ])
+    expect(jobFindings('w j', job(expr(`${flat} || fromJSON('{}')`)))).toEqual(
+      [],
+    )
     expect(
       jobFindings('w j', {
         'runs-on': runsOn,
