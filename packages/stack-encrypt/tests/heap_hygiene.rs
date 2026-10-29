@@ -412,7 +412,8 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
             true,
             None,
         )
-        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
+        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")
+        .with_elements_query_sql_domain("eql_v4.query_json_elements")]
     }
     fn encrypt<'a, K: 'static>(
         &self,
@@ -815,7 +816,7 @@ mod json_index {
         let keyset = cipher.default_keyset();
         let wire = json!({
             "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
-                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
+                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age", "$.visits[*].at"]}}}
         });
         let plan = record::plan_with(
             &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
@@ -851,6 +852,28 @@ mod json_index {
                     ("path", frame("$.age")),
                     ("low", frame(quoted.as_str())),
                     ("high", frame(quoted.as_str())),
+                ]),
+            ),
+            (
+                OpSpec::ElementMatch,
+                object(vec![
+                    ("path", frame("$.visits[*]")),
+                    (
+                        "predicates",
+                        frame(vec![
+                            object(vec![
+                                ("member", frame("at")),
+                                ("op", frame("eq")),
+                                ("json", frame(quoted.as_str())),
+                            ]),
+                            object(vec![
+                                ("member", frame("at")),
+                                ("op", frame("between")),
+                                ("low", frame(quoted.as_str())),
+                                ("high", frame(quoted.as_str())),
+                            ]),
+                        ]),
+                    ),
                 ]),
             ),
         ];

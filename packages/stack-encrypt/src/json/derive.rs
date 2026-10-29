@@ -2102,6 +2102,71 @@ fn subtree_key_for(
     })
 }
 
+impl JsonSubtreeKey {
+    /// The key that reads `steps` below every node this key reads, each
+    /// probe kept as it is: the key of this key's path followed by
+    /// `steps`, at the same bound, derived from this key's tokens instead
+    /// of from the root. Every token below a node derives from the node's
+    /// token by the member or element rule and the step's selector, which
+    /// reads a position as the wildcard, so each step's selector is derived
+    /// once for every node, and each node's token extended by one hash per
+    /// step. A probe names an element past the bound, which the reads below
+    /// it do not reach, so it stays the element's own token.
+    ///
+    /// # Errors
+    ///
+    /// [`TermError::JsonWildcardTooWide`] for a step that is a wildcard,
+    /// which names many nodes below each one and so is a read of its own;
+    /// [`TermError::JsonTooWide`] for a position past the last one a
+    /// document numbers.
+    #[cfg(feature = "dynamic")]
+    pub(crate) fn below(&self, steps: &JsonPath) -> Result<Self, TermError> {
+        let prf = &self.selectors.keyset.prf;
+        let context = &self.selectors.context;
+        let mut pattern = self.path.clone();
+        let mut rules = Vec::with_capacity(steps.segments().len());
+        for step in steps.segments() {
+            let index = match step {
+                Segment::Key(_) => None,
+                Segment::Index(index) => Some(fit_ordinal(*index)?),
+                Segment::Wildcard => return Err(TermError::JsonWildcardTooWide),
+            };
+            pattern = pattern.then(step.clone());
+            let selector = prf16(prf, SELECTOR_DOMAIN, context, &pattern.selector_bytes())?;
+            rules.push((step, selector, index));
+        }
+        let reads = self
+            .reads
+            .iter()
+            .map(|read| {
+                if read.probe {
+                    return read.clone();
+                }
+                let mut token = read.token;
+                let mut path = read.path.clone();
+                for (step, selector, index) in &rules {
+                    token = match index {
+                        None => member_token(&token, selector),
+                        Some(index) => element_token(&token, selector, *index),
+                    };
+                    path = path.then((*step).clone());
+                }
+                Read {
+                    token,
+                    path,
+                    probe: false,
+                }
+            })
+            .collect();
+        Ok(Self {
+            reads,
+            bound: self.bound,
+            path: pattern,
+            selectors: self.selectors.clone(),
+        })
+    }
+}
+
 impl<K> KeysetCipher<'_, K> {
     /// The selector of `path`, under the field `descriptor`: what `->` and
     /// the path functions take. Every element of an array shares its
@@ -2507,6 +2572,47 @@ mod tests {
                 tokens.dedup();
                 assert_eq!(tokens.len(), key.reads.len(), "every token distinct");
             }
+        }
+
+        /// A key extended below its nodes is the key of the longer path,
+        /// tokens, probes, paths and order, under either root and through
+        /// nested wildcards; a wildcard below is refused.
+        #[cfg(feature = "dynamic")]
+        #[test]
+        fn a_key_extended_below_its_nodes_is_the_longer_paths_key() {
+            for options in [JsonOptions::default(), open_root()] {
+                for (base, steps, bound) in [
+                    ("$.a[*]", "$.b", 2),
+                    ("$.a[*]", "$.b.c", 3),
+                    ("$.a[*]", "$[\"x y\"]", 1),
+                    ("$.a[*]", "$.b[2].c", 2),
+                    ("$[*]", "$.x", 2),
+                    ("$.a[*].b[*]", "$.c", 2),
+                    ("$.a[*]", "$", 2),
+                    ("$.a[*]", "$.b", 0),
+                ] {
+                    let full = format!("{base}{}", steps.trim_start_matches('$'));
+                    let extended = key_for(&options, base, bound)
+                        .unwrap()
+                        .below(&JsonPath::parse(steps).unwrap())
+                        .unwrap();
+                    assert_eq!(
+                        extended,
+                        key_for(&options, &full, bound).unwrap(),
+                        "{base} then {steps} at {bound}, sealed root {}",
+                        options.sealed_root
+                    );
+                }
+            }
+            let key = key_for(&JsonOptions::default(), "$.a[*]", 2).unwrap();
+            assert!(matches!(
+                key.below(&JsonPath::parse("$.b[*]").unwrap()),
+                Err(TermError::JsonWildcardTooWide)
+            ));
+            assert!(matches!(
+                key.below(&JsonPath::parse("$[2147483648]").unwrap()),
+                Err(TermError::JsonTooWide)
+            ));
         }
 
         #[test]

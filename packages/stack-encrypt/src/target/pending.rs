@@ -630,11 +630,17 @@ fn load_keysets<'c, K: DataKeySource + IndexKeySource>(
             distinct.push(*keyset_id);
         }
     }
-    let loading = futures::future::join_all(
-        distinct
-            .iter()
-            .map(|&id| Box::pin(async move { cipher.keyset_state(id).await.map_err(Arc::new) })),
-    );
+    // Boxed too, so the returned future holds the joined loads as a pointer
+    // rather than inline. `dispatch` polls this future first after the
+    // retrieves have put the batch's data keys through the stack. Held
+    // inline, `tests/heap_hygiene.rs` observes this future's box, 256 bytes
+    // in a macOS arm64 debug build, freed holding a retrieved data key and
+    // stack addresses (the `json_open (subtree)` watch). Which write copies
+    // them in is not identified; with the loads boxed the residue is not
+    // observed, and the box costs one allocation per dispatch.
+    let loading = Box::pin(futures::future::join_all(distinct.iter().map(|&id| {
+        Box::pin(async move { cipher.keyset_state(id).await.map_err(Arc::new) })
+    })));
     async move {
         let by_keyset: HashMap<Uuid, Result<Arc<KeysetState>, Arc<Error>>> =
             distinct.into_iter().zip(loading.await).collect();

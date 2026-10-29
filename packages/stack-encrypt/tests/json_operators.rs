@@ -1,7 +1,7 @@
 //! A document field's JSON operators and reads through the data plan, with
 //! the engine's own JSON index behind the target: what a binding names by
 //! operator (`contains`, `eq_at`, the orderings at a path, `selector`,
-//! `subtree`, `children`, `child_count`), the operand each derives and the
+//! `subtree`, `children`, `child_count`, `element_match`), the operand each derives and the
 //! type it binds as, the refusals made before anything is derived, and
 //! reads opened against the request that prepared them.
 //!
@@ -51,7 +51,8 @@ impl TargetResolver for Documents {
             true,
             None,
         )
-        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
+        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")
+        .with_elements_query_sql_domain("eql_v4.query_json_elements")]
     }
 
     fn encrypt<'a, K: 'static>(
@@ -920,4 +921,685 @@ fn a_malformed_read_is_refused_before_any_key() {
     )
     .unwrap_err();
     assert_eq!(error.reason(), Some(Reason::OperatorNotAnswered));
+}
+
+/// `element_match`: a predicate on one element of an array, its operand the
+/// members' subtree reads and their bounds, as the `subtree` operator and
+/// the orderings derive them. `json_tree_element_match` is modelled over
+/// the rows `JsonDocument::subtree` returns, as the subtree tests model
+/// `json_tree_subtree`; `packages/eql/tests/encryption` runs the SQL.
+mod element_match {
+    use super::*;
+
+    use proptest::prelude::*;
+    use proptest::test_runner::{Config, TestCaseError, TestRunner};
+
+    /// `profile`, ordering a contact's `relationship`, `calls`,
+    /// `address.postcode` and `["first name"]`, but not its `note`.
+    fn contacts() -> record::Plan {
+        plan_of(json!({
+            "name": "JsonSearch",
+            "options": {"ordered": [
+                "$.contacts[*].relationship",
+                "$.contacts[*].calls",
+                "$.contacts[*].address.postcode",
+                "$.contacts[*][\"first name\"]",
+            ]}
+        }))
+    }
+
+    fn input(bound: u32, predicates: Value) -> Value {
+        json!({"path": "$.contacts[*]", "wildcard_bound": bound, "predicates": predicates})
+    }
+
+    /// The operand's JSON, `eql_v4.query_json_elements`.
+    async fn operand<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        input: Value,
+    ) -> Value {
+        let term = term(keyset, plan, "element_match", input).await;
+        assert_eq!(term.encoding(), "eql", "an EQL operand");
+        assert_eq!(
+            term.domain(),
+            Some("eql_v4.query_json_elements"),
+            "bound as the target's element predicate domain"
+        );
+        match term.operand() {
+            Operand::One(bytes) => serde_json::from_slice(bytes).unwrap(),
+            other => panic!("one operand, got {other:?}"),
+        }
+    }
+
+    /// The one leaf operand an ordering at `path` derives for `json`.
+    async fn leaf<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        operator: &str,
+        path: &str,
+        json: &str,
+    ) -> Value {
+        let term = term(keyset, plan, operator, json!({"path": path, "json": json})).await;
+        match term.operand() {
+            Operand::One(bytes) => serde_json::from_slice(bytes).unwrap(),
+            other => panic!("{operator}: {other:?}"),
+        }
+    }
+
+    /// The tokens a `subtree` read of `path` at `bound` sends.
+    async fn tokens<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        path: &str,
+        bound: u32,
+    ) -> Value {
+        let term = term(
+            keyset,
+            plan,
+            "subtree",
+            json!({"path": path, "wildcard_bound": bound}),
+        )
+        .await;
+        match term.operand() {
+            Operand::TextList(tokens) => json!(tokens),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// What `json_tree_element_match(doc, operand)` answers: whether one
+    /// `k` has, for every member, the node its `k`-th token names at the
+    /// member's selector and inside its bounds, compared as the SQL
+    /// compares ordering terms (bytes); or `None` where a token names a
+    /// node at another selector, a probe's hit, which the SQL raises on.
+    fn element_match(doc: &JsonDocument, operand: &Value) -> Option<bool> {
+        let members = operand["m"].as_array().unwrap();
+        let width = members[0]["t"].as_array().unwrap().len();
+        let term = |leaf: &Value| Base64::decode_vec(leaf["op"].as_str().unwrap()).unwrap();
+        let mut truncated = false;
+        let mut matched = false;
+        for k in 0..width {
+            let mut all = true;
+            for member in members {
+                let bounds: Vec<(&str, &Value)> = ["gt", "gte", "lt", "lte"]
+                    .into_iter()
+                    .filter_map(|key| member.get(key).map(|leaf| (key, leaf)))
+                    .collect();
+                let selector = tag(bounds[0].1["s"].as_str().unwrap());
+                let token = tag(member["t"][k].as_str().unwrap());
+                let Some((j, entry, _)) = doc.subtree(&[token]).into_iter().next() else {
+                    all = false;
+                    continue;
+                };
+                if entry.selector() != &selector {
+                    truncated = true;
+                    all = false;
+                    continue;
+                }
+                let node = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+                if node.get("op").is_none() {
+                    all = false;
+                    continue;
+                }
+                let stored = term(&node);
+                all &= bounds.iter().all(|(key, leaf)| {
+                    let bound = term(leaf);
+                    match *key {
+                        "gt" => stored > bound,
+                        "gte" => stored >= bound,
+                        "lt" => stored < bound,
+                        _ => stored <= bound,
+                    }
+                });
+            }
+            matched |= all;
+        }
+        (!truncated).then_some(matched)
+    }
+
+    mod given_a_predicate_per_comparison {
+        use super::*;
+
+        /// Each `op` derives the bound the ordering of the same name
+        /// derives, under its own key; `eq` is `gte` and `lte` at one
+        /// value, and `between` is `between_at`'s two.
+        #[tokio::test]
+        async fn each_bound_is_the_orderings_leaf_operand() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let calls = "$.contacts[*].calls";
+            let operand = operand(
+                &keyset,
+                &plan,
+                input(
+                    2,
+                    json!([
+                        {"member": "calls", "op": "eq", "json": "5"},
+                        {"member": "calls", "op": "lt", "json": "5"},
+                        {"member": "calls", "op": "lte", "json": "5"},
+                        {"member": "calls", "op": "gt", "json": "5"},
+                        {"member": "calls", "op": "gte", "json": "5"},
+                        {"member": "calls", "op": "between", "low": "1", "high": "9"},
+                    ]),
+                ),
+            )
+            .await;
+            let m = operand["m"].as_array().unwrap();
+            assert_eq!(m.len(), 6, "one member per predicate: {operand}");
+            let at_five = leaf(&keyset, &plan, "gte_at", calls, "5").await;
+            assert_eq!(
+                leaf(&keyset, &plan, "lt_at", calls, "5").await,
+                at_five,
+                "a leaf operand is one term, whichever ordering asks"
+            );
+            let keys = |member: &Value| -> Vec<String> {
+                member.as_object().unwrap().keys().cloned().collect()
+            };
+            assert_eq!(keys(&m[0]), ["gte", "lte", "t"], "eq: {}", m[0]);
+            assert_eq!(m[0]["gte"], at_five, "eq's low bound is the value's");
+            assert_eq!(m[0]["lte"], m[0]["gte"], "eq is lo = hi");
+            for (member, key) in [(&m[1], "lt"), (&m[2], "lte"), (&m[3], "gt"), (&m[4], "gte")] {
+                assert_eq!(keys(member), [key, "t"], "{member}");
+                assert_eq!(member[key], at_five, "{key}: the value's leaf operand");
+            }
+            let between = term(
+                &keyset,
+                &plan,
+                "between_at",
+                json!({"path": calls, "low": "1", "high": "9"}),
+            )
+            .await;
+            let Operand::Range { lo, hi } = between.operand() else {
+                panic!("between_at is a range")
+            };
+            let json = |bytes: &[u8]| serde_json::from_slice::<Value>(bytes).unwrap();
+            assert_eq!(keys(&m[5]), ["gte", "lte", "t"], "between: {}", m[5]);
+            assert_eq!(m[5]["gte"], json(lo), "between's low bound is between_at's");
+            assert_eq!(
+                m[5]["lte"],
+                json(hi),
+                "between's high bound is between_at's"
+            );
+            assert_ne!(m[5]["gte"], m[5]["lte"], "two values, two terms");
+        }
+
+        /// Every member's tokens are the `subtree` read of its full path at
+        /// the bound, the default bound when the input names none: one per
+        /// element below it, then the probe, the element at the bound
+        /// itself, which every member shares.
+        #[tokio::test]
+        async fn each_member_reads_its_full_path_and_ends_with_the_probe() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let read = operand(
+                &keyset,
+                &plan,
+                input(
+                    3,
+                    json!([
+                        {"member": "relationship", "op": "eq", "json": "\"Sibling\""},
+                        {"member": "address.postcode", "op": "gte", "json": "3000"},
+                        {"member": "[\"first name\"]", "op": "lt", "json": "\"M\""},
+                    ]),
+                ),
+            )
+            .await;
+            let m = read["m"].as_array().unwrap();
+            for (member, path) in [
+                (&m[0], "$.contacts[*].relationship"),
+                (&m[1], "$.contacts[*].address.postcode"),
+                (&m[2], "$.contacts[*][\"first name\"]"),
+            ] {
+                assert_eq!(
+                    member["t"],
+                    tokens(&keyset, &plan, path, 3).await,
+                    "{path}: the subtree read's tokens"
+                );
+                assert_eq!(member["t"].as_array().unwrap().len(), 3 + 1, "{path}");
+            }
+            assert_eq!(m[0]["t"][3], m[1]["t"][3], "the probe is the element's");
+            assert_eq!(m[0]["t"][3], m[2]["t"][3], "the probe is the element's");
+            assert_ne!(m[0]["t"][0], m[1]["t"][0], "a field's token is its own");
+
+            let defaulted = operand(
+                &keyset,
+                &plan,
+                json!({"path": "$.contacts[*]", "predicates": [
+                    {"member": "calls", "op": "gt", "json": "1"}
+                ]}),
+            )
+            .await;
+            assert_eq!(
+                defaulted["m"][0]["t"],
+                tokens(&keyset, &plan, "$.contacts[*].calls", 64).await,
+                "no bound named is the subtree read's default"
+            );
+        }
+    }
+
+    mod given_documents {
+        use super::*;
+
+        fn sibling_with_more_than_five_calls(bound: u32) -> Value {
+            input(
+                bound,
+                json!([
+                    {"member": "relationship", "op": "eq", "json": "\"Sibling\""},
+                    {"member": "calls", "op": "gt", "json": "5"},
+                ]),
+            )
+        }
+
+        /// A Sibling with more than five calls. Two contacts each matching
+        /// half of it are not a match, one matching both is, and an array
+        /// longer than the bound is the probe's hit, not an answer.
+        #[tokio::test]
+        async fn one_element_must_satisfy_every_member() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let operand = operand(&keyset, &plan, sibling_with_more_than_five_calls(2)).await;
+            for (document, want, why) in [
+                (
+                    json!({"contacts": [
+                        {"relationship": "Sibling", "calls": 3},
+                        {"relationship": "Friend", "calls": 7}
+                    ]}),
+                    Some(false),
+                    "each half in another element",
+                ),
+                (
+                    json!({"contacts": [
+                        {"relationship": "Friend", "calls": 9},
+                        {"relationship": "Sibling", "calls": 7}
+                    ]}),
+                    Some(true),
+                    "both halves in the second element",
+                ),
+                (
+                    json!({"contacts": [{"relationship": "Sibling"}, {"calls": 8}]}),
+                    Some(false),
+                    "a field absent from an element satisfies none of its bounds",
+                ),
+                (json!({"contacts": []}), Some(false), "no element"),
+                (json!({"other": 1}), Some(false), "no array"),
+                (
+                    json!({"contacts": [
+                        {"relationship": "Friend", "calls": 1},
+                        {"relationship": "Friend", "calls": 1},
+                        {"relationship": "Sibling", "calls": 9}
+                    ]}),
+                    None,
+                    "three elements past a bound of two: the probe names a node",
+                ),
+            ] {
+                let doc = seal(&keyset, &plan, &document).await;
+                assert_eq!(element_match(&doc, &operand), want, "{why}: {document}");
+            }
+        }
+
+        /// Against plaintext jsonpath over random arrays: within the bound
+        /// the operand answers `exists($.contacts[*] ? (@.relationship ==
+        /// $r && @.calls <op> $n))`, and past it the probe names a node.
+        #[test]
+        fn answers_as_the_jsonpath_over_the_plaintext() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let cipher = runtime.block_on(common::stack_cipher());
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let bound = 3u32;
+            let names = ["Sibling", "Friend", "Parent"];
+            let contact = (0..names.len(), proptest::option::of(0u64..8));
+            let ops = prop::sample::select(vec!["eq", "lt", "lte", "gt", "gte", "between"]);
+            let strategy = (
+                prop::collection::vec(contact, 0..=4),
+                0..names.len(),
+                ops,
+                0u64..8,
+                0u64..8,
+            );
+            let mut runner = TestRunner::new(Config {
+                cases: 48,
+                ..Config::default()
+            });
+            runner
+                .run(&strategy, |(contacts, wanted, op, n, m)| {
+                    let document = json!({"contacts": contacts
+                        .iter()
+                        .map(|(name, calls)| match calls {
+                            Some(calls) => json!({"relationship": names[*name], "calls": calls}),
+                            None => json!({"relationship": names[*name]}),
+                        })
+                        .collect::<Vec<_>>()});
+                    let (low, high) = (n.min(m), n.max(m));
+                    let calls = match op {
+                        "between" => json!({
+                            "member": "calls", "op": op,
+                            "low": low.to_string(), "high": high.to_string()
+                        }),
+                        _ => json!({"member": "calls", "op": op, "json": n.to_string()}),
+                    };
+                    let predicates = json!([
+                        {"member": "relationship", "op": "eq", "json": json!(names[wanted]).to_string()},
+                        calls,
+                    ]);
+                    let (doc, operand) = runtime.block_on(async {
+                        (
+                            seal(&keyset, &plan, &document).await,
+                            operand(&keyset, &plan, input(bound, predicates)).await,
+                        )
+                    });
+                    let holds = |calls: u64| match op {
+                        "eq" => calls == n,
+                        "lt" => calls < n,
+                        "lte" => calls <= n,
+                        "gt" => calls > n,
+                        "gte" => calls >= n,
+                        _ => (low..=high).contains(&calls),
+                    };
+                    let within = contacts.len() <= usize::try_from(bound).unwrap();
+                    let want = within.then(|| {
+                        contacts
+                            .iter()
+                            .any(|(name, calls)| *name == wanted && calls.is_some_and(holds))
+                    });
+                    let got = element_match(&doc, &operand);
+                    if got != want {
+                        return Err(TestCaseError::fail(format!(
+                            "{document} {op} {n} {m}: got {got:?}, want {want:?}"
+                        )));
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+    }
+
+    mod given_an_input_it_cannot_answer {
+        use super::*;
+
+        /// The refusals made before anything is derived, each by its
+        /// reason, or the index's term error by name.
+        #[test]
+        fn is_refused_with_its_reason() {
+            let plan = contacts();
+            let check = |input: &Value| {
+                dynamic::check_query(
+                    &plan,
+                    "profile",
+                    OpSpec::ElementMatch,
+                    json_frame(input),
+                    &Documents,
+                )
+            };
+            let reason = |input: &Value| -> String {
+                let error = check(input).unwrap_err();
+                match (&error, error.reason()) {
+                    (_, Some(reason)) => reason.as_str().to_owned(),
+                    (dynamic::Error::Cipher(stack_encrypt::Error::Term(term)), None) => {
+                        format!("{term:?}")
+                            .split(['(', ' ', '{'])
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned()
+                    }
+                    (other, None) => panic!("neither a reason nor a term error: {other:?}"),
+                }
+            };
+            let calls = |op: &str| json!([{"member": "calls", "op": op, "json": "1"}]);
+            let one = |predicate: Value| input(2, json!([predicate]));
+            let deep_member = |steps: usize| {
+                one(json!({"member": vec!["a"; steps].join("."), "op": "gt", "json": "1"}))
+            };
+            for (input, want) in [
+                (input(2, json!([])), "json_no_predicates"),
+                (
+                    json!({"path": "$.contacts", "predicates": calls("gt")}),
+                    "json_path_no_wildcard",
+                ),
+                (
+                    json!({"path": "$.contacts[0]", "predicates": calls("gt")}),
+                    "json_path_no_wildcard",
+                ),
+                (
+                    json!({"path": "$.contacts[1].tags[*]", "predicates": calls("gt")}),
+                    "JsonOrderingAtPosition",
+                ),
+                (
+                    one(json!({"member": "note", "op": "eq", "json": "\"x\""})),
+                    "JsonPathNotOrdered",
+                ),
+                (
+                    one(json!({"member": "address", "op": "gt", "json": "1"})),
+                    "JsonPathNotOrdered",
+                ),
+                (
+                    one(json!({"member": "address[0].postcode", "op": "gt", "json": "1"})),
+                    "JsonOrderingAtPosition",
+                ),
+                (
+                    one(json!({"member": "phones[*]", "op": "gt", "json": "1"})),
+                    "json_path_wildcard",
+                ),
+                (input(2, calls("ne")), "json_unknown_predicate_op"),
+                (input(2, calls("between_at")), "json_unknown_predicate_op"),
+                (input(0, calls("gt")), "json_wildcard_bound_zero"),
+                (one(json!({"member": "calls", "op": "gt"})), "json_input"),
+                (
+                    one(json!({"member": "calls", "op": "eq", "low": "1", "high": "2"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "gt", "json": "1", "low": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "gt", "json": "1", "high": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "low": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "high": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(
+                        json!({"member": "calls", "op": "between", "json": "1", "low": "1", "high": "2"}),
+                    ),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "gt", "json": "1", "extra": 1})),
+                    "json_input",
+                ),
+                (json!({"path": "$.contacts[*]"}), "json_input"),
+                (
+                    one(json!({"member": "calls", "op": "eq", "json": "true"})),
+                    "JsonLeafNotOrdered",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "low": "1", "high": "null"})),
+                    "JsonLeafNotOrdered",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "low": "[1]", "high": "2"})),
+                    "JsonLeafNotOrdered",
+                ),
+                (
+                    one(json!({"member": "", "op": "gt", "json": "1"})),
+                    "JsonPath",
+                ),
+                (
+                    json!({"path": "secret", "predicates": calls("gt")}),
+                    "JsonPath",
+                ),
+                // The path has two steps, so a member of 125 is a full path
+                // of 127, as deep as a document goes, and one of 126 deeper.
+                (deep_member(125), "JsonPathNotOrdered"),
+                (deep_member(126), "JsonTooDeep"),
+            ] {
+                assert_eq!(reason(&input), want, "{input}");
+            }
+            // A member that does not parse is refused at an offset into the
+            // member's own text, whichever form it starts with.
+            for (member, at) in [("a.b[", 4), ("[\"a\"].", 6), ("a..b", 2), ("[x]", 1)] {
+                let error =
+                    check(&one(json!({"member": member, "op": "gt", "json": "1"}))).unwrap_err();
+                let dynamic::Error::Cipher(stack_encrypt::Error::Term(
+                    stack_encrypt::sem::TermError::JsonPath(error),
+                )) = error
+                else {
+                    panic!("{member}: not a path error: {error:?}")
+                };
+                assert_eq!(error.at, at, "{member}: {error}");
+            }
+            for input in [
+                input(1, calls("gte")),
+                input(2, calls("gte")),
+                input(
+                    2,
+                    json!([
+                        {"member": "relationship", "op": "eq", "json": "\"a\""},
+                        {"member": "calls", "op": "between", "low": "1", "high": "2"},
+                    ]),
+                ),
+            ] {
+                assert!(check(&input).is_ok(), "{input}");
+            }
+        }
+    }
+
+    mod given_the_fields_type {
+        use super::*;
+
+        /// A resolver whose `JsonSearch` names no element predicate domain:
+        /// what a host presents that has not been taught the operand.
+        struct Unnamed;
+
+        impl TargetResolver for Unnamed {
+            fn targets(&self) -> Vec<TargetDescriptor> {
+                let mut targets = Documents.targets();
+                targets[0].elements_query_sql_domain = None;
+                targets
+            }
+            fn encrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                options: Option<&TargetOptions>,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: ValueFrame,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                Documents.encrypt(name, options, keyset, label, plaintext)
+            }
+            fn decrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                cipher: &'a StackCipher<K>,
+                label: &Label,
+                bytes: &[u8],
+            ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+                Documents.decrypt(name, cipher, label, bytes)
+            }
+            fn query<'a, K: 'static>(
+                &self,
+                name: &str,
+                index: &IndexSpec,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: ValueFrame,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                Documents.query(name, index, keyset, label, plaintext)
+            }
+        }
+
+        fn names(plan: &record::Plan, resolver: &impl TargetResolver) -> Vec<&'static str> {
+            dynamic::field_operators(plan, "profile", resolver)
+                .unwrap()
+                .into_iter()
+                .map(|(op, _)| op.name())
+                .collect()
+        }
+
+        /// Answered, through the JSON index, on a field that orders a path
+        /// and whose type names the operand's domain; its input is
+        /// `path_predicates`.
+        #[test]
+        fn lists_it_when_a_path_is_ordered_and_the_domain_named() {
+            let plan = contacts();
+            assert_eq!(
+                names(&plan, &Documents).last(),
+                Some(&"element_match"),
+                "the last operator, in OpSpec::ALL's order"
+            );
+            let (_, index) = dynamic::field_operators(&plan, "profile", &Documents)
+                .unwrap()
+                .into_iter()
+                .find(|(op, _)| *op == OpSpec::ElementMatch)
+                .unwrap();
+            assert!(
+                matches!(index, IndexSpec::Json(_)),
+                "the JSON index answers it: {index:?}"
+            );
+            assert_eq!(
+                OpSpec::parse("element_match"),
+                Some(OpSpec::ElementMatch),
+                "the wire name parses"
+            );
+            assert_eq!(
+                OpSpec::ElementMatch.input(),
+                "path_predicates",
+                "its input shape"
+            );
+            assert_eq!(
+                OpSpec::ElementMatch.fidelity(),
+                OpSpec::BetweenAt.fidelity(),
+                "compared as the orderings compare"
+            );
+        }
+
+        #[test]
+        fn does_not_list_it_without_an_ordered_path() {
+            let names = names(&plan_of(json!("JsonSearch")), &Documents);
+            assert!(
+                !names.contains(&"element_match"),
+                "no ordering term to compare: {names:?}"
+            );
+        }
+
+        #[test]
+        fn does_not_answer_it_when_the_type_names_no_domain() {
+            let wire = json!({
+                "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                            "target": {"name": "JsonSearch", "options": {"ordered": ["$.a[*].b"]}}}
+            });
+            let plan = record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Unnamed)
+                .unwrap();
+            let names = names(&plan, &Unnamed);
+            assert!(names.contains(&"lt_at"), "the orderings still: {names:?}");
+            assert!(!names.contains(&"element_match"), "{names:?}");
+            let error = dynamic::check_query(
+                &plan,
+                "profile",
+                OpSpec::ElementMatch,
+                json_frame(&json!({"path": "$.a[*]", "predicates": [
+                    {"member": "b", "op": "gt", "json": "1"}
+                ]})),
+                &Unnamed,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.reason(),
+                Some(Reason::OperatorNotAnswered),
+                "{error:?}"
+            );
+        }
+    }
 }
