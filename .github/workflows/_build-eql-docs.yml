@@ -53,10 +53,12 @@ jobs:
           cache: false # publish path; see _build-eql-sql.yml
           working_directory: packages/eql
 
+      # A fresh RunsOn machine can still be running apt from boot, and apt-get
+      # fails at once on a held lock unless told to wait for it.
       - name: Install Doxygen
         run: |
-          sudo apt-get update
-          sudo apt-get install -y doxygen
+          sudo apt-get -o DPkg::Lock::Timeout=300 update
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y doxygen
 
       - name: Generate documentation
         env:
