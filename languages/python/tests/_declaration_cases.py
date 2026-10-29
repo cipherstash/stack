@@ -38,7 +38,7 @@ from stackencrypt import (
     TimestampEq,
 )
 from stackencrypt import _eql
-from stackencrypt._declaration import declaration_of
+from stackencrypt._declaration import _KIND_TYPES, declaration_of
 
 EXPECTED_FIELDS = [("email", TextEq), ("age", Passthrough)]
 
@@ -303,6 +303,26 @@ def test_an_unresolved_hint_is_refused_with_its_field():
     assert isinstance(error.__cause__, NameError)
 
 
+class LaterBase(DeclarativeBase):
+    pass
+
+
+def test_a_relationship_to_a_class_defined_later_is_refused_with_its_field():
+    # Author is defined after Book, as a relationship target often is.
+    def build():
+        @stackencrypt.model("books")
+        class Book(LaterBase):
+            __tablename__ = "books"
+            id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+            title: Mapped[Annotated[str, TextEq]]
+            authors: Mapped[Annotated[List["Author"], Ignore]] = relationship()  # noqa: F821
+
+    error = refusal(build)
+    assert error.code == "declaration_hints_unresolved"
+    assert error.field == "authors"
+    assert isinstance(error.__cause__, NameError)
+
+
 def test_a_class_is_declared_once():
     def build():
         @stackencrypt.model("users")
@@ -403,13 +423,11 @@ def test_each_kind_takes_its_one_python_type(value_type, marker):
     assert planned(stackencrypt.model("users")(User)) == [("value", marker)]
 
 
-def test_every_producible_marker_has_a_python_type():
+def test_every_producible_kind_but_json_has_a_python_type():
     # A new kind in the catalog fails here until the table names its type.
+    # JSON has no Python type in v1 on purpose (#1341, Out of Scope).
     kinds = {marker.plaintext for marker in _eql.TYPES if marker.producible}
-    assert kinds - {"json"} <= {
-        "string", "int16", "int32", "int64", "float32", "float64",
-        "bool", "decimal", "date", "timestamp",
-    }
+    assert kinds - set(_KIND_TYPES) == {"json"}
 
 
 def test_a_value_type_that_is_not_the_kinds_is_refused():
@@ -519,16 +537,65 @@ def test_the_decorator_below_attrs_is_refused():
     assert refusal(build).code == "declaration_not_outermost"
 
 
-def test_a_field_the_constructor_does_not_take_is_refused():
-    def build():
+def build_without_the_field_in_the_constructor(kind):
+    if kind == "init=False field":
+
         @stackencrypt.model("users")
         @dataclasses.dataclass
         class User:
             email: Annotated[str, TextEq] = dataclasses.field(init=False)
 
-    error = refusal(build)
-    assert error.code == "declaration_not_outermost"
-    assert error.field == "email"
+    elif kind == "init=False class":
+
+        @stackencrypt.model("users")
+        @dataclasses.dataclass(init=False)
+        class User:
+            email: Annotated[str, TextEq]
+
+    elif kind == "attrs private name":
+
+        @stackencrypt.model("users")
+        @attrs.define
+        class User:
+            _email: Annotated[str, TextEq]
+
+    elif kind == "pydantic alias":
+
+        @stackencrypt.model("users")
+        class User(pydantic.BaseModel):
+            email: Annotated[str, TextEq] = pydantic.Field(alias="Email")
+
+    else:
+
+        @stackencrypt.model("users")
+        class User(pydantic.BaseModel):
+            model_config = pydantic.ConfigDict(extra="allow")
+            email: Annotated[str, TextEq] = pydantic.Field(alias="Email")
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "init=False field",
+        "init=False class",
+        "attrs private name",
+        "pydantic alias",
+        "pydantic alias with extra=allow",
+    ],
+)
+def test_a_field_the_constructor_does_not_take_is_refused(kind):
+    error = refusal(lambda: build_without_the_field_in_the_constructor(kind))
+    assert error.code == "declaration_constructor_missing_field"
+    assert "above @dataclass" not in str(error)
+
+
+def test_a_pydantic_alias_is_accepted_when_the_name_is_taken_too():
+    @stackencrypt.model("users")
+    class User(pydantic.BaseModel):
+        model_config = pydantic.ConfigDict(populate_by_name=True)
+        email: Annotated[str, TextEq] = pydantic.Field(alias="Email")
+
+    assert planned(User) == [("email", TextEq)]
 
 
 def build_with_a_required_ignore(kind):

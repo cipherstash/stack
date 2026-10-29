@@ -362,6 +362,9 @@ def _check_value_type(field: _ReadField) -> None:
                 reason="passthrough",
             )
         return
+    # The engine refuses this marker too, as stack_encrypt_target_unproducible.
+    # Python refuses it first, with the catalog's reason, so the engine's code
+    # never reaches a Python caller. The spec asks for this (#1341, Markers).
     if not marker.producible:
         raise DeclarationError(
             "declaration_unproducible",
@@ -369,13 +372,13 @@ def _check_value_type(field: _ReadField) -> None:
             f"cannot produce {marker.__name__} yet: {marker.reason}.",
             field=name,
         )
-    kind = marker.plaintext or ""
-    expected = _KIND_TYPES.get(kind)
-    if expected is None:
+    kind = marker.plaintext
+    expected = _KIND_TYPES.get(kind) if kind is not None else None
+    if kind is None or expected is None:
         raise DeclarationError(
             "declaration_type_mismatch",
-            f"field {name!r} is declared {marker.__name__}, whose kind {kind} "
-            "has no Python type in this version of the SDK.",
+            f"field {name!r} is declared {marker.__name__}. Its plaintext kind, "
+            f"{kind}, has no Python type in this version of the SDK.",
             field=name,
             reason=kind,
         )
@@ -402,6 +405,13 @@ def _check_constructor(cls: type, read: List[_ReadField]) -> None:
     except (TypeError, ValueError):
         parameters = inspect.Signature().parameters
     any_keyword = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+    # A plain class with no constructor: a decorator below this one, such as
+    # @dataclass, has not made the class yet.
+    unbuilt = _library_field_names(cls) is None and not any(
+        "__init__" in vars(base) or "__new__" in vars(base)
+        for base in cls.__mro__
+        if base is not object
+    )
     for field in read:
         parameter = parameters.get(field.name)
         if field.marker is Ignore:
@@ -413,14 +423,43 @@ def _check_constructor(cls: type, read: List[_ReadField]) -> None:
                     "passes it, so give it a default or a default factory.",
                     field=field.name,
                 )
-        elif not (_keyword(parameter) or any_keyword):
+        elif _takes(cls, field.name, parameter, any_keyword):
+            continue
+        elif unbuilt:
             raise DeclarationError(
                 "declaration_not_outermost",
-                f"the constructor of class {cls.__name__!r} does not take field "
-                f"{field.name!r} as a keyword argument. Put @stackencrypt.model "
-                "above @dataclass or @attrs.define, so that it runs last.",
+                f"class {cls.__name__!r} has no constructor yet. Put "
+                "@stackencrypt.model above @dataclass or @attrs.define, so "
+                "that it runs last.",
                 field=field.name,
             )
+        else:
+            raise DeclarationError(
+                "declaration_constructor_missing_field",
+                f"the constructor of class {cls.__name__!r} does not take field "
+                f"{field.name!r} as a keyword argument. Decrypt passes every "
+                "field by its name, so the constructor must take that name. "
+                "Look for init=False, a private attrs name, or an alias.",
+                field=field.name,
+            )
+
+
+def _takes(
+    cls: type, name: str, parameter: Optional[inspect.Parameter], any_keyword: bool
+) -> bool:
+    """Whether the constructor takes field ``name`` as a keyword argument."""
+    fields = getattr(cls, "__pydantic_fields__", None)
+    info = fields.get(name) if isinstance(fields, dict) else None
+    if info is not None:
+        # Pydantic's signature shows a field's alias, not its name. Its config
+        # says whether the name is taken too. With extra="allow" the signature
+        # has **kwargs, and a name that is not taken lands in the extras.
+        alias = getattr(info, "validation_alias", None) or getattr(info, "alias", None)
+        if alias is None or alias == name:
+            return True
+        config = getattr(cls, "model_config", {})
+        return bool(config.get("populate_by_name") or config.get("validate_by_name"))
+    return _keyword(parameter) or any_keyword
 
 
 def _keyword(parameter: Optional[inspect.Parameter]) -> bool:

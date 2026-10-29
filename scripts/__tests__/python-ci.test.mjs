@@ -72,19 +72,28 @@ const coversTree = (pattern, file) =>
   pattern.endsWith('/**') && file.startsWith(pattern.slice(0, -2))
 
 /**
- * The files outside `languages/python` the core crate compiles through a
- * `#[path = "..."]` module. Cargo.lock does not record them, so they are read
- * from the crate's source.
+ * The files the workspace's crates compile through a `#[path = "..."]`
+ * module. Cargo.lock does not record them, so they are read from every `.rs`
+ * file under `crates/`. A path is resolved from the directory of the file
+ * that names it, which is Rust's rule outside an inline `mod { }` block.
  */
 function pathModuleFiles() {
-  const src = `${PYTHON_ROOT}/crates/core/src`
   const files = []
-  for (const name of readdirSync(join(REPO_ROOT, src))) {
-    if (!name.endsWith('.rs')) continue
-    for (const match of read(`${src}/${name}`).matchAll(/#\[path = "([^"]+)"\]/g)) {
-      files.push(posix.normalize(`${src}/${match[1]}`))
+  const walk = (dir) => {
+    for (const entry of readdirSync(join(REPO_ROOT, dir), {
+      withFileTypes: true,
+    })) {
+      const rel = `${dir}/${entry.name}`
+      if (entry.isDirectory()) walk(rel)
+      else if (entry.name.endsWith('.rs')) {
+        const attribute = /#\[\s*path\s*=\s*"([^"]+)"\s*\]/g
+        for (const match of read(rel).matchAll(attribute)) {
+          files.push(posix.normalize(`${dir}/${match[1]}`))
+        }
+      }
     }
   }
+  walk(`${PYTHON_ROOT}/crates`)
   return files.sort()
 }
 
