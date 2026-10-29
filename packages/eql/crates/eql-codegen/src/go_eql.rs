@@ -189,6 +189,9 @@ fn document_types(out: &mut String) {
                 DocumentRole::ElementsQuery => {
                     "element-scoped predicate, which eql_v4.json_tree_element_match tests"
                 }
+                DocumentRole::PredicateQuery => {
+                    "compiled predicate, a boolean tree of the other operands, which eql_v4.json_tree_match and `@@` evaluate"
+                }
                 DocumentRole::Entry => {
                     "entry: one node of a document, as `->` and the walks return it"
                 }
@@ -275,6 +278,7 @@ mod tests {
             "JSONSearchQuery",
             "JSONSearchLeafQuery",
             "JSONSearchElementsQuery",
+            "JSONSearchPredicateQuery",
             "JSONEntry",
         ] {
             assert_eq!(
