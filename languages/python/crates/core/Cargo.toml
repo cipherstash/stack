@@ -27,6 +27,7 @@ eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features
 miette = "7.5.0"
 # For the plan's frame: the fields in declaration order.
 serde = "1"
+stack-auth = { workspace = true }
 stack-encrypt = { workspace = true }
 
 [dev-dependencies]

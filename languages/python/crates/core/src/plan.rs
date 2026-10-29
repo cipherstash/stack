@@ -6,11 +6,11 @@
 //! engine sees the same declaration a Rust or Go caller would, and its
 //! refusal reaches Python unchanged: its code, message, field and reason.
 
-use miette::Diagnostic as _;
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use stack_encrypt::dynamic::{self, record};
 use stack_encrypt::ErrorPayload as _;
 
+use crate::refusal::Refusal;
 use crate::targets;
 
 /// What one plan field stores.
@@ -20,20 +20,6 @@ pub enum Column<'a> {
     Eql(&'a str),
     /// A field stored as it is.
     Passthrough,
-}
-
-/// The engine's refusal of a plan, in the four fields every SDK error has.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Refusal {
-    /// The engine's diagnostic code, with `::` replaced by `_`:
-    /// `stack_encrypt_dynamic_plan`.
-    pub code: String,
-    /// The engine's message.
-    pub message: String,
-    /// The plan field at fault, where the engine names one.
-    pub field: Option<String>,
-    /// The engine's reason token, such as `no_fields`, where it gives one.
-    pub reason: Option<String>,
 }
 
 /// Check the plan of a model stored in `table`, with `fields` in
@@ -51,26 +37,18 @@ pub fn check(table: &str, fields: &[(&str, Column<'_>)]) -> Result<(), Refusal> 
         .map_err(|error| refusal(&error))
 }
 
-/// An engine diagnostic code as the SDK's `code`: `stack_encrypt::aead`
-/// becomes `stack_encrypt_aead`.
-pub fn python_code(engine_code: &str) -> String {
-    engine_code.replace("::", "_")
-}
-
 fn refusal(error: &dynamic::Error) -> Refusal {
     let payload = error.payload();
-    let text = |key: &str| payload.get(key).and_then(|v| v.as_str()).map(str::to_owned);
     Refusal {
-        code: error.code().map_or_else(
-            || "stack_encrypt_dynamic".to_owned(),
-            |code| python_code(&code.to_string()),
-        ),
-        message: error.to_string(),
-        field: text("field"),
+        field: payload
+            .get("field")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
         // Only the engine's own reason tokens. A resolver's reason, such as
         // the catalog's for an unproducible type, is prose and stays in the
         // message.
         reason: error.reason().map(|reason| reason.as_str().to_owned()),
+        ..Refusal::of(error)
     }
 }
 
@@ -148,14 +126,5 @@ mod tests {
     fn an_unproducible_eql_type_is_refused_by_the_resolver() {
         let refused = check("users", &[("doc", Column::Eql("Json"))]).unwrap_err();
         assert_eq!(refused.code, "stack_encrypt_target_unproducible");
-    }
-
-    #[test]
-    fn engine_codes_replace_the_path_separator() {
-        assert_eq!(python_code("stack_encrypt::aead"), "stack_encrypt_aead");
-        assert_eq!(
-            python_code("stack_kms::load_keyset_forbidden"),
-            "stack_kms_load_keyset_forbidden"
-        );
     }
 }

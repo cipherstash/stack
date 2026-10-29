@@ -28,9 +28,12 @@ edition = "2021"
 repository = "https://github.com/cipherstash/stack"
 
 [workspace.dependencies]
-# `default-features = false`: no `http` yet. The skeleton makes no request;
-# the ticket that turns `encrypt` live names `http` explicitly on the engine
-# crate so a later `default-features = false` cannot remove it silently.
 # `dynamic` is the runtime value model every binding speaks (frames, plans
-# read at run time), and the only stack-encrypt surface the spec has core use.
+# read at run time). `http`, the HTTP client and TLS stack, is off: nothing
+# makes a request yet. `Cipher` finds the credentials over a transport that
+# sends nothing (`crates/core/src/credentials.rs`). The ticket that makes
+# the first request turns it on, here and on stack-auth below.
 stack-encrypt = { path = "../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
+# The credentials, as every SDK finds them. By path, the same crate
+# stack-encrypt depends on. Its `http` feature is off, as above.
+stack-auth = { path = "../../packages/stack-auth", default-features = false }

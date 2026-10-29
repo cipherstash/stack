@@ -1,11 +1,14 @@
 //! The Python SDK's engine-side logic, with no pyo3 in it, so that it can be
 //! linked and tested without a Python interpreter.
 //!
-//! It holds the engine commit the build recorded (`build.rs`), and the
-//! engine's check of a model's plan ([`plan`]). The Python SDK spec (#1341,
-//! "Layout") says what else belongs here.
+//! It holds the engine commit the build recorded (`build.rs`), the engine's
+//! check of a model's plan ([`plan`]), and the credential lookup
+//! ([`credentials`]). Both report an engine error as a [`refusal::Refusal`].
+//! The Python SDK spec (#1341, "Layout") says what else belongs here.
 
+pub mod credentials;
 pub mod plan;
+pub mod refusal;
 
 // The resolver file below holds the EQL types only under this feature.
 #[cfg(not(feature = "eql"))]
