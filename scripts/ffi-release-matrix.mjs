@@ -52,7 +52,7 @@ const PLATFORMS_DIR = join(
 export function runnerFor(platform) {
   if (platform.startsWith('win32')) return 'windows-latest'
   if (platform.startsWith('darwin')) return 'macos-latest'
-  return 'blacksmith-4vcpu-ubuntu-2404'
+  return 'ubuntu-24.04'
 }
 
 /**

@@ -58,7 +58,7 @@ concurrency:
 jobs:
   rust:
     name: cargo test + clippy + rustfmt
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
