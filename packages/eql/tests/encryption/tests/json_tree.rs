@@ -511,6 +511,10 @@ fn postgres_containment_over_the_encrypted_column_is_jsonb_containment() {
 #[path = "json_tree/generated.rs"]
 mod generated;
 
+/// Native jsonb functions on a stored document and on an entry raise.
+#[path = "json_tree/blockers.rs"]
+mod blockers;
+
 /// Needs an EQL v4 installation. Extraction by selector opens to the leaf;
 /// the subtree walk by a client-derived token returns exactly the nodes
 /// under it and reassembles; the array functions count and list elements;

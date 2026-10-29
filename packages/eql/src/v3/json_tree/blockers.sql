@@ -2,6 +2,7 @@
 -- REQUIRE: src/v3/schema.sql
 -- REQUIRE: src/v3/json_tree/types.sql
 -- REQUIRE: src/v3/scalars/functions.sql
+-- REQUIRE: src/v3/json_tree/functions.sql
 
 --! @file v3/json_tree/blockers.sql
 --! @brief Native-jsonb firewall for public.{{prefix}}_json_search.
@@ -26,6 +27,10 @@
 --! helpers. Each blocker's RETURNS type matches the native operator it shadows
 --! so a composed expression resolves and the body raises 'operator not
 --! supported', rather than failing earlier on a boolean intermediate.
+--!
+--! The native jsonb FUNCTIONS that would run over the envelope are blocked
+--! too, by overloads in `public` at the end of this file: see "Function-form
+--! blockers" below.
 
 --! @brief Blocker: ? (key/element exists).
 --! @param a public.{{prefix}}_json_search Left operand (encrypted payload).
@@ -1116,3 +1121,686 @@ CREATE OPERATOR <@ (
   LEFTARG = jsonb,
   RIGHTARG = public.{{prefix}}_json_search
 );
+
+------------------------------------------------------------------------------
+-- Function-form blockers
+------------------------------------------------------------------------------
+
+--! Function-form blockers: native jsonb functions on the document and entry domains.
+--!
+--! The operators above leave the FUNCTION forms of the same operations open:
+--! `jsonb_path_match(col, $1::jsonpath)` on a domain over jsonb resolves to
+--! the native `pg_catalog` function, which runs over the stored envelope
+--! (`{v, i, h, sv, q}`), finds none of the user's keys and returns false for
+--! every row, with no error. Each overload below takes the domain as its
+--! first argument and the native signature's other arguments (names and
+--! defaults included, so a short or a named call resolves here too), and
+--! raises `feature_not_supported` naming the function and the EQL operation
+--! to use instead.
+--!
+--! They live in `public`, beside the domains: callers name these functions
+--! unqualified, so an overload is a candidate only in a schema on the
+--! caller's search path, and `public` is the one EQL already puts the
+--! domains in. PostgreSQL looks
+--! for an exact match on the argument types before it treats a domain as its
+--! base type, which is what lets the overload win over `pg_catalog`; that is
+--! the rule the operator blockers rely on too. It is also the overload's
+--! limit: when ANY argument is untyped (a bare literal such as
+--! `jsonb_path_match(col, '$.a == 1')`, or a parameter the driver sends with
+--! no type), there is no exact match, the column is treated as jsonb, and
+--! the native function runs. Only a call whose every argument has a type is
+--! caught. An overload cannot close that, and nothing here tries to.
+--!
+--! The bodies raise on their own rather than through the
+--! `{{prefix}}_internal` helpers: the domains outlive an uninstall of the
+--! EQL schemas, and these overloads, which depend on nothing in them, go on
+--! guarding the columns. `CREATE OR REPLACE`, like the CHECK validators in
+--! `public`, so a reinstall over surviving domains succeeds.
+--!
+--! Deliberately NOT blocked: `jsonb_array_elements`,
+--! `jsonb_array_elements_text` and `jsonb_array_length`. On either domain
+--! the native function already raises (the envelope and an entry are
+--! objects), so an overload buys only a different message, and costs what
+--! every overload here costs: a plain-jsonb call whose first argument is
+--! untyped, such as `jsonb_array_elements($1)` from a driver that sends no
+--! parameter types, becomes ambiguous ('function ... is not unique') once
+--! the overload exists, and must cast (`$1::jsonb`). The jsonb operators
+--! above already impose that on untyped operands.
+
+--! @brief Blocker: jsonb_path_exists(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_exists(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_exists is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and matches nothing; query with EQL: col @> needle::{{prefix}}.query_json, or compare col -> selector with an {{prefix}}.query_json_leaf'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_exists_tz(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_exists_tz(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_exists_tz is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and matches nothing; query with EQL: col @> needle::{{prefix}}.query_json, or compare col -> selector with an {{prefix}}.query_json_leaf'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_match(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_match(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_match is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and matches nothing; query with EQL: col @> needle::{{prefix}}.query_json, or compare col -> selector with an {{prefix}}.query_json_leaf'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_match_tz(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_match_tz(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_match_tz is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and matches nothing; query with EQL: col @> needle::{{prefix}}.query_json, or compare col -> selector with an {{prefix}}.query_json_leaf'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return SETOF jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS SETOF jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and finds nothing; extract with EQL: col -> selector, {{prefix}}.json_tree_path_query(col, selector) or {{prefix}}.json_tree_subtree(col, tokens), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_tz(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return SETOF jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_tz(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS SETOF jsonb
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_tz is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and finds nothing; extract with EQL: col -> selector, {{prefix}}.json_tree_path_query(col, selector) or {{prefix}}.json_tree_subtree(col, tokens), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_array(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_array(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_array is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and finds nothing; extract with EQL: col -> selector, {{prefix}}.json_tree_path_query(col, selector) or {{prefix}}.json_tree_subtree(col, tokens), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_array_tz(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_array_tz(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_array_tz is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and finds nothing; extract with EQL: col -> selector, {{prefix}}.json_tree_path_query(col, selector) or {{prefix}}.json_tree_subtree(col, tokens), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_first(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_first(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_first is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and finds nothing; extract with EQL: col -> selector, {{prefix}}.json_tree_path_query(col, selector) or {{prefix}}.json_tree_subtree(col, tokens), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_first_tz(public.{{prefix}}_json_search, ...).
+--! @param target public.{{prefix}}_json_search The encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_first_tz(target public.{{prefix}}_json_search, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_first_tz is not supported for public.{{prefix}}_json_search: a jsonpath runs over the encrypted envelope, not the document, and finds nothing; extract with EQL: col -> selector, {{prefix}}.json_tree_path_query(col, selector) or {{prefix}}.json_tree_subtree(col, tokens), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_extract_path(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @param path_elems text[] Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_extract_path(from_json public.{{prefix}}_json_search, VARIADIC path_elems text[])
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_extract_path is not supported for public.{{prefix}}_json_search: the keys of the document are encrypted, so a key path finds nothing; extract with EQL: col -> selector, and decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_extract_path_text(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @param path_elems text[] Native argument.
+--! @return text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_extract_path_text(from_json public.{{prefix}}_json_search, VARIADIC path_elems text[])
+RETURNS text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_extract_path_text is not supported for public.{{prefix}}_json_search: the keys of the document are encrypted, so a key path finds nothing; extract with EQL: col -> selector, and decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_each(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @return SETOF record (key text, value jsonb) Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_each(from_json public.{{prefix}}_json_search, OUT key text, OUT value jsonb)
+RETURNS SETOF record
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_each is not supported for public.{{prefix}}_json_search: it would list the encrypted envelope, not the document; list the children of a node with {{prefix}}.json_tree_children(col, token), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_each_text(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @return SETOF record (key text, value text) Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_each_text(from_json public.{{prefix}}_json_search, OUT key text, OUT value text)
+RETURNS SETOF record
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_each_text is not supported for public.{{prefix}}_json_search: it would list the encrypted envelope, not the document; list the children of a node with {{prefix}}.json_tree_children(col, token), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_object_keys(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @return SETOF text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_object_keys(from_json public.{{prefix}}_json_search)
+RETURNS SETOF text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_object_keys is not supported for public.{{prefix}}_json_search: it would list the encrypted envelope, not the document; list the children of a node with {{prefix}}.json_tree_children(col, token), and decrypt in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_typeof(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @return text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_typeof(from_json public.{{prefix}}_json_search)
+RETURNS text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_typeof is not supported for public.{{prefix}}_json_search: the kind of every node is encrypted, so it would answer object for every row; decrypt the document in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_strip_nulls(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @param strip_in_arrays boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_strip_nulls(from_json public.{{prefix}}_json_search, strip_in_arrays boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_strip_nulls is not supported for public.{{prefix}}_json_search: an encrypted document cannot be edited in the database; decrypt it, change the plaintext and encrypt it again in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_set(public.{{prefix}}_json_search, ...).
+--! @param jsonb_in public.{{prefix}}_json_search The encrypted document.
+--! @param path text[] Native argument.
+--! @param replacement jsonb Native argument.
+--! @param create_if_missing boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_set(jsonb_in public.{{prefix}}_json_search, path text[], replacement jsonb, create_if_missing boolean DEFAULT true)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_set is not supported for public.{{prefix}}_json_search: an encrypted document cannot be edited in the database; decrypt it, change the plaintext and encrypt it again in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_insert(public.{{prefix}}_json_search, ...).
+--! @param jsonb_in public.{{prefix}}_json_search The encrypted document.
+--! @param path text[] Native argument.
+--! @param replacement jsonb Native argument.
+--! @param insert_after boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_insert(jsonb_in public.{{prefix}}_json_search, path text[], replacement jsonb, insert_after boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_insert is not supported for public.{{prefix}}_json_search: an encrypted document cannot be edited in the database; decrypt it, change the plaintext and encrypt it again in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_pretty(public.{{prefix}}_json_search, ...).
+--! @param from_json public.{{prefix}}_json_search The encrypted document.
+--! @return text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_pretty(from_json public.{{prefix}}_json_search)
+RETURNS text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_pretty is not supported for public.{{prefix}}_json_search: it would print the encrypted envelope, not the document; decrypt the document in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_exists(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_exists(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_exists is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and matches nothing; compare the entry with an {{prefix}}.query_json_leaf, or test the document with col @> needle::{{prefix}}.query_json'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_exists_tz(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_exists_tz(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_exists_tz is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and matches nothing; compare the entry with an {{prefix}}.query_json_leaf, or test the document with col @> needle::{{prefix}}.query_json'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_match(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_match(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_match is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and matches nothing; compare the entry with an {{prefix}}.query_json_leaf, or test the document with col @> needle::{{prefix}}.query_json'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_match_tz(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return boolean Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_match_tz(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS boolean
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_match_tz is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and matches nothing; compare the entry with an {{prefix}}.query_json_leaf, or test the document with col @> needle::{{prefix}}.query_json'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return SETOF jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS SETOF jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_tz(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return SETOF jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_tz(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS SETOF jsonb
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_tz is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_array(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_array(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_array is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_array_tz(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_array_tz(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_array_tz is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_first(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_first(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_first is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_path_query_first_tz(public.{{prefix}}_json_entry, ...).
+--! @param target public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path jsonpath Native argument.
+--! @param vars jsonb Native argument.
+--! @param silent boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_path_query_first_tz(target public.{{prefix}}_json_entry, path jsonpath, vars jsonb DEFAULT '{}'::jsonb, silent boolean DEFAULT false)
+RETURNS jsonb
+STABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_path_query_first_tz is not supported for public.{{prefix}}_json_entry: a jsonpath runs over the encrypted entry, not its value, and finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_extract_path(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path_elems text[] Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_extract_path(from_json public.{{prefix}}_json_entry, VARIADIC path_elems text[])
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_extract_path is not supported for public.{{prefix}}_json_entry: the value of an entry is encrypted, so a key path finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_extract_path_text(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path_elems text[] Native argument.
+--! @return text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_extract_path_text(from_json public.{{prefix}}_json_entry, VARIADIC path_elems text[])
+RETURNS text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_extract_path_text is not supported for public.{{prefix}}_json_entry: the value of an entry is encrypted, so a key path finds nothing; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_each(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @return SETOF record (key text, value jsonb) Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_each(from_json public.{{prefix}}_json_entry, OUT key text, OUT value jsonb)
+RETURNS SETOF record
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_each is not supported for public.{{prefix}}_json_entry: it would list the fields of the encrypted entry, not its value; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_each_text(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @return SETOF record (key text, value text) Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_each_text(from_json public.{{prefix}}_json_entry, OUT key text, OUT value text)
+RETURNS SETOF record
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_each_text is not supported for public.{{prefix}}_json_entry: it would list the fields of the encrypted entry, not its value; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_object_keys(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @return SETOF text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_object_keys(from_json public.{{prefix}}_json_entry)
+RETURNS SETOF text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_object_keys is not supported for public.{{prefix}}_json_entry: it would list the fields of the encrypted entry, not its value; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_typeof(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @return text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_typeof(from_json public.{{prefix}}_json_entry)
+RETURNS text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_typeof is not supported for public.{{prefix}}_json_entry: the kind of the node is encrypted, so it would answer object for every entry; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_strip_nulls(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param strip_in_arrays boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_strip_nulls(from_json public.{{prefix}}_json_entry, strip_in_arrays boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_strip_nulls is not supported for public.{{prefix}}_json_entry: an encrypted entry cannot be edited in the database; decrypt the document, change the plaintext and encrypt it again in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_set(public.{{prefix}}_json_entry, ...).
+--! @param jsonb_in public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path text[] Native argument.
+--! @param replacement jsonb Native argument.
+--! @param create_if_missing boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_set(jsonb_in public.{{prefix}}_json_entry, path text[], replacement jsonb, create_if_missing boolean DEFAULT true)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_set is not supported for public.{{prefix}}_json_entry: an encrypted entry cannot be edited in the database; decrypt the document, change the plaintext and encrypt it again in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_insert(public.{{prefix}}_json_entry, ...).
+--! @param jsonb_in public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @param path text[] Native argument.
+--! @param replacement jsonb Native argument.
+--! @param insert_after boolean Native argument.
+--! @return jsonb Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_insert(jsonb_in public.{{prefix}}_json_entry, path text[], replacement jsonb, insert_after boolean DEFAULT false)
+RETURNS jsonb
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_insert is not supported for public.{{prefix}}_json_entry: an encrypted entry cannot be edited in the database; decrypt the document, change the plaintext and encrypt it again in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
+
+--! @brief Blocker: jsonb_pretty(public.{{prefix}}_json_entry, ...).
+--! @param from_json public.{{prefix}}_json_entry An entry extracted from an encrypted document.
+--! @return text Never returns; always raises feature_not_supported.
+CREATE OR REPLACE FUNCTION public.jsonb_pretty(from_json public.{{prefix}}_json_entry)
+RETURNS text
+IMMUTABLE PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  RAISE EXCEPTION 'jsonb_pretty is not supported for public.{{prefix}}_json_entry: it would print the encrypted entry, not its value; decrypt the entry in the client'
+    USING ERRCODE = 'feature_not_supported', HINT = 'Cast the value to jsonb (col::jsonb) only to read the stored envelope itself.';
+END;
+$$ LANGUAGE plpgsql;
