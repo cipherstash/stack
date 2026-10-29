@@ -7,6 +7,10 @@
  * from npm as pinned devDependencies of this package. Reader: the in-tree
  * `@cipherstash/stack` (→ the in-tree protect-ffi → cipherstash-client 0.42).
  *
+ * A final, DEPRECATED block also pins `@cipherstash/stack@0.19.0` (aliased as
+ * `@cipherstash/stack-0.19`) to show that the old Protect → 0.19 → 1.x route
+ * still lands in the same place. That hop is no longer required.
+ *
  * Every other v2 test in the repo mints its "v2" fixtures with TODAY's
  * protect-ffi in v2 mode, so compatibility with ciphertext written by the old
  * native client rested on the record format being unchanged — argued from
@@ -29,6 +33,12 @@ import { csColumn, csTable, protect } from '@cipherstash/protect'
 import { protectDynamoDB } from '@cipherstash/protect-dynamodb'
 import { encryptedDynamoDB } from '@cipherstash/stack/dynamodb'
 import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
+import { Encryption as Encryption019 } from '@cipherstash/stack-0.19'
+import { encryptedDynamoDB as encryptedDynamoDB019 } from '@cipherstash/stack-0.19/dynamodb'
+import {
+  encryptedColumn as encryptedColumn019,
+  encryptedTable as encryptedTable019,
+} from '@cipherstash/stack-0.19/schema'
 import { config } from 'dotenv'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -752,6 +762,98 @@ describe.skipIf(!authConfigured)(
           'stack decryptModel (json backfill)',
         )
         expect(read.profile).toEqual(doc)
+      })
+    })
+
+    // -------------------------------------------------------------------------
+    // DEPRECATED — NO LONGER REQUIRED: the Stack 0.19 bridge.
+    //
+    // Earlier migration guidance routed Protect apps through
+    // `@cipherstash/stack@0.19.0` (the last release that writes EQL v2) before
+    // Stack 1.x. Everything above proves the direct path — Protect 10.2.1 →
+    // Stack 1.x — on its own, so that intermediate step is unnecessary. Do not
+    // recommend it.
+    //
+    // This block exists only so the answer for anyone who already took the hop
+    // is pinned rather than argued: a 0.19 deployment reads Protect's items,
+    // writes items Stack 1.x reads, and writes the SAME `__hmac` values Protect
+    // did, so the hop adds nothing and loses nothing. Delete the block, and the
+    // `@cipherstash/stack-0.19` devDependency, when no customer is on 0.19.
+    // -------------------------------------------------------------------------
+
+    describe('DEPRECATED (no longer required): Protect 10.2.1 → Stack 0.19 → Stack 1.x', () => {
+      /** The customer's v2 table, as a Stack 0.19 app declares it. */
+      const bridgeUsers = encryptedTable019('users', {
+        email: encryptedColumn019('email').equality(),
+        emailLower: encryptedColumn019('emailLower').equality([
+          { kind: 'downcase' },
+        ]),
+        age: encryptedColumn019('age').dataType('number').equality(),
+        balance: encryptedColumn019('balance').dataType('bigint').equality(),
+        active: encryptedColumn019('active').dataType('boolean').equality(),
+        notes: encryptedColumn019('notes'),
+      })
+      /** Protect's item as Stack 0.19 reads it. */
+      let read: Record<string, unknown>
+      /** That read, re-written by Stack 0.19. */
+      let bridged: Record<string, unknown>
+
+      beforeAll(async () => {
+        const bridgeClient = await Encryption019({ schemas: [bridgeUsers] })
+        const bridge = encryptedDynamoDB019({ encryptionClient: bridgeClient })
+        read = ok(
+          await bridge.decryptModel(item, bridgeUsers),
+          'stack 0.19 decryptModel (protect item)',
+        )
+        bridged = ok(
+          await bridge.encryptModel(read, bridgeUsers),
+          'stack 0.19 encryptModel',
+        )
+      }, 60_000)
+
+      it('Stack 0.19 reads the Protect 10.2.1 item', () => {
+        expect(read).toMatchObject({
+          pk: 'user#1',
+          email: model.email,
+          emailLower: model.emailLower,
+          age: model.age,
+          active: true,
+          notes: model.notes,
+        })
+        expect(BigInt(read.balance as number | bigint)).toBe(
+          BigInt(model.balance),
+        )
+      })
+
+      it('Stack 0.19 re-writes the same attributes and the same __hmac values Protect wrote', () => {
+        expect(Object.keys(bridged).sort()).toEqual(Object.keys(item).sort())
+        for (const key of Object.keys(item).filter((k) =>
+          k.endsWith('__hmac'),
+        )) {
+          expect(bridged[key], key).toBe(item[key])
+        }
+      })
+
+      it('Stack 1.x reads the 0.19-written item exactly as it reads the Protect item directly', async () => {
+        const viaBridge = ok(
+          await stack.decryptModel(bridged, users, { storedEqlVersion: 2 }),
+          'stack decryptModel (0.19 item)',
+        )
+        const direct = ok(
+          await stack.decryptModel(item, users, { storedEqlVersion: 2 }),
+          'stack decryptModel (protect item)',
+        )
+        expect(viaBridge).toEqual(direct)
+      })
+
+      it('Stack 1.x queries find the 0.19-written item', async () => {
+        expect(await hmOf(model.email, users, users.email)).toBe(
+          bridged.email__hmac,
+        )
+        expect(await hmOf(model.age, users, users.age)).toBe(bridged.age__hmac)
+        expect(await hmOf(BigInt(model.balance), users, users.balance)).toBe(
+          bridged.balance__hmac,
+        )
       })
     })
   },
