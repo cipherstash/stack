@@ -43,6 +43,11 @@ flowchart LR
   architecture is slow.
 - **Run arm64 jobs on GitHub-hosted arm64 runners.** Those runners cost money
   for private repositories.
+- **Pull Docker Hub images through a cache in RunsOn's AWS setup.** RunsOn
+  documents that cache only for its Terraform or OpenTofu install.
+- **Pull Docker's official images from Amazon ECR Public.** Every image name
+  in every repository would change. Images that are not official would need
+  another source.
 
 ## Consequences
 
@@ -58,6 +63,10 @@ flowchart LR
 - Every job sets `timeout-minutes`. In the trial, one job without a limit ran
   for over 2 hours.
 - We maintain the RunsOn resources in AWS. They cost $40 to $60 a month.
+- RunsOn machines leave AWS through one shared address. Docker Hub limits
+  anonymous pulls per address. Jobs failed on that limit in October 2026. So
+  a job logs in to Docker Hub before it pulls an image. Runs for pull
+  requests from forks get no secrets, so they still pull without a login.
 - A pull request from a fork would run its code on a machine in our AWS
   account. So this repository requires approval before any outside
   contributor's workflows run, not only a first-time contributor's.
