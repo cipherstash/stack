@@ -160,6 +160,18 @@ jobs:
       - name: pytest
         run: mise run test
 
+      # The committed stackencrypt/_eql.py is generated from the EQL catalog
+      # by eql-codegen (#1385). `mise run types:check` in test-eql.yml diffs
+      # it, but that workflow does not run on a change under languages/python,
+      # so a hand edit to the file reached no check. This runs the one test
+      # that renders the catalog and compares it with the committed file,
+      # plus the Go/Python attribute parity in the same file. It compiles
+      # eql-codegen and its catalog only, in the EQL workspace, under the
+      # root Rust toolchain; tests-golang.yml compiles that workspace the
+      # same way. The target directory is not cached: the build is seconds.
+      - name: stackencrypt._eql matches the EQL catalog
+        run: cargo test --locked --manifest-path ../../packages/eql/Cargo.toml -p eql-codegen --test py_eql_parity
+
   # One abi3-py39 wheel per platform the FFI ships for, by the same Rust
   # triples. python-ci.test.mjs holds the list to the protect-ffi platform
   # packages. The wheels are uploaded as artifacts. Nothing publishes them:

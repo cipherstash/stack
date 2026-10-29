@@ -380,7 +380,10 @@ The table and the dispatch are generated into `src/v4/targets.rs` beside
 the v4 family modules (`mise run types:generate`), gated to the `targets`
 feature, and drift-gated by the same parity tests. The same generator writes
 the Go package `languages/golang/encrypt/eql` from the same rows
-(`eql-codegen go-eql`, also under `types:generate` / `types:check`). The
+(`eql-codegen go-eql`, also under `types:generate` / `types:check`), and the
+Python markers module `languages/python/python/stackencrypt/_eql.py`
+(`eql-codegen py-eql`, likewise). Both are outside this subtree, so neither
+command accepts an `EQL_CODEGEN_OUT_ROOT` override. The
 engine's `TargetResolver` (stack-encrypt's `dynamic` module) is implemented
 over this module by the Go guest's `eql` build, not here: a resolver in this
 crate would need stack-encrypt API newer than the crates.io release the

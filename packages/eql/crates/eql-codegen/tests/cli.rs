@@ -221,6 +221,28 @@ fn select_subcommand_drops_files_confined_to_the_other_version() {
     assert_eq!(out.status.code(), Some(2));
 }
 
+/// `go-eql` and `py-eql` write outside the EQL subtree, so an
+/// `EQL_CODEGEN_OUT_ROOT` override would send them outside the throwaway tree.
+/// Each refuses the override with exit 2, before writing anything.
+#[test]
+fn cross_tree_emitters_refuse_the_output_root_override() {
+    let out_root = tempdir();
+    for command in ["go-eql", "py-eql"] {
+        let out = Command::new(bin())
+            .arg(command)
+            .env("EQL_CODEGEN_OUT_ROOT", out_root.0.as_os_str())
+            .output()
+            .unwrap_or_else(|e| panic!("run eql-codegen {command}: {e}"));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{command}: {stderr}");
+        assert!(out.stdout.is_empty(), "{command} printed a written path");
+        assert!(
+            stderr.contains("EQL_CODEGEN_OUT_ROOT"),
+            "{command}: {stderr}"
+        );
+    }
+}
+
 /// An unrecognised argument prints usage and exits 2 (the `ExitCode::from(2)`
 /// fall-through in `main.rs`).
 #[test]

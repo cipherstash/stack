@@ -130,33 +130,11 @@ pub fn render_go_eql() -> String {
     out.push_str("}\n");
     for row in &rows {
         let go = go_name(&row.name);
-        let indexes = if row.indexes.is_empty() {
-            "no index".to_owned()
-        } else {
-            format!(
-                "the {} index{}",
-                row.indexes.join(" and "),
-                if row.indexes.len() > 1 { "es" } else { "" }
-            )
-        };
-        let status = match (row.reason, row.plaintext) {
-            (None, Some(kind)) => {
-                // The Go kinds are read as words: "an int32", "a float64".
-                let article = if kind.starts_with(['a', 'e', 'i', 'o', 'u']) {
-                    "an"
-                } else {
-                    "a"
-                };
-                format!("The engine produces it from {article} {kind}.")
-            }
-            (None, None) => "The engine produces it.".to_owned(),
-            (Some(reason), _) => format!("The engine cannot produce it yet: {reason}."),
-        };
         let _ = write!(
             out,
-            "\n// {go} is the EQL type stored in {domain}: the {family} family with {indexes}.\n// {status}\ntype {go} []byte\n",
-            domain = row.sql_domain,
-            family = row.family,
+            "\n// {go} is the EQL type {summary}.\n// {status}\ntype {go} []byte\n",
+            summary = row.summary(),
+            status = row.status(),
         );
         methods(&mut out, &go, &row.sql_domain);
         if let Some((query, query_domain)) = &row.query {
@@ -231,8 +209,10 @@ fn range_types(out: &mut String) {
     }
 }
 
-/// Write `eql_gen.go` under `out_root` (the EQL subtree root, or the
-/// override `EQL_CODEGEN_OUT_ROOT`). Returns the path written.
+/// Write `eql_gen.go` under `out_root`, the EQL subtree root. The CLI
+/// refuses an `EQL_CODEGEN_OUT_ROOT` override here: the path leaves the
+/// subtree, so under an override it would land outside the throwaway tree.
+/// Returns the path written.
 pub fn generate_go_eql(out_root: &Path) -> std::io::Result<PathBuf> {
     let path = out_root.join(GO_EQL_PATH);
     if let Some(dir) = path.parent() {
