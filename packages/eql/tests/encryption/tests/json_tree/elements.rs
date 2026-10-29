@@ -1,7 +1,12 @@
 //! The element-scoped predicate end to end: documents sealed by Stack
 //! Encrypt's JSON index, the `element_match` operand derived through a data
-//! plan over eql-bindings' target table (the path the Go guest takes), and
-//! `eql_v4.json_tree_element_match` over the stored column.
+//! plan over eql-bindings' target table, and
+//! `eql_v4.json_tree_element_match` over the stored column. The resolver
+//! here ([`Eql`]) names the document's leaf, element-scoped and compiled
+//! predicate domains, so the engine answers `element_match` and `match`
+//! through it. The Go guest's resolver names the leaf domain alone (its
+//! `targets` tests pin that), so the Go SDK is not offered either operator
+//! until the Go side takes them.
 //!
 //! These tests pin:
 //!
@@ -26,10 +31,11 @@ use stack_encrypt::dynamic::{
 };
 use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
 
-/// eql-bindings' table as the engine's resolver, naming each type's leaf
-/// and element predicate domains, as a host that answers `element_match`
-/// describes it.
-struct Eql;
+/// eql-bindings' table as the engine's resolver, naming each type's leaf,
+/// element predicate and compiled predicate domains: a host that answers
+/// `element_match` and `match`. Not the Go guest's resolver, which names
+/// the leaf domain alone.
+pub(super) struct Eql;
 
 fn describe(target: &Target) -> TargetDescriptor {
     let mut descriptor = TargetDescriptor::new(
@@ -49,6 +55,9 @@ fn describe(target: &Target) -> TargetDescriptor {
     }
     if let Some(domain) = target.elements_query_sql_domain() {
         descriptor = descriptor.with_elements_query_sql_domain(domain);
+    }
+    if let Some(domain) = target.predicate_query_sql_domain() {
+        descriptor = descriptor.with_predicate_query_sql_domain(domain);
     }
     descriptor
 }
@@ -116,13 +125,13 @@ fn contact_plan() -> record::Plan {
     record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Eql).unwrap()
 }
 
-fn frame_of(value: &Value) -> ValueFrame {
+pub(super) fn frame_of(value: &Value) -> ValueFrame {
     ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
 }
 
 /// The operand of `operator` on `profile` for `input`, as the SQL binds
 /// it: an EQL operand's JSON text, or a list of tokens.
-fn derive(
+pub(super) fn derive(
     runtime: &tokio::runtime::Runtime,
     keyset: &KeysetCipher<'_, common::Observed>,
     plan: &record::Plan,
@@ -145,7 +154,7 @@ fn derive(
     term.operand().clone()
 }
 
-fn eql_text(operand: &Operand) -> String {
+pub(super) fn eql_text(operand: &Operand) -> String {
     match operand {
         Operand::One(bytes) => String::from_utf8(bytes.clone()).unwrap(),
         other => panic!("one EQL operand, got {other:?}"),
