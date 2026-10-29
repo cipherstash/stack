@@ -268,6 +268,35 @@ mod tests {
         ));
     }
 
+    /// The JSON document's query domains this guest names, and so the JSON
+    /// operators the Go SDK is offered: the leaf operand, for the orderings
+    /// at a path, and not the element-scoped or compiled predicate, whose
+    /// operators (`element_match`, `match`) the Go side does not parse yet.
+    /// Naming one is a change to the Go SDK's operator list: update this
+    /// test with the Go side that takes the operator.
+    #[cfg(feature = "eql")]
+    #[test]
+    fn a_document_names_the_leaf_domain_and_not_the_predicate_domains() {
+        let targets = resolver().targets();
+        let document = targets
+            .iter()
+            .find(|t| t.name == "JsonSearch")
+            .expect("JsonSearch");
+        assert_eq!(
+            document.leaf_query_sql_domain.as_deref(),
+            Some("eql_v4.query_json_leaf")
+        );
+        assert_eq!(document.elements_query_sql_domain, None);
+        assert_eq!(document.predicate_query_sql_domain, None);
+        let operators = document.operators();
+        for absent in [
+            stack_encrypt::dynamic::OpSpec::ElementMatch,
+            stack_encrypt::dynamic::OpSpec::Match,
+        ] {
+            assert!(!operators.contains(&absent), "{absent:?}: {operators:?}");
+        }
+    }
+
     #[cfg(feature = "eql")]
     #[test]
     fn eql_refusals_convert_to_the_engines_with_the_field_left_to_the_lowering() {

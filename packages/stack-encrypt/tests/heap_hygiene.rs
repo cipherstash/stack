@@ -413,7 +413,8 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
             None,
         )
         .with_leaf_query_sql_domain("eql_v4.query_json_leaf")
-        .with_elements_query_sql_domain("eql_v4.query_json_elements")]
+        .with_elements_query_sql_domain("eql_v4.query_json_elements")
+        .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
     }
     fn encrypt<'a, K: 'static>(
         &self,
@@ -827,6 +828,12 @@ mod json_index {
         let mark = marked("operand");
         let quoted = format!("{mark:?}");
         let document = format!(r#"{{{quoted}: [{quoted}], "name": {quoted}}}"#);
+        // Every leaf kind, with a literal and a variable carrying the mark.
+        let predicate = format!(
+            "$.name == {quoted} && $.name != $v && $.age > {quoted} && \
+             exists($.visits[*] ? (@.at == $v && @.at < {quoted})) && $.visits[*].at >= $v"
+        );
+        let vars = format!(r#"{{"v": {quoted}}}"#);
         let inputs = [
             (
                 OpSpec::Contains,
@@ -874,6 +881,13 @@ mod json_index {
                             ]),
                         ]),
                     ),
+                ]),
+            ),
+            (
+                OpSpec::Match,
+                object(vec![
+                    ("predicate", frame(predicate.as_str())),
+                    ("vars", frame(vars.as_str())),
                 ]),
             ),
         ];
