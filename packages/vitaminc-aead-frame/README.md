@@ -132,7 +132,14 @@ A blob comes back in a `Buffer`, wiped sixteen bytes at a time as it grows and w
 
 ### Validated before built
 
-`storage::from_slice` checks the whole blob first: every length and count against the end of the blob, nesting bounded at 128, a repeated key refused. Only then does it walk the blob again to build the value, so hostile bytes are refused before anything is allocated for them. MessagePack and Borsh build the value as they read it. The bounds are under [Hardening](#hardening).
+`storage::from_slice` walks the whole blob against the format first, building nothing, and only then walks it again to build the value. MessagePack and Borsh build as they read. The first walk buys four things:
+
+- **A refusal builds nothing.** A malformed blob never has its contents copied into a half-built value and freed, and never gets an allocation from a forged length or count.
+- **Corrupt is told apart from wrong type.** A blob that passes is well formed, so a refusal on the second walk is the type's. The stable refusal kinds rest on this: a caller can tell tampering or corruption from a reader that is too old.
+- **One walker to prove and to port.** The validator is independent of any type, so it is what the Kani proofs cover, what the golden corpus pins, and what a reader in another language must match. Two readers that accept different blobs are a vulnerability class of their own.
+- **Document rules hold before anything is committed.** A repeated key, the nesting bound and every length against the end of the blob are checked for the whole document, so a blob means one thing or is refused, and no entry is silently replaced by a later one.
+
+The bounds are under [Hardening](#hardening).
 
 ### Self-describing
 
