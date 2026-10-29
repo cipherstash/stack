@@ -1,9 +1,10 @@
 """The exceptions the SDK raises.
 
 Every error carries the same four fields, whoever raised it: ``code`` (a fixed
-upper-case token), ``message`` (prose for a person), ``reason`` (a fixed
-lower-case token or ``None``) and ``field`` (the field name, or ``None``). The
-code's prefix tells where the error came from.
+lower_snake_case token), ``message`` (prose for a person), ``reason`` (a fixed
+lower_snake_case token or ``None``) and ``field`` (the field name, or
+``None``). The code's prefix tells where the error came from. An engine
+error's code is the engine's diagnostic code with ``::`` replaced by ``_``.
 """
 
 from typing import Optional
