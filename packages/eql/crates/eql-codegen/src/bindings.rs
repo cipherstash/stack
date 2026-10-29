@@ -1061,7 +1061,7 @@ pub fn render_v4_inventory_rs() -> String {
         })
         .collect();
     // The document families' hand-written types: the stored document in
-    // `all()`, its two query operands in `all_query()`. The entry `->`
+    // `all()`, its query operands in `all_query()`. The entry `->`
     // returns is neither a column nor an operand, so it is in neither.
     let document = |roles: &'static [eql_domains::DocumentRole]| -> TokenStream {
         eql_domains::DOCUMENT_FAMILIES
@@ -1083,6 +1083,7 @@ pub fn render_v4_inventory_rs() -> String {
         let documents = document(&[
             eql_domains::DocumentRole::Query,
             eql_domains::DocumentRole::LeafQuery,
+            eql_domains::DocumentRole::ElementsQuery,
         ]);
         quote! { #query_entries #documents }
     };

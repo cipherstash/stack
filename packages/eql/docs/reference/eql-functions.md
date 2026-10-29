@@ -11,6 +11,7 @@ A reference for the functions and operators EQL exposes for querying encrypted d
 - [Index Term Extraction](#index-term-extraction)
 - [Encrypted JSON (`public.eql_v3_json_search`)](#encrypted-json-publiceql_v3_json_search)
 - [Range queries in EQL v4: `eql_v4.between`](#range-queries-in-eql-v4-eql_v4between)
+- [One array element in EQL v4: `eql_v4.json_tree_element_match`](#one-array-element-in-eql-v4-eql_v4json_tree_element_match)
 - [Aggregate Functions](#aggregate-functions)
 - [Diagnostics](#diagnostics)
 
@@ -169,6 +170,52 @@ SELECT * FROM users WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ope
 - **Always cast the range parameter to its exact range domain**, as in `$1::eql_v4.query_integer_range_ore`. PostgreSQL resolves a function's domain arguments as their base type, `jsonb`, and every `between` overload takes jsonb domains. So an uncast `$1`, a `jsonb` parameter, or a range of the wrong term (an OPE range on an `_ord_ore` column) or the wrong family matches several overloads, and the statement fails with SQLSTATE 42725 (`function eql_v4.between(...) is not unique`) when it is parsed, before it runs. This differs from the single-bound operators: `col < $1` resolves an untyped `$1`.
 - A `NULL` range matches no row. So does a range whose low bound is above its high bound, as with SQL `BETWEEN`; the SQL does not reorder the bounds.
 - The `eql_bindings::v4` Rust types (`IntegerRangeOreQuery`, …) and the Go `encrypt/eql` types of the same names hold a range value, so it binds as one parameter.
+
+---
+
+## One array element in EQL v4: `eql_v4.json_tree_element_match`
+
+On an encrypted JSON document (`public.eql_v4_json_search`), equality at a path is a containment needle (`col @> $1::eql_v4.query_json`) and a range at a path is an ordering over every match (`eql_v4.json_tree_path_query(col, $sel)`). Each can be answered by a different element of an array. So the two together ask "some contact is a Sibling, and some contact, maybe another one, has more than five calls", which is more rows than the plaintext query asks for:
+
+```
+exists($.contacts[*] ? (@.relationship == "Sibling" && @.calls > 5))
+```
+
+`eql_v4.json_tree_element_match` asks that question: **some one element** satisfies every part of the predicate.
+
+```sql
+eql_v4.json_tree_element_match(e public.eql_v4_json_search, p eql_v4.query_json_elements) RETURNS boolean
+
+SELECT id FROM people
+ WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements);
+```
+
+The operand `eql_v4.query_json_elements` is one parameter, `{"m": [member, …]}`, with one member per field of the element the predicate tests. Stack Encrypt's `element_match` query operator derives it. Each member holds:
+
+- `t`: the tokens of a subtree read of the field's path through the array (`$.contacts[*].relationship`), one per element below a bound, in element order, then the **probe**, the token of the element at the bound;
+- one or two bounds, each an ordering operand of the shape `eql_v4.query_json_leaf` holds: `gt` or `gte` for the lower bound, `lt` or `lte` for the upper. Equality is `gte` and `lte` at one value.
+
+The function opens the row's document once, finds the node each token of every member names (the node `eql_v4.json_tree_subtree_indexed` returns for that token at `d = 0`), and pairs the members' nodes by `k`, the token's place in its list. The members' tokens were expanded to one bound in one order, so one `k` is one element. It is true when some `k` has a node for every member, inside that member's bounds. Nothing beneath a node is read.
+
+- **Every field must be at an ordered path.** The comparison is on the ordering term, which a leaf carries only at a path the column's index orders (`ordered=`). Stack Encrypt refuses a member whose path is not ordered.
+- **Equality is folded.** Equality here is the ordering term's equality: text compares after case and accents are folded (`"Sibling"`, `"sibling"` and `"Síbling"` are equal), and numbers compare as 64-bit floats, so two integers past 2⁵³ can be equal. That suits an enum-like field. Exact equality at a path is containment (`@>`), which this function does not provide per element.
+- **An array longer than the bound raises.** The probe finds a node only when the array is longer than the bound. Then the function raises SQLSTATE `22023` (`invalid_parameter_value`) rather than answer over part of the array. Derive the operand with a bound past the longest array (`wildcard_bound`, 64 by default). The server tells the probe apart without any marker: every other token names the field, at the selector the member's bounds carry, and the probe names the element, at the array's selector.
+- **No index serves it.** The function is PL/pgSQL, so the planner cannot see into it: it filters the rows it is given. Narrow them first with an indexed predicate on the same values, such as `col @> $1::eql_v4.query_json` for the equality half.
+- **What it reveals** is what its parts reveal sent alone: a subtree read's tokens for each field, to the bound, with the probes, and each bound's ordering term. See [What a query shows](./json-tree-leakage.md#what-a-query-shows).
+
+`eql_v4.json_tree_subtree_indexed(e, tokens text[], budget integer DEFAULT 64) RETURNS TABLE (k integer, entry public.eql_v4_json_entry)` is the subtree read with `k` on every row: the 1-based place in `tokens` of the token whose node the row sits in. `eql_v4.json_tree_subtree` is the same read without `k`. Past the budget, the sealed root comes back alone with `k = 0`. The same pairing by `k` can be written by hand, one parameter per token list and bound:
+
+```sql
+WHERE EXISTS (
+  SELECT 1
+  FROM eql_v4.json_tree_subtree_indexed(col, $1::text[], 0) AS r
+  JOIN eql_v4.json_tree_subtree_indexed(col, $2::text[], 0) AS c ON c.k = r.k
+  WHERE r.entry ->> 'd' = '0' AND c.entry ->> 'd' = '0'
+    AND r.entry >= $3::eql_v4.query_json_leaf AND r.entry <= $3::eql_v4.query_json_leaf
+    AND c.entry > $4::eql_v4.query_json_leaf)
+```
+
+That form does not check the probe: on a row whose array is longer than the bound it answers over the first elements only. Prefer the function.
 
 ---
 

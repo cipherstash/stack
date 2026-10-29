@@ -631,51 +631,34 @@ AS $$
   FROM doc
 $$;
 
---! @brief The nodes the tokens name, each with everything beneath it, as
---!        rows: the subtree read, in core SQL.
+--! @brief The subtree read, each row with the place in `tokens` of the
+--!        token whose node it sits in.
 --!
---! For each token in turn, the entry whose self tag is the token's, at
---! `d = 0`, then its descendants, each with `d` its depth below that entry,
---! found by probing the ordinals under each node in hand until the first
---! miss and recursing under each hit's own token. So a read returns the
---! node it names, and `{}`, `[]`, a scalar and an absent node are an empty
---! object's entry, an empty array's entry, the scalar's entry and no rows,
---! the four answers `jsonb #>` gives. Rows come out in no promised order:
---! the client places each one by its tags and checks it under its parent's
---! digest, so the order they arrive in carries nothing. A token that names
---! no node yields no row, and nothing in a row is linkable to anything without its token.
---! The client sends one token for a path with no wildcard, and for a
---! wildcard one per position below its bound and a probe at the bound. The
---! server treats a probe like any other token, but can pick it out: it is
---! the last token of its level, the token count gives the bound away, and
---! a hit on it carries the element's selector rather than the leaf's.
---! Wanting a whole array is a read of the array's path, which sends the
---! array's own token.
---!
---! **The budget.** A read returns about two hundred characters per entry,
---! where a sealed root holds the whole document in one ciphertext of about
---! the plaintext's size. So when the root is sealed and the read would
---! return more than `budget` rows, counted across all the tokens and the
---! nodes at `d = 0` included, it stops and returns the root entry alone,
---! with `d = 0`: the client opens it to the whole document and evaluates
---! the same paths over it, which is cheaper on both sides than the read
---! past that point. The default of 64 is past the crossover by bytes
---! (about a dozen entries) by a margin that keeps a small subtree arriving
---! as the entries it is. A `budget` of `0` never falls back. Tokens that
---! name no node yield no row under any budget, and a document whose root
---! is not sealed is always read in full, since its root holds no document
---! to return.
+--! The read {{prefix}}.json_tree_subtree describes, returning `k` beside
+--! each row: `1` for the first token of `tokens`, `2` for the second, as
+--! `unnest … WITH ORDINALITY` numbers them, for the node a token names and
+--! for every row beneath it. `k` is a place in the caller's array and
+--! nothing more: what it means is what the caller's order means. A client
+--! expands a wildcard (`$.items[*].price`) into one token per position in
+--! element order, `$.items[0].price` first, then the probe for the element
+--! at the bound, so for such a read `k` is the element's position plus
+--! one, and two reads expanded to the same bound over two paths below one
+--! array (`$.items[*].price`, `$.items[*].sku`) agree on `k` for the same
+--! element: a join on `k` pairs the fields of one element. Past the budget,
+--! the root entry comes back alone with `k = 0`, as its `j` is: no token
+--! found it.
 --!
 --! @param e public.{{prefix}}_json_search The stored document.
 --! @param tokens text[] The tokens of the nodes to read, base64, each
 --!        derived by the client from a concrete path alone.
 --! @param budget integer The most rows to return before falling back to
 --!        the sealed root; `0` to always read in full. Default 64.
---! @return SETOF public.{{prefix}}_json_entry The rows, each with its
---!         depth `d` below the node its token named; or the root entry
---!         alone, with `j = 0` and `d = 0`, past the budget.
-CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_search, tokens text[], budget integer DEFAULT 64)
-  RETURNS SETOF public.{{prefix}}_json_entry
+--! @return TABLE(k integer, entry public.{{prefix}}_json_entry) The rows,
+--!         ordered by `k`, each entry with its depth `d` below the node its
+--!         token named; or the root entry alone, with `k = 0`, `j = 0` and
+--!         `d = 0`, past the budget.
+CREATE FUNCTION {{prefix}}.json_tree_subtree_indexed(e public.{{prefix}}_json_search, tokens text[], budget integer DEFAULT 64)
+  RETURNS TABLE(k integer, entry public.{{prefix}}_json_entry)
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   WITH RECURSIVE
@@ -754,7 +737,7 @@ AS $$
     over AS MATERIALIZED (
       SELECT doc.capped AND (SELECT count(*) FROM found) > budget AS fallback FROM doc
     )
-  SELECT rows.entry
+  SELECT rows.k::integer, rows.entry
   FROM (
     SELECT 0::bigint AS k, 0 AS j,
            (doc.meta || (doc.sv -> 0) || '{"j": 0, "d": 0}'::jsonb)::public.{{prefix}}_json_entry AS entry
@@ -767,6 +750,62 @@ AS $$
     WHERE NOT over.fallback
   ) AS rows
   ORDER BY rows.k, rows.j
+$$;
+
+--! @brief The nodes the tokens name, each with everything beneath it, as
+--!        rows: the subtree read, in core SQL.
+--!
+--! For each token in turn, the entry whose self tag is the token's, at
+--! `d = 0`, then its descendants, each with `d` its depth below that entry,
+--! found by probing the ordinals under each node in hand until the first
+--! miss and recursing under each hit's own token. So a read returns the
+--! node it names, and `{}`, `[]`, a scalar and an absent node are an empty
+--! object's entry, an empty array's entry, the scalar's entry and no rows,
+--! the four answers `jsonb #>` gives. Rows come out in no promised order:
+--! the client places each one by its tags and checks it under its parent's
+--! digest, so the order they arrive in carries nothing. A token that names
+--! no node yields no row, and nothing in a row is linkable to anything without its token.
+--! The client sends one token for a path with no wildcard, and for a
+--! wildcard one per position below its bound and a probe at the bound. The
+--! server treats a probe like any other token, but can pick it out: it is
+--! the last token of its level, the token count gives the bound away, and
+--! a hit on it carries the element's selector rather than the leaf's.
+--! Wanting a whole array is a read of the array's path, which sends the
+--! array's own token.
+--!
+--! **The budget.** A read returns about two hundred characters per entry,
+--! where a sealed root holds the whole document in one ciphertext of about
+--! the plaintext's size. So when the root is sealed and the read would
+--! return more than `budget` rows, counted across all the tokens and the
+--! nodes at `d = 0` included, it stops and returns the root entry alone,
+--! with `d = 0`: the client opens it to the whole document and evaluates
+--! the same paths over it, which is cheaper on both sides than the read
+--! past that point. The default of 64 is past the crossover by bytes
+--! (about a dozen entries) by a margin that keeps a small subtree arriving
+--! as the entries it is. A `budget` of `0` never falls back. Tokens that
+--! name no node yield no row under any budget, and a document whose root
+--! is not sealed is always read in full, since its root holds no document
+--! to return.
+--!
+--! The rows are {{prefix}}.json_tree_subtree_indexed's, without the place
+--! of the token that found each: one implementation, so the two reads
+--! cannot disagree.
+--!
+--! @param e public.{{prefix}}_json_search The stored document.
+--! @param tokens text[] The tokens of the nodes to read, base64, each
+--!        derived by the client from a concrete path alone.
+--! @param budget integer The most rows to return before falling back to
+--!        the sealed root; `0` to always read in full. Default 64.
+--! @return SETOF public.{{prefix}}_json_entry The rows, each with its
+--!         depth `d` below the node its token named; or the root entry
+--!         alone, with `j = 0` and `d = 0`, past the budget.
+--! @see {{prefix}}.json_tree_subtree_indexed
+CREATE FUNCTION {{prefix}}.json_tree_subtree(e public.{{prefix}}_json_search, tokens text[], budget integer DEFAULT 64)
+  RETURNS SETOF public.{{prefix}}_json_entry
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT r.entry
+  FROM {{prefix}}.json_tree_subtree_indexed(e, tokens, budget) AS r
 $$;
 
 ------------------------------------------------------------------------------
