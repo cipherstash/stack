@@ -170,18 +170,20 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
     // pushing it out of sync: `scripts/sync-lockstep-versions.mjs` writes its
     // `Cargo.toml` on every release. If this crate ever drops out of the pair
     // set, the check that matters most has silently stopped running. It is
-    // in the three locks whose workspaces build it: EQL's own, protect-ffi's,
-    // and the stack-encrypt Go guest's, whose `eql` build links it by path
-    // (ADR-0007, amended). The stack-* workspaces do not depend on it. The
-    // bump's own set is discovered by walking (`cargoLockWorkspaces`), so a
-    // lock added here is one it already rewrites; this pins that the walk
-    // still sees all three.
+    // in the four locks whose workspaces build it: EQL's own, protect-ffi's,
+    // the stack-encrypt Go guest's, whose `eql` build links it by path
+    // (ADR-0007, amended), and the Python SDK's, whose core crate links it by
+    // path for the EQL resolver (#1387). The stack-* workspaces do not depend
+    // on it. The bump's own set is discovered by walking
+    // (`cargoLockWorkspaces`), so a lock added here is one it already
+    // rewrites; this holds that the walk still sees all four.
     expect(
       PAIRS.filter(({ name }) => name === 'eql-bindings')
         .map(({ lock }) => lock)
         .sort(),
     ).toEqual([
       'languages/golang/encrypt/guest/Cargo.lock',
+      'languages/python/Cargo.lock',
       'languages/typescript/packages/protect-ffi/Cargo.lock',
       'packages/eql/Cargo.lock',
     ])

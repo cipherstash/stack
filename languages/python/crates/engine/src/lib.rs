@@ -4,6 +4,7 @@
 //! the boundary. Logic belongs in `stackencrypt-core` and `stack-encrypt`.
 
 use pyo3::prelude::*;
+use stackencrypt_core::plan::{self, Column};
 
 /// The two build facts the package exposes: `(version, engine_commit)`.
 ///
@@ -17,6 +18,29 @@ fn build_info() -> (&'static str, &'static str) {
         env!("CARGO_PKG_VERSION"),
         stackencrypt_core::engine_commit(),
     )
+}
+
+/// The engine's check of a model's plan, run when the class is declared.
+///
+/// `fields` is `(name, eql_type)` per plan field in declaration order, with
+/// `eql_type` `None` for a passthrough field. Returns `None` when the engine
+/// accepts the plan, or its refusal as `(code, message, field, reason)`. The
+/// Python side raises it as a `DeclarationError`.
+#[pyfunction]
+fn check_plan(
+    table: &str,
+    fields: Vec<(String, Option<String>)>,
+) -> Option<(String, String, Option<String>, Option<String>)> {
+    let fields: Vec<(&str, Column<'_>)> = fields
+        .iter()
+        .map(|(name, eql_type)| {
+            let column = eql_type.as_deref().map_or(Column::Passthrough, Column::Eql);
+            (name.as_str(), column)
+        })
+        .collect();
+    plan::check(table, &fields)
+        .err()
+        .map(|refused| (refused.code, refused.message, refused.field, refused.reason))
 }
 
 /// Gate fact 2 (#1384): block for `millis` on a multi-thread tokio runtime
@@ -42,6 +66,7 @@ fn _probe_detached_sleep(py: Python<'_>, millis: u64) -> u64 {
 #[pymodule]
 fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_info, module)?)?;
+    module.add_function(wrap_pyfunction!(check_plan, module)?)?;
     #[cfg(feature = "gate-probe")]
     module.add_function(wrap_pyfunction!(_probe_detached_sleep, module)?)?;
     Ok(())

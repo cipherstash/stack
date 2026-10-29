@@ -10,5 +10,27 @@ edition.workspace = true
 publish = false
 repository.workspace = true
 
+[features]
+default = ["eql"]
+# The EQL types, through the resolver the Go guest's `eql` build installs.
+# `src/lib.rs` compiles that resolver from the Go guest's own file
+# (`languages/golang/encrypt/guest/src/targets.rs`), and the file switches on
+# a feature of exactly this name. On by default: every build of the SDK
+# holds the EQL types. Off, the resolver is the engine's `NoTargets`, which
+# refuses every EQL marker.
+eql = ["dep:eql-bindings"]
+
 [dependencies]
+# By path, like every other eql-bindings dependency in the repository: the
+# SQL that stores a payload and the Rust that emits it must agree
+# (scripts/lint-no-eql-registry-pins.mjs).
+eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["targets"], optional = true }
+# For the engine error's diagnostic code.
+miette = "7.5.0"
+# For the plan's frame: the fields in declaration order.
+serde = "1"
 stack-encrypt = { workspace = true }
+
+[dev-dependencies]
+# The shared resolver file's own tests use it.
+serde_json = "1"

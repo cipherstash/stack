@@ -41,13 +41,18 @@ on:
       # suite that reads them.
       - packages/eql/crates/eql-codegen/**
       - packages/eql/crates/eql-domains/**
+      # The EQL types the engine check resolves (#1387). The core crate links
+      # eql-bindings by path, and compiles the Go guest's resolver file
+      # in place, so a change to either reruns this suite.
+      - packages/eql/crates/eql-bindings/**
+      - languages/golang/encrypt/guest/src/targets.rs
       # The Rust version the workspace builds under. The workspace's own
       # mise.toml is under languages/python/** above.
       - mise.toml
       - .github/workflows/tests-python.yml
   # Unfiltered, like tests-rust.yml. Every push to main runs the suite, so
-  # main runs a superset of what pull requests run. Recorded in
-  # scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+  # main runs a superset of what the filtered `pull_request` trigger above
+  # runs. Recorded in scripts/__tests__/workflow-paths-filter-parity.test.mjs.
   push:
     branches: [main]
   workflow_dispatch: {}
