@@ -2,15 +2,17 @@
 
 Walking skeleton. The package loads its native extension, ``_engine``, exposes
 two facts about the build, exports the markers a model's fields are declared
-with, and reads a model's declaration with ``model``. Nothing encrypts yet.
+with, reads a model's declaration with ``model``, and builds a ``Cipher`` for
+a declared class. Nothing encrypts yet.
 """
 
 from stackencrypt import _engine, _eql
+from stackencrypt._cipher import Cipher
 from stackencrypt._declaration import model
 # The markers for the EQL types the engine produces today. `_eql.__all__`
 # lists them; a marker the engine cannot produce yet stays in `_eql` only.
 from stackencrypt._eql import *  # noqa: F403
-from stackencrypt._errors import DeclarationError, StashError
+from stackencrypt._errors import AuthenticationError, DeclarationError, StashError
 from stackencrypt._markers import Ignore, Passthrough
 
 # The distribution's version, and the commit of the engine it was built from.
@@ -19,6 +21,8 @@ __engine__: str
 __version__, __engine__ = _engine.build_info()
 
 __all__ = [
+    "AuthenticationError",
+    "Cipher",
     "DeclarationError",
     "Ignore",
     "Passthrough",
