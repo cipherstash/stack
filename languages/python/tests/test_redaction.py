@@ -10,6 +10,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 import stackencrypt
 from stackencrypt import DeclarationError, Ignore, Passthrough, TextEq
+from stackencrypt._redact import SEALED
 
 SECRET = "alice@example.com"
 EXPECTED = "User(email=[sealed], age=42)"
@@ -95,6 +96,10 @@ def test_repr_and_str_seal_every_encrypted_field(declare):
         assert shown == expected
         assert SECRET not in shown
         assert "note" not in shown
+    # The hook rich prints through, so rich.print and a rich traceback with
+    # locals show the same. rich reprs each value itself, so a passthrough
+    # value is the value. Checked without rich: the hook is a plain method.
+    assert list(user.__rich_repr__()) == [("email", SEALED), ("age", 42)]
 
 
 def test_a_hand_written_repr_is_refused():
@@ -110,6 +115,87 @@ def test_a_hand_written_repr_is_refused():
     error = pytest.raises(DeclarationError, build).value
     assert error.code == "declaration_repr_present"
     assert "redact=False" in str(error)
+
+
+class ReprBase:
+    """A base with its own __repr__, as a SQLAlchemy Base often has."""
+
+    def __repr__(self):
+        return "from the base"
+
+
+def test_a_repr_inherited_from_a_base_is_replaced_not_refused():
+    @stackencrypt.model("users")
+    @dataclasses.dataclass(repr=False)
+    class User(ReprBase):
+        email: Annotated[str, TextEq]
+
+    assert repr(User(email=SECRET)) == "User(email=[sealed])"
+    assert repr(ReprBase()) == "from the base"
+
+
+def test_a_repr_compiled_from_a_string_is_hand_written():
+    # As in the REPL, a notebook or `python -c`: the code's file name is
+    # `<stdin>`, and the method is still the user's.
+    source = (
+        "@stackencrypt.model('users')\n"
+        "@dataclasses.dataclass\n"
+        "class User:\n"
+        "    email: Annotated[str, TextEq]\n"
+        "    def __repr__(self):\n"
+        "        return self.email\n"
+    )
+    namespace = dict(globals())
+
+    with pytest.raises(DeclarationError) as raised:
+        exec(compile(source, "<stdin>", "exec"), namespace)
+
+    assert raised.value.code == "declaration_repr_present"
+
+
+def test_a_passthrough_value_is_read_without_running_a_descriptor():
+    # A field that is not set is shown as unset, and no attribute read runs:
+    # a SQLAlchemy column that is not loaded would run a SELECT.
+    @stackencrypt.model("users")
+    class User:
+        email: Annotated[str, TextEq]
+        age: Annotated[int, Passthrough]
+
+        def __init__(self, **kwargs):
+            vars(self).update(kwargs)
+
+        def __getattr__(self, name):
+            raise RuntimeError(f"{name} was read")
+
+    assert repr(User(email=SECRET)) == "User(email=[sealed], age=<unset>)"
+
+
+def test_a_class_level_default_is_shown():
+    @stackencrypt.model("users")
+    class User:
+        email: Annotated[str, TextEq]
+        age: Annotated[int, Passthrough] = 7
+
+        def __init__(self, **kwargs):
+            vars(self).update(kwargs)
+
+    assert repr(User(email=SECRET)) == "User(email=[sealed], age=7)"
+    assert repr(User(email=SECRET, age=8)) == "User(email=[sealed], age=8)"
+
+
+def test_an_unset_slot_is_shown_as_unset():
+    @stackencrypt.model("users")
+    class User:
+        __slots__ = ("email", "age")
+        email: Annotated[str, TextEq]
+        age: Annotated[int, Passthrough]
+
+        def __init__(self, **kwargs):
+            for name, value in kwargs.items():
+                setattr(self, name, value)
+
+    assert repr(User(email=SECRET)) == "User(email=[sealed], age=<unset>)"
+    assert repr(User(email=SECRET, age=9)) == "User(email=[sealed], age=9)"
 
 
 def test_a_hand_written_str_is_refused():

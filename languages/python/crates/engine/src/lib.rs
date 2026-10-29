@@ -49,9 +49,11 @@ fn check_plan(table: &str, fields: Vec<(String, Option<String>)>) -> Option<Refu
 }
 
 /// Find the credentials as every SDK does: `CS_CLIENT_ACCESS_KEY` and
-/// `CS_WORKSPACE_CRN`, then the profile store. Makes no request. Returns
-/// `None` when they are found, or the refusal as `(code, message, field,
-/// reason)`.
+/// `CS_WORKSPACE_CRN`, then the profile store. Makes no request, and builds
+/// no HTTP client. It reads the environment, and reads and parses the
+/// profile's token file where there is one, which is short enough to run
+/// with the GIL held. Returns `None` when the credentials are found, or the
+/// refusal as `(code, message, field, reason)`.
 ///
 /// Nothing keeps the strategy yet: `Cipher` only needs to know that the
 /// credentials are there. The ticket that makes the first request keeps it.
