@@ -50,7 +50,7 @@ cargo add vitaminc-aead-frame
 On small values it is slower and larger than MessagePack and Borsh (see [Performance](#performance)). It is used for what they do not do:
 
 - ✅ [Strict zeroization](#strict-zeroization)
-- ✅ [Validated before built](#validated-before-built)
+- ✅ [Defensive by design](#defensive-by-design)
 - ✅ [Self-describing](#self-describing)
 - ✅ [Versioned and proved](#versioned-and-proved)
 
@@ -130,9 +130,9 @@ assert_eq!(back, Some(None));
 
 A blob comes back in a `Buffer`, wiped sixteen bytes at a time as it grows and when it is dropped, and read through `risky_ref`. MessagePack and Borsh write into a plain `Vec<u8>`, which frees the old allocation unwiped each time it grows, and frees the result unwiped when it is dropped.
 
-### Validated before built
+### Defensive by design
 
-`storage::from_slice` walks the whole blob against the format first, building nothing, and only then walks it again to build the value. MessagePack and Borsh build as they read. The first walk buys four things:
+The reader treats every blob as hostile until it has proved otherwise. `storage::from_slice` walks the whole blob against the format first, building nothing, and either refuses it whole or walks it again to build the value. MessagePack and Borsh build as they read. That order buys four things:
 
 - **A refusal builds nothing.** A malformed blob never has its contents copied into a half-built value and freed, and never gets an allocation from a forged length or count.
 - **Corrupt is told apart from wrong type.** A blob that passes is well formed, so a refusal on the second walk is the type's. The stable refusal kinds rest on this: a caller can tell tampering or corruption from a reader that is too old.
