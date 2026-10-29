@@ -7,10 +7,21 @@
 
 pub mod plan;
 
+// The resolver file below holds the EQL types only under this feature.
+#[cfg(not(feature = "eql"))]
+compile_error!(
+    "stackencrypt-core needs its `eql` feature: every build of the SDK holds the EQL types"
+);
+
 // The EQL resolver: the Go guest's own file, compiled here too, so the two
 // SDKs run one resolver and cannot drift apart. It switches on this crate's
 // `eql` feature. Its tests run here as well as in the guest. `HOLDS_EQL` is
 // the guest's alone, so dead code is allowed.
+//
+// This crate must have every crate the file uses. Today that is
+// stack-encrypt and eql-bindings, plus serde_json for its tests. A Go change
+// that adds one fails this crate's build in tests-python.yml. Then add it
+// to Cargo.toml here too.
 #[allow(dead_code)]
 #[path = "../../../../golang/encrypt/guest/src/targets.rs"]
 mod targets;
