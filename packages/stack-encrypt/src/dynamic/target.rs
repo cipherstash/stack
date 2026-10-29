@@ -117,6 +117,12 @@ pub struct TargetDescriptor {
     /// [`leaf_query_sql_domain`](Self::leaf_query_sql_domain) is not; a type
     /// that names none does not answer `element_match`.
     pub elements_query_sql_domain: Option<String>,
+    /// The PostgreSQL domain of the type's compiled predicate, for a type
+    /// that stores a JSON document
+    /// ([`with_predicate_query_sql_domain`](Self::with_predicate_query_sql_domain)):
+    /// what `match` binds as. Not on the wire; a type that names none does
+    /// not answer `match`.
+    pub predicate_query_sql_domain: Option<String>,
 }
 
 /// The descriptor in its wire form: the object a guest's `se_targets`
@@ -186,6 +192,7 @@ impl TargetDescriptor {
             match_options: None,
             leaf_query_sql_domain: None,
             elements_query_sql_domain: None,
+            predicate_query_sql_domain: None,
         }
     }
 
@@ -202,6 +209,14 @@ impl TargetDescriptor {
     #[must_use]
     pub fn with_elements_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
         self.elements_query_sql_domain = Some(domain.into());
+        self
+    }
+
+    /// The descriptor of a type that stores a JSON document, whose compiled
+    /// predicate is the domain `domain`.
+    #[must_use]
+    pub fn with_predicate_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
+        self.predicate_query_sql_domain = Some(domain.into());
         self
     }
 
@@ -229,8 +244,11 @@ impl TargetDescriptor {
     /// in [`OpSpec::ALL`]'s order: none for a type it does not produce or
     /// that has no query twin, and otherwise each operator of one value
     /// that one of the type's indexes answers for its plaintext kind
-    /// ([`OpSpec::answered_by`]): the exact ones, and `matches` when the
-    /// type's match options are known ([`with_match_options`](Self::with_match_options)).
+    /// ([`OpSpec::answered_by`]): the exact ones, `matches` when the
+    /// type's match options are known ([`with_match_options`](Self::with_match_options)),
+    /// and a JSON operator when the type names the SQL type its operand
+    /// binds as (`match` with
+    /// [`with_predicate_query_sql_domain`](Self::with_predicate_query_sql_domain)).
     /// The query for each is the type's query twin. `between` is not
     /// answered through a type yet: see [`query_term`](super::query_term)'s
     /// module.

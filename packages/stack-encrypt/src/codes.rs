@@ -212,6 +212,12 @@ mod tests {
             Error::UntypedIndex { .. } => Error::UntypedIndex { field: name() },
             Error::Source { .. } => Error::bad_source(Reason::FieldMissing),
             Error::Record { .. } => Error::bad_record(Reason::NoCiphertextNode),
+            Error::Predicate { .. } => Error::Predicate {
+                field: Some(name()),
+                reason: Reason::JsonPredicateUnsupported,
+                construct: "`like_regex`",
+                at: 4,
+            },
             Error::Internal => Error::Internal,
             Error::Target(_) => Error::Target(TargetError::NoTargets { name: target() }),
             Error::Cipher(_) => Error::Cipher(crate::Error::Aead),
@@ -595,6 +601,23 @@ mod tests {
             (
                 Box::new(Error::UntypedIndex { field: name() }),
                 json!({ "field": "email" }),
+            ),
+            (
+                Box::new(
+                    Error::Predicate {
+                        field: None,
+                        reason: Reason::JsonPredicateUnsupported,
+                        construct: "`like_regex`",
+                        at: 4,
+                    }
+                    .in_field("email"),
+                ),
+                json!({
+                    "field": "email",
+                    "reason": "json_predicate_unsupported",
+                    "construct": "`like_regex`",
+                    "at": 4
+                }),
             ),
             (Box::new(Error::Internal), json!({})),
             (

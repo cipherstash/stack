@@ -89,6 +89,7 @@
 //! reason, given on the type.
 mod context;
 mod json;
+mod json_predicate;
 mod json_query;
 mod kind;
 mod query;
@@ -314,6 +315,33 @@ pub enum Error {
         reason: Reason,
     },
 
+    /// A `match` predicate is refused at a place in its text: text the
+    /// grammar does not read, a construct of SQL/JSON path the JSON index
+    /// cannot answer, a variable its `vars` do not hold, or a value of a
+    /// type its comparison cannot take. The error names the construct in
+    /// the grammar's own words and the byte offset in the caller's
+    /// predicate text, and nothing of the text itself: a key name or a
+    /// value in it can be customer data.
+    #[error(
+        "the predicate is refused at byte {at}: {reason} ({construct}){}",
+        in_field_text(field)
+    )]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_predicate),
+        help("A predicate compares a path (`$.a.b`, `$.a[*].b`, `$.\"a b\"`) with a variable (`$v`) or a literal by `==`, `!=`, `<`, `<=`, `>` or `>=`, tests `exists($.path)` or `exists($.array[*] ? (@.x == $v && @.y > $w))`, and combines them with `&&`, `||`, `!` and parentheses.")
+    )]
+    Predicate {
+        /// The plan field the predicate is for, if one is named yet.
+        field: Option<String>,
+        /// What was wrong.
+        reason: Reason,
+        /// The construct refused, in the grammar's words: never text from
+        /// the predicate.
+        construct: &'static str,
+        /// The byte offset in the predicate text the construct starts at.
+        at: usize,
+    },
+
     /// An invariant this module maintains did not hold — a slot count that
     /// did not line up, a re-proof that should not have been able to fail.
     /// Always a bug here, never a statement about the caller's data.
@@ -391,6 +419,7 @@ impl Error {
             | Self::Plan { field, .. }
             | Self::Source { field, .. }
             | Self::Record { field, .. }
+            | Self::Predicate { field, .. }
                 if field.is_none() =>
             {
                 *field = Some(name.to_owned());
@@ -407,19 +436,22 @@ impl Error {
             | Self::Term { field, .. }
             | Self::Plan { field, .. }
             | Self::Source { field, .. }
-            | Self::Record { field, .. } => field.as_deref(),
+            | Self::Record { field, .. }
+            | Self::Predicate { field, .. } => field.as_deref(),
             Self::UntypedIndex { field } => Some(field),
             Self::Internal | Self::Target(_) | Self::Cipher(_) => None,
         }
     }
 
-    /// What was wrong, for a context, plan, source or record error.
+    /// What was wrong, for a context, plan, source, record or predicate
+    /// error.
     pub fn reason(&self) -> Option<Reason> {
         match self {
             Self::Context { reason, .. }
             | Self::Plan { reason, .. }
             | Self::Source { reason, .. }
-            | Self::Record { reason, .. } => Some(*reason),
+            | Self::Record { reason, .. }
+            | Self::Predicate { reason, .. } => Some(*reason),
             Self::Term { .. }
             | Self::UntypedIndex { .. }
             | Self::Internal
@@ -435,6 +467,10 @@ impl crate::ErrorPayload for Error {
             Self::Target(error) => return error.payload(),
             Self::Cipher(error) => return error.payload(),
             Self::Term { kind, .. } => crate::diagnostic::payload([("index", kind.key().into())]),
+            Self::Predicate { construct, at, .. } => crate::diagnostic::payload([
+                ("construct", (*construct).into()),
+                ("at", (*at as u64).into()),
+            ]),
             _ => serde_json::Map::new(),
         };
         if let Some(field) = self.field() {
@@ -669,6 +705,32 @@ reasons! {
         /// A predicate of an element predicate has an `op` that is not
         /// `eq`, `lt`, `lte`, `gt`, `gte` or `between`.
         JsonUnknownPredicateOp => "json_unknown_predicate_op", r#"a predicate's "op" is not eq, lt, lte, gt, gte or between"#;
+        /// A `match` predicate is not text the SQL/JSON path predicate
+        /// grammar reads: an unexpected character, an unterminated string,
+        /// a literal that is not JSON, or text after the predicate.
+        JsonPredicateSyntax => "json_predicate_syntax", "the predicate is not SQL/JSON path predicate text";
+        /// A `match` predicate uses a construct of SQL/JSON path the JSON
+        /// index cannot answer: arithmetic, `like_regex`, `starts with`,
+        /// `is unknown`, a method, a `strict` or `lax` mode, `.*`, `.**`,
+        /// a slice, `last`, a comparison of two paths or of two values, a
+        /// filter outside `exists`, or `||`, `!` or `!=` inside a filter.
+        JsonPredicateUnsupported => "json_predicate_unsupported", "the predicate uses a construct the JSON index cannot answer";
+        /// A `match` predicate names a variable (`$v`) its `vars` do not
+        /// hold.
+        JsonPredicateUnknownVariable => "json_predicate_unknown_variable", "the predicate names a variable its vars do not hold";
+        /// A value in a `match` predicate, a literal or a variable, is of a
+        /// JSON type its comparison cannot take: an object or array
+        /// anywhere, and anything but a number or a string beside `<`,
+        /// `<=`, `>`, `>=` or in an element-scoped filter of more than one
+        /// equality.
+        JsonPredicateValueType => "json_predicate_value_type", "a value in the predicate is of a type its comparison cannot take";
+        /// `!=` at a path with a wildcard: jsonpath answers it true when
+        /// some element differs, which no term of the index can say.
+        JsonPredicateNotEqualAtWildcard => "json_predicate_not_equal_at_wildcard", "!= at a path with a wildcard asks whether some element differs, which the index cannot answer";
+        /// A `match` predicate nests parentheses, `!` and `exists` deeper
+        /// than the engine reads, or names a path with more steps than a
+        /// document has levels.
+        JsonPredicateTooDeep => "json_predicate_too_deep", "the predicate nests too deep";
     }
 }
 
