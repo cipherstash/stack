@@ -12,12 +12,12 @@ The extension can walk the record frame that `stack_encrypt::dynamic::decrypt` r
 
 The issue says the extension can "recover the value kind without decrypting". That is not possible for a sealed value. The kind of a sealed value is stored inside its encryption. The doc comment on `dynamic::decrypt` in `packages/stack-encrypt/src/dynamic/record.rs` says: "the type tag is inside the AEAD envelope, so only opening can see it."
 
-The issue also says that the decrypt checks `DECRYPT_FOREIGN_ROW` and `DECRYPT_MALFORMED` depend on this fact. Neither check needs the value kind:
+The issue also says that the decrypt checks `decrypt_foreign_row` and `decrypt_malformed` depend on this fact. Neither check needs the value kind:
 
-- `DECRYPT_FOREIGN_ROW` compares the stored `i` value with the expected table and column. The `i` value is plain JSON.
-- `DECRYPT_MALFORMED` checks that the column value parses as EQL JSON.
+- `decrypt_foreign_row` compares the stored `i` value with the expected table and column. The `i` value is plain JSON.
+- `decrypt_malformed` checks that the column value parses as EQL JSON.
 
-What depends on this fact is the step after decrypting. That step builds model instances from the opened record and runs the `DECRYPT_KIND_MISMATCH` check. The spec in #1341 already puts the kind check after decrypting, so the spec needs no change.
+What depends on this fact is the step after decrypting. That step builds model instances from the opened record and runs the `decrypt_kind_mismatch` check. The spec in #1341 already puts the kind check after decrypting, so the spec needs no change.
 
 ## Versions checked
 
