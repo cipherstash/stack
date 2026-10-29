@@ -106,6 +106,7 @@ pub fn all_query() -> Vec<Box<dyn DomainType>> {
         Box::new(PhantomData::<super::double::DoubleOrdOpeQuery>),
         Box::new(PhantomData::<super::json_tree::JsonTreeQuery>),
         Box::new(PhantomData::<super::json_tree::JsonTreeLeafQuery>),
+        Box::new(PhantomData::<super::json_tree::JsonTreeElementsQuery>),
     ]
 }
 /// Every v4 RANGE query operand (`eql_v4.query_<family>_range_<term>`),
