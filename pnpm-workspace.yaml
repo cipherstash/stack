@@ -169,6 +169,9 @@ overrides:
   # #246 GHSA-wq5f-xc86-pv6w / CVE-2026-96889 — bundled librsvg memory-safety
   # bug (possible RCE); raised to 0.35.5 (published 2026-09-27).
   'sharp@<0.35.5': '0.35.5'
+  # #279 CVE-2026-111181 (GHSA-27r3-jxmh-p828, HIGH) — body-parser 2.x; fixed in
+  # 2.4.0. Reached through express 5 (`^2.2.1`) via @modelcontextprotocol/sdk.
+  'body-parser@>=2.0.0 <2.4.0': '2.4.0'
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
