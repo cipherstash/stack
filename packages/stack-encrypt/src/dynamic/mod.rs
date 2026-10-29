@@ -657,6 +657,18 @@ reasons! {
         /// finds a null by its term. A `"null": "sql"` field's nulls are SQL
         /// `NULL`, which `IS NULL` finds.
         NullQuery => "null_query", r#"a null is found by its term only with eq on a field with "null": "sealed"; a "null": "sql" field's nulls are SQL NULL"#;
+        /// An element predicate's path has no wildcard: the predicate is
+        /// over the elements of an array, which `[*]` names.
+        JsonPathNoWildcard => "json_path_no_wildcard", "an element predicate is over an array's elements, and the path names no wildcard";
+        /// An element predicate has no predicates: it would be true of
+        /// every row with an element.
+        JsonNoPredicates => "json_no_predicates", "an element predicate needs at least one predicate";
+        /// An element predicate's `wildcard_bound` is `0`: its reads would
+        /// send the probe alone, so the predicate could never be true.
+        JsonWildcardBoundZero => "json_wildcard_bound_zero", "an element predicate reads at least one element, and a wildcard_bound of 0 reads none";
+        /// A predicate of an element predicate has an `op` that is not
+        /// `eq`, `lt`, `lte`, `gt`, `gte` or `between`.
+        JsonUnknownPredicateOp => "json_unknown_predicate_op", r#"a predicate's "op" is not eq, lt, lte, gt, gte or between"#;
     }
 }
 
