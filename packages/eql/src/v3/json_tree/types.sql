@@ -20,6 +20,9 @@
 --!   - {{prefix}}.query_json_elements — an element-scoped predicate: per
 --!                                    member of an array's elements, the
 --!                                    member's read tokens and its bounds.
+--! A sixth, {{prefix}}.query_json_predicate, a boolean tree whose leaves
+--! are these operands, is in predicate.sql beside the function that reads
+--! it.
 --!
 --! The design is `docs/plans/2026-10-17-json-tree-index.md`
 --! at the repository root. The document's per-entry fields:
@@ -301,21 +304,56 @@ BEGIN
 END
 $$;
 
+--! @brief Validate the bounds of an ordering at one path.
+--! @internal
+--!
+--! Bounds are `{"gt" | "gte": leaf, "lt" | "lte": leaf}`: one or two
+--! ordering operands of the shape `{{prefix}}.query_json_leaf` holds
+--! (`{"s", "op"}`). At most one lower bound (`gt` or `gte`) and at most one
+--! upper (`lt` or `lte`), at least one in all, and every bound at the one
+--! selector: the path's. A member of an element-scoped predicate is bounds
+--! with its tokens beside them, and the `cmp` leaf of a
+--! `{{prefix}}.query_json_predicate` is bounds alone.
+--!
+--! @param val jsonb Candidate bounds.
+--! @return boolean True when `val` is bounds.
+--! @note plpgsql, for the subqueries over the bounds, which a CHECK
+--!       expression cannot hold.
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_bounds(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND val - ARRAY['gt', 'gte', 'lt', 'lte']::text[] = '{}'::jsonb
+     AND val ?| ARRAY['gt', 'gte', 'lt', 'lte']::text[]
+     AND NOT (val ? 'gt' AND val ? 'gte')
+     AND NOT (val ? 'lt' AND val ? 'lte')
+     -- Each bound by the `{{prefix}}.query_json_leaf` CHECK's own rule.
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_each(val) AS bound
+       WHERE NOT {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(bound.value)
+     )
+     AND (SELECT count(DISTINCT bound.value ->> 's') FROM jsonb_each(val) AS bound) = 1,
+    false
+  );
+END;
+$$;
+
 --! @brief Validate one member of an element-scoped predicate.
 --! @internal
 --!
 --! A member is `{"t": ["…", …], "gt" | "gte": leaf, "lt" | "lte": leaf}`:
 --! the tokens of a read of the member's path, one per element below the
---! wildcard bound in element order and then the probe, and one or two
---! bounds, each an ordering operand of the shape `{{prefix}}.query_json_leaf`
---! holds (`{"s", "op"}`). At most one lower bound (`gt` or `gte`) and at most
---! one upper (`lt` or `lte`), at least one in all, and every bound of the
---! member at the one selector: the member's path's.
+--! wildcard bound in element order and then the probe, and the bounds of
+--! the member's path beside them, as
+--! {{prefix}}_internal.json_tree_is_valid_bounds validates them.
 --!
 --! @param val jsonb Candidate member.
 --! @return boolean True when `val` is a member.
---! @note plpgsql, for the subqueries over the tokens and bounds, which a
---!       CHECK expression cannot hold.
+--! @note plpgsql, for the subquery over the tokens, which a CHECK
+--!       expression cannot hold.
 CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_elements_member(val jsonb)
   RETURNS boolean
   LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
@@ -323,22 +361,13 @@ AS $$
 BEGIN
   RETURN COALESCE(
     jsonb_typeof(val) = 'object'
-     AND val - ARRAY['t', 'gt', 'gte', 'lt', 'lte']::text[] = '{}'::jsonb
      AND jsonb_typeof(val -> 't') = 'array'
      AND jsonb_array_length(val -> 't') >= 1
      AND NOT EXISTS (
        SELECT 1 FROM jsonb_array_elements(val -> 't') AS token
        WHERE jsonb_typeof(token) <> 'string'
      )
-     AND val ?| ARRAY['gt', 'gte', 'lt', 'lte']::text[]
-     AND NOT (val ? 'gt' AND val ? 'gte')
-     AND NOT (val ? 'lt' AND val ? 'lte')
-     -- Each bound by the `{{prefix}}.query_json_leaf` CHECK's own rule.
-     AND NOT EXISTS (
-       SELECT 1 FROM jsonb_each(val - 't') AS bound
-       WHERE NOT {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(bound.value)
-     )
-     AND (SELECT count(DISTINCT bound.value ->> 's') FROM jsonb_each(val - 't') AS bound) = 1,
+     AND {{prefix}}_internal.json_tree_is_valid_bounds(val - 't'),
     false
   );
 END;

@@ -567,6 +567,9 @@ pub enum DocumentRole {
     /// The element-scoped predicate: fields of one array element, each
     /// with its read tokens and its bounds.
     ElementsQuery,
+    /// The compiled predicate: a boolean tree whose leaves are the other
+    /// query operands.
+    PredicateQuery,
     /// One node, as `->` and the walks return it.
     Entry,
 }
@@ -625,8 +628,10 @@ impl DocumentFamily {
 /// `JsonSearch` over `public.eql_v4_json_search`, its needle
 /// `JsonSearchQuery` (`eql_v4.query_json`), its ordering operand
 /// `JsonSearchLeafQuery` (`eql_v4.query_json_leaf`), its element-scoped
-/// predicate `JsonSearchElementsQuery` (`eql_v4.query_json_elements`) and
-/// its entry `JsonEntry` (`public.eql_v4_json_entry`). The storage-only `Json`
+/// predicate `JsonSearchElementsQuery` (`eql_v4.query_json_elements`), its
+/// compiled predicate `JsonSearchPredicateQuery`
+/// (`eql_v4.query_json_predicate`) and its entry `JsonEntry`
+/// (`public.eql_v4_json_entry`). The storage-only `Json`
 /// (`public.eql_v4_json`) is the `json` family's. The Rust structs keep the
 /// implementation's name, as v3's `SteVecDocument` does.
 pub const JSON_TREE: DocumentFamily = DocumentFamily {
@@ -657,6 +662,12 @@ pub const JSON_TREE: DocumentFamily = DocumentFamily {
             name: "JsonSearchElementsQuery",
             rust: "JsonTreeElementsQuery",
             sql_domain: "eql_v4.query_json_elements",
+        },
+        DocumentDomain {
+            role: DocumentRole::PredicateQuery,
+            name: "JsonSearchPredicateQuery",
+            rust: "JsonTreePredicateQuery",
+            sql_domain: "eql_v4.query_json_predicate",
         },
         DocumentDomain {
             role: DocumentRole::Entry,

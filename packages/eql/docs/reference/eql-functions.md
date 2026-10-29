@@ -12,6 +12,7 @@ A reference for the functions and operators EQL exposes for querying encrypted d
 - [Encrypted JSON (`public.eql_v3_json_search`)](#encrypted-json-publiceql_v3_json_search)
 - [Range queries in EQL v4: `eql_v4.between`](#range-queries-in-eql-v4-eql_v4between)
 - [One array element in EQL v4: `eql_v4.json_tree_element_match`](#one-array-element-in-eql-v4-eql_v4json_tree_element_match)
+- [A compiled predicate in EQL v4: `eql_v4.json_tree_match`](#a-compiled-predicate-in-eql-v4-eql_v4json_tree_match)
 - [Aggregate Functions](#aggregate-functions)
 - [Diagnostics](#diagnostics)
 
@@ -216,6 +217,40 @@ WHERE EXISTS (
 ```
 
 That form does not check the probe: on a row whose array is longer than the bound it answers over the first elements only. Prefer the function.
+
+---
+
+## A compiled predicate in EQL v4: `eql_v4.json_tree_match`
+
+On plaintext `jsonb`, one function answers a whole filter: `jsonb_path_match(col, $1, $2)`, a jsonpath predicate and its variables. An application that compiles a filter language into SQL can target that shape with one template and two parameters. On an encrypted JSON document (`public.eql_v4_json_search`) the database cannot evaluate a path or a value, so `@@` with a `jsonpath` is blocked, `jsonb_path_match` matches nothing ([Native jsonb functions read the envelope](json-tree-leakage.md#native-jsonb-functions-read-the-envelope)), and each question is its own operator. `eql_v4.json_tree_match` takes the whole filter as one parameter again: Stack Encrypt's `match` query operator compiles the jsonpath predicate on the client into a tree of those operators' operands, and the function evaluates the tree.
+
+```sql
+eql_v4.json_tree_match(e public.eql_v4_json_search, p eql_v4.query_json_predicate) RETURNS boolean
+
+SELECT id FROM people WHERE eql_v4.json_tree_match(profile, $1::eql_v4.query_json_predicate);
+SELECT id FROM people WHERE profile @@ $1::eql_v4.query_json_predicate;
+```
+
+The operand `eql_v4.query_json_predicate` is a boolean tree, serialised as JSON. Each node is an object with one key, which names its kind:
+
+| node | true when | the same question, written out |
+|---|---|---|
+| `{"and": [node, …]}`, `{"or": [node, …]}` | every child is, or one child is | `… AND …`, `… OR …` |
+| `{"not": node}` | the child is false | `NOT …` |
+| `{"contains": needle}` | the document contains the needle, an `eql_v4.query_json` | `col @> needle` |
+| `{"exists": selector}` | the document has a node at the path | `eql_v4.json_tree_path_exists(col, selector)` |
+| `{"cmp": {"gt" \| "gte": leaf, "lt" \| "lte": leaf}}` | the first entry at the bounds' selector is inside every bound, each an `eql_v4.query_json_leaf` | `(col -> s) > gt AND (col -> s) < lt` |
+| `{"elements": predicate}` | one element of an array satisfies every member, an `eql_v4.query_json_elements` | `eql_v4.json_tree_element_match(col, predicate)` |
+
+Each leaf is checked by the CHECK of its own domain, and `and` and `or` take at least one child.
+
+- **The answer is the hand-written WHERE's, NULL included.** `and`, `or` and `not` follow SQL's three-valued logic, and a `cmp` leaf is NULL where the path is absent or its node has no ordering term, as `(col -> s) < $1` is. Stack Encrypt compiles a jsonpath comparison so that the tree answers as `jsonb_path_match` does over the plaintext: `$.age < $n` is a node at `$.age`, not a JSON `null`, whose leaf compares; `$.age != $n` is a node there that is not the value. So an absent path is false under every comparison and `null` false under an ordering, as jsonpath has them, and an ordering of a boolean is unknown (NULL), as jsonpath's comparison of two kinds is.
+- **Where the tree and jsonpath part.** In four places, each a property of the stored document or of the ordering terms. A path is read as written, so an array where the predicate names no `[*]` is not unwrapped as jsonpath's lax mode unwraps it (`$.tags == "a"` over `{"tags": ["a"]}` is true to jsonpath, false here). Nor is a value that is not an array wrapped where the predicate does name `[*]`: `$.tags[*] == "a"` over `{"tags": "a"}`, `exists($.tags[*])` over a scalar `tags` and `exists($.items[*] ? (@.sku == "x"))` over `{"items": {"sku": "x"}}` are true to jsonpath and false here, since `$.tags[*]` and `$.tags` have different selectors. A comparison of a string with a number, which jsonpath answers unknown, is false under `==` and true under `!=`, since the terms do not record a value's kind. An ordering compares the ordering terms, so text is case- and accent-folded, as every ordering at a path is; so does each condition of a filter with more than one, which compiles to an element leaf.
+- **Cast the operand.** `col @@ $1::eql_v4.query_json_predicate`. An untyped operand on the right of `@@` matches both this operator and the blocked `jsonpath` one, and PostgreSQL refuses the statement with SQLSTATE 42725 (`operator is not unique`). A `jsonpath` operand still raises `operator @@ is not supported`.
+- **Element leaves raise as their function does.** An array longer than the bound the predicate was compiled to raises SQLSTATE `22023`. Children are read in order and the read stops at the first child that decides the answer, so an element leaf the answer does not depend on is not read and does not raise.
+- **The document is opened once.** It is decompressed once per row, and indexed once when the tree has an element leaf, however many leaves read it.
+- **No index serves it.** The tree is evaluated inside a PL/pgSQL function, which the planner cannot see into: `json_tree_match` and `@@` filter the rows they are given, a sequential scan unless something else narrows them. The same predicate written out per operator (the right-hand column above) engages the GIN index on `eql_v4.json_tree_query(col)` and the functional btrees on `eql_v4.ord_term(col -> s)`, and is the fast path. Use `match` where one template matters more than the plan, and put an indexed predicate beside it where you can.
+- **What it reveals** is what its leaves reveal sent one by one, and the boolean shape of the filter. See [What a query shows](./json-tree-leakage.md#what-a-query-shows).
 
 ---
 
