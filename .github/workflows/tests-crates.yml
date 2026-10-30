@@ -78,8 +78,28 @@ env:
 
 jobs:
   rust:
-    name: fmt, clippy, nextest, doctests, rustdoc
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: fmt, clippy, nextest, doctests, rustdoc (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 60
     env:
       # Job-level, not workflow-level: RUSTFLAGS replaces the
@@ -157,8 +177,28 @@ jobs:
         run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt
 
   node-bindings:
-    name: node bindings, napi typings, stack-auth-wasm
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: node bindings, napi typings, stack-auth-wasm (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
