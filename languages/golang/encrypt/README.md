@@ -687,6 +687,38 @@ A row whose array is longer than
 `JSONReadOptions.WildcardBound` (64 by default) fails the query with
 SQLSTATE 22023.
 
+A whole filter binds as one parameter with the field's `Match`: a jsonpath
+predicate and its variables, as plaintext `jsonb_path_match(col, $1, $2)`
+takes them. The engine reads the predicate and compiles it into a tree of
+the operands above; the Go side reads none of it.
+
+```go
+q, err := users.Fields.Profile.Match(ctx, cipher,
+	`$."plan" == $plan && $."age" < $max`,
+	map[string]any{"plan": "pro", "max": 40}, encrypt.JSONReadOptions{})
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @@ $1::eql_v4.query_json_predicate`, q)
+```
+
+`eql_v4.json_tree_match(profile, $1::eql_v4.query_json_predicate)` returns
+the same rows. The variables are any value `encoding/json` writes as an
+object, or `nil` for none. The grammar is paths of `.key`, `."key"` and
+`[*]`; `==`, `!=`, `<`, `<=`, `>`, `>=` with a variable or a JSON literal;
+`exists(path)` and `exists(path ? (@.a == $x && @.b > $y))`; `&&`, `||` and
+`!(…)`. An ordering, and each member of a filter of more than one condition,
+needs its path in `ordered=`. Anything else is refused as a `*Diagnostic`
+wrapping `ErrEncoding`, whose `Reason()`, `Construct()` and `At()` give the
+reason, the construct in the grammar's words and the byte offset in the
+predicate, never its text or the values. Each row answers as
+`jsonb_path_match` does over its plaintext, save five cases the stashgen
+README lists: lax unwrapping and wrapping of arrays are not applied, a
+string compared with a number is false under `==`, orderings and
+multi-condition filters compare folded terms, and an ordering of a `null`
+is NULL rather than false outside an odd number of `!`, which returns the
+same rows. The tree is evaluated inside a
+function, so no index engages: where a query needs one, write its leaves
+with `EqAt`, `Contains` and `At.<Path>`, whose `@>` and `->` comparisons
+use the GIN and btree indexes, or put one beside `Match` to narrow the rows.
+
 ## Building
 
 The package embeds `wasm/stack_encrypt_guest.wasm`, a build artefact of the

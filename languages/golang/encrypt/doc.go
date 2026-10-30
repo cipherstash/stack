@@ -265,6 +265,22 @@
 // array is longer than [JSONReadOptions.WildcardBound] (64 by default)
 // fails the query with SQLSTATE 22023.
 //
+// A whole filter binds as one parameter with the field's Match: a jsonpath
+// predicate and its variables, as plaintext jsonb_path_match takes them.
+// The engine parses the predicate and compiles it into a tree of the
+// operands above; nothing in Go reads it.
+//
+//	q, err := customers.Fields.Profile.Match(ctx, cipher,
+//		`$."name" == $name && $."age" < $max`,
+//		map[string]any{"name": "Alice", "max": 40}, encrypt.JSONReadOptions{})
+//	// WHERE profile @@ $1::eql_v4.query_json_predicate
+//
+// A predicate the engine cannot answer is refused as a [Diagnostic]
+// wrapping [ErrEncoding], whose Reason, Construct and At name the refusal
+// and the byte offset in the predicate where it starts. The tree is
+// evaluated inside eql_v4.json_tree_match, so no index engages: a query
+// that needs one writes its leaves with EqAt, Contains and At.<Path>.
+//
 // # Cancellation
 //
 // Every call takes a [context.Context], and a call whose context is
