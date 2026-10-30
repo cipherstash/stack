@@ -70,6 +70,16 @@ func JSONText(v any) ([]byte, error) {
 	return nil, fmt.Errorf("%w: a %T does not write as JSON", encrypt.ErrEncoding, v)
 }
 
+// isGoString reports whether v is a Go string, a type defined over one, or
+// a pointer to either, that encoding/json writes as one JSON string: one
+// with no MarshalJSON or MarshalText of its own. A containment needle and
+// Match's vars refuse it, since JSON text in a Go string is the likely
+// mistake.
+func isGoString(v any) bool {
+	t := throughPointer(v)
+	return t != nil && t.Kind() == reflect.String && writesItself(v) == ""
+}
+
 // writesItself names the encoding/json interface v implements to write
 // itself, or "" for none.
 func writesItself(v any) string {
@@ -181,7 +191,7 @@ func (f Field[T]) jsonOperand(v any) ([]byte, error) {
 func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, operator string, needle any) (Q, error) {
 	// A Go string is one JSON string, and a document of members never
 	// contains one: it is almost always JSON text meant as the needle.
-	if t := throughPointer(needle); t != nil && t.Kind() == reflect.String && writesItself(needle) == "" {
+	if isGoString(needle) {
 		return nil, fmt.Errorf("%w: gensupport: %s: a %T needle is one JSON string, not JSON text; pass JSON text as json.RawMessage, or a map or struct", encrypt.ErrEncoding, f.name, needle)
 	}
 	if needle == nil {
@@ -310,6 +320,90 @@ func JSONElementMatch[Q ~[]byte, T, E any](ctx context.Context, f Field[T], c *e
 		return nil, err
 	}
 	return Q(term.Terms[0]), nil
+}
+
+// JSONMatch derives match on a JSON field: the one operand
+// eql_v4.json_tree_match and `@@` take, a jsonpath predicate compiled into
+// a boolean tree of the other operators' operands. The predicate crosses
+// as it is: the engine parses and compiles it, and nothing here reads it.
+//
+// vars are the predicate's variables ($name), the jsonb that
+// jsonb_path_match takes third: any value [JSONText] writes as a JSON
+// object, such as a map, a struct or a json.RawMessage of one. They answer
+// as the same Go value bound as jsonb_path_match's vars through pgx or
+// database/sql answers over plaintext:
+//
+//   - A nil value (nil, or a nil map, slice, pointer or json.RawMessage)
+//     is SQL NULL there, and jsonb_path_match is NULL for every row. Match
+//     returns an empty operand, which binds as NULL, so `@@` and
+//     json_tree_match are NULL for every row too. The predicate is still
+//     compiled, so text the grammar does not read is still refused; a
+//     variable it names is not, as plaintext does not look for one.
+//   - A value that writes the JSON null (a json.RawMessage of null, or a
+//     pointer to a nil map) is refused as not an object, as plaintext
+//     refuses "vars" that are not an object.
+//   - Any other json.RawMessage crosses as it is, so an empty or
+//     whitespace-only one is refused by the engine as not JSON, as "{" is.
+//
+// A Go string or a non-nil pointer to one is refused, as [JSONQuery]
+// refuses a needle: it writes one JSON string, and JSON text in a Go string
+// is the likely mistake.
+//
+// What the engine refuses (text it does not read, a construct the index
+// cannot answer, a variable vars do not hold, vars that are not an
+// object, an ordering at a path the field does not order) is its
+// [encrypt.Diagnostic]. opts.WildcardBound 0 sends no bound, and the
+// engine's default, 64, applies.
+func JSONMatch[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (Q, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	input := vcvalue.Object{{Key: "predicate", Value: predicate}}
+	if opts.WildcardBound != 0 {
+		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
+	}
+	if isNilValue(vars) {
+		// SQL NULL vars: compile with none for what plaintext refuses
+		// before it reads vars, and answer with the empty operand.
+		if _, err := f.jsonTerm(ctx, c, "match", "eql", 1, input); err != nil && !isUnknownVariable(err) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if isGoString(vars) {
+		return nil, fmt.Errorf("%w: gensupport: %s: Match takes vars as a JSON object, and a %T is one JSON string; pass JSON text as json.RawMessage, or a map or struct", encrypt.ErrEncoding, f.name, vars)
+	}
+	text, err := f.jsonOperand(vars)
+	if err != nil {
+		return nil, err
+	}
+	input = append(input, vcvalue.Field{Key: "vars", Value: text})
+	term, err := f.jsonTerm(ctx, c, "match", "eql", 1, input)
+	if err != nil {
+		return nil, err
+	}
+	return Q(term.Terms[0]), nil
+}
+
+// isNilValue reports whether v is nil, or a nil map, slice, pointer or
+// interface value: what database/sql and pgx bind as SQL NULL.
+func isNilValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Pointer, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
+}
+
+// isUnknownVariable reports whether err is the engine's refusal of a
+// $name that vars do not hold.
+func isUnknownVariable(err error) bool {
+	var d *encrypt.Diagnostic
+	return errors.As(err, &d) && d.Reason() == "json_predicate_unknown_variable"
 }
 
 // orderedMembers says which members of an array's elements the field

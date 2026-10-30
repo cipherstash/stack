@@ -154,7 +154,7 @@ func TestJSONOperatorsDeriveTaggedTerms(t *testing.T) {
 		"contains": "json", "contained_by": "json", "eq_at": "path_json",
 		"lt_at": "path_json", "lte_at": "path_json", "gt_at": "path_json", "gte_at": "path_json",
 		"between_at": "path_pair", "selector": "path", "subtree": "path_bound",
-		"children": "path", "child_count": "path", "element_match": "path_predicates",
+		"children": "path", "child_count": "path", "element_match": "path_predicates", "match": "predicate",
 	}
 	if !reflect.DeepEqual(inputs, want) {
 		t.Fatalf("operators = %v", inputs)

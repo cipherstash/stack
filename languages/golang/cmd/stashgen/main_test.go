@@ -468,6 +468,18 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 	if strings.Contains(written, "PrefsFieldElements") {
 		t.Error("Prefs orders no member, and got Elements")
 	}
+	// Every document field has Match, ordered paths or none: what a
+	// predicate may use is the engine's to decide when it compiles it.
+	for _, field := range []string{"ProfileField", "PrefsField"} {
+		for _, want := range []string{
+			"func (f " + field + ") Match(ctx context.Context, c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (eql.JSONSearchPredicateQuery, error)",
+			"gensupport.JSONMatch[eql.JSONSearchPredicateQuery](ctx, f.field, c, predicate, vars, opts)",
+		} {
+			if !strings.Contains(written, want) {
+				t.Errorf("the generated file lacks %q", want)
+			}
+		}
+	}
 	// The members of one array, named as At names their paths; an ordered
 	// path that ends at its wildcard, or has none, is no array's member.
 	written, stderr, code = generate("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.extra.emergency_contacts[*].relationship;$.extra.emergency_contacts[*].previous_call_count;$.tags[*];$.age)\"`")
@@ -593,6 +605,19 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 		t.Fatalf("exit %d, want 1\n%s", code, stderrBuf.String())
 	}
 	if got := stderrBuf.String(); !strings.Contains(got, "Customer.Profile") || !strings.Contains(got, "the engine answers no element_match") {
+		t.Fatalf("stderr = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "customer_stash.go")); !os.IsNotExist(err) {
+		t.Fatal("a file was written after the refusal")
+	}
+	// The same for any document field, ordered or not, and an engine that
+	// answers no match.
+	dir = writeModule(t, map[string]string{"model.go": source("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch\"`")})
+	stderrBuf.Reset()
+	if code := run([]string{"-type", "Customer"}, dir, &bytes.Buffer{}, &stderrBuf, withoutOperator("match")); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, stderrBuf.String())
+	}
+	if got := stderrBuf.String(); !strings.Contains(got, "Customer.Profile") || !strings.Contains(got, "the engine answers no match on JsonSearch") {
 		t.Fatalf("stderr = %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "customer_stash.go")); !os.IsNotExist(err) {

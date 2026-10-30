@@ -985,4 +985,61 @@ mod tests {
             Err(STATUS_ENCODING)
         );
     }
+
+    /// `match` on a JsonSearch field through the query exports: a
+    /// predicate compiles to the predicate operand, and one the grammar
+    /// refuses is the caller's input (`STATUS_ENCODING`), never the
+    /// guest's own failure.
+    #[cfg(feature = "eql")]
+    #[test]
+    fn a_compiled_predicate_derives_and_a_refused_one_is_the_callers_input() {
+        use futures::executor::block_on;
+        use stack_encrypt::StackCipher;
+        use stack_kms::FakeDataKeySource;
+
+        let cipher = block_on(StackCipher::builder().kms(FakeDataKeySource::new()).init())
+            .expect("a cipher");
+        let keyset = cipher.default_keyset();
+        let plan = encoded(object(vec![(
+            "profile",
+            object(vec![
+                ("context", Tree::Array(vec![text("users"), text("profile")])),
+                ("type", text("json")),
+                ("null", text("sql")),
+                ("target", text("JsonSearch")),
+            ]),
+        )]));
+        let input = |predicate: &str| {
+            encoded(object(vec![
+                ("predicate", text(predicate)),
+                ("vars", text(r#"{"v": "nz"}"#)),
+            ]))
+        };
+
+        let accepted = input("$.country == $v && exists($.tags[*])");
+        validate::query_term(&accepted, &plan, b"profile", b"match")
+            .expect("a field answers match");
+        let term =
+            block_on(query_term(&keyset, &accepted, &plan, b"profile", b"match")).expect("derives");
+        let Tree::Object(term) = Tree::from_frame(&term).expect("a value") else {
+            panic!("a query term is an object")
+        };
+        let text = |key: &str| match term.iter().find(|(k, _)| k == key) {
+            Some((_, Tree::String(s))) => s.as_bytes().to_vec(),
+            other => panic!("{key}: {other:?}"),
+        };
+        assert_eq!(text("operator"), b"match");
+        assert_eq!(text("domain"), b"eql_v4.query_json_predicate");
+        assert_eq!(text("encoding"), b"eql");
+
+        let refused = input(r#"$.country like_regex "n""#);
+        assert_eq!(
+            validate::query_term(&refused, &plan, b"profile", b"match"),
+            Err(STATUS_ENCODING)
+        );
+        assert_eq!(
+            block_on(query_term(&keyset, &refused, &plan, b"profile", b"match")),
+            Err(STATUS_ENCODING)
+        );
+    }
 }

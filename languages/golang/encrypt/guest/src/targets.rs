@@ -114,16 +114,19 @@ fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescrip
         Some(options) => descriptor.with_match_options(options),
         None => descriptor,
     };
-    // A document's orderings at a path bind as its leaf operand, and its
-    // element predicate (`element_match`) as its elements operand. Its
-    // compiled predicate (`match`) is not named: the Go SDK does not take
-    // that operator yet.
+    // A document's orderings at a path bind as its leaf operand, its
+    // element predicate (`element_match`) as its elements operand, and its
+    // compiled predicate (`match`) as its predicate operand.
     let descriptor = match target.leaf_query_sql_domain() {
         Some(domain) => descriptor.with_leaf_query_sql_domain(domain),
         None => descriptor,
     };
-    match target.elements_query_sql_domain() {
+    let descriptor = match target.elements_query_sql_domain() {
         Some(domain) => descriptor.with_elements_query_sql_domain(domain),
+        None => descriptor,
+    };
+    match target.predicate_query_sql_domain() {
+        Some(domain) => descriptor.with_predicate_query_sql_domain(domain),
         None => descriptor,
     }
 }
@@ -277,13 +280,12 @@ mod tests {
 
     /// The JSON document's query domains this guest names, and so the JSON
     /// operators the Go SDK is offered: the leaf operand, for the orderings
-    /// at a path, and the element predicate, for `element_match`; not the
-    /// compiled predicate, whose operator (`match`) the Go side does not
-    /// parse yet. Naming it is a change to the Go SDK's operator list:
-    /// update this test with the Go side that takes the operator.
+    /// at a path; the element predicate, for `element_match`; and the
+    /// compiled predicate, for `match`. Every operator a field lists is one
+    /// the Go SDK's operator list (`parseOperatorName`) and stashgen read.
     #[cfg(feature = "eql")]
     #[test]
-    fn a_document_names_the_leaf_and_element_domains_and_not_the_predicate_domain() {
+    fn a_document_names_the_leaf_element_and_predicate_domains() {
         use stack_encrypt::dynamic::{self, record, OpSpec};
         let targets = resolver().targets();
         let document = targets
@@ -298,9 +300,17 @@ mod tests {
             document.elements_query_sql_domain.as_deref(),
             Some("eql_v4.query_json_elements")
         );
-        assert_eq!(document.predicate_query_sql_domain, None);
+        assert_eq!(
+            document.predicate_query_sql_domain.as_deref(),
+            Some("eql_v4.query_json_predicate")
+        );
+        assert!(
+            document.operators().contains(&OpSpec::Match),
+            "the type lists match: {:?}",
+            document.operators()
+        );
         // The operators a field answers: the orderings and `element_match`
-        // only where it orders a path, and `match` nowhere.
+        // only where it orders a path, and `match` on every field.
         let field_operators = |ordered: &[&str]| {
             let wire = serde_json::json!({
                 "profile": {
@@ -319,12 +329,12 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let ordered = field_operators(&["$.contacts[*].relationship"]);
-        assert!(ordered.contains(&OpSpec::ElementMatch), "{ordered:?}");
-        assert!(!ordered.contains(&OpSpec::Match), "{ordered:?}");
-        let unordered = field_operators(&[]);
-        for absent in [OpSpec::ElementMatch, OpSpec::Match] {
-            assert!(!unordered.contains(&absent), "{absent:?}: {unordered:?}");
+        for present in [OpSpec::ElementMatch, OpSpec::Match] {
+            assert!(ordered.contains(&present), "{present:?}: {ordered:?}");
         }
+        let unordered = field_operators(&[]);
+        assert!(unordered.contains(&OpSpec::Match), "{unordered:?}");
+        assert!(!unordered.contains(&OpSpec::ElementMatch), "{unordered:?}");
     }
 
     #[cfg(feature = "eql")]

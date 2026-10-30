@@ -90,13 +90,15 @@ var ErrStorageVersion = vcffi.ErrUnsupportedVersion
 // returns after the sentinel's text), Help, URL, Severity, Fields (the
 // structured fields, by name) and Causes (the errors behind it, outermost
 // first). Accessors read the fields a caller branches on: ExpectedKeyset
-// and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes), and
-// Field and Reason on a refused plan, record or value.
+// and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes);
+// Field and Reason on a refused plan, record or value; and Construct and At
+// on a refused Match predicate, the construct in the grammar's words and
+// the byte offset in the predicate where it starts.
 //
 // What one may carry is fixed: keyset ids and names, field names, counts,
-// index kinds, ZeroKMS request kinds and HTTP statuses. Never plaintext,
-// key material, tokens, ciphertext or term bytes, or the values of an
-// encryption context.
+// index kinds, ZeroKMS request kinds and HTTP statuses, and a refused
+// predicate's construct and offset. Never plaintext, key material,
+// tokens, ciphertext or term bytes, or the values of an encryption context.
 //
 // Errors the client raises itself carry none: a closed client ([ErrState]),
 // a guest that did not return, [ErrMemoryLock], and an argument refused
