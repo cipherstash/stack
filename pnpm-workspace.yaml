@@ -158,7 +158,9 @@ overrides:
   # #215 CVE-2026-84394 (GHSA-58mr-gqgx-xq4g) — raised to 3.1.7 (published
   # 2026-09-02).
   # #223 CVE-2026-86472 — raised to 3.1.8 (published 2026-09-15).
-  'fast-uri@<3.1.8': '3.1.8'
+  # #280-#283 CVE-2026-110306, CVE-2026-110180, CVE-2026-110725,
+  # CVE-2026-110095 — raised to 3.1.9 (published 2026-10-19).
+  'fast-uri@<3.1.9': '3.1.9'
   # GHSA-f88m-g3jw-g9cj — sharp's vendored libvips carries multiple High
   # libvips CVEs (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590,
   # CVE-2026-35591), fixed >=0.35.0. Pulled in as an optional dependency of
