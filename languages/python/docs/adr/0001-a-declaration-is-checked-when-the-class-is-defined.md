@@ -307,9 +307,13 @@ Option 2.
    The decorator writes `__repr__` and `__str__` on the class it
    decorates. (`encrypt` returns plain mappings, by the spec, so there is
    no encrypted type to write them on.)
-   Both print the passthrough fields and `[sealed]` in place of each
-   sealed field's value, the format of Go's generated `String` and
-   `LogValue`.
+   Both print the passthrough fields and `<sealed>` in place of each
+   sealed field's value.
+   That is the format of Go's generated `String` and `LogValue`, with
+   one change: Go prints `[sealed]`.
+   Python prints angle brackets because `[sealed]` is a valid tag in
+   rich's markup, and `rich.print(repr(user))` would show the field as
+   empty.
    The same markers that drive encryption drive the print, so a sealed
    field added later is hidden the day it is added; no per-field
    `repr=False` is needed, and none is read.
