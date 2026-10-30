@@ -318,11 +318,15 @@ describe('tests-python.yml', () => {
     }
   })
 
-  it('gives no job a CipherStash credential', () => {
-    // The live job (credentials, Postgres) is #1389's and arrives as its own
-    // job. Until then nothing in this file may read a CS_* variable or
-    // secret. ffi-binding-step-order.test.mjs holds a credentialed job to a
-    // pre-flight and a binding build. This workflow has no use for either.
-    expect(read(WORKFLOW)).not.toMatch(/(vars|secrets)\.CS_/)
+  it('gives a CipherStash credential to the live job only, which skips on a fork', () => {
+    // A credentialed job is one ffi-binding-step-order.test.mjs holds to the
+    // secrets pre-flight. Only `live` needs one (#1389). A fork's pull
+    // request has no secrets, so the job skips there rather than fails.
+    const { jobs } = readWorkflow(WORKFLOW)
+    const credentialed = Object.entries(jobs)
+      .filter(([, job]) => /(vars|secrets)\.CS_/.test(JSON.stringify(job)))
+      .map(([id]) => id)
+    expect(credentialed).toEqual(['live'])
+    expect(jobs.live.if).toMatch(/head\.repo\.full_name == github\.repository/)
   })
 })

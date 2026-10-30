@@ -29,11 +29,14 @@ repository = "https://github.com/cipherstash/stack"
 
 [workspace.dependencies]
 # `dynamic` is the runtime value model every binding speaks (frames, plans
-# read at run time). `http`, the HTTP client and TLS stack, is off: nothing
-# makes a request yet. `Cipher` finds the credentials over a transport that
-# sends nothing (`crates/core/src/credentials.rs`). The ticket that makes
-# the first request turns it on, here and on stack-auth below.
-stack-encrypt = { path = "../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
+# read at run time). `http` is the HTTP client and TLS stack: `encrypt`
+# makes ZeroKMS requests through the shared client in
+# `crates/core/src/client.rs` (#1389). Named, not left to the default, so a
+# later `default-features = false` cannot remove it.
+stack-encrypt = { path = "../../packages/stack-encrypt", default-features = false, features = ["dynamic", "http"] }
 # The credentials, as every SDK finds them. By path, the same crate
-# stack-encrypt depends on. Its `http` feature is off, as above.
-stack-auth = { path = "../../packages/stack-auth", default-features = false }
+# stack-encrypt depends on. `http` for the transport the shared client uses.
+stack-auth = { path = "../../packages/stack-auth", default-features = false, features = ["http"] }
+# The ZeroKMS client the shared client is built over, and its HTTP
+# connection, which `client.rs` wraps to count requests for the tests.
+stack-kms = { path = "../../packages/stack-kms", default-features = false, features = ["http", "profile"] }

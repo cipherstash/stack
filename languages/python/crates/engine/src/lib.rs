@@ -3,6 +3,10 @@
 //! Deliberately thin: this crate only converts between Python and Rust at
 //! the boundary. Logic belongs in `stackencrypt-core` and `stack-encrypt`.
 
+mod encrypt;
+mod errors;
+mod values;
+
 use pyo3::prelude::*;
 use stackencrypt_core::credentials;
 use stackencrypt_core::plan::{self, Column};
@@ -87,6 +91,11 @@ fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_info, module)?)?;
     module.add_function(wrap_pyfunction!(check_plan, module)?)?;
     module.add_function(wrap_pyfunction!(detect_credentials, module)?)?;
+    module.add_class::<encrypt::Plan>()?;
+    module.add_function(wrap_pyfunction!(encrypt::build_plan, module)?)?;
+    module.add_function(wrap_pyfunction!(encrypt::encrypt, module)?)?;
+    module.add_function(wrap_pyfunction!(encrypt::client_builds, module)?)?;
+    module.add_function(wrap_pyfunction!(encrypt::request_count, module)?)?;
     #[cfg(feature = "gate-probe")]
     module.add_function(wrap_pyfunction!(_probe_detached_sleep, module)?)?;
     Ok(())
