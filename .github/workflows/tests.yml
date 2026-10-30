@@ -407,8 +407,9 @@ jobs:
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
-      CS_ZEROKMS_HOST: https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net
-      CS_CTS_HOST: https://ap-southeast-2.aws.cts.cipherstashmanaged.net
+      # No CS_ZEROKMS_HOST / CS_CTS_HOST: current clients derive both from the
+      # CRN, and a pinned region points the shared credentials at the wrong
+      # deployment (see integration-protect-ffi.yml).
 
     steps:
       - name: Checkout Repo
@@ -444,15 +445,13 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # `e2e/vitest.config.ts` includes `tests/**/*.e2e.test.ts` and the step
-      # below applies no file filter, so this job runs
-      # `tests/prisma-example-readme.e2e.test.ts` — whose
-      # `describe.skipIf(!authConfigured)` un-skips the moment CS_CLIENT_ID and
-      # CS_CLIENT_KEY are set, which the job env above does. That walkthrough's
-      # `pnpm start` step encrypts against the live service through
-      # `@cipherstash/stack`, so it needs `index.node`; turbo's `^build` only
-      # gets as far as protect-ffi's `build` (tsc → `lib/`), which is the half
-      # that does not encrypt anything.
+      # The protect-dynamodb compatibility step at the end of this job
+      # encrypts against the live service through `@cipherstash/stack`, so it
+      # needs `index.node`; turbo's `^build` only gets as far as protect-ffi's
+      # `build` (tsc → `lib/`), which is the half that does not encrypt
+      # anything. (`tests/prisma-example-readme.e2e.test.ts` would need it too,
+      # but under turbo's strict env mode the job-level CS_* never reach it,
+      # so it skips.)
       #
       # After the pre-flight above, per
       # scripts/__tests__/ffi-binding-step-order.test.mjs. No `wasm: true` —
@@ -470,6 +469,19 @@ jobs:
       # job above; we filter to the new workspace here to avoid duplication.
       - name: Run E2E tests
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
+
+      # The step above runs under turbo's strict env mode, which filters out
+      # every env var `turbo.json` does not declare, so the job-level CS_*
+      # never reach vitest there and auth-gated suites skip. This suite proves
+      # a migration claim made to customers, so it runs again here, outside
+      # turbo, with the credentials, and `CS_E2E_REQUIRE_AUTH` makes it throw
+      # rather than skip if they are missing. The step above already built
+      # everything it imports.
+      - name: Run the protect-dynamodb compatibility suite
+        working-directory: e2e
+        env:
+          CS_E2E_REQUIRE_AUTH: '1'
+        run: pnpm exec vitest run tests/protect-dynamodb-compat.e2e.test.ts
 
   # Verifies @cipherstash/stack/wasm-inline works under Deno — i.e. the
   # WASM build of protect-ffi 0.26+ and auth 0.40+ can round-trip an

@@ -87,9 +87,21 @@ importers:
         specifier: workspace:*
         version: link:../languages/typescript/packages/cli
     devDependencies:
+      '@cipherstash/protect':
+        specifier: 10.2.1
+        version: 10.2.1
+      '@cipherstash/protect-dynamodb':
+        specifier: 6.0.1
+        version: 6.0.1(@cipherstash/protect@10.2.1)
+      '@cipherstash/stack-0.19':
+        specifier: npm:@cipherstash/stack@0.19.0
+        version: '@cipherstash/stack@0.19.0(@supabase/supabase-js@2.112.3)(drizzle-orm@0.45.4(@types/pg@8.23.1)(gel@2.2.0)(pg@8.23.1)(postgres@3.4.9))(next@15.5.28(@types/node@26.2.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)'
       '@types/semver':
         specifier: 7.8.0
         version: 7.8.0
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
       semver:
         specifier: ^7.8.0
         version: 7.8.5
@@ -1065,8 +1077,156 @@ packages:
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
 
+  '@cipherstash/auth-darwin-arm64@0.41.0':
+    resolution: {integrity: sha512-2B+J/bPblfiWQcxm3Z9voLhV66TZcmDpzVz5aBNS4y/B7Ke55jGH6m3H9g+c1xHZbe62q7zwDUEatveOy69f2A==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cipherstash/auth-darwin-x64@0.41.0':
+    resolution: {integrity: sha512-XrmFRSdQaoed7tqJ+RJLiBvuQr/v7qiSu7LDA3PCVbegHVcsjYQ9D0sd49zDZEEFN4zZlcwmeh80eGAEJiyhKg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cipherstash/auth-linux-arm64-gnu@0.41.0':
+    resolution: {integrity: sha512-NQJK++HzV7XCQPuNbVmIJcC5T4QuflOySYmQtP2PoTg0p+V7WK/3yruZZKgjbbCU6v8tek/D3T8hk02snq/8sQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@cipherstash/auth-linux-x64-gnu@0.41.0':
+    resolution: {integrity: sha512-9NMiMs2p8p5NBcir8Cx90zBzOlkM0EWbIZOeCIjokT9X4d6UJy3+JhXi5VRn0gWpqAA7i7+BZD+puZ+fmBzJLQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@cipherstash/auth-linux-x64-musl@0.41.0':
+    resolution: {integrity: sha512-V8QwrxXLoqO0ED02hnvQJNBid/iDZUawt3zobUL+DqieN3QZxDxI5/viFIkA4bTg7CV6oSmy2b0rINGqiHvkig==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@cipherstash/auth-win32-x64-msvc@0.41.0':
+    resolution: {integrity: sha512-MkC04kTuyUd7J2/dRWIzdER1if6V+g6tVDRoZI/dql/Uq/+FXtV9lBXDcS1iATDyE/1APLvMMvuAqJeELGrGag==}
+    cpu: [x64]
+    os: [win32]
+
+  '@cipherstash/auth@0.41.0':
+    resolution: {integrity: sha512-jhhCthk+vilCQAvOfKYPSnIOZR2J3/+0JEYLNY3+M19rEzZ2ZmTLZDqzu4c+y1P73LgzTX+oWL6ESUoKsMd0TQ==}
+    peerDependencies:
+      '@cipherstash/auth-darwin-arm64': 0.41.0
+      '@cipherstash/auth-darwin-x64': 0.41.0
+      '@cipherstash/auth-linux-arm64-gnu': 0.41.0
+      '@cipherstash/auth-linux-x64-gnu': 0.41.0
+      '@cipherstash/auth-linux-x64-musl': 0.41.0
+      '@cipherstash/auth-win32-x64-msvc': 0.41.0
+    peerDependenciesMeta:
+      '@cipherstash/auth-darwin-arm64':
+        optional: true
+      '@cipherstash/auth-darwin-x64':
+        optional: true
+      '@cipherstash/auth-linux-arm64-gnu':
+        optional: true
+      '@cipherstash/auth-linux-x64-gnu':
+        optional: true
+      '@cipherstash/auth-linux-x64-musl':
+        optional: true
+      '@cipherstash/auth-win32-x64-msvc':
+        optional: true
+
   '@cipherstash/eql@3.0.2':
     resolution: {integrity: sha512-E85o0aoOqgCW6RReLtJ0YLh/ExRlmDJo7LlJGpWPoMTVaw+CW8o11DJ4oJIF1vFtuxSVxNULuPzzBuVmpTvvcA==}
+
+  '@cipherstash/protect-dynamodb@6.0.1':
+    resolution: {integrity: sha512-AjlV0jLbD3DivFMiEtS+En3457pH7Ywrnk8S6f4l35F/NnXt1PQer033G/G8SqvVTAymrPysgoENKi5ZxrVnTA==}
+    deprecated: EQL v2-only package, no longer maintained. Use @cipherstash/stack/dynamodb instead.
+    peerDependencies:
+      '@cipherstash/protect': 10.2.1
+
+  '@cipherstash/protect-ffi-darwin-arm64@0.18.1':
+    resolution: {integrity: sha512-kTkshWuGG07X9m4Ug0mPXIglfZopVFCJy55/B2yy9Z+hhNP95d4Zjq6AXlRYAHsnxgcp0SnynC8LaVTcXsEx8w==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cipherstash/protect-ffi-darwin-arm64@0.28.0':
+    resolution: {integrity: sha512-QRwiovEdgjstbaCONZGYXA82NG4Gwz9mJOZeAzthUmNIQfnVErO9UQAfJ+I1T/YG1Ww2FCWcHltXMl/qjyeK4A==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cipherstash/protect-ffi-darwin-x64@0.18.1':
+    resolution: {integrity: sha512-VdoTOIF5hmS7sQUR/w6FQKAj7aJOhOD2lo2wlV3hxG0PNd2pWiB1HvE9wvrGY2VAPqBU97Cp+S8IFkf5ckqQ2A==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cipherstash/protect-ffi-darwin-x64@0.28.0':
+    resolution: {integrity: sha512-H8qB2z3drJSc2bR5ITsJSFrOoNKvORbauTdHmaS1e5OleXsLl/F+56Zvghz8NWs+bXs/2aVzHxpYte8FgV8AAQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.18.1':
+    resolution: {integrity: sha512-DcGIgoTkRDaBqqXs3X4fB7XCOMtleSLd+kMAStS1uEq6agVHp2P/9Y+ag30MQ7Ypm0xTJBZVwl8ClDXDSklQcw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.28.0':
+    resolution: {integrity: sha512-h7vZxB/wako6j1jspkGl41gptTN1dBTWYqAR6jhVnvKJK0TBlyUKuSJwO1NeqyNfFQ/b1KmqJ11JGvY95uRZOA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.18.1':
+    resolution: {integrity: sha512-I5Cg7vlkVX2qL3hKYiYEx1C1lTQ+uGt2YrAxaqSs09gpvpa6xC2/2QMpV9UvKnJ9uLlxVly8jycnzp7TyvS9pA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.28.0':
+    resolution: {integrity: sha512-PgHn0Og0PiCwFdV4yKhipGKfqkCXP6Xchyy6ykTaISabmSlkkbRNkyNF1/tZEQYF65sm5gmqSpwSYzKODaAsbg==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-linux-x64-musl@0.18.1':
+    resolution: {integrity: sha512-Ol9dYVNXIaoYrhpsJv90PX5pHg1mmWKqnpnhh2ofA+NNZqEAdolo4BeTsQc10sCE6WogcM8FFJ9OcOrk79N8lA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-linux-x64-musl@0.28.0':
+    resolution: {integrity: sha512-fMu3k1Y3wYMcGbGpVtrlCMNRLd1//5c9ZHcyWFjKFqimOCbBO5akgCQij4zcvj4kYDHtveu9dOdOKVhaG8k6hQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.18.1':
+    resolution: {integrity: sha512-j9mqXQDHu3vdLJx93g2lAuKDeOh+XuC1FBvsrr2FTjgzBqrZAHH60QFPXjvFT1/U1oWjV8nAgTZQ4cUMJSDa9Q==}
+    cpu: [x64]
+    os: [win32]
+
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.28.0':
+    resolution: {integrity: sha512-tF0y7TcyBtgN/jHodYMnrJ4etLkEI/klzDivW8Q8eIuIdoJ3q5muZKFIhNX0MbDDdh2O4GsRdNhXRubs7BiFpA==}
+    cpu: [x64]
+    os: [win32]
+
+  '@cipherstash/protect-ffi@0.18.1':
+    resolution: {integrity: sha512-rDYIRIWo7EvJ+ytGEwzeb0D/4j3tQ8w+5Kpz089IEhxIVxOzavsR+f5HyMXohAKYkH+19RpD+2X+v1P8rwmiUA==}
+
+  '@cipherstash/protect-ffi@0.28.0':
+    resolution: {integrity: sha512-R2L/8HwMREkVKlR5KCcuELIWz4QNButSBQzY+nRDHl1PUXjRqWG1h265FkKVtTXKNKUup7rB4mswu+M+t9KF3A==}
+
+  '@cipherstash/protect@10.2.1':
+    resolution: {integrity: sha512-SCGOGpLWhwa9+hotbA11tPNGhKBZYspa5NWBtwBiHv/EgEKCQvaLDc0MAwzyT5cv7xDwbQESkhxyD9oqHnIMfg==}
+    deprecated: Deprecated in favour of @cipherstash/stack. Install @cipherstash/stack instead.
+
+  '@cipherstash/schema@2.0.2':
+    resolution: {integrity: sha512-3DpGvJ3sbhPpAGTQFf1St+WU6AlNR0S/rumSFHG0ghwDGzNV7PjnLHCzzZcMQX8UVw9KYwDz5+n/SAZAuDQczg==}
+    deprecated: EQL v2-only package, no longer maintained. Use @cipherstash/stack instead.
+
+  '@cipherstash/stack@0.19.0':
+    resolution: {integrity: sha512-n/jzMEiEU3AObG2isu1uMCQ34k2SqKSReVd63j63uaMU2UCHwmXZWtg9WeXF+IdS1w6G6VVj/DZCuygv3kzxWg==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@supabase/supabase-js': '>=2'
+      drizzle-orm: '>=0.33'
+    peerDependenciesMeta:
+      '@supabase/supabase-js':
+        optional: true
+      drizzle-orm:
+        optional: true
 
   '@clack/core@1.5.1':
     resolution: {integrity: sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ==}
@@ -1666,6 +1826,9 @@ packages:
     resolution: {integrity: sha512-SC8xYNOH1dTnDiB2pykFhREl74gs6TF4jr2qFp0h9fwriRSoxic/CnVN2d7ikpc3XatOK1QnwfQCCmyv31x9/A==}
     hasBin: true
 
+  '@neon-rs/load@0.1.82':
+    resolution: {integrity: sha512-H4Gu2o5kPp+JOEhRrOQCnJnf7X6sv9FBLttM/wSbb4efsgFWeHzfU/ItZ01E5qqEk+U6QGdeVO7lxXIAtYHr5A==}
+
   '@neon-rs/load@0.2.6':
     resolution: {integrity: sha512-7p8j+guEhGTJNJISgmHO0homqGYAc0SDfmgGZfluMcQnimcceMY87b4hdqufp+7YmsOVC4W/JvT3/Tpi3/gy+Q==}
 
@@ -1983,6 +2146,12 @@ packages:
   '@rollup/rollup-linux-s390x-gnu@4.64.12':
     resolution: {integrity: sha512-pjmDTFStvwFE3shTeUDvSDiSp8/qAf5bQXejcEUDDavWz4jEhTIpCdpS06G0PEwSCSNK0Lngjz2v9l4hk3Z74A==}
     cpu: [s390x]
+    os: [linux]
+    libc: [glibc]
+
+  '@rollup/rollup-linux-x64-gnu@4.24.0':
+    resolution: {integrity: sha512-ZXFk7M72R0YYFN5q13niV0B7G8/5dcQ9JDp8keJSfr3GoZeXEoMHP/HlvqROA3OMbMdfr19IjCeNAnPUG93b6A==}
+    cpu: [x64]
     os: [linux]
     libc: [glibc]
 
@@ -3810,6 +3979,10 @@ packages:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
 
+  uuid@14.0.0:
+    resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
+    hasBin: true
+
   uuid@14.0.3:
     resolution: {integrity: sha512-Sc5u1VVln93y1Xnz4R+CunOZc7R9LUcTmhj7Rc7Eg3HVcf7rVn2FOoa812fe0W8p3jD7xeoGSYbfqCGGH2B6xw==}
     hasBin: true
@@ -4220,7 +4393,138 @@ snapshots:
       human-id: 4.2.0
       prettier: 2.8.8
 
+  '@cipherstash/auth-darwin-arm64@0.41.0':
+    optional: true
+
+  '@cipherstash/auth-darwin-x64@0.41.0':
+    optional: true
+
+  '@cipherstash/auth-linux-arm64-gnu@0.41.0':
+    optional: true
+
+  '@cipherstash/auth-linux-x64-gnu@0.41.0':
+    optional: true
+
+  '@cipherstash/auth-linux-x64-musl@0.41.0':
+    optional: true
+
+  '@cipherstash/auth-win32-x64-msvc@0.41.0':
+    optional: true
+
+  '@cipherstash/auth@0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)':
+    dependencies:
+      '@byteslice/result': 0.3.0
+    optionalDependencies:
+      '@cipherstash/auth-darwin-arm64': 0.41.0
+      '@cipherstash/auth-darwin-x64': 0.41.0
+      '@cipherstash/auth-linux-arm64-gnu': 0.41.0
+      '@cipherstash/auth-linux-x64-gnu': 0.41.0
+      '@cipherstash/auth-linux-x64-musl': 0.41.0
+      '@cipherstash/auth-win32-x64-msvc': 0.41.0
+
   '@cipherstash/eql@3.0.2': {}
+
+  '@cipherstash/protect-dynamodb@6.0.1(@cipherstash/protect@10.2.1)':
+    dependencies:
+      '@byteslice/result': 0.2.0
+      '@cipherstash/protect': 10.2.1
+
+  '@cipherstash/protect-ffi-darwin-arm64@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-darwin-arm64@0.28.0':
+    optional: true
+
+  '@cipherstash/protect-ffi-darwin-x64@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-darwin-x64@0.28.0':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.28.0':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.28.0':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-x64-musl@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-linux-x64-musl@0.28.0':
+    optional: true
+
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.18.1':
+    optional: true
+
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.28.0':
+    optional: true
+
+  '@cipherstash/protect-ffi@0.18.1':
+    dependencies:
+      '@neon-rs/load': 0.1.82
+    optionalDependencies:
+      '@cipherstash/protect-ffi-darwin-arm64': 0.18.1
+      '@cipherstash/protect-ffi-darwin-x64': 0.18.1
+      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.18.1
+      '@cipherstash/protect-ffi-linux-x64-gnu': 0.18.1
+      '@cipherstash/protect-ffi-linux-x64-musl': 0.18.1
+      '@cipherstash/protect-ffi-win32-x64-msvc': 0.18.1
+
+  '@cipherstash/protect-ffi@0.28.0':
+    dependencies:
+      '@neon-rs/load': 0.1.82
+    optionalDependencies:
+      '@cipherstash/protect-ffi-darwin-arm64': 0.28.0
+      '@cipherstash/protect-ffi-darwin-x64': 0.28.0
+      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.28.0
+      '@cipherstash/protect-ffi-linux-x64-gnu': 0.28.0
+      '@cipherstash/protect-ffi-linux-x64-musl': 0.28.0
+      '@cipherstash/protect-ffi-win32-x64-msvc': 0.28.0
+
+  '@cipherstash/protect@10.2.1':
+    dependencies:
+      '@byteslice/result': 0.2.0
+      '@cipherstash/protect-ffi': 0.18.1
+      '@cipherstash/schema': 2.0.2
+      zod: 3.25.76
+    optionalDependencies:
+      '@rollup/rollup-linux-x64-gnu': 4.24.0
+
+  '@cipherstash/schema@2.0.2':
+    dependencies:
+      zod: 3.25.76
+
+  '@cipherstash/stack@0.19.0(@supabase/supabase-js@2.112.3)(drizzle-orm@0.45.4(@types/pg@8.23.1)(gel@2.2.0)(pg@8.23.1)(postgres@3.4.9))(next@15.5.28(@types/node@26.2.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@byteslice/result': 0.2.0
+      '@cipherstash/auth': 0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)
+      '@cipherstash/protect-ffi': 0.28.0
+      evlog: 1.11.0(next@15.5.28(@types/node@26.2.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
+      uuid: 14.0.0
+      zod: 3.25.76
+    optionalDependencies:
+      '@cipherstash/auth-darwin-arm64': 0.41.0
+      '@cipherstash/auth-darwin-x64': 0.41.0
+      '@cipherstash/auth-linux-arm64-gnu': 0.41.0
+      '@cipherstash/auth-linux-x64-gnu': 0.41.0
+      '@cipherstash/auth-linux-x64-musl': 0.41.0
+      '@cipherstash/auth-win32-x64-msvc': 0.41.0
+      '@supabase/supabase-js': 2.112.3
+      drizzle-orm: 0.45.4(@types/pg@8.23.1)(gel@2.2.0)(pg@8.23.1)(postgres@3.4.9)
+    transitivePeerDependencies:
+      - '@nuxt/kit'
+      - h3
+      - next
+      - nitro
+      - nitropack
+      - ofetch
+      - react
 
   '@clack/core@1.5.1':
     dependencies:
@@ -4636,6 +4940,8 @@ snapshots:
 
   '@neon-rs/cli@0.2.6': {}
 
+  '@neon-rs/load@0.1.82': {}
+
   '@neon-rs/load@0.2.6': {}
 
   '@next/env@15.5.28': {}
@@ -4941,6 +5247,9 @@ snapshots:
     optional: true
 
   '@rollup/rollup-linux-s390x-gnu@4.64.12':
+    optional: true
+
+  '@rollup/rollup-linux-x64-gnu@4.24.0':
     optional: true
 
   '@rollup/rollup-linux-x64-gnu@4.60.4':
@@ -6636,6 +6945,8 @@ snapshots:
   universalify@0.1.2: {}
 
   unpipe@1.0.0: {}
+
+  uuid@14.0.0: {}
 
   uuid@14.0.3: {}
 
