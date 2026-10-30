@@ -12,6 +12,39 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Test several members of one array element of a `JsonSearch` field
+  (#1442).** A field whose `ordered=` paths name members beneath an array's
+  wildcard (`$.contacts[*].relationship;$.contacts[*].calls`) gets
+  `Fields.<Field>.Elements.<Array>.Match`, one accessor per array, named as
+  `At` names a path (`Elements.Contacts`). `Match(ctx, cipher, opts,
+  predicates...)` returns an `eql.JSONSearchElementsQuery` for
+  `eql_v4.json_tree_element_match(col, $1::eql_v4.query_json_elements)`,
+  which finds a row where one element passes every predicate. An `EqAt` and
+  an ordering at the array's paths can each be answered by a different
+  element. The generated `Paths` names each array's ordered members, nested
+  as the JSON nests them (`Paths.Profile.Contacts.Relationship`), and
+  `encrypt.AtPath(path)` makes the predicates: `Eq`, `Lt`, `Lte`, `Gt`,
+  `Gte` and `Between`. A path's type, `encrypt.Path[E, T]`, carries its
+  array and the member's Go type from the document's struct (`any` for a
+  `json.RawMessage`), so a value of another type, or a predicate on another
+  array's member, does not compile. `Paths` holds only fields, so no JSON
+  key is reserved. For a member named at run time, the array accessor's
+  `Member("relationship")` makes the same predicates with `any` values.
+  Each comparison is of the member's ordering term, so `Eq` compares text
+  case- and accent-folded and integers past 2^53 can tie; `EqAt` stays
+  exact. A member named at run time that the field does not order is
+  refused before the engine is asked, with `encrypt.ErrTerm`, naming the
+  member and the array; no predicates, a zero `ElementPredicate` and a
+  member with a wildcard are refused with `encrypt.ErrEncoding`. An array
+  whose members `Paths` cannot name (a key with no Go name, or one name for
+  two paths) gets no accessor and a notice, as two arrays with one
+  accessor name do. A row whose array is
+  longer than `JSONReadOptions.WildcardBound` (64 by default) fails the
+  query with SQLSTATE 22023. An `ElementPredicate` prints and logs its
+  member and comparison, never its values. The embedded EQL guest now names
+  the `eql_v4.query_json_elements` domain, so `Checker.Operators` lists
+  `element_match` (input `path_predicates`) on a field that orders a path.
+
 - **A two-letter word is searchable in `TextMatch`, `TextSearch` and
   `TextSearchOre` (#1309).** The EQL v4 match types index each two-letter
   word whole, beside the 3-grams of the text, so a two-letter surname such

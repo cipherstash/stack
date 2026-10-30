@@ -242,6 +242,29 @@
 // A selection or a subtree read opens values as JSON text ([JSONValue],
 // [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
 //
+// Two queries at an array's paths can each be answered by a different
+// element. To test several members of one element together, use Match on
+// the array's accessor under Elements, which a field has for each array
+// whose elements have an ordered member. The generated Paths names those
+// members, nested as the JSON nests them, and [AtPath] makes a predicate
+// from one:
+//
+//	q, err := customers.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+//		encrypt.AtPath(customers.Paths.Profile.Visits.Place).Eq("home"),
+//		encrypt.AtPath(customers.Paths.Profile.Visits.At).Gt(15),
+//	)
+//	// WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)
+//
+// A [Path] carries its array and the member's Go type, so a value of
+// another type, or a predicate on another array's member, does not
+// compile. For a filter built at run time, the array accessor's Member
+// names the member as text: Visits.Member("place").Eq("home").
+//
+// Each comparison is of the member's ordering term, so [MemberTest.Eq]
+// compares text case- and accent-folded, and integers past 2^53 can tie. A row whose
+// array is longer than [JSONReadOptions.WildcardBound] (64 by default)
+// fails the query with SQLSTATE 22023.
+//
 // # Cancellation
 //
 // Every call takes a [context.Context], and a call whose context is
