@@ -7,6 +7,9 @@
 - [Stack Encrypt](./packages/stack-encrypt/CONTEXT.md) — encrypts values under
   per-value ZeroKMS data keys and derives searchable terms from them, for Rust
   and, through a WASI guest, Go.
+- [Migrate](./languages/typescript/packages/migrate/CONTEXT.md) — moves an
+  existing column between plaintext and encrypted form, resumably, for the
+  Stack CLI and customer workers.
 
 ## Relationships
 
