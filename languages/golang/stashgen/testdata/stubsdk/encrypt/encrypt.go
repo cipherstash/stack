@@ -145,6 +145,29 @@ type JSONReadOptions struct{ WildcardBound uint32 }
 // JSONRange is both bounds of a between at a path.
 type JSONRange[Q ~[]byte] struct{ Low, High Q }
 
+// Path is one ordered member of an array's elements: E is the array, T
+// the member's Go type.
+type Path[E, T any] struct{ _ *E }
+
+// NewPath is the Path of member below array.
+func NewPath[E, T any](array, member string) Path[E, T] { return Path[E, T]{} }
+
+// AtPath is the comparisons of the member at p.
+func AtPath[E, T any](p Path[E, T]) MemberTest[E, T] { return MemberTest[E, T]{} }
+
+// MemberTest makes the predicates on one member of an array's elements.
+type MemberTest[E, T any] struct{ _ *T }
+
+func (m MemberTest[E, T]) Eq(v T) ElementPredicate[E]           { return ElementPredicate[E]{} }
+func (m MemberTest[E, T]) Lt(v T) ElementPredicate[E]           { return ElementPredicate[E]{} }
+func (m MemberTest[E, T]) Lte(v T) ElementPredicate[E]          { return ElementPredicate[E]{} }
+func (m MemberTest[E, T]) Gt(v T) ElementPredicate[E]           { return ElementPredicate[E]{} }
+func (m MemberTest[E, T]) Gte(v T) ElementPredicate[E]          { return ElementPredicate[E]{} }
+func (m MemberTest[E, T]) Between(lo, hi T) ElementPredicate[E] { return ElementPredicate[E]{} }
+
+// ElementPredicate is one test on a member of the elements of the array E.
+type ElementPredicate[E any] struct{ _ *E }
+
 // JSONSelection is a prepared `->` on a JSONSearch field.
 type JSONSelection[E ~[]byte] struct{ _ E }
 

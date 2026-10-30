@@ -140,6 +140,54 @@ type TargetOptions struct {
 	Ordered []string
 }
 
+// ElementArray is an array of a document whose elements have ordered
+// members: the path through the array's elements ($.contacts[*]), and each
+// ordered path beneath it as a member of one element (relationship,
+// address.city). The element predicate (element_match) tests these members
+// of one element together.
+type ElementArray struct {
+	Path    string
+	Members []string
+}
+
+// ElementArrays groups the ordered paths by the array each one's last
+// wildcard names: $.contacts[*].relationship and
+// $.contacts[*].address.city give the array $.contacts[*] with the members
+// relationship and address.city. A path with no wildcard, one that ends
+// at its wildcard, or one whose member crosses another array has no
+// element member. Only paths a stash tag spells are read ($, then .key,
+// [n] and [*] steps): a path with a quoted key has none. Arrays and
+// members are in the order the paths are given.
+func (o *TargetOptions) ElementArrays() []ElementArray {
+	if o == nil {
+		return nil
+	}
+	var arrays []ElementArray
+	index := map[string]int{}
+	for _, path := range o.Ordered {
+		if strings.ContainsAny(path, `"'`) {
+			continue
+		}
+		at := strings.LastIndex(path, "[*]")
+		if at < 0 {
+			continue
+		}
+		base, rest := path[:at+len("[*]")], path[at+len("[*]"):]
+		member, ok := strings.CutPrefix(rest, ".")
+		if !ok || member == "" || strings.Contains(member, "[") {
+			continue
+		}
+		i, seen := index[base]
+		if !seen {
+			i = len(arrays)
+			index[base] = i
+			arrays = append(arrays, ElementArray{Path: base})
+		}
+		arrays[i].Members = append(arrays[i].Members, member)
+	}
+	return arrays
+}
+
 // wire is the options object as the plan spells it: only the options set.
 func (o *TargetOptions) wire() vcvalue.Object {
 	out := vcvalue.Object{}
@@ -572,7 +620,8 @@ type Operator struct {
 	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
 	// gte, between or matches; for a field that stores a JSON document,
 	// contains, contained_by, eq_at, lt_at, lte_at, gt_at, gte_at,
-	// between_at, selector, subtree, children or child_count.
+	// between_at, selector, subtree, children, child_count or
+	// element_match.
 	Name string
 	// Fidelity is how far the server's answer can be trusted.
 	Fidelity Fidelity
@@ -583,7 +632,7 @@ type Operator struct {
 	Index Output
 	// Input is the shape of the operator's input, as the engine names it:
 	// value (one value of the field's kind), pair (two, low then high),
-	// json, path_json, path_pair, path or path_bound (objects of named
-	// inputs, for a document's operators).
+	// json, path_json, path_pair, path, path_bound or path_predicates
+	// (objects of named inputs, for a document's operators).
 	Input string
 }

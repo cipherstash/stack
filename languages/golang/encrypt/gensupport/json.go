@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -239,6 +241,100 @@ func JSONBetweenAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt
 		return encrypt.JSONRange[Q]{}, err
 	}
 	return encrypt.JSONRange[Q]{Low: Q(term.Terms[0]), High: Q(term.Terms[1])}, nil
+}
+
+// JSONElementMatch derives element_match on a JSON field: the one operand
+// eql_v4.json_tree_element_match takes, which is true of a row where some
+// element of the array at path passes every predicate. path is an array
+// through its last wildcard ($.contacts[*]) that the field orders members
+// beneath ([record.TargetOptions.ElementArrays]).
+//
+// Refused before the engine is asked, each wrapping the sentinel the
+// engine's own refusal would: no predicates, a zero ElementPredicate, or a
+// predicate on the zero Path, which names no member
+// ([encrypt.ErrEncoding]); a member with a wildcard ([encrypt.ErrEncoding]);
+// a member whose full path the field does not order ([encrypt.ErrTerm]),
+// naming the member, the array and the members it orders. A member read
+// from the generated Paths is one the field orders; a member named at run
+// time, through the array accessor's Member, may not be. A value is
+// written as [JSONText] writes it. What the engine refuses past these, a
+// value that is not a number or a string say, is its [encrypt.Diagnostic].
+// opts.WildcardBound 0 sends no bound, and the engine's default, 64,
+// applies.
+func JSONElementMatch[Q ~[]byte, T, E any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions, predicates []encrypt.ElementPredicate[E]) (Q, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if len(predicates) == 0 {
+		return nil, fmt.Errorf("%w: gensupport: %s: Match at %s needs at least one predicate: with none it is true of every row with an element", encrypt.ErrEncoding, f.name, path)
+	}
+	members := f.elementMembers(path)
+	list := make([]any, len(predicates))
+	for i, p := range predicates {
+		member, op, values := p.Member(), p.Op(), p.Values()
+		if op == "" {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: predicate %d is a zero ElementPredicate; make one with encrypt.AtPath and a path from the generated Paths, or with the array's Member", encrypt.ErrEncoding, f.name, path, i)
+		}
+		if member == "" {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: predicate %d names no member, as a zero encrypt.Path does; read the path from the generated Paths (%s)", encrypt.ErrEncoding, f.name, path, i, orderedMembers(members))
+		}
+		if strings.Contains(member, "[*]") {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: the member %q has a wildcard; a member names one field of each element (%s)", encrypt.ErrEncoding, f.name, path, member, orderedMembers(members))
+		}
+		if !slices.Contains(members, member) {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: the member %q is not ordered, so no element carries a term to compare (%s); order its full path in the field's tag, ordered=", encrypt.ErrTerm, f.name, path, member, orderedMembers(members))
+		}
+		entry := vcvalue.Object{{Key: "member", Value: member}, {Key: "op", Value: op}}
+		// Each comparison gives its op its values: between the low and
+		// the high, every other op one.
+		keys := []string{"json"}
+		if op == "between" {
+			keys = []string{"low", "high"}
+		}
+		for j, key := range keys {
+			text, err := f.jsonOperand(values[j])
+			if err != nil {
+				return nil, err
+			}
+			entry = append(entry, vcvalue.Field{Key: key, Value: text})
+		}
+		list[i] = entry
+	}
+	input := vcvalue.Object{{Key: "path", Value: path}}
+	if opts.WildcardBound != 0 {
+		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
+	}
+	input = append(input, vcvalue.Field{Key: "predicates", Value: list})
+	term, err := f.jsonTerm(ctx, c, "element_match", "eql", 1, input)
+	if err != nil {
+		return nil, err
+	}
+	return Q(term.Terms[0]), nil
+}
+
+// orderedMembers says which members of an array's elements the field
+// orders.
+func orderedMembers(members []string) string {
+	if len(members) == 0 {
+		return "the field orders no member beneath this array"
+	}
+	return "the field orders " + strings.Join(members, ", ") + " beneath this array"
+}
+
+// elementMembers are the members the field orders beneath the array at
+// path, as its declaration's ordered paths give them.
+func (f Field[T]) elementMembers(path string) []string {
+	if f.plan == nil {
+		return nil
+	}
+	if pf := f.plan.Field(f.name); pf != nil {
+		for _, a := range pf.TargetOptions.ElementArrays() {
+			if a.Path == path {
+				return a.Members
+			}
+		}
+	}
+	return nil
 }
 
 // JSONSelect prepares `->` at a path on a JSON field: the selector to
