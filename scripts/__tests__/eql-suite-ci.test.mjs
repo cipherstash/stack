@@ -591,8 +591,30 @@ const RUST_CACHE_STEPS = workflowFiles().flatMap((relPath) => {
   )
 })
 
-/** The rust-cache steps in EQL's jobs. */
-const EQL_RUST_CACHE_STEPS = RUST_CACHE_STEPS.filter(({ eql }) => eql)
+/**
+ * Whether a rust-cache step names the root of another Cargo workspace: a
+ * directory outside the EQL tree with its own `Cargo.lock`. A job that builds
+ * both EQL and that workspace (tests-python.yml's `live` builds the Python
+ * wheel and the EQL bundle) caches each in its own step, and the other
+ * workspace's step is right where it is. A member of the EQL workspace, or
+ * the monorepo root, is not another workspace, so this check still catches
+ * both.
+ */
+const namesAnotherWorkspace = ({ step }) => {
+  const dir = step?.with?.workspaces
+  return (
+    typeof dir === 'string' &&
+    dir !== '.' &&
+    dir !== CARGO_WORKSPACE &&
+    !dir.startsWith(`${CARGO_WORKSPACE}/`) &&
+    existsSync(join(REPO_ROOT, dir, 'Cargo.lock'))
+  )
+}
+
+/** The rust-cache steps in EQL's jobs that cache the EQL workspace. */
+const EQL_RUST_CACHE_STEPS = RUST_CACHE_STEPS.filter(
+  (entry) => entry.eql && !namesAnotherWorkspace(entry),
+)
 
 const stepLabel = ({ relPath, jobName }, detail) =>
   `${relPath} (${jobName}): ${detail}`

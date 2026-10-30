@@ -31,13 +31,18 @@ pub fn detect() -> Result<(), Refusal> {
         .transport(NoRequest)
         .detect()
         .map(drop)
-        .map_err(|error| {
-            let refused = Refusal::of(&error);
-            Refusal {
-                message: message(&error).unwrap_or(refused.message.clone()),
-                ..refused
-            }
-        })
+        .map_err(|error| refusal(&error))
+}
+
+/// An auth error as the SDK's refusal, with the message for a Python user.
+/// The shared client ([`crate::client`]) reports its own credential errors
+/// through this, so the two paths agree.
+pub fn refusal(error: &AuthError) -> Refusal {
+    let refused = Refusal::of(error);
+    match message(error) {
+        Some(message) => Refusal { message, ..refused },
+        None => refused,
+    }
 }
 
 /// The message for a Python user, where the engine's names a Rust API or

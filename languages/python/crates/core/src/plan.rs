@@ -29,15 +29,23 @@ pub enum Column<'a> {
 ///
 /// The engine's refusal, as a [`Refusal`].
 pub fn check(table: &str, fields: &[(&str, Column<'_>)]) -> Result<(), Refusal> {
+    build(table, fields).map(drop)
+}
+
+/// The engine's plan for a model stored in `table`, with `fields` in
+/// declaration order: what [`check`] checks, kept for `encrypt`.
+///
+/// # Errors
+///
+/// As [`check`].
+pub fn build(table: &str, fields: &[(&str, Column<'_>)]) -> Result<record::Plan, Refusal> {
     // A frame of strings and lists of strings always encodes.
     let frame = dynamic::frame::serde::to_vec(&Wire { table, fields })
         .expect("a plan of strings encodes as a frame");
-    record::plan_with(&frame, &targets::resolver())
-        .map(drop)
-        .map_err(|error| refusal(&error))
+    record::plan_with(&frame, &targets::resolver()).map_err(|error| refusal(&error))
 }
 
-fn refusal(error: &dynamic::Error) -> Refusal {
+pub fn refusal(error: &dynamic::Error) -> Refusal {
     let payload = error.payload();
     Refusal {
         field: payload

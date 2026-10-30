@@ -2,13 +2,18 @@
 //! linked and tested without a Python interpreter.
 //!
 //! It holds the engine commit the build recorded (`build.rs`), the engine's
-//! check of a model's plan ([`plan`]), and the credential lookup
-//! ([`credentials`]). Both report an engine error as a [`refusal::Refusal`].
-//! The Python SDK spec (#1341, "Layout") says what else belongs here.
+//! check of a model's plan ([`plan`]), the credential lookup
+//! ([`credentials`]), the one engine client a process shares ([`client`]),
+//! the value rules ([`values`]) and `encrypt` itself ([`encrypt`]). Each
+//! reports an engine error as a [`refusal::Refusal`]. The Python SDK spec
+//! (#1341, "Layout") says what else belongs here.
 
+pub mod client;
 pub mod credentials;
+pub mod encrypt;
 pub mod plan;
 pub mod refusal;
+pub mod values;
 
 // The resolver file below holds the EQL types only under this feature.
 #[cfg(not(feature = "eql"))]

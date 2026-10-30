@@ -93,10 +93,12 @@ _PASSTHROUGH_TYPES = (str, int, float, bool, bytes, date, datetime, Decimal)
 
 @dataclass(frozen=True)
 class DeclaredField:
-    """One field in the plan: its name, which is the column, and its marker."""
+    """One field in the plan: its name, which is the column, its marker, and
+    the Python type its annotation declares."""
 
     name: str
     marker: Type[Marker]
+    value_type: type = dataclasses.field(default=object, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -173,7 +175,10 @@ def model(table: str, *, redact: bool = True) -> Callable[[T], T]:
             )
         declaration = Declaration(
             table=table,
-            fields=tuple(DeclaredField(name=f.name, marker=f.marker) for f in planned),
+            fields=tuple(
+                DeclaredField(name=f.name, marker=f.marker, value_type=f.value_type)
+                for f in planned
+            ),
             hints=hints,
             constructor=_constructor(cls),
             methods=methods,

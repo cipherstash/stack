@@ -3,7 +3,7 @@
 Walking skeleton. The package loads its native extension, ``_engine``, exposes
 two facts about the build, exports the markers a model's fields are declared
 with, reads a model's declaration with ``model``, and builds a ``Cipher`` for
-a declared class. Nothing encrypts yet.
+a declared class that encrypts its instances.
 """
 
 from stackencrypt import _engine, _eql
@@ -12,7 +12,12 @@ from stackencrypt._declaration import model
 # The markers for the EQL types the engine produces today. `_eql.__all__`
 # lists them; a marker the engine cannot produce yet stays in `_eql` only.
 from stackencrypt._eql import *  # noqa: F403
-from stackencrypt._errors import AuthenticationError, DeclarationError, StashError
+from stackencrypt._errors import (
+    AuthenticationError,
+    DeclarationError,
+    InvalidValueError,
+    StashError,
+)
 from stackencrypt._markers import Ignore, Passthrough
 
 # The distribution's version, and the commit of the engine it was built from.
@@ -25,6 +30,7 @@ __all__ = [
     "Cipher",
     "DeclarationError",
     "Ignore",
+    "InvalidValueError",
     "Passthrough",
     "StashError",
     "__engine__",

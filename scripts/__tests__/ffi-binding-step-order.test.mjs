@@ -230,6 +230,10 @@ const BINDING_EXEMPT_JOBS = new Map([
     'Rust: the proptest-e2e oracle encrypts through cipherstash-client, and never loads index.node or dist/wasm.',
   ],
   [
+    '.github/workflows/tests-python.yml / live',
+    'Rust and Python: the Python live tests encrypt through the stackencrypt extension, built from languages/python by maturin, which links stack-encrypt directly. It never loads index.node or dist/wasm.',
+  ],
+  [
     '.github/workflows/tests-golang.yml / live',
     'Go and Rust: the Go live tests encrypt through the stack-encrypt WASI guest, and the stack-encrypt examples link the crate directly. Neither loads index.node or dist/wasm.',
   ],
