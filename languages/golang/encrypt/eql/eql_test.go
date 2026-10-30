@@ -1,7 +1,11 @@
 package eql_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
@@ -98,5 +102,68 @@ func TestValuesRoundTripThroughTheDriverAndJSON(t *testing.T) {
 	var q eql.TextEqQuery
 	if err := json.Unmarshal([]byte("null"), &q); err != nil || q != nil {
 		t.Fatalf("null unmarshals to an empty value: %v, %v", q, err)
+	}
+}
+
+// An EQL value prints and logs its type's name and never its bytes, by
+// every verb, through %#v and slog, and inside a struct.
+func TestValuesPrintAndLogRedacted(t *testing.T) {
+	doc := []byte(`{"v":4,"i":{"t":"users","c":"email"},"c":"stack-encrypt:1:SECRET==","hm":"cafe"}`)
+	v := eql.TextEq(doc)
+	q := eql.JSONSearchPredicateQuery(`{"contains":{"sv":[{"s":"SECRET"}]}}`)
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
+		for _, c := range []struct {
+			value any
+			want  string
+		}{
+			{v, "eql.TextEq{[redacted]}"},
+			{q, "eql.JSONSearchPredicateQuery{[redacted]}"},
+			{eql.TextEq(nil), "eql.TextEq{}"},
+		} {
+			if got := fmt.Sprintf(verb, c.value); got != c.want {
+				t.Errorf("%s prints %s, want %s", verb, got, c.want)
+			}
+		}
+		if got := fmt.Sprintf(verb, struct{ Email eql.TextEq }{v}); strings.Contains(got, "SECRET") || strings.Contains(strings.ToUpper(got), "5345435245") {
+			t.Errorf("%s of a struct prints the value: %s", verb, got)
+		}
+	}
+	if v.String() != "eql.TextEq{[redacted]}" {
+		t.Errorf("String %s", v.String())
+	}
+	// slog records what String gives, the type's name with it.
+	var logged bytes.Buffer
+	slog.New(slog.NewJSONHandler(&logged, nil)).Info("row", "email", v, "q", q, "none", eql.TextEq(nil))
+	for _, want := range []string{`"email":"eql.TextEq{[redacted]}"`, `"q":"eql.JSONSearchPredicateQuery{[redacted]}"`, `"none":"eql.TextEq{}"`} {
+		if !strings.Contains(logged.String(), want) {
+			t.Errorf("slog records %s, without %s", logged.String(), want)
+		}
+	}
+	if strings.Contains(logged.String(), "SECRET") {
+		t.Errorf("slog records the value: %s", logged.String())
+	}
+	// The JSON is the value itself, as a conversion, the driver and
+	// encoding/json give it.
+	if got, err := v.Value(); err != nil || got != string(doc) {
+		t.Errorf("Value = %v, %v", got, err)
+	}
+	if string(v) != string(doc) || !bytes.Equal(json.RawMessage(v), doc) {
+		t.Error("a conversion does not give the JSON")
+	}
+	// Reveal is the named call that prints the JSON, as text through fmt
+	// and through slog's handlers.
+	if got := v.Reveal(); got != string(doc) {
+		t.Errorf("Reveal = %s, want the JSON", got)
+	}
+	if got := fmt.Sprint(v.Reveal()); got != string(doc) {
+		t.Errorf("fmt prints Reveal as %s", got)
+	}
+	logged.Reset()
+	slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})).Debug("row", "email", v.Reveal())
+	if !strings.Contains(logged.String(), "SECRET") {
+		t.Errorf("slog does not record the revealed JSON: %s", logged.String())
+	}
+	if eql.TextEq(nil).Reveal() != "" {
+		t.Error("an empty value reveals text")
 	}
 }
