@@ -7,12 +7,14 @@
 #
 # Nothing complained before because actionlint has never run in this repository;
 # lint-release.yml is what introduces it.
+#
+# RunsOn labels need no entry here. Each one starts with
+# `runs-on=${{ github.run_id }}`, and actionlint does not check a label that
+# contains an expression.
 self-hosted-runner:
   labels:
     - blacksmith-4vcpu-ubuntu-2404
-    # Every job in the imported EQL suite. Sixteen of them, and the size is
-    # deliberate upstream: the sharded SQLx matrix compiles the full Rust
-    # dependency tree, so the runner is chosen for the compile rather than for
-    # the tests. Kept as its own label rather than renamed to the 4vcpu one —
-    # rehoming those jobs is a cost decision, not a lint fix.
+    # Only light jobs still use this label: they run bash, compute a matrix or
+    # summarise results. The heavy jobs that used it, such as the Rust compiles
+    # and the Postgres suites, run on RunsOn instead.
     - blacksmith-16vcpu-ubuntu-2204

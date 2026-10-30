@@ -160,7 +160,7 @@ concurrency:
 jobs:
   integration:
     name: protect-ffi integration suite
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     # Generous, because a cold `build-ffi-binding` compiles the cipherstash
     # client graph from scratch. It is also the backstop for `mise run
     # start-db`, whose readiness loop retries `pg_isready` forever rather than
@@ -340,6 +340,24 @@ jobs:
           working_directory: languages/typescript/packages/protect-ffi
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2404
+
+      # Docker Hub refuses pulls without a login after too many from one
+      # address, and RunsOn machines reach that limit. With either secret empty,
+      # as on a fork's pull request, this step does nothing and pulls stay
+      # anonymous. scripts/__tests__/workflow-docker-hub-login.test.mjs
+      # requires it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOCKER_HUB_USERNAME" ] || [ -z "$DOCKER_HUB_PASSWORD" ]; then
+            echo "No Docker Hub credentials, so image pulls stay anonymous."
+            exit 0
+          fi
+          printf '%s' "$DOCKER_HUB_PASSWORD" |
+            docker login --username "$DOCKER_HUB_USERNAME" --password-stdin
 
       # One task, four things the suite cannot run without (see
       # integration-tests/tasks.toml): `pnpm install --frozen-lockfile` (a
