@@ -1,5 +1,36 @@
 # @cipherstash/migrate
 
+## 1.1.0
+
+### Minor Changes
+
+- bde5b73: `@cipherstash/migrate` adds `ColumnMigration`, one place for the rules of a column migration in either direction: which twin column it pairs with (the flag, the recorded pairing, the manifest, then the naming convention), its phase, whether a forced pass is owed, and which open migration in the other direction blocks it.
+  `ColumnMigration.load()` reads it from `cipherstash.cs_migrations`; `confirmDualWrites()`, `recordDropGenerated()` and `recordSourceRemoved()` record events, refusing those the rules forbid with a `ColumnMigrationError`.
+  The pure rules are exported as `deriveColumnMigration`, `openCounterpart`, `planPassFor`, `passProgress`, `deriveTwinName` and `manifestTwin`.
+
+  `runBackfill` and `runDecryptBackfill` now apply the rules themselves rather than leaving them to the caller.
+  Every event records whether its pass was forced.
+  An interrupted forced pass is finished as one by the next run, with or without `force`, and the result says why in `forcedBy`.
+  A forward backfill resumes after a failed run from its last committed position, counts its total once when it resumes a forced pass, and refuses to start while a reverse migration of the same columns is open.
+  `runBackfill` now throws a `ColumnMigrationError` with code `twin-mismatch` when `encryptedColumn` differs from the encrypted column already recorded for that column, rather than continuing into a different one.
+  A reverse backfill over a twin that already holds values is forced unless the caller confirmed dual-writes with the `plaintext-current` waiver.
+  Error events store the error's class (`errorName`) and safe details instead of its message, which could carry row data.
+
+  `stash decrypt plan`, `status`, `backfill` and `drop` resolve every column through `ColumnMigration`, so they always agree on the twin and the phase.
+  `decrypt status` flags `forward-open`, `twin-has-values` and `forced-pass-owed`.
+  `decrypt backfill --confirm-plaintext-current` is accepted on a later run as long as no forced pass has started, and refused while a started forced pass is owed.
+
+- bca02b6: `stash decrypt status|plan|backfill|drop` moves encrypted columns back to plaintext — the encrypt lifecycle run in reverse, with the same safety rails. `decrypt plan` adds a nullable plaintext twin per EQL v3 column with its type mapped back from the domain (`text*` → `text`, `timestamp*` → `timestamptz`, `json*` → `jsonb`, …): Drizzle schema lines for `drizzle-kit generate`, or a reviewed SQL migration elsewhere. `decrypt backfill` decrypts in resumable, checkpointed chunks, one `bulkDecrypt` (one ZeroKMS request) per chunk, default 500 rows. It refuses a plaintext column that a forward encryption started from and never dropped: only one migration may be open on a pair of columns, so finish or abandon the forward one first. When that column was already removed outside stash, `decrypt plan` finds it missing and records the forward migration as dropped (marked as observed), so the reverse migration can start. Its first run also refuses a plaintext column that already holds values, because those values may be stale and the backfill only fills NULLs: pass `--force` to overwrite them from the ciphertext or `--confirm-plaintext-current` to keep them. Once `--force` is chosen, or any forced run starts, every later run is forced until a forced pass completes, so an interrupted overwrite is always finished. The application keeps writing both columns until the drop migration is applied. Values bound to an end-user lock context cannot be decrypted with workspace credentials; they are skipped, counted, left NULL and reported, and `decrypt drop` refuses while any remain. `decrypt drop` re-verifies coverage at apply time, drops the indexes built on the column's EQL terms, drops the column, and with `--uninstall-eql` removes EQL v3 when it was the last encrypted column in the database.
+
+  `@cipherstash/migrate`: `runBackfill` now runs on a shared chunked engine (`runChunkedMigration`), which also drives the new `runDecryptBackfill`. Forward behaviour and recorded event details are unchanged. Adds `runDecryptBackfill` (resumes after a failed run; `PlaintextWriteError` keeps decrypted values out of write errors; chunk size capped at `MAX_DECRYPT_CHUNK_SIZE`), `columnHasValues`, `countUndecrypted`, `fetchUndecryptedPage`, `plaintextTypeForEqlDomain`, `columnSqlType`, `listColumnIndexes`, `primaryKeyColumns`, `countEqlColumnsInDatabase`, `removeManifestColumn`, and the reverse event/phase vocabulary (`decrypt_started`, `decrypt_checkpoint`, `decrypted`, `encrypted_dropped`; `decrypt-dual-writing`, `decrypting`, `decrypted`, `encrypted-dropped`), recorded against the encrypted column. `MigrationPhase` and `MigrationEvent` gain those members, so an exhaustive `switch` over them needs the new cases.
+
+### Patch Changes
+
+- f7f1c76: The package's source links now point at its folder under
+  `languages/typescript/` in cipherstash/stack. The previous release linked to
+  its old folder under `packages/`, which no longer exists, so the README's
+  source links and the npm page's repository link returned 404.
+
 ## 1.0.0
 
 ### Major Changes
