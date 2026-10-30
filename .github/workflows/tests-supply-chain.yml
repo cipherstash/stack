@@ -57,6 +57,7 @@ jobs:
   verify-no-caching-in-release-workflows:
     name: Verify no caching in release workflows
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Repo

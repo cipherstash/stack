@@ -22,6 +22,7 @@ jobs:
   lint:
     name: Lint (Biome)
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -54,6 +55,7 @@ jobs:
   run-tests:
     name: Run Tests (Node ${{ matrix.node-version }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 25
     strategy:
       matrix:
         node-version: [22, 24]
@@ -398,6 +400,7 @@ jobs:
   e2e-tests:
     name: Run E2E Tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
     # are set. We expose them at the job level so the wizard subprocess
@@ -479,6 +482,7 @@ jobs:
   wasm-e2e-tests:
     name: Run WASM E2E Tests (Deno)
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 35
 
     permissions:
       contents: read
@@ -622,6 +626,7 @@ jobs:
   run-tests-bun:
     name: Run Tests (Bun)
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
     continue-on-error: true
 
     services:
