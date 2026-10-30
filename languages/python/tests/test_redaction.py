@@ -13,7 +13,7 @@ from stackencrypt import DeclarationError, Ignore, Passthrough, TextEq
 from stackencrypt._redact import SEALED
 
 SECRET = "alice@example.com"
-EXPECTED = "User(email=[sealed], age=42)"
+EXPECTED = "User(email=<sealed>, age=42)"
 
 
 def declare_dataclass():
@@ -130,7 +130,7 @@ def test_a_repr_inherited_from_a_base_is_replaced_not_refused():
     class User(ReprBase):
         email: Annotated[str, TextEq]
 
-    assert repr(User(email=SECRET)) == "User(email=[sealed])"
+    assert repr(User(email=SECRET)) == "User(email=<sealed>)"
     assert repr(ReprBase()) == "from the base"
 
 
@@ -167,7 +167,7 @@ def test_a_passthrough_value_is_read_without_running_a_descriptor():
         def __getattr__(self, name):
             raise RuntimeError(f"{name} was read")
 
-    assert repr(User(email=SECRET)) == "User(email=[sealed], age=<unset>)"
+    assert repr(User(email=SECRET)) == "User(email=<sealed>, age=<unset>)"
 
 
 def test_a_class_level_default_is_shown():
@@ -179,8 +179,8 @@ def test_a_class_level_default_is_shown():
         def __init__(self, **kwargs):
             vars(self).update(kwargs)
 
-    assert repr(User(email=SECRET)) == "User(email=[sealed], age=7)"
-    assert repr(User(email=SECRET, age=8)) == "User(email=[sealed], age=8)"
+    assert repr(User(email=SECRET)) == "User(email=<sealed>, age=7)"
+    assert repr(User(email=SECRET, age=8)) == "User(email=<sealed>, age=8)"
 
 
 def test_an_unset_slot_is_shown_as_unset():
@@ -194,8 +194,8 @@ def test_an_unset_slot_is_shown_as_unset():
             for name, value in kwargs.items():
                 setattr(self, name, value)
 
-    assert repr(User(email=SECRET)) == "User(email=[sealed], age=<unset>)"
-    assert repr(User(email=SECRET, age=9)) == "User(email=[sealed], age=9)"
+    assert repr(User(email=SECRET)) == "User(email=<sealed>, age=<unset>)"
+    assert repr(User(email=SECRET, age=9)) == "User(email=<sealed>, age=9)"
 
 
 def test_a_hand_written_str_is_refused():

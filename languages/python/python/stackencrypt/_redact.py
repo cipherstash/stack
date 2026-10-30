@@ -2,7 +2,7 @@
 
 The decorator replaces the class's ``__repr__``, ``__str__`` and
 ``__rich_repr__`` (the hook ``rich`` prints and pretty-prints through). Every
-sealed field shows ``[sealed]``, a passthrough field shows its value, and an
+sealed field shows ``<sealed>``, a passthrough field shows its value, and an
 ``Ignore`` field is left out. Nothing else is covered: ``dataclasses.asdict``,
 Pydantic's ``model_dump``, ``vars`` and ``__dict__`` still return plaintext,
 and so does a debugger that reads attributes.
@@ -23,7 +23,7 @@ from typing import Any, Callable, Iterator, Sequence, Tuple
 
 
 class _Placeholder:
-    """What a repr shows in place of a value: ``[sealed]`` or ``<unset>``."""
+    """What a repr shows in place of a value: ``<sealed>`` or ``<unset>``."""
 
     def __init__(self, text: str) -> None:
         self._text = text
@@ -32,7 +32,9 @@ class _Placeholder:
         return self._text
 
 
-SEALED = _Placeholder("[sealed]")
+# Angle brackets, not Go's `[sealed]`: that is a valid tag in rich's markup,
+# so `rich.print(repr(user))` would show the field as empty.
+SEALED = _Placeholder("<sealed>")
 UNSET = _Placeholder("<unset>")
 UNAVAILABLE = _Placeholder("<unavailable>")
 
@@ -94,7 +96,7 @@ def install(cls: type, fields: Sequence[Tuple[str, bool]]) -> Tuple[Callable[...
         return __repr__(self)
 
     # rich reprs each value itself, so a passthrough value is yielded as it
-    # is, and a sealed one as the placeholder whose repr is [sealed].
+    # is, and a sealed one as the placeholder whose repr is <sealed>.
     def __rich_repr__(self: object) -> Iterator[Tuple[str, object]]:
         for name, in_clear in shown:
             yield name, (_value(self, name) if in_clear else SEALED)

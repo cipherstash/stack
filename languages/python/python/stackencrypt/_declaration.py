@@ -143,7 +143,7 @@ def model(table: str, *, redact: bool = True) -> Callable[[T], T]:
             email: Annotated[str, TextEq]
             age: Annotated[int, Passthrough]
 
-    ``repr`` and ``str`` of an instance then show ``[sealed]`` for each sealed
+    ``repr`` and ``str`` of an instance then show ``<sealed>`` for each sealed
     field. ``redact=False`` keeps the class's own ``__repr__`` and
     ``__str__``, which may show plaintext.
     """
