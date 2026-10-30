@@ -2,11 +2,16 @@
 '@cipherstash/stack-prisma': minor
 ---
 
-Move the bundled EQL v3 migrations to **eql-3.1.0**. EQL 3.1.0 is a minor
-release for the Rust `eql-bindings` crate. Its install SQL changes only the
-version stamp: `eql_v3.version()` returns `'3.1.0'` and the `eql_v3` schema
-comment reads `'3.1.0'`. No function, operator, domain or index behaviour
-changes.
+Move the bundled EQL v3 migrations to **eql-3.1.0**. Its install SQL changes
+the version stamp (`eql_v3.version()` returns `'3.1.0'` and the `eql_v3`
+schema comment reads `'3.1.0'`) and the ORE block comparator behind every
+ordered ORE operator and the ORE operator class. The comparator now runs a
+constant number of operations whatever two values share, closing a timing
+leak. Ordering results are unchanged for well-formed values, but a block-ORE
+text value with a malformed or mismatched-width term now raises on every
+comparison against it. Check your `_ore` text columns before migrating; see
+[U-004](../../../../packages/eql/docs/upgrading/v3.1.md#u-004-block-ore-text-comparisons-check-every-term).
+No domain, wire format or index term changes.
 
 Two artefacts carry the new bundle:
 
@@ -52,4 +57,6 @@ baseline. The team chose it on these numbers: `@cipherstash/stack-prisma` had
 481 npm downloads in the 30 days to 3 October 2026, and 384 in the last 7 of
 those days, 305 of them on the 1.2.0 release day. The append-only alternative,
 a second `from: null` genesis edge, would add another permanent ~2.6 MB copy of
-the bundle for a release that changes no SQL behaviour.
+the bundle. That choice was made when 3.1.0 changed only the version stamp; the
+comparator change came after it and does not alter the trade, since every
+database reaches the same bundle either way.

@@ -121,10 +121,14 @@ const client = await Encryption({ schemas: [users] });
 // strategy serves every user. (On this native entry the client calls getJwt
 // from a background task, so a request read from AsyncLocalStorage is not
 // visible there yet — pass it in, or build the client per request; see
-// cipherstash/stack#1065.)
+// cipherstash/stack#1065.) create() returns a Result: unwrap it and pass the
+// strategy itself, not the Result envelope.
+const strategy = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt(req));
+if (strategy.failure) throw new Error(strategy.failure.error.message);
+
 const client = await Encryption({
   schemas: [users],
-  config: { authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt(req)) },
+  config: { authStrategy: strategy.data },
 });
 ```
 
