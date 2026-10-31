@@ -364,6 +364,14 @@ async fn serde_stores_base64_text_or_raw_bytes() {
     assert_eq!(strict.to_bytes(), bytes);
 
     assert!(serde_json::from_str::<Ciphertext>("\"not base64!\"").is_err());
+    // A value of the wrong type names the form it should have had.
+    let wrong = serde_json::from_str::<Ciphertext>("42").unwrap_err();
+    assert!(
+        wrong
+            .to_string()
+            .contains("expected a sealed ciphertext as Base64 text or bytes"),
+        "{wrong}"
+    );
     // Valid Base64, but too short to be an envelope.
     assert!(serde_json::from_str::<Ciphertext>("\"AAAA\"").is_err());
 }
