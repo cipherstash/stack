@@ -325,7 +325,7 @@ pub struct EncryptBuilder<'a, S: ?Sized, K> {
 
 impl<'a, S: ?Sized, K: 'static> EncryptBuilder<'a, S, K> {
     /// Encrypt under `context`: one tree, sealed under that label, as
-    /// `keyset.encrypt(&value, label)` does. Text is parsed as a
+    /// `keyset.encrypt_tree(&value, label)` does. Text is parsed as a
     /// [`Label`] (`"documents/v2/body"` is three segments), and text that
     /// is not one is refused when the chain is awaited.
     pub fn context(self, context: impl IntoLabel) -> EncryptWithContext<'a, S, K> {

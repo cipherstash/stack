@@ -1,10 +1,10 @@
 error[E0277]: the trait bound `CallerContext: Default` is not satisfied
-  --> tests/ui/leaf_without_context.rs:17:39
+  --> tests/ui/leaf_without_context.rs:18:39
    |
-17 |     let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
+18 |     let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
    |                                       ^^^^^^^^^^^^ the trait `Default` is not implemented for `CallerContext`
    |
-note: required by a bound in `encrypt_into`
+note: required by a bound in `stack_encrypt::target::legacy::EncryptInto::encrypt_into`
   --> src/target/operations.rs
    |
    |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
@@ -14,12 +14,12 @@ note: required by a bound in `encrypt_into`
    |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
 error[E0277]: the trait bound `CallerContext: Default` is not satisfied
-  --> tests/ui/leaf_without_context.rs:18:39
+  --> tests/ui/leaf_without_context.rs:19:39
    |
-18 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
+19 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
    |                                       ^^^^^^^^^^^^ the trait `Default` is not implemented for `CallerContext`
    |
-note: required by a bound in `encrypt_into`
+note: required by a bound in `stack_encrypt::target::legacy::EncryptInto::encrypt_into`
   --> src/target/operations.rs
    |
    |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
@@ -29,14 +29,14 @@ note: required by a bound in `encrypt_into`
    |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
 error[E0277]: the trait bound `AeadContext: Default` is not satisfied
-  --> tests/ui/leaf_without_context.rs:19:41
+  --> tests/ui/leaf_without_context.rs:20:41
    |
-19 |     let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();
+20 |     let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();
    |                                         ^^^^^^^^^^ ------------ required by a bound introduced by this call
    |                                         |
    |                                         the trait `Default` is not implemented for `AeadContext`
    |
-note: required by a bound in `encrypt_into`
+note: required by a bound in `stack_encrypt::target::legacy::EncryptInto::encrypt_into`
   --> src/target/operations.rs
    |
    |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
@@ -46,14 +46,14 @@ note: required by a bound in `encrypt_into`
    |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
 error[E0277]: the trait bound `CallerContext: Default` is not satisfied
-  --> tests/ui/leaf_without_context.rs:23:34
+  --> tests/ui/leaf_without_context.rs:24:34
    |
-23 |     let _age = u32::decrypt_from(record, cipher).await.unwrap();
+24 |     let _age = u32::decrypt_from(record, cipher).await.unwrap();
    |                ----------------- ^^^^^^ the trait `Default` is not implemented for `CallerContext`
    |                |
    |                required by a bound introduced by this call
    |
-note: required by a bound in `decrypt_from`
+note: required by a bound in `stack_encrypt::target::legacy::DecryptFrom::decrypt_from`
   --> src/target/operations.rs
    |
    |     fn decrypt_from<'a, S, K: 'static>(
@@ -63,9 +63,9 @@ note: required by a bound in `decrypt_from`
    |                     ^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`
 
 error[E0277]: the trait bound `CallerContext: From<()>` is not satisfied
-  --> tests/ui/leaf_without_context.rs:27:49
+  --> tests/ui/leaf_without_context.rs:28:49
    |
-27 |     let _age: u32 = record.decrypt_into(cipher, ()).await.unwrap();
+28 |     let _age: u32 = record.decrypt_into(cipher, ()).await.unwrap();
    |                            ------------         ^^ the trait `From<()>` is not implemented for `CallerContext`
    |                            |
    |                            required by a bound introduced by this call

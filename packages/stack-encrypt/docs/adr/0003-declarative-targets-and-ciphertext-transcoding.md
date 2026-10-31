@@ -61,6 +61,13 @@ not close it. A concrete associated context type does not implicitly accept
 arbitrary context extensions; any extension facility must preserve the declared
 base context and be specified explicitly.
 
+Amended 2026-10-31: the opaque scalar `Ciphertext` is the one target-directed
+output that accepts empty context, because it is the cipher-directed
+contract in owned form: `keyset.encrypt(value)` seals what
+`keyset.encrypt_tree(value, ())` seals. It reaches the shared core through a
+separate entry. Every other target goes through the entry that takes a
+`NonEmpty`, so the nonempty requirement stays in the type.
+
 Transcoding consumes native encryption output through a custom encrypted-data
 protocol. It distinguishes sealed leaves, sequences, maps, authenticated absence
 and empty-container markers, passthrough metadata, and typed terms. Readers expose

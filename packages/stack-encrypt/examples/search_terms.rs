@@ -19,7 +19,8 @@
 //! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::EncryptInto;
+
+use stack_encrypt::target::legacy::EncryptInto;
 use stack_encrypt::{nonempty, EncryptFrom, StackCipher, StackCipherText};
 
 #[tokio::main(flavor = "current_thread")]

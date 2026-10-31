@@ -31,6 +31,24 @@ pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<T>,
 ) -> Pending<'a, StackCipherText, K> {
+    encrypt_opaque(source, cipher, context)
+}
+/// The opening half of [`encrypt_native`]; the context is nonempty.
+pub(crate) fn open_native<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext<'c>>(
+    tree: StackCipherText,
+    cipher: &'a StackCipher<K>,
+    context: NonEmpty<T>,
+) -> Pending<'a, P, K> {
+    open_opaque(tree, cipher, context)
+}
+/// [`encrypt_native`] for an opaque scalar, the one output whose context may
+/// be empty. Every other target goes through `encrypt_native`, so the
+/// nonempty requirement stays in its type.
+pub(crate) fn encrypt_opaque<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
+    source: S,
+    cipher: &'a KeysetCipher<'_, K>,
+    context: T,
+) -> Pending<'a, StackCipherText, K> {
     let context = context.into_context();
     let descriptor = Descriptor::from_piece(&context);
     if let Err(error) = descriptor.check() {
@@ -42,10 +60,11 @@ pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
         Err(error) => Pending::ready(cipher, Err(error)),
     }
 }
-pub(crate) fn open_native<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext<'c>>(
+/// The opening half of [`encrypt_opaque`].
+pub(crate) fn open_opaque<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext<'c>>(
     tree: StackCipherText,
     cipher: &'a StackCipher<K>,
-    context: NonEmpty<T>,
+    context: T,
 ) -> Pending<'a, P, K> {
     let context = context.into_context();
     let descriptor = Descriptor::from_piece(&context);

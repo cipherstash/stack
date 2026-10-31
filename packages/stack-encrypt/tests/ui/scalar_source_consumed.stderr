@@ -1,0 +1,19 @@
+error[E0382]: use of moved value: `value`
+ --> tests/ui/scalar_source_consumed.rs:5:10
+  |
+3 |     let value = String::from("secret");
+  |         ----- move occurs because `value` has type `std::string::String`, which does not implement the `Copy` trait
+4 |     let _ = value.encrypt_into::<Ciphertext, _>(keyset);
+  |                   ------------------------------------- `value` moved due to this method call
+5 |     drop(value);
+  |          ^^^^^ value used here after move
+  |
+note: `stack_encrypt::EncryptInto::encrypt_into` takes ownership of the receiver `self`, which moves `value`
+ --> src/target/conversion.rs
+  |
+  |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+  |                                        ^^^^
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+  |
+4 |     let _ = value.clone().encrypt_into::<Ciphertext, _>(keyset);
+  |                  ++++++++
