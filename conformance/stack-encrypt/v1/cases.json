@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "profile": "record-scalars-v1",
+  "seed": "0000000000000000000000000000000000000000000000000000000000000000",
+  "context": ["conformance"],
+  "field": "value",
+  "required_capabilities": [
+    "records",
+    "equality",
+    "context-binding",
+    "query-errors"
+  ],
+  "cases": [
+    {
+      "id": "i32-min",
+      "kind": "int32",
+      "input": {
+        "type": "int32",
+        "text": "-2147483648"
+      }
+    },
+    {
+      "id": "i32-max",
+      "kind": "int32",
+      "input": {
+        "type": "int32",
+        "text": "2147483647"
+      }
+    },
+    {
+      "id": "i64-min",
+      "kind": "int64",
+      "input": {
+        "type": "int64",
+        "text": "-9223372036854775808"
+      }
+    },
+    {
+      "id": "i64-max",
+      "kind": "int64",
+      "input": {
+        "type": "int64",
+        "text": "9223372036854775807"
+      }
+    },
+    {
+      "id": "u64-max",
+      "kind": "uint64",
+      "input": {
+        "type": "uint64",
+        "text": "18446744073709551615"
+      }
+    },
+    {
+      "id": "above-js-safe-integer",
+      "kind": "int64",
+      "input": {
+        "type": "int64",
+        "text": "9007199254740993"
+      }
+    },
+    {
+      "id": "text-unicode",
+      "kind": "string",
+      "input": {
+        "type": "string",
+        "text": "café 東京 🔐"
+      }
+    },
+    {
+      "id": "text-empty",
+      "kind": "string",
+      "input": {
+        "type": "string",
+        "text": ""
+      }
+    },
+    {
+      "id": "query-text-for-integer",
+      "kind": "int64",
+      "input": {
+        "type": "string",
+        "text": "sensitive-query-value"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "query-bool-for-integer",
+      "kind": "int64",
+      "input": {
+        "type": "bool",
+        "text": "true"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type"
+      }
+    },
+    {
+      "id": "query-null",
+      "kind": "int64",
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null_query"
+      }
+    }
+  ]
+}
