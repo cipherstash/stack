@@ -1084,6 +1084,7 @@ pub fn render_v4_inventory_rs() -> String {
             eql_domains::DocumentRole::Query,
             eql_domains::DocumentRole::LeafQuery,
             eql_domains::DocumentRole::ElementsQuery,
+            eql_domains::DocumentRole::PredicateQuery,
         ]);
         quote! { #query_entries #documents }
     };

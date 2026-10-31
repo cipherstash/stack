@@ -8,6 +8,94 @@
 --! @brief Element-scoped predicates on public.{{prefix}}_json_search: tests
 --!        that one element of an array satisfies them all.
 
+--! @brief Whether an entry is inside every bound of an ordering at one
+--!        path: what an element predicate's member and a compiled
+--!        predicate's `cmp` leaf each test of the entry they find.
+--! @internal
+--!
+--! `gt` by `>`, `gte` by `>=`, `lt` by `<` and `lte` by `<=`, the ordering
+--! operators an entry has against a {{prefix}}.query_json_leaf, joined by
+--! SQL `AND`; a bound `bounds` does not carry is no test. So it is NULL
+--! where a bound's comparison is: an entry that is NULL (no node at the
+--! path) or has no ordering term.
+--!
+--! @param entry public.{{prefix}}_json_entry The entry.
+--! @param bounds jsonb Bounds, as {{prefix}}_internal.json_tree_is_valid_bounds
+--!        validates them; other keys (a member's `t`) are not read.
+--! @return boolean Whether the entry satisfies every bound.
+--! @note LANGUAGE sql and not STRICT, so it inlines into its callers.
+CREATE FUNCTION {{prefix}}_internal.json_tree_within_bounds(entry public.{{prefix}}_json_entry, bounds jsonb)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$
+  SELECT (NOT bounds ? 'gt' OR {{prefix}}.gt(entry, (bounds -> 'gt')::{{prefix}}.query_json_leaf))
+     AND (NOT bounds ? 'gte' OR {{prefix}}.gte(entry, (bounds -> 'gte')::{{prefix}}.query_json_leaf))
+     AND (NOT bounds ? 'lt' OR {{prefix}}.lt(entry, (bounds -> 'lt')::{{prefix}}.query_json_leaf))
+     AND (NOT bounds ? 'lte' OR {{prefix}}.lte(entry, (bounds -> 'lte')::{{prefix}}.query_json_leaf))
+$$;
+
+--! @brief {{prefix}}.json_tree_element_match over a document already opened
+--!        and indexed: what that function and {{prefix}}.json_tree_match
+--!        each call, so a predicate with several element-scoped leaves
+--!        opens and indexes its row once.
+--! @internal
+--! @param iv bytea The document's `iv`, which salts its self tags.
+--! @param sv jsonb The document's entries.
+--! @param tags jsonb The document's self tags, each mapped to the entry's
+--!        ordinal in `sv`: the `nodes` {{prefix}}_internal.json_tree_index
+--!        builds.
+--! @param p jsonb The predicate, a valid {{prefix}}.query_json_elements.
+--! @return boolean As {{prefix}}.json_tree_element_match.
+--! @throws invalid_parameter_value As {{prefix}}.json_tree_element_match.
+CREATE FUNCTION {{prefix}}_internal.json_tree_element_match_opened(iv bytea, sv jsonb, tags jsonb, p jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+DECLARE
+  truncated boolean;
+  matched boolean;
+BEGIN
+  WITH
+    member AS MATERIALIZED (
+      SELECT m.i,
+             m.v,
+             -- The selector of the member's field: every bound carries it.
+             COALESCE(m.v -> 'gt', m.v -> 'gte', m.v -> 'lt', m.v -> 'lte') ->> 's' AS s
+      FROM jsonb_array_elements(p -> 'm') WITH ORDINALITY AS m(v, i)
+    ),
+    -- The node each member's `k`-th token names, by its self tag; a token
+    -- that names none yields no row.
+    node AS MATERIALIZED (
+      SELECT member.i, member.v, member.s, t.k, sv -> found.j AS entry
+      FROM member
+      CROSS JOIN LATERAL jsonb_array_elements_text(member.v -> 't') WITH ORDINALITY AS t(token, k)
+      CROSS JOIN LATERAL (
+        SELECT (tags ->> {{prefix}}_internal.json_tree_self_tag(iv, decode(t.token, 'base64')))::integer AS j
+      ) AS found
+      WHERE found.j IS NOT NULL
+    ),
+    satisfied AS (
+      SELECT node.k
+      FROM node
+      CROSS JOIN LATERAL (SELECT node.entry::public.{{prefix}}_json_entry AS entry) AS typed
+      WHERE node.entry ->> 's' = node.s
+        AND {{prefix}}_internal.json_tree_within_bounds(typed.entry, node.v)
+      GROUP BY node.k
+      HAVING count(DISTINCT node.i) = (SELECT count(*) FROM member)
+    )
+  SELECT EXISTS (SELECT 1 FROM node WHERE node.entry ->> 's' IS DISTINCT FROM node.s),
+         EXISTS (SELECT 1 FROM satisfied)
+  INTO truncated, matched;
+
+  IF truncated THEN
+    RAISE EXCEPTION 'an array the element predicate reads is longer than the bound it was derived to, so the predicate would answer over part of it'
+      USING ERRCODE = 'invalid_parameter_value',
+            HINT = 'Derive the predicate (element_match) with a wildcard_bound past the longest array.';
+  END IF;
+  RETURN matched;
+END;
+$$;
+
 --! @brief Whether some one element of an array in the document satisfies
 --!        every member of an element-scoped predicate.
 --!
@@ -53,68 +141,18 @@
 --! @note plpgsql, to raise, and so opaque to the planner: the call filters
 --!       a scan, as a subtree read in a predicate does. Narrow the rows with
 --!       an indexed predicate first, such as `@>` on the same values.
+--! @see {{prefix}}_internal.json_tree_element_match_opened
 CREATE FUNCTION {{prefix}}.json_tree_element_match(e public.{{prefix}}_json_search, p {{prefix}}.query_json_elements)
   RETURNS boolean
   LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
 DECLARE
-  truncated boolean;
-  matched boolean;
+  -- The document, decompressed once.
+  d jsonb := e::jsonb #> '{}'::text[];
+  tags jsonb;
 BEGIN
-  WITH
-    -- The document, decompressed and indexed once for every member.
-    raw AS MATERIALIZED (SELECT e::jsonb #> '{}'::text[] AS d),
-    doc AS MATERIALIZED (
-      SELECT {{prefix}}_internal.json_tree_iv(raw.d ->> 'h') AS iv,
-             raw.d -> 'sv' AS sv,
-             idx.nodes
-      FROM raw
-      CROSS JOIN LATERAL {{prefix}}_internal.json_tree_index(raw.d) AS idx
-    ),
-    member AS MATERIALIZED (
-      SELECT m.i,
-             m.v,
-             -- The selector of the member's field: every bound carries it.
-             COALESCE(m.v -> 'gt', m.v -> 'gte', m.v -> 'lt', m.v -> 'lte') ->> 's' AS s
-      FROM jsonb_array_elements(p::jsonb -> 'm') WITH ORDINALITY AS m(v, i)
-    ),
-    -- The node each member's `k`-th token names, by its self tag; a token
-    -- that names none yields no row.
-    node AS MATERIALIZED (
-      SELECT member.i, member.v, member.s, t.k, doc.sv -> found.j AS entry
-      FROM member
-      CROSS JOIN doc
-      CROSS JOIN LATERAL jsonb_array_elements_text(member.v -> 't') WITH ORDINALITY AS t(token, k)
-      CROSS JOIN LATERAL (
-        SELECT (doc.nodes ->> {{prefix}}_internal.json_tree_self_tag(doc.iv, decode(t.token, 'base64')))::integer AS j
-      ) AS found
-      WHERE found.j IS NOT NULL
-    ),
-    satisfied AS (
-      SELECT node.k
-      FROM node
-      CROSS JOIN LATERAL (SELECT node.entry::public.{{prefix}}_json_entry AS entry) AS typed
-      WHERE node.entry ->> 's' = node.s
-        AND (NOT node.v ? 'gt'
-             OR {{prefix}}.gt(typed.entry, (node.v -> 'gt')::{{prefix}}.query_json_leaf))
-        AND (NOT node.v ? 'gte'
-             OR {{prefix}}.gte(typed.entry, (node.v -> 'gte')::{{prefix}}.query_json_leaf))
-        AND (NOT node.v ? 'lt'
-             OR {{prefix}}.lt(typed.entry, (node.v -> 'lt')::{{prefix}}.query_json_leaf))
-        AND (NOT node.v ? 'lte'
-             OR {{prefix}}.lte(typed.entry, (node.v -> 'lte')::{{prefix}}.query_json_leaf))
-      GROUP BY node.k
-      HAVING count(DISTINCT node.i) = (SELECT count(*) FROM member)
-    )
-  SELECT EXISTS (SELECT 1 FROM node WHERE node.entry ->> 's' IS DISTINCT FROM node.s),
-         EXISTS (SELECT 1 FROM satisfied)
-  INTO truncated, matched;
-
-  IF truncated THEN
-    RAISE EXCEPTION 'an array the element predicate reads is longer than the bound it was derived to, so the predicate would answer over part of it'
-      USING ERRCODE = 'invalid_parameter_value',
-            HINT = 'Derive the predicate (element_match) with a wildcard_bound past the longest array.';
-  END IF;
-  RETURN matched;
+  SELECT idx.nodes INTO tags FROM {{prefix}}_internal.json_tree_index(d) AS idx;
+  RETURN {{prefix}}_internal.json_tree_element_match_opened(
+    {{prefix}}_internal.json_tree_iv(d ->> 'h'), d -> 'sv', tags, p::jsonb);
 END;
 $$;

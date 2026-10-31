@@ -520,6 +520,11 @@ mod native_functions;
 #[path = "json_tree/elements.rs"]
 mod elements;
 
+/// The compiled predicate, through a data plan, against the column and
+/// against `jsonb_path_match` over the plaintexts.
+#[path = "json_tree/predicate.rs"]
+mod predicate;
+
 /// Needs an EQL v4 installation. Extraction by selector opens to the leaf;
 /// the subtree walk by a client-derived token returns exactly the nodes
 /// under it and reassembles; the array functions count and list elements;
