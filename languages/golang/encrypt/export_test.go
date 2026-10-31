@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
@@ -192,4 +193,36 @@ func (k *Checker) CheckFrameForTest(ctx context.Context, encoded []byte) error {
 		return inst.call(ctx, inst.planCheck, buf(encoded))
 	})
 	return err
+}
+
+// OpenTreeForTest accepts stored tree shapes that record.Sealed cannot express.
+// It uses the normal guest export, transport codec and keyset options. The
+// returned plaintext transport buffer is wiped after decoding, as in Open.
+func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree any, plan *record.Plan, expected string) (any, error) {
+	encodedTree, err := marshalCipherText(tree)
+	if err != nil {
+		return nil, err
+	}
+	encodedPlan, err := vcffi.Marshal(plan.Wire())
+	if err != nil {
+		return nil, err
+	}
+	opts, err := vcffi.Marshal(options(cph.keyset, expected))
+	if err != nil {
+		return nil, err
+	}
+	out, err := cph.client.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.decryptRecord, buf(encodedTree), buf(encodedPlan), buf(opts))
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer wipe(out)
+	return vcffi.Unmarshal(out)
+}
+
+// OpenTreeForTest asks an uninitialised guest to run its normal read preflight.
+// A valid request reaches ErrState; an invalid one must fail before that point.
+func (k *Checker) OpenTreeForTest(ctx context.Context, tree any, plan *record.Plan, expected string) (any, error) {
+	return k.c.DefaultKeyset().OpenTreeForTest(ctx, tree, plan, expected)
 }

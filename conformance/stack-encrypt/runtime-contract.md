@@ -74,6 +74,8 @@ guest's lack of network requests is not proof of logical key-call counts.
 The 37 cases cover runtime writes, corresponding reads, and equality queries.
 They do not cover malformed stored records, authenticated type mismatches on
 read, context composition/preflight, provider failures, or other operators.
+The separate [read profile](read-contract.md) adds stored-shape, authenticated
+type and context-preflight cases.
 Fresh cross-language artifact exchange remains the scalar profile's coverage.
 
 Existing `value_kinds.json` and `query_operators.json` fixtures remain the
