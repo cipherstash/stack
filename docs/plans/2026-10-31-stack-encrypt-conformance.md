@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: first Rust/Go slice implemented; the complete contract is not frozen.
+Date: 2026-10-31. Status: scalar and declaration slices implemented; the complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -78,21 +78,43 @@ Implemented on `feat/stack-encrypt-conformance`, based directly on #1404.
 The corpus has eight positive cases and three query refusals. Local validation
 passes for native Rust, Go WASI, and fresh Go-to-Rust artifact exchange through
 `mise run test:conformance`. Rust clippy, the enabled Go linters, and 33 CI wiring
-checks also pass. The workflow changes are local; hosted CI has not run them.
+checks also pass. The work is in draft [PR #1460](https://github.com/cipherstash/stack/pull/1460),
+targeting #1404's branch. Local validation is distinct from hosted CI status.
 
 The first profile includes frozen typed frames and equality terms, frozen native
 ciphertexts, fresh native scalar and record round trips, and forbidden retrieval
 under a wrong context. The implementation adds no production API changes.
-The wider grammar, SQL requirements and Python/TypeScript runners remain open.
+SQL requirements and Python/TypeScript runners remain open.
+
+## Declaration checkpoint
+
+The [declaration grammar](../../conformance/stack-encrypt/declaration-grammar.md)
+records the implemented syntax and semantic rules, including accepted enum
+aliases, defaults, context composition, all 21 kinds against five scalar indexes,
+null policies and target-capability refusal. Its 201 cases run in native Rust
+and Go WASI without a cipher. Native Rust checks selected normalized plan
+observations; Go's existing checker exposes acceptance and diagnostics only.
+
+The profile fixes `NoTargets`. EQL resolver/catalog behavior and full JSON/SQL
+operation semantics remain later profiles. Malformed frames explicitly distinguish
+the native parser's diagnostic from the WASI boundary's earlier refusal.
+
+Local validation passes for both profiles (212 shared cases), fresh ciphertext
+exchange, Rust clippy/formatting, Go lint, Biome and 34 CI wiring checks.
+
+The [coverage map](../../conformance/stack-encrypt/coverage.md#consolidation-policy)
+records consolidation candidates. Shared case tables can replace duplicated
+expectations once coverage matches; language-specific and implementation tests
+remain. No existing tests have been removed.
 
 ## Follow-up slices
 
-- Add a formal grammar for the implemented declaration/request profile, including
-  unknown-field rules, defaults, normalized declarations, and unsupported features.
-  Generate structural schemas from shared models where faithful; keep semantic
-  validation normative and executable rather than assuming JSON Schema covers it.
-- Add shared positive and negative definition/request cases, stable diagnostic
-  fields, missing/null cases, full numeric kinds, and context composition vectors.
+- Extend the declaration grammar to EQL resolver capabilities and the operation
+  request profiles. Generate structural schemas from shared models where faithful;
+  keep semantic validation executable rather than assuming JSON Schema covers it.
+- Extend shared cases to runtime source/read/request shapes, missing/null values,
+  all numeric kinds, and context binding. Consolidate existing duplicate tables
+  only after their unique assertions have equivalent coverage.
 - Bring the existing JSON/SQL suites under named requirements. Add common JSON
   vectors across runners and pin the supported predicate grammar and its limits.
 - Add Python's runner in its owning repository/worktree, with a declared capability

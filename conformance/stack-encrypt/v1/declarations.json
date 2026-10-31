@@ -1,0 +1,3278 @@
+{
+  "version": 1,
+  "profile": "record-declarations-v1",
+  "resolver": "none",
+  "cases": [
+    {
+      "id": "ciphertext-untyped",
+      "input": {
+        "json": { "value": { "context": ["users", "value"], "outputs": ["c"] } }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "passthrough-untyped",
+      "input": {
+        "json": {
+          "value": { "context": ["users", "value"], "outputs": ["passthrough"] }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["passthrough"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "index-only",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["eq"],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "int64",
+            "null": null,
+            "outputs": ["eq"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "outputs-retain-order",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["ore", "c", "eq"],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "int64",
+            "null": null,
+            "outputs": ["ore", "c", "eq"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-output-null-c",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "c": null }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-output-null-passthrough",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "passthrough": null }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["passthrough"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-output-null-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "eq": null }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["eq"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-output-null-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "ore": null }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["ore"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-output-null-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "ope": null }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["ope"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unit-output-null-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "ore_block": null }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["ore_block"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "match-default-bare",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["match"],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["match"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "match-default-null",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": null }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["match"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "match-default-empty",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": {} }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["match"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "match-default-explicit",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [
+              {
+                "match": {
+                  "tokenizer": { "ngram": 3 },
+                  "downcase": true,
+                  "short_words": false,
+                  "k": 3,
+                  "m": 256
+                }
+              }
+            ],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": ["match"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "match-custom",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [
+              {
+                "match": {
+                  "tokenizer": "standard",
+                  "downcase": false,
+                  "k": 4,
+                  "m": 512
+                }
+              }
+            ],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": [
+              {
+                "match": {
+                  "tokenizer": "standard",
+                  "downcase": false,
+                  "k": 4,
+                  "m": 512
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tokenizer-standard-null",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "tokenizer": { "standard": null } } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": [
+              {
+                "match": {
+                  "tokenizer": "standard",
+                  "downcase": true,
+                  "k": 3,
+                  "m": 256
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "match-short-words",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "short_words": true } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "string",
+            "null": null,
+            "outputs": [
+              {
+                "match": {
+                  "tokenizer": { "ngram": 3 },
+                  "downcase": true,
+                  "short_words": true,
+                  "k": 3,
+                  "m": 256
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "extended-context",
+      "input": {
+        "json": {
+          "value": {
+            "context": [[["users", "value"], 7], "eu"],
+            "outputs": ["c"]
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [
+          { "type": "uint64", "text": "7" },
+          { "type": "string", "text": "eu" }
+        ],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "flat-label-is-not-extension",
+      "input": {
+        "json": {
+          "value": { "context": ["users", "region", "value"], "outputs": ["c"] }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users", "region"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "region", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "sealed-null-equality",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "int32",
+            "null": "sealed"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "int32",
+            "null": "sealed",
+            "outputs": ["c", "eq"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "sealed-null-bool",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "type": "bool",
+            "null": "sealed"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": "bool",
+            "null": "sealed",
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "sql-null-untyped",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "null": "sql"
+          }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": "sql",
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "context-field-infers-string",
+      "input": {
+        "json": {
+          "context_field": "tenant",
+          "tenant": { "context": ["tenant"], "outputs": ["passthrough"] },
+          "value": { "context": ["value"], "outputs": ["c"] }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": null,
+        "context_field": "tenant",
+        "extension": [],
+        "fields": [
+          {
+            "name": "tenant",
+            "label": ["tenant"],
+            "type": "string",
+            "null": null,
+            "outputs": ["passthrough"]
+          },
+          {
+            "name": "value",
+            "label": ["value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "type-bool-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "bool"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-bool-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "bool"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-bool-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "bool"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-bool-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "bool"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-bool-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "bool"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int8-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "int8"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int8-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "int8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int8-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "int8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int8-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "int8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int8-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "int8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int16-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "int16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int16-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "int16"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int16-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "int16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int16-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "int16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int16-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "int16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int32-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "int32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int32-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "int32"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int32-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "int32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int32-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "int32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int32-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "int32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int64-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int64-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int64-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int64-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int64-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int128-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "int128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int128-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "int128"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-int128-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "int128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int128-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "int128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-int128-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "int128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint8-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "uint8"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint8-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "uint8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint8-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "uint8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint8-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "uint8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint8-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "uint8"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint16-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "uint16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint16-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "uint16"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint16-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "uint16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint16-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "uint16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint16-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "uint16"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint32-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "uint32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint32-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "uint32"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint32-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "uint32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint32-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "uint32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint32-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "uint32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint64-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "uint64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint64-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "uint64"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint64-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "uint64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint64-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "uint64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint64-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "uint64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint128-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "uint128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint128-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "uint128"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-uint128-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "uint128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint128-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "uint128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-uint128-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "uint128"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float32-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "float32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float32-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "float32"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-float32-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "float32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float32-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "float32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float32-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "float32"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float64-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "float64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float64-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "float64"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-float64-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "float64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float64-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "float64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-float64-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "float64"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-decimal-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "decimal"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-decimal-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "decimal"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-decimal-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "decimal"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-decimal-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "decimal"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-decimal-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "decimal"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-date-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "date"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-date-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "date"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-date-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "date"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-date-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "date"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-date-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "date"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-timestamp-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "timestamp"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-timestamp-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "timestamp"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-timestamp-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "timestamp"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-timestamp-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "timestamp"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-timestamp-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "timestamp"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-string-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-string-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-string-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-string-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-string-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-bytes-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "bytes"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-bytes-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "bytes"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-bytes-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "bytes"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-bytes-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "bytes"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-bytes-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "bytes"
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "type-array-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "array"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-array-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "array"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-array-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "array"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-array-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "array"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-array-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "array"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-object-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "object"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-object-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "object"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-object-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "object"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-object-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "object"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-object-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "object"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-json-eq",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "eq"],
+            "type": "json"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-json-match",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "match"],
+            "type": "json"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-json-ore",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "json"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-json-ope",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ope"],
+            "type": "json"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "type-json-ore_block",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore_block"],
+            "type": "json"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "index_not_admitted", "field": "value" }
+      }
+    },
+    {
+      "id": "root-null",
+      "input": { "json": null },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object" }
+      }
+    },
+    {
+      "id": "root-list",
+      "input": { "json": [] },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object" }
+      }
+    },
+    {
+      "id": "empty-plan",
+      "input": { "json": {} },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "no_fields" }
+      }
+    },
+    {
+      "id": "field-not-object",
+      "input": { "json": { "value": "x" } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object", "field": "value" }
+      }
+    },
+    {
+      "id": "field-null",
+      "input": { "json": { "value": null } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object", "field": "value" }
+      }
+    },
+    {
+      "id": "unknown-key",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "unknown": true
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_key", "field": "value" }
+      }
+    },
+    {
+      "id": "missing-context",
+      "input": { "json": { "value": { "outputs": ["c"] } } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "missing_context", "field": "value" }
+      }
+    },
+    {
+      "id": "missing-outputs",
+      "input": { "json": { "value": { "context": ["users", "value"] } } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "missing_outputs", "field": "value" }
+      }
+    },
+    {
+      "id": "outputs-with-target",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "target": "TextEq"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "outputs_with_target", "field": "value" }
+      }
+    },
+    {
+      "id": "outputs-string",
+      "input": {
+        "json": { "value": { "context": ["users", "value"], "outputs": "c" } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "outputs_not_list", "field": "value" }
+      }
+    },
+    {
+      "id": "outputs-null",
+      "input": {
+        "json": { "value": { "context": ["users", "value"], "outputs": null } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "outputs_not_list", "field": "value" }
+      }
+    },
+    {
+      "id": "outputs-empty",
+      "input": {
+        "json": { "value": { "context": ["users", "value"], "outputs": [] } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "no_outputs", "field": "value" }
+      }
+    },
+    {
+      "id": "output-unknown",
+      "input": {
+        "json": {
+          "value": { "context": ["users", "value"], "outputs": ["wat"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "output-options-on-equality",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "eq": {} }],
+            "type": "int64"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "output-duplicate",
+      "input": {
+        "json": {
+          "value": { "context": ["users", "value"], "outputs": ["c", "c"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "duplicate_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-options-duplicate-key",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["match", { "match": {} }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "duplicate_output", "field": "value" }
+      }
+    },
+    {
+      "id": "passthrough-with-ciphertext",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["passthrough", "c"]
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "passthrough_with_outputs", "field": "value" }
+      }
+    },
+    {
+      "id": "type-unknown",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "type": "uuid"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_type", "field": "value" }
+      }
+    },
+    {
+      "id": "type-null",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "type": null
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_type", "field": "value" }
+      }
+    },
+    {
+      "id": "type-json-without-target",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "type": "json"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "json_needs_target", "field": "value" }
+      }
+    },
+    {
+      "id": "json-output-pending",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["json"],
+            "type": "json"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "json_index_pending", "field": "value" }
+      }
+    },
+    {
+      "id": "context-bare-label",
+      "input": {
+        "json": { "value": { "context": "users/value", "outputs": ["c"] } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_not_label", "field": "value" }
+      }
+    },
+    {
+      "id": "context-one-segment",
+      "input": {
+        "json": { "value": { "context": ["value"], "outputs": ["c"] } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_not_label", "field": "value" }
+      }
+    },
+    {
+      "id": "context-nested-extension",
+      "input": {
+        "json": {
+          "value": {
+            "context": [["users", "value"], ["tenant"]],
+            "outputs": ["c"]
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_not_label", "field": "value" }
+      }
+    },
+    {
+      "id": "context-segment-slash",
+      "input": {
+        "json": { "value": { "context": ["users", "a/b"], "outputs": ["c"] } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_not_label", "field": "value" }
+      }
+    },
+    {
+      "id": "context-segment-digit",
+      "input": {
+        "json": { "value": { "context": ["users", "9"], "outputs": ["c"] } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_not_label", "field": "value" }
+      }
+    },
+    {
+      "id": "mixed-prefix",
+      "input": {
+        "json": {
+          "a": { "context": ["users", "a"], "outputs": ["c"] },
+          "b": { "context": ["orders", "b"], "outputs": ["c"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "mixed_contexts", "field": "b" }
+      }
+    },
+    {
+      "id": "mixed-extension",
+      "input": {
+        "json": {
+          "a": { "context": [["users", "a"], 1], "outputs": ["c"] },
+          "b": { "context": [["users", "b"], 2], "outputs": ["c"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "mixed_contexts", "field": "b" }
+      }
+    },
+    {
+      "id": "shared-identity",
+      "input": {
+        "json": {
+          "a": { "context": ["users", "same"], "outputs": ["c"] },
+          "b": { "context": ["users", "same"], "outputs": ["c"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "shared_identity", "field": "b" }
+      }
+    },
+    {
+      "id": "context-field-null",
+      "input": {
+        "json": {
+          "context_field": null,
+          "value": { "context": ["users", "value"], "outputs": ["c"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_field" }
+      }
+    },
+    {
+      "id": "context-field-not-declared",
+      "input": {
+        "json": {
+          "context_field": "tenant",
+          "value": { "context": ["value"], "outputs": ["c"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "no_such_field", "field": "tenant" }
+      }
+    },
+    {
+      "id": "context-field-encrypted",
+      "input": {
+        "json": {
+          "context_field": "tenant",
+          "tenant": { "context": ["tenant"], "outputs": ["c"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_field", "field": "tenant" }
+      }
+    },
+    {
+      "id": "context-field-static-label",
+      "input": {
+        "json": {
+          "context_field": "tenant",
+          "tenant": {
+            "context": ["users", "tenant"],
+            "outputs": ["passthrough"]
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "context_not_label", "field": "tenant" }
+      }
+    },
+    {
+      "id": "null-mode-null",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "null": null
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_null", "field": "value" }
+      }
+    },
+    {
+      "id": "null-mode-unknown",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "null": "optional"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_null", "field": "value" }
+      }
+    },
+    {
+      "id": "null-passthrough",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["passthrough"],
+            "null": "sql"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "null_passthrough", "field": "value" }
+      }
+    },
+    {
+      "id": "sealed-null-untyped",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "null": "sealed"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "sealed_null_type", "field": "value" }
+      }
+    },
+    {
+      "id": "sealed-null-text",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c"],
+            "type": "string",
+            "null": "sealed"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "sealed_null_type", "field": "value" }
+      }
+    },
+    {
+      "id": "sealed-null-order",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["c", "ore"],
+            "type": "int64",
+            "null": "sealed"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "sealed_null_index", "field": "value" }
+      }
+    },
+    {
+      "id": "target-null",
+      "input": {
+        "json": { "value": { "context": ["users", "value"], "target": null } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "invalid_target", "field": "value" }
+      }
+    },
+    {
+      "id": "target-empty",
+      "input": {
+        "json": { "value": { "context": ["users", "value"], "target": "" } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "invalid_target", "field": "value" }
+      }
+    },
+    {
+      "id": "target-options-null",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "target": { "name": "TextEq", "options": null }
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "invalid_target", "field": "value" }
+      }
+    },
+    {
+      "id": "target-options-unknown",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "target": { "name": "JsonSearch", "options": { "wat": 1 } }
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "invalid_target", "field": "value" }
+      }
+    },
+    {
+      "id": "target-options-position",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "target": {
+              "name": "JsonSearch",
+              "options": { "ordered": ["$.a[0]"] }
+            }
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "invalid_target", "field": "value" }
+      }
+    },
+    {
+      "id": "context-null",
+      "input": { "json": { "value": { "context": null, "outputs": ["c"] } } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_context",
+        "fields": { "reason": "context_kind", "field": "value" }
+      }
+    },
+    {
+      "id": "context-bool",
+      "input": { "json": { "value": { "context": true, "outputs": ["c"] } } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_context",
+        "fields": { "reason": "context_kind", "field": "value" }
+      }
+    },
+    {
+      "id": "context-float",
+      "input": { "json": { "value": { "context": 1.25, "outputs": ["c"] } } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_context",
+        "fields": { "reason": "context_kind", "field": "value" }
+      }
+    },
+    {
+      "id": "context-empty",
+      "input": { "json": { "value": { "context": [], "outputs": ["c"] } } },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_context",
+        "fields": { "reason": "empty_context", "field": "value" }
+      }
+    },
+    {
+      "id": "untyped-index",
+      "input": {
+        "json": {
+          "value": { "context": ["users", "value"], "outputs": ["eq"] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_untyped_index",
+        "fields": { "field": "value" }
+      }
+    },
+    {
+      "id": "target-unavailable-name",
+      "input": {
+        "json": {
+          "value": { "context": ["users", "value"], "target": "TextEq" }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::target_none",
+        "fields": { "target": "TextEq" }
+      }
+    },
+    {
+      "id": "target-unavailable-configured",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "target": { "name": "TextEq" }
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::target_none",
+        "fields": { "target": "TextEq" }
+      }
+    },
+    {
+      "id": "target-unavailable-json-options",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "target": {
+              "name": "JsonSearch",
+              "options": { "sealed_root": false, "ordered": ["$.age", "$.age"] }
+            }
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::target_none",
+        "fields": { "target": "JsonSearch" }
+      }
+    },
+    {
+      "id": "match-invalid-unknown",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "wat": 1 } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-k-low",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "k": 2 } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-k-high",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "k": 17 } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-m-power",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "m": 100 } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-m-low",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "m": 16 } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-m-high",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "m": 131072 } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-ngram-zero",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "tokenizer": { "ngram": 0 } } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-short-standard",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [
+              { "match": { "tokenizer": "standard", "short_words": true } }
+            ],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-short-small",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [
+              { "match": { "tokenizer": { "ngram": 2 }, "short_words": true } }
+            ],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "match-invalid-downcase-null",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": [{ "match": { "downcase": null } }],
+            "type": "string"
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
+      "id": "typed-extension-int32",
+      "input": {
+        "frame_hex": "f1010000000500000076616c7565f10200000007000000636f6e74657874f002000000f0020000000a0500000075736572730a0500000076616c75650407000000070000006f757470757473f0010000000a0100000063"
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [{ "type": "int32", "text": "7" }],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "typed-extension-int64",
+      "input": {
+        "frame_hex": "f1010000000500000076616c7565f10200000007000000636f6e74657874f002000000f0020000000a0500000075736572730a0500000076616c7565050700000000000000070000006f757470757473f0010000000a0100000063"
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [{ "type": "int64", "text": "7" }],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "typed-extension-uint32",
+      "input": {
+        "frame_hex": "f1010000000500000076616c7565f10200000007000000636f6e74657874f002000000f0020000000a0500000075736572730a0500000076616c75650607000000070000006f757470757473f0010000000a0100000063"
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [{ "type": "uint32", "text": "7" }],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "typed-extension-uint64",
+      "input": {
+        "frame_hex": "f1010000000500000076616c7565f10200000007000000636f6e74657874f002000000f0020000000a0500000075736572730a0500000076616c7565070700000000000000070000006f757470757473f0010000000a0100000063"
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [{ "type": "uint64", "text": "7" }],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "typed-extension-int8",
+      "input": {
+        "frame_hex": "f1010000000500000076616c7565f10200000007000000636f6e74657874f002000000f0020000000a0500000075736572730a0500000076616c75650c07070000006f757470757473f0010000000a0100000063"
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_context",
+        "fields": { "field": "value", "reason": "context_kind" }
+      }
+    },
+    {
+      "id": "frame-empty",
+      "input": { "frame_hex": "" },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object" }
+      },
+      "boundary_error": {
+        "code": "stack_guest_abi::malformed_input",
+        "fields": {}
+      }
+    },
+    {
+      "id": "frame-invalid",
+      "input": { "frame_hex": "ff" },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object" }
+      },
+      "boundary_error": {
+        "code": "stack_guest_abi::malformed_input",
+        "fields": {}
+      }
+    },
+    {
+      "id": "frame-truncated",
+      "input": { "frame_hex": "f101" },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object" }
+      },
+      "boundary_error": {
+        "code": "stack_guest_abi::malformed_input",
+        "fields": {}
+      }
+    },
+    {
+      "id": "frame-duplicate-key",
+      "input": {
+        "frame_hex": "f1020000000500000076616c7565f10200000007000000636f6e74657874f0020000000a0500000075736572730a0500000076616c7565070000006f757470757473f0010000000a01000000630500000076616c7565f10200000007000000636f6e74657874f0020000000a0500000075736572730a0500000076616c7565070000006f757470757473f0010000000a0100000063"
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object" }
+      },
+      "boundary_error": {
+        "code": "stack_guest_abi::malformed_input",
+        "fields": {}
+      }
+    },
+    {
+      "id": "frame-trailing",
+      "input": {
+        "frame_hex": "f1010000000500000076616c7565f10200000007000000636f6e74657874f0020000000a0500000075736572730a0500000076616c7565070000006f757470757473f0010000000a010000006300"
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "not_an_object" }
+      },
+      "boundary_error": {
+        "code": "stack_guest_abi::malformed_input",
+        "fields": {}
+      }
+    },
+    {
+      "id": "frame-field-order",
+      "input": {
+        "frame_hex": "f102000000010000007af10200000007000000636f6e74657874f0020000000a0500000075736572730a010000007a070000006f757470757473f0010000000a01000000630100000061f10200000007000000636f6e74657874f0020000000a0500000075736572730a0100000061070000006f757470757473f0010000000a0100000063"
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "z",
+            "label": ["users", "z"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          },
+          {
+            "name": "a",
+            "label": ["users", "a"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    }
+  ]
+}

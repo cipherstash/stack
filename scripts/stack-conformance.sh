@@ -18,11 +18,11 @@ fi
 artifacts=$(mktemp -d)
 trap 'rm -rf "$artifacts"' EXIT
 
-mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance
+mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations
 (
   cd languages/golang
   STACK_CONFORMANCE_OUTPUT="$artifacts/go.json" CGO_ENABLED=0 \
-    go test -count=1 -v -run '^TestStackConformance$' ./encrypt
+    go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance)$' ./encrypt
 )
 test -s "$artifacts/go.json"
 STACK_CONFORMANCE_INPUT="$artifacts/go.json" mise x --env test -- \
