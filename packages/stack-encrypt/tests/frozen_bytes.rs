@@ -211,7 +211,7 @@ async fn sealed_leaf_survives_persistence_via_bytes() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt_node("durable".to_string(), b"ctx".as_slice())
+        .encrypt_tree("durable".to_string(), b"ctx".as_slice())
         .await
         .expect("encrypt");
     let leaf = match ct {
@@ -237,7 +237,7 @@ async fn sealed_value_keyset_id_is_authenticated() {
     let keyset = cipher.default_keyset();
     let aad = b"ctx".as_slice();
     let ct = keyset
-        .encrypt_node("durable".to_string(), aad)
+        .encrypt_tree("durable".to_string(), aad)
         .await
         .expect("encrypt");
     let leaf = match ct {
@@ -312,7 +312,7 @@ async fn seal_rejects_a_key_tag_the_length_field_cannot_frame() {
 
     let result = cipher
         .default_keyset()
-        .encrypt_node("boundary".to_string(), b"ctx".as_slice())
+        .encrypt_tree("boundary".to_string(), b"ctx".as_slice())
         .await;
     assert!(
         matches!(result, Err(Error::Aead)),

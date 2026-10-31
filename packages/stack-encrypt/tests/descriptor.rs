@@ -179,10 +179,10 @@ async fn the_cipher_directed_path_renders_its_aad_the_same_way() -> Result<(), E
     let (cipher, sent) = recording_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let ct = keyset.encrypt_node(42u32, ("users", "age")).await?;
+    let ct = keyset.encrypt_tree(42u32, ("users", "age")).await?;
     let _: u32 = cipher.decrypt(ct, ("users", "age")).await?;
     // No AAD at all is the empty descriptor: ZeroKMS binds nothing.
-    let ct = keyset.encrypt_node(42u32, ()).await?;
+    let ct = keyset.encrypt_tree(42u32, ()).await?;
     let _: u32 = cipher.decrypt(ct, ()).await?;
 
     let sent = sent.lock().expect("lock").clone();

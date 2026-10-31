@@ -210,9 +210,11 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! [`KeysetCipher::encrypt`] returns one opaque [`Ciphertext`]. Persist it with
 //! [`Ciphertext::to_bytes`] and restore it with [`Ciphertext::from_bytes`].
 //! These bytes are exactly the existing [`SealedValue`] v1 envelope, with no
-//! extra wrapper. Parsing does not authenticate a value; decryption does.
+//! extra wrapper. Its Serde form is those bytes: padded standard Base64 in a
+//! human-readable format such as JSON, raw bytes in a binary one. Parsing
+//! does not authenticate a value; decryption does.
 //!
-//! The scalar API accepts owned [`Scalar`] values. It wipes the owned source
+//! The scalar API accepts owned [`OpaqueEncode`] values. It wipes the owned source
 //! before returning the pending request, including on planning failure. A
 //! successful decrypt returns an ordinary owned value: the caller is then
 //! responsible for its cleanup. Copy types may still have copies held by the
@@ -236,11 +238,10 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! Existing structural plans and derives still use [`StackCipherText`], a tree
 //! of sealed leaves. Their low-level direct entry points are
-//! [`KeysetCipher::encrypt_node`] and [`KeysetCipher::decrypt_node`]; their
+//! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their
 //! borrowed conversion helpers live in [`target::legacy`]. They are separate
-//! from the owned scalar API. Collection targets, opaque blob adapters and
-//! migrated derives will be added in subsequent API slices. No generic
-//! `Serialize` fallback or implicit `Vec<u8>` blob is provided here.
+//! from the owned scalar API. There is no generic `Serialize` fallback and
+//! no implicit `Vec<u8>` blob.
 //!
 //! # What is authenticated
 //!
@@ -290,7 +291,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod cipher;
 mod scalar;
-pub use scalar::{Ciphertext, Scalar};
+pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
 #[cfg(test)]
 mod codes;
 pub mod descriptor;

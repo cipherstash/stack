@@ -464,13 +464,17 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S
 }
 /// Encrypt a supported scalar as one opaque ciphertext, permitting empty context.
 /// This reads the source under the owned conversion API's zeroization guard.
-pub fn scalar_ciphertext<'s, S: crate::Scalar, K: 'static>(
+pub fn scalar_ciphertext<'s, S: crate::OpaqueEncode, K: 'static>(
 ) -> Encryption<'s, S, crate::Ciphertext, K, super::OptionalContext<super::ScalarContext>> {
     Encryption {
         build: Box::new(
             move |source, cipher, context: super::OptionalContext<super::ScalarContext>| {
-                encrypt_native(crate::scalar::ScalarRef(source), cipher, context.piece())
-                    .try_map(crate::Ciphertext::from_node)
+                super::core::encrypt_opaque(
+                    crate::scalar::ScalarRef(source),
+                    cipher,
+                    context.piece(),
+                )
+                .try_map(crate::Ciphertext::from_tree)
             },
         ),
     }

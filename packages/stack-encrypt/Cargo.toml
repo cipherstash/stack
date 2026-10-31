@@ -143,6 +143,9 @@ trybuild = "1"
 # stack-guest-abi takes it: `std` carries the failure persistence and the
 # ChaCha RNG the runs are seeded with, and nothing else is needed.
 proptest = { version = "1.12", default-features = false, features = ["std"] }
+# A binary Serde format for `Ciphertext`'s bytes form (tests/scalar.rs).
+# Already in the graph through vitaminc-traits.
+rmp-serde = "1.3"
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
 # and CI run them. They cannot be relied on to hold under both feature sets
