@@ -23,12 +23,28 @@ Paths are relative to the repository root. New profile cases run from `v1/`.
 Python and future TypeScript runners have no evidence in this checkout. Their
 absence is a delivery gap, not a test skip that counts toward certification.
 
+## Runtime checkpoint
+
+`v1/runtime.json` adds 37 shared cases for typed writes and reads, null storage,
+batches, equality queries and lossless numeric conversion. See the
+[runtime contract](runtime-contract.md) for exact observations and limits.
+Native data-key counters cover zero-call preflight failures and single-call
+batches; Go provider-call instrumentation remains open.
+
+| Existing evidence | Shared case IDs | Retained assertions |
+|---|---|---|
+| Native SQL-null record tests | `sql-missing`, `sql-null`, `sql-mixed-batch`, `sql-all-absent` | Wider declarations and malformed stored-record behavior |
+| Native sealed-null padding/equality tests | `sealed-mixed-batch`, `sealed-int64`, `sealed-uint64`, `sealed-float64` | Other integer widths, bool ciphertext, dates, timestamps and decimals |
+| Go generated `null_test.go` | Same sealed/SQL semantics | Pointer mapping, generated methods, EQL envelopes, reading null into nonpointer fields |
+| Native source validation tests | `late-wrong-type`, `late-missing`, `unknown-field` | Repeated keys, unsupported frame shapes and more output kinds |
+| Existing shared value-kind/operator fixtures | Runtime query cases cover selected conversion edges | Full type/operator matrices, generated SDK calls and verification |
+
 ## Consolidation policy
 
 Shared semantic expectations should be maintained once and executed by each
 language runner. Conformance can replace duplicate case tables and fixture
 maintenance. It does not eliminate the need to execute the Rust and Go paths.
-No existing test has been deleted in these first two slices.
+No existing test has been deleted in these first three slices.
 
 | Existing evidence | Relationship to conformance | Consolidation action |
 |---|---|---|

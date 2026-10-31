@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
+use common::conformance::{value, Input};
 use common::frames::{frame, object};
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
@@ -40,14 +41,6 @@ struct Case {
     kind: String,
     input: Input,
     expected_error: Option<ExpectedError>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Input {
-    #[serde(rename = "type")]
-    kind: String,
-    text: String,
 }
 
 #[derive(Deserialize)]
@@ -91,22 +84,6 @@ fn unhex(text: &str) -> Vec<u8> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex byte"))
         .collect()
-}
-
-fn value(input: &Input) -> ValueFrame {
-    match input.kind.as_str() {
-        "int32" => frame(input.text.parse::<i32>().expect("i32")),
-        "int64" => frame(input.text.parse::<i64>().expect("i64")),
-        "uint64" => frame(input.text.parse::<u64>().expect("u64")),
-        "bool" => frame(input.text.parse::<bool>().expect("bool")),
-        "string" => frame(input.text.clone()),
-        "null" => {
-            assert!(input.text.is_empty());
-            use vitaminc_aead::plaintext::{Physical, Raw};
-            frame(Raw(None, Physical::Null))
-        }
-        other => panic!("unsupported input kind {other}"),
-    }
 }
 
 fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
