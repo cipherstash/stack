@@ -38,6 +38,7 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
       # The eql guest build links eql-bindings.
@@ -57,6 +58,7 @@ on:
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/stack-conformance.sh
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -74,6 +76,7 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
       # The eql guest build links eql-bindings.
@@ -93,6 +96,7 @@ on:
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
+      - scripts/stack-conformance.sh
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -119,6 +123,7 @@ env:
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: full
   CARGO_TERM_COLOR: always
+  STACK_CONFORMANCE_REQUIRED: "1"
   CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
@@ -249,6 +254,9 @@ jobs:
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      - name: Shared Stack Encrypt conformance and fresh Go to Rust opening
+        run: mise run test:conformance
 
       # The Rust suite opens the committed v4_rows.json and
       # v4_smallint_rows.json, whose ciphertexts the Go SDK sealed when each
