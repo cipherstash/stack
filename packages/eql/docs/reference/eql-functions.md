@@ -10,6 +10,9 @@ A reference for the functions and operators EQL exposes for querying encrypted d
 - [Function Equivalents](#function-equivalents)
 - [Index Term Extraction](#index-term-extraction)
 - [Encrypted JSON (`public.eql_v3_json_search`)](#encrypted-json-publiceql_v3_json_search)
+- [Range queries in EQL v4: `eql_v4.between`](#range-queries-in-eql-v4-eql_v4between)
+- [One array element in EQL v4: `eql_v4.json_tree_element_match`](#one-array-element-in-eql-v4-eql_v4json_tree_element_match)
+- [A compiled predicate in EQL v4: `eql_v4.json_tree_match`](#a-compiled-predicate-in-eql-v4-eql_v4json_tree_match)
 - [Aggregate Functions](#aggregate-functions)
 - [Diagnostics](#diagnostics)
 
@@ -128,6 +131,126 @@ See [json-support.md](./json-support.md).
 ## Encrypted JSON (`public.eql_v3_json_search`)
 
 The full encrypted-JSONB function surface — containment, `->` / `->>`, `eql_v3.jsonb_path_query` / `_first` / `_exists`, `eql_v3.jsonb_array_length` / `_elements`, `eql_v3.to_ste_vec_query`, `eql_v3.jsonb_document_contains`, the envelope accessors `eql_v3.meta_data` / `eql_v3.ciphertext` / `eql_v3.selector`, and the GIN helpers — is documented in **[EQL with JSON and JSONB](./json-support.md)**. (`eql_v3.jsonb_array_elements_text` was removed in 3.0 — a bare-ciphertext stream is no longer independently decryptable; use `eql_v3.jsonb_array_elements`.)
+
+---
+
+## Range queries in EQL v4: `eql_v4.between`
+
+EQL v4 is the same SQL installed as the `eql_v4` schema, for values written by Stack Encrypt (`release/cipherstash-encrypt-v4.sql`). Everything above applies to it with `eql_v4` in place of `eql_v3`. It also has one thing EQL v3 does not: a range query that is **one operand**, so a statement cannot pair the low bound of one query with the high bound of another.
+
+Every ordered family has a **range query domain** per ordering term, beside its single-bound query domains:
+
+| Range domain | Bounds | Column domains it applies to |
+|---|---|---|
+| `eql_v4.query_<T>_range_ore` | two block-ORE terms (`ob` hex strings) | `public.eql_v4_<T>_ord_ore`, `public.eql_v4_text_search_ore` |
+| `eql_v4.query_<T>_range_ope` | two CLLW-OPE terms (`op` hex strings) | `public.eql_v4_<T>_ord`, `public.eql_v4_<T>_ord_ope`, `public.eql_v4_text_search` |
+
+`<T>` is any ordered family: `integer`, `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `text`, `real`, `double`. A range value is `{"v": 4, "i": {...}, "lo": <term>, "hi": <term>}`: each bound is the single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a `{v, i, lo, hi}` envelope, with no ciphertext `c`. Both are one lowercase hex string: a block ORE bound starts `0202` or `0203` and an OPE bound `00` or `01`, and the range domain refuses any other bound with `check_violation` (an EQL v3 `ob` array among them; see [U-003](../upgrading/v3.1.md#u-003-an-order-term-is-one-hex-string-checked-when-it-is-written)). Stack Encrypt does not build this envelope yet: build it from the `ob` or `op` of two single-bound queries of the column's type.
+
+```sql
+-- true when lo <= column <= hi, both bounds included
+eql_v4.between(a public.eql_v4_integer_ord_ore, r eql_v4.query_integer_range_ore) RETURNS boolean
+eql_v4.between(a public.eql_v4_integer_ord,     r eql_v4.query_integer_range_ope) RETURNS boolean
+eql_v4.between(a public.eql_v4_integer_ord_ope, r eql_v4.query_integer_range_ope) RETURNS boolean
+
+```
+
+`between` reads each bound with an internal accessor, `eql_v4_internal.lo(r)` and `eql_v4_internal.hi(r)`, which return the bound as the column's order term type. They are not part of the public surface.
+
+**Example**, on an OPE column, which indexes on every install:
+
+```sql
+CREATE INDEX ON users USING btree (eql_v4.ord_term(age));
+
+SELECT * FROM users WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ope);
+```
+
+- `eql_v4.between` is an inlinable SQL function, so the planner sees `ord_term(age) >= lo AND ord_term(age) <= hi`, and a btree on the column's order term serves it as one range scan: `eql_v4.ord_term(col)` for an OPE column (`_ord`, `_ord_ope`, and `_search` for text), `eql_v4.ord_term_ore(col)` for an ORE one (`_ord_ore`, and `_search_ore` for text).
+- **An ORE column needs the `eql_v4_internal.ore_block_256` btree operator class**, for its index and so for an ORE range scan. The installer creates that class only when it runs with superuser privileges. Otherwise (on Supabase and other managed roles) it skips it and disables the ORE column domains and the ORE range domains: a value cast to `_ord_ore` or `_search_ore` raises `feature_not_supported`, naming the OPE and equality alternatives, and a value cast to a `query_<T>_range_ore` domain raises the same error, naming the family's `_range_ope` domain. On such an install, use an OPE column and its `_range_ope` domain, which need nothing more.
+- Always write it schema-qualified. `BETWEEN` is an SQL keyword, so a bare `between(...)` does not parse.
+- **Always cast the range parameter to its exact range domain**, as in `$1::eql_v4.query_integer_range_ore`. PostgreSQL resolves a function's domain arguments as their base type, `jsonb`, and every `between` overload takes jsonb domains. So an uncast `$1`, a `jsonb` parameter, or a range of the wrong term (an OPE range on an `_ord_ore` column) or the wrong family matches several overloads, and the statement fails with SQLSTATE 42725 (`function eql_v4.between(...) is not unique`) when it is parsed, before it runs. This differs from the single-bound operators: `col < $1` resolves an untyped `$1`.
+- A `NULL` range matches no row. So does a range whose low bound is above its high bound, as with SQL `BETWEEN`; the SQL does not reorder the bounds.
+- The `eql_bindings::v4` Rust types (`IntegerRangeOreQuery`, …) and the Go `encrypt/eql` types of the same names hold a range value, so it binds as one parameter.
+
+---
+
+## One array element in EQL v4: `eql_v4.json_tree_element_match`
+
+On an encrypted JSON document (`public.eql_v4_json_search`), equality at a path is a containment needle (`col @> $1::eql_v4.query_json`) and a range at a path is an ordering over every match (`eql_v4.json_tree_path_query(col, $sel)`). Each can be answered by a different element of an array. So the two together ask "some contact is a Sibling, and some contact, maybe another one, has more than five calls", which is more rows than the plaintext query asks for:
+
+```
+exists($.contacts[*] ? (@.relationship == "Sibling" && @.calls > 5))
+```
+
+`eql_v4.json_tree_element_match` asks that question: **some one element** satisfies every part of the predicate.
+
+```sql
+eql_v4.json_tree_element_match(e public.eql_v4_json_search, p eql_v4.query_json_elements) RETURNS boolean
+
+SELECT id FROM people
+ WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements);
+```
+
+The operand `eql_v4.query_json_elements` is one parameter, `{"m": [member, …]}`, with one member per field of the element the predicate tests. Stack Encrypt's `element_match` query operator derives it. Each member holds:
+
+- `t`: the tokens of a subtree read of the field's path through the array (`$.contacts[*].relationship`), one per element below a bound, in element order, then the **probe**, the token of the element at the bound;
+- one or two bounds, each an ordering operand of the shape `eql_v4.query_json_leaf` holds: `gt` or `gte` for the lower bound, `lt` or `lte` for the upper. Equality is `gte` and `lte` at one value.
+
+The function opens the row's document once, finds the node each token of every member names (the node `eql_v4.json_tree_subtree_indexed` returns for that token at `d = 0`), and pairs the members' nodes by `k`, the token's place in its list. The members' tokens were expanded to one bound in one order, so one `k` is one element. It is true when some `k` has a node for every member, inside that member's bounds. Nothing beneath a node is read.
+
+- **Every field must be at an ordered path.** The comparison is on the ordering term, which a leaf carries only at a path the column's index orders (`ordered=`). Stack Encrypt refuses a member whose path is not ordered.
+- **Equality is folded.** Equality here is the ordering term's equality: text compares after case and accents are folded (`"Sibling"`, `"sibling"` and `"Síbling"` are equal), and numbers compare as 64-bit floats, so two integers past 2⁵³ can be equal. That suits an enum-like field. Exact equality at a path is containment (`@>`), which this function does not provide per element.
+- **An array longer than the bound raises.** The probe finds a node only when the array is longer than the bound. Then the function raises SQLSTATE `22023` (`invalid_parameter_value`) rather than answer over part of the array. Derive the operand with a bound past the longest array (`wildcard_bound`, 64 by default). The server tells the probe apart without any marker: every other token names the field, at the selector the member's bounds carry, and the probe names the element, at the array's selector.
+- **No index serves it.** The function is PL/pgSQL, so the planner cannot see into it: it filters the rows it is given. Narrow them first with an indexed predicate on the same values, such as `col @> $1::eql_v4.query_json` for the equality half.
+- **What it reveals** is what its parts reveal sent alone: a subtree read's tokens for each field, to the bound, with the probes, and each bound's ordering term. See [What a query shows](./json-tree-leakage.md#what-a-query-shows).
+
+`eql_v4.json_tree_subtree_indexed(e, tokens text[], budget integer DEFAULT 64) RETURNS TABLE (k integer, entry public.eql_v4_json_entry)` is the subtree read with `k` on every row: the 1-based place in `tokens` of the token whose node the row sits in. `eql_v4.json_tree_subtree` is the same read without `k`. Past the budget, the sealed root comes back alone with `k = 0`. The same pairing by `k` can be written by hand, one parameter per token list and bound:
+
+```sql
+WHERE EXISTS (
+  SELECT 1
+  FROM eql_v4.json_tree_subtree_indexed(col, $1::text[], 0) AS r
+  JOIN eql_v4.json_tree_subtree_indexed(col, $2::text[], 0) AS c ON c.k = r.k
+  WHERE r.entry ->> 'd' = '0' AND c.entry ->> 'd' = '0'
+    AND r.entry >= $3::eql_v4.query_json_leaf AND r.entry <= $3::eql_v4.query_json_leaf
+    AND c.entry > $4::eql_v4.query_json_leaf)
+```
+
+That form does not check the probe: on a row whose array is longer than the bound it answers over the first elements only. Prefer the function.
+
+---
+
+## A compiled predicate in EQL v4: `eql_v4.json_tree_match`
+
+On plaintext `jsonb`, one function answers a whole filter: `jsonb_path_match(col, $1, $2)`, a jsonpath predicate and its variables. An application that compiles a filter language into SQL can target that shape with one template and two parameters. On an encrypted JSON document (`public.eql_v4_json_search`) the database cannot evaluate a path or a value, so `@@` with a `jsonpath` is blocked, `jsonb_path_match` matches nothing ([Native jsonb functions read the envelope](json-tree-leakage.md#native-jsonb-functions-read-the-envelope)), and each question is its own operator. `eql_v4.json_tree_match` takes the whole filter as one parameter again: Stack Encrypt's `match` query operator compiles the jsonpath predicate on the client into a tree of those operators' operands, and the function evaluates the tree.
+
+```sql
+eql_v4.json_tree_match(e public.eql_v4_json_search, p eql_v4.query_json_predicate) RETURNS boolean
+
+SELECT id FROM people WHERE eql_v4.json_tree_match(profile, $1::eql_v4.query_json_predicate);
+SELECT id FROM people WHERE profile @@ $1::eql_v4.query_json_predicate;
+```
+
+The operand `eql_v4.query_json_predicate` is a boolean tree, serialised as JSON. Each node is an object with one key, which names its kind:
+
+| node | true when | the same question, written out |
+|---|---|---|
+| `{"and": [node, …]}`, `{"or": [node, …]}` | every child is, or one child is | `… AND …`, `… OR …` |
+| `{"not": node}` | the child is false | `NOT …` |
+| `{"contains": needle}` | the document contains the needle, an `eql_v4.query_json` | `col @> needle` |
+| `{"exists": selector}` | the document has a node at the path | `eql_v4.json_tree_path_exists(col, selector)` |
+| `{"cmp": {"gt" \| "gte": leaf, "lt" \| "lte": leaf}}` | the first entry at the bounds' selector is inside every bound, each an `eql_v4.query_json_leaf` | `(col -> s) > gt AND (col -> s) < lt` |
+| `{"elements": predicate}` | one element of an array satisfies every member, an `eql_v4.query_json_elements` | `eql_v4.json_tree_element_match(col, predicate)` |
+
+Each leaf is checked by the CHECK of its own domain, and `and` and `or` take at least one child.
+
+- **The answer is the hand-written WHERE's, NULL included.** `and`, `or` and `not` follow SQL's three-valued logic, and a `cmp` leaf is NULL where the path is absent or its node has no ordering term, as `(col -> s) < $1` is. Stack Encrypt compiles a jsonpath comparison so that the tree is true of the rows `jsonb_path_match` is true of over the plaintext: `$.age < $n` is a node at `$.age` whose leaf compares; `$.age != $n` is a node there that is not the value. So an absent path is false under every comparison, as jsonpath has it, and an ordering of a boolean is unknown (NULL), as jsonpath's comparison of two kinds is. jsonpath also answers false of an ordering over a JSON `null`. The tree matches that only under an odd number of `!`, where it changes the rows: there `$.age < $n` is also not a `null`, a `null` needle beside the bound. Elsewhere the ordering over a `null` is NULL, which selects the same rows as false, so a `SELECT` of the boolean itself can show NULL where `jsonb_path_match` shows false.
+- **Where the tree and jsonpath part.** In four places, each a property of the stored document or of the ordering terms. A path is read as written, so an array where the predicate names no `[*]` is not unwrapped as jsonpath's lax mode unwraps it (`$.tags == "a"` over `{"tags": ["a"]}` is true to jsonpath, false here). Nor is a value that is not an array wrapped where the predicate does name `[*]`: `$.tags[*] == "a"` over `{"tags": "a"}`, `exists($.tags[*])` over a scalar `tags` and `exists($.items[*] ? (@.sku == "x"))` over `{"items": {"sku": "x"}}` are true to jsonpath and false here, since `$.tags[*]` and `$.tags` have different selectors. A comparison of a string with a number, which jsonpath answers unknown, is false under `==` and true under `!=`, since the terms do not record a value's kind. An ordering compares the ordering terms, so text is case- and accent-folded, as every ordering at a path is; so does each condition of a filter with more than one, which compiles to an element leaf.
+- **Cast the operand.** `col @@ $1::eql_v4.query_json_predicate`. An untyped operand on the right of `@@` matches both this operator and the blocked `jsonpath` one, and PostgreSQL refuses the statement with SQLSTATE 42725 (`operator is not unique`). A `jsonpath` operand still raises `operator @@ is not supported`.
+- **Element leaves raise as their function does.** An array longer than the bound the predicate was compiled to raises SQLSTATE `22023`. Children are read in order and the read stops at the first child that decides the answer, so an element leaf the answer does not depend on is not read and does not raise.
+- **The document is opened once.** It is decompressed once per row, and indexed once when the tree has an element leaf, however many leaves read it.
+- **No index serves it.** The tree is evaluated inside a PL/pgSQL function, which the planner cannot see into: `json_tree_match` and `@@` filter the rows they are given, a sequential scan unless something else narrows them. The same predicate written out per operator (the right-hand column above) engages the GIN index on `eql_v4.json_tree_query(col)` and the functional btrees on `eql_v4.ord_term(col -> s)`, and is the fast path. Use `match` where one template matters more than the plan, and put an indexed predicate beside it where you can.
+- **What it reveals** is what its leaves reveal sent one by one, and the boolean shape of the filter. See [What a query shows](./json-tree-leakage.md#what-a-query-shows).
 
 ---
 

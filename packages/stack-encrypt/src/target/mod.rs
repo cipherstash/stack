@@ -95,18 +95,19 @@ mod source;
 pub mod transcode;
 mod tuples;
 
-pub(crate) use self::core::{decipher_pending, seal_pending};
+pub(crate) use self::core::{bind_pending, seal_pending};
 pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
 pub use index::{
-    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, TermSet,
-    Whole,
+    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,
+    Select, TermSet, Whole,
 };
 #[cfg(feature = "dynamic")]
 pub(crate) use operations::chosen;
 pub(crate) use operations::inspect;
 pub use operations::{
-    ciphertext, equality, matching, ope, open, ore, passthrough, DecryptField, DecryptFrom,
-    DecryptInto, Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
+    ciphertext, equality, json_document, json_terms, matching, ope, open, ore, ore_block,
+    passthrough, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption, EncryptFrom,
+    EncryptInto, Encryption, Layout,
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};

@@ -39,6 +39,9 @@ var goldenCases = map[string]goldenCase{
 	// the context field to a column.
 	"tenants": {req: stashgen.Request{Type: "Note", Models: []stashgen.ModelRequest{{Name: "Rows", Type: "NoteRow"}}}, golden: "note_stash.go.golden"},
 	"foreign": {req: stashgen.Request{Type: "individualStash", For: "pb.Individual"}, golden: "individualstash_stash.go.golden"},
+	// An EQL type with three indexes, TextSearch: Eq, the orderings and
+	// Matches, each returning its own query.
+	"directory": {req: stashgen.Request{Type: "Entry"}, golden: "entry_stash.go.golden"},
 }
 
 func TestGolden(t *testing.T) {

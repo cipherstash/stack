@@ -13,26 +13,31 @@
 //! back through `se_last_error`'s packing. Each scenario also pins the codes
 //! it reaches, so a path that stops being driven fails here, by name,
 //! instead of quietly dropping out of the check.
-//! Unreachable natively, and so not here: the host imports (`token_get`,
-//! `transport_send`), whose failures arrive as stack-auth and ZeroKMS
-//! errors the key-source and token scenarios below already encode.
+//! Unreachable natively, and so not here: the host's side of the step loop
+//! (the `token_get` import, and the responses `se_resume` is handed), whose
+//! failures arrive as stack-auth and ZeroKMS errors the key-source and token
+//! scenarios below already encode.
 
 use std::borrow::Cow;
 use std::future::IntoFuture;
 
 use stack_auth::{SecretToken, ServiceToken};
+mod support;
+
+use stack_encrypt::dynamic::frame::encode_ciphertext;
+use stack_encrypt::dynamic::plaintext::Logical;
 use stack_encrypt::dynamic::Scope;
-use stack_encrypt::{CipherText, Descriptor, StackCipher};
+use stack_encrypt::{CipherText, Descriptor, Node, PassthroughFrame, StackCipher};
 use stack_encrypt_guest::options::{parse_options, Side};
 use stack_encrypt_guest::status::fail_error;
 use stack_encrypt_guest::{config, ops};
-use stack_guest_abi::{call, last_error};
+use stack_guest_abi::call;
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyError,
     GenerateKeyPayload, IndexKeySource, LoadKeysetError, RetrieveKeyError, RetrieveKeyPayload,
 };
+use support::Tree;
 use uuid::Uuid;
-use vitaminc_aead_value::{transport as codec, FfiValue};
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext, ViturRequestError};
 
 const PLAINTEXT: &str = "leak-marker-plaintext";
@@ -126,18 +131,22 @@ fn failing() -> StackCipher<Failing> {
 // Values
 // =============================================================================
 
-fn encode(value: FfiValue) -> Vec<u8> {
-    let mut out = Vec::new();
-    codec::encode_value(value, &mut out).expect("encode");
-    out
+fn encode(value: Tree) -> Vec<u8> {
+    use stack_encrypt::Controlled;
+    value.to_frame().expect("encode").risky_unwrap()
 }
 
-fn s(value: &str) -> FfiValue {
-    FfiValue::String(value.into())
+/// A value as a passthrough node: its frame, in the clear.
+fn clear(value: Tree) -> Node<Vec<u8>> {
+    CipherText::Passthrough(PassthroughFrame(encode(value)))
 }
 
-fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
-    FfiValue::Object(
+fn s(value: &str) -> Tree {
+    Tree::String(value.into())
+}
+
+fn obj(entries: Vec<(&str, Tree)>) -> Tree {
+    Tree::Object(
         entries
             .into_iter()
             .map(|(k, v)| (k.to_owned(), v))
@@ -145,22 +154,22 @@ fn obj(entries: Vec<(&str, FfiValue)>) -> FfiValue {
     )
 }
 
-fn label(field: &str) -> FfiValue {
-    FfiValue::Array(vec![s("users"), s(field)])
+fn label(field: &str) -> Tree {
+    Tree::Array(vec![s("users"), s(field)])
 }
 
 /// A field's label extended by a marker part: a context built from the
 /// caller's data, as a tenant id is.
-fn extended(field: &str, part: &str) -> FfiValue {
-    FfiValue::Array(vec![label(field), s(part)])
+fn extended(field: &str, part: &str) -> Tree {
+    Tree::Array(vec![label(field), s(part)])
 }
 
-fn field(context: FfiValue, outputs: &[&str], ty: Option<&str>) -> FfiValue {
+fn field(context: Tree, outputs: &[&str], ty: Option<&str>) -> Tree {
     let mut spec = vec![
         ("context", context),
         (
             "outputs",
-            FfiValue::Array(outputs.iter().map(|o| s(o)).collect()),
+            Tree::Array(outputs.iter().map(|o| s(o)).collect()),
         ),
     ];
     if let Some(ty) = ty {
@@ -170,14 +179,14 @@ fn field(context: FfiValue, outputs: &[&str], ty: Option<&str>) -> FfiValue {
 }
 
 /// `email` sealed and equality-indexed under `context`, typed string.
-fn plan_under(context: FfiValue) -> Vec<u8> {
+fn plan_under(context: Tree) -> Vec<u8> {
     encode(obj(vec![(
         "email",
         field(context, &["c", "eq"], Some("string")),
     )]))
 }
 
-fn row(email: &str) -> FfiValue {
+fn row(email: &str) -> Tree {
     obj(vec![("email", s(email))])
 }
 
@@ -191,13 +200,13 @@ fn sealed(cipher: &StackCipher<FakeDataKeySource>, plan: &[u8]) -> Vec<u8> {
 }
 
 /// A one-leaf ciphertext tree whose leaf is `leaf`, under `email`/`c`.
-fn tree_with_leaf(leaf: CipherText<Vec<u8>, Box<dyn std::any::Any + Send>>) -> Vec<u8> {
-    let tree: CipherText<Vec<u8>, Box<dyn std::any::Any + Send>> = CipherText::Map(vec![(
+fn tree_with_leaf(leaf: Node<Vec<u8>>) -> Vec<u8> {
+    let tree: Node<Vec<u8>> = CipherText::Map(vec![(
         "email".to_owned(),
         CipherText::Map(vec![("c".to_owned(), leaf)]),
     )]);
     let mut out = Vec::new();
-    codec::encode_ciphertext_boxed(tree, &mut out).expect("encode tree");
+    encode_ciphertext(&tree, &mut out).expect("encode tree");
     out
 }
 
@@ -215,10 +224,10 @@ fn failure<T: std::fmt::Debug>(
     what: &str,
     expect: &[&str],
     step: impl FnOnce() -> Result<T, u32>,
-) -> FfiValue {
+) -> Tree {
     let _ = call::run(step).expect_err(what);
     let bytes = call::take_last_error().unwrap_or_else(|| panic!("{what}: no error recorded"));
-    let error = codec::decode_value(&mut codec::Reader::new(&bytes)).expect("an error decodes");
+    let error = Tree::from_frame(&bytes).expect("an error decodes");
     assert_eq!(codes(&error), expect, "{what}: the codes it reaches");
     error
 }
@@ -239,47 +248,45 @@ fn check(bytes: &[u8], at: &str, found: &mut Vec<String>) {
 }
 
 /// Every place in `value` a marker appears, as a path.
-fn leaks(value: &FfiValue, path: &str, found: &mut Vec<String>) {
+fn leaks(value: &Tree, path: &str, found: &mut Vec<String>) {
     match value {
-        FfiValue::String(text) => check(text.risky_ref(), path, found),
-        FfiValue::Bytes(bytes) => {
-            use vitaminc_protected::Controlled;
-            check(bytes.risky_ref(), path, found);
-        }
-        FfiValue::Array(items) => {
+        Tree::String(text) => check(text.as_bytes(), path, found),
+        Tree::Bytes(bytes) => check(bytes.as_slice(), path, found),
+        Tree::Array(items) => {
             for (at, item) in items.iter().enumerate() {
                 leaks(item, &format!("{path}[{at}]"), found);
             }
         }
-        FfiValue::Object(entries) => {
+        Tree::Object(entries) => {
             for (key, item) in entries {
                 check(key.as_bytes(), &format!("{path} key"), found);
                 leaks(item, &format!("{path}.{key}"), found);
             }
         }
-        FfiValue::Passthrough(inner) => leaks(inner, &format!("{path}(passthrough)"), found),
+        Tree::Passthrough(inner) => leaks(inner, &format!("{path}(passthrough)"), found),
+        Tree::Typed(_, inner) => leaks(inner, &format!("{path}(typed)"), found),
         _ => {}
     }
 }
 
-fn get<'a>(value: &'a FfiValue, key: &str) -> Option<&'a FfiValue> {
+fn get<'a>(value: &'a Tree, key: &str) -> Option<&'a Tree> {
     match value {
-        FfiValue::Object(entries) => entries.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+        Tree::Object(entries) => entries.iter().find(|(k, _)| k == key).map(|(_, v)| v),
         _ => None,
     }
 }
 
-fn text(value: Option<&FfiValue>) -> Option<String> {
+fn text(value: Option<&Tree>) -> Option<String> {
     match value? {
-        FfiValue::String(s) => String::from_utf8(s.risky_ref().to_vec()).ok(),
+        Tree::String(s) => String::from_utf8(s.as_bytes().to_vec()).ok(),
         _ => None,
     }
 }
 
 /// The error's code and every cause's code.
-fn codes(value: &FfiValue) -> Vec<String> {
+fn codes(value: &Tree) -> Vec<String> {
     let mut out: Vec<String> = text(get(value, "code")).into_iter().collect();
-    if let Some(FfiValue::Array(causes)) = get(value, "causes") {
+    if let Some(Tree::Array(causes)) = get(value, "causes") {
         out.extend(causes.iter().filter_map(|cause| text(get(cause, "code"))));
     }
     out
@@ -290,7 +297,7 @@ fn codes(value: &FfiValue) -> Vec<String> {
 // =============================================================================
 
 /// Every failing step, by what it drives.
-fn scenarios() -> Vec<(&'static str, FfiValue)> {
+fn scenarios() -> Vec<(&'static str, Tree)> {
     let cipher = cipher();
     let keyset = cipher.default_keyset();
     let failing = failing();
@@ -315,7 +322,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                 block_on(ops::term(
                     &keyset,
                     &encode(s(PLAINTEXT)),
-                    &encode(FfiValue::Bool(true)),
+                    &encode(Tree::Bool(true)),
                     ops::TERM_EQUALITY,
                 ))
             }),
@@ -328,7 +335,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                 || {
                     block_on(ops::term(
                         &keyset,
-                        &encode(FfiValue::Bool(true)),
+                        &encode(Tree::Bool(true)),
                         &encode(s(CONTEXT)),
                         ops::TERM_EQUALITY,
                     ))
@@ -369,7 +376,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
             failure("plan context", &["stack_encrypt::dynamic_context"], || {
                 ops::plan_check(&encode(obj(vec![(
                     "email",
-                    field(FfiValue::Bool(true), &["c"], None),
+                    field(Tree::Bool(true), &["c"], None),
                 )])))
             }),
         ),
@@ -429,10 +436,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                 "source passthrough",
                 &["stack_encrypt::dynamic_source"],
                 || {
-                    let source = obj(vec![(
-                        "email",
-                        FfiValue::Passthrough(Box::new(s(PLAINTEXT))),
-                    )]);
+                    let source = obj(vec![("email", Tree::Passthrough(Box::new(s(PLAINTEXT))))]);
                     block_on(ops::encrypt_record(
                         &keyset,
                         &encode(source),
@@ -488,9 +492,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                 "record passthrough",
                 &["stack_encrypt::dynamic_record"],
                 || {
-                    let record = tree_with_leaf(CipherText::Passthrough(Box::new(
-                        FfiValue::Bytes(vitaminc_protected::Protected::new(CIPHERTEXT.to_vec())),
-                    )));
+                    let record = tree_with_leaf(clear(Tree::Bytes(CIPHERTEXT.to_vec())));
                     block_on(ops::decrypt_record(
                         Scope::Client(&cipher),
                         &record,
@@ -547,7 +549,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         (
             "options that are not an object",
             failure("options", &["stack_guest_abi::malformed_input"], || {
-                parse_options(s(CONTEXT), Side::Open)
+                parse_options(&encode(s(CONTEXT)), Side::Open)
             }),
         ),
         // -- ZeroKMS, through a key source whose answers carry the body ---
@@ -577,7 +579,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
             "a keyset ZeroKMS does not know",
             failure("keyset", &["stack_kms::keyset_not_found"], || {
                 let options = parse_options(
-                    obj(vec![("keyset", obj(vec![("name", s("tenant"))]))]),
+                    &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
                     Side::Mint,
                 )?;
                 block_on(options.keyset.resolve(&failing)).map(drop)
@@ -614,17 +616,13 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                     ("client_id", s("6a1b8c6e-6f3a-4e43-9a3b-2f0f6f8b1c2d")),
                     ("client_key", s(CLIENT_KEY)),
                 ]);
-                config::parse_config(config)
-                    .map(drop)
-                    .map_err(|e| last_error::malformed(e.describe()))
+                config::parse_config(&encode(config)).map(drop)
             }),
         ),
         (
             "a config key this version does not know",
             failure("config key", &["stack_guest_abi::malformed_input"], || {
-                config::parse_config(obj(vec![(CLIENT_KEY, s(CLIENT_KEY))]))
-                    .map(drop)
-                    .map_err(|e| last_error::malformed(e.describe()))
+                config::parse_config(&encode(obj(vec![(CLIENT_KEY, s(CLIENT_KEY))]))).map(drop)
             }),
         ),
         // -- an error no native path raises, recorded the same way ---------
@@ -641,6 +639,103 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
             ),
         ),
     ];
+    // -- queries by operator -----------------------------------------------
+    let marker = || Tree::Bytes(PLAINTEXT.into());
+    let match_plan = || {
+        encode(obj(vec![(
+            "name",
+            field(label("name"), &["c", "match"], Some("string")),
+        )]))
+    };
+    let source = &["stack_encrypt::dynamic_source"];
+    out.extend([
+        (
+            "an operator the field does not answer",
+            failure("not answered", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(s(PLAINTEXT)),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"lt",
+                ))
+            }),
+        ),
+        (
+            "a query input of another type",
+            failure("query input", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(marker()),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"eq",
+                ))
+            }),
+        ),
+        (
+            "an operator name the engine does not know",
+            failure("unknown operator", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(s(PLAINTEXT)),
+                    &plan_under(label("email")),
+                    b"email",
+                    PLAINTEXT.as_bytes(),
+                ))
+            }),
+        ),
+        (
+            "verifying an exact operator",
+            failure("verify exact", source, || {
+                ops::verify(
+                    &encode(s(PLAINTEXT)),
+                    &encode(Tree::Array(vec![s(PLAINTEXT)])),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"eq",
+                )
+            }),
+        ),
+        (
+            "verifying a value of another type",
+            failure("verify value", source, || {
+                ops::verify(
+                    &encode(s(PLAINTEXT)),
+                    &encode(Tree::Array(vec![marker()])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                )
+            }),
+        ),
+        (
+            "a fetch sized from bytes that are not a term",
+            failure("limit term", source, || {
+                ops::target_limit(
+                    PLAINTEXT.as_bytes(),
+                    &encode(obj(vec![("rows", Tree::UInt64(1))])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                    10,
+                )
+            }),
+        ),
+        (
+            "statistics that are not statistics",
+            failure("limit stats", source, || {
+                ops::target_limit(
+                    &[1, 0],
+                    &encode(obj(vec![("rows", s(PLAINTEXT))])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                    10,
+                )
+            }),
+        ),
+    ]);
     // An EQL value whose stored bytes are a JSON string where an object
     // belongs: serde_json's message would quote the string.
     #[cfg(feature = "eql")]
@@ -651,19 +746,15 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                 "email",
                 obj(vec![("context", label("email")), ("target", s("TextEq"))]),
             )]));
-            let tree: CipherText<Vec<u8>, Box<dyn std::any::Any + Send>> = CipherText::Map(vec![(
+            let tree: Node<Vec<u8>> = CipherText::Map(vec![(
                 "email".to_owned(),
                 CipherText::Map(vec![(
                     "eql".to_owned(),
-                    CipherText::Passthrough(Box::new(FfiValue::Bytes(
-                        vitaminc_protected::Protected::new(
-                            [&b"\""[..], CIPHERTEXT, &b"\""[..]].concat(),
-                        ),
-                    ))),
+                    clear(Tree::Bytes([&b"\""[..], CIPHERTEXT, &b"\""[..]].concat())),
                 )]),
             )]);
             let mut record = Vec::new();
-            codec::encode_ciphertext_boxed(tree, &mut record).expect("encode tree");
+            encode_ciphertext(&tree, &mut record).expect("encode tree");
             block_on(ops::decrypt_record(
                 Scope::Client(&cipher),
                 &record,
@@ -714,15 +805,16 @@ fn the_marker_check_finds_a_marker_at_any_depth() {
         ("message", s(&format!("x {PLAINTEXT} y"))),
         (
             "causes",
-            FfiValue::Array(vec![obj(vec![(
-                CONTEXT,
-                FfiValue::Bytes(vitaminc_protected::Protected::new(CIPHERTEXT.to_vec())),
-            )])]),
+            Tree::Array(vec![obj(vec![(CONTEXT, Tree::Bytes(CIPHERTEXT.to_vec()))])]),
+        ),
+        (
+            "typed",
+            Tree::Typed(Logical::Uuid, Box::new(Tree::Bytes(CIPHERTEXT.to_vec()))),
         ),
     ]);
     let mut found = Vec::new();
     leaks(&carrying, "error", &mut found);
-    assert_eq!(found.len(), 3, "{found:?}");
+    assert_eq!(found.len(), 4, "{found:?}");
 }
 
 /// A ZeroKMS failure's cause names the request and the status, and the
@@ -732,7 +824,7 @@ fn a_keyset_not_found_carries_its_help_and_request_kind() {
     let failing = failing();
     let error = failure("keyset", &["stack_kms::keyset_not_found"], || {
         let options = parse_options(
-            obj(vec![("keyset", obj(vec![("name", s("tenant"))]))]),
+            &encode(obj(vec![("keyset", obj(vec![("name", s("tenant"))]))])),
             Side::Mint,
         )?;
         block_on(options.keyset.resolve(&failing)).map(drop)
@@ -747,7 +839,7 @@ fn a_keyset_not_found_carries_its_help_and_request_kind() {
         text(get(fields, "request_kind")).as_deref(),
         Some("NotFound")
     );
-    let Some(FfiValue::Array(causes)) = get(&error, "causes") else {
+    let Some(Tree::Array(causes)) = get(&error, "causes") else {
         panic!("causes");
     };
     let messages: Vec<String> = causes

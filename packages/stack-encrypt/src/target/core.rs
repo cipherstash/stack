@@ -1,6 +1,6 @@
 //! Canonical execution shared by the cipher-directed and declaration APIs.
 use super::{CipherScope, Pending, Request, Responses};
-use crate::cipher::{bind_keys, PendingStackCipherText, StackDecipher};
+use crate::cipher::{bind_keys, open_keyed, KeyedCipherText, PendingStackCipherText};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher, StackCipherText};
 use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad, IntoContext};
 use vitaminc_protected::NonEmpty;
@@ -21,9 +21,11 @@ pub(crate) trait Term<S, K, Ctx>: Sized {
 }
 
 /// Seal `source` into the native tree. It is consumed, as Vitamin C's
-/// `Encrypt` consumes it: a caller holding only a borrow clones before it
-/// gets here (see [`ConsumeSource`](super::ConsumeSource)), and one holding
-/// the value hands it over without a copy.
+/// by-value [`Encrypt`] walk consumes it: a caller holding only a borrow
+/// clones before it gets here (see [`ConsumeSource`](super::ConsumeSource)),
+/// and one holding the value hands it over without a copy. The walk happens
+/// here, before any request exists, so the pending holds only the planned
+/// leaves.
 pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
     source: S,
     cipher: &'a KeysetCipher<'_, K>,
@@ -35,12 +37,12 @@ pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
         return Pending::failed(cipher, error);
     }
     let aad = context.into_aad().into_owned();
-    match source.encrypt_with_aad(cipher, aad) {
+    match PendingStackCipherText::plan(source, aad) {
         Ok(tree) => seal_pending(cipher, tree, descriptor),
-        Err(_) => Pending::ready(cipher, Err(Error::Aead)),
+        Err(error) => Pending::ready(cipher, Err(error)),
     }
 }
-pub(crate) fn open_native<'a, 'c, P: Decrypt<'static> + 'static, K, T: IntoContext<'c>>(
+pub(crate) fn open_native<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext<'c>>(
     tree: StackCipherText,
     cipher: &'a StackCipher<K>,
     context: NonEmpty<T>,
@@ -54,8 +56,8 @@ pub(crate) fn open_native<'a, 'c, P: Decrypt<'static> + 'static, K, T: IntoConte
     let requests = retrieve_requests(&tree, &descriptor);
     let aad = context.into_aad().into_owned();
     Pending::request(cipher, requests, move |responses| {
-        let decipher = decipher_from_responses(tree, responses)?;
-        P::decrypt_with_aad(decipher, aad).map_err(Error::from)
+        let keyed = keyed_from_responses(tree, responses)?;
+        open_keyed(keyed, aad)
     })
 }
 pub(crate) fn seal_pending<'a, K>(
@@ -74,30 +76,32 @@ pub(crate) fn seal_pending<'a, K>(
         .take(tree.key_count())
         .collect();
     Pending::request(cipher, requests, move |responses| {
-        let mut keys = responses.drain_generated();
-        tree.seal_with(keyset_id, &mut keys).map_err(Error::from)
+        tree.seal_with(keyset_id, responses.drain_generated())
+            .map_err(Error::from)
     })
 }
 
-pub(crate) fn decipher_pending<'a, K>(
+/// Retrieve every leaf's data key and bind it onto its leaf, ready for
+/// [`open_keyed`](crate::cipher::open_keyed).
+pub(crate) fn bind_pending<'a, K>(
     scope: impl CipherScope<'a, K>,
     ciphertext: StackCipherText,
     descriptor: Descriptor,
-) -> Pending<'a, StackDecipher, K> {
+) -> Pending<'a, KeyedCipherText, K> {
     // Fast path, as in `seal_pending`; `dispatch` is the gate.
     if let Err(e) = descriptor.check() {
         return Pending::ready(scope, Err(e));
     }
     let requests = retrieve_requests(&ciphertext, &descriptor);
     Pending::request(scope, requests, move |responses| {
-        decipher_from_responses(ciphertext, responses)
+        keyed_from_responses(ciphertext, responses)
     })
 }
 
-fn decipher_from_responses(
+fn keyed_from_responses(
     ciphertext: StackCipherText,
     responses: &mut Responses,
-) -> Result<StackDecipher, Error> {
+) -> Result<KeyedCipherText, Error> {
     let mut keys = responses.drain_retrieved();
     // Too few keys for the tree, or keys left over once it is bound, both
     // mean `retrieve_requests` and `bind_keys` disagreed about the tree's
@@ -107,7 +111,7 @@ fn decipher_from_responses(
     if keys.next().is_some() {
         return Err(Error::ResponseShape);
     }
-    Ok(StackDecipher::over(keyed))
+    Ok(keyed)
 }
 
 fn retrieve_requests(ciphertext: &StackCipherText, descriptor: &Descriptor) -> Vec<Request> {
@@ -122,10 +126,7 @@ fn collect_retrieve_requests(
     out: &mut Vec<Request>,
 ) {
     match ciphertext {
-        CipherText::Single(leaf)
-        | CipherText::None(leaf)
-        | CipherText::EmptySequence(leaf)
-        | CipherText::EmptyMap(leaf) => {
+        CipherText::Single(leaf) | CipherText::EmptySequence(leaf) | CipherText::EmptyMap(leaf) => {
             out.push(Request::retrieve_under(
                 *leaf.iv(),
                 leaf.tag().to_vec(),

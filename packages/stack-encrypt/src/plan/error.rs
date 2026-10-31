@@ -123,7 +123,7 @@ pub enum PlanError {
     },
     /// A field is not of the type the plan declares for it, so the plan
     /// cannot resolve how to seal, index or read it.
-    #[error("field {field:?} is not a {expected}")]
+    #[error("field {field:?} is not {article} {expected}", article = article(expected))]
     #[diagnostic(
         code(stack_encrypt::plan_field_type),
         help("Give the field a value of the type the plan declares. A row stored as another type opens only after it is re-encrypted as the declared one.")
@@ -182,6 +182,23 @@ pub enum PlanError {
         declared: IndexSpec,
         /// The index as the query asked for it.
         asked: IndexSpec,
+    },
+    /// A match configuration's [`MatchCase`](crate::op::MatchCase) names one
+    /// case and its options fold the other, so a `Matches` query would be
+    /// asked in a case its index does not answer.
+    #[error(
+        "a match configuration declares the case {declared} but its options {}",
+        if *folds { "fold case" } else { "keep case" }
+    )]
+    #[diagnostic(
+        code(stack_encrypt::plan_match_case),
+        help("Make `MatchCase::Case` agree with `MatchConfig::options().downcase`: `CaseInsensitive` when it is true, `CaseSensitive` when it is false.")
+    )]
+    MatchCase {
+        /// The case `MatchCase::Case` names: `CaseInsensitive` or `CaseSensitive`.
+        declared: &'static str,
+        /// Whether the configuration's options fold case.
+        folds: bool,
     },
     /// The plan's context was given twice. A plan takes its context from
     /// exactly one place: the plan, the call that runs it, or a context
@@ -263,6 +280,9 @@ impl crate::ErrorPayload for PlanError {
                 ("declared", index_value(declared)),
                 ("asked", index_value(asked)),
             ]),
+            Self::MatchCase { declared, folds } => {
+                payload([("declared", (*declared).into()), ("folds", (*folds).into())])
+            }
             Self::TwoContextSources { first, second } => {
                 payload([("first", (*first).into()), ("second", (*second).into())])
             }
@@ -275,10 +295,13 @@ impl crate::ErrorPayload for PlanError {
 }
 
 /// An index as a plan writes it: its key, or for a match index the object of
-/// all four options (`{"match": {"tokenizer": "standard", "downcase": true,
-/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`). A caller in
-/// another language can read it, and it does not move when a field is added
-/// to the Rust type, as `Debug` text would.
+/// its options (`{"match": {"tokenizer": "standard", "downcase": true,
+/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`, and
+/// `"short_words": true` only when that option is on), and for a
+/// JSON index the object of its options (`{"json": {"sealed_root":
+/// true, "ordered": ["$.age"]}}`). A caller in another language can read
+/// it, and it does not move when a field is added to the Rust type, as
+/// `Debug` text would.
 fn index_value(index: &IndexSpec) -> serde_json::Value {
     use crate::sem::Tokenizer;
     match index {
@@ -287,15 +310,59 @@ fn index_value(index: &IndexSpec) -> serde_json::Value {
                 Tokenizer::Standard => serde_json::Value::from("standard"),
                 Tokenizer::Ngram { length } => serde_json::json!({ "ngram": length }),
             };
-            serde_json::json!({
-                "match": {
-                    "tokenizer": tokenizer,
-                    "downcase": options.downcase,
-                    "k": options.k,
-                    "m": options.m,
-                }
-            })
+            let mut value = serde_json::json!({
+                "tokenizer": tokenizer,
+                "downcase": options.downcase,
+                "k": options.k,
+                "m": options.m,
+            });
+            if options.short_words {
+                value["short_words"] = true.into();
+            }
+            serde_json::json!({ "match": value })
         }
-        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope => index.key().into(),
+        IndexSpec::Json(options) => serde_json::json!({
+            "json": {
+                "sealed_root": options.sealed_root,
+                "ordered": options.ordered,
+            }
+        }),
+        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope | IndexSpec::OreBlock => {
+            index.key().into()
+        }
+    }
+}
+
+/// The indefinite article for a type's name, as it is read aloud: "an" before
+/// a vowel sound (`an int8`, `an i64`, `an object`), and "a" otherwise. A name
+/// starting with `u` is read as "you" (`a uint8`, `a u32`), so it takes "a".
+fn article(name: &str) -> &'static str {
+    match name.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o') => "an",
+        _ => "a",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_type_refusal_reads_with_the_right_article() {
+        let message = |expected| {
+            PlanError::FieldType {
+                field: "f".to_owned(),
+                expected,
+            }
+            .to_string()
+        };
+        assert_eq!(message("int8"), r#"field "f" is not an int8"#);
+        assert_eq!(message("object"), r#"field "f" is not an object"#);
+        assert_eq!(message("i64"), r#"field "f" is not an i64"#);
+        assert_eq!(message("uint8"), r#"field "f" is not a uint8"#);
+        assert_eq!(message("u32"), r#"field "f" is not a u32"#);
+        assert_eq!(message("string"), r#"field "f" is not a string"#);
+        assert_eq!(message("decimal"), r#"field "f" is not a decimal"#);
+        assert_eq!(message(""), r#"field "f" is not a "#);
     }
 }

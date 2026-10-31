@@ -55,7 +55,7 @@ runs:
         # Edit either and the Rust hash is unchanged, so the cache hit skips
         # the build step below and the job proceeds on a stale index.node.
         #
-        # The last two are NOT in this package. `crates/protect-ffi/Cargo.toml`
+        # The EQL entries are NOT in this package. `crates/protect-ffi/Cargo.toml`
         # carries `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`
         # — an in-tree path dependency that compiles into `index.node` and into
         # the wasm build below. A path dep has no registry checksum, so a
@@ -67,14 +67,24 @@ runs:
         # observed, not theoretical: the crate went 3.0.4 -> 4.0.0 -> 3.0.5
         # across three commits and neither key here changed by a byte.)
         #
-        # `crates/**` rather than the one crate, deliberately. `eql-bindings`
-        # has no path deps of its own TODAY, so the narrower glob would be exact
-        # — and would silently stop being exact the moment it gains one on a
-        # sibling in that workspace, which is the same hole one level down. The
-        # cost of the wider glob is a spurious miss when an unrelated EQL crate
-        # changes; the cost of the narrower one is a stale binary. Guarded by
-        # `scripts/__tests__/ffi-binding-action.test.mjs`, which discovers the
-        # path deps from the manifest rather than trusting this comment.
+        # The files cargo compiles from that crate, not the crate directory and
+        # not `packages/eql/crates/**`. protect-ffi builds eql-bindings with no
+        # features, so its `v4`, `encryption` and `encoding` modules (feature
+        # `stack-encrypt`) never reach the binding, and its tests, docs and
+        # generated `bindings/` / `schema/` are not compile inputs at all. The
+        # wider glob hashed all of that, plus eql-codegen and the other crates
+        # beside it: each such edit missed this cache, and every workflow whose
+        # `paths:` copies the glob started its suites over a change that cannot
+        # reach them. An EQL v4 pull request ran every TypeScript integration
+        # suite that way.
+        #
+        # The list is derived, not remembered.
+        # `scripts/__tests__/ffi-binding-action.test.mjs` walks the path
+        # dependencies from the manifest, follows each crate's modules from
+        # `src/lib.rs` under the features it is built with, and fails both
+        # ways: a compiled file this key misses (a new module, a new path dep,
+        # a feature turned on), and a file beside those crates that it hashes
+        # and cargo does not read.
         #
         # The EQL workspace root manifest comes with it: cargo reads it for the
         # crate's workspace context, so a `<key>.workspace = true` added to
@@ -87,7 +97,12 @@ runs:
           'languages/typescript/packages/protect-ffi/Cargo.lock',
           'languages/typescript/packages/protect-ffi/package.json',
           'languages/typescript/packages/protect-ffi/mise.toml',
-          'packages/eql/crates/**',
+          'packages/eql/crates/eql-bindings/Cargo.toml',
+          'packages/eql/crates/eql-bindings/src/lib.rs',
+          'packages/eql/crates/eql-bindings/src/sql.rs',
+          'packages/eql/crates/eql-bindings/src/from_v2/**',
+          'packages/eql/crates/eql-bindings/src/v3/**',
+          'packages/eql/crates/eql-bindings/sql/**',
           'packages/eql/Cargo.toml') }}
 
     # Always, hit or miss: `lib/` is `tsc` over `src/`, which is seconds, and
@@ -165,7 +180,7 @@ runs:
         # never reads. ffi-binding-action.test.mjs walks the tsconfig's imports
         # and fails if this stops being the complete input set.
         #
-        # `packages/eql/**` is here for the reason spelled out on the native key
+        # The EQL entries are here for the reason spelled out on the native key
         # above, and it is NOT redundant with it: wasm-pack compiles the same
         # `eql-bindings` path dependency for wasm32 into
         # `protect_ffi_inline.js`, which is the bundle
@@ -176,7 +191,12 @@ runs:
           hashFiles('languages/typescript/packages/protect-ffi/crates/**',
           'languages/typescript/packages/protect-ffi/Cargo.toml',
           'languages/typescript/packages/protect-ffi/Cargo.lock',
-          'packages/eql/crates/**',
+          'packages/eql/crates/eql-bindings/Cargo.toml',
+          'packages/eql/crates/eql-bindings/src/lib.rs',
+          'packages/eql/crates/eql-bindings/src/sql.rs',
+          'packages/eql/crates/eql-bindings/src/from_v2/**',
+          'packages/eql/crates/eql-bindings/src/v3/**',
+          'packages/eql/crates/eql-bindings/sql/**',
           'packages/eql/Cargo.toml',
           'languages/typescript/packages/protect-ffi/dist/wasm/*.d.ts',
           'languages/typescript/packages/protect-ffi/src/errors.ts',

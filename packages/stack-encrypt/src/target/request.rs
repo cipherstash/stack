@@ -12,16 +12,18 @@
 //! sibling's key material are unit-testable on their own.
 
 use super::context::AeadContext;
-use std::collections::VecDeque;
+use std::sync::Arc;
 
 use stack_kms::{DataKey, DataKeyWithTag, Iv};
 use uuid::Uuid;
 
+use crate::keyset::KeysetState;
 use crate::{Descriptor, Error};
 
 /// One unit of ZeroKMS work a [`Pending`](super::Pending) needs:
 /// constructible, otherwise opaque, so new request kinds (a PRF derivation, a
-/// keyset override) can be added without breaking implementations.
+/// keyset override, a keyset's index key) can be added without breaking
+/// implementations.
 #[derive(Debug, Clone)]
 pub struct Request(RequestKind);
 
@@ -39,6 +41,18 @@ pub(super) enum RequestKind {
         descriptor: Descriptor,
         keyset_id: Uuid,
     },
+    /// The loaded state of the keyset `keyset_id`, its index-key PRF: from
+    /// the cipher's keyset cache, or loaded from ZeroKMS and cached on a
+    /// miss, as [`StackCipher::keyset`](crate::StackCipher::keyset) loads
+    /// one.
+    ///
+    /// A request kind rather than a call: opening a JSON document whose
+    /// root is open derives the root's token under the keyset's PRF, and
+    /// that open runs inside a pending's fulfilment, after dispatch, with
+    /// no way to await a ZeroKMS round trip of its own. Dispatch is the one
+    /// place a pending reaches ZeroKMS, so the keyset is asked for as a
+    /// request and answered beside the document's data key.
+    LoadKeyset { keyset_id: Uuid },
 }
 
 impl Request {
@@ -106,32 +120,51 @@ impl Request {
         })
     }
 
+    /// Request the loaded state of the keyset `keyset_id` (crate-internal:
+    /// the state holds the keyset's index-key PRF, which never leaves the
+    /// crate).
+    pub(crate) fn load_keyset(keyset_id: Uuid) -> Self {
+        Self(RequestKind::LoadKeyset { keyset_id })
+    }
+
     /// Consume the request, yielding what it asks for.
     pub(super) fn into_kind(self) -> RequestKind {
         self.0
     }
 
-    /// The keyset a retrieve request names; `None` for a generate request,
-    /// which mints under the pending's keyset.
+    /// The keyset a retrieve or keyset request names; `None` for a generate
+    /// request, which mints under the pending's keyset.
     pub(super) fn retrieve_keyset(&self) -> Option<Uuid> {
         match &self.0 {
             RequestKind::GenerateDataKey { .. } => None,
-            RequestKind::RetrieveDataKey { keyset_id, .. } => Some(*keyset_id),
+            RequestKind::RetrieveDataKey { keyset_id, .. }
+            | RequestKind::LoadKeyset { keyset_id } => Some(*keyset_id),
         }
     }
 }
 
 /// How many requests of each kind `requests` holds, as
-/// `(generate, retrieve)` — the shape a fulfilment is scoped to.
-pub(super) fn tally(requests: &[Request]) -> (usize, usize) {
-    let (mut generate, mut retrieve) = (0usize, 0usize);
+/// `(generate, retrieve, keyset)` — the shape a fulfilment is scoped to.
+pub(super) fn tally(requests: &[Request]) -> (usize, usize, usize) {
+    let (mut generate, mut retrieve, mut keyset) = (0usize, 0usize, 0usize);
     for request in requests {
         match request.0 {
             RequestKind::GenerateDataKey { .. } => generate += 1,
             RequestKind::RetrieveDataKey { .. } => retrieve += 1,
+            RequestKind::LoadKeyset { .. } => keyset += 1,
         }
     }
-    (generate, retrieve)
+    (generate, retrieve, keyset)
+}
+
+/// What a keyset request settles to: the keyset's loaded state, or the
+/// error its load ended in, shared by every request in the batch that named
+/// that keyset. A failed load fails those requests' fulfilments and no
+/// other.
+#[derive(Clone)]
+pub(super) struct KeysetAnswer {
+    pub(super) keyset_id: Uuid,
+    pub(super) outcome: Result<Arc<KeysetState>, Arc<Error>>,
 }
 
 /// The responses a fulfilment draws from — one queue per request kind, in
@@ -139,17 +172,69 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize) {
 /// asked for (never a neighbour's), and drawing past that is
 /// [`Error::ResponseShape`].
 pub struct Responses {
-    generated: VecDeque<DataKeyWithTag>,
-    retrieved: VecDeque<DataKey>,
+    generated: Queue<DataKeyWithTag>,
+    retrieved: Queue<DataKey>,
+    keysets: Queue<KeysetAnswer>,
+}
+
+/// One kind's responses, drawn front first. A response is handed out as a
+/// clone and the original stays where it is until the queue drops, so it
+/// drops in place: a data key wipes itself on drop, and one moved out of the
+/// buffer would leave its bytes behind in the freed allocation.
+struct Queue<T> {
+    items: Vec<T>,
+    next: usize,
+}
+
+impl<T: Clone> Queue<T> {
+    fn new(items: Vec<T>) -> Self {
+        Self { items, next: 0 }
+    }
+
+    fn len(&self) -> usize {
+        self.items.len() - self.next
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn pop_front(&mut self) -> Option<T> {
+        let item = self.items.get(self.next).cloned()?;
+        self.next += 1;
+        Some(item)
+    }
+
+    /// The first `n`, as a queue of their own; `n` must not pass the end.
+    fn split_front(&mut self, n: usize) -> Self {
+        let front = self.items[self.next..self.next + n].to_vec();
+        self.next += n;
+        Self::new(front)
+    }
+
+    /// Every response left, front first.
+    fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
+        let rest = &self.items[self.next..];
+        self.next = self.items.len();
+        rest.iter().cloned()
+    }
 }
 
 impl Responses {
     /// The full response set of one batched dispatch, in request order.
     pub(super) fn new(generated: Vec<DataKeyWithTag>, retrieved: Vec<DataKey>) -> Self {
         Self {
-            generated: generated.into(),
-            retrieved: retrieved.into(),
+            generated: Queue::new(generated),
+            retrieved: Queue::new(retrieved),
+            keysets: Queue::new(Vec::new()),
         }
+    }
+
+    /// These responses with the answers to the keyset requests, in request
+    /// order.
+    pub(super) fn with_keysets(mut self, keysets: Vec<KeysetAnswer>) -> Self {
+        self.keysets = Queue::new(keysets);
+        self
     }
 
     /// The next generated data key, in [`Request::generate_data_key`] order.
@@ -162,7 +247,17 @@ impl Responses {
         self.retrieved.pop_front().ok_or(Error::ResponseShape)
     }
 
-    /// Split off the first `generated` + `retrieved` responses — the
+    /// The next loaded keyset, in [`Request::load_keyset`] order, or
+    /// [`Error::KeysetLoad`] when the cipher could not load it.
+    pub(crate) fn next_keyset(&mut self) -> Result<Arc<KeysetState>, Error> {
+        let answer = self.keysets.pop_front().ok_or(Error::ResponseShape)?;
+        answer.outcome.map_err(|source| Error::KeysetLoad {
+            keyset_id: answer.keyset_id,
+            source,
+        })
+    }
+
+    /// Split off the first `generated` + `retrieved` + `keysets` responses — the
     /// per-fulfilment view [`Pending::request`](super::Pending::request)
     /// scopes each fulfilment to. Short of either count is
     /// [`Error::ResponseShape`], and nothing is consumed.
@@ -170,13 +265,18 @@ impl Responses {
         &mut self,
         generated: usize,
         retrieved: usize,
+        keysets: usize,
     ) -> Result<Responses, Error> {
-        if self.generated.len() < generated || self.retrieved.len() < retrieved {
+        if self.generated.len() < generated
+            || self.retrieved.len() < retrieved
+            || self.keysets.len() < keysets
+        {
             return Err(Error::ResponseShape);
         }
         Ok(Responses {
-            generated: self.generated.drain(..generated).collect(),
-            retrieved: self.retrieved.drain(..retrieved).collect(),
+            generated: self.generated.split_front(generated),
+            retrieved: self.retrieved.split_front(retrieved),
+            keysets: self.keysets.split_front(keysets),
         })
     }
 
@@ -184,15 +284,15 @@ impl Responses {
     /// fulfilment returns: a fulfilment that asked for a key and left it
     /// behind is a composition bug, not a cheaper request.
     pub(super) fn is_exhausted(&self) -> bool {
-        self.generated.is_empty() && self.retrieved.is_empty()
+        self.generated.is_empty() && self.retrieved.is_empty() && self.keysets.is_empty()
     }
 
     pub(crate) fn drain_generated(&mut self) -> impl Iterator<Item = DataKeyWithTag> + '_ {
-        self.generated.drain(..)
+        self.generated.drain()
     }
 
     pub(crate) fn drain_retrieved(&mut self) -> impl Iterator<Item = DataKey> + '_ {
-        self.retrieved.drain(..)
+        self.retrieved.drain()
     }
 }
 
@@ -252,19 +352,20 @@ mod tests {
 
     #[test]
     fn tally_counts_nothing_for_no_requests() {
-        assert_eq!(tally(&[]), (0, 0));
+        assert_eq!(tally(&[]), (0, 0, 0));
     }
 
     #[test]
-    fn tally_separates_the_two_kinds() {
+    fn tally_separates_the_three_kinds() {
         let requests = vec![
             Request::generate_under(d()),
             Request::retrieve_under(Iv::default(), vec![1], d(), ks()),
             Request::generate_under(d()),
             Request::retrieve_under(Iv::default(), vec![2], d(), ks()),
             Request::generate_under(d()),
+            Request::load_keyset(ks()),
         ];
-        assert_eq!(tally(&requests), (3, 2));
+        assert_eq!(tally(&requests), (3, 2, 1));
     }
 
     /// The public constructors render the descriptor themselves, from the
@@ -277,11 +378,11 @@ mod tests {
         let expected = Descriptor::of(context);
         match Request::generate_data_key(context).into_kind() {
             RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor, expected),
-            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+            _ => panic!("expected a generate request"),
         }
         match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
             RequestKind::RetrieveDataKey { descriptor, .. } => assert_eq!(descriptor, expected),
-            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+            _ => panic!("expected a retrieve request"),
         }
     }
 
@@ -309,13 +410,13 @@ mod tests {
         let context = NonEmpty::new(Tenant("acme".into())).unwrap();
         match Request::generate_data_key(context.clone()).into_kind() {
             RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor.as_str(), "acme"),
-            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+            _ => panic!("expected a generate request"),
         }
         match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
             RequestKind::RetrieveDataKey { descriptor, .. } => {
                 assert_eq!(descriptor.as_str(), "acme")
             }
-            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+            _ => panic!("expected a retrieve request"),
         }
     }
 
@@ -323,7 +424,7 @@ mod tests {
     fn a_generate_request_carries_its_descriptor() {
         match Request::generate_under(d()).into_kind() {
             RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor, d()),
-            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+            _ => panic!("expected a generate request"),
         }
     }
 
@@ -342,7 +443,7 @@ mod tests {
                 assert_eq!(tag, vec![7, 8, 9]);
                 assert_eq!(descriptor, d());
             }
-            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+            _ => panic!("expected a retrieve request"),
         }
     }
 
@@ -408,7 +509,7 @@ mod tests {
     #[tokio::test]
     async fn split_front_takes_exactly_what_was_asked_for() {
         let mut responses = responses(3, 2).await;
-        let own = responses.split_front(2, 1).unwrap();
+        let own = responses.split_front(2, 1, 0).unwrap();
 
         assert_eq!((own.generated.len(), own.retrieved.len()), (2, 1));
         assert_eq!(
@@ -425,10 +526,10 @@ mod tests {
         let tags: Vec<Vec<u8>> = generated.iter().map(|key| key.tag.clone()).collect();
         let mut responses = Responses::new(generated, Vec::new());
 
-        let mut first = responses.split_front(1, 0).unwrap();
+        let mut first = responses.split_front(1, 0, 0).unwrap();
         assert_eq!(first.next_generated_key().unwrap().tag, tags[0]);
 
-        let mut rest = responses.split_front(2, 0).unwrap();
+        let mut rest = responses.split_front(2, 0, 0).unwrap();
         assert_eq!(rest.next_generated_key().unwrap().tag, tags[1]);
         assert_eq!(rest.next_generated_key().unwrap().tag, tags[2]);
     }
@@ -436,7 +537,7 @@ mod tests {
     #[tokio::test]
     async fn split_front_of_nothing_yields_an_empty_view() {
         let mut responses = responses(2, 2).await;
-        let mut own = responses.split_front(0, 0).unwrap();
+        let mut own = responses.split_front(0, 0, 0).unwrap();
 
         assert!(matches!(
             own.next_generated_key(),
@@ -457,7 +558,7 @@ mod tests {
     async fn split_front_short_of_generated_responses_errors_without_consuming() {
         let mut responses = responses(1, 0).await;
         assert!(matches!(
-            responses.split_front(2, 0),
+            responses.split_front(2, 0, 0),
             Err(Error::ResponseShape)
         ));
         assert_eq!(responses.generated.len(), 1);
@@ -467,7 +568,7 @@ mod tests {
     async fn split_front_short_of_retrieved_responses_errors_without_consuming() {
         let mut responses = responses(2, 1).await;
         assert!(matches!(
-            responses.split_front(2, 2),
+            responses.split_front(2, 2, 0),
             Err(Error::ResponseShape)
         ));
         // Neither queue was drained: the check happens before the split.
@@ -493,5 +594,83 @@ mod tests {
             responses.next_retrieved_key(),
             Err(Error::ResponseShape)
         ));
+    }
+
+    fn keyset(id: u128) -> KeysetAnswer {
+        use vitaminc_prf::PrfKeyInit;
+        KeysetAnswer {
+            keyset_id: Uuid::from_u128(id),
+            outcome: Ok(Arc::new(KeysetState {
+                id: Uuid::from_u128(id),
+                name: None,
+                prf: vitaminc_hmac::HmacSha256Prf::new(vitaminc_protected::Protected::new([1; 32])),
+            })),
+        }
+    }
+
+    /// A keyset request answered with a failed load names the keyset and
+    /// carries the load's error; the next request's answer is its own.
+    #[test]
+    fn a_failed_load_answers_its_request_with_the_keyset_and_the_cause() {
+        let failed = KeysetAnswer {
+            keyset_id: Uuid::from_u128(9),
+            outcome: Err(Arc::new(Error::Aead)),
+        };
+        let mut responses =
+            Responses::new(Vec::new(), Vec::new()).with_keysets(vec![failed, keyset(1)]);
+        let refused = responses.next_keyset().map(|state| state.id);
+        assert!(
+            matches!(
+                &refused,
+                Err(Error::KeysetLoad { keyset_id, source })
+                    if *keyset_id == Uuid::from_u128(9) && matches!(**source, Error::Aead)
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(
+            responses.next_keyset().unwrap().id,
+            Uuid::from_u128(1),
+            "the next request's keyset is unaffected"
+        );
+    }
+
+    #[test]
+    fn a_keyset_request_names_its_keyset() {
+        let request = Request::load_keyset(ks());
+        assert_eq!(request.retrieve_keyset(), Some(ks()), "held to the scope");
+        match request.into_kind() {
+            RequestKind::LoadKeyset { keyset_id } => assert_eq!(keyset_id, ks()),
+            _ => panic!("expected a keyset request"),
+        }
+    }
+
+    #[test]
+    fn keysets_come_back_in_request_order_and_not_past_the_end() {
+        let mut responses =
+            Responses::new(Vec::new(), Vec::new()).with_keysets(vec![keyset(1), keyset(2)]);
+        assert!(!responses.is_exhausted());
+        assert_eq!(responses.next_keyset().unwrap().id, Uuid::from_u128(1));
+        assert_eq!(responses.next_keyset().unwrap().id, Uuid::from_u128(2));
+        assert!(responses.is_exhausted());
+        assert!(matches!(responses.next_keyset(), Err(Error::ResponseShape)));
+    }
+
+    #[test]
+    fn split_front_takes_keysets_and_refuses_short_of_them() {
+        let mut responses = Responses::new(Vec::new(), Vec::new()).with_keysets(vec![
+            keyset(1),
+            keyset(2),
+            keyset(3),
+        ]);
+        assert!(matches!(
+            responses.split_front(0, 0, 4),
+            Err(Error::ResponseShape)
+        ));
+        assert_eq!(responses.keysets.len(), 3, "nothing consumed");
+        let mut own = responses.split_front(0, 0, 2).unwrap();
+        assert_eq!(own.next_keyset().unwrap().id, Uuid::from_u128(1));
+        assert_eq!(own.next_keyset().unwrap().id, Uuid::from_u128(2));
+        assert_eq!(responses.keysets.len(), 1, "the sibling's keyset is left");
+        assert!(!responses.is_exhausted());
     }
 }

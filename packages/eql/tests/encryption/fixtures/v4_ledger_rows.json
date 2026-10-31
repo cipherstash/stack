@@ -1,0 +1,199 @@
+{
+  "_comment": "Ledger rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and queries them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4LedgerRows, do not edit.",
+  "seed": "encrypt round-trip tests seed v1",
+  "table": "profiles",
+  "rows": [
+    {
+      "id": 1,
+      "plaintext": {
+        "opened": "-262143-01-01",
+        "due": "2024-02-29",
+        "created": "1969-12-31T23:59:59.999999999Z",
+        "posted": "2024-02-29T12:34:56.123456Z",
+        "total": "-79228162514264337593543950335",
+        "amount": "1.50"
+      },
+      "stored": {
+        "amount": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "amount"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABkTJd2+gSGUCXq5Bog0ODUIACQ+t9l6f3shvibRWnk1Ihw7dEY6c0vRmYYIIFt9OMzRAIL8M8TSHbtBLpRD8evgfwfWeQncgvb4wFTmJ2Dl2n60SGuhBcL2PnYmDbY/GM=",
+          "hm": "ff787d4a33e41d24d30fb95098c57bdffeef072fb9e0907a2dd7fa621a5eda03"
+        },
+        "created": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "created"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABGuTbf5RPT5TP4jkMDscaIIADvvVQ1X3uY1KcA+8e4xNhSomXJsaXQbJQFq2COXq6V/gKCU8qm+3AzsbJ2iZdccv/Iaxb+WgqDN6aoF4MRVZU74p5qKfXg12dXAA=="
+        },
+        "due": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "due"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABxVAjbrawodyK39W6/wh82IABYPU+0mX8CHFvfIfoChRygxSp/EY9wA5Tt3u09Pc3bgwIDcMmFSrX/0VrXRIQ4VO1CORi2fLaZvUHGHKyQ51NO9OU=",
+          "hm": "decc03613957c47004860bc9bc70770aed4c6ba3f0da2aaea3da9fe7367af6a9"
+        },
+        "opened": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "opened"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABac+LBy0VG2VPg3ZA53wR5IADij0/N3siwDhSUWwCHNy3M63fuNYPaRFubg/d7h/snCAL03BHwsPgXawwBQRFdQWpQKS5jg02BxED9R4DALnq5jis="
+        },
+        "posted": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "posted"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAr9Mw7BH8KdqEzSM13/Zi7IADyLjNo7TciDvsKQU+xOu/8uQlNYMYFE1U+bVt29bUpOQIHRhk22OLKCoM9GSa2moqwpXD2u/VhhJfzC9Yt+Nj6OJMZhFCoU4Fuhg==",
+          "hm": "b3a2b5c8d5ea562f472a55eb57f3b49aec3d6cc3731dad16c4f8999394a95c55"
+        },
+        "total": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "total"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAATyRC14+m8N7oH7Js7ZVqRIAAMq9Za2+D51qL5ba1r6/Rtqzc3kwtt8DctI1tVVhdvgQKko9YUgjcDJdcUOhpOnbxcyAs53dUr8W3bkDuQJ2+tOMjWzVbZi3+3UY9THL8="
+        }
+      }
+    },
+    {
+      "id": 2,
+      "plaintext": {
+        "opened": "+262142-12-31",
+        "due": "2024-03-01",
+        "created": "2024-02-29T12:34:56.123456789Z",
+        "posted": "2024-02-29T12:34:56.123456999Z",
+        "total": "0.0000000000000000000000000001",
+        "amount": "1.5"
+      },
+      "stored": {
+        "amount": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "amount"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAKybDqXBsszdixWIGR8SZBIAD/drxmP5dzmNDKUjYtiDgZvFcHhOZOJzrc6eex0q0MCgJ/PdJDq9vGicUmekPKAKWfOpPYO9BZKtoa1mnfIssxqlPAj08l1SM/ZUkyzdg=",
+          "hm": "ff787d4a33e41d24d30fb95098c57bdffeef072fb9e0907a2dd7fa621a5eda03"
+        },
+        "created": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "created"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACseL3lfg99+b/uhGmba7LRIADKXzDfsoVOBKIKwpw6XN/IWltOxnK8Q1qzZ0YkAqK0WwI+rlmCIdTAihn74kvROTOrdSmPQRCT1v1M110EAPHAat3QVBGT+2H9AA=="
+        },
+        "due": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "due"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAXndapLjoyx2wsK2yToOIfIACwJln1DyojCIuwH8XHvJodMunCGS0dfEYintuFQrNXLALNoZ3nax4abrlBe0je4lvugniEDqDjJ/5+nrsWCL19o84=",
+          "hm": "086ccfab604ccf449a731ad7e01161bfd80c12f25ba5832e92b709f42b2b7aa4"
+        },
+        "opened": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "opened"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADhmok01VlvzDZ54Ve4NYs+IAA9SQIB8WxjSZDilDh2n9Ym6YccQQWBJ7ef2clbtu4SgQLl1OmZPlTj2ZHK0QyC215t27avkXEaIiiXstXCtLjsXhQ="
+        },
+        "posted": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "posted"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABaXm2d096n8ZEEJiaB3NxKIACL8OhWrR2p4fZZazuJKKgRsv+lJPaamyXwxGVq9vT2EAK7AmoJ7W7R19iCPgf9Vgr+k6s4qT1n8cIt4USX0NfAI+pE7FlsCyeD7A==",
+          "hm": "b3a2b5c8d5ea562f472a55eb57f3b49aec3d6cc3731dad16c4f8999394a95c55"
+        },
+        "total": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "total"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABLXWj8ZGmyU14mfULzczbUIADg6xfObeAiOuQQcg49dZ3rMkOc2WqCL0NPepGJDhhslgLyLRD8HyuEqddrbsIzlXzyWBYWvk46vlaHtQK02b+Task10kxCuTxm7gJtg0s="
+        }
+      }
+    },
+    {
+      "id": 3,
+      "plaintext": {
+        "opened": "1970-01-01",
+        "due": "2024-02-29",
+        "created": "1970-01-01T00:00:00Z",
+        "posted": "2024-02-29T12:34:56.123457Z",
+        "total": "1234.5600",
+        "amount": "1.51"
+      },
+      "stored": {
+        "amount": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "amount"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABnPkyUpuwK99phMHDnRbhCIABCbSCYPvkH92/UTxfFMiL/7X01xvH3mgh3pxeV+v59vwJJQAnSyyjouUFH1r1Y5SrLasHKlU9oED93T3O5LqvtTWwiArdsKBHHpx71T4Y=",
+          "hm": "7fbed23fa93b6d89ecf0883cddd191d4260d1cc8af68ec9c60d997365dbf4d5f"
+        },
+        "created": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "created"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADb10mF0XME/G6O/c19GNdtIAC6NkocrbY4y7PuHSJX/nEKsSq6uC8EKGhUL69Xkgz4MQJh2UUJ/xMpXG6j+ij6GOMZn9R/bakY9mtlssoB5upT/pIJA+hV4N478g=="
+        },
+        "due": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "due"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAMtFomHN3dgKH8FZNzXqxbIAAX/CwMjLj4HTN/Mo0hRbmUt+V5v4bI366uKHRN55IcpQKhu13tqJuXm3Uw6yrB8GapAq7TEKzLqcOkNT2vSyNPLvk=",
+          "hm": "decc03613957c47004860bc9bc70770aed4c6ba3f0da2aaea3da9fe7367af6a9"
+        },
+        "opened": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "opened"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAUfff4RXAt9HIL0ezwFl5oIABloL38OjJ3H7ZOBpgYefpdza2nKMMccXMcD8sSAdaR9AIG69Y8fG9aO6AFuMG4AkH92lz4Plj5TuGR3crB+83JuHc="
+        },
+        "posted": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "posted"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABTyd02/xTIqENG5WzqeH+kIACTeY3JPRFisVuLrMf6rcKnordc0e9lrrATavl1B/cL4wJ2f82ziXPF0/JepP3C5XPnAxP/UVQemoyzemJeRGdkqegUvASIHcRrgQ==",
+          "hm": "b75c44fffb471158dd836f858f88d04658cd8985d0f52ccf582af259eeda030f"
+        },
+        "total": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "total"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACT3tVNTBXZ5pFHbNGibsVoIADBAZSy1MjXUm3HtQF3xbv35hpGRWHsK4FDx5KsARB6cgLDY8S5OvL6ob8+2pUnCBw7Eq1x5kSeBw1lpoRqjUmzugxrQ9NTSGwi1ObgAuk="
+        }
+      }
+    }
+  ]
+}

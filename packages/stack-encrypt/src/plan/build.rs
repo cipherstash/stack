@@ -244,7 +244,7 @@ pub(crate) fn check_declared(
 /// # struct User { email: String, id: u64 }
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
 /// use stack_encrypt::kms::FakeDataKeySource;
-/// use stack_encrypt::{Equality, Plan, StackCipher};
+/// use stack_encrypt::{op, Equality, Plan, StackCipher};
 ///
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let user = User { email: "bob@example.com".into(), id: 42 };
@@ -259,10 +259,9 @@ pub(crate) fn check_declared(
 /// // A query and a read name the same context.
 /// let email_plan = users_plan.field("email")?;
 /// let query_value = cipher
-///     .query("bob@example.com")
+///     .query(op::Eq, "bob@example.com")
 ///     .context("tenants/acme/users")
-///     .using(&email_plan)
-///     .equality()
+///     .on(&email_plan)
 ///     .await?;
 /// # let _ = query_value;
 /// let back = cipher.open(record).context("tenants/acme/users").using(&users_plan).await?;
@@ -604,7 +603,7 @@ fn stored<T: 'static>(field: &str, slot: Slot) -> Result<T, PlanError> {
 /// Open a sealed field's ciphertext as an `F`.
 fn open_sealed<F, K>(ciphertext: StackCipherText, context: CallerContext) -> Decryption<Slot, K>
 where
-    F: crate::Decrypt<'static> + Send + 'static,
+    F: crate::Decrypt + Send + 'static,
     K: 'static,
 {
     open::<F, K>(ciphertext, AeadContext::from(context)).map(Slot::new)
@@ -728,7 +727,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// `<context>/<identity>`. Lowers to [`ciphertext`]`().under(label)`.
     pub fn encrypt<F>(self, field: impl FieldRef<S, F>) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         let (name, access) = resolve(field);
         let read = Arc::clone(&access.read);
@@ -765,14 +764,14 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
         indexes: impl Indexes<F, Terms: Send> + Clone + Send + Sync + 'static,
     ) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
     {
         self.encrypt_index_of(field, indexes)
     }
 
     fn encrypt_index_of<F, X>(self, field: impl FieldRef<S, F>, indexes: X) -> Self
     where
-        F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
+        F: crate::Encrypt + crate::Decrypt + Clone + Send + 'static,
         X: Indexes<F> + Clone + Send + Sync + 'static,
         X::Terms: Send,
     {
@@ -915,7 +914,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::sem::{EqualityTerm, MatchTerms};
-    /// use stack_encrypt::{Encrypted, Plan, StackCipher};
+    /// use stack_encrypt::{op, Encrypted, Plan, StackCipher};
     ///
     /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
     /// let users_plan = Plan::context("users")
@@ -928,7 +927,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// let email: Encrypted<(EqualityTerm, MatchTerms)> = record.take("email")?;
     ///
     /// // The target declares an equality index, so the field answers it.
-    /// let query_value = cipher.query("bob@example.com").using(&users_plan.field("email")?).equality().await?;
+    /// let query_value = cipher.query(op::Eq, "bob@example.com").on(&users_plan.field("email")?).await?;
     /// assert_eq!(query_value, email.terms.0);
     /// # Ok(())
     /// # }

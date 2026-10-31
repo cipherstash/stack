@@ -100,7 +100,8 @@ on:
       - "packages/eql/docker/**"
       - "packages/eql/README.md"
       - "packages/eql/SUPABASE.md"
-      # The `rust-crates` job's encryption steps compile these by PATH
+      # The `rust-crates` and `rust-encryption-postgres` jobs' encryption
+      # steps compile these by PATH
       # (`eql-bindings`' `stack-encrypt` feature): stack-encrypt, its derive
       # and stack-kms through `path =`, and stack-auth and stack-profile
       # through `workspace = true` entries the root `Cargo.toml` resolves to
@@ -449,6 +450,70 @@ jobs:
         run: |
           mise run test:sqlx:partition
 
+  # The Rust encryption suite against a live database, once per supported
+  # PostgreSQL version: the JSON tree family's oracle (containment over the
+  # encrypted column against native `jsonb @>` over the plaintexts), its
+  # walks and orderings, and the plan-shape test that holds the planner to
+  # the GIN and btree indexes with every setting at its default. Plan choice
+  # is a per-version property of the planner, which is why this is a matrix
+  # and not a step of `rust-crates`. PR and manual dispatch run PG 17 alone;
+  # a push or the schedule runs the full set, like the SQLx jobs (see
+  # `setup`). Listed in `ci-required`'s `needs`, like every job here: the
+  # step it replaced sat inside `rust-crates`, which is.
+  rust-encryption-postgres:
+    name: "Rust encryption with PostgreSQL ${{ matrix.postgres-version }}"
+    needs: [changes, setup]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ${{ fromJSON(needs.setup.outputs.pg-versions) }}
+    services:
+      encryption-postgres:
+        image: postgres:${{ matrix.postgres-version }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        # Container port only: Docker picks the host port, and the test step
+        # reads it from `job.services`, so the number is written once.
+        ports:
+          - 5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+      # Restores what `rust-crates` saves (the stack-encrypt feature tree)
+      # and never saves itself: a matrix of fast jobs racing one key would
+      # overwrite it with whichever finished first.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: rust-crates
+          save-if: false
+      # The task takes the connection from EQL_TEST_DATABASE_URL alone, and
+      # the host port in it comes from the service, so the two cannot
+      # disagree.
+      - name: Test Rust encryption with PostgreSQL ${{ matrix.postgres-version }}
+        env:
+          EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.encryption-postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres"
+        run: mise run test:encryption:postgres
+
   # docs:validate + Clean-DB v3 install smoke. Both are version-relevant, so
   # they follow the event's PG set (PG17 on PR; 14-17 in the queue). Moved out
   # of the old per-version test job so they run ONCE per version, not per shard.
@@ -548,20 +613,6 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
-    services:
-      encryption-postgres:
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-        # Container port only: Docker picks the host port, and the test step
-        # reads it from `job.services`, so the number is written once.
-        ports:
-          - 5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -597,19 +648,19 @@ jobs:
           rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run test:crates
 
-      # The three encryption checks are mise tasks rather than raw cargo here,
-      # so `eql-suite-ci.test.mjs` counts them among the cargo tasks a root
+      # The block ORE timing harness's ciphertext generator is a detached
+      # workspace with its own Cargo.lock that no job builds, so its lock is
+      # checked here rather than left to drift until someone runs the harness.
+      - name: Check the timing harness's Cargo.lock
+        run: cargo metadata --locked --format-version 1 --manifest-path tests/timing/ore_block_v2/ctgen/Cargo.toml > /dev/null
+
+      # The encryption checks are mise tasks rather than raw cargo here, so
+      # `eql-suite-ci.test.mjs` counts them among the cargo tasks a root
       # workflow must reach, and `eql-workflow-filters.test.mjs` derives the
-      # paths they read. The database task takes the connection from
-      # EQL_TEST_DATABASE_URL alone, and the host port in it comes from the
-      # service, so the two cannot disagree.
+      # paths they read. The database half runs in `rust-encryption-postgres`
+      # below, once per supported PostgreSQL version.
       - name: Test Rust text equality
         run: mise run test:encryption
-
-      - name: Test Rust text equality with PostgreSQL
-        env:
-          EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.encryption-postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres"
-        run: mise run test:encryption:postgres
 
       - name: Compile Rust text equality for WASI without HTTP
         run: mise run check:encryption:wasi
@@ -733,6 +784,8 @@ jobs:
         run: mise run test:installer_complete
       - name: Symbol-order cross-check (v3)
         run: mise run test:symbol_order_v3
+      - name: v4 isolation gate and its self-test
+        run: mise run test:v4_isolation
       - name: Build-ordering helper unit tests
         run: mise run test:build_ordering_helpers
 
@@ -1003,8 +1056,9 @@ jobs:
   ci-required:
     name: "ci-required"
     needs: [changes, setup, build-archive, test, validate, schema, rust-crates,
-            codegen, self-contained-v3, matrix-coverage, splinter, docs-static,
-            known-failures, doc-anchors, e2e]
+            rust-encryption-postgres, codegen, self-contained-v3,
+            matrix-coverage, splinter, docs-static, known-failures,
+            doc-anchors, e2e]
     if: always()
     runs-on: blacksmith-16vcpu-ubuntu-2204
     # Same opt-out as `setup`, and this is the worse of the two to get wrong:

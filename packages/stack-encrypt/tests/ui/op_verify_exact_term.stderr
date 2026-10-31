@@ -1,0 +1,5 @@
+error[E0599]: no method named `verify` found for struct `EqualityTerm` in the current scope
+  --> tests/ui/op_verify_exact_term.rs:13:18
+   |
+13 |     let _ = term.verify("bob");
+   |                  ^^^^^^ method not found in `EqualityTerm`

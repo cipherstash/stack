@@ -1,0 +1,25 @@
+# Ciphertext generator for the EQL v4 block ORE comparator timing harness
+# (../run.sh).
+#
+# A DETACHED crate: the empty `[workspace]` table makes it its own workspace
+# root, so it never joins the main workspace or its CI. It encrypts with ore-rs
+# directly under a random throwaway key; the harness needs real ciphertexts but
+# no CipherStash credentials, and nothing it produces is a test fixture.
+[package]
+name = "ore-block-v2-timing-ctgen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# ore-rs's `BlockOre`, whose 6-bit fixed-width and chained engines are what
+# EQL v4's `ore_block_v2` compares; the same version as the root Cargo.lock.
+# Since 0.10 a value reaches the engines only through vitaminc-ore, as it
+# does in stack-encrypt.
+ore-rs = { version = "=0.10.0", default-features = false }
+vitaminc-ore = "=0.8.0"
+vitaminc-protected = "=0.8.0"
+rand = "0.8"
+hex = "0.4"
+
+[workspace]

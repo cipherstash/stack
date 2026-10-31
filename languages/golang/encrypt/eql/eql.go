@@ -3,12 +3,18 @@
 // the type's domain, and the query types that match them.
 //
 // A field with `stash:"email,encrypt_into=TextEq"` is an [TextEq] in the
-// generated encrypted type, and its Fields entry's Query returns a
+// generated encrypted type, and its Fields entry's Eq returns a
 // [TextEqQuery]. The guest builds every value: generated code stores what
 // the guest returns and never assembles an EQL value itself (ADR-0007,
 // amended 2026-10-06). Each type implements driver.Valuer and sql.Scanner
 // for one column, and json.Marshaler, which writes the value as the JSON
-// it is.
+// it is. It prints (fmt.Stringer, fmt.Formatter, for every verb) and logs
+// (slog.LogValuer) as its type's name and never its bytes, so fmt.Sprint
+// and %s do not give its JSON: a stored value holds ciphertext and terms,
+// and a query value terms. To print or log the JSON on purpose, call
+// Reveal at that call: slog.Debug("stored", "email", v.Reveal()). In code,
+// the JSON is the value itself, a []byte: convert it (string(v),
+// json.RawMessage(v)), or call MarshalJSON.
 //
 // Importing this package links the build of the engine that holds the EQL
 // types: eql_gen.go's init registers the embedded module with package
@@ -18,9 +24,9 @@
 //
 // The types and the [Types] table are generated from the EQL catalog by
 // eql-codegen (`mise run types:generate` in packages/eql); eql_gen.go is
-// committed and drift-gated. The engine produces [TextEq] today; every
-// other type is listed with the reason it cannot be produced yet, and
-// stashgen refuses it.
+// committed and drift-gated. [Types] says which types the engine produces
+// today; every other type is listed with the reason it cannot be produced
+// yet, and stashgen refuses it.
 package eql
 
 import (
@@ -28,6 +34,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 )
 
 // Type is one EQL type as the catalog describes it: what stashgen learns
@@ -120,4 +128,34 @@ func unmarshal(dst *[]byte, b []byte) error {
 	}
 	*dst = append([]byte(nil), b...)
 	return nil
+}
+
+// redacted stands in for an EQL value's bytes in what it prints and logs.
+const redacted = "[redacted]"
+
+// text is what an EQL value prints: its type's name, and [redacted] for
+// its bytes, or {} when it is empty.
+func text(b []byte, kind string) string {
+	if len(b) == 0 {
+		return "eql." + kind + "{}"
+	}
+	return "eql." + kind + "{" + redacted + "}"
+}
+
+// format writes [text] for every verb fmt hands an EQL value.
+func format(f fmt.State, b []byte, kind string) {
+	_, _ = io.WriteString(f, text(b, kind))
+}
+
+// logValue is what slog records of an EQL value: the [text] it prints,
+// never its bytes.
+func logValue(b []byte, kind string) slog.Value {
+	return slog.StringValue(text(b, kind))
+}
+
+// reveal is an EQL value's JSON as text, for the Reveal its type carries:
+// a string, so fmt and every slog handler print it as text and not as a
+// list of byte values. Empty when the value is.
+func reveal(b []byte) string {
+	return string(b)
 }

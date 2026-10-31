@@ -18,7 +18,7 @@
 //!
 //! # Wire format
 //!
-//! [`TargetDescriptor::to_value`] is the entry a guest's `se_targets` export
+//! A [`TargetDescriptor`], serialized, is the entry a guest's `se_targets` export
 //! lists for each type; the keys are fixed on [`TargetDescriptor`], in the
 //! crate that owns the data grammar, and `eql-bindings` is tested to spell
 //! its table the same way.
@@ -27,15 +27,19 @@
 
 use std::fmt;
 
-use vitaminc_aead_value::{FfiValue, ValueKind};
+use super::query::target_operators;
+use super::{OpSpec, ValueFrame, ValueKind};
 
+use crate::json::JsonOptions;
+use crate::sem::MatchOptions;
+use crate::target::IndexSpec;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 
 /// One EQL type a plan may name as a target, as the host describes it.
 ///
 /// # Wire format
 ///
-/// [`to_value`](Self::to_value) is the entry a guest's `se_targets` export
+/// The descriptor, serialized (it is `Serialize`), is the entry a guest's `se_targets` export
 /// lists for each type, so a generator can ask the engine it embeds which
 /// EQL types it holds. Every key is always present; an absent value is
 /// null, never a missing key.
@@ -47,11 +51,26 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 /// | `suffix` | string: the query-capability suffix, `Eq`; empty for a storage-only type |
 /// | `plaintext` | string or null: the [`ValueKind`] name the type is produced from — the same names a field's `"type"` key uses — or null while unspecified |
 /// | `sql_domain` | string: the stored value's PostgreSQL domain |
-/// | `indexes` | list of strings: the indexes the type carries, by `IndexSpec::key()`, plus `json` for a SteVec document |
+/// | `indexes` | list of strings: the indexes the type carries, by `IndexSpec::key()`: `eq`, `match`, `ore`, `ope`, and `json` for a document family's stored type (`JsonSearch`) |
 /// | `query` | string or null: the query twin's type name |
 /// | `query_sql_domain` | string or null: the query twin's PostgreSQL domain |
 /// | `producible` | bool: whether the engine produces the type today |
 /// | `reason` | string or null: why not, when it does not |
+/// | `operators` | list of objects: the operators the engine answers for the type ([`operators`](Self::operators)), each `{"operator", "fidelity", "arity", "index"}`; empty for a type it does not produce |
+///
+/// Each `operators` entry has every key:
+///
+/// | key | value |
+/// |---|---|
+/// | `operator` | string: the operator's name, `eq` ([`OpSpec::name`]) |
+/// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`](super::Fidelity::name)) |
+/// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
+/// | `index` | string: the key of the type's index that answers it, `eq` |
+///
+/// The first ten keys are the row `eql-bindings` serializes for the type;
+/// `operators` is the engine's, computed from the row by the table every
+/// plan field is held to ([`OpSpec::answered_by`]), so a generator reads the
+/// operators from the engine it embeds rather than from a copy of the rules.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TargetDescriptor {
@@ -75,6 +94,72 @@ pub struct TargetDescriptor {
     pub producible: bool,
     /// Why it does not, when it does not.
     pub reason: Option<String>,
+    /// The options the type's match index is built under, for a type that
+    /// carries one and whose builder says which ([`with_match_options`]).
+    /// Not on the wire: the engine needs them to answer `matches` through
+    /// the type (to cut the query's tokens for [`verify`] as the stored
+    /// filter was cut, and to read a query term), and a host does not.
+    ///
+    /// [`with_match_options`]: Self::with_match_options
+    /// [`verify`]: super::verify
+    pub match_options: Option<MatchOptions>,
+    /// The PostgreSQL domain of the type's ordering operand at a path, for
+    /// a type that stores a JSON document
+    /// ([`with_leaf_query_sql_domain`](Self::with_leaf_query_sql_domain)):
+    /// what an ordering at a path binds as, beside the containment query
+    /// [`query_sql_domain`](Self::query_sql_domain) names. Not on the
+    /// wire; a generator reads it from the operators' terms.
+    pub leaf_query_sql_domain: Option<String>,
+    /// The PostgreSQL domain of the type's element-scoped predicate, for a
+    /// type that stores a JSON document
+    /// ([`with_elements_query_sql_domain`](Self::with_elements_query_sql_domain)):
+    /// what `element_match` binds as. Not on the wire, as
+    /// [`leaf_query_sql_domain`](Self::leaf_query_sql_domain) is not; a type
+    /// that names none does not answer `element_match`.
+    pub elements_query_sql_domain: Option<String>,
+    /// The PostgreSQL domain of the type's compiled predicate, for a type
+    /// that stores a JSON document
+    /// ([`with_predicate_query_sql_domain`](Self::with_predicate_query_sql_domain)):
+    /// what `match` binds as. Not on the wire; a type that names none does
+    /// not answer `match`.
+    pub predicate_query_sql_domain: Option<String>,
+}
+
+/// The descriptor in its wire form: the object a guest's `se_targets`
+/// lists, every key present (see [the type's wire format](TargetDescriptor#wire-format)).
+impl serde::Serialize for TargetDescriptor {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct Wire<'a> {
+            name: &'a str,
+            family: &'a str,
+            suffix: &'a str,
+            plaintext: Option<&'static str>,
+            sql_domain: &'a str,
+            indexes: &'a [String],
+            query: Option<&'a str>,
+            query_sql_domain: Option<&'a str>,
+            producible: bool,
+            reason: Option<&'a str>,
+            operators: Vec<super::OperatorEntry>,
+        }
+        serde::Serialize::serialize(
+            &Wire {
+                name: &self.name,
+                family: &self.family,
+                suffix: &self.suffix,
+                plaintext: self.plaintext.map(ValueKind::name),
+                sql_domain: &self.sql_domain,
+                indexes: &self.indexes,
+                query: self.query.as_deref(),
+                query_sql_domain: self.query_sql_domain.as_deref(),
+                producible: self.producible,
+                reason: self.reason.as_deref(),
+                operators: self.operator_entries(),
+            },
+            s,
+        )
+    }
 }
 
 impl TargetDescriptor {
@@ -104,36 +189,100 @@ impl TargetDescriptor {
             query_sql_domain,
             producible,
             reason,
+            match_options: None,
+            leaf_query_sql_domain: None,
+            elements_query_sql_domain: None,
+            predicate_query_sql_domain: None,
         }
     }
 
-    /// The descriptor in its wire form: the object a guest's `se_targets`
-    /// lists, every key present (see [the type's wire format](Self#wire-format)).
-    pub fn to_value(&self) -> FfiValue {
-        let text = |s: &str| FfiValue::String(s.into());
-        let optional = |s: &Option<String>| s.as_deref().map_or(FfiValue::Null, text);
-        FfiValue::Object(vec![
-            ("name".to_string(), text(&self.name)),
-            ("family".to_string(), text(&self.family)),
-            ("suffix".to_string(), text(&self.suffix)),
-            (
-                "plaintext".to_string(),
-                self.plaintext
-                    .map_or(FfiValue::Null, |kind| text(kind.name())),
-            ),
-            ("sql_domain".to_string(), text(&self.sql_domain)),
-            (
-                "indexes".to_string(),
-                FfiValue::Array(self.indexes.iter().map(|k| text(k)).collect()),
-            ),
-            ("query".to_string(), optional(&self.query)),
-            (
-                "query_sql_domain".to_string(),
-                optional(&self.query_sql_domain),
-            ),
-            ("producible".to_string(), FfiValue::Bool(self.producible)),
-            ("reason".to_string(), optional(&self.reason)),
-        ])
+    /// The descriptor of a type that stores a JSON document, whose
+    /// ordering operand at a path is the domain `domain`.
+    #[must_use]
+    pub fn with_leaf_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
+        self.leaf_query_sql_domain = Some(domain.into());
+        self
+    }
+
+    /// The descriptor of a type that stores a JSON document, whose
+    /// element-scoped predicate is the domain `domain`.
+    #[must_use]
+    pub fn with_elements_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
+        self.elements_query_sql_domain = Some(domain.into());
+        self
+    }
+
+    /// The descriptor of a type that stores a JSON document, whose compiled
+    /// predicate is the domain `domain`.
+    #[must_use]
+    pub fn with_predicate_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
+        self.predicate_query_sql_domain = Some(domain.into());
+        self
+    }
+
+    /// The descriptor of a type whose match index is built under `options`:
+    /// such a type answers `matches` through its query twin
+    /// ([`operators`](Self::operators)). A type with a match index and no
+    /// options given answers no probabilistic operator, since `verify`
+    /// could not cut the query's tokens as the stored filter was cut.
+    #[must_use]
+    pub fn with_match_options(mut self, options: MatchOptions) -> Self {
+        self.match_options = Some(options);
+        self
+    }
+
+    /// The entries of [`operators`](Self::operators), each with the index
+    /// that answers it, as the wire form lists them.
+    fn operator_entries(&self) -> Vec<super::OperatorEntry> {
+        target_operators(self)
+            .iter()
+            .map(|(op, index)| super::OperatorEntry::new(*op, index))
+            .collect()
+    }
+
+    /// The operators the engine answers for a field that names this type,
+    /// in [`OpSpec::ALL`]'s order: none for a type it does not produce or
+    /// that has no query twin, and otherwise each operator of one value
+    /// that one of the type's indexes answers for its plaintext kind
+    /// ([`OpSpec::answered_by`]): the exact ones, `matches` when the
+    /// type's match options are known ([`with_match_options`](Self::with_match_options)),
+    /// and a JSON operator when the type names the SQL type its operand
+    /// binds as (`match` with
+    /// [`with_predicate_query_sql_domain`](Self::with_predicate_query_sql_domain)).
+    /// The query for each is the type's query twin. `between` is not
+    /// answered through a type yet: see [`query_term`](super::query_term)'s
+    /// module.
+    pub fn operators(&self) -> Vec<OpSpec> {
+        target_operators(self)
+            .into_iter()
+            .map(|(op, _)| op)
+            .collect()
+    }
+}
+
+/// The options a plan field gives the EQL type it names: the options of
+/// the index the type carries. A target that stores a JSON document
+/// (`JsonSearch`) carries the JSON index and takes its options, the
+/// sealed root and the ordered paths; no other target takes any today.
+///
+/// The plan resolves them once, when it is built ([`Plan::new_with`]):
+/// a JSON target given none runs under the index's defaults, so the
+/// field's writes, queries and reads run under one definition.
+///
+/// [`Plan::new_with`]: super::record::Plan::new_with
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TargetOptions {
+    /// The JSON index's options.
+    Json(JsonOptions),
+}
+
+impl TargetOptions {
+    /// The JSON index's options, if these are they.
+    pub fn json(&self) -> Option<&JsonOptions> {
+        match self {
+            TargetOptions::Json(options) => Some(options),
+        }
     }
 }
 
@@ -264,6 +413,22 @@ pub enum TargetError {
         /// passthrough value.
         found: Option<ValueKind>,
     },
+    /// The value is not a JSON document by the engine's rules
+    /// ([`crate::json::parse_text`]): not text or bytes, not JSON, an
+    /// object that names a member twice, or an integer literal outside the
+    /// 64-bit range. Decided before any key is touched.
+    #[error("{name}: {target} stores a JSON document, and the value is not one: {reason}")]
+    #[diagnostic(code(stack_encrypt::target_json))]
+    Json {
+        /// The field's name.
+        name: String,
+        /// The EQL type.
+        target: String,
+        /// What was wrong, by its code ([`super::JsonValueError::code`]):
+        /// `json_not_text`, `json_syntax`, `json_duplicate_key` or
+        /// `json_integer_range`. Never a byte of the value.
+        reason: &'static str,
+    },
     /// The stored bytes are not a value of the type.
     #[error("{name}: the stored value is not a {target}: {reason}")]
     #[diagnostic(code(stack_encrypt::target_stored))]
@@ -332,6 +497,10 @@ impl crate::ErrorPayload for TargetError {
                 ("target", target.as_str().into()),
                 ("reason", reason.as_str().into()),
             ]),
+            Self::Json { target, reason, .. } => payload([
+                ("target", target.as_str().into()),
+                ("reason", (*reason).into()),
+            ]),
         };
         // `name` is the target type for the first four, and the field for
         // the rest (the lowering fills it in): keep the two apart.
@@ -347,6 +516,7 @@ impl crate::ErrorPayload for TargetError {
             | Self::Kind { name, .. }
             | Self::Column { name, .. }
             | Self::Plaintext { name, .. }
+            | Self::Json { name, .. }
             | Self::Stored { name, .. } => {
                 if !name.is_empty() {
                     let _ = fields.insert("field".to_owned(), name.as_str().into());
@@ -410,7 +580,9 @@ pub trait TargetResolver {
     }
 
     /// Run the named type's own encryption plan over one value under
-    /// `label`, resolving to the EQL value's JSON bytes.
+    /// `label`, resolving to the EQL value's JSON bytes. `options` are the
+    /// ones the plan resolved for the field ([`TargetOptions`]): the JSON
+    /// index's for a type that carries it, `None` for every other type.
     ///
     /// # Errors
     ///
@@ -421,9 +593,10 @@ pub trait TargetResolver {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        options: Option<&TargetOptions>,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
-        plaintext: FfiValue,
+        plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 
     /// Open a stored value of the named type back to its plaintext, checking
@@ -442,10 +615,20 @@ pub trait TargetResolver {
         cipher: &'a StackCipher<K>,
         label: &Label,
         stored: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError>;
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError>;
 
     /// Run the named type's query twin over one value: the operand that
     /// matches stored values under `label`'s column, as JSON bytes.
+    ///
+    /// `index` is the type's index that answers the query's operator, one of
+    /// the descriptor's [`indexes`](TargetDescriptor::indexes):
+    /// [`query_term`](super::query_term()) passes the one
+    /// [`OpSpec::answered_by`] picks. A twin that carries every term of the
+    /// type may ignore it. A twin whose terms are optional (EQL v4's
+    /// `TextSearchQuery`) carries that index's term alone, so a query whose
+    /// operator needs one term is not refused for want of another: a match
+    /// term, which text shorter than one token cannot make, is derived only
+    /// for `matches`.
     ///
     /// # Errors
     ///
@@ -453,9 +636,10 @@ pub trait TargetResolver {
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        index: &IndexSpec,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
-        plaintext: FfiValue,
+        plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 }
 
@@ -482,9 +666,10 @@ impl TargetResolver for NoTargets {
     fn encrypt<'a, K: 'static>(
         &self,
         name: &str,
+        _: Option<&TargetOptions>,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -495,16 +680,17 @@ impl TargetResolver for NoTargets {
         _: &'a StackCipher<K>,
         _: &Label,
         _: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         Self::refuse(name)
     }
 
     fn query<'a, K: 'static>(
         &self,
         name: &str,
+        _: &IndexSpec,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -519,6 +705,17 @@ impl fmt::Display for TargetDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::test_frame::Tree;
+
+    #[test]
+    fn json_options_are_read_back_as_given() {
+        let mut options = JsonOptions::new();
+        options.sealed_root = false;
+        let _ = options.ordered.insert("$.age".parse().unwrap());
+        let target = TargetOptions::Json(options.clone());
+        assert_eq!(target.json(), Some(&options));
+        assert_ne!(target.json(), Some(&JsonOptions::default()));
+    }
 
     fn text_eq() -> TargetDescriptor {
         TargetDescriptor::new(
@@ -526,10 +723,10 @@ mod tests {
             "text",
             "Eq",
             Some(ValueKind::String),
-            "public.eql_v3_text_eq",
+            "public.eql_v4_text_eq",
             vec!["eq".to_string()],
             Some("TextEqQuery".to_string()),
-            Some("eql_v3.query_text_eq".to_string()),
+            Some("eql_v4.query_text_eq".to_string()),
             true,
             None,
         )
@@ -541,10 +738,10 @@ mod tests {
             "text",
             "OrdOre",
             Some(ValueKind::String),
-            "public.eql_v3_text_ord_ore",
+            "public.eql_v4_text_ord_ore",
             vec!["eq".to_string(), "ore".to_string()],
             Some("TextOrdOreQuery".to_string()),
-            Some("eql_v3.query_text_ord_ore".to_string()),
+            Some("eql_v4.query_text_ord_ore".to_string()),
             false,
             Some("block ORE is not CLLW ORE".to_string()),
         )
@@ -560,9 +757,10 @@ mod tests {
         fn encrypt<'a, K: 'static>(
             &self,
             _: &str,
+            _: Option<&TargetOptions>,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
@@ -572,15 +770,16 @@ mod tests {
             _: &'a StackCipher<K>,
             _: &Label,
             _: &[u8],
-        ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("not run here")
         }
         fn query<'a, K: 'static>(
             &self,
             _: &str,
+            _: &IndexSpec,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
@@ -588,7 +787,7 @@ mod tests {
 
     #[test]
     fn the_wire_form_has_every_key_in_order_with_null_for_absent() {
-        let FfiValue::Object(entries) = text_eq().to_value() else {
+        let Tree::Object(entries) = crate::dynamic::test_frame::value_of(&text_eq()) else {
             panic!("an object");
         };
         let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
@@ -604,27 +803,28 @@ mod tests {
                 "query",
                 "query_sql_domain",
                 "producible",
-                "reason"
+                "reason",
+                "operators"
             ],
             "the se_targets entry's keys, in order"
         );
-        assert!(matches!(&entries[3].1, FfiValue::String(s) if s.risky_ref() == b"string"));
-        assert!(matches!(&entries[8].1, FfiValue::Bool(true)));
+        assert!(matches!(&entries[3].1, Tree::String(s) if s.as_bytes() == b"string"));
+        assert!(matches!(&entries[8].1, Tree::Bool(true)));
         assert!(
-            matches!(&entries[9].1, FfiValue::Null),
+            matches!(&entries[9].1, Tree::Null),
             "no reason is null, not absent"
         );
         let mut unspecified = text_eq();
         unspecified.plaintext = None;
         unspecified.query = None;
-        let FfiValue::Object(entries) = unspecified.to_value() else {
+        let Tree::Object(entries) = crate::dynamic::test_frame::value_of(&unspecified) else {
             panic!("an object");
         };
-        assert!(matches!(&entries[3].1, FfiValue::Null));
-        assert!(matches!(&entries[6].1, FfiValue::Null));
+        assert!(matches!(&entries[3].1, Tree::Null));
+        assert!(matches!(&entries[6].1, Tree::Null));
         assert_eq!(
             entries.len(),
-            10,
+            11,
             "an absent value is null, never a missing key"
         );
     }

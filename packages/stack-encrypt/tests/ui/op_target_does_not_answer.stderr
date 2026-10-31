@@ -1,0 +1,15 @@
+error[E0277]: `EqualityTerm` does not answer `stack_encrypt::op::Matches` given `std::string::String`
+  --> tests/ui/op_target_does_not_answer.rs:13:46
+   |
+13 |     let _ = cipher.query(op::Matches, "bob").on(&email_plan);
+   |                                              ^^ this target type does not answer the operator
+   |
+   = note: a target answers the operators its type implements `Answers` for; `.via(index)` names an index the target declares
+help: the trait `Answers<stack_encrypt::op::Matches, std::string::String>` is not implemented for `EqualityTerm`
+      but trait `Answers<stack_encrypt::op::Eq, std::string::String>` is implemented for it
+  --> src/op/mod.rs
+   |
+   | impl<S: crate::Encrypt + 'static> Answers<Eq, S> for EqualityTerm {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `stack_encrypt::op::Eq`, found `stack_encrypt::op::Matches`
+   = note: required for `ValuePlan<std::string::String, Typed<EqualityTerm>>` to implement `Chooses<stack_encrypt::op::Matches, std::string::String, Whole>`

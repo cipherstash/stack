@@ -1,7 +1,7 @@
 [package]
 name = "stack-encrypt"
 description = "Encrypt Rust values under per-value ZeroKMS data keys via the vitaminc cipher traits"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -17,38 +17,87 @@ license-file = "LICENSE"
 # `StackCipher::new()` fall back to the client key `stash auth login` writes
 # to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
 # CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
-stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false, features = ["profile"] }
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false, features = ["profile"] }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
-stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.2.0" }
+stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
 
-# The workspace vitaminc (0.5.1): one canonical context encoding shared by
+# The workspace vitaminc: one canonical context encoding shared by
 # the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
 # `NonEmpty::with`, `From<integer> for NonEmpty` (#314) and the parts view
 # (#318), all of which this crate relies on. All five must share one
 # version or the aead crate is duplicated.
 vitaminc-aead = { workspace = true }
-# `dynamic`: the runtime value model every language binding funnels through.
-vitaminc-aead-value = { workspace = true, optional = true }
 vitaminc-encrypt = { workspace = true }
 vitaminc-hmac = { workspace = true }
+# Equality terms derive over `vitaminc-normalize`'s encoding of a value
+# (the workspace turns on vitaminc-prf's `normalize` feature): one term per
+# number whatever its width, text in Unicode 16 NFC. Match text is
+# normalized by the same crate before it is tokenized.
+vitaminc-normalize = { workspace = true }
+# The order targets (`OrderTarget`) and the scheme traits clww-ore and
+# ore-rs implement, which order terms encrypt through.
+vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
+# The generator the JSON index draws its permutations from (`json::shuffle`):
+# `vitaminc::random::SafeRand`, seeded from the operating system.
+vitaminc = { workspace = true }
+# `rand::seq::SliceRandom::shuffle`, the Fisher–Yates shuffle `SafeRand`
+# drives. The version is vitaminc-random's, so the `Rng` it asks for is the
+# one `SafeRand` implements. No default features: `std`, the OS and thread
+# generators are not used.
+rand = { version = "0.10.1", default-features = false }
+# `future::join` and `join_all`: a pending's dispatch loads the keysets its
+# JSON documents need beside the data-key retrieval, in one await.
+futures = { version = "0.3.25", default-features = false }
+# `dynamic` only: serde over the transport frame, which reads a binding's
+# control data (statistics, options, a plan) into typed messages.
+vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true }
-# `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
+# The order terms' serde: lowercase hex in JSON, raw bytes in a binary
+# format, through serdect's constant-time hex.
+serdect = { workspace = true }
+# `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS,
+# and the JSON index's chain fields, header and ordering term on the wire:
+# padded standard base64, the one form PostgreSQL's `decode(x, 'base64')`
+# reads and `encode(x, 'base64')` writes.
 base64ct = { version = "1.7", features = ["alloc"] }
+# The JSON index's ciphertext field on the wire, which nothing in SQL
+# decodes: RFC 1924 base85, five characters per four bytes. SIMD on
+# aarch64 and x86_64, portable scalar code elsewhere (wasm32 included).
+base85-simd = "0.1.0"
+# The JSON index's token chain: SHA-256 is what links a node to its
+# children, because core PostgreSQL computes `sha256(bytea)` and can walk
+# the chain server-side (`json` module). The same version vitaminc-hmac
+# already builds, so nothing new is compiled.
+sha2 = "0.11"
 
-cllw-ore = { workspace = true }
+clww-ore = { workspace = true }
+# Block ORE (`OreBlock`): ore-rs's `BlockOre`, its 6-bit schemes behind
+# the same vitaminc-ore traits clww-ore implements.
+ore-rs = { workspace = true }
 # Every error derives `miette::Diagnostic` (a code, and help where a caller
 # can act) and gives its structured fields as a `serde_json` map through
 # `ErrorPayload`. Both are already in the graph through stack-kms.
 miette = { workspace = true }
-serde_json = { workspace = true }
+# `float_roundtrip`: the JSON index stores a number leaf as its shortest
+# round-trip text and parses it back when the entry or the sealed root
+# opens (`json::derive::decode_node`, `json::plain::PlainJson::parse`).
+# serde_json's default float parser is fast and can land one unit in the
+# last place off the `f64` that text names; this one returns the nearest
+# `f64`, so the value opens to the one sealed (#1364). It costs slower
+# float parsing and a little more code, and nothing new is compiled.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
+# `value::{Date, Timestamp}` to and from chrono's types (the `chrono`
+# feature), and `value::Decimal` to and from rust_decimal's (`rust_decimal`).
+chrono = { version = "0.4.44", optional = true, default-features = false }
+rust_decimal = { version = "1", optional = true, default-features = false }
 
 [features]
 default = ["http"]
@@ -60,8 +109,13 @@ default = ["http"]
 http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of
-# use to a binding author, and it pulls `vitaminc-aead-value` in.
-dynamic = ["dep:vitaminc-aead-value"]
+# use to a binding author. Its transport frames are vitaminc-aead's own.
+dynamic = ["dep:vitaminc-aead-frame"]
+# Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
+# `value::Date` / `value::Timestamp`.
+chrono = ["dep:chrono", "vitaminc-aead/chrono"]
+# Conversions between rust_decimal's `Decimal` and `value::Decimal`.
+rust_decimal = ["dep:rust_decimal", "vitaminc-aead/rust_decimal"]
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.
@@ -81,12 +135,20 @@ zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
+# Property tests of the JSON index's derivations and reads
+# (tests/json_properties.rs), the generated containment property in
+# tests/json_index.rs, and the JSON index's executable leakage profile
+# (tests/json_leakage): random columns for its positive control, and the
+# seeded generator its simulator draws from. Default features off, as
+# stack-guest-abi takes it: `std` carries the failure persistence and the
+# ChaCha RNG the runs are seeded with, and nothing else is needed.
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
-# and CI run them. They cannot hold under both feature sets — rustc lists a
-# trait's other implementors in its help, and the `dynamic` feature's
-# `FfiValue` joins one such list and pushes another entry off it — so the
-# test is only built with that feature rather than skipped at runtime.
+# and CI run them. They cannot be relied on to hold under both feature sets
+# — rustc lists a trait's other implementors in its help, and the `dynamic`
+# feature adds implementors (`ValueFrame`) that can join such a list — so
+# the test is only built with that feature rather than skipped at runtime.
 [[test]]
 name = "ui"
 required-features = ["dynamic"]

@@ -10,7 +10,7 @@ constant number of operations whatever two values share, closing a timing
 leak. Ordering results are unchanged for well-formed values, but a block-ORE
 text value with a malformed or mismatched-width term now raises on every
 comparison against it. Check your `_ore` text columns before migrating; see
-[U-001](../../../../packages/eql/docs/upgrading/v3.1.md#u-001-block-ore-text-comparisons-check-every-term).
+[U-004](../../../../packages/eql/docs/upgrading/v3.1.md#u-004-block-ore-text-comparisons-check-every-term).
 No domain, wire format or index term changes.
 
 Two artefacts carry the new bundle:

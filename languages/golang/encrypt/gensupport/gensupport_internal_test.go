@@ -1,6 +1,8 @@
 package gensupport
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
@@ -70,7 +73,7 @@ func TestDeclarationRefusals(t *testing.T) {
 		"identity of no field":      Declare("u").Encrypt("a", String).Identity("b", "x"),
 		"seals nothing":             Declare("u").Passthrough("id"),
 		"EQL type unnamed":          Declare("u").EncryptInto("email", String, ""),
-		"json index":                Declare("u").EncryptIndex("a", String, encrypt.JSON()),
+		"json index":                Declare("u").EncryptIndex("a", String, encrypt.JSON()), //nolint:staticcheck // the deprecated index is still refused
 		"name not a label":          Declare("u").Encrypt("1a", String),
 	}
 	for name, d := range cases {
@@ -146,20 +149,46 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 	if err := convert(obj, &x); err == nil {
 		t.Fatal("a struct target was accepted")
 	}
-	// An opaque value decodes straight into the generated shape type.
+	// An opaque value is a storage blob of the generated shape type, and
+	// decodes straight into it.
 	type shape struct {
-		Title string            `json:"title"`
-		N     int32             `json:"n"`
-		Tags  []string          `json:"tags"`
-		Inner map[string]string `json:"inner"`
+		Title string            `vc:"title" json:"title"`
+		N     int32             `vc:"n" json:"n"`
+		Tags  []string          `vc:"tags" json:"tags"`
+		Inner map[string]string `vc:"inner" json:"inner"`
 	}
 	encoded, err := opaqueBytes(shape{Title: "x", N: 4, Tags: []string{"a"}, Inner: map[string]string{"k": "v"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !bytes.HasPrefix(encoded, vcffi.StorageHeader[:]) {
+		t.Fatalf("opaqueBytes wrote % x, not a version 1 storage blob", encoded[:4])
+	}
 	var back shape
 	if err := Opaque(Values{OpaqueField: encoded}, &back); err != nil || back.Title != "x" || back.N != 4 || back.Inner["k"] != "v" {
 		t.Fatalf("Opaque: %v %+v", err, back)
+	}
+	// A value an earlier release sealed is the JSON document it wrote, and
+	// still opens.
+	var legacy shape
+	if err := Opaque(Values{OpaqueField: []byte(`{"title":"x","n":4,"tags":["a"],"inner":{"k":"v"}}`)}, &legacy); err != nil || !reflect.DeepEqual(legacy, back) {
+		t.Fatalf("Opaque of a JSON document: %v %+v", err, legacy)
+	}
+	// A blob of a storage version this release does not read is refused as
+	// such, not misread as JSON.
+	future := append([]byte(nil), encoded...)
+	future[3] = vcffi.StorageVersion + 1
+	if err := Opaque(Values{OpaqueField: future}, &back); !errors.Is(err, encrypt.ErrEncoding) || !errors.Is(err, vcffi.ErrUnsupportedVersion) {
+		t.Fatalf("Opaque of a version %d blob: %v", vcffi.StorageVersion+1, err)
+	}
+	// A value that is neither a storage blob nor a JSON object (a JSON
+	// array, a header cut short of its "S", nothing at all) is refused as
+	// such, by neither reader.
+	for _, neither := range [][]byte{[]byte("[]"), []byte("VC"), []byte("VC\x01"), {}, []byte("null")} {
+		err := Opaque(Values{OpaqueField: neither}, &back)
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "neither a storage blob nor a JSON document") {
+			t.Fatalf("Opaque of %q: %v", neither, err)
+		}
 	}
 	if err := Opaque(Values{OpaqueField: "not bytes"}, &back); err == nil {
 		t.Fatal("Opaque accepted a string")
@@ -257,8 +286,16 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 		{"json uint", json.Number("-4242"), func(v Values) error { _, err := Get[uint64](v, "f"); return err }, "4242"},
 		{"json float", json.Number("4242e999"), func(v Values) error { _, err := Get[float64](v, "f"); return err }, "4242"},
 		{"map key", Values{"secret-key-4242": "x"}, func(v Values) error { _, err := Get[map[string]int](v, "f"); return err }, "4242"},
-		{"opaque bytes", []byte(`{"n":4242}`), func(v Values) error {
+		{"opaque JSON bytes", []byte(`{"n":4242}`), func(v Values) error {
 			var out struct{ N uint8 }
+			return Opaque(Values{OpaqueField: v["f"]}, &out)
+		}, "4242"},
+		{"opaque storage bytes", mustStorage(t, struct {
+			N uint32 `vc:"n"`
+		}{4242}), func(v Values) error {
+			var out struct {
+				N uint8 `vc:"n"`
+			}
 			return Opaque(Values{OpaqueField: v["f"]}, &out)
 		}, "4242"},
 	}
@@ -274,11 +311,74 @@ func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
 			t.Errorf("%s: the error holds the value: %v", tc.name, err)
 		}
 	}
-	// encoding/json's own error ("json: unsupported value: NaN") quotes the
-	// value, so it is not wrapped.
-	if _, err := opaqueBytes(struct{ F float64 }{math.NaN()}); !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "json:") {
-		t.Errorf("opaqueBytes NaN: %v", err)
+	// A value the storage profile has no form for is ErrEncoding, and the
+	// error names the class, not the value.
+	if _, err := opaqueBytes(struct{ C chan int }{make(chan int)}); !errors.Is(err, encrypt.ErrEncoding) {
+		t.Errorf("opaqueBytes chan: %v", err)
 	}
+	// A field a blob lacks (one added to the struct since the row was
+	// sealed) reads as its zero value, as the generated `vc:",default"`
+	// tags say; a field the struct no longer has is skipped.
+	old := mustStorage(t, struct {
+		N    uint32 `vc:"n,default"`
+		Gone string `vc:"gone,default"`
+	}{N: 7, Gone: "x"})
+	var grown struct {
+		N   uint32 `vc:"n,default"`
+		New string `vc:"new,default"`
+	}
+	if err := Opaque(Values{OpaqueField: old}, &grown); err != nil || grown.N != 7 || grown.New != "" {
+		t.Fatalf("a grown struct read %+v, %v", grown, err)
+	}
+	// A blob of a later storage version is encrypt.ErrStorageVersion, which
+	// needs no import of vitaminc's bindings to check.
+	later := append([]byte(nil), old...)
+	later[3]++
+	if err := Opaque(Values{OpaqueField: later}, &grown); !errors.Is(err, encrypt.ErrStorageVersion) || !errors.Is(err, encrypt.ErrEncoding) {
+		t.Fatalf("a later version: %v", err)
+	}
+	// The storage profile writes a float by its bits: NaN and the
+	// infinities, which encoding/json refused, are values like any other.
+	blob, err := opaqueBytes(struct{ F float64 }{math.NaN()})
+	if err != nil {
+		t.Fatalf("opaqueBytes NaN: %v", err)
+	}
+	var nan struct{ F float64 }
+	if err := Opaque(Values{OpaqueField: blob}, &nan); err != nil || !math.IsNaN(nan.F) {
+		t.Fatalf("NaN came back as %v, %v", nan.F, err)
+	}
+}
+
+// A pointer to a type with MarshalText and UnmarshalText (*time.Time) is
+// written as its element's text, nil as null, and read back into a new
+// element: what stashgen accepts such a field on the strength of.
+func TestAnOpaqueStructCarriesAPointerToATextType(t *testing.T) {
+	at := time.Date(2026, 10, 26, 5, 3, 16, 0, time.UTC)
+	type stamped struct {
+		At  *time.Time   `vc:"at,default"`
+		Ats []*time.Time `vc:"ats,default"`
+	}
+	blob, err := opaqueBytes(stamped{At: &at, Ats: []*time.Time{&at, nil}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got stamped
+	if err := Opaque(Values{OpaqueField: blob}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.At == nil || !got.At.Equal(at) || len(got.Ats) != 2 || got.Ats[0] == nil || !got.Ats[0].Equal(at) || got.Ats[1] != nil {
+		t.Fatalf("*time.Time came back as %+v", got)
+	}
+}
+
+// mustStorage is v as a storage blob.
+func mustStorage(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := vcffi.MarshalStorage(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestSplitFailsClosedInBothDirections(t *testing.T) {
@@ -393,4 +493,90 @@ func check(err error, ok bool) error {
 		return fmt.Errorf("wrong value")
 	}
 	return nil
+}
+
+// A value sealed at an EQL integer type's kind is converted to it on the
+// host: any Go integer of a value that fits, from a narrower type or a wider
+// one, and a value that does not fit is refused with ErrEncoding, naming the
+// kind and not the value (ADR-0002).
+func TestAsKindConvertsAnIntegerThatFitsAndRefusesOneThatDoesNot(t *testing.T) {
+	for _, c := range []struct {
+		kind Kind
+		in   any
+		want any
+	}{
+		{Int32, int8(-7), int32(-7)},
+		{Int32, uint16(65535), int32(65535)},
+		{Int32, int64(math.MaxInt32), int32(math.MaxInt32)},
+		{Int32, int(math.MinInt32), int32(math.MinInt32)},
+		{Int64, uint32(math.MaxUint32), int64(math.MaxUint32)},
+		{Int64, uint64(math.MaxInt64), int64(math.MaxInt64)},
+		{Int8, int8(3), int8(3)},
+		{String, "s", "s"},
+	} {
+		got, err := asKind(c.kind, c.in)
+		if err != nil || got != c.want {
+			t.Errorf("asKind(%s, %T) = %v (%T), %v; want %v (%T)", c.kind, c.in, got, got, err, c.want, c.want)
+		}
+	}
+	for _, c := range []struct {
+		kind Kind
+		in   any
+	}{
+		{Int32, int64(math.MaxInt32) + 1},
+		{Int32, int64(math.MinInt32) - 1},
+		{Int32, uint32(math.MaxUint32)},
+		{Int64, uint64(math.MaxInt64) + 1},
+		{Uint8, int8(-1)},
+	} {
+		_, err := asKind(c.kind, c.in)
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Errorf("asKind(%s, %T out of range) = %v, want ErrEncoding", c.kind, c.in, err)
+		}
+		if err != nil && strings.Contains(err.Error(), fmt.Sprint(c.in)) {
+			t.Errorf("asKind's error names the value: %v", err)
+		}
+	}
+}
+
+// encodedInt is an integer type that writes itself, as an int32 of its value
+// plus 100.
+type encodedInt int16
+
+func (v encodedInt) EncryptValue(enc vcffi.Encoder) error {
+	enc.Int32(int32(v) + 100)
+	return nil
+}
+
+// A value whose type writes itself crosses as it is, whatever the kind: a
+// conversion to a built-in integer would drop its EncryptValue, so a write
+// would store one value and a query, which keeps it, ask for another.
+func TestAsKindLeavesAValueThatWritesItself(t *testing.T) {
+	for _, kind := range []Kind{Int16, Int32, Int64} {
+		got, err := asKind(kind, encodedInt(7))
+		if err != nil || got != encodedInt(7) {
+			t.Errorf("asKind(%s, encodedInt(7)) = %v (%T), %v; want encodedInt(7)", kind, got, got, err)
+		}
+	}
+}
+
+// EncryptNull seals nil only for a field that stores it as a sealed null.
+// Under null=sql nil is SQL NULL, and a field of no null mode has no nil,
+// so both are refused before any cipher is used.
+func TestEncryptNullOnlyForASealedNull(t *testing.T) {
+	d := Declare("people").
+		EncryptIndex("age", Int32, encrypt.Equality).Null("age", NullSealed).
+		Encrypt("nick", String).Null("nick", NullSQL).
+		Encrypt("score", Int64)
+	for _, name := range []string{"nick", "score"} {
+		_, err := NewField[int64](d, name).EncryptNull(context.Background(), nil)
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "null=sealed") {
+			t.Fatalf("%s: EncryptNull = %v", name, err)
+		}
+	}
+	// A sealed null passes the check and reaches the cipher.
+	_, err := NewField[int32](d, "age").EncryptNull(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "EncryptNull needs a cipher") {
+		t.Fatalf("age: EncryptNull = %v", err)
+	}
 }

@@ -55,6 +55,9 @@ npx stash init
 
 > The Stack also ships a `stash` CLI for auth, schema, and database setup. See the [SDK reference][reference].
 
+Building in Go? Start with the [Go SDK guide](languages/golang/README.md) for
+typed field encryption, generated methods and EQL v4 PostgreSQL queries.
+
 ## What's in the Stack
 
 ### 🔐 Searchable encryption

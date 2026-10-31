@@ -16,48 +16,52 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
-// transportModule is the name of the guest's one import module. Its two
-// functions are the whole host surface the guest can reach.
+// transportModule is the name of the guest's one import module. Its one
+// function, token_get, is the whole host surface the guest can reach: its
+// ZeroKMS requests come back to the host through the step loop (step.go).
 const transportModule = "cipherstash_transport"
 
 // tokenSource supplies the bearer token the guest presents to ZeroKMS. It
-// is asked on every request, so a source that rotates tokens needs no
-// re-initialisation of the client. Outside this package's tests it is
-// always a *auth.Strategy: minting and refresh stay host-side, out of
-// the crypto guest, in auth's credential guest. The interface is
-// unexported so that no caller can hand the client a raw token, which could
-// not be refreshed and would bypass the strategies' refresh lock.
+// is asked once before each operation that can reach ZeroKMS, so a source
+// that rotates tokens needs no re-initialisation of the client.
+// Outside this package's tests it is always a *auth.Strategy: minting and
+// refresh stay host-side, out of the crypto guest, in auth's credential
+// guest. The interface is unexported so that no caller can hand the client
+// a raw token, which could not be refreshed and would bypass the
+// strategies' refresh lock.
 type tokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
-// transport implements the guest's two host imports over a RoundTripper
-// and a tokenSource. One per Client; it is bound to the module at
-// instantiation and reaches the guest's allocator through the module the
-// call arrives on.
+// transport performs the guest's ZeroKMS requests over a RoundTripper and
+// implements its token_get import over a tokenSource. One per Client.
 type transport struct {
 	rt    http.RoundTripper
 	token tokenSource
-	// sends counts transport_send excursions, so tests can pin the batching
+	// sends counts the requests performed, so tests can pin the batching
 	// contract (one ZeroKMS call per operation) instead of trusting it.
 	sends atomic.Int64
-	// tokenErr is why the token source last failed during the call in
-	// flight: the guest sees only that token_get failed, so Client.call
-	// attaches the cause — ErrNoCredentials, a refused refresh — to the
-	// error it returns. Only touched under the client's lock, which every
-	// guest call holds.
+	// held is the token fetched for the operation in flight, which
+	// token_get hands over, and fetchErr why the source gave none. tokenErr is why
+	// token_get failed, when the guest asked: the guest sees only that it
+	// failed, so Client.call attaches the cause — ErrNoCredentials, a
+	// refused refresh — to the error it returns. All three are set for each
+	// step and only touched under the client's lock, which every step
+	// holds.
+	held     string
+	fetchErr error
 	tokenErr error
 }
 
-// transportFailed is the return value of transport_send when the request
-// could not be performed at all; the body then carries the error text.
+// transportFailed is the status of a request that could not be performed
+// at all; the body then carries the error text.
 const transportFailed int32 = -1
 
 // hostFailed is the return value of token_get when no token is available.
 const hostFailed int32 = 1
 
-// maxResponseBytes bounds what transport_send will buffer from ZeroKMS. The
-// guest issues at most one 500-key batch per request, which is well under a
+// maxResponseBytes bounds what perform will buffer from ZeroKMS. The guest
+// issues at most one 500-key batch per request, which is well under a
 // megabyte either way; the bound exists so that an endpoint the transport
 // was pointed at cannot make the host allocate without limit.
 const maxResponseBytes = 16 << 20
@@ -65,7 +69,6 @@ const maxResponseBytes = 16 << 20
 // instantiate registers the host module in r.
 func (t *transport) instantiate(ctx context.Context, r wazero.Runtime) error {
 	_, err := r.NewHostModuleBuilder(transportModule).
-		NewFunctionBuilder().WithFunc(t.send).Export("transport_send").
 		NewFunctionBuilder().WithFunc(t.tokenGet).Export("token_get").
 		Instantiate(ctx)
 	if err != nil {
@@ -74,42 +77,29 @@ func (t *transport) instantiate(ctx context.Context, r wazero.Runtime) error {
 	return nil
 }
 
-// send is transport_send: one HTTP request on the guest's behalf. Inputs
-// are (ptr, len) pairs borrowed for the call; the two outputs are slot
-// pairs filled with buffers obtained from the guest's se_alloc. Returns
-// the HTTP status, or transportFailed with the error text as the body.
-func (t *transport) send(ctx context.Context, m api.Module,
-	methodPtr, methodLen, urlPtr, urlLen, headersPtr, headersLen, bodyPtr, bodyLen uint32,
-	respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut uint32,
-) int32 {
-	t.sends.Add(1)
-	mem := m.Memory()
-	status, respHeaders, respBody := t.perform(ctx, mem,
-		methodPtr, methodLen, urlPtr, urlLen, headersPtr, headersLen, bodyPtr, bodyLen)
-	// The response carries wrapped key material; once it is in guest memory
-	// the host copy is wiped.
-	defer wipe(respBody)
-	if !place(ctx, m, respHeadersPtrOut, respHeadersLenOut, respHeaders) ||
-		!place(ctx, m, respBodyPtrOut, respBodyLenOut, respBody) {
-		// The guest reclaims whatever was placed and refuses an unplaced
-		// slot as an unregistered buffer; nothing more this side can do.
-		return transportFailed
+// fetchToken asks the token source for the token an operation's steps hand
+// the guest. It runs before the first step, outside the client's lock, so a
+// refresh that waits on the network holds up no other caller; the steps
+// then never wait. A failure is kept for a step to report if the guest
+// asks.
+func (t *transport) fetchToken(ctx context.Context) (string, error) {
+	if t.token == nil {
+		return "", nil
 	}
-	return status
+	token, err := t.token.Token(ctx)
+	if err == nil && token == "" {
+		err = errors.New("encrypt: the token source returned an empty token")
+	}
+	return token, err
 }
 
-func (t *transport) perform(ctx context.Context, mem api.Memory,
-	methodPtr, methodLen, urlPtr, urlLen, headersPtr, headersLen, bodyPtr, bodyLen uint32,
-) (int32, []byte, []byte) {
-	method, ok1 := mem.Read(methodPtr, methodLen)
-	url, ok2 := mem.Read(urlPtr, urlLen)
-	headers, ok3 := mem.Read(headersPtr, headersLen)
-	body, ok4 := mem.Read(bodyPtr, bodyLen)
-	if !ok1 || !ok2 || !ok3 || !ok4 {
-		return transportFailed, nil, []byte("guest request buffers out of range")
-	}
+// perform is one HTTP request on the guest's behalf. It returns the HTTP
+// status, the response headers in the guest's line format and the body,
+// or transportFailed with the error text as the body.
+func (t *transport) perform(ctx context.Context, method, url string, headers, body []byte) (int32, []byte, []byte) {
+	t.sends.Add(1)
 	// The request body may carry key-material contexts; it is copied
-	// because the guest wipes its own buffer when the call returns, and the
+	// because the caller wipes its own copy when the step ends, and the
 	// RoundTripper may read it after this function has. The copy is owned
 	// by the request body handed to the RoundTripper and is wiped when that
 	// body is closed — not here: RoundTrip may go on reading, and close,
@@ -117,7 +107,7 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 	// included, and a wipe racing that send would put a truncated or
 	// zeroed request on the wire.
 	reqBody := newRequestBody(body)
-	req, err := http.NewRequestWithContext(ctx, string(method), string(url), reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		_ = reqBody.Close()
 		return transportFailed, nil, []byte(err.Error())
@@ -210,15 +200,15 @@ func (b *requestBody) Close() error {
 	return nil
 }
 
-// tokenGet is token_get: hand the guest the current bearer token.
+// tokenGet is token_get: hand the guest the token fetched for this step.
+// It never waits: the fetch happened before the step (fetchToken).
 func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tokenLenOut uint32) int32 {
-	token, err := t.token.Token(ctx)
-	if err != nil {
-		t.tokenErr = err
-		return hostFailed
-	}
+	token := t.held
 	if token == "" {
-		t.tokenErr = errors.New("encrypt: the token source returned an empty token")
+		t.tokenErr = t.fetchErr
+		if t.tokenErr == nil {
+			t.tokenErr = errors.New("encrypt: no token was fetched for this step")
+		}
 		return hostFailed
 	}
 	// The credential's transport copy is wiped once it is in guest memory;

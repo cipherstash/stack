@@ -26,13 +26,31 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // `list-schemas`: print the schemas the eql_v3 surface owns, public first,
-    // one per line. Consumed by `mise run test:schemas:parity`, which compares
-    // this against the SQL `eql_v3_internal.owned_schemas()` array in
-    // src/v3/schema.sql so the Rust consts and the SQL cannot drift.
-    if args.len() == 2 && args[1] == "list-schemas" {
+    // `list-schemas [3|4]`: print the schemas one EQL version's surface owns
+    // (default 3), rendered, public first, one per line. Consumed by
+    // `mise run test:schemas:parity`, which compares this against the rendered
+    // SQL `owned_schemas()` array in src/v3/schema.sql so the Rust consts and
+    // the SQL cannot drift.
+    if (args.len() == 2 || args.len() == 3) && args[1] == "list-schemas" {
+        let version = match args
+            .get(2)
+            .map_or(Ok(eql_codegen::render::EqlVersion::V3), |v| {
+                v.parse::<eql_codegen::render::EqlVersion>()
+            }) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
         for schema in eql_codegen::owned_schemas() {
-            println!("{schema}");
+            match eql_codegen::render::render_str(schema, version) {
+                Ok(name) => println!("{name}"),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
         }
         return ExitCode::SUCCESS;
     }
@@ -117,6 +135,86 @@ fn main() -> ExitCode {
         }
     }
 
+    // `render <3|4> <out-dir> <file>...`: write each placeholder source file
+    // (relative to the working directory) as that EQL version, to the same
+    // relative path under <out-dir>. Consumed by tasks/build.sh, which renders
+    // the ordered surface and assembles the installer from the result.
+    if args.len() >= 4 && args[1] == "render" {
+        let version = match args[2].parse::<eql_codegen::render::EqlVersion>() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let files: Vec<PathBuf> = args[4..].iter().map(PathBuf::from).collect();
+        // An empty file list writes nothing and would exit 0, so an empty
+        // order file in build.sh would surface later as a confusing "missing"
+        // error rather than here.
+        if files.is_empty() {
+            eprintln!("error: render needs at least one file: render <3|4> <out-dir> <file>...");
+            return ExitCode::from(2);
+        }
+        return match eql_codegen::render::render_files(
+            std::path::Path::new("."),
+            &files,
+            std::path::Path::new(&args[3]),
+            version,
+        ) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    // `select <3|4> <file>...`: print, in the order given, the files that
+    // belong to that EQL version: every file but one confined to the other
+    // version by a `-- ONLY EQL VERSION:` line. A kept file that `-- REQUIRE:`s
+    // a dropped one is refused. tasks/build.sh runs the
+    // install order through this before rendering each version's bundle, so
+    // the v4-only range surface never reaches the v3 installer.
+    if args.len() >= 3 && args[1] == "select" {
+        let version = match args[2].parse::<eql_codegen::render::EqlVersion>() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let mut sources = Vec::new();
+        for file in &args[3..] {
+            match std::fs::read_to_string(file) {
+                Ok(src) => sources.push((file.clone(), src)),
+                Err(e) => {
+                    eprintln!("error: {file}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        // Refuses a kept file that requires a dropped one, so each
+        // version's order stays closed under `-- REQUIRE:`.
+        let selected = match eql_codegen::render::select(&sources, version) {
+            Ok(selected) => selected,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        if selected.is_empty() {
+            eprintln!(
+                "error: select chose no file for EQL version {}",
+                version.number()
+            );
+            return ExitCode::FAILURE;
+        }
+        for file in selected {
+            println!("{file}");
+        }
+        return ExitCode::SUCCESS;
+    }
+
     // `clean`: remove the generated SQL surface (marker-aware) under every
     // src/v3/scalars/* type dir. Replaces build.sh's filename-pattern sweep;
     // hand-written files (no AUTO-GENERATED marker) are preserved.
@@ -152,8 +250,12 @@ fn main() -> ExitCode {
     eprintln!("Usage: eql-codegen            (generate all types)");
     eprintln!("       eql-codegen order      (print the src/v3 install order, one path per line)");
     eprintln!("       eql-codegen clean      (remove the generated SQL surface)");
+    eprintln!("       eql-codegen render <3|4> <out-dir> <file>... (render placeholder SQL as one EQL version)");
+    eprintln!("       eql-codegen select <3|4> <file>... (print the files that belong to one EQL version)");
     eprintln!("       eql-codegen list-types (print catalog tokens)");
-    eprintln!("       eql-codegen list-schemas (print owned schemas, public first)");
+    eprintln!(
+        "       eql-codegen list-schemas [3|4] (print owned schemas, rendered, public first)"
+    );
     eprintln!("       eql-codegen dump-catalog (print catalog surface as JSON)");
     eprintln!("       eql-codegen bindings   (regenerate eql-bindings Rust payload types)");
     eprintln!("       eql-codegen go-eql     (regenerate the Go package encrypt/eql)");

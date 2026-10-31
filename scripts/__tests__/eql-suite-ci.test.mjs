@@ -200,6 +200,34 @@ describe('a root workflow runs the EQL SQLx suite', () => {
   })
 })
 
+describe('`ci-required` aggregates every job in the EQL workflow', () => {
+  // `ci-required` is the one check meant to gate a merge, and it reads
+  // `needs.*.result`, so a job missing from its `needs:` can fail without
+  // turning it red. Silent when wrong: the failing job still shows in the
+  // checks list, and the aggregate beside it is green. The PostgreSQL half of
+  // the Rust encryption suite left `rust-crates` (which is listed) for a job
+  // of its own and was missing from the list until the review of #1336.
+  const AGGREGATOR = 'ci-required'
+
+  it('lists every other job in its `needs:`', () => {
+    const jobs = readWorkflow(EQL_WORKFLOW)?.jobs ?? {}
+    const names = Object.keys(jobs)
+    // Guards the guard: an empty job map passes the comparison below.
+    expect(names.length).toBeGreaterThan(1)
+    expect(names, `${EQL_WORKFLOW} has no \`${AGGREGATOR}\` job`).toContain(
+      AGGREGATOR,
+    )
+    const needs = [jobs[AGGREGATOR]?.needs ?? []].flat()
+    const missing = names.filter(
+      (name) => name !== AGGREGATOR && !needs.includes(name),
+    )
+    expect(
+      missing,
+      `These jobs in ${EQL_WORKFLOW} are not in \`${AGGREGATOR}\`'s \`needs:\`, so a failure in them leaves the required check green:\n${missing.map((name) => `  ${name}`).join('\n')}`,
+    ).toEqual([])
+  })
+})
+
 describe('the relevance filter still selects the imported tree', () => {
   const wf = readWorkflow(EQL_WORKFLOW)
 

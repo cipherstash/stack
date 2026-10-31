@@ -1,6 +1,7 @@
 package gensupport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Values is a struct's field values by declared name: what Source gives and
@@ -24,7 +26,7 @@ type Output struct {
 	Match      encrypt.MatchTerm
 	Ore        encrypt.OreTerm
 	Ope        encrypt.OpeTerm
-	JSON       encrypt.JSONTerm
+	JSON       encrypt.JSONTerm //nolint:staticcheck // the deprecated output, kept so a declaration naming it fails into a Go type
 	EQL        []byte
 }
 
@@ -154,6 +156,10 @@ func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypte
 			switch {
 			case f.verb == verbOmit:
 				continue
+			case !ok && f.null == NullSQL:
+				// The field was nil, so nothing was stored for it; it opens
+				// as nil.
+				continue
 			case !ok:
 				return nil, fmt.Errorf("gensupport: %s: value %d: Open gave no field %q", c.g.TypeName, i, f.name)
 			case f.verb == verbContextField:
@@ -190,10 +196,13 @@ func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypte
 }
 
 // split sorts a value's fields into what crosses the binding and what stays:
-// every declared field must be present and nothing else may be.
+// every declared field must be present and nothing else may be. A nil field
+// declared with NullSQL is left out of the row, since nothing is stored for
+// it; one declared with NullSealed crosses as nil, which the engine seals.
 func (c *Codec[P, E]) split(vals Values) (record.Source, map[string]any, error) {
 	row := make(record.Source, len(c.plan.Fields))
 	keep := map[string]any{}
+	left := 0
 	for _, f := range c.g.Declaration.fields {
 		if f.verb == verbOmit {
 			continue
@@ -202,13 +211,21 @@ func (c *Codec[P, E]) split(vals Values) (record.Source, map[string]any, error) 
 		if !ok {
 			return nil, nil, fmt.Errorf("the generated Source gave no field %q", f.name)
 		}
+		if v == nil && f.null == NullSQL {
+			left++
+			continue
+		}
 		if f.crosses() {
-			row[f.name] = v
+			converted, err := asKind(f.kind, v)
+			if err != nil {
+				return nil, nil, fmt.Errorf("field %q: %w", f.name, err)
+			}
+			row[f.name] = converted
 		} else {
 			keep[f.name] = v
 		}
 	}
-	if len(vals) != len(row)+len(keep) {
+	if len(vals) != len(row)+len(keep)+left {
 		for name := range vals {
 			if _, ok := row[name]; ok {
 				continue
@@ -293,6 +310,33 @@ func Get[T any](vals Values, name string) (T, error) {
 	return out, nil
 }
 
+// Deref is a field declared over a pointer as Source gives it: nil for a nil
+// pointer, else the value it points to.
+func Deref[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// GetPtr reads one opened field declared over a pointer: nil for a field
+// that opened as nil, which it stored as a null or as nothing, else a
+// pointer to the value as [Get] reads it.
+func GetPtr[T any](vals Values, name string) (*T, error) {
+	v, ok := vals[name]
+	if !ok {
+		return nil, fmt.Errorf("gensupport: the opened value has no field %q", name)
+	}
+	if v == nil {
+		return nil, nil
+	}
+	out, err := Get[T](vals, name)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Records wraps a codec with a model's conversions, for separate columns:
 // EncryptRows and DecryptRows return and take the model.
 func Records[P, E, R any](codec *Codec[P, E], to func(E) R, from func(R) E) *RecordsCodec[P, R] {
@@ -335,23 +379,32 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 }
 
 // opaqueBytes is an opaque struct's fields as the one value the engine
-// seals: a JSON document of the generated shape struct, so the struct is one
-// column and every field type encoding/json round-trips comes back as it
-// was.
+// seals: a storage blob (vitaminc's storage profile, version 1, written by
+// vcffi.MarshalStorage) of the generated shape struct, so the struct is one
+// column and every field comes back at the Go type the struct declares. The
+// storage profile is the format for bytes that are kept: unlike the
+// transport, its version 1 is a compatibility commitment shared with Rust,
+// and it carries every float, NaN and the infinities included.
 func opaqueBytes(fields any) ([]byte, error) {
-	encoded, err := json.Marshal(fields)
+	encoded, err := vcffi.MarshalStorage(fields)
 	if err != nil {
-		// encoding/json refuses NaN and the infinities, which a sealed float
-		// field outside an opaque struct accepts.
-		// Its error is not wrapped: encoding/json's text quotes the value.
-		return nil, fmt.Errorf("%w: the opaque value does not encode as JSON (NaN, an infinity, or a type encoding/json refuses)", encrypt.ErrEncoding)
+		// vcffi's error names a type or a kind (no storage form, a string
+		// that is not UTF-8, a repeated key, nesting too deep), never a
+		// value, so it is wrapped: errors.Is reads vcffi.ErrUnwritable.
+		return nil, fmt.Errorf("%w: the opaque value cannot be written as a storage blob: %w", encrypt.ErrEncoding, err)
 	}
 	return encoded, nil
 }
 
-// Opaque reads an opened opaque value into the generated shape struct: the
-// JSON document the engine returned, decoded into the exact Go types the
-// struct declares. Generated code calls it from Value.
+// Opaque reads an opened opaque value into the generated shape struct, at
+// the exact Go types the struct declares. Generated code calls it from
+// Value.
+//
+// The value is a storage blob, which begins "VCS". A value an earlier
+// release sealed is the JSON document encoding/json wrote, which begins
+// "{": it is read as JSON, so stored rows open without being encrypted
+// again. Each is read by its own rules: a storage blob gives back an empty
+// slice or map where the struct held nil, and JSON gives back nil.
 func Opaque[T any](vals Values, out *T) error {
 	v, ok := vals[OpaqueField]
 	if !ok {
@@ -360,6 +413,23 @@ func Opaque[T any](vals Values, out *T) error {
 	encoded, ok := v.([]byte)
 	if !ok {
 		return fmt.Errorf("gensupport: %w: the opaque value opened as %T, not bytes", encrypt.ErrEncoding, v)
+	}
+	if bytes.HasPrefix(encoded, vcffi.StorageHeader[:3]) {
+		if err := vcffi.UnmarshalStorage(encoded, out); err != nil {
+			// The vcffi error names the kind found and where, never the
+			// value; it is wrapped so errors.Is reads its class
+			// (encrypt.ErrStorageVersion for a blob a later release
+			// wrote, say).
+			return fmt.Errorf("gensupport: %w: the opaque value does not read into a %T: %w", encrypt.ErrEncoding, *out, err)
+		}
+		return nil
+	}
+	// encoding/json writes a struct as an object, so a JSON document of
+	// the shape struct begins "{"; a value that begins with neither is not
+	// one either reader can take, and is said so rather than handed to
+	// the JSON reader to fail on.
+	if !bytes.HasPrefix(encoded, []byte("{")) {
+		return fmt.Errorf("gensupport: %w: the opaque value is neither a storage blob nor a JSON document", encrypt.ErrEncoding)
 	}
 	if err := json.Unmarshal(encoded, out); err != nil {
 		// Its error is not wrapped: encoding/json's text quotes the value.

@@ -3,6 +3,8 @@ package stashgen
 import (
 	"fmt"
 	"strings"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // Declaration is how each field of one struct is encrypted: the context of
@@ -43,10 +45,48 @@ type Field struct {
 	Indexes []Index
 	// EQLType is the EQL type an EncryptInto field seals into.
 	EQLType string
+	// TargetOptions are the EQL type's options, for a type that takes them
+	// (JsonSearch); nil for its defaults.
+	TargetOptions *record.TargetOptions
 	// Identity is the field's part of its context when it differs from Name:
 	// a column that was renamed keeps the identity it was first written
 	// under. "" means Name. Only a policy sets it.
 	Identity string
+	// Null is how a sealed field declared over a pointer stores nil; NotNull
+	// for every other field. GoType is then the type the pointer points to.
+	Null Null
+}
+
+// Null is how a sealed field declared over a pointer (*T) stores nil: the
+// `null=` tag, or the generator's choice where the tag is left out.
+type Null string
+
+const (
+	// NotNull is a field that is not a pointer: it is never nil.
+	NotNull Null = ""
+	// NullSealed seals nil like a value, as long as one, so the stored
+	// field does not show that the value is absent. Its equality term is the
+	// one every nil shares, and the generated EqNull queries it. The default
+	// for a field whose only index, if any, is equality and whose type has a
+	// fixed width: a bool, a number, encrypt.Date, time.Time,
+	// encrypt.Decimal, encrypt.Int128 or encrypt.Uint128.
+	NullSealed Null = "sealed"
+	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
+	// which shows that the value is absent. A field with an index other than
+	// equality, or of text or bytes, says so with `null=sql`: its absence
+	// would show anyway.
+	NullSQL Null = "sql"
+)
+
+// fixedWidth reports whether a scalar kind seals at one length whatever its
+// value, so that a sealed nil can be as long as a value.
+func (k Kind) fixedWidth() bool {
+	switch k {
+	case KindBool, KindInt, KindUint, KindFloat, KindInt128, KindUint128,
+		KindDate, KindTimestamp, KindDecimal:
+		return true
+	}
+	return false
 }
 
 // Verb is what happens to a field.
@@ -154,6 +194,11 @@ const (
 	IndexOre      IndexName = "ore"
 	IndexOpe      IndexName = "ope"
 	IndexJSON     IndexName = "json"
+	// IndexOreBlock is block ORE (ore-rs's 6-bit schemes): the index of an
+	// EQL type's ORE term (`ob`), TextOrdOre's and IntegerOrdOre's. It is
+	// not a tag word: a field reaches it by naming such an EQL type
+	// (encrypt_into=), and indexNames leaves it out.
+	IndexOreBlock IndexName = "ore_block"
 )
 
 // indexNames lists every index, in the order the generated type lists their
@@ -172,6 +217,8 @@ func (n IndexName) GoName() string {
 		return "Ore"
 	case IndexOpe:
 		return "Ope"
+	case IndexOreBlock:
+		return "OreBlock"
 	case IndexJSON:
 		return "JSON"
 	}
@@ -186,7 +233,10 @@ type GoType struct {
 	// Kind is the type's underlying kind.
 	Kind Kind
 	// Basic is the underlying basic type's name for a scalar kind — "uint8",
-	// "int", "string" — which decides the wire type the field seals as.
+	// "int", "string" — which decides the wire type the field seals as. It is
+	// "" for a value type the generator knows by name (time.Time,
+	// encrypt.Date, encrypt.Int128, encrypt.Uint128, encrypt.Decimal), whose
+	// kind says all there is.
 	Basic string
 	// Elem is the element type of a slice, map or pointer, and nil otherwise.
 	Elem *GoType
@@ -216,20 +266,44 @@ const (
 	KindPointer
 	// KindStruct is a struct whose fields are all exported.
 	KindStruct
+	// KindInt128 and KindUint128 are encrypt.Int128 and encrypt.Uint128.
+	KindInt128
+	KindUint128
+	// KindDate is encrypt.Date, a calendar date.
+	KindDate
+	// KindTimestamp is time.Time, an instant.
+	KindTimestamp
+	// KindDecimal is encrypt.Decimal.
+	KindDecimal
+	// KindJSON is json.RawMessage: a JSON document, stored as an
+	// JSONSearch value.
+	KindJSON
+	// KindJSONValue is a struct, map or slice type stored as an
+	// JSONSearch document: encoding/json writes it to JSON text and reads
+	// it back. A field is classified so only where it names such an EQL
+	// type; anywhere else the type keeps its own kind.
+	KindJSONValue
 )
 
 var kindNames = [...]string{
-	KindOther:   "other",
-	KindString:  "string",
-	KindBool:    "bool",
-	KindInt:     "int",
-	KindUint:    "uint",
-	KindFloat:   "float",
-	KindBytes:   "bytes",
-	KindSlice:   "slice",
-	KindMap:     "map",
-	KindPointer: "pointer",
-	KindStruct:  "struct",
+	KindOther:     "other",
+	KindString:    "string",
+	KindBool:      "bool",
+	KindInt:       "int",
+	KindUint:      "uint",
+	KindFloat:     "float",
+	KindBytes:     "bytes",
+	KindSlice:     "slice",
+	KindMap:       "map",
+	KindPointer:   "pointer",
+	KindStruct:    "struct",
+	KindInt128:    "int128",
+	KindUint128:   "uint128",
+	KindDate:      "date",
+	KindTimestamp: "timestamp",
+	KindDecimal:   "decimal",
+	KindJSON:      "json",
+	KindJSONValue: "json value",
 }
 
 // String returns the kind's name.
@@ -243,7 +317,8 @@ func (k Kind) String() string {
 // Scalar reports whether the kind is one value an index can take.
 func (k Kind) Scalar() bool {
 	switch k {
-	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes:
+	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes,
+		KindInt128, KindUint128, KindDate, KindTimestamp, KindDecimal, KindJSON, KindJSONValue:
 		return true
 	}
 	return false

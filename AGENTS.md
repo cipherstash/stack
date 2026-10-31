@@ -92,7 +92,7 @@ Every npm package except EQL lives under `languages/typescript/`: packages in `l
   links are provenance only.
 - `packages/stack-auth`, `packages/stack-profile`, `packages/stack-kms`, `packages/stack-encrypt`, `packages/stack-encrypt-derive`, `packages/stack-guest-abi`: The Rust crates imported from `cipherstash/cipherstash-suite` with their history — `stack-auth` and `stack-profile` (published to crates.io, one version group), `stack-kms` (published to crates.io from 0.1.0, its own version group, re-exported by `stack-encrypt` as `stack_encrypt::kms`), `stack-encrypt` and `stack-encrypt-derive` (published to crates.io from 0.1.0, one version group; `eql-bindings`' `stack-encrypt` feature depends on them from the registry), and `stack-guest-abi` (`publish = false`). They are the members of the **root Cargo workspace**, with the three node binding crates below. See "Working on the Rust crates".
 - `languages/typescript/packages/auth`, `languages/typescript/packages/profile`, `languages/typescript/packages/stack-auth-wasm`: The node bindings of those crates. `@cipherstash/auth` (napi-rs v2) and its six `platforms/*` packages are published to npm from this repository by `release.yml` (`auth-artifacts`, `publish-auth`); a change to what it ships, the `stack-auth` crate included, needs an `@cipherstash/auth` changeset (`require-auth-npm-changeset.yml`). `@cipherstash/profile` and its platforms are private and never published; `@cipherstash/stack-auth-wasm` is private and builds the wasm that `@cipherstash/auth` ships. Their `build` and `test` scripts never invoke cargo; `build:native`, `build:debug` and `test:cargo` do.
-- `languages/golang`: The Go module — the SDK `encrypt` with its generated-code support `encrypt/gensupport` and the policy packages `encrypt/policy` and `encrypt/policy/protosource`; the credential package `auth`; the generator `stashgen` and its command `cmd/stashgen`; and `internal` (the shared guest plumbing and the `record` wire model). A wazero host with no cgo. Its two WASI guests (`encrypt/guest`, `auth/guest`) are detached Cargo workspaces built by `mise run wasm:guest:build` and `mise run wasm:auth-guest:build`; `mise run wasm:guest:build:deterministic` builds the seeded TEST build the hermetic Go tests use; the `.wasm` files they embed are gitignored. The stack-encrypt guest has a second build with the EQL types (`mise run wasm:guest:build:eql`, cargo feature `eql`, linking `eql-bindings` by path; `wasm:guest:build:eql:deterministic` is its test build), embedded by `encrypt/eql` and registered on import, so a program whose generated code names an EQL type runs it (ADR-0007, amended). `encrypt/eql`'s types and `Types` table are generated from the EQL catalog by `eql-codegen` (`eql_gen.go`, written by `mise run types:generate` in `packages/eql` and drift-gated by `types:check` and `cargo test -p eql-codegen`). Generated `*_stash.go` files are committed and CI fails when `go generate ./...` changes one. Releases are cut by hand with `.github/workflows/release-golang.yml` (`gh workflow run release-golang.yml -f version=X.Y.Z[-pre] --ref <branch>`): because the guests are gitignored on main and Go fetches a version as the files committed at its tag, the workflow builds them, commits them on a release-only commit no branch points at, tags it `languages/golang/vX.Y.Z` and pushes the tag alone, then attaches the EQL v4 SQL bundle to the GitHub release. The ref must carry the EQL v4 bundle, or the build stops at "Build the EQL SQL bundles". `scripts/go-release-version.mjs` refuses, before anything is built, every version Go would refuse (non-canonical semver, `+build` metadata, a v2+ major on a module path with no `/vN` suffix, a version shaped like a pseudo-version), and a final version dispatched from anywhere but `main`; a pre-release may come from a branch. The build job also refuses a version the Go proxy already lists in `@v/list`, which catches a tag deleted after the proxy fetched it; it never asks the proxy for the version itself before the tag exists, because the proxy would cache "not found" for up to 30 minutes and `verify` would fail after the push. The build checks the `Cargo.lock` of the EQL workspace and both guest workspaces with `--locked` first, since none of those builds passes it. It runs in a job with no write token and hands the guests to a `publish` job that holds `contents: write` and runs only git and gh. `publish` fetches the commit with plain unauthenticated git rather than `actions/checkout`, whose `token` input defaults to the job's writable token, and refuses a release commit whose tree is not the one the build tested. `publish` takes the paths it commits from the workflow's fixed `GUESTS` list, never from the artifact, and refuses a `guests.sha256` that is not exactly one SHA-256 line for each of those three guests: the build job runs third-party code after writing that manifest, so a path read from it could put any file on the tag (`scripts/__tests__/go-release-artifact.test.mjs`). A version is immutable once the Go proxy has fetched it, so a tag is never moved or deleted: if `publish` or `verify` fails after the tag is pushed, use "Re-run failed jobs" on the same run, which keeps a tag that run pushed and creates or completes the release; a new dispatch of the same version is refused. Never tag a main commit by hand: `go get` would fetch a module with no guests.
+- `languages/golang`: The Go module — the SDK `encrypt` with its generated-code support `encrypt/gensupport` and the policy packages `encrypt/policy` and `encrypt/policy/protosource`; the credential package `auth`; the generator `stashgen` and its command `cmd/stashgen`; and `internal` (the shared guest plumbing and the `record` wire model). A wazero host with no cgo. Its two WASI guests (`encrypt/guest`, `auth/guest`) are detached Cargo workspaces built by `mise run wasm:guest:build` and `mise run wasm:auth-guest:build`; `mise run wasm:guest:build:deterministic` builds the seeded TEST build the hermetic Go tests use; the `.wasm` files they embed are gitignored. The stack-encrypt guest has a second build with the EQL types (`mise run wasm:guest:build:eql`, cargo feature `eql`, linking `eql-bindings` by path; `wasm:guest:build:eql:deterministic` is its test build), embedded by `encrypt/eql` and registered on import, so a program whose generated code names an EQL type runs it (ADR-0007, amended). `encrypt/eql`'s types and `Types` table are generated from the EQL catalog by `eql-codegen` (`eql_gen.go`, written by `mise run types:generate` in `packages/eql` and drift-gated by `types:check` and `cargo test -p eql-codegen`). Generated `*_stash.go` files are committed and CI fails when `go generate ./...` changes one. Releases are cut by hand with `.github/workflows/release-golang.yml` (`gh workflow run release-golang.yml -f version=X.Y.Z[-pre] --ref <branch>`): because the guests are gitignored on main and Go fetches a version as the files committed at its tag, the workflow builds them, commits them on a release-only commit no branch points at, tags it `languages/golang/vX.Y.Z` and pushes the tag alone, then attaches the EQL v4 SQL bundle to the GitHub release. The ref must carry the EQL v4 bundle, or the build stops at "Build the EQL SQL bundles". `scripts/go-release-version.mjs` refuses, before anything is built, every version Go would refuse (non-canonical semver, `+build` metadata, a v2+ major on a module path with no `/vN` suffix, a version shaped like a pseudo-version), a final version dispatched from anywhere but `main`, and a final version while `languages/golang/go.mod` pins a `github.com/cipherstash/vitaminc/…` module at a pseudo-version (vitaminc's Go bindings have no tags, and a TEMPORARY pin on an unreleased commit must be gone before the module is tagged); a pre-release may come from a branch and may carry such a pin. The build job also refuses a version the Go proxy already lists in `@v/list`, which catches a tag deleted after the proxy fetched it; it never asks the proxy for the version itself before the tag exists, because the proxy would cache "not found" for up to 30 minutes and `verify` would fail after the push. The build checks the `Cargo.lock` of the EQL workspace and both guest workspaces with `--locked` first, since none of those builds passes it. It runs in a job with no write token and hands the guests to a `publish` job that holds `contents: write` and runs only git and gh. `publish` fetches the commit with plain unauthenticated git rather than `actions/checkout`, whose `token` input defaults to the job's writable token, and refuses a release commit whose tree is not the one the build tested. `publish` takes the paths it commits from the workflow's fixed `GUESTS` list, never from the artifact, and refuses a `guests.sha256` that is not exactly one SHA-256 line for each of those three guests: the build job runs third-party code after writing that manifest, so a path read from it could put any file on the tag (`scripts/__tests__/go-release-artifact.test.mjs`). A version is immutable once the Go proxy has fetched it, so a tag is never moved or deleted: if `publish` or `verify` fails after the tag is pushed, use "Re-run failed jobs" on the same run, which keeps a tag that run pushed and creates or completes the release; a new dispatch of the same version is refused. Never tag a main commit by hand: `go get` would fetch a module with no guests.
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `languages/typescript/examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
@@ -252,7 +252,8 @@ EQL versions installed** in the database.
   rather than listing it, so a task added there tomorrow is covered.
 
   `typecheck` is the deliberate exception: it *should* run under `turbo run
-  typecheck`, and does, from `tests.yml`, on every PR. It needs no credentials
+  typecheck`, and does, from `tests.yml`, on every PR that can reach the JS
+  side (see "`tests.yml` gates its live jobs" below). It needs no credentials
   and no database, and its tsconfig sets `checkJs` so the suite's two `.cjs`
   fixtures are compiled too — one of them is a real `AccessKeyStrategy` call
   site, and a `tests/**/*.ts` scope would leave it checked by nothing but the
@@ -681,22 +682,48 @@ monorepo, which is where the silent failures are.
 - **Changesets for `@cipherstash/eql` go in the repo-root `.changeset/`.** The
   subtree's own `.changeset/` was deleted with the import; there is no second
   one to put them in by mistake.
+- **The JSON tree family is EQL v4 only and spans two crates.** The engine
+  half is `packages/stack-encrypt/src/json/` (the `Json` index, `JsonDocument`,
+  the query terms); the SQL is `packages/eql/src/v3/json_tree/` under
+  `-- ONLY EQL VERSION: 4`; the EQL types are hand-written in
+  `packages/eql/crates/eql-bindings/src/v4/json_tree.rs`; and the live
+  oracle, containment over the encrypted column against PostgreSQL's own
+  `jsonb @>` over the plaintexts, is `packages/eql/tests/encryption/tests/json_tree.rs`,
+  run by `mise run test:encryption:postgres`. The design and its
+  implementation notes are `docs/plans/2026-10-17-json-tree-index.md`.
+  In v4 it carries v3's names for the searchable JSON document: the target
+  `JsonSearch` stores `public.eql_v4_json_search`, queried with
+  `eql_v4.query_json` and `eql_v4.query_json_leaf`, with entries
+  `public.eql_v4_json_entry`; `json_tree` names the implementation only (the
+  SQL directory, the Rust structs, the SQL functions). The v3 SteVec SQL
+  that owns those names in v3 (`src/v3/json/` and the generated
+  `json_entry_<T>` cross files) is `-- ONLY EQL VERSION: 3`, so no bundle
+  carries both.
+  A change to the derivations on one side (a PAE domain, the header layout,
+  the projection shape) is a change to the other: the Postgres suite is
+  what holds them together.
 
 ## Working on the Rust crates
 
 The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
-`cipherstash-client`, `cts-common`, `zerokms-protocol`, `recipher` and
-`cllw-ore`. Here those come from crates.io, and `Cargo.lock` holds their
-exact versions. In the root `Cargo.toml`, `recipher` and `cllw-ore` are
-pinned with `=`. `cts-common` and `zerokms-protocol` take caret
+`cipherstash-client`, `cts-common`, `zerokms-protocol` and `recipher`. Here
+those come from crates.io, and `Cargo.lock` holds their exact versions. In the
+root `Cargo.toml`, `recipher` is pinned with `=`, and so are the order
+schemes `clww-ore` (formerly `cllw-ore`) and `ore-rs`, which live in
+`cipherstash/ore.rs`: a new release of either can change every stored order
+term. `cts-common` and `zerokms-protocol` take caret
 requirements, because the published `stack-auth` inherits them, and an
 exact pin would stop the suite sharing one `cts-common` with it.
 
 - **Three Cargo workspaces, not one.** The root workspace (the six stack-*
   crates and the three node binding crates), protect-ffi's and EQL's. The root
   `Cargo.toml` excludes the other two, and they pin their own vitaminc. The
-  three fuzz crates and the two Go guests are detached workspaces too, each
-  with its own `Cargo.lock`.
+  three fuzz crates, the two Go guests and the EQL v4 block ORE timing
+  harness's ciphertext generator
+  (`packages/eql/tests/timing/ore_block_v2/ctgen`) are detached workspaces
+  too, each with its own `Cargo.lock`. None of them has a Dependabot entry.
+  CI builds the generator nowhere, so `test-eql.yml` checks its lock with
+  `cargo metadata --locked`, and `run.sh` builds it with `--locked`.
 - **The toolchain is pinned in the root `mise.toml`:** Rust 1.94.1 (the
   `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics) and
   Go 1.26.10, the module's `go` minimum (#1300: the first 1.26 patch whose
@@ -724,7 +751,9 @@ exact pin would stop the suite sharing one `cts-common` with it.
 - **CI:** `tests-crates.yml` (fmt, clippy, nextest including the trybuild
   `tests/ui` binary, doctests, rustdoc, the node bindings and
   `stack-auth-wasm`), `tests-golang.yml` (WASI checks, the guests, the Go
-  module on Linux, macOS and Windows, and the live tests), `crap-crates.yml`,
+  module on Linux, macOS and Windows, its PostgreSQL tests against the EQL v4
+  bundle built from the tree — `mise run go:test:postgres` locally — and the
+  live tests), `crap-crates.yml`,
   `mutants.yml`, `fuzz.yml`, `miri.yml` and `udeps.yml`.
   `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
   `mise.toml` or the five crate `tasks.toml` files loses its last CI caller.
@@ -938,6 +967,16 @@ pnpm changeset:publish
   `languages/typescript/packages/cli/tests/e2e/**` run via `pnpm --filter stash
   test:e2e` (requires a build). See `languages/typescript/packages/cli/AGENTS.md` for when to
   add or update them.
+- **`tests.yml` gates its live jobs on what a pull request changes.** Its
+  `changes` job skips `run-tests`, `e2e-tests`, `wasm-e2e-tests` and
+  `run-tests-bun` when every changed file sits in a tree they cannot read
+  (the Go module, the Stack Encrypt crates, EQL's SQL and Rust outside the
+  compiled `eql-bindings` files, docs, other workflows). A test that reads a
+  path in one of those trees would be skipped on the change that breaks it:
+  `scripts/__tests__/tests-workflow-gate.test.mjs` scans for that and fails.
+  Checks that read the whole tree (the lint scripts, `test:scripts`, the
+  release gate, the suites that read workflow files) run in the ungated
+  `repo-checks` job instead.
 
 ## Bundling and Deployment Notes
 
@@ -997,6 +1036,39 @@ pnpm changeset:publish
 
    A skills-only change is **not** internal: `skills/` ships inside the
    `stash` tarball, so it needs a `stash` patch changeset.
+
+## Review guidelines
+
+These apply to every agent that reviews a pull request here, human-prompted
+or automated (Codex, Copilot, CodeRabbit, Claude Code's `/code-review`).
+
+### Known non-findings
+
+These are deliberate design decisions, recorded in ADRs. Do not report them
+as defects or security issues, and do not change code to "fix" them. If a
+change seems to need one reversed, say so and link the ADR.
+
+- **A sealed container's membership, order and length are not
+  authenticated.** Each leaf is bound to its context, its map key, its role
+  (single value or sequence element), its type tag and the wire version. But
+  which entries a stored map holds, and a stored sequence's order, length
+  and duplicates, are deliberately not bound: stored values are database
+  rows and columns, which come back in any order and in part. A target that
+  refuses a container's shape (a missing field, say) is a shape mismatch,
+  `Error::OpenedType`, not tampering, `Error::Aead`. Stricter authentication
+  will be opt-in, through named types. See
+  `packages/stack-encrypt/docs/adr/0010-what-a-stored-value-authenticates.md`
+  and vitaminc's ADR 0002.
+- **A passthrough field is not authenticated.** It is stored in the clear,
+  by definition, and comes back as the store holds it. A plan's context
+  field is the exception: every other field is sealed under it, so a change
+  to it is caught. Same ADR.
+- **Two leaves sealed under the same context are interchangeable between
+  rows.** Binding a value to its row is the caller's choice of context (a
+  row id or tenant in it). Same ADR.
+
+A finding that a *leaf* is not bound to its context, key, role, type or
+version is a real defect: report it.
 
 ## Useful Links
 

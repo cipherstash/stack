@@ -65,11 +65,11 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	if err != nil {
 		return nil, err
 	}
-	out, err := cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := cph.client.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.encryptRecord, buf(encodedSource), buf(encodedPlan), buf(opts))
 	})
 	if errors.Is(err, ErrTerm) {
-		// The plan as given: Derive applies the extension itself.
+		// The plan as given: derive applies the extension itself.
 		return nil, cph.locateTermFailure(ctx, plan, rows, err)
 	}
 	if err != nil {
@@ -111,31 +111,18 @@ func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record
 	return cph.client.open(ctx, cph.keyset, cph.context, p, records)
 }
 
-// Derive derives one index term for one value of a field, under the plan's
-// context for that field and this cipher's extension: the term a query
-// compares against the stored one. A plan that takes its context from a
-// field has none of its own, so the term derives under the context named
-// with [Cipher.Context], and a cipher that names none is refused as
-// [ErrEncoding]. For generated code.
-func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, output record.Output, value any) ([]byte, error) {
-	p, err := cph.plan(plan)
+// derive derives one index term for one value of a field, under the plan's
+// context for that field and this cipher's extension: the term the record
+// call stores for it. It is how locateTermFailure names the field
+// behind a record's term failure; a query asks [Cipher.QueryTerm], which
+// names an operator. A plan that takes its context from a field has none of
+// its own, so the term derives under the context named with
+// [Cipher.Context], and a cipher that names none is refused as
+// [ErrEncoding].
+func (cph *Cipher) derive(ctx context.Context, plan *record.Plan, field string, output record.Output, value any) ([]byte, error) {
+	p, err := cph.queryPlan(plan, field)
 	if err != nil {
 		return nil, err
-	}
-	if p.ContextField != "" {
-		if cph.context == "" {
-			return nil, fmt.Errorf("%w: field %q: the type takes its context from its field %q, so a query names it with Cipher.Context", ErrEncoding, field, p.ContextField)
-		}
-		// The label a query compares against is <context>/<identity>, as
-		// the record stored it: the plan under the named context, with no
-		// context field of its own. Validate has checked the label.
-		segments, err := record.ParseContext(cph.context)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
-		}
-		under := *p
-		under.Context, under.ContextField = segments, ""
-		p = &under
 	}
 	f := p.Field(field)
 	if f == nil {
@@ -167,45 +154,37 @@ func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, 
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+	return cph.client.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.term, buf(encodedValue), buf(encodedContext), scalar(uint64(code)), buf(opts))
 	})
 }
 
-// Query derives the EQL query value of a field that names an EQL type, for
-// one value: the operand that matches stored values of the field, as the
-// JSON bytes the field's eql_v3.query_* domain takes. The engine runs the
-// EQL type's own query plan; no data key is minted. For generated code.
-func (cph *Cipher) Query(ctx context.Context, plan *record.Plan, field string, value any) ([]byte, error) {
+// queryPlan is the plan a query on field derives under: the declaration's
+// plan with this cipher's extension and, for a plan that takes its context
+// from a field, the context named with [Cipher.Context] in that field's
+// place. A cipher that names none is refused as [ErrEncoding]: a term
+// derives under a context, and such a plan has none until a record names it.
+func (cph *Cipher) queryPlan(plan *record.Plan, field string) (*record.Plan, error) {
 	p, err := cph.plan(plan)
 	if err != nil {
 		return nil, err
 	}
-	f := p.Field(field)
-	if f == nil {
-		return nil, fmt.Errorf("%w: the plan has no field %q", ErrEncoding, field)
+	if p.ContextField == "" {
+		return p, nil
 	}
-	if !f.IsTarget() {
-		return nil, fmt.Errorf("%w: field %q names no EQL type; its terms are derived by index", ErrEncoding, field)
+	if cph.context == "" {
+		return nil, fmt.Errorf("%w: field %q: the type takes its context from its field %q, so a query names it with Cipher.Context", ErrEncoding, field, p.ContextField)
 	}
-	encodedValue, err := vcffi.Marshal(value)
+	// The label a query compares against is <context>/<identity>, as the
+	// record stored it: the plan under the named context, with no context
+	// field of its own. Validate has checked the label.
+	segments, err := record.ParseContext(cph.context)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	// The probe value is plaintext: its transport copy is wiped once it is
-	// in the guest.
-	defer wipe(encodedValue)
-	encodedPlan, err := vcffi.Marshal(p.Wire())
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
-	}
-	opts, err := vcffi.Marshal(options(cph.keyset, ""))
-	if err != nil {
-		return nil, err
-	}
-	return cph.client.call(ctx, func(inst *instance) ([]byte, error) {
-		return inst.call(ctx, inst.query, buf(encodedValue), buf(encodedPlan), buf([]byte(field)), buf(opts))
-	})
+	under := *p
+	under.Context, under.ContextField = segments, ""
+	return &under, nil
 }
 
 // Open decrypts records sealed under the plan by any keyset of this client:
@@ -273,6 +252,10 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 	}
 	for _, f := range p.Fields {
 		v, ok := row[f.Name]
+		if f.Null == record.SQLNull && (!ok || v == nil) {
+			// Nothing is stored for it: the engine leaves it out.
+			continue
+		}
 		if !ok {
 			return nil, fmt.Errorf("no value for field %q", f.Name)
 		}
@@ -344,7 +327,8 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 		sealed[name] = o
 	}
 	for _, f := range p.Fields {
-		if _, ok := sealed[f.Name]; !ok {
+		// A SQLNull field that was nil has no entry: nothing was stored.
+		if _, ok := sealed[f.Name]; !ok && f.Null != record.SQLNull {
 			return nil, fmt.Errorf("the engine returned no outputs for field %q", f.Name)
 		}
 	}
@@ -380,9 +364,9 @@ var errNoContext = errors.New("encrypt: the record has no value for its context 
 var errNoEQL = errors.New("encrypt: the record has no EQL value for a field that names an EQL type")
 
 // open decrypts records under the keyset the selector names, and, when
-// context is not "", refuses a record whose stored context field names
+// expected is not "", refuses a record whose stored context field names
 // another context before any key is retrieved.
-func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
+func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	trees := make([]any, len(records))
 	for i, rec := range records {
 		tree := make(map[string]any, len(p.Fields)+1)
@@ -400,6 +384,11 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 				continue
 			}
 			outputs, ok := rec[f.Name]
+			if !ok && f.Null == record.SQLNull {
+				// It was nil, and nothing was stored: the engine opens it
+				// as nil.
+				continue
+			}
 			if f.IsTarget() {
 				if !ok || outputs.EQL == nil {
 					return nil, fmt.Errorf("%w: row %d, field %q", errNoEQL, i, f.Name)
@@ -425,11 +414,11 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(sel, context))
+	opts, err := vcffi.Marshal(options(sel, expected))
 	if err != nil {
 		return nil, err
 	}
-	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+	out, err := c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.decryptRecord, buf(encodedTree), buf(encodedPlan), buf(opts))
 	})
 	if err != nil {
@@ -470,11 +459,13 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 // locateTermFailure names the row, field and index behind an ErrTerm from a
 // record call. The guest's error says what was wrong with the term but not
 // which value or field it came from, so the host asks the engine again, one
-// term at a time, which costs no key request: a term derives locally. The engine defines no match term for text that yields no
-// token (empty, separator-only, or shorter than the n-gram), because an
-// empty term would match every row; a program hands such a field a value or
-// drops the match index. p is the plan without this cipher's extension,
-// which Derive adds.
+// term at a time, which costs no key request: a term derives locally. A
+// stored value is never refused for its text (text with no token is stored
+// as the empty filter), so a term failure on a record is the scheme refusing
+// the value's kind under that index. derive asks the query path, which does
+// refuse text with no token, so that one refusal is skipped here: it cannot
+// be why the record failed. p is the plan without this cipher's extension,
+// which derive adds.
 func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
 	for i, row := range rows {
 		for _, f := range p.Fields {
@@ -482,14 +473,26 @@ func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows [
 				if !o.IsTerm() {
 					continue
 				}
-				if _, derr := cph.Derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) {
-					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value (a match index needs text with at least one token; an empty or separator-only string has none)", err, i, f.Name, indexWord(o))
+				if _, derr := cph.derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) && !queryOnlyRefusal(o, derr) {
+					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value", err, i, f.Name, indexWord(o))
 				}
 			}
 		}
 	}
 	return err
 }
+
+// queryOnlyRefusal reports whether derr is the one term refusal the query
+// path makes and the record path does not: match text that cuts no token,
+// which a record stores as the empty filter.
+func queryOnlyRefusal(o record.Output, derr error) bool {
+	var d *Diagnostic
+	return o == record.Match && errors.As(derr, &d) && d.Code == emptyTermTextCode
+}
+
+// emptyTermTextCode is the stable code of the engine's refusal of match text
+// that cuts no token.
+const emptyTermTextCode = "stack_encrypt::empty_term_text"
 
 func indexWord(o record.Output) string {
 	switch o {

@@ -40,6 +40,20 @@ type UserRow struct {
 	Notes      encrypt.Ciphertext   `stash:"notes"`
 }
 
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type QueryProfile -name QueryProfile
+
+// QueryProfile is the declaration of the Rust query fixture
+// (packages/stack-encrypt/tests/fixtures/query_operators.json): the same
+// context, field names, kinds and indexes, so each query its generated
+// methods derive compares with the term the fixture records.
+type QueryProfile struct {
+	_     struct{} `stash:"context=users"`
+	Email string   `stash:"email,encrypt,index=equality"`
+	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+	Name  string   `stash:"name,encrypt,index=match"`
+	Score float64  `stash:"score,encrypt,index=ore"`
+}
+
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Document -name Document
 
 // Document is sealed as one value.
@@ -70,6 +84,8 @@ type Probe struct {
 	I64 int64    `stash:"i64,encrypt,index=ore;ope"`
 	S   string   `stash:"s,encrypt,index=ore;ope"`
 	B   []byte   `stash:"b,encrypt,index=ore;ope"`
+	F64 float64  `stash:"f64,encrypt,index=ore;ope"`
+	F32 float32  `stash:"f32,encrypt,index=ore;ope"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Note -name Note

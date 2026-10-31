@@ -17,9 +17,27 @@
 //	type User struct {
 //		_     struct{} `stash:"context=users"`
 //		ID    int64    `stash:"id,passthrough"`
-//		Email string   `stash:"email,encrypt,index=equality;match"`
-//		Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+//		Email string   `stash:"email,encrypt_into=TextEq"`
+//		Name  string   `stash:"name,encrypt_into=TextMatch"`
+//		Age   int32    `stash:"age,encrypt_into=Integer"`
 //	}
+//
+// encrypt_into names the EQL type the field is stored as. The Go field type
+// must match it: TextEq, TextMatch and Text take a string, Smallint and
+// SmallintEq an int16, Integer and IntegerEq an int32, Bigint and BigintEq
+// an int64, Boolean a bool, Real and RealEq a float32, Double and DoubleEq a
+// float64, Date and DateEq a [Date], Timestamp and TimestampEq a time.Time,
+// and Numeric and NumericEq a [Decimal]. An integer EQL type
+// also takes any other built-in Go integer type, sealed at the type's width:
+// one every value of which fits it (an int16 into Integer) always seals, and
+// a wider one (an int64 into Integer) is range checked, a value that does not
+// fit refused with [ErrEncoding]. The *Eq types answer Eq; the *Ord and
+// *OrdOpe types (IntegerOrd, SmallintOrd, BigintOrd, RealOrd, DoubleOrd,
+// TextOrd and their OrdOpe twins) answer Lt, Lte, Gt and Gte, and Eq too on
+// text; Smallint, Integer, Bigint, Boolean, Real, Double, Text, Date,
+// Timestamp and Numeric are stored and read only. NumericEq compares
+// decimals with their scale normalised (1.5 = 1.50), and TimestampEq
+// compares instants to the microsecond, truncated, never rounded.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:
 //
@@ -37,15 +55,24 @@
 //	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
 //	encrypted, err := users.Encrypt(ctx, cipher, people) // []users.EncryptedUser
 //	opened, err := users.Decrypt(ctx, cipher, encrypted) // []users.User
-//	term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+//	term, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
 //
 // Encrypt and Decrypt send one ZeroKMS request for each 500 sealed values in
-// the batch, plus one the first time a keyset is used.
+// the batch, plus one the first time a keyset is used. A query derives its
+// term locally, with no request of its own; only the first use of a keyset,
+// by a query or anything else, loads it from ZeroKMS. See Queries below.
 //
-// 6. Store the encrypted type. Each sealed field is one or more columns of
-// bytes ([Ciphertext] and the term types), each implementing driver.Valuer
-// and sql.Scanner, so a database library binds and scans each one as bytes;
-// map each one to its own column.
+// 6. Store the encrypted type. Each encrypt_into field is one EQL v4 column
+// (an eql.TextEq goes in a public.eql_v4_text_eq column), implementing
+// driver.Valuer and sql.Scanner, so a database library binds and scans it
+// like any other value. Install EQL v4 into PostgreSQL first, with the
+// eql-v4-install.sql attached to the release. A query casts its parameter to
+// the column's query type:
+//
+//	SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
+//
+// A field tagged encrypt or index= stores its ciphertext ([Ciphertext]) and
+// each term as separate byte columns instead; see Terms below.
 //
 // 7. Run the generator again after each change to the struct or to a tag. A
 // change to the fields of the struct stops the build until you do.
@@ -91,11 +118,22 @@
 // plan the Rust chain and the derive run. A program never builds or names a
 // plan, and no call takes a context or an index choice of its own.
 //
+// A sealed field outside an opaque struct is one value: a string, []byte,
+// bool, an integer of any width (int8 to int64, uint8 to uint64, int, uint,
+// or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date] or a
+// time.Time (a timestamp), or a type defined over one of the built-in types.
+// Each integer seals at its own width. Equality applies to every one but a
+// bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
+// bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no
+// order index, since over so few values its order terms would show which
+// rows hold which value.
+//
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
-// carry every Go type a program stores beside a ciphertext (a time.Time, a
-// driver.Valuer). An opaque struct crosses as one JSON document and is one
-// column.
+// carry every Go type a program stores beside a ciphertext (a
+// driver.Valuer, a sql.NullTime). An opaque struct crosses as one storage
+// blob (vitaminc's storage profile, vcffi.MarshalStorage) and is one column;
+// a row an earlier release sealed as a JSON document still opens.
 //
 // # Terms
 //
@@ -106,18 +144,171 @@
 // [Match], [Ore] and [Ope]; [JSON] is declared and refused until the engine
 // derives it. Every stored type implements driver.Valuer and sql.Scanner.
 //
-// A match index needs text with at least one token: the engine derives no
-// match term for an empty string, separator-only text, or text shorter than
-// the n-gram length (3 characters), because an empty term would match every
-// row. Encrypt then fails for the whole batch with [ErrTerm], naming the row,
-// the field and the index, so an optional or short value does not belong
-// under match.
+// A match index stores text with no token (an empty string, separator-only
+// text, or text shorter than the n-gram length of 3 characters) as the empty
+// filter: a valid value that no query matches, so an optional or short value
+// can live under match. The empty filter tells anyone who can read the
+// column that the value is one of those. A match *query* of such text is
+// refused with [ErrTerm], because an empty filter as a query would match every
+// row.
+//
+// # Queries
+//
+// A generated Fields entry has one method for each operator the engine
+// answers on the field, named for it: Eq, Lt, Lte, Gt, Gte, Between and
+// Matches. A field has no method for an operator it does not answer, so
+// such a query does not compile; the generator asks the engine which
+// operators each field answers, and holds no copy of the rules. Each method
+// takes the field's own Go type.
+//
+// Eq returns an [EqualityTerm] (or, for a field with encrypt_into, the EQL
+// type's query value), an ordering an [OreTerm] or [OpeTerm], and Between a
+// [Range] of two. Their answers are exact. The orderings are answered on
+// integers, on floats, which order as PostgreSQL's float8 does (-0.0 ties
+// 0.0, NaN sorts last), on text, which orders by its folded form (case and
+// accents folded, under Unicode 16), so Café and cafe tie and alice orders
+// before Zoe, and on a [Decimal], which orders by value (1.5 ties 1.50), a
+// [Date], and a time.Time, which orders by the microsecond. Matches returns a [MatchQuery],
+// whose answer can hold rows that do not match: size the fetch with
+// [MatchQuery.TargetLimit], then decrypt the rows and keep those
+// [MatchQuery.Verify] reports true, one call into the engine for the page.
+// On a field with encrypt_into=TextMatch, Matches returns an
+// [EQLMatchQuery], the type's query value with the same two methods.
+// Every query type implements driver.Valuer, so it binds as a parameter
+// through database/sql or pgx. With separate byte columns, as the example/
+// program declares its fields (Email `stash:"email,encrypt,index=equality;match"`,
+// Age `stash:"age,encrypt,index=equality;ore"`), not the encrypt_into User
+// above:
+//
+//	q, err := users.Fields.Email.Matches(ctx, cipher, "alice")
+//	limit, err := q.TargetLimit(ctx, 10, encrypt.Stats{Rows: rowCount})
+//	rows, err := db.QueryContext(ctx, `SELECT id, email, email_eq, email_match, age, age_eq, age_ore
+//		FROM users WHERE match_positions(email_match) @> match_positions($1)
+//		ORDER BY id LIMIT $2`, q, limit.FetchOr(50))
+//	// scan into []users.EncryptedUser, then
+//	people, err := users.Decrypt(ctx, cipher, encrypted)
+//	emails := make([]string, len(people))
+//	for i, p := range people {
+//		emails[i] = p.Email
+//	}
+//	verified, err := q.Verify(ctx, emails) // one bool per row
+//
+// match_positions is a SQL function of your own that reads a match term's
+// little-endian uint16 positions into an int[]; the package README has one.
+// A MatchQuery keeps the text it was derived from, because Verify cuts its
+// tokens again in the engine. Go cannot wipe a string, so the text stays in
+// memory until the garbage collector reclaims it; a MatchQuery never prints
+// it.
+//
+// # Encrypted JSON documents
+//
+// A field tagged encrypt_into=JsonSearch is stored as one encrypted JSON
+// document. Declare it as a json.RawMessage, which holds the document's JSON
+// text, or as a struct, map or slice type. The generated code marshals such
+// a type with encoding/json when it seals the field. It unmarshals the
+// opened text into the declared type, so integers to 64 bits and finite
+// float64s come back exactly. The rest comes back as encoding/json reads
+// what it wrote, which is not always the value sealed: invalid UTF-8 in a
+// string becomes U+FFFD, with no error (a property of the value, which the
+// generated code does not walk, so check it with utf8.ValidString first); a
+// nil map or slice is stored as JSON null, which a needle of an empty one
+// does not match; and a time.Time inside a document is stored as RFC 3339
+// text in its own offset, so EqAt with a time in another zone misses and
+// an ordering on that path orders the text, not the instants. Store a time
+// you query as an integer, such as t.UnixNano().
+//
+// The field's operands are Go values. Contains and ContainedBy take a
+// needle, and EqAt and the orderings take a scalar. Each is a
+// json.RawMessage of JSON text or any value encoding/json writes:
+//
+//	q, err := customers.Fields.Profile.Contains(ctx, cipher, map[string]any{"tier": "gold"})
+//	older, err := customers.Fields.Profile.At.Age.Gt(ctx, cipher, 40)
+//
+// A Go string is the string value itself, never parsed. So Contains and
+// ContainedBy refuse a string needle, or a pointer to one; put JSON text in
+// a json.RawMessage. They refuse a needle that writes JSON null (nil, or a
+// nil pointer, map or slice) too: only a null document contains it.
+//
+// A document contains a needle when it holds every member the needle writes.
+// encoding/json writes a struct field that has no omitempty even when the
+// field is zero. So a zero field narrows the query to documents that hold
+// that zero. Give a needle struct pointer fields with omitempty, or use a
+// map. Contains refuses a needle of the field's own type when that type
+// holds a struct, the likeliest way to make this mistake, a slice of
+// structs included: for a []Visit document, pass a slice of a needle type
+// with pointer fields. ContainedBy takes one: there a zero field widens
+// the query.
+//
+// A selection or a subtree read opens values as JSON text ([JSONValue],
+// [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
+//
+// Two queries at an array's paths can each be answered by a different
+// element. To test several members of one element together, use Match on
+// the array's accessor under Elements, which a field has for each array
+// whose elements have an ordered member. The generated Paths names those
+// members, nested as the JSON nests them, and [AtPath] makes a predicate
+// from one:
+//
+//	q, err := customers.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+//		encrypt.AtPath(customers.Paths.Profile.Visits.Place).Eq("home"),
+//		encrypt.AtPath(customers.Paths.Profile.Visits.At).Gt(15),
+//	)
+//	// WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)
+//
+// A [Path] carries its array and the member's Go type, so a value of
+// another type, or a predicate on another array's member, does not
+// compile. For a filter built at run time, the array accessor's Member
+// names the member as text: Visits.Member("place").Eq("home").
+//
+// Each comparison is of the member's ordering term, so [MemberTest.Eq]
+// compares text case- and accent-folded, and integers past 2^53 can tie. A row whose
+// array is longer than [JSONReadOptions.WildcardBound] (64 by default)
+// fails the query with SQLSTATE 22023.
+//
+// A whole filter binds as one parameter with the field's Match: a jsonpath
+// predicate and its variables, as plaintext jsonb_path_match takes them.
+// The engine parses the predicate and compiles it into a tree of the
+// operands above; nothing in Go reads it.
+//
+//	q, err := customers.Fields.Profile.Match(ctx, cipher,
+//		`$."name" == $name && $."age" < $max`,
+//		map[string]any{"name": "Alice", "max": 40}, encrypt.JSONReadOptions{})
+//	// WHERE profile @@ $1::eql_v4.query_json_predicate
+//
+// A predicate the engine cannot answer is refused as a [Diagnostic]
+// wrapping [ErrEncoding], whose Reason, Construct and At name the refusal
+// and the byte offset in the predicate where it starts. The tree is
+// evaluated inside eql_v4.json_tree_match, so no index engages: a query
+// that needs one writes its leaves with EqAt, Contains and At.<Path>.
+//
+// # Cancellation
+//
+// Every call takes a [context.Context], and a call whose context is
+// cancelled or passes its deadline fails with that context's error. Only
+// that call fails: one Client is shared by every request in a service, and
+// one request giving up never closes it for the others. A call waiting
+// for the client, which runs one call at a time, leaves the queue when its
+// context ends and never starts. A call waiting on ZeroKMS has that request
+// cancelled; its error matches both the context's error and
+// [ErrTransport]. A call waiting on its auth strategy for a token returns
+// too, with the context's error. If the strategy is refreshing a device
+// session, the refresh finishes in the background, for up to 10 seconds:
+// the service rotates the refresh token when it answers, and dropping that
+// answer would leave the strategy unable to refresh.
+//
+// A Client closes itself, and every later call returns [ErrState], only
+// when the guest's state is unknown: the guest trapped, or a call ran on
+// for 30 seconds after its context ended, which means a bug, not a caller
+// that gave up. A service that sees ErrState from a client it did not
+// close builds a new one.
 //
 // # Transport and auth
 //
-// The guest imports exactly two host functions: an HTTP send, served by any
-// [net/http.RoundTripper], and a bearer-token fetch, served by the
-// credentials' auth strategy. What crosses per ZeroKMS call is what would
+// The guest imports exactly one host function, a bearer-token fetch, served
+// by the credentials' auth strategy. It never performs a request itself: an
+// operation that needs ZeroKMS pauses and hands the request to the client,
+// which sends it with any [net/http.RoundTripper] and resumes the operation
+// with the response. What crosses per ZeroKMS call is what would
 // cross TLS anyway; derived key material never leaves the guest. Under
 // [AutoCredentials] and [OIDCFederation] the same RoundTripper also carries
 // the authentication requests to CTS, so one scoped to the ZeroKMS host alone
@@ -145,7 +336,8 @@
 //
 // The generator and the compiler find a mistake in a declaration, so no call
 // returns an error for one. A call returns an error for a key, for the
-// network, or for stored data: [ErrForeignKeyset] when a *Cipher is given a
+// network, or for stored data, or because its context ended (see
+// Cancellation): [ErrForeignKeyset] when a *Cipher is given a
 // record another keyset sealed, [ErrAuthentication] or [ErrForbidden] for a
 // ciphertext that does not open under its field's context, [ErrEncoding] for
 // a stored value that does not fit its declaration. Read the kind with

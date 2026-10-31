@@ -1,6 +1,13 @@
-//! One-value plans: one plaintext, sealed with its indexes beside it
-//! ([`with`](ValueStart::with)) or laid out by a target type
-//! ([`encrypt_into`](ValueStart::encrypt_into)).
+//! One-value plans: how to encrypt a single plaintext. Start one with
+//! [`Plan::value`], then choose its output in one of three ways:
+//!
+//! - [`with`](ValueStart::with): a ciphertext with the indexes you name
+//!   beside it, as an [`Encrypted<Terms>`].
+//! - [`encrypt_into`](ValueStart::encrypt_into): a target type, laid out
+//!   as that type says.
+//! - [`encrypt_with_layout`](ValueStart::encrypt_with_layout): a target laid
+//!   out by a value with options, such as the JSON index with the paths it
+//!   orders ([`Layout`]).
 use std::fmt;
 use std::marker::PhantomData;
 
@@ -11,7 +18,7 @@ use super::build::{
 use super::PlanError;
 use crate::target::{
     indexed, Borrowed, CallerContext, DeclaredContext, DecryptInto, Decryption, EncryptFrom,
-    Encrypted, Encryption, ExpectedContext, IndexSpec, Indexes, Pending,
+    Encrypted, Encryption, ExpectedContext, IndexSpec, Indexes, Layout, Pending,
 };
 use crate::{
     Error, IntoContext, KeysetCipher, Label, LabelError, MaybeEmpty, NonEmpty, Plan,
@@ -34,7 +41,7 @@ impl Plan<(), ()> {
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::sem::EqualityTerm;
-    /// use stack_encrypt::{Equality, Ore, Plan, StackCipher, StackCipherText};
+    /// use stack_encrypt::{op, Equality, Ore, Plan, StackCipher, StackCipherText};
     ///
     /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
     ///
@@ -52,10 +59,9 @@ impl Plan<(), ()> {
     /// let email = String::from("bob@example.com");
     /// let (c, eq) = cipher.encrypt(&email).context("users/email").using(&email_plan).await?;
     /// let query_value = cipher
-    ///     .query("bob@example.com")
+    ///     .query(op::Eq, "bob@example.com")
     ///     .context("users/email")
-    ///     .using(&email_plan)
-    ///     .equality()
+    ///     .on(&email_plan)
     ///     .await?;
     /// assert_eq!(query_value, eq);
     /// let back = cipher.open((c, eq)).context("users/email").using(&email_plan).await?;
@@ -126,6 +132,53 @@ impl<S> ValueStart<S> {
             plaintext: PhantomData,
         }
     }
+
+    /// Encrypt the value as `layout` does, with the layout's options. The
+    /// plan's output is the layout's target.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use serde_json::json;
+    /// use stack_encrypt::json::{JsonDocument, JsonOptions};
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::Json;
+    /// use stack_encrypt::{op, Plan, StackCipher};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    ///
+    /// // The JSON index, ordering the leaves at `$.age`.
+    /// let options = JsonOptions::default().ordering(["$.age"])?;
+    /// let plan = Plan::value::<serde_json::Value>()
+    ///     .context("users/profile")
+    ///     .encrypt_with_layout(Json::new(options))
+    ///     .build()?;
+    ///
+    /// // The output is a `JsonDocument`, with an ordering term on `$.age`.
+    /// let doc: JsonDocument = cipher.encrypt(&json!({"age": 34, "name": "Bob"})).using(&plan).await?;
+    /// assert_eq!(doc.entries().iter().filter(|e| e.ordering_term().is_some()).count(), 1);
+    ///
+    /// // A query through the plan uses the same options, so `$.age` can be compared.
+    /// let _at_least_18 = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&plan).await?;
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    ///
+    /// Use this when the target needs options that its type cannot carry,
+    /// such as the paths the JSON index orders. With
+    /// [`encrypt_into::<JsonDocument>()`](Self::encrypt_into) the same
+    /// document is sealed under the default options, which order no path.
+    /// [`Layout`] says more.
+    pub fn encrypt_with_layout<X>(self, layout: X) -> ValuePlanBuilder<S, Laid<X, X::Target>>
+    where
+        X: Layout<S>,
+    {
+        ValuePlanBuilder {
+            sources: self.sources,
+            shape: Laid(layout, PhantomData),
+            plaintext: PhantomData,
+        }
+    }
 }
 
 impl<S> ValueStart<S> {
@@ -152,7 +205,7 @@ impl<S> ValueStart<S> {
     /// Unlike a fields plan's context field, the context here is a `C`, not
     /// a [`Label`], so the plan does not run through the chain:
     /// `cipher.encrypt(..).using`, `cipher.open(..).using` and
-    /// `cipher.query(..).using` do not take it (it is neither
+    /// `cipher.query(..).on` do not take it (it is neither
     /// [`Runs`](super::Runs) nor [`Opens`](super::Opens)), and it has no
     /// query path. Run it as the derive does, with its two descriptions:
     /// `keyset.run(plan.encryption_with_context(), &value, context)` and
@@ -322,10 +375,30 @@ impl<T> fmt::Debug for Typed<T> {
     }
 }
 
+/// A one-value plan's layout when it was given one by value
+/// ([`encrypt_with_layout`](ValueStart::encrypt_with_layout)): the layout
+/// `X`, whose target `T` is its output, and a query runs through the
+/// layout's own index, with its options ([`Layout::index`]). `T` is the
+/// layout's [`Target`](Layout::Target), spelled out so that opening one
+/// `T` and a `Vec<T>` are told apart as they are for a [`Typed`] plan.
+pub struct Laid<X, T>(X, PhantomData<fn() -> T>);
+
+impl<X: Clone, T> Clone for Laid<X, T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
+impl<X: fmt::Debug, T> fmt::Debug for Laid<X, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Laid<{}>({:?})", std::any::type_name::<T>(), self.0)
+    }
+}
+
 mod sealed {
     pub trait Sealed {}
     impl<X> Sealed for super::Indexed<X> {}
     impl<T> Sealed for super::Typed<T> {}
+    impl<X, T> Sealed for super::Laid<X, T> {}
 }
 
 /// What a one-value plan's layout says before it runs: what one run
@@ -338,6 +411,14 @@ mod sealed {
 /// into that context. A target whose context is, say, a `NonEmpty<u64>`
 /// builds, and runs through
 /// [`encryption_with_context`](ValuePlan::encryption_with_context).
+///
+/// A query through a [`Typed`] plan whose target is a
+/// [`LabelledTarget`](crate::op::LabelledTarget) needs only this: the query
+/// derives through the index the target's `Answers` impl names, under the
+/// plan's label, and never runs the target's encryption. So an EQL type,
+/// sealed under its column rather than the label, is queried through its
+/// plan though it cannot be encrypted through it. Naming another index with
+/// `.via(..)` needs [`ValueShape`].
 pub trait ValueLayout<S>: sealed::Sealed + Clone {
     /// What one run produces.
     type Output: 'static;
@@ -347,7 +428,9 @@ pub trait ValueLayout<S>: sealed::Sealed + Clone {
 
 /// How a one-value plan lays its value out under a [`Label`]: [`Indexed`]
 /// or [`Typed`]. What [`ValuePlan::encryption`], `cipher.encrypt(..).using`
-/// and a query through the plan ask. Sealed.
+/// and a query that names its index with `.via(..)` ask. A query that lets
+/// a [`Typed`] plan choose the index asks only [`ValueLayout`], when the
+/// target is a [`LabelledTarget`](crate::op::LabelledTarget). Sealed.
 pub trait ValueShape<S>: ValueLayout<S> {
     /// The description of one value, run under its whole context.
     fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>
@@ -399,6 +482,31 @@ where
         S: 's,
     {
         T::encryption().accepting::<CallerContext>()
+    }
+}
+
+impl<S, X, T> ValueLayout<S> for Laid<X, T>
+where
+    X: Layout<S, Target = T>,
+    T: EncryptFrom<S>,
+{
+    type Output = T;
+    fn specs(&self) -> Vec<IndexSpec> {
+        self.0.specs()
+    }
+}
+
+impl<S, X, T> ValueShape<S> for Laid<X, T>
+where
+    X: Layout<S, Target = T>,
+    T: EncryptFrom<S>,
+    CallerContext: Into<T::Context>,
+{
+    fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, T, K, CallerContext>
+    where
+        S: 's,
+    {
+        self.0.encryption().accepting::<CallerContext>()
     }
 }
 
@@ -543,10 +651,12 @@ impl<S, X> ValuePlan<S, Indexed<X>> {
 
 impl<S, T> ValuePlan<S, Typed<T>>
 where
-    Typed<T>: ValueShape<S>,
+    Typed<T>: ValueLayout<S>,
 {
     /// The label a query through `index` is derived under, or why the plan
-    /// cannot answer it.
+    /// cannot answer it. It reads only the indexes `T` declares
+    /// ([`ValueLayout`]); which plans may be queried at all is the query
+    /// chain's (`Chooses`, `Resolves`).
     pub(crate) fn query_label(
         &self,
         index: &IndexSpec,
@@ -555,6 +665,24 @@ where
         let label = self.resolve(call)?;
         check_declared(THE_VALUE, &self.shape.specs(), index)?;
         Ok(label)
+    }
+}
+
+impl<S, X, T> ValuePlan<S, Laid<X, T>>
+where
+    X: Layout<S, Target = T>,
+{
+    /// The layout: the index a query runs through, with its options.
+    pub fn layout(&self) -> &X {
+        &self.shape.0
+    }
+}
+
+impl<S, X: ValueLayout<S>> ValuePlan<S, X> {
+    /// The indexes the plan declares, as data: what a query through it may
+    /// ask for ([`ValueLayout::specs`]).
+    pub fn specs(&self) -> Vec<IndexSpec> {
+        self.shape.specs()
     }
 }
 
@@ -661,7 +789,7 @@ macro_rules! indexed_opens {
     ($([$($generics:tt)*] $record:ty;)+) => {$(
         impl<S, X, K, $($generics)*> Opens<$record, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = S;
@@ -679,7 +807,7 @@ macro_rules! indexed_opens {
         }
         impl<S, X, K, $($generics)*> Opens<Vec<$record>, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = Vec<S>;
@@ -727,6 +855,52 @@ where
 
 impl<S, T, K> Opens<Vec<T>, K> for ValuePlan<S, Typed<T>>
 where
+    T: DecryptInto<S>,
+    CallerContext: Into<T::Context>,
+    S: 'static,
+    K: 'static,
+{
+    type Output = Vec<S>;
+    fn decryption(
+        &self,
+        records: Vec<T>,
+        context: Option<Label>,
+        extend: DeclaredContext,
+    ) -> Decryption<Vec<S>, K> {
+        self.open_all(records, context, extend)
+    }
+    fn check(&self, _: &Vec<T>, context: Option<&Label>) -> Result<(), Error> {
+        self.check_call(context)
+    }
+}
+
+/// A [`Laid`] plan opens its layout's target, one or a `Vec` of them,
+/// through the target's own [`DecryptInto`], as a [`Typed`] plan does.
+impl<S, X, T, K> Opens<T, K> for ValuePlan<S, Laid<X, T>>
+where
+    X: Layout<S, Target = T>,
+    T: DecryptInto<S>,
+    CallerContext: Into<T::Context>,
+    S: 'static,
+    K: 'static,
+{
+    type Output = S;
+    fn decryption(
+        &self,
+        record: T,
+        context: Option<Label>,
+        extend: DeclaredContext,
+    ) -> Decryption<S, K> {
+        self.open_one(record, context, extend)
+    }
+    fn check(&self, _: &T, context: Option<&Label>) -> Result<(), Error> {
+        self.check_call(context)
+    }
+}
+
+impl<S, X, T, K> Opens<Vec<T>, K> for ValuePlan<S, Laid<X, T>>
+where
+    X: Layout<S, Target = T>,
     T: DecryptInto<S>,
     CallerContext: Into<T::Context>,
     S: 'static,

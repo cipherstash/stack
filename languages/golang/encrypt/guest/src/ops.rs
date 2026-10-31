@@ -4,9 +4,10 @@
 //! module wires them to the session table and the packed ABI; nothing in
 //! here knows about linear memory.
 //!
-//! Values and ciphertext trees cross the boundary in the vitaminc FFI codec
-//! (`vitaminc_aead_value::transport`) — the same codec the vitaminc guest
-//! uses, so the Go side carries exactly one codec. A ciphertext tree's
+//! Values cross the boundary as vitaminc transport frames, and ciphertext
+//! trees in vitaminc's ciphertext codec (`vitaminc_aead_frame`) — the same
+//! encodings the vitaminc guest uses, so the Go side carries exactly one
+//! codec. A ciphertext tree's
 //! leaves are re-encoded through [`SealedValue::to_bytes`] /
 //! [`SealedValue::from_bytes`]: the codec sees an opaque byte-string leaf,
 //! and the bytes inside it are the frozen storage encoding a database column
@@ -34,17 +35,24 @@
 //! directions, buffers sized before a byte of plaintext is written, the
 //! ABI's numeric term kinds, and the mapping from a library error to a
 //! status code.
+//!
+//! Plaintext is never decoded into a value tree. A term's value is parsed and
+//! walked in place to the scalar it holds, the way vitaminc's own guest walks
+//! a frame into encryption. A record's source, a query's input and a page of
+//! values to verify are read as [`ValueFrame`]s: the frame is checked against
+//! the engine's value model, and the engine walks it, splitting a source into
+//! one frame per field as it goes. A record opens into one frame, which is
+//! the output. Control data (a plan, a context, an options object, query
+//! statistics) carries no secret and is read from its frame with serde.
 
-use stack_encrypt::dynamic::{self, Scalar, Scope};
+use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext, Frame};
+use stack_encrypt::dynamic::{self, Scope, ValueFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
-use stack_encrypt::{
-    BoxedPassthrough, CipherText, KeysetCipher, Label, SealedValue, StackCipherText,
-};
-use stack_kms::DataKeySource;
-use vitaminc_aead_value::{transport as codec, FfiValue};
-use vitaminc_protected::Controlled;
+use stack_encrypt::{CipherText, KeysetCipher, Label, Node, SealedValue, StackCipherText};
+use stack_kms::{DataKeySource, IndexKeySource};
+use zeroize::Zeroizing;
 
 use stack_guest_abi::last_error;
 
@@ -63,7 +71,7 @@ pub const TERM_OPE: u32 = 4;
 
 /// A ciphertext tree whose leaves are the frozen [`SealedValue`] byte
 /// encoding — the shape that crosses the FFI codec.
-type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
+type BytesTree = Node<Vec<u8>>;
 
 // =============================================================================
 // Terms
@@ -71,15 +79,15 @@ type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
 
 /// Derive one index term: a codec-encoded scalar and a codec-encoded
 /// context in, the term's frozen byte encoding out (see `stack-encrypt`'s
-/// `sem` module docs). Under the local HMAC backend the derivation is one
+/// `sem` module docs). The scalar's frame is walked in place. Under the local HMAC backend the derivation is one
 /// PRF/CLLW computation with no ZeroKMS I/O; that is the backend's
 /// property, not this operation's contract — the term API is a `Pending`
 /// so a backend that derives terms at ZeroKMS settles the same way.
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, nested as deep as the transport codec allows
-/// ([`codec::MAX_DEPTH`] levels from the root of the encoded value; deeper
-/// is [`STATUS_ENCODING`] before the context is parsed), exactly as a plan
+/// ([`MAX_DEPTH`](stack_encrypt::dynamic::frame::MAX_DEPTH) levels from the root of the frame; deeper
+/// is [`STATUS_ENCODING`] before the context is read), exactly as a plan
 /// field's; [`dynamic::context`] is the one home of that grammar. Shape is identity:
 /// `[x]` is a PAE-framed list and `x` is not, so a probe takes the context
 /// in the shape the field was sealed under — a plan field's context
@@ -93,27 +101,37 @@ pub async fn term<K>(
     kind: u32,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
-    let context = dynamic::context(decode_value(context)?).map_err(|e| fail_dynamic(&e))?;
-    let (scalar, kind) = parse_term(decode_value(value)?, kind)?;
-    dynamic::term(cipher, scalar, &kind, context)
+    let context = parse_context(context)?;
+    let value = parse_frame(value)?;
+    let kind = parse_term(value, kind)?;
+    dynamic::term(cipher, value, &kind, context)
         .await
         .map_err(|e| fail_dynamic(&e))
 }
 
-/// The static half of a term: the kind is one of the ABI's table, the value
-/// is a scalar, and the scheme defines the pair
-/// ([`IndexSpec::supports`]). Shared by [`term`] and [`validate::term`] so
-/// the ABI refuses exactly what the operation would, before any keyset is
-/// resolved.
+/// A term's context: one frame, read by [`dynamic::context`]. Bytes that
+/// are not a frame are refused as every other input's are, before the
+/// context's own grammar.
+fn parse_context(
+    context: &[u8],
+) -> Result<stack_encrypt::NonEmpty<stack_encrypt::ContextPiece<'static>>, u32> {
+    let _ = parse_frame(context)?;
+    dynamic::context(context).map_err(|e| fail_dynamic(&e))
+}
+
+/// The static half of a term: the kind is one of the ABI's table, and the
+/// value is one scalar the index takes ([`IndexSpec::defines`]). Shared by
+/// [`term`] and [`validate::term`] so the ABI refuses exactly what the
+/// operation would, before any keyset is resolved.
 ///
 /// The ABI's kind codes carry no options, so [`TERM_MATCH`] is the match
 /// index under the default options, the same index a plan's bare `"match"`
 /// names.
-fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, IndexSpec), u32> {
+fn parse_term(value: Frame<'_>, kind: u32) -> Result<IndexSpec, u32> {
     let kind = match kind {
         TERM_EQUALITY => IndexSpec::Equality,
         TERM_MATCH => IndexSpec::Match(MatchOptions::default()),
@@ -125,11 +143,10 @@ fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, IndexSpec), u32> {
             ))
         }
     };
-    let scalar = Scalar::of(&value, &kind).map_err(|e| fail_dynamic(&e))?;
-    if !kind.supports(&scalar) {
+    if !kind.defines(value) {
         return Err(fail_dynamic(&dynamic::Error::Term { field: None, kind }));
     }
-    Ok((scalar, kind))
+    Ok(kind)
 }
 
 // =============================================================================
@@ -161,13 +178,14 @@ pub async fn encrypt_record<K>(
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let tree = dynamic::record::encrypt_with(cipher, decode_value(source)?, &plan, &resolver())
-        .map_err(|e| fail_dynamic(&e))?
-        .await
-        .map_err(|e| fail_error(&e))?;
+    let tree =
+        dynamic::record::encrypt_with(cipher, checked_plaintext(source)?, &plan, &resolver())
+            .map_err(|e| fail_dynamic(&e))?
+            .await
+            .map_err(|e| fail_error(&e))?;
     encode_tree(tree)
 }
 
@@ -195,7 +213,7 @@ pub async fn decrypt_record<K>(
     expected: Option<Label>,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
     let value =
@@ -203,39 +221,195 @@ where
             .map_err(|e| fail_dynamic(&e))?
             .await
             .map_err(|e| fail_error(&e))?;
-    encode_value(value)
+    encode_frame(value)
 }
 
-/// Derive the EQL query value of one target field: a codec-encoded
-/// plaintext, the codec-encoded plan and the field's name (UTF-8) in, the
-/// query value's JSON bytes out — the operand `eql_v3.query_<name>` takes.
-/// Runs the EQL type's own query plan through this build's resolver
-/// ([`crate::targets`]); a build without EQL types refuses the plan before
-/// this is reached. No data key is minted: under the local backend the
-/// equality term is one PRF derivation.
-pub async fn query<K>(
+// =============================================================================
+// Queries by operator
+// =============================================================================
+
+/// Derive the query term for one plan field, an operator and its input
+/// (ADR-0009; ADR-0007, amended 2026-10-16): a codec-encoded input, the
+/// codec-encoded plan, the field's name and the operator's name (both UTF-8)
+/// in, the term's codec-encoded object out (the `Serialize` form of
+/// [`dynamic::QueryTerm`]):
+///
+/// ```text
+/// { "operator": "matches", "fidelity": "probabilistic", "index": "match",
+///   "domain": null, "encoding": "bytes", "term": <bytes> }
+/// ```
+///
+/// The input is one value for every operator but `between`, whose input is
+/// a list of two, low then high, and a document's operators, whose input
+/// is an object of named inputs (`{"json"}`, `{"path", "json"}`, ...; see
+/// [`dynamic::OpSpec::input`]). A value is read as the field's declared
+/// kind first, so a host's float `34.0` queries a `uint64` field. A field
+/// with indexes derives the term of the index that answers the operator,
+/// as bytes; `between` derives one per bound, as a list of two. A field
+/// that names an EQL type runs the type's query twin through this build's
+/// resolver, and `term` holds the twin's JSON bytes and `domain` its
+/// PostgreSQL domain. A document's operator gives `encoding` `eql` (a
+/// containment query or leaf operand), `text` (a selector or node token) or
+/// `text_array` (a subtree read's tokens). No data key is minted.
+pub async fn query_term<K>(
     cipher: &KeysetCipher<'_, K>,
-    value: &[u8],
+    input: &[u8],
     plan: &[u8],
     field: &[u8],
+    operator: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: DataKeySource + IndexKeySource + Sync + 'static,
 {
+    let (plan, field, operator) = parse_query(plan, field, operator)?;
+    let term = dynamic::query_term(
+        cipher,
+        &plan,
+        field,
+        operator,
+        checked_plaintext(input)?,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?
+    .await
+    .map_err(|e| fail_error(&e))?;
+    encode_answer(&term)
+}
+
+/// Open the rows a read of a document field returned
+/// ([`dynamic::json_open`]): a codec-encoded list per database row of the
+/// entries the SQL returned (`public.eql_v4_json_entry` JSON, text or
+/// bytes), the plan, the field's name and the codec-encoded read request
+/// (`{"operation": "selector" | "subtree", "path", "wildcard_bound"?}`) in;
+/// a codec-encoded list per row of JSON texts (bytes) out, which is
+/// **plaintext**. The selector or the read key is derived again from the
+/// request under `keyset`, which the host names as it named it to prepare
+/// the read, and the rows open through that keyset only: a document sealed
+/// under another is refused before any key is retrieved. One batched key
+/// request for every row.
+pub async fn json_open<K>(
+    keyset: &KeysetCipher<'_, K>,
+    rows: &[u8],
+    plan: &[u8],
+    field: &[u8],
+    request: &[u8],
+) -> Result<Vec<u8>, u32>
+where
+    K: DataKeySource + IndexKeySource + Sync + 'static,
+{
+    let (plan, field) = parse_field(plan, field)?;
+    let opened = dynamic::json_open(
+        keyset,
+        &plan,
+        field,
+        parse_frame(request)?,
+        parse_frame(rows)?,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?
+    .await
+    .map_err(|e| fail_error(&e))?;
+    encode_frame(opened)
+}
+
+/// Verify a page of decrypted values against a probabilistic query: the
+/// query's codec-encoded input and a codec-encoded list of values, with the
+/// plan, the field's name and the operator's name, in; a codec-encoded list
+/// of booleans out, one per value in order ([`dynamic::verify`]). The query
+/// is named as it was derived, and its tokens are cut again from the input:
+/// they are plaintext, so no term carries them. A null value is `false`.
+/// Needs no cipher and no key.
+pub fn verify(
+    input: &[u8],
+    values: &[u8],
+    plan: &[u8],
+    field: &[u8],
+    operator: &[u8],
+) -> Result<Vec<u8>, u32> {
+    let (plan, field, operator) = parse_query(plan, field, operator)?;
+    // Each value becomes a frame of its own (wiped on drop): vitaminc's
+    // `Frame` walks a sequence but does not hand out its elements' frames,
+    // and reading them out of the frame layout here would duplicate
+    // vitaminc's parser.
+    let values = decode_plaintext(values)?
+        .elements()
+        .ok_or_else(|| last_error::malformed("the values to verify are not a list"))?;
+    let verified = dynamic::verify(
+        &plan,
+        field,
+        operator,
+        checked_plaintext(input)?,
+        values,
+        &resolver(),
+    )
+    .map_err(|e| fail_dynamic(&e))?;
+    encode_answer(&verified)
+}
+
+/// How many rows a probabilistic query should fetch for `want` of them to
+/// verify: the term's bytes as [`query_term`] returned them (not a frame),
+/// the codec-encoded statistics
+/// ([`Stats::from_frame`](stack_encrypt::op::Stats::from_frame)), the plan,
+/// the field's name and the operator's name in; the codec-encoded limit out,
+/// an unsigned 64-bit integer or null for no finite fetch
+/// ([`Limit::rows`](stack_encrypt::op::Limit::rows)). Needs no cipher and
+/// no key.
+pub fn target_limit(
+    term: &[u8],
+    stats: &[u8],
+    plan: &[u8],
+    field: &[u8],
+    operator: &[u8],
+    want: u64,
+) -> Result<Vec<u8>, u32> {
+    let (plan, field, operator) = parse_query(plan, field, operator)?;
+    // Statistics are read without a field to hand; the error names the
+    // query's, as every other refusal of a query does.
+    let stats = stack_encrypt::op::Stats::from_frame(stats)
+        .map_err(|e| fail_dynamic(&e.in_field(field)))?;
+    let limit = dynamic::target_limit(&plan, field, operator, term, want, &stats, &resolver())
+        .map_err(|e| fail_dynamic(&e))?;
+    encode_answer(&limit.rows())
+}
+
+/// A plan and one of its fields' names: the plan parsed against this
+/// build's resolver, and the field's name UTF-8.
+fn parse_field<'f>(plan: &[u8], field: &'f [u8]) -> Result<(dynamic::record::Plan, &'f str), u32> {
     let plan = parse_plan(plan)?;
     let field = std::str::from_utf8(field)
         .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
-    dynamic::record::query(cipher, &plan, field, decode_value(value)?, &resolver())
-        .map_err(|e| fail_dynamic(&e))?
-        .await
-        .map_err(|e| fail_error(&e))
+    Ok((plan, field))
 }
 
-/// A codec-encoded plan, parsed against this build's resolver: a target
-/// name this build cannot run is refused here, the same way at every
-/// export that takes a plan.
+/// The plan, field name and operator a query names: [`parse_field`]'s two,
+/// and the operator one the engine knows ([`dynamic::OpSpec::parse`]); an
+/// unknown operator is refused naming the field, as an operator the field
+/// does not answer is.
+fn parse_query<'f>(
+    plan: &[u8],
+    field: &'f [u8],
+    operator: &[u8],
+) -> Result<(dynamic::record::Plan, &'f str, dynamic::OpSpec), u32> {
+    let (plan, field) = parse_field(plan, field)?;
+    let operator = std::str::from_utf8(operator)
+        .ok()
+        .and_then(dynamic::OpSpec::parse)
+        .ok_or_else(|| {
+            fail_dynamic(&dynamic::Error::Source {
+                field: Some(field.to_owned()),
+                reason: dynamic::Reason::UnknownOperator,
+            })
+        })?;
+    Ok((plan, field, operator))
+}
+
+/// A plan's frame, parsed against this build's resolver: a target name this
+/// build cannot run is refused here, the same way at every export that
+/// takes a plan. Bytes that are not a frame are refused as every other
+/// input's are, before the plan's own grammar.
 fn parse_plan(plan: &[u8]) -> Result<dynamic::record::Plan, u32> {
-    dynamic::record::plan_with(decode_value(plan)?, &resolver()).map_err(|e| fail_dynamic(&e))
+    let _ = parse_frame(plan)?;
+    dynamic::record::plan_with(plan, &resolver()).map_err(|e| fail_dynamic(&e))
 }
 
 // =============================================================================
@@ -255,8 +429,8 @@ pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
 
 /// The EQL types this build of the engine knows, as a codec-encoded
 /// `{"targets": [...]}`: one entry per type in
-/// [`TargetDescriptor::to_value`](stack_encrypt::dynamic::TargetDescriptor::to_value)'s
-/// wire form, producible or not, with the reason when not. The build
+/// [`TargetDescriptor`](stack_encrypt::dynamic::TargetDescriptor)'s
+/// `Serialize` form, producible or not, with the reason when not. The build
 /// without EQL types lists none, which a generator reads as "no
 /// `encrypt_into` type is available" and refuses the tag; the `eql` build
 /// lists the catalog, and a generator writes `encrypt_into` only for an
@@ -278,18 +452,50 @@ pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
 /// | `query_sql_domain` | string or null    | the Postgres domain of the query value |
 /// | `producible`       | bool              | whether this build produces the type |
 /// | `reason`           | string or null    | why not, when `producible` is false |
+/// | `operators`        | list of objects   | the operators the engine answers for the type, each `{"operator", "fidelity", "arity", "index"}` ([`TargetDescriptor`](stack_encrypt::dynamic::TargetDescriptor#wire-format)) |
+///
+/// The first ten keys are eql-bindings' row; `operators` is the engine's,
+/// computed from the row, so a generator asks the engine which operators a
+/// type answers and how far each answer can be trusted.
 pub fn targets() -> Result<Vec<u8>, u32> {
     use stack_encrypt::dynamic::TargetResolver as _;
-    encode_value(FfiValue::Object(vec![(
-        "targets".to_string(),
-        FfiValue::Array(
-            resolver()
-                .targets()
-                .iter()
-                .map(|target| target.to_value())
-                .collect(),
-        ),
-    )]))
+    #[derive(serde::Serialize)]
+    struct Targets {
+        targets: Vec<dynamic::TargetDescriptor>,
+    }
+    encode_answer(&Targets {
+        targets: resolver().targets(),
+    })
+}
+
+/// The operators one field of a codec-encoded plan answers, as a
+/// codec-encoded list: one object per operator, in the order the engine
+/// lists them, each the `Serialize` form of a
+/// [`dynamic::OperatorEntry`]:
+///
+/// ```text
+/// [ { "operator": "eq", "fidelity": "exact", "arity": "one", "index": "eq" }, ... ]
+/// ```
+///
+/// Exactly the operators [`query_term`] derives a term for on that field
+/// ([`dynamic::field_operators`]): the operators a field declared with
+/// indexes answers, and those its EQL type answers for a field that names
+/// one. The Go generator (`stashgen`) asks this for every sealed field it
+/// writes and generates one query method per entry, so it holds no copy of
+/// which index answers which operator. A field the plan does not have is
+/// [`STATUS_ENCODING`]. Needs no cipher.
+pub fn operators(plan: &[u8], field: &[u8]) -> Result<Vec<u8>, u32> {
+    let plan = parse_plan(plan)?;
+    let field = std::str::from_utf8(field)
+        .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
+    let operators =
+        dynamic::field_operators(&plan, field, &resolver()).map_err(|e| fail_dynamic(&e))?;
+    encode_answer(
+        &operators
+            .iter()
+            .map(|(operator, index)| dynamic::OperatorEntry::new(*operator, index))
+            .collect::<Vec<_>>(),
+    )
 }
 
 // =============================================================================
@@ -308,13 +514,10 @@ pub mod validate {
 
     /// A term's inputs, as [`term`] takes them: the context decodes and is
     /// non-empty, the kind is one of [`TERM_EQUALITY`] .. [`TERM_OPE`], and
-    /// the value is a scalar the scheme defines that term for
-    /// ([`IndexSpec::supports`]).
+    /// the value is one scalar the index takes ([`IndexSpec::defines`]).
     pub fn term(value: &[u8], context: &[u8], kind: u32) -> Result<(), u32> {
-        dynamic::context(decode_value(context)?)
-            .map(drop)
-            .map_err(|e| fail_dynamic(&e))?;
-        parse_term(decode_value(value)?, kind).map(drop)
+        let _ = parse_context(context)?;
+        parse_term(parse_frame(value)?, kind).map(drop)
     }
 
     /// A record source against its plan, as [`encrypt_record`] takes them:
@@ -323,38 +526,40 @@ pub mod validate {
     /// against its field's outputs).
     pub fn record(source: &[u8], plan: &[u8]) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
-        dynamic::record::check_source(decode_value(source)?, &plan).map_err(|e| fail_dynamic(&e))
+        dynamic::record::check_source(checked_plaintext(source)?, &plan)
+            .map_err(|e| fail_dynamic(&e))
     }
 
-    /// A target query's inputs, as [`query`] takes them: the plan parses
-    /// against this build's resolver, the field is one of its target fields,
-    /// and the value is of the field's declared kind.
-    pub fn query(value: &[u8], plan: &[u8], field: &[u8]) -> Result<(), u32> {
-        let plan = parse_plan(plan)?;
-        let field = std::str::from_utf8(field)
-            .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
-        let refuse = |reason| {
-            fail_dynamic(&dynamic::Error::Plan {
-                field: Some(field.to_owned()),
-                reason,
-            })
-        };
-        let field = plan
-            .fields()
-            .iter()
-            .find(|candidate| candidate.name() == field)
-            .ok_or_else(|| refuse(dynamic::Reason::NoSuchField))?;
-        if field.target().is_none() {
-            return Err(refuse(dynamic::Reason::NotATarget));
-        }
-        let value = decode_value(value)?;
-        if field.field_type().is_some_and(|kind| !kind.holds(&value)) {
-            return Err(fail_dynamic(&dynamic::Error::Source {
-                field: Some(field.name().to_owned()),
-                reason: dynamic::Reason::FieldType,
-            }));
-        }
-        Ok(())
+    /// A query's inputs, as [`query_term`](super::query_term) takes them:
+    /// the plan parses, the field is one of its fields, the operator is one
+    /// the engine knows and the field answers, and the input reads as the
+    /// field's kind and passes the refusals the typed path makes before a
+    /// term exists ([`dynamic::check_query`]).
+    pub fn query_term(input: &[u8], plan: &[u8], field: &[u8], operator: &[u8]) -> Result<(), u32> {
+        let (plan, field, operator) = parse_query(plan, field, operator)?;
+        dynamic::check_query(
+            &plan,
+            field,
+            operator,
+            checked_plaintext(input)?,
+            &resolver(),
+        )
+        .map_err(|e| fail_dynamic(&e))
+    }
+
+    /// A read's inputs, as [`json_open`](super::json_open) takes them: the
+    /// plan parses, the field stores a document, and the request and rows
+    /// are the read's ([`dynamic::check_json_open`]).
+    pub fn json_open(rows: &[u8], plan: &[u8], field: &[u8], request: &[u8]) -> Result<(), u32> {
+        let (plan, field) = parse_field(plan, field)?;
+        dynamic::check_json_open(
+            &plan,
+            field,
+            parse_frame(request)?,
+            parse_frame(rows)?,
+            &resolver(),
+        )
+        .map_err(|e| fail_dynamic(&e))
     }
 
     /// A record tree against its plan, as [`decrypt_record`] takes them:
@@ -373,32 +578,61 @@ pub mod validate {
 // Codec glue
 // =============================================================================
 
-fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
-    codec::decode_value(&mut codec::Reader::new(bytes))
-        .map_err(|_| last_error::malformed("an input is not a value in the transport codec"))
+/// Plaintext from a frame: checked against the engine's value model and
+/// held as the frame, in a buffer wiped when it drops. The same frames are
+/// refused as control data's, so a malformed input fails the same way on
+/// every path.
+fn decode_plaintext(bytes: &[u8]) -> Result<ValueFrame, u32> {
+    ValueFrame::from_bytes(bytes).map_err(|_| not_a_frame())
 }
 
-/// Encode a value tree into a buffer sized **before** the first byte is
-/// written.
-///
-/// This buffer is plaintext on the decrypt path, and a `Vec` grown by the
-/// codec's pushes would leave partial plaintext in every abandoned
-/// allocation a reallocation could not extend in place — memory nothing
-/// wipes, undercutting the guarantee the registry makes about the buffer it
-/// eventually hands the host. Reserving the exact encoded length up front
-/// means the encoder never reallocates, and `register`'s `into_boxed_slice`
-/// (capacity == length) does not copy either.
-fn encode_value(value: FfiValue) -> Result<Vec<u8>, u32> {
-    let mut out = exact_buffer(value_encoded_len(&value))?;
-    codec::encode_value(value, &mut out).map_err(|_| STATUS_ENCODING)?;
+/// Plaintext checked as [`decode_plaintext`] checks it, and walked in place
+/// from the host's buffer: for a source or an input that is walked once,
+/// where a frame of its own would be one more copy of the plaintext. The
+/// record split copies each field into its own wiped frame, and a query's
+/// input is read straight into its term.
+fn checked_plaintext(bytes: &[u8]) -> Result<Frame<'_>, u32> {
+    ValueFrame::check(bytes).map_err(|_| not_a_frame())
+}
+
+/// An opened value as the output buffer: its frame, copied into a buffer
+/// whose capacity is exactly its length (see [`encode_tree`]); the frame
+/// is wiped when it drops.
+fn encode_frame(frame: ValueFrame) -> Result<Vec<u8>, u32> {
+    let mut out = exact_buffer(Some(frame.risky_ref().len()))?;
+    out.extend_from_slice(frame.risky_ref());
+    Ok(out)
+}
+
+/// One frame, parsed and checked but not decoded: what a term's value is
+/// walked from, in place.
+fn parse_frame(bytes: &[u8]) -> Result<Frame<'_>, u32> {
+    Frame::parse(bytes).map_err(|_| not_a_frame())
+}
+
+fn not_a_frame() -> u32 {
+    last_error::malformed("an input is not a value in the transport frame")
+}
+
+/// One of the engine's answers (a query term, a page of verdicts, a limit, a
+/// catalog), written to its frame by serde, in a buffer whose capacity is
+/// exactly its length. An answer is not plaintext, but the registry's
+/// `into_boxed_slice` would reallocate a buffer with spare capacity, so it
+/// is sized as every other output is. A query term's search tokens are
+/// derived from plaintext, so the staging buffer is wiped once copied.
+fn encode_answer<T: serde::Serialize>(answer: &T) -> Result<Vec<u8>, u32> {
+    let frame = Zeroizing::new(
+        stack_encrypt::dynamic::frame::serde::to_vec(answer).map_err(|_| STATUS_ENCODING)?,
+    );
+    let mut out = exact_buffer(Some(frame.len()))?;
+    out.extend_from_slice(&frame);
     Ok(out)
 }
 
 fn decode_tree(bytes: &[u8]) -> Result<StackCipherText, u32> {
-    let tree: BytesTree =
-        codec::decode_ciphertext_boxed(&mut codec::Reader::new(bytes)).map_err(|_| {
-            last_error::malformed("the record is not a ciphertext tree in the transport codec")
-        })?;
+    let tree: BytesTree = decode_ciphertext(bytes).map_err(|_| {
+        last_error::malformed("the record is not a ciphertext tree in the transport codec")
+    })?;
     // Structural only — a decoded leaf proves nothing until its AEAD opens
     // (see the `SealedValue` docs).
     map_leaves(tree, &mut |l: Vec<u8>| {
@@ -408,25 +642,25 @@ fn decode_tree(bytes: &[u8]) -> Result<StackCipherText, u32> {
 }
 
 /// The encode twin of [`decode_tree`]. Passthrough nodes can carry caller
-/// plaintext, so this is sized up front for the same reason
-/// [`encode_value`] is.
+/// plaintext, so this is sized up front: the registry wipes only the buffer
+/// it holds, and `register`'s `into_boxed_slice` reallocates a `Vec` whose
+/// capacity exceeds its length, leaving the old allocation unwiped.
 fn encode_tree(tree: StackCipherText) -> Result<Vec<u8>, u32> {
     let tree = map_leaves(tree, &mut |l: SealedValue| Ok::<_, u32>(l.to_bytes()))?;
     let mut out = exact_buffer(tree_encoded_len(&tree))?;
-    codec::encode_ciphertext_boxed(tree, &mut out).map_err(|_| STATUS_ENCODING)?;
+    encode_ciphertext(&tree, &mut out).map_err(|_| STATUS_ENCODING)?;
     Ok(out)
 }
 
 /// Rebuild a ciphertext tree with every leaf run through `leaf`, keeping the
-/// structure (and the passthrough payloads) untouched. One definition for
+/// structure (and the passthrough frames) untouched. One definition for
 /// both directions of the frozen [`SealedValue`] leaf encoding.
 fn map_leaves<A, B, E>(
-    tree: CipherText<A, BoxedPassthrough>,
+    tree: Node<A>,
     leaf: &mut impl FnMut(A) -> Result<B, E>,
-) -> Result<CipherText<B, BoxedPassthrough>, E> {
+) -> Result<Node<B>, E> {
     Ok(match tree {
         CipherText::Single(l) => CipherText::Single(leaf(l)?),
-        CipherText::None(l) => CipherText::None(leaf(l)?),
         CipherText::EmptySequence(l) => CipherText::EmptySequence(leaf(l)?),
         CipherText::EmptyMap(l) => CipherText::EmptyMap(leaf(l)?),
         CipherText::Sequence(items) => CipherText::Sequence(
@@ -460,41 +694,14 @@ fn exact_buffer(len: Option<usize>) -> Result<Vec<u8>, u32> {
     Ok(out)
 }
 
-/// Exact byte length of the codec's encoding of `value`. `None` on overflow
-/// or on a length the codec's `u32` frames cannot express — the encode would
-/// fail on those anyway, so the caller reports an encoding error.
-fn value_encoded_len(value: &FfiValue) -> Option<usize> {
-    // tag byte + fixed payload, or tag + u32 length prefix + payload.
-    let framed = |len: usize| u32::try_from(len).ok().and_then(|_| len.checked_add(5));
-    match value {
-        FfiValue::Null | FfiValue::Undefined | FfiValue::Bool(_) => Some(1),
-        FfiValue::Int32(_) | FfiValue::UInt32(_) | FfiValue::Float32(_) => Some(5),
-        FfiValue::Int64(_) | FfiValue::UInt64(_) | FfiValue::Float64(_) => Some(9),
-        FfiValue::String(s) => framed(s.risky_ref().len()),
-        FfiValue::Bytes(b) => framed(b.risky_ref().len()),
-        FfiValue::Array(items) => items.iter().try_fold(5usize, |acc, item| {
-            acc.checked_add(value_encoded_len(item)?)
-        }),
-        FfiValue::Object(entries) => entries.iter().try_fold(5usize, |acc, (key, value)| {
-            acc.checked_add(framed(key.len())?.checked_sub(1)?)?
-                .checked_add(value_encoded_len(value)?)
-        }),
-        FfiValue::Passthrough(inner) => value_encoded_len(inner)?.checked_add(1),
-    }
-}
-
-/// Exact byte length of the codec's encoding of a ciphertext tree. The
-/// passthrough payloads are read (not consumed) through `Any::downcast_ref`,
-/// matching what `encode_ciphertext_boxed` will re-home them to; a payload
-/// that is not an [`FfiValue`] is `None`, which is the same rejection the
-/// encoder would make.
+/// Exact byte length of the codec's encoding of a ciphertext tree. A
+/// passthrough is its node byte and its frame, written as it is.
 fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
     let framed = |len: usize| u32::try_from(len).ok().and_then(|_| len.checked_add(5));
     match tree {
-        CipherText::Single(l)
-        | CipherText::None(l)
-        | CipherText::EmptySequence(l)
-        | CipherText::EmptyMap(l) => framed(l.len()),
+        CipherText::Single(l) | CipherText::EmptySequence(l) | CipherText::EmptyMap(l) => {
+            framed(l.len())
+        }
         CipherText::Sequence(items) => items
             .iter()
             .try_fold(5usize, |acc, item| acc.checked_add(tree_encoded_len(item)?)),
@@ -502,63 +709,39 @@ fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
             acc.checked_add(framed(key.len())?.checked_sub(1)?)?
                 .checked_add(tree_encoded_len(value)?)
         }),
-        CipherText::Passthrough(p) => {
-            value_encoded_len((**p).downcast_ref::<FfiValue>()?)?.checked_add(1)
-        }
+        CipherText::Passthrough(p) => p.0.len().checked_add(1),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vitaminc_protected::Protected;
+    use crate::support::Tree;
+    use stack_encrypt::Controlled;
 
-    // `value_encoded_len` / `tree_encoded_len` re-derive the codec's framing
-    // arithmetic; the codec exports no `encoded_len` of its own, so these
-    // pins are the only thing that fails if the two drift. Drift is not a
-    // cosmetic bug: an undersized reservation makes `encode_value`
-    // reallocate mid-encode, leaving unwiped partial plaintext in the
-    // abandoned allocation — silently.
+    // `tree_encoded_len` re-derives the codec's arithmetic; the codec exports
+    // no `encoded_len` of its own, so this pin is the only thing that fails if
+    // the two drift. Drift is not a cosmetic bug: an undersized reservation
+    // makes `encode_tree` reallocate mid-encode, leaving unwiped partial
+    // plaintext in the abandoned allocation — silently.
 
-    fn every_value_shape() -> Vec<FfiValue> {
-        vec![
-            FfiValue::Null,
-            FfiValue::Undefined,
-            FfiValue::Bool(true),
-            FfiValue::Int32(-5),
-            FfiValue::UInt32(5),
-            FfiValue::Float32(1.5),
-            FfiValue::Int64(-9),
-            FfiValue::UInt64(9),
-            FfiValue::Float64(2.5),
-            FfiValue::String("".into()),
-            FfiValue::String("héllo".into()),
-            FfiValue::Bytes(Protected::new(Vec::new())),
-            FfiValue::Bytes(Protected::new(vec![0u8; 300])),
-            FfiValue::Array(Vec::new()),
-            FfiValue::Array(vec![FfiValue::Bool(false), FfiValue::String("x".into())]),
-            FfiValue::Object(Vec::new()),
-            FfiValue::Object(vec![
-                ("a".to_string(), FfiValue::Int32(1)),
-                (
-                    "nested".to_string(),
-                    FfiValue::Object(vec![("b".to_string(), FfiValue::Null)]),
-                ),
-            ]),
-            FfiValue::Passthrough(Box::new(FfiValue::Int64(7))),
-            FfiValue::Passthrough(Box::new(FfiValue::Array(vec![FfiValue::String(
-                "deep".into(),
-            )]))),
-        ]
-    }
-
+    /// The registry wipes the buffer it is handed, and `into_boxed_slice`
+    /// reallocates one whose capacity exceeds its length. So every answer's
+    /// capacity is its length.
     #[test]
-    fn value_encoded_len_matches_the_codec_exactly() {
-        for (i, value) in every_value_shape().into_iter().enumerate() {
-            let expected = value_encoded_len(&value).expect("encodable shape");
-            let mut out = Vec::new();
-            codec::encode_value(value, &mut out).expect("codec encode");
-            assert_eq!(out.len(), expected, "shape {i}");
+    fn an_encoded_answer_has_no_spare_capacity() {
+        let entries = [
+            dynamic::OperatorEntry::new(dynamic::OpSpec::Eq, &IndexSpec::Equality),
+            dynamic::OperatorEntry::new(dynamic::OpSpec::Between, &IndexSpec::Ope),
+        ];
+        for out in [
+            encode_answer(&vec![true, false, true]),
+            encode_answer(&Some(11u64)),
+            encode_answer(&None::<u64>),
+            encode_answer(&entries),
+        ] {
+            let out = out.expect("encodes");
+            assert_eq!(out.capacity(), out.len());
         }
     }
 
@@ -568,10 +751,9 @@ mod tests {
         let trees: Vec<BytesTree> = vec![
             leaf(b""),
             leaf(&[7u8; 40]),
-            CipherText::None(vec![1, 2]),
             CipherText::EmptySequence(vec![3]),
             CipherText::EmptyMap(Vec::new()),
-            CipherText::Sequence(vec![leaf(b"a"), CipherText::None(vec![9])]),
+            CipherText::Sequence(vec![leaf(b"a"), CipherText::EmptyMap(vec![9])]),
             CipherText::Map(vec![
                 ("name".to_string(), leaf(b"ct")),
                 (
@@ -579,32 +761,33 @@ mod tests {
                     CipherText::Map(vec![("x".to_string(), leaf(b"y"))]),
                 ),
             ]),
-            CipherText::Passthrough(
-                Box::new(FfiValue::Bytes(Protected::new(vec![1, 2, 3]))) as BoxedPassthrough
-            ),
+            CipherText::Passthrough(stack_encrypt::PassthroughFrame(
+                Tree::Bytes(vec![1, 2, 3])
+                    .to_frame()
+                    .expect("a frame")
+                    .risky_unwrap(),
+            )),
         ];
         for (i, tree) in trees.into_iter().enumerate() {
             let expected = tree_encoded_len(&tree).expect("encodable shape");
             let mut out = Vec::new();
-            codec::encode_ciphertext_boxed(tree, &mut out).expect("codec encode");
+            encode_ciphertext(&tree, &mut out).expect("codec encode");
             assert_eq!(out.len(), expected, "tree {i}");
         }
     }
 
     // ---- the EQL target path, native, over FakeDataKeySource -----------------
 
-    fn encoded(value: FfiValue) -> Vec<u8> {
-        let mut out = Vec::new();
-        codec::encode_value(value, &mut out).expect("encode");
-        out
+    fn encoded(value: Tree) -> Vec<u8> {
+        value.to_frame().expect("encode").risky_unwrap()
     }
 
-    fn text(value: &str) -> FfiValue {
-        FfiValue::String(value.into())
+    fn text(value: &str) -> Tree {
+        Tree::String(value.into())
     }
 
-    fn object(entries: Vec<(&str, FfiValue)>) -> FfiValue {
-        FfiValue::Object(
+    fn object(entries: Vec<(&str, Tree)>) -> Tree {
+        Tree::Object(
             entries
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v))
@@ -619,10 +802,7 @@ mod tests {
             (
                 "email",
                 object(vec![
-                    (
-                        "context",
-                        FfiValue::Array(vec![text("users"), text("email")]),
-                    ),
+                    ("context", Tree::Array(vec![text("users"), text("email")])),
                     ("target", text("TextEq")),
                     ("type", text("string")),
                 ]),
@@ -630,11 +810,8 @@ mod tests {
             (
                 "notes",
                 object(vec![
-                    (
-                        "context",
-                        FfiValue::Array(vec![text("users"), text("notes")]),
-                    ),
-                    ("outputs", FfiValue::Array(vec![text("c")])),
+                    ("context", Tree::Array(vec![text("users"), text("notes")])),
+                    ("outputs", Tree::Array(vec![text("c")])),
                     ("type", text("string")),
                 ]),
             ),
@@ -644,22 +821,22 @@ mod tests {
     #[test]
     fn targets_lists_what_this_build_holds_in_the_wire_shape() {
         let out = targets().expect("encodes");
-        let FfiValue::Object(entries) = decode_value(&out).expect("decodes") else {
+        let Tree::Object(entries) = Tree::from_frame(&out).expect("decodes") else {
             panic!("an object");
         };
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "targets");
-        let FfiValue::Array(items) = &entries[0].1 else {
+        let Tree::Array(items) = &entries[0].1 else {
             panic!("a list");
         };
         if !crate::targets::HOLDS_EQL {
             assert!(items.is_empty(), "the build without EQL types lists none");
             return;
         }
-        let FfiValue::Object(text_eq) = items
+        let Tree::Object(text_eq) = items
             .iter()
             .find(|item| {
-                matches!(item, FfiValue::Object(fields) if fields.iter().any(|(k, v)| k == "name" && matches!(v, FfiValue::String(s) if s.risky_ref() == b"TextEq")))
+                matches!(item, Tree::Object(fields) if fields.iter().any(|(k, v)| k == "name" && matches!(v, Tree::String(s) if s.as_bytes() == b"TextEq")))
             })
             .expect("TextEq is listed")
         else {
@@ -678,10 +855,15 @@ mod tests {
                 "query",
                 "query_sql_domain",
                 "producible",
-                "reason"
+                "reason",
+                "operators"
             ]
         );
-        assert!(matches!(text_eq[8].1, FfiValue::Bool(true)));
+        assert!(matches!(text_eq[8].1, Tree::Bool(true)));
+        assert!(
+            matches!(&text_eq[10].1, Tree::Array(operators) if operators.len() == 1),
+            "TextEq answers one operator"
+        );
     }
 
     #[test]
@@ -691,14 +873,11 @@ mod tests {
             assert_eq!(plan_check(&plan), Ok(()), "the eql build runs TextEq");
             // A type the engine cannot produce, and one that does not exist,
             // are refused at plan_check.
-            for name in ["TextOrdOre", "Nope"] {
+            for name in ["Json", "Nope"] {
                 let refused = encoded(object(vec![(
                     "email",
                     object(vec![
-                        (
-                            "context",
-                            FfiValue::Array(vec![text("users"), text("email")]),
-                        ),
+                        ("context", Tree::Array(vec![text("users"), text("email")])),
                         ("target", text(name)),
                     ]),
                 )]));
@@ -731,7 +910,7 @@ mod tests {
         validate::record(&source, &plan).expect("the source fits");
         let sealed = block_on(encrypt_record(&keyset, &source, &plan)).expect("seals");
 
-        // The stored tree carries the EQL JSON under "eql": the v3 envelope
+        // The stored tree carries the EQL JSON under "eql": the v4 envelope
         // with the column as its i and a stack-encrypt ciphertext.
         let tree = decode_tree(&sealed).expect("a tree");
         let CipherText::Map(mut fields) = tree else {
@@ -749,11 +928,11 @@ mod tests {
         let CipherText::Passthrough(payload) = &outputs[0].1 else {
             panic!("a passthrough")
         };
-        let FfiValue::Bytes(bytes) = payload.downcast_ref::<FfiValue>().expect("a value") else {
+        let Tree::Bytes(bytes) = Tree::from_frame(&payload.0).expect("a value") else {
             panic!("bytes")
         };
-        let eql: serde_json::Value = serde_json::from_slice(bytes.risky_ref()).expect("JSON");
-        assert_eq!(eql["v"], 3);
+        let eql: serde_json::Value = serde_json::from_slice(bytes.as_slice()).expect("JSON");
+        assert_eq!(eql["v"], 4, "Stack Encrypt writes EQL v4");
         assert_eq!(eql["i"], serde_json::json!({"t": "users", "c": "email"}));
         assert!(eql["c"].as_str().unwrap().starts_with("stack-encrypt:1:"));
         assert_eq!(eql["hm"].as_str().unwrap().len(), 64);
@@ -762,19 +941,27 @@ mod tests {
         validate::record_tree(&sealed, &plan, None).expect("the tree fits");
         let opened =
             block_on(decrypt_record(Scope::Client(&cipher), &sealed, &plan, None)).expect("opens");
-        let FfiValue::Object(values) = decode_value(&opened).expect("a value") else {
+        let Tree::Object(values) = Tree::from_frame(&opened).expect("a value") else {
             panic!("an object")
         };
-        assert!(
-            matches!(&values[0].1, FfiValue::String(s) if s.risky_ref() == b"alice@example.com")
-        );
-        assert!(matches!(&values[1].1, FfiValue::String(s) if s.risky_ref() == b"likes cats"));
+        assert!(matches!(&values[0].1, Tree::String(s) if s.as_bytes() == b"alice@example.com"));
+        assert!(matches!(&values[1].1, Tree::String(s) if s.as_bytes() == b"likes cats"));
 
-        // The query value matches the stored term.
+        // The eq query's term is the type's query value, and it matches the
+        // stored term.
         let probe = encoded(text("alice@example.com"));
-        validate::query(&probe, &plan, b"email").expect("a target field");
-        let query_bytes = block_on(query(&keyset, &probe, &plan, b"email")).expect("derives");
-        let probe_json: serde_json::Value = serde_json::from_slice(&query_bytes).expect("JSON");
+        validate::query_term(&probe, &plan, b"email", b"eq").expect("a target field answers eq");
+        let term = block_on(query_term(&keyset, &probe, &plan, b"email", b"eq")).expect("derives");
+        let Tree::Object(term) = Tree::from_frame(&term).expect("a value") else {
+            panic!("a query term is an object")
+        };
+        assert!(matches!(&term[3].1, Tree::String(s) if s.as_bytes() == b"eql_v4.query_text_eq"));
+        assert!(matches!(&term[4].1, Tree::String(s) if s.as_bytes() == b"eql"));
+        let Tree::Bytes(query_bytes) = &term[5].1 else {
+            panic!("the term is the query value's bytes")
+        };
+        let probe_json: serde_json::Value =
+            serde_json::from_slice(query_bytes.as_slice()).expect("JSON");
         assert_eq!(
             probe_json["hm"], eql["hm"],
             "the query matches the stored value"
@@ -786,15 +973,72 @@ mod tests {
         // A query on a sealed field, an unknown field, or a wrong kind is
         // refused at validation.
         assert_eq!(
-            validate::query(&probe, &plan, b"notes"),
+            validate::query_term(&probe, &plan, b"notes", b"eq"),
             Err(STATUS_ENCODING)
         );
         assert_eq!(
-            validate::query(&probe, &plan, b"nope"),
+            validate::query_term(&probe, &plan, b"nope", b"eq"),
             Err(STATUS_ENCODING)
         );
         assert_eq!(
-            validate::query(&encoded(FfiValue::UInt32(1)), &plan, b"email"),
+            validate::query_term(&encoded(Tree::UInt32(1)), &plan, b"email", b"eq"),
+            Err(STATUS_ENCODING)
+        );
+    }
+
+    /// `match` on a JsonSearch field through the query exports: a
+    /// predicate compiles to the predicate operand, and one the grammar
+    /// refuses is the caller's input (`STATUS_ENCODING`), never the
+    /// guest's own failure.
+    #[cfg(feature = "eql")]
+    #[test]
+    fn a_compiled_predicate_derives_and_a_refused_one_is_the_callers_input() {
+        use futures::executor::block_on;
+        use stack_encrypt::StackCipher;
+        use stack_kms::FakeDataKeySource;
+
+        let cipher = block_on(StackCipher::builder().kms(FakeDataKeySource::new()).init())
+            .expect("a cipher");
+        let keyset = cipher.default_keyset();
+        let plan = encoded(object(vec![(
+            "profile",
+            object(vec![
+                ("context", Tree::Array(vec![text("users"), text("profile")])),
+                ("type", text("json")),
+                ("null", text("sql")),
+                ("target", text("JsonSearch")),
+            ]),
+        )]));
+        let input = |predicate: &str| {
+            encoded(object(vec![
+                ("predicate", text(predicate)),
+                ("vars", text(r#"{"v": "nz"}"#)),
+            ]))
+        };
+
+        let accepted = input("$.country == $v && exists($.tags[*])");
+        validate::query_term(&accepted, &plan, b"profile", b"match")
+            .expect("a field answers match");
+        let term =
+            block_on(query_term(&keyset, &accepted, &plan, b"profile", b"match")).expect("derives");
+        let Tree::Object(term) = Tree::from_frame(&term).expect("a value") else {
+            panic!("a query term is an object")
+        };
+        let text = |key: &str| match term.iter().find(|(k, _)| k == key) {
+            Some((_, Tree::String(s))) => s.as_bytes().to_vec(),
+            other => panic!("{key}: {other:?}"),
+        };
+        assert_eq!(text("operator"), b"match");
+        assert_eq!(text("domain"), b"eql_v4.query_json_predicate");
+        assert_eq!(text("encoding"), b"eql");
+
+        let refused = input(r#"$.country like_regex "n""#);
+        assert_eq!(
+            validate::query_term(&refused, &plan, b"profile", b"match"),
+            Err(STATUS_ENCODING)
+        );
+        assert_eq!(
+            block_on(query_term(&keyset, &refused, &plan, b"profile", b"match")),
             Err(STATUS_ENCODING)
         );
     }

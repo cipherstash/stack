@@ -11,16 +11,29 @@ name = "text_eq_example"
 path = "../../crates/eql-bindings/src/encryption/example.rs"
 harness = false
 
+# The same, for the typed query example in `eql_bindings::encryption::query`.
+[[test]]
+name = "query_example"
+path = "../../crates/eql-bindings/src/encryption/query_example.rs"
+harness = false
+
 # Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
 [dev-dependencies]
-eql-bindings = { path = "../../crates/eql-bindings", features = ["stack-encrypt"] }
+# `chrono` and `rust_decimal`: the date, timestamp and decimal plaintexts
+# convert from those crates' values, which build the test values here.
+eql-bindings = { path = "../../crates/eql-bindings", features = ["targets", "chrono", "rust_decimal"] }
 # The parity oracle for the generated target table (tests/targets.rs): the
 # table must name every stored catalog domain, in catalog order.
 eql-domains = { path = "../../crates/eql-domains" }
-stack-encrypt = { path = "../../../stack-encrypt", default-features = false }
-# `FfiValue`: the runtime plaintext the target dispatch takes. The same line
-# eql-bindings names.
-vitaminc-aead-value = "0.5.1"
+# `dynamic`: `ValueFrame`, the runtime plaintext the target dispatch takes,
+# as eql-bindings names it.
+stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic"] }
+# `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl; and
+# chrono's and rust_decimal's own sources, which seal the leaf a date,
+# timestamp or decimal from any other producer seals.
+vitaminc-aead = { version = "0.8.0", features = ["chrono", "rust_decimal"] }
+chrono = { version = "0.4.44", default-features = false, features = ["std"] }
+rust_decimal = { version = "1", default-features = false, features = ["std"] }
 stack-kms = { path = "../../../stack-kms", default-features = false, features = ["test-support"] }
 serde = "1"
 serde_json = "1"
@@ -39,7 +52,12 @@ postgres = "0.19"
 # (and tests/sqlx's) with it, and the pin then covers the versions of those two
 # crates protect-ffi ships. Primitive dependencies such as blake3 are not
 # compared.
+#
 cipherstash-client = "=0.42.3"
+# The generated containment oracle (tests/json_tree/generated.rs). The same
+# requirement eql-domains and tests/sqlx carry, so the lockfile gains no
+# second copy.
+proptest = "1"
 # The tampering test decodes a stored body, changes one byte and re-encodes
 # it. The same line eql-bindings uses, so the lockfile gains no second copy.
 base64 = "0.22"

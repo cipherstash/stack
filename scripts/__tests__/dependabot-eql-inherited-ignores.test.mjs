@@ -13,11 +13,11 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * The EQL workspace is a separate Cargo workspace, but not an independent one:
  * `tests/encryption` depends by path on `stack-kms` and `stack-encrypt`, and
  * `eql-bindings` on `stack-encrypt` (behind its optional `stack-encrypt`
- * feature). Those crates declare `recipher`, `cllw-ore` and `vitaminc-*` as
+ * feature). Those crates declare `recipher`, `clww-ore` and `vitaminc-*` as
  * `{ workspace = true }`. Built inside the EQL workspace, those requirements
  * still come from the ROOT `Cargo.toml`. The root entry ignores these crates
- * because they move by hand with cipherstash-suite: the root manifest pins
- * `recipher` and `cllw-ore` with `=`, and so does the Go guest. With no
+ * because they move by hand: the root manifest pins `recipher` with `=`, and
+ * so does the Go guest. With no
  * matching ignore, the EQL entry's monthly PR bumped them in the EQL lock and,
  * to satisfy the exact pins, edited the root `Cargo.toml` without updating the
  * root `Cargo.lock` or the guest's pin (#1205). Every root `--locked` build and

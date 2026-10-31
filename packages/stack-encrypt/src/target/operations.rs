@@ -11,8 +11,10 @@
 //! by name, with [`Encryption::under`] or [`Encryption::extend`].
 use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
+use super::index::{Index, IndexSpec, Json};
 use super::source::{Borrowed, ConsumeSource, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
+use crate::json::{JsonDocument, JsonOptions, JsonTerms};
 use crate::{Error, IntoContext, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
 use std::fmt;
@@ -21,7 +23,7 @@ use std::fmt;
 ///
 /// The derive supplies it; a hand-written implementation composes the
 /// constructors in this module ([`ciphertext`], [`equality`], [`matching`],
-/// [`ore`], [`ope`]) and converts their output with [`Encryption::map`] or
+/// [`ore`], [`ope`], [`ore_block`]) and converts their output with [`Encryption::map`] or
 /// [`Encryption::transcode`]. Nothing here receives the plaintext or a
 /// cipher: the returned [`Encryption`]'s execution is private, so a target
 /// can choose operations and build its output but cannot replace encryption.
@@ -535,8 +537,9 @@ macro_rules! term_operation {
 }
 term_operation!(
     /// The equality term of `S` under the context the tree hands it. Requires
-    /// only `S`'s PRF contract, not recoverable encryption.
-    equality, crate::sem::EqualityTerm, consume, [], [S: vitaminc_prf::PrfValue]
+    /// only that `S` describes itself (`Encrypt`), as one scalar with an
+    /// equality domain; not recoverable encryption.
+    equality, crate::sem::EqualityTerm, consume, [], [S: crate::Encrypt]
 );
 term_operation!(
     /// The match term of any text `S` under the context the tree hands it,
@@ -545,17 +548,179 @@ term_operation!(
 );
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
-    /// The bounds are the leaf's own: they say which `S` the CLLW ORE scheme
-    /// can order.
+    /// The bound is the leaf's own: it says which `S` has an order target.
     ore, crate::sem::OreTerm<S>, consume, [],
-    [S: cllw_ore::CllwOreEncrypt + Send + 'static, S::Output: Send + 'static]
+    [S: crate::sem::Orderable]
 );
 term_operation!(
     /// The order-preserving term of `S` under the context the tree hands it,
     /// with the same bounds as [`ore`].
     ope, crate::sem::OpeTerm<S>, consume, [],
-    [S: cllw_ore::CllwOpeEncrypt + Send + 'static, S::Output: Send + 'static]
+    [S: crate::sem::Orderable]
 );
+term_operation!(
+    /// The block ORE term of `S` under the context the tree hands it, with
+    /// the same bounds as [`ore`].
+    ore_block, crate::sem::OreBlockTerm<S>, consume, [],
+    [S: crate::sem::Orderable]
+);
+
+/// The JSON index's terms of a document under the context the tree hands
+/// it: every node's selectors, the chain tokens and the grouping
+/// ([`JsonTerms`]), derived locally. No key is requested, and the document
+/// is only read, so this runs in any source mode without a copy. What
+/// [`Json`](struct@super::Json)'s [`Index::operation`](super::Index::operation)
+/// is, and what a query derives.
+pub fn json_terms<'s, K: 'static, M: SourceMode<'s, serde_json::Value>>(
+    options: JsonOptions,
+) -> Encryption<'s, serde_json::Value, JsonTerms, K, CallerContext, M> {
+    Encryption {
+        build: Box::new(move |source, cipher, cx: CallerContext| {
+            let pending = match cx.validated() {
+                Ok(ctx) => crate::json::terms_pending(M::view(&source), &options, cipher, ctx),
+                Err(e) => Pending::failed(cipher, e),
+            };
+            // The terms are derived by now; a document this description
+            // owns (the one a query asks about) is wiped rather than dropped.
+            M::release(source, |value| drop(crate::json::PlainJson::protect(value)));
+            pending
+        }),
+    }
+}
+
+/// The JSON index's one sealing operation: flatten the document, derive
+/// its terms, request one data key under the context's descriptor and seal
+/// every node under it, into a [`JsonDocument`]. The stored form of a JSON
+/// field; what [`JsonDocument`]'s own [`EncryptFrom<Value>`] runs. The
+/// document is consumed, so in the default [`Borrowed`] mode it is cloned
+/// once, as [`ciphertext`] clones its plaintext.
+pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
+    options: JsonOptions,
+) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext, M> {
+    Encryption {
+        build: Box::new(
+            move |source, cipher, cx: CallerContext| match cx.validated() {
+                Ok(ctx) => crate::json::seal_pending(M::take(source), &options, cipher, ctx),
+                Err(e) => Pending::failed(cipher, e),
+            },
+        ),
+    }
+}
+
+/// A target's layout, chosen by value rather than by type.
+///
+/// Most targets have one layout, fixed by their type: the type's
+/// [`EncryptFrom`] says what is sealed and which terms sit beside it, and
+/// a plan uses it with
+/// [`encrypt_into::<T>()`](crate::plan::ValueStart::encrypt_into). A
+/// target that takes options needs more than a type, and a layout is the
+/// value that carries them.
+///
+/// The JSON index is the layout this crate provides. `Json::new(options)`
+/// seals the same [`JsonDocument`] as `encrypt_into::<JsonDocument>()`,
+/// but under `options` instead of the defaults: for example, with the
+/// leaves at `$.age` ordered, so that a query can compare them.
+///
+/// A plan takes a layout with
+/// [`encrypt_with_layout`](crate::plan::ValueStart::encrypt_with_layout).
+/// A query through that plan uses the layout's index ([`Layout::index`]),
+/// so it derives under the same options without naming them again.
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use serde_json::json;
+/// use stack_encrypt::json::{JsonDocument, JsonOptions};
+/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::sem::TermError;
+/// use stack_encrypt::target::Json;
+/// use stack_encrypt::{op, Error, Plan, StackCipher};
+///
+/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let profile = json!({"name": "Bob", "age": 34});
+///
+/// // By value: the JSON index with `$.age` ordered.
+/// let options = JsonOptions::default().ordering(["$.age"])?;
+/// let ordered = Plan::value::<serde_json::Value>()
+///     .context("users/profile")
+///     .encrypt_with_layout(Json::new(options))
+///     .build()?;
+/// let doc: JsonDocument = cipher.encrypt(&profile).using(&ordered).await?;
+/// // The leaf at `$.age` carries an ordering term...
+/// assert_eq!(doc.entries().iter().filter(|e| e.ordering_term().is_some()).count(), 1);
+/// // ...and a query through the plan derives under the same options.
+/// let _adults = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&ordered).await?;
+///
+/// // By type: the same target under the default options, which order no
+/// // path, so the same query is refused.
+/// let unordered = Plan::value::<serde_json::Value>()
+///     .context("users/profile")
+///     .encrypt_into::<JsonDocument>()
+///     .build()?;
+/// let refused = cipher.query(op::AtPath(op::Gte), &("$.age", 18)).on(&unordered).await;
+/// assert!(matches!(refused, Err(Error::Term(TermError::JsonPathNotOrdered))));
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
+///
+/// A layout belongs to a plan. The cipher's
+/// [`encrypt_as`](crate::KeysetCipher::encrypt_as) is a different layer:
+/// it seals one value as a target type's own `EncryptFrom` does, with no
+/// plan and no options.
+pub trait Layout<S>: Clone + fmt::Debug + 'static {
+    /// What a run produces: the target the layout seals a value into.
+    type Target: EncryptFrom<S>;
+    /// The index a query through the plan runs through: the layout
+    /// itself, for an index with options.
+    type Index: Index<S> + Clone;
+    /// The description the cipher executes for one value of `S`, under
+    /// this layout's options.
+    fn encryption<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, S, Self::Target, K, <Self::Target as EncryptFrom<S>>::Context>
+    where
+        S: 's;
+    /// The index, with its options.
+    fn index(&self) -> &Self::Index;
+    /// The indexes the plan declares, as data: the index's.
+    fn specs(&self) -> Vec<IndexSpec> {
+        vec![self.index().spec()]
+    }
+}
+
+/// The JSON index seals a [`JsonDocument`] under its options, and is the
+/// index a query through the plan runs through.
+impl Layout<serde_json::Value> for Json {
+    type Target = JsonDocument;
+    type Index = Json;
+    fn encryption<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, serde_json::Value, JsonDocument, K, CallerContext>
+    where
+        serde_json::Value: 's,
+    {
+        json_document(self.options.clone())
+    }
+    fn index(&self) -> &Json {
+        self
+    }
+}
+
+/// A JSON document seals as the JSON index lays it out under the default
+/// options, and declares that index: a plan typed with it answers
+/// containment and the accessors through [`Json`](struct@super::Json).
+impl EncryptFrom<serde_json::Value> for JsonDocument {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, serde_json::Value, Self, K, Self::Context>
+    where
+        serde_json::Value: 's,
+    {
+        json_document(JsonOptions::default())
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Json(JsonOptions::default())]
+    }
+}
 
 impl<T: 'static, K: 'static> Decryption<T, K> {
     /// Reject the opening: execution yields `error` without I/O, any
@@ -571,6 +736,15 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
         Self {
             inner: Opening::Open(open),
         }
+    }
+    /// A description whose opening is `open`: a crate-internal target
+    /// that builds its own key requests (the JSON index's documents) runs
+    /// through here, as [`open`] does for a native tree.
+    pub(crate) fn from_open<F>(open: F) -> Self
+    where
+        F: for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K> + MaybeSend + 'static,
+    {
+        Self::open(Box::new(open))
     }
     /// A description whose output is already known: a defaulted field, or
     /// an absent optional.
@@ -647,7 +821,7 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
 }
 /// The canonical opening operation: retrieve the tree's keys and decode `P`
 /// through its own Vitamin C `Decrypt` implementation, under `context`.
-pub fn open<P: crate::Decrypt<'static> + 'static, K: 'static>(
+pub fn open<P: crate::Decrypt + Send + 'static, K: 'static>(
     tree: StackCipherText,
     context: impl Into<AeadContext>,
 ) -> Decryption<P, K> {
@@ -887,13 +1061,13 @@ impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
         ciphertext()
     }
 }
-impl<P: crate::Decrypt<'static> + 'static> DecryptInto<P> for StackCipherText {
+impl<P: crate::Decrypt + Send + 'static> DecryptInto<P> for StackCipherText {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
         open(self, context)
     }
 }
-impl<S: vitaminc_prf::PrfValue + Clone> EncryptFrom<S> for crate::sem::EqualityTerm {
+impl<S: crate::Encrypt + Clone> EncryptFrom<S> for crate::sem::EqualityTerm {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
@@ -921,8 +1095,7 @@ impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
 }
 impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
 where
-    S: cllw_ore::CllwOreEncrypt + Clone + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::sem::Orderable + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -937,8 +1110,7 @@ where
 }
 impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
 where
-    S: cllw_ore::CllwOpeEncrypt + Clone + Send + 'static,
-    S::Output: Send + 'static,
+    S: crate::sem::Orderable + Clone,
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -949,6 +1121,21 @@ where
     }
     fn indexes() -> Vec<super::IndexSpec> {
         vec![super::IndexSpec::Ope]
+    }
+}
+impl<S> EncryptFrom<S> for crate::sem::OreBlockTerm<S>
+where
+    S: crate::sem::Orderable + Clone,
+{
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        ore_block()
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::OreBlock]
     }
 }
 

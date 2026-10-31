@@ -21,5 +21,5 @@ impl Field<u32> for User {
 fn main() {
     let _ = Plan::context("users")
         .fields::<User, FakeDataKeySource>()
-        .encrypt_index::<u32>("age", Match::default());
+        .encrypt_index::<u32>("age", Match);
 }

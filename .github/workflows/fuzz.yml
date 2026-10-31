@@ -60,6 +60,42 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
 
 jobs:
+  # cargo-fuzz has no --locked, and a build without it re-resolves a stale
+  # Cargo.lock in memory, so the harnesses would build against whatever
+  # versions are newest that day while the job stays green. This job checks
+  # each fuzz crate's committed lockfile instead. It runs on the schedule too,
+  # so a lockfile that goes stale on the default branch still fails a run.
+  fuzz-lockfiles:
+    name: fuzz lockfiles are current
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
+
+      - name: Resolve every fuzz crate against its committed lockfile
+        run: |
+          status=0
+          for manifest in packages/*/fuzz/Cargo.toml; do
+            if cargo metadata --locked --format-version 1 --manifest-path "$manifest" > /dev/null; then
+              echo "ok: ${manifest%/Cargo.toml}/Cargo.lock"
+            else
+              echo "::error file=${manifest%/Cargo.toml}/Cargo.lock::stale; run cargo metadata --manifest-path $manifest and commit the lockfile"
+              status=1
+            fi
+          done
+          exit "$status"
+
   fuzz-regression:
     name: fuzz regression (${{ matrix.slug }})
     # Not on the nightly schedule, which is the campaign's. A manual dispatch
@@ -78,6 +114,8 @@ jobs:
           - { task: "fuzz:term-decode", slug: term-decode }
           - { task: "fuzz:check-record", slug: check-record }
           - { task: "fuzz:plan-build", slug: plan-build }
+          - { task: "fuzz:json-wire", slug: json-wire }
+          - { task: "fuzz:json-text", slug: json-text }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -126,6 +164,8 @@ jobs:
           - { task: "fuzz:term-decode",  slug: term-decode,  dir: packages/stack-encrypt, target: term_decode }
           - { task: "fuzz:check-record", slug: check-record, dir: packages/stack-encrypt, target: check_record }
           - { task: "fuzz:plan-build",   slug: plan-build,   dir: packages/stack-encrypt, target: plan_build }
+          - { task: "fuzz:json-wire",    slug: json-wire,    dir: packages/stack-encrypt, target: json_wire_decode }
+          - { task: "fuzz:json-text",    slug: json-text,    dir: packages/stack-encrypt, target: json_text }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:

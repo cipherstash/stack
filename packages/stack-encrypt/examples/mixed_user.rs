@@ -9,9 +9,8 @@
 //! derivation chain.
 //!
 //! Element *positions* are not. Every element of a sequence is sealed under
-//! the same derived AAD — deliberately, since that is what lets a single row
-//! of a batch decrypt on its own as `Element<T>` — so reordering the elements
-//! of a stored sequence still verifies. Order and length are the caller's
+//! the same derived AAD, so reordering the elements of a stored sequence
+//! still verifies. Order and length are the caller's
 //! obligation; if they matter, bind them into the AAD yourself or store the
 //! index alongside the row.
 //!
@@ -19,7 +18,8 @@
 //! use them for non-sensitive routing/display data only.
 //!
 //! This is the *cipher-directed* layer — vitaminc's `Encrypt` / `Decrypt`
-//! driven by hand — one level below `#[derive(EncryptFrom)]`, which the
+//! derives, sealed through the keyset directly — one level below
+//! `#[derive(EncryptFrom)]`, which the
 //! `encrypted_record` example uses. Reach for this layer when a value needs
 //! what the derive does not express: fields stored in the clear beside
 //! sealed ones, or a single ciphertext whose internal shape (this
@@ -37,84 +37,23 @@
 //! `CS_WORKSPACE_CRN` and `CS_CLIENT_ID` / `CS_CLIENT_KEY` instead (see the
 //! `zerokms_auth` example for the lookup order).
 
-use stack_encrypt::{
-    Cipher, CipherText, Decipher, Decrypt, Encrypt, IntoAad, Label, StackCipher, StackCipherText,
-    Unspecified,
-};
-use vitaminc_aead::{DecipherVisitor, MapAccess, MapCipher, Passthrough};
+use stack_encrypt::{CipherText, Label, StackCipher, StackCipherText};
+use vitaminc_aead::{Decrypt, Encrypt};
 
 // --- The record type ---------------------------------------------------------
 
-#[derive(Debug, PartialEq)]
+// The derives walk the struct as a map keyed by field name. Keys travel in
+// the clear; each *encrypted* value is sealed against an AAD derived from the
+// map's AAD + its key, so entries cannot be renamed or swapped. Passthrough
+// entries carry no such binding.
+#[derive(Debug, PartialEq, Encrypt, Decrypt)]
 struct User {
-    id: u32,              // passthrough: visible in the stored ciphertext
-    display_name: String, // passthrough
-    email: String,        // encrypted
-    age: u32,             // encrypted
-}
-
-impl Encrypt for User {
-    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        // Keys travel in the clear; each *encrypted* value is sealed against
-        // an AAD derived from the map's AAD + its key, so entries cannot be
-        // renamed or swapped. Passthrough entries carry no such binding.
-        cipher
-            .encrypt_map(aad)
-            .encrypt_entry("id", Passthrough(self.id))?
-            .encrypt_entry("display_name", Passthrough(self.display_name))?
-            .encrypt_entry("email", self.email)?
-            .encrypt_entry("age", self.age)?
-            .end()
-    }
-}
-
-impl<'c> Decrypt<'c> for User {
-    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
-    where
-        D: Decipher<'c>,
-        A: IntoAad<'a>,
-    {
-        struct UserVisitor;
-        impl<'c> DecipherVisitor<'c> for UserVisitor {
-            type Value = User;
-
-            fn visit_map<M: MapAccess<'c>>(self, mut map: M) -> Result<User, Unspecified> {
-                // Entries arrive in encryption order; each is pulled with its
-                // expected type and its key is checked.
-                fn entry<'c, M: MapAccess<'c>, T: Decrypt<'c> + 'c>(
-                    map: &mut M,
-                    key: &str,
-                ) -> Result<T, Unspecified> {
-                    let (k, value) = map
-                        .next_entry::<T>()
-                        .map_err(|_| Unspecified)?
-                        .ok_or(Unspecified)?;
-                    if k == key {
-                        Ok(value)
-                    } else {
-                        Err(Unspecified)
-                    }
-                }
-
-                let Passthrough(id) = entry::<_, Passthrough<u32>>(&mut map, "id")?;
-                let Passthrough(display_name) =
-                    entry::<_, Passthrough<String>>(&mut map, "display_name")?;
-                let email: String = entry(&mut map, "email")?;
-                let age: u32 = entry(&mut map, "age")?;
-                Ok(User {
-                    id,
-                    display_name,
-                    email,
-                    age,
-                })
-            }
-        }
-        decipher.decrypt_map(UserVisitor, aad)
-    }
+    #[aead(passthrough)]
+    id: u32, // visible in the stored ciphertext
+    #[aead(passthrough)]
+    display_name: String,
+    email: String, // encrypted
+    age: u32,      // encrypted
 }
 
 // --- Inspect what a server would see -----------------------------------------
@@ -131,11 +70,13 @@ fn describe(ciphertext: &StackCipherText, indent: usize) {
         CipherText::Map(entries) => {
             for (key, value) in entries {
                 match value {
-                    CipherText::Passthrough(boxed) => {
-                        // Passthrough values are readable without any key.
-                        if let Some(v) = boxed.downcast_ref::<u32>() {
+                    CipherText::Passthrough(frame) => {
+                        // Passthrough values are readable without any key:
+                        // the frame of the value, in the clear.
+                        let Ok(frame) = frame.parse() else { continue };
+                        if let Ok(v) = frame.visit(u32::sink()) {
                             println!("{pad}{key}: {v}  (passthrough, in the clear)");
-                        } else if let Some(v) = boxed.downcast_ref::<String>() {
+                        } else if let Ok(v) = frame.visit(String::sink()) {
                             println!("{pad}{key}: {v:?}  (passthrough, in the clear)");
                         }
                     }

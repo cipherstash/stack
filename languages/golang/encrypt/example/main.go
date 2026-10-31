@@ -47,7 +47,7 @@ func run(ctx context.Context) error {
 	}
 
 	// A query term for one field compares against the stored terms.
-	term, err := Fields.Email.Equality(ctx, cipher, "bob@example.com")
+	term, err := Fields.Email.Eq(ctx, cipher, "bob@example.com")
 	if err != nil {
 		return fmt.Errorf("query term: %w", err)
 	}
@@ -65,6 +65,24 @@ func run(ctx context.Context) error {
 	// Print ids only: everything else here is plaintext.
 	for _, u := range back {
 		fmt.Printf("decrypted id %d\n", u.ID)
+	}
+
+	// A matches query's answer can hold rows that do not match, so the
+	// rows it finds are decrypted and verified: one call for the page.
+	q, err := Fields.Email.Matches(ctx, cipher, "bob")
+	if err != nil {
+		return fmt.Errorf("matches: %w", err)
+	}
+	emails := make([]string, len(back))
+	for i, u := range back {
+		emails[i] = u.Email
+	}
+	verified, err := q.Verify(ctx, emails)
+	if err != nil {
+		return fmt.Errorf("verify: %w", err)
+	}
+	for i, u := range back {
+		fmt.Printf("id %d holds bob: %v\n", u.ID, verified[i])
 	}
 	return nil
 }

@@ -14,32 +14,53 @@ import (
 // derives; every field seals as vitaminc's tagged leaf whatever its kind,
 // which a Rust record opens when its field is a Value. Every sealed field has a
 // scalar kind: stashgen refuses a struct, slice or map outside an opaque
-// struct, and an opaque struct seals as Bytes (one JSON document). Untyped
+// struct, and an opaque struct seals as Bytes (one storage blob). Untyped
 // names a field with no declared type; generated code never writes it, and
 // the engine refuses a plan whose indexed field has no type.
 type Kind string
 
-// The kinds. int8, int16 and int32 are Int32; int and int64 are Int64;
-// uint8, uint16 and uint32 are Uint32; uint and uint64 are Uint64; []byte is
-// Bytes. A type defined over one of these has its underlying kind.
+// The kinds. Each Go integer type has the kind of its own width: int8 is
+// Int8, int16 Int16, int32 Int32, int and int64 Int64, uint8 Uint8, uint16
+// Uint16, uint32 Uint32, uint and uint64 Uint64, and encrypt.Int128 and
+// encrypt.Uint128 the 128-bit kinds. time.Time is Timestamp, encrypt.Date
+// Date and encrypt.Decimal Decimal. []byte is Bytes. A type defined over a
+// basic type has its underlying kind. A field stored as an EQL type takes
+// the type's kind instead, when every value of its Go type fits it (an int16
+// into Integer's int32), and its value is converted to that kind before it
+// crosses.
 const (
-	Untyped Kind = ""
-	Bool    Kind = "bool"
-	Int32   Kind = "int32"
-	Int64   Kind = "int64"
-	Uint32  Kind = "uint32"
-	Uint64  Kind = "uint64"
-	Float32 Kind = "float32"
-	Float64 Kind = "float64"
-	String  Kind = "string"
-	Bytes   Kind = "bytes"
+	Untyped   Kind = ""
+	Bool      Kind = "bool"
+	Int8      Kind = "int8"
+	Int16     Kind = "int16"
+	Int32     Kind = "int32"
+	Int64     Kind = "int64"
+	Int128    Kind = "int128"
+	Uint8     Kind = "uint8"
+	Uint16    Kind = "uint16"
+	Uint32    Kind = "uint32"
+	Uint64    Kind = "uint64"
+	Uint128   Kind = "uint128"
+	Float32   Kind = "float32"
+	Float64   Kind = "float64"
+	Decimal   Kind = "decimal"
+	Date      Kind = "date"
+	Timestamp Kind = "timestamp"
+	String    Kind = "string"
+	Bytes     Kind = "bytes"
+	// JSON is a field stored as a JSONSearch document: it crosses as
+	// its JSON text, which the engine parses. A json.RawMessage is that
+	// text; a field of another Go type is marshalled with encoding/json
+	// ([Field.Encrypt]) and opened with [GetDocument].
+	JSON Kind = "json"
 )
 
 // OpaqueField is the one field of an opaque declaration: the whole struct,
 // sealed as one value under <context>/value. The struct crosses the binding
-// as one JSON document — the engine seals a composite value as a tree of
-// leaves, and an opaque struct is one column — so its field types are what
-// JSON carries: scalars, []byte (base64), slices and maps of them.
+// as one storage blob (vitaminc's storage profile, version 1) — the engine
+// seals a composite value as a tree of leaves, and an opaque struct is one
+// column. A value an earlier release sealed is a JSON document, which
+// [Opaque] still reads.
 const OpaqueField = "value"
 
 type verb uint8
@@ -61,7 +82,37 @@ type field struct {
 	verb     verb
 	indexes  []encrypt.Index
 	eqlType  string
+	null     NullMode
+	options  *TargetOptions
 }
+
+// TargetOptions are the options an EncryptInto field gives its EQL type:
+// for JsonSearch, the JSON index's. The engine checks them when the
+// declaration is first used (stashgen asked it when the file was written).
+type TargetOptions struct {
+	// SealedRoot says whether the document's root is sealed; nil is the
+	// default, sealed.
+	SealedRoot *bool
+	// Ordered are the JSONPath paths whose number and string leaves carry
+	// an ordering term.
+	Ordered []string
+}
+
+// NullMode is how a sealed field declared over a pointer (*T) stores nil:
+// stashgen's `null=` tag. A field with none is never nil.
+type NullMode string
+
+const (
+	// NullSealed seals nil like a value, as a null as long as a value of
+	// the field's kind, so the stored record does not show which rows are
+	// absent. Decrypt gives nil. An equality index stores the term every nil
+	// shares, which [Field.NullTerm] queries; the field has no other index,
+	// and its kind has a fixed width.
+	NullSealed NullMode = "sealed"
+	// NullSQL stores nothing for nil: the field's columns hold SQL NULL,
+	// which shows that the value is absent. Decrypt gives nil.
+	NullSQL NullMode = "sql"
+)
 
 // Declaration is a generated struct's declaration as data: its context and,
 // for each field, what happens to it. Only generated code builds one, from
@@ -135,6 +186,57 @@ func (d Declaration) Index(name string, kind Kind, indexes ...encrypt.Index) Dec
 // beside it, and the stored field holds the value as it is.
 func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration {
 	return d.add(field{name: name, kind: kind, verb: verbEncryptInto, eqlType: eqlType})
+}
+
+// Options gives the named EncryptInto field's EQL type its options: the
+// `encrypt_into=JsonSearch(ordered=...)` tag.
+func (d Declaration) Options(name string, options TargetOptions) Declaration {
+	if d.err != nil {
+		return d
+	}
+	for i := range d.fields {
+		if d.fields[i].name != name {
+			continue
+		}
+		if d.fields[i].verb != verbEncryptInto {
+			d.err = fmt.Errorf("gensupport: Options(%q): only an EncryptInto field's EQL type takes options", name)
+			return d
+		}
+		d.fields = slices.Clone(d.fields)
+		d.fields[i].options = &options
+		return d
+	}
+	d.err = fmt.Errorf("gensupport: Options(%q): no such field", name)
+	return d
+}
+
+// Null says how the named field, declared over a pointer, stores nil. The
+// engine decides whether the field can, when the declaration is first used:
+// a sealed null needs a field whose only index is equality, of a kind of
+// fixed width.
+func (d Declaration) Null(name string, mode NullMode) Declaration {
+	if d.err != nil {
+		return d
+	}
+	if mode != NullSealed && mode != NullSQL {
+		d.err = fmt.Errorf("gensupport: Null(%q): unknown mode %q", name, mode)
+		return d
+	}
+	for i := range d.fields {
+		if d.fields[i].name != name {
+			continue
+		}
+		if !d.fields[i].sealed() {
+			d.err = fmt.Errorf("gensupport: Null(%q): only a sealed field stores nil", name)
+			return d
+		}
+		// A copy, so the receiver's fields are not changed under it.
+		d.fields = slices.Clone(d.fields)
+		d.fields[i].null = mode
+		return d
+	}
+	d.err = fmt.Errorf("gensupport: Null(%q): no such field", name)
+	return d
 }
 
 // Omit leaves the field out: it does not cross the binding and is not
@@ -223,7 +325,7 @@ func (d Declaration) plan() (*record.Plan, error) {
 		if !f.sealed() {
 			continue
 		}
-		rf := record.Field{Name: f.name, Identity: f.identity, Kind: record.Kind(f.kind)}
+		rf := record.Field{Name: f.name, Identity: f.identity, Kind: record.Kind(f.kind), Null: record.Null(f.null)}
 		switch f.verb {
 		case verbEncryptInto:
 			// The EQL type's own plan decides the outputs; the engine
@@ -231,6 +333,9 @@ func (d Declaration) plan() (*record.Plan, error) {
 			// is the engine's to say, at the first call (stashgen asked it
 			// when the file was written).
 			rf.Target = f.eqlType
+			if f.options != nil {
+				rf.TargetOptions = &record.TargetOptions{SealedRoot: f.options.SealedRoot, Ordered: slices.Clone(f.options.Ordered)}
+			}
 		case verbEncrypt:
 			rf.Outputs = []record.Output{record.Ciphertext}
 		case verbEncryptIndex:
@@ -258,3 +363,7 @@ func (d Declaration) plan() (*record.Plan, error) {
 var termOutputs = map[record.Output]struct{}{
 	record.Equality: {}, record.Match: {}, record.Ore: {}, record.Ope: {},
 }
+
+// Ptr is a pointer to v: what a generated TargetOptions literal spells an
+// option set to false with.
+func Ptr[T any](v T) *T { return &v }

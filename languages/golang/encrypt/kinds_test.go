@@ -16,6 +16,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
 // Everything the generator accepts round-trips: one sealed field of every
@@ -88,7 +89,7 @@ func TestEverySealedKindRoundTrips(t *testing.T) {
 		t.Fatalf("DecryptKinds =\n%+v\nwant\n%+v", back, in)
 	}
 	// A defined type's field entry takes and derives at the defined type.
-	term, err := testusers.KindsFields.E.Equality(ctx, cipher, testusers.Email("alice@example.com"))
+	term, err := testusers.KindsFields.E.Eq(ctx, cipher, testusers.Email("alice@example.com"))
 	if err != nil || !term.Equal(encrypted[0].E.Equality) {
 		t.Fatalf("defined-type probe: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestEverySealedKindRoundTrips(t *testing.T) {
 	if err != nil || len(one.Ciphertext) == 0 {
 		t.Fatalf("Score field: %v", err)
 	}
-	if probe, err := testusers.KindsFields.St.Equality(ctx, cipher, "active"); err != nil || !probe.Equal(encrypted[0].St.Equality) {
+	if probe, err := testusers.KindsFields.St.Eq(ctx, cipher, "active"); err != nil || !probe.Equal(encrypted[0].St.Equality) {
 		t.Fatalf("Status probe: %v", err)
 	}
 }
@@ -110,16 +111,16 @@ func TestModelRowsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	probe, err := testusers.Fields.Email.Equality(t.Context(), cipher, people[1].Email)
+	probe, err := testusers.Fields.Email.Eq(t.Context(), cipher, people[1].Email)
 	if err != nil || !probe.Equal(rows[1].EmailEq) || probe.Equal(rows[0].EmailEq) {
 		t.Fatalf("EmailEq does not hold the email's equality term: %v", err)
 	}
-	ageProbe, err := testusers.Fields.Age.Ore(t.Context(), cipher, people[1].Age)
+	ageProbe, err := testusers.Fields.Age.Lt(t.Context(), cipher, people[1].Age)
 	if err != nil || ageProbe.Compare(rows[1].AgeOre) != 0 || !rows[1].AgeOre.Less(rows[0].AgeOre) {
 		t.Fatalf("AgeOre does not hold the age's ORE term: %v", err)
 	}
-	match, err := testusers.Fields.Email.Match(t.Context(), cipher, people[1].Email)
-	if err != nil || !bytes.Equal(match, rows[1].EmailMatch) || len(rows[1].Notes) == 0 || rows[1].ID != people[1].ID {
+	match, err := testusers.Fields.Email.Matches(t.Context(), cipher, people[1].Email)
+	if err != nil || !bytes.Equal(match.Term(), rows[1].EmailMatch) || len(rows[1].Notes) == 0 || rows[1].ID != people[1].ID {
 		t.Fatalf("the other columns: %v %+v", err, rows[1])
 	}
 	want := append([]testusers.User(nil), people...)
@@ -148,7 +149,7 @@ func TestEveryOpaqueFieldTypeRoundTrips(t *testing.T) {
 		In: testusers.Inner{Name: "in", N: 5}, Ins: []testusers.Inner{{Name: "i", N: 6}}, P: &hello, PI: &testusers.Inner{Name: "pi", N: 7},
 		T: when, N: sql.NullTime{Time: when, Valid: true}, Nested: [][]byte{{1}, {2, 3}}, Arr: [2]uint8{9, 8},
 	}, {
-		// Zero values, with the slices and maps nil: JSON null comes back as nil.
+		// Zero values, with the slices and maps nil.
 	}}
 	encrypted, err := testusers.EncryptEverything(ctx, cipher, in)
 	if err != nil {
@@ -158,8 +159,14 @@ func TestEveryOpaqueFieldTypeRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(back, in) {
-		t.Fatalf("DecryptEverything =\n%+v\nwant\n%+v", back, in)
+	// A storage blob writes a nil slice or map as an empty one, so the zero
+	// value's come back empty; its nil pointers stay nil.
+	want := []testusers.Everything{in[0], {
+		By: []byte{}, Bl: testusers.Blob{}, Tags: []string{}, Ints: []int{}, F32s: []float32{}, Emails: []testusers.Email{},
+		Counts: map[string]int{}, Labels: map[string]string{}, ByKey: map[int]string{}, Ins: []testusers.Inner{}, Nested: [][]byte{},
+	}}
+	if !reflect.DeepEqual(back, want) {
+		t.Fatalf("DecryptEverything =\n%+v\nwant\n%+v", back, want)
 	}
 }
 
@@ -179,7 +186,7 @@ func TestIndexOnlyFieldsDecryptToTheirZeroValue(t *testing.T) {
 	if !encrypted[1].Score.Ore.Less(encrypted[0].Score.Ore) || len(encrypted[0].Code.Equality) == 0 {
 		t.Fatalf("index-only terms: %+v", encrypted)
 	}
-	probe, err := testusers.LookupFields.Code.Equality(ctx, cipher, "gold")
+	probe, err := testusers.LookupFields.Code.Eq(ctx, cipher, "gold")
 	if err != nil || !probe.Equal(encrypted[0].Code.Equality) {
 		t.Fatalf("Code probe: %v", err)
 	}
@@ -227,16 +234,23 @@ func TestAnEmptyBatchRoundTrips(t *testing.T) {
 	}
 }
 
-// encoding/json refuses NaN and the infinities, so an opaque struct holding
-// one is an ErrEncoding that names the value, not an unclassified error.
-func TestANonFiniteFloatInAnOpaqueStructIsErrEncoding(t *testing.T) {
+// A storage blob writes a float by its bits, so an opaque struct holding NaN
+// or an infinity, which the JSON document of earlier releases refused, seals
+// and comes back as it was.
+func TestANonFiniteFloatInAnOpaqueStructRoundTrips(t *testing.T) {
 	c := deterministicClient(t)
 	ctx := context.Background()
-	for _, v := range []testusers.Everything{{F64: math.NaN()}, {F32: float32(math.Inf(1))}} {
-		_, err := testusers.EncryptEverything(ctx, c.DefaultKeyset(), []testusers.Everything{v})
-		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "value 0") {
-			t.Fatalf("err = %v, want ErrEncoding naming value 0", err)
-		}
+	in := []testusers.Everything{{F64: math.NaN()}, {F32: float32(math.Inf(1)), F64: math.Inf(-1)}}
+	encrypted, err := testusers.EncryptEverything(ctx, c.DefaultKeyset(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := testusers.DecryptEverything(ctx, c, encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !math.IsNaN(back[0].F64) || !math.IsInf(float64(back[1].F32), 1) || !math.IsInf(back[1].F64, -1) {
+		t.Fatalf("came back as %v, %v, %v", back[0].F64, back[1].F32, back[1].F64)
 	}
 }
 
@@ -309,5 +323,21 @@ func TestARedactedStructPrintsNoSealedField(t *testing.T) {
 	slog.New(slog.NewTextHandler(&buf, nil)).Info("secret", "s", s)
 	if strings.Contains(buf.String(), "hunter2") {
 		t.Errorf("slog printed the sealed field: %s", buf.String())
+	}
+}
+
+// A value with no storage form (here a string that is not UTF-8, which the
+// JSON document of earlier releases wrote as U+FFFD) refuses the batch as
+// ErrEncoding naming the value, with vcffi's class wrapped and no byte of
+// the value in the error.
+func TestAnOpaqueStructWithNoStorageFormIsErrEncoding(t *testing.T) {
+	c := deterministicClient(t)
+	in := []testusers.Everything{{S: "fine"}, {S: "secret-4242\xff"}}
+	_, err := testusers.EncryptEverything(context.Background(), c.DefaultKeyset(), in)
+	if !errors.Is(err, encrypt.ErrEncoding) || !errors.Is(err, vcffi.ErrUnwritable) {
+		t.Fatalf("err = %v, want ErrEncoding wrapping vcffi.ErrUnwritable", err)
+	}
+	if !strings.Contains(err.Error(), "value 1") || strings.Contains(err.Error(), "4242") {
+		t.Fatalf("err = %v, want it to name value 1 and hold none of the value", err)
 	}
 }

@@ -14,10 +14,10 @@ help: the trait `DecryptField<u32, CallerContext>` is not implemented for `Opaqu
             `(A, B, C)` implements `DecryptField<P, Ctx>`
             `(A, B, C, D)` implements `DecryptField<P, Ctx>`
             `(A, B, C, D, E)` implements `DecryptField<P, Ctx>`
-            `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
+            `CipherText<SealedValue, PassthroughFrame>` implements `DecryptField<P, Ctx>`
             `Encrypted<Terms>` implements `DecryptField<P, Ctx>`
             `EqualityTerm` implements `DecryptField<P, Ctx>`
-            `MatchTerms<O>` implements `DecryptField<P, Ctx>`
+            `JsonDocument` implements `DecryptField<P, Ctx>`
           and $N others
   = help: see issue #48214
   = note: this error originates in the derive macro `DecryptInto` (in Nightly builds, run with -Z macro-backtrace for more info)
@@ -38,8 +38,8 @@ help: the trait `Decryptable` is not implemented for `Opaque`
              (A, B, C)
              (A, B, C, D)
              (A, B, C, D, E)
-             CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>
+             CipherText<SealedValue, PassthroughFrame>
              Encrypted<Terms>
              EqualityTerm
-             MatchTerms<O>
+             JsonDocument
            and $N others

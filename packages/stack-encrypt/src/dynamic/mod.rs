@@ -2,8 +2,7 @@
 //!
 //! Everything else in this crate is typed: a target names its source type,
 //! and the operations it composes are reached through bounds — `Encrypt` for
-//! a ciphertext, [`PrfValue`](vitaminc_prf::PrfValue) for an equality term,
-//! `AsRef<str>` for a match term. That is what makes a term a cross-language
+//! a ciphertext or an equality term, `AsRef<str>` for a match term. That is what makes a term a cross-language
 //! contract: `equality_term(34u32)` derives the same bytes wherever it is
 //! called from, because `34u32` is the same value everywhere.
 //!
@@ -13,33 +12,53 @@
 //! the typed operation. This module is that something, written once here
 //! rather than once per language binding.
 //!
-//! The runtime value is [`FfiValue`], vitaminc's language-neutral value tree
-//! and the type every binding already funnels through.
+//! A term is derived from anything that describes itself to vitaminc
+//! ([`Encrypt`](crate::Encrypt)), walked to its one scalar: a guest
+//! walks the transport frame it was handed in place, with no tree built.
+//! A plaintext the engine holds is a [`ValueFrame`]: one value as its
+//! transport frame, in a buffer wiped when it drops. A record's source is
+//! walked once and split into one frame per field; a field is sealed and
+//! indexed by walking its frame into the encrypting sink and the term
+//! derivers; and a record opens straight into a frame (vitaminc ADR 0001: a
+//! value describes itself once, and sinks consume it). A binding's control
+//! data (a plan, a context, query statistics) is read from its frame by
+//! serde (`vitaminc_aead_frame::serde`) into a typed message, with no tree
+//! built.
 //!
 //! # What is here
 //!
-//! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
-//! * [`term`](term()) — one index term for a value, dispatched on its variant.
+//! * [`context`](context()) — a frame read as an encryption context.
+//! * [`ValueFrame`] — the engine's plaintext for a value whose type is known
+//!   only at run time, and the value model it holds.
+//! * [`term`](term()) — one index term for a value, derived at the one
+//!   scalar it is walked to.
 //! * [`record`] — a fields plan spelled as data, *lowered* into the plan
 //!   builder ([`Plan`](crate::Plan)) and run by the engine: the same code a
 //!   Rust chain and the derive run, so a record written from any language
 //!   is the same bytes (ADR-0007). The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
+//! * [`read_json`] and [`json_frame`] — a `json` field's document, from
+//!   the JSON text a binding hands over and back to it.
 //! * [`TargetResolver`] — the EQL types a build holds, installed by the host
 //!   that links them, so a plan field may name one as its target and the
 //!   lowering runs that type's own plan in the same request; [`NoTargets`]
 //!   is the build without them.
-//! * [`Value`] — an [`FfiValue`] as a plan field's plaintext, the type of
-//!   every field lowered from data; [`TermBytes`] — the term such a field
-//!   derives, as its frozen bytes.
+//! * [`TermBytes`] — the term a field lowered from data derives, as its
+//!   frozen bytes. Such a field's plaintext is a [`ValueFrame`].
+//! * [`query_term`], [`verify`] and [`target_limit`] — a query named by
+//!   operator ([`OpSpec`]) on a plan field, and a probabilistic term's two
+//!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats)
+//!   (ADR-0009; ADR-0007, amended 2026-10-16), and [`field_operators`], the
+//!   operators a plan field answers, for a generator to ask before the
+//!   program runs.
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
 //!
-//! Encrypting a whole value is not: [`FfiValue`] implements `Encrypt`
-//! already, so `keyset.encrypt(value, aad)` is the whole of it and needs
-//! nothing from this module. Nor is a second executor: nothing here calls
+//! Encrypting a whole value is not: a [`ValueFrame`], like any source,
+//! implements `Encrypt` already, so `keyset.encrypt(value, aad)` is the whole
+//! of it and needs nothing from this module. Nor is a second executor: nothing here calls
 //! the term functions or the seal path to produce a record. A capability a
 //! data plan needs and the builder lacks is added to the builder, once.
 //!
@@ -55,11 +74,10 @@
 //!
 //! A plan field's `"type"` names (`"int64"`, `"string"`, …) are wire format
 //! in the same way: a binding spells them, and a stored row opens only under
-//! the type it was sealed as. They are not this crate's: a declared type is
-//! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
-//! beside its tag table. This crate adds only what a kind means to an index
-//! ([`admits`]) and to a query value ([`read`]); it decides nothing about
-//! the bytes ([`record`]). Every field with a term output declares one;
+//! the type it was sealed as. A declared type is a [`ValueKind`], whose
+//! names are frozen. What a kind means to an index ([`admits`]) and to a
+//! query value ([`read`]) is stated over it; the bytes are vitaminc's, from
+//! the tagged leaf a value of the kind seals as ([`record`]). Every field with a term output declares one;
 //! a plan whose indexed field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field).
 //!
@@ -70,29 +88,47 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod json;
+mod json_predicate;
+mod json_query;
 mod kind;
+mod query;
 pub mod record;
 mod target;
 mod term;
-mod value;
+#[cfg(test)]
+mod test_frame;
+mod value_frame;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
-pub use kind::{admits, read};
-pub use record::{FieldPlan, Output, Plan};
-pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
-pub use term::{term, Scalar, TermBytes};
-pub use value::Value;
-/// vitaminc's language-neutral value tree — the runtime value every binding
-/// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
-/// which stays the binding's: this crate takes and returns values, never
-/// encoded bytes.
-pub use vitaminc_aead_value::FfiValue;
-/// vitaminc's value kinds: the type a plan field declares in its `"type"`
-/// key. Its names are frozen wire format; see [`admits`] and [`read`] for
-/// what a kind means to this engine.
-pub use vitaminc_aead_value::ValueKind;
+pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
+/// The value kinds, the type a plan field declares in its `"type"` key. A
+/// kind's names are frozen wire format; see [`admits`] and [`read`] for what
+/// a kind means to this engine.
+pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
+pub use query::{
+    check_json_open, check_query, field_operators, json_open, query_term, target_limit, verify,
+    Fidelity, OpSpec, Operand, OperatorEntry, QueryTerm,
+};
+pub use record::{FieldPlan, NullMode, Output, Plan};
+pub use target::{NoTargets, TargetDescriptor, TargetError, TargetOptions, TargetResolver};
+pub use term::{term, TermBytes};
+pub use value_frame::{Children, FromFrameError, Modeled, Opening, ValueFrame};
+
+/// vitaminc's value model, the sinks and scalar types a value describes
+/// itself through. A binding implements [`Encrypt`](crate::Encrypt) for its
+/// own values with it, as [`read`] takes them. Re-exported so a binding
+/// builds against the vitaminc this crate does. Two versions of vitaminc in
+/// one build do not fail loudly: a [`ValueFrame`] stops meeting the other
+/// version's `Decrypt` bound.
+pub use vitaminc_aead::plaintext;
+/// vitaminc's transport frame and ciphertext codec (`vitaminc-aead-frame`,
+/// with its `serde` module): the bytes a binding hands this module, and the
+/// codec its ciphertexts cross in. Re-exported for the same reason as
+/// [`plaintext`].
+pub use vitaminc_aead_frame as frame;
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -135,10 +171,13 @@ impl<K> fmt::Debug for Scope<'_, K> {
     }
 }
 
-/// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
-/// invariant; checked rather than assumed because this is boundary code.
-fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
-    std::str::from_utf8(s.risky_ref()).ok()
+/// Bytes, written as a frame's bytes leaf rather than a list of integers.
+struct WireBytes<'a>(&'a [u8]);
+
+impl serde::Serialize for WireBytes<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(self.0)
+    }
 }
 
 /// What went wrong in a dynamic operation.
@@ -187,9 +226,9 @@ pub enum Error {
 
     /// A term was asked for a value the scheme defines no such term for: a
     /// container, null or passthrough (which have no term semantics at all),
-    /// or a scalar outside the kind's domain — equality over a float or a
-    /// boolean, match over anything but text. See
-    /// [`IndexSpec::supports`].
+    /// or a scalar outside the kind's domain — equality over a boolean,
+    /// match over anything but text, an order term over a boolean. See
+    /// [`IndexSpec::defines`].
     #[error("no {kind} term is defined for this value{}", in_field_text(field))]
     #[diagnostic(code(stack_encrypt::dynamic_term))]
     Term {
@@ -236,8 +275,12 @@ pub enum Error {
     /// them), a field the plan does not name, a plan field the source does
     /// not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
-    /// field declares. Also a query value that cannot be read as its field's
-    /// type ([`read`]).
+    /// field declares. Also a query its field does not answer: an operator
+    /// the field's type does not answer, an input that cannot be read as the
+    /// field's type ([`read`]) or is not the pair a range takes, a page of
+    /// values to verify that holds a value of another type, or statistics
+    /// or a term that are not what [`target_limit`] reads — the same shape of
+    /// refusal as a mistyped field, naming the field.
     #[error(
         "record source does not fit the plan: {reason}{}",
         in_field_text(field)
@@ -270,6 +313,33 @@ pub enum Error {
         field: Option<String>,
         /// What was wrong with the stored record.
         reason: Reason,
+    },
+
+    /// A `match` predicate is refused at a place in its text: text the
+    /// grammar does not read, a construct of SQL/JSON path the JSON index
+    /// cannot answer, a variable its `vars` do not hold, or a value of a
+    /// type its comparison cannot take. The error names the construct in
+    /// the grammar's own words and the byte offset in the caller's
+    /// predicate text, and nothing of the text itself: a key name or a
+    /// value in it can be customer data.
+    #[error(
+        "the predicate is refused at byte {at}: {reason} ({construct}){}",
+        in_field_text(field)
+    )]
+    #[diagnostic(
+        code(stack_encrypt::dynamic_predicate),
+        help("A predicate compares a path (`$.a.b`, `$.a[*].b`, `$.\"a b\"`) with a variable (`$v`) or a literal by `==`, `!=`, `<`, `<=`, `>` or `>=`, tests `exists($.path)` or `exists($.array[*] ? (@.x == $v && @.y > $w))`, and combines them with `&&`, `||`, `!` and parentheses.")
+    )]
+    Predicate {
+        /// The plan field the predicate is for, if one is named yet.
+        field: Option<String>,
+        /// What was wrong.
+        reason: Reason,
+        /// The construct refused, in the grammar's words: never text from
+        /// the predicate.
+        construct: &'static str,
+        /// The byte offset in the predicate text the construct starts at.
+        at: usize,
     },
 
     /// An invariant this module maintains did not hold — a slot count that
@@ -349,6 +419,7 @@ impl Error {
             | Self::Plan { field, .. }
             | Self::Source { field, .. }
             | Self::Record { field, .. }
+            | Self::Predicate { field, .. }
                 if field.is_none() =>
             {
                 *field = Some(name.to_owned());
@@ -365,19 +436,22 @@ impl Error {
             | Self::Term { field, .. }
             | Self::Plan { field, .. }
             | Self::Source { field, .. }
-            | Self::Record { field, .. } => field.as_deref(),
+            | Self::Record { field, .. }
+            | Self::Predicate { field, .. } => field.as_deref(),
             Self::UntypedIndex { field } => Some(field),
             Self::Internal | Self::Target(_) | Self::Cipher(_) => None,
         }
     }
 
-    /// What was wrong, for a context, plan, source or record error.
+    /// What was wrong, for a context, plan, source, record or predicate
+    /// error.
     pub fn reason(&self) -> Option<Reason> {
         match self {
             Self::Context { reason, .. }
             | Self::Plan { reason, .. }
             | Self::Source { reason, .. }
-            | Self::Record { reason, .. } => Some(*reason),
+            | Self::Record { reason, .. }
+            | Self::Predicate { reason, .. } => Some(*reason),
             Self::Term { .. }
             | Self::UntypedIndex { .. }
             | Self::Internal
@@ -393,6 +467,10 @@ impl crate::ErrorPayload for Error {
             Self::Target(error) => return error.payload(),
             Self::Cipher(error) => return error.payload(),
             Self::Term { kind, .. } => crate::diagnostic::payload([("index", kind.key().into())]),
+            Self::Predicate { construct, at, .. } => crate::diagnostic::payload([
+                ("construct", (*construct).into()),
+                ("at", (*at as u64).into()),
+            ]),
             _ => serde_json::Map::new(),
         };
         if let Some(field) = self.field() {
@@ -440,10 +518,10 @@ macro_rules! reasons {
 }
 
 reasons! {
-    /// What was wrong with a context, plan, source or stored record: the reason
-    /// a dynamic input error carries beside the field it names.
+    /// What was wrong with a context, plan, source, stored record or query: the
+    /// reason a dynamic input error carries beside the field it names.
     ///
-    /// One vocabulary for all four, since several reasons apply to more than
+    /// One vocabulary for all five, since several reasons apply to more than
     /// one (a field given twice is a misfit in a source and in a stored
     /// record). [`as_str`](Self::as_str) is the `snake_case` name a binding
     /// reports in its payload's `reason` field; `Display` is the phrase the
@@ -458,7 +536,9 @@ reasons! {
         /// A context value is of a kind a context cannot hold: a boolean,
         /// float, null, object or passthrough.
         ContextKind => "context_kind", "a boolean, float, null, object or passthrough cannot be a context";
-        /// A context string is not UTF-8.
+        /// A context string is not UTF-8. No longer produced: a frame's
+        /// text is UTF-8 by construction. Kept so a binding that switches on
+        /// it still compiles.
         ContextNotUtf8 => "context_not_utf8", "a context string is not UTF-8";
         /// A context renders empty.
         EmptyContext => "empty_context", "the context renders empty";
@@ -473,8 +553,8 @@ reasons! {
         /// A field is named twice in the plan.
         DuplicateField => "duplicate_field", "a field is named twice";
         /// A field spec has a key other than `"context"`, `"outputs"`,
-        /// `"target"` and `"type"`.
-        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target" and "type""#;
+        /// `"target"`, `"type"` and `"null"`.
+        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target", "type" and "null""#;
         /// A key is given twice: in a field spec, or in a map inside a source
         /// value or a stored record.
         RepeatedKey => "repeated_key", "a key is given twice";
@@ -496,13 +576,29 @@ reasons! {
         DuplicateOutput => "duplicate_output", "an output is named twice";
         /// A field names `"passthrough"` beside another output.
         PassthroughWithOutputs => "passthrough_with_outputs", r#""passthrough" beside another output"#;
-        /// `"target"` is not a non-empty string.
-        InvalidTarget => "invalid_target", r#""target" is not a non-empty string"#;
+        /// `"target"` is not a non-empty string, nor an object of a
+        /// non-empty `"name"` and the target's `"options"`; or the options
+        /// do not parse as the target's (an unknown option, a path that is
+        /// not one, an ordered path naming a position).
+        InvalidTarget => "invalid_target", r#""target" is not a non-empty string or a {"name", "options"} object the target reads"#;
         /// `"type"` is not a string naming a value type.
         UnknownType => "unknown_type", r#""type" does not name a value type"#;
         /// The field's declared type has no such index: match on an integer,
-        /// equality on a float, any index on a composite.
+        /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
+        /// The field declares the JSON index as an output. A data plan
+        /// reaches the JSON index through a target that stores a document
+        /// (`JsonSearch`, with the `json` type), whose options are the
+        /// index's; the index is not an output of its own.
+        JsonIndexPending => "json_index_pending", "the JSON index is reached through a target that stores a document, not as an output";
+        /// The field declares the `json` type and names no target: a JSON
+        /// document is stored through a target that stores one
+        /// (`JsonSearch`).
+        JsonNeedsTarget => "json_needs_target", r#"a "json" field names a target that stores a document"#;
+        /// The field gives its target options the target does not take: a
+        /// target takes the options of the index it carries, and this one
+        /// carries none that has any.
+        TargetOptions => "target_options", "the target takes no options";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.
@@ -526,6 +622,9 @@ reasons! {
         FieldType => "field_type", "a value is not of the type its field declares";
         /// A passthrough sits where a sealed value, or a ciphertext, must be.
         Passthrough => "passthrough", "a passthrough where a sealed value must be";
+        /// A passthrough value cannot be stored as a frame: it nests deeper,
+        /// or holds text, bytes or a key longer, than a frame carries.
+        Unframeable => "unframeable", "a passthrough value nests deeper, or holds a longer value, than a frame carries";
         /// A stored field is not a map of outputs.
         OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
         /// A stored sealed field has no `"c"` node.
@@ -537,6 +636,101 @@ reasons! {
         /// A stored `"passthrough"` or `"eql"` node is not a passthrough
         /// carrying a value of the kind it holds.
         NotPassthrough => "not_passthrough", "a node does not carry a value of the kind it holds";
+        /// A plan takes its context from a field of each record, so a query on
+        /// it has no context: the caller names the context, and sends the plan
+        /// under it.
+        QueryContextField => "query_context_field", "the plan takes its context from a field of each record, so a query has none";
+        /// An operator name is not one the engine knows ([`OpSpec::parse`]).
+        UnknownOperator => "unknown_operator", "the operator is not one the engine knows";
+        /// The field's type does not answer the operator: no index it declares
+        /// answers it, or the EQL type it names does not ([`OpSpec::answered_by`]).
+        OperatorNotAnswered => "operator_not_answered", "the field's type does not answer the operator";
+        /// A range's input is not a list of two values.
+        NotARange => "not_a_range", "a range is not a list of two values";
+        /// The operator's answer is exact, so there is nothing to verify and no
+        /// fetch to size.
+        ExactOperator => "exact_operator", "the operator's answer is exact, so there is nothing to verify or size";
+        /// The term is not one the field's index derives for the operator.
+        NotAQueryTerm => "not_a_query_term", "the term is not one the field's index derives for the operator";
+        /// Statistics are not a row count with an optional histogram and
+        /// confidence ([`Stats::from_frame`](crate::op::Stats::from_frame)).
+        NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
+        /// A JSON operator's input or a read's request or rows are not the
+        /// object the operator takes ([`json_open`], the JSON operators of
+        /// [`OpSpec`]): a missing or unknown key, a value of another kind,
+        /// a row that is not an entry, or more than one entry for a
+        /// selector.
+        JsonInput => "json_input", "the input is not the object the JSON operator takes";
+        /// A JSON value in an input is not JSON text the engine reads.
+        JsonSyntax => "json_syntax", "a JSON value is not JSON text";
+        /// A JSON value in an input names an object member twice.
+        JsonDuplicateKey => "json_duplicate_key", "a JSON object names a member twice";
+        /// A JSON value in an input has an integer literal outside the 64-bit
+        /// range.
+        JsonIntegerRange => "json_integer_range", "a JSON integer literal is outside the 64-bit range";
+        /// A path names an array position where the operand is a selector,
+        /// which reads every position as the wildcard: read a position with
+        /// a subtree read.
+        JsonPathPosition => "json_path_position", "a selector reads a position as the wildcard; read a position with subtree";
+        /// A path has a wildcard where the operator names one node.
+        JsonPathWildcard => "json_path_wildcard", "the operator names one node, and a wildcard names many";
+        /// `"null"` is not `"sealed"` or `"sql"`.
+        UnknownNull => "unknown_null", r#""null" is not "sealed" or "sql""#;
+        /// A passthrough field says how to store a null: it carries one as
+        /// it is.
+        NullPassthrough => "null_passthrough", r#"a passthrough carries a null as it is, and takes no "null""#;
+        /// A field with `"null": "sealed"` derives a term other than
+        /// equality's, or names an EQL type that carries one: a null has an
+        /// equality term and no other (#1298), so its absence would show in
+        /// that term's column.
+        SealedNullIndex => "sealed_null_index", r#"a null has an equality term and no other, so a field with another index takes "null": "sql""#;
+        /// A field with `"null": "sealed"` declares no type, or one of no
+        /// fixed width (text, bytes, a container), whose absence the length
+        /// of its ciphertext would show.
+        SealedNullType => "sealed_null_type", "a sealed null needs a declared type of fixed width: a bool, a number, a date, a timestamp or a decimal";
+        /// A query's input is a null, and the field does not seal its nulls
+        /// beside an equality term: only `eq` on a `"null": "sealed"` field
+        /// finds a null by its term. A `"null": "sql"` field's nulls are SQL
+        /// `NULL`, which `IS NULL` finds.
+        NullQuery => "null_query", r#"a null is found by its term only with eq on a field with "null": "sealed"; a "null": "sql" field's nulls are SQL NULL"#;
+        /// An element predicate's path has no wildcard: the predicate is
+        /// over the elements of an array, which `[*]` names.
+        JsonPathNoWildcard => "json_path_no_wildcard", "an element predicate is over an array's elements, and the path names no wildcard";
+        /// An element predicate has no predicates: it would be true of
+        /// every row with an element.
+        JsonNoPredicates => "json_no_predicates", "an element predicate needs at least one predicate";
+        /// An element predicate's `wildcard_bound` is `0`: its reads would
+        /// send the probe alone, so the predicate could never be true.
+        JsonWildcardBoundZero => "json_wildcard_bound_zero", "an element predicate reads at least one element, and a wildcard_bound of 0 reads none";
+        /// A predicate of an element predicate has an `op` that is not
+        /// `eq`, `lt`, `lte`, `gt`, `gte` or `between`.
+        JsonUnknownPredicateOp => "json_unknown_predicate_op", r#"a predicate's "op" is not eq, lt, lte, gt, gte or between"#;
+        /// A `match` predicate is not text the SQL/JSON path predicate
+        /// grammar reads: an unexpected character, an unterminated string,
+        /// a literal that is not JSON, or text after the predicate.
+        JsonPredicateSyntax => "json_predicate_syntax", "the predicate is not SQL/JSON path predicate text";
+        /// A `match` predicate uses a construct of SQL/JSON path the JSON
+        /// index cannot answer: arithmetic, `like_regex`, `starts with`,
+        /// `is unknown`, a method, a `strict` or `lax` mode, `.*`, `.**`,
+        /// a slice, `last`, a comparison of two paths or of two values, a
+        /// filter outside `exists`, or `||`, `!` or `!=` inside a filter.
+        JsonPredicateUnsupported => "json_predicate_unsupported", "the predicate uses a construct the JSON index cannot answer";
+        /// A `match` predicate names a variable (`$v`) its `vars` do not
+        /// hold.
+        JsonPredicateUnknownVariable => "json_predicate_unknown_variable", "the predicate names a variable its vars do not hold";
+        /// A value in a `match` predicate, a literal or a variable, is of a
+        /// JSON type its comparison cannot take: an object or array
+        /// anywhere, and anything but a number or a string beside `<`,
+        /// `<=`, `>`, `>=` or in an element-scoped filter of more than one
+        /// equality.
+        JsonPredicateValueType => "json_predicate_value_type", "a value in the predicate is of a type its comparison cannot take";
+        /// `!=` at a path with a wildcard: jsonpath answers it true when
+        /// some element differs, which no term of the index can say.
+        JsonPredicateNotEqualAtWildcard => "json_predicate_not_equal_at_wildcard", "!= at a path with a wildcard asks whether some element differs, which the index cannot answer";
+        /// A `match` predicate nests parentheses, `!` and `exists` deeper
+        /// than the engine reads, or names a path with more steps than a
+        /// document has levels.
+        JsonPredicateTooDeep => "json_predicate_too_deep", "the predicate nests too deep";
     }
 }
 

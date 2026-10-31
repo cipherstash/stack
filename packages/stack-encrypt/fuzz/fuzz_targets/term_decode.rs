@@ -21,21 +21,21 @@ fuzz_target!(|bytes: &[u8]| {
     }
     let _ = MatchTerms::<DefaultMatch>::from_bytes(bytes);
     // One fixed-width and one variable-width CLLW output each for ORE and OPE.
-    if let Ok(term) = OreTerm::<u64>::from_bytes(bytes) {
+    if let Ok(term) = OreTerm::<u64>::from_bytes(bytes.to_vec()) {
         assert_eq!(
             term.as_bytes(),
             bytes,
             "OreTerm<u64> decode is not lossless"
         );
     }
-    if let Ok(term) = OreTerm::<String>::from_bytes(bytes) {
+    if let Ok(term) = OreTerm::<String>::from_bytes(bytes.to_vec()) {
         assert_eq!(
             term.as_bytes(),
             bytes,
             "OreTerm<String> decode is not lossless"
         );
     }
-    if let Ok(term) = OpeTerm::<String>::from_bytes(bytes) {
+    if let Ok(term) = OpeTerm::<String>::from_bytes(bytes.to_vec()) {
         assert_eq!(
             term.as_bytes(),
             bytes,

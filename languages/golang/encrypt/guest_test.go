@@ -15,13 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cipherstash/stack/languages/golang/auth"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/sys"
 )
 
 // Tests that drive the embedded guest without a live ZeroKMS. What they
@@ -115,7 +113,9 @@ func testInit(url string) initConfig {
 	return initConfig{clientID: testClientID, clientKey: NewClientKey([]byte(testClientKey)), zerokmsURL: url}
 }
 
-func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
+// The guest reaches its host through one import, token_get: its ZeroKMS
+// requests come back through the step loop, so it has no HTTP import.
+func TestImportSurfaceIsWASIPlusTokenGet(t *testing.T) {
 	ctx := context.Background()
 	r := wazero.NewRuntime(ctx)
 	defer r.Close(ctx)
@@ -140,12 +140,12 @@ func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
 			t.Errorf("guest imports %s::%s, outside the allowed surface", module, name)
 		}
 	}
-	want := []string{"token_get", "transport_send"}
+	want := []string{"token_get"}
 	sort.Strings(transportImports)
 	if !reflect.DeepEqual(transportImports, want) {
 		t.Fatalf("transport imports = %v, want %v", transportImports, want)
 	}
-	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_term": true, "se_encrypt_record": true, "se_decrypt_record": true, "se_plan_check": true, "se_targets": true} {
+	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_term": true, "se_query_term": true, "se_verify": true, "se_target_limit": true, "se_encrypt_record": true, "se_decrypt_record": true, "se_plan_check": true, "se_targets": true, "se_operators": true, "se_io": true, "se_resume": true, "se_abort": true} {
 		if _, ok := compiled.ExportedFunctions()[name]; !ok {
 			t.Errorf("guest does not export %s", name)
 		}
@@ -277,53 +277,6 @@ func TestRoundTripperFailureIsTransport(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-// An interrupted call closes the module (WithCloseOnContextDone); the
-// client must then be closed rather than a wedge or a runtime error.
-func TestInterruptedCallClosesTheClient(t *testing.T) {
-	t.Run("deadline during a request", func(t *testing.T) {
-		guestOrSkip(t)
-		cfg := testConfig("http://zerokms.invalid")
-		cfg = append(cfg, WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			<-r.Context().Done()
-			return nil, r.Context().Err()
-		})))
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		defer cancel()
-		_, err := NewClient(ctx, cfg...)
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("NewClient: %v, want the deadline", err)
-		}
-	})
-	t.Run("closed module is ErrState", func(t *testing.T) {
-		ctx := context.Background()
-		c := rawInstance(t)
-		// What the runtime does to the module when a call's context ends.
-		if err := c.inst.module.CloseWithExitCode(ctx, sys.ExitCodeContextCanceled); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := c.Keyset(KeysetName("k")).KeysetID(ctx); !errors.Is(err, ErrState) {
-			t.Fatalf("Keyset on a closed module: %v, want ErrState", err)
-		}
-		if err := c.Close(); err != nil {
-			t.Fatalf("Close after interruption: %v", err)
-		}
-		// The close must reach the runtime. An interrupted call closes the
-		// module and marks the client closed; a Close that treated that as
-		// "already done" would leave the runtime and the host module it
-		// carries allocated for the life of the process.
-		if !c.released {
-			t.Error("Close after interruption left the runtime unreleased")
-		}
-		if m := c.inst.runtime.Module(transportModule); m != nil {
-			t.Errorf("host module %s is still registered after Close", transportModule)
-		}
-		// Still idempotent.
-		if err := c.Close(); err != nil {
-			t.Fatalf("second Close: %v", err)
-		}
-	})
-}
 
 // A response the host would have to buffer without bound is refused as a
 // transport failure, whether the size is announced or streamed.
@@ -649,15 +602,20 @@ func TestTargetWithoutEQLIsRefusedBeforeTheGuest(t *testing.T) {
 	}
 }
 
-// Query refuses a field the plan does not have, and a field that names no
-// EQL type, before the guest is asked.
-func TestQueryRejectsMissingAndNonTargetFieldsBeforeTheGuest(t *testing.T) {
+// QueryTerm refuses a field the plan does not have, an operator the engine
+// does not know and one the field does not answer before it looks for a
+// cipher: ErrEncoding naming the field, on an uninitialised instance.
+func TestQueryTermRefusesWhatTheFieldDoesNotAnswerBeforeState(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
-	for _, field := range []string{"email", "missing"} {
-		_, err := c.DefaultKeyset().Query(ctx, usersPlan(), field, "a@b.c")
-		if !errors.Is(err, ErrEncoding) || errors.Is(err, ErrState) || !strings.Contains(err.Error(), field) {
-			t.Errorf("Query(%q) = %v, want ErrEncoding before the guest, naming the field", field, err)
+	for _, q := range []struct{ field, operator string }{
+		{"missing", "eq"},
+		{"age", "like"},
+		{"age", "matches"},
+	} {
+		_, err := c.DefaultKeyset().QueryTerm(ctx, usersPlan(), q.field, q.operator, uint32(1))
+		if !errors.Is(err, ErrEncoding) || errors.Is(err, ErrState) || !strings.Contains(err.Error(), q.field) {
+			t.Errorf("QueryTerm(%q, %q) = %v, want ErrEncoding before the guest, naming the field", q.field, q.operator, err)
 		}
 	}
 }
@@ -705,13 +663,19 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 		"Open bound":       func() error { _, err := byID.Open(ctx, usersPlan(), records); return err },
 		"Open extended":    func() error { _, err := tenant.Open(ctx, usersPlan(), records); return err },
 		"Open any":         func() error { _, err := c.Open(ctx, usersPlan(), records); return err },
-		"Derive equality":  func() error { _, err := def.Derive(ctx, usersPlan(), "age", record.Equality, uint32(34)); return err },
-		"Derive match":     func() error { _, err := named.Derive(ctx, usersPlan(), "email", record.Match, "alice"); return err },
-		"Derive ore ext":   func() error { _, err := tenant.Derive(ctx, usersPlan(), "age", record.Ore, uint32(1)); return err },
-		"Derive ope": func() error {
+		"derive equality":  func() error { _, err := def.derive(ctx, usersPlan(), "age", record.Equality, uint32(34)); return err },
+		"derive match":     func() error { _, err := named.derive(ctx, usersPlan(), "email", record.Match, "alice"); return err },
+		"derive ore ext":   func() error { _, err := tenant.derive(ctx, usersPlan(), "age", record.Ore, uint32(1)); return err },
+		"QueryTerm eq":     func() error { _, err := def.QueryTerm(ctx, usersPlan(), "age", "eq", uint32(34)); return err },
+		"QueryTerm between": func() error {
+			_, err := tenant.QueryTerm(ctx, usersPlan(), "age", "between", []any{uint32(18), uint32(65)})
+			return err
+		},
+		"QueryTerm matches": func() error { _, err := named.QueryTerm(ctx, usersPlan(), "email", "matches", "alice"); return err },
+		"derive ope": func() error {
 			p := usersPlan()
 			p.Fields[0].Outputs = append(p.Fields[0].Outputs, record.Ope)
-			_, err := byID.Derive(ctx, p, "age", record.Ope, uint32(1))
+			_, err := byID.derive(ctx, p, "age", record.Ope, uint32(1))
 			return err
 		},
 		"Seal untyped": func() error {
@@ -734,12 +698,12 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 	c := rawInstance(t)
 	def := c.DefaultKeyset()
 	plan := usersPlan()
-	floatAge := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Ciphertext, record.Equality}}}}
+	boolFlag := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "flag", Kind: record.Bool, Outputs: []record.Output{record.Ciphertext, record.Equality}}}}
 	matchInt := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Match}}}}
 	calls := map[string]func() error{
-		"float under equality":    func() error { _, err := def.Derive(ctx, floatAge, "age", record.Equality, 1.5); return err },
-		"integer under match":     func() error { _, err := def.Derive(ctx, matchInt, "age", record.Match, uint32(1)); return err },
-		"container as term value": func() error { _, err := def.Derive(ctx, plan, "age", record.Equality, []any{1}); return err },
+		"bool under equality":     func() error { _, err := def.derive(ctx, boolFlag, "flag", record.Equality, true); return err },
+		"integer under match":     func() error { _, err := def.derive(ctx, matchInt, "age", record.Match, uint32(1)); return err },
+		"container as term value": func() error { _, err := def.derive(ctx, plan, "age", record.Equality, []any{1}); return err },
 		"a kind the type refuses": func() error { _, err := def.Seal(ctx, matchInt, []record.Source{usersRow(1, "x")}); return err },
 		"a value of another kind": func() error {
 			_, err := def.Seal(ctx, plan, []record.Source{{"age": "thirty", "email": "x"}})
@@ -749,8 +713,8 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 			_, err := def.Open(ctx, plan, []record.Sealed{{"age": {Ciphertext: []byte{0xff}}, "email": {Ciphertext: fixtureLeaf}}})
 			return err
 		},
-		"a term the field lacks":              func() error { _, err := def.Derive(ctx, plan, "age", record.Match, uint32(1)); return err },
-		"a field the plan lacks":              func() error { _, err := def.Derive(ctx, plan, "name", record.Equality, "x"); return err },
+		"a term the field lacks":              func() error { _, err := def.derive(ctx, plan, "age", record.Match, uint32(1)); return err },
+		"a field the plan lacks":              func() error { _, err := def.derive(ctx, plan, "name", record.Equality, "x"); return err },
 		"an empty context segment":            func() error { p := usersPlan(); p.Context = []string{""}; _, err := def.Seal(ctx, p, nil); return err },
 		"an extension the codec cannot carry": func() error { _, err := def.Extend(1.5).Seal(ctx, plan, nil); return err },
 		"a nil keyset selector":               func() error { _, err := c.Keyset(nil).Seal(ctx, plan, nil); return err },
@@ -837,7 +801,8 @@ func TestPlanCheckAnswersWithoutACipher(t *testing.T) {
 	}
 	refused := []*record.Plan{
 		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Match}}}},
-		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Equality}}}},
+		{Context: []string{"users"}, Fields: []record.Field{{Name: "flag", Kind: record.Bool, Outputs: []record.Output{record.Equality}}}},
+		{Context: []string{"users"}, Fields: []record.Field{{Name: "flag", Kind: record.Bool, Outputs: []record.Output{record.Ore}}}},
 	}
 	for i, p := range refused {
 		if err := k.Check(ctx, p); !errors.Is(err, ErrEncoding) {
@@ -949,7 +914,10 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = inst.release() }()
-	_, err = inst.call(ctx, inst.cipherInit, buf(encoded))
+	c := newClient(inst, tr)
+	_, err = c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.cipherInit, buf(encoded))
+	})
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
 	}
@@ -974,7 +942,9 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	}
 }
 
-func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
+// The init's one load-keyset request is one step: one request performed,
+// and the operation's handle spent once it ends.
+func TestEachRequestIsOneStep(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "text/plain", "nope")
 	tr := &transport{rt: http.DefaultTransport, token: staticToken("stub-token")}
@@ -984,12 +954,18 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = inst.release() }()
+	c := newClient(inst, tr)
 	encoded, _ := encodeConfig(testInit(stub.URL))
-	if _, err := inst.call(ctx, inst.cipherInit, buf(encoded)); !errors.Is(err, ErrUnauthorized) {
+	if _, err := c.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.cipherInit, buf(encoded))
+	}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
 	}
 	if n := tr.sends.Load(); n != 1 {
 		t.Fatalf("transport sends = %d, want 1", n)
+	}
+	if _, err := inst.call(ctx, inst.abort, scalar(1)); !errors.Is(err, ErrState) {
+		t.Fatalf("aborting the finished operation's handle: %v, want ErrState", err)
 	}
 }
 

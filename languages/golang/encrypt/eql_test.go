@@ -41,8 +41,8 @@ var contacts = []testusers.Contact{
 	{ID: 3, Email: "bob@example.com"},
 }
 
-// eqlEnvelope is the EQL v3 envelope of a TextEq value, as PostgreSQL's
-// public.eql_v3_text_eq domain checks it.
+// eqlEnvelope is the EQL v4 envelope of a TextEq value, as PostgreSQL's
+// public.eql_v4_text_eq domain checks it.
 type eqlEnvelope struct {
 	V  int `json:"v"`
 	I  struct{ T, C string }
@@ -91,8 +91,8 @@ func TestTextEqFieldSealsToTheEQLEnvelope(t *testing.T) {
 			t.Errorf("row %d: passthrough id %d, want %d", i, e.ID, contacts[i].ID)
 		}
 		env := decodeEnvelope(t, e.Email)
-		if env.V != 3 {
-			t.Errorf("row %d: v = %d, want 3", i, env.V)
+		if env.V != 4 {
+			t.Errorf("row %d: v = %d, want 4", i, env.V)
 		}
 		if env.I.T != "users" || env.I.C != "email" {
 			t.Errorf("row %d: i = %+v, want users/email", i, env.I)
@@ -162,7 +162,7 @@ func TestTextEqQueryMatchesTheStoredValueAndTheRustFixture(t *testing.T) {
 		t.Fatalf("the fixture's column changed: %+v", fixture)
 	}
 
-	query, err := testusers.ContactFields.Email.Query(ctx, cipher, fixture.Plaintext)
+	query, err := testusers.ContactFields.Email.Eq(ctx, cipher, fixture.Plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestTextEqQueryMatchesTheStoredValueAndTheRustFixture(t *testing.T) {
 	if env := decodeEnvelope(t, stored); env.HM != probe.HM {
 		t.Fatalf("the query's hm %s does not match the stored %s", probe.HM, env.HM)
 	}
-	if other, _ := testusers.ContactFields.Email.Query(ctx, cipher, "Bob@example.com"); string(other) == fixture.Query {
+	if other, _ := testusers.ContactFields.Email.Eq(ctx, cipher, "Bob@example.com"); string(other) == fixture.Query {
 		t.Fatal("no case folding: a different plaintext has a different term")
 	}
 }
@@ -217,7 +217,7 @@ func TestATamperedEQLValueDoesNotOpen(t *testing.T) {
 	for name, value := range map[string]eql.TextEq{
 		"an empty object": eql.TextEq(`{}`),
 		"not JSON":        eql.TextEq(`not json`),
-		"a query value":   eql.TextEq(`{"v":3,"i":{"t":"users","c":"email"},"hm":"00"}`),
+		"a query value":   eql.TextEq(`{"v":4,"i":{"t":"users","c":"email"},"hm":"00"}`),
 	} {
 		junk[0].Email = value
 		if _, err := testusers.DecryptContact(ctx, cipher, junk); !errors.Is(err, encrypt.ErrEncoding) {
@@ -315,7 +315,7 @@ func TestTextEqIsRefusedByTheBuildWithoutEQLTypes(t *testing.T) {
 	if err := eqlChecker.Check(ctx, plan); err != nil {
 		t.Fatalf("the eql build refuses TextEq: %v", err)
 	}
-	for _, name := range []string{"TextOrdOre", "Nope"} {
+	for _, name := range []string{"Json", "Nope"} {
 		refused := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: name}}}
 		if err := eqlChecker.Check(ctx, refused); !errors.Is(err, encrypt.ErrEncoding) {
 			t.Errorf("%s: Check = %v, want ErrEncoding", name, err)

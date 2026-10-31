@@ -35,10 +35,14 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    type User struct {
    	_     struct{} `stash:"context=users"`
    	ID    int64    `stash:"id,passthrough"`
-   	Email string   `stash:"email,encrypt,index=equality;match"`
-   	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+   	Email string   `stash:"email,encrypt_into=TextEq"`
+   	Name  string   `stash:"name,encrypt_into=TextMatch"`
+   	Age   int32    `stash:"age,encrypt_into=Integer"`
    }
    ```
+
+   `encrypt_into=` names the EQL type the field is stored as. The Go field
+   type must match it; see [EQL columns](#eql-columns).
 
 3. Run the generator. It writes `user_stash.go` beside the struct.
 
@@ -60,17 +64,28 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
-   term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+   term, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
    ```
 
    `Encrypt` and `Decrypt` send one ZeroKMS request for each 500 sealed
    values in the batch, plus one request the first time a keyset is used.
+   A query derives its term locally and sends no request of its own; only
+   the first use of a keyset, by a query or anything else, loads it from
+   ZeroKMS. See [Queries](#queries).
 
-6. Store the encrypted type. Each sealed field is one or more byte columns:
-   `e.Email.Ciphertext`, `e.Email.Equality`, `e.Email.Match`. `Ciphertext`
-   and each term type implement `driver.Valuer` and `sql.Scanner`, so a
-   database library binds and scans each column as bytes; map each one to
-   its own column.
+6. Store the encrypted type. Each `encrypt_into` field is one EQL v4 column:
+   `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database
+   library binds and scans it as the JSON a `public.eql_v4_text_eq` column
+   holds. Install EQL v4 into PostgreSQL first, with the
+   `eql-v4-install.sql` attached to the release. A query casts its parameter
+   to the column's query type:
+
+   ```sql
+   SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
+   ```
+
+   A field tagged `encrypt` or `index=` stores its ciphertext and each term
+   as separate byte columns instead; see [What is stored](#what-is-stored).
 
 7. Run the generator again after each change to the struct or to a tag. A
    change to the fields of the struct stops the build until you do.
@@ -84,14 +99,18 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    `git diff` sees only files git already tracks; the `git status` check
    also fails on a generated file that was never committed.
 
-The rest of this file is the reference. [`example/`](example/) is the eight
-steps as a program.
+The rest of this file is the reference. [`example/`](example/) is a program
+that stores separate byte columns (`index=`) against real ZeroKMS.
 
 ## Connect
 
 A `Client` is one ZeroKMS client: its client key, its default keyset, and the
 keysets it has loaded since. Make one per process and share it; it is safe
-for concurrent use.
+for concurrent use. The guest runs one call at a time, but never holds the
+client across a ZeroKMS round trip: a call that needs ZeroKMS hands its
+request to the client, which performs it with the client free for other
+callers, and then carries on. A call whose context ends while its request
+is in flight returns the context's error and leaves the client open.
 
 ```go
 client, err := encrypt.NewClient(ctx)
@@ -105,6 +124,25 @@ defer client.Close()
 ZeroKMS round trip `NewClient` makes. It has nothing to do with an
 *encryption* context, which is what a field is sealed under; that is the
 `context=` tag.
+
+Every call takes a `ctx` too, and a call whose `ctx` is cancelled or passes
+its deadline fails with the context's error. Only that call fails: one
+request giving up never closes the shared client for the others.
+
+- A call waiting for the client (it runs one call at a time) leaves the
+  queue when its `ctx` ends, and never starts.
+- A call waiting on ZeroKMS has that request cancelled. Its error matches
+  both `context.Canceled` or `context.DeadlineExceeded` and `ErrTransport`.
+- A call waiting on its auth strategy for a token returns too, with the
+  context's error. If the strategy is refreshing a device session, the
+  refresh finishes in the background, for up to 10 seconds. The service
+  rotates the refresh token when it answers, and dropping that answer
+  would leave the strategy unable to refresh.
+
+A client closes itself, and every later call returns `ErrState`, only when
+the guest's state is unknown: the guest trapped, or a call ran on for 30
+seconds after its `ctx` ended, which means a bug. A service that sees
+`ErrState` from a client it did not close builds a new one.
 
 Every other setting is a functional option with a default:
 
@@ -194,15 +232,56 @@ and `Equality`, `Match`, `Ore` or `Ope` (the term types). A field with
 An `opaque` struct is one `Sealed` field. Every stored type implements
 `driver.Valuer` and `sql.Scanner`.
 
-A `match` index needs text with at least one token. The engine derives no
-match term for an empty string, separator-only text, or text shorter than the
-n-gram length (3 characters), because an empty term would match every row.
-`Encrypt` then fails for the whole batch with `ErrTerm`, naming the row, the
-field and the index. So an optional or short value does not belong under
-`match`: give such a field `equality` alone, or make the value required.
+A sealed field outside an opaque struct is one value of one of these types,
+or a type defined over one (`type Email string`):
+
+| Go field | Seals as | Indexes it can store | Query methods |
+|---|---|---|---|
+| `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
+| `[]byte` | bytes | `equality`, `ore`, `ope` | `Eq` |
+| `bool` | a boolean | none | none |
+| `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
+| `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
+| `int8`, `uint8` (`byte`) | an 8-bit integer | `equality` | `Eq` |
+| `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` | the same |
+| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
+| `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
+| `encrypt.Date` | a calendar date | `equality` | `Eq` |
+| `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
+
+Each query method needs its index declared. An `ore` or `ope` index on bytes
+stores its term, but the engine answers no ordering through it, so such a
+field has no `Lt` (see [Queries](#queries)).
+
+`encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
+types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
+`ParseDecimal` (which refuses NaN and the infinities). A `time.Time` opens in
+UTC: compare it with `Equal`, not `==`. A decimal opens at the scale it was
+sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
+`encrypt.Date` is not a date, and `Encrypt` or a query refuses it with
+`ErrEncoding`, naming the field; so is a decimal or a `time.Time` outside
+vitaminc's range. A sealed field cannot be a pointer, so an optional date has
+no sealed form yet: keep it in an opaque struct, or use a sentinel date. Each integer type seals at its own
+width, and each width is passed to the order scheme as itself, so an `int16`
+field's terms are an `int16`'s. An `int8` or `uint8` field has no order
+index: with 256 values, an order term would rank every row among 256, which
+a few known rows resolve to the values, as a `bool`'s would say which rows
+are true. Equality follows vitaminc's normalisation: an
+integer equals itself at every width, decimals compare at any scale
+(`1.50 = 1.5`), and a timestamp compares to the microsecond, truncated, never rounded. An order index on
+a decimal, date or timestamp is refused for now: the engine derives no
+order term for those kinds yet.
+
+A `match` index stores text with no token (an empty string, separator-only
+text, or text shorter than the n-gram length of 3 characters) as the empty
+filter: a valid value that no query matches, so an optional or short value can
+live under `match`. The empty filter tells anyone who can read the column that
+the value is one of those. A match *query* of such text is refused with
+`ErrTerm`, because an empty filter as a query would match every row. An EQL
+`TextMatch` field is stricter, as "EQL columns" below says.
 
 Terms are byte-equal to the ones the Rust crate derives, so a term from
-`users.Fields.Email.Equality` compares against a stored term written from any
+`users.Fields.Email.Eq` compares against a stored term written from any
 language. `EqualityTerm.Equal` compares in constant time; `OreTerm.Compare`
 and `OpeTerm.Compare` order as the plaintexts; `MatchTerm.Positions` decodes
 the token positions.
@@ -215,8 +294,123 @@ A database can compare some terms by itself:
 - `Ore`: do not compare in SQL. Plain byte order is almost always right, and
   sometimes wrong, with no error. Compare in Go with `OreTerm.Compare`, or
   use an EQL type (`encrypt_into=`), which the database compares correctly.
-- `Match`: do not compare in SQL. Decode the positions in Go with
-  `MatchTerm.Positions`, or use an EQL type.
+- `Match`: a row matches when its stored filter holds every position of the
+  query's term. Decode both into positions in SQL and compare with `@>`, as
+  [Queries](#queries) shows, or in Go with `MatchTerm.Positions`.
+
+## Queries
+
+Each sealed field's entry in `Fields` has one method for each operator the
+engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` and
+`Matches`. A field has no method for an operator it does not answer, so such
+a query does not compile. The generator asks the engine which operators each
+field answers, and which index answers each one; it holds no copy of those
+rules.
+
+| The field declares | Methods | Each returns |
+|---|---|---|
+| `index=equality` | `Eq` | `encrypt.EqualityTerm` |
+| `index=ore` or `index=ope`, on an integer of 16 bits or wider or a string | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
+| the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
+| `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
+| `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
+| `encrypt_into=TextMatch` | `Matches` | `encrypt.EQLMatchQuery[eql.TextMatchQuery, T]` |
+
+A method takes the field's own Go type, so `Fields.Age.Lt` on a `uint32`
+field takes a `uint32`.
+
+Text orders by its folded form (ADR-0002): case and accents are folded and
+`ß` becomes `ss`, under Unicode 16. So `Café`, `cafe` and `CAFÉ` are one
+value and tie, `alice` orders before `Zoe`, and `é` orders with `e`, not
+after `z`. `Between` is inclusive at both ends and, as SQL's `BETWEEN`,
+does not refuse a range whose low bound is above its high bound: such a
+range matches nothing. So `Between("b", "A")` matches nothing, since `A`
+folds to `a`, below `b`. Text holding a code point Unicode 16 does not assign has no
+fold, and its query or write is refused with `encrypt.ErrTerm`.
+
+Floats order as PostgreSQL's `float8` does (ADR-0002): `-0.0` and `0.0` are
+one value, and every NaN is one value, above `+Inf`, so `Between(math.NaN(),
+math.Inf(1))` matches nothing. A `float32` orders as the `float64` it
+widens to.
+
+An order index on bytes stores its term but answers no ordering
+operator, so such a field has no `Lt`; nor does the `ope` index of a field
+that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
+the generated file: the terms are stored, and only your own code can compare
+them. A match index on an index-only field (`index=match` with no `encrypt`)
+is refused, because `Verify` checks a match query's rows by decrypting them.
+
+Every query type implements `driver.Valuer`, so it binds as a parameter in
+any library built on `database/sql` or pgx. A `Range` binds as two
+parameters, `Low` and `High`. On an EQL column a range is one value instead:
+package `encrypt/eql` has a range query type per ordered family and order
+index (`eql.IntegerRangeOreQuery`, `eql.TextRangeOpeQuery`, ...), the one
+operand of `eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`. Keep
+the cast to the exact range domain: an uncast `$1`, a `jsonb` parameter, or a
+range of another term or family fails with SQLSTATE 42725 ("function ... is
+not unique"), unlike the single-bound operators, which resolve an untyped
+`$1`. The ordered EQL types are producible, but `stashgen` does not yet
+generate a `Between` method or construct these range query values. Their
+generated fields expose the four single-bound comparisons.
+
+`Eq`, the orderings and `Between` are exact: the server's answer is the
+answer. `Matches` is probabilistic: the server answers with every row whose
+stored filter holds the query's bits, which can include rows that do not
+hold the query's text. So `MatchQuery` carries two more methods, and an
+exact query's type carries neither (on an `encrypt_into=TextMatch` field,
+`Matches` returns an `encrypt.EQLMatchQuery`, the `eql.TextMatchQuery`
+operand with the same two):
+
+- `TargetLimit(ctx, want, stats)` is how many rows to fetch for `want` of
+  them to verify. A field declared with tags states no expected number of
+  tokens, so with no measured histogram of the stored filters in
+  `encrypt.Stats` the limit is unbounded, and `Limit.FetchOr(page)` fetches
+  a page.
+- `Verify(ctx, values)` says, for each decrypted value of a page, whether it
+  really holds the query's text: one call into the engine for the page, with
+  no key.
+
+The example below uses separate byte columns, as [`example/`](example/)
+declares its fields (`Email` with `stash:"email,encrypt,index=equality;match"`,
+`Age` with `stash:"age,encrypt,index=equality;ore"`), not the `encrypt_into`
+`User` of the quick start:
+
+```go
+// Positions of a stored filter or a match term, for @>.
+const positions = `CREATE FUNCTION match_positions(term bytea) RETURNS int[]
+LANGUAGE sql IMMUTABLE STRICT AS $$
+  SELECT coalesce(array_agg(get_byte(term, 2 * i) | (get_byte(term, 2 * i + 1) << 8)), '{}')
+  FROM generate_series(0, length(term) / 2 - 1) AS i
+$$`
+
+q, err := users.Fields.Email.Matches(ctx, cipher, "alice")
+limit, err := q.TargetLimit(ctx, 10, encrypt.Stats{Rows: rowCount})
+
+rows, err := db.QueryContext(ctx, `
+	SELECT id, email, email_eq, email_match, age, age_eq, age_ore FROM users
+	WHERE match_positions(email_match) @> match_positions($1)
+	ORDER BY id LIMIT $2`, q, limit.FetchOr(50))
+// scan each row into a users.Encrypted, then
+people, err := users.Decrypt(ctx, cipher, encrypted)
+emails := make([]string, len(people))
+for i, p := range people {
+	emails[i] = p.Email
+}
+verified, err := q.Verify(ctx, emails)
+hits := people[:0]
+for i, p := range people {
+	if verified[i] {
+		hits = append(hits, p)
+	}
+}
+```
+
+`Verify` cuts the query's text into tokens again in the engine, with the
+field's own tokenizer, so a `MatchQuery` keeps that text for as long as the
+program holds the query. Go cannot wipe a string: the text stays in memory
+until the garbage collector reclaims it, as the string you passed in does.
+A `MatchQuery` never prints it; `fmt`, `slog` and `%#v` show the field and
+the size of the term only.
 
 ## Errors
 
@@ -233,7 +427,11 @@ or for stored data. Check an error two ways.
   its field's context (ZeroKMS refuses the key, or the AEAD fails).
 - `ErrEncoding`: a stored value or a call that does not fit the declaration.
 - `ErrUnauthorized`, `ErrNotFound`, `ErrTransport`, `ErrKMS`: ZeroKMS.
-- `ErrState`: a call on a closed client. `ErrMemoryLock`: see below.
+- `ErrState`: a call on a closed client: you closed it, or the guest
+  trapped or ran on long after a call's context ended (see Connect).
+  `ErrMemoryLock`: see below.
+- `context.Canceled`, `context.DeadlineExceeded`: the call's `ctx` ended.
+  The client is still open.
 
 `errors.As` with a `*Diagnostic` gives you the detail behind a failure the
 engine reports: a stable `Code` (`stack_encrypt::foreign_keyset`,
@@ -280,16 +478,246 @@ package documentation for the full account.
 ## EQL columns
 
 A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
-PostgreSQL holds in a `public.eql_v3_text_eq` column, as an `eql.TextEq`
-from package `encrypt/eql`. The guest builds the value: the generated code
+PostgreSQL holds in a `public.eql_v4_text_eq` column, as an `eql.TextEq`
+from package `encrypt/eql`. Stack Encrypt writes EQL v4, the `eql_v4` install
+of EQL's SQL; the `eql_v3` columns the TypeScript SDK writes hold
+cipherstash-client's terms, which these never match. Install EQL v4 into
+PostgreSQL first, with the `eql-v4-install.sql` attached to each Go release
+(`psql -f eql-v4-install.sql`); `stash eql install` installs EQL v3 only, and
+an `eql_v4_*` column needs the v4 domains.
+
+The EQL types the engine produces, and the Go field types each takes:
+
+| EQL type | Go field | Queries |
+|---|---|---|
+| `TextEq` | `string` | `=`, `<>` |
+| `TextMatch` | `string` | `@@` (3-grams and whole two-letter words, case-insensitive; see below) |
+| `TextOrd`, `TextOrdOpe`, `TextOrdOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `TextSearch`, `TextSearchOre` | `string` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY`, `@@` |
+| `Text` | `string` | none: stored and read only |
+| `Smallint` | `int16`, or any Go integer type (see below) | none |
+| `SmallintEq` | the same | `=`, `<>` |
+| `SmallintOrd`, `SmallintOrdOpe`, `SmallintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Integer` | `int32`, or any Go integer type (see below) | none |
+| `IntegerEq` | the same | `=`, `<>` |
+| `IntegerOrd`, `IntegerOrdOpe`, `IntegerOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Bigint` | `int64`, or any Go integer type | none |
+| `BigintEq` | the same | `=`, `<>` |
+| `BigintOrd`, `BigintOrdOpe`, `BigintOrdOre` | the same | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Boolean` | `bool` | none |
+| `Real` | `float32` | none |
+| `RealEq` | `float32` | `=`, `<>` |
+| `RealOrd`, `RealOrdOpe`, `RealOrdOre` | `float32` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Double` | `float64` | none |
+| `DoubleEq` | `float64` | `=`, `<>` |
+| `DoubleOrd`, `DoubleOrdOpe`, `DoubleOrdOre` | `float64` | `=`, `<>`, `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Date` | `encrypt.Date` | none |
+| `DateEq` | `encrypt.Date` | `=`, `<>` |
+| `DateOrd`, `DateOrdOpe`, `DateOrdOre` | `encrypt.Date` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Timestamp` | `time.Time` | none |
+| `TimestampEq` | `time.Time` | `=`, `<>` (to the microsecond, truncated) |
+| `TimestampOrd`, `TimestampOrdOpe`, `TimestampOrdOre` | `time.Time` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `Numeric` | `encrypt.Decimal` | none |
+| `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
+| `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
+| `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, several members of one array element, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
+
+Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
+is sealed at the type's width, and opens back into the field's type. A type
+every value of which fits (an `int16` or a `uint16` field for `Integer`, an
+`int8` for `Smallint`)
+always seals; a wider one (an `int64` or a `uint32` field for `Integer`) is
+range checked value by value, and `Encrypt` refuses a value that does not fit
+with `ErrEncoding`, naming the field's kind and not the value.
+`encrypt.Int128` and `encrypt.Uint128` are not converted, and floats take
+exactly their own width.
+
+A `TextMatch` value is indexed by its 3-grams and by each two-letter word
+whole, so a two-letter surname such as "Ng" is stored, and `Matches` with
+"ng" finds the rows holding the word "Ng" ("Ng", "Mike Ng"), not "Nguyen".
+A query's two-letter words must be whole words of the row, so "Mike Ng" does
+not find "Mike Nguyen". The word token reveals one more token per two-letter
+word, in the same filter: someone who clusters tokens across rows can tell
+"Ng" from "Nguyen", where before only the trigram they share was visible.
+Text that cuts no token, such as an empty string or one letter, is refused. A
+`TextSearch` value of such text is stored with an empty match filter: `Eq`,
+`Lt`, `Lte`, `Gt` and `Gte` find it through its other terms, and no
+`Matches` query does. A `TextSearch` query carries only the term its
+operator reads, so `Eq` and `Lt` on one-letter text work and `Matches` on it
+is refused; EQL v4 raises if a query lacks the term its operator compares. The number
+equality types compare as
+PostgreSQL compares the plain types: an integer equals itself whatever its
+width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
+decrypts to exactly what was written. The same holds for the date,
+timestamp and numeric types: `NumericEq` normalises the scale, so `1.5` and
+`1.50` are equal, and `TimestampEq` compares to the microsecond, truncating
+(never rounding) the nanoseconds below it, so two instants in one
+microsecond are equal; each still opens as it was written, a
+decimal with its scale and a `time.Time` with its nanoseconds, in UTC. A
+`time.Time` is sealed as its instant, whatever its location. A zero
+`encrypt.Date`, a date or instant outside years -262143 to 262142 and a
+decimal with more than 28 digits after the point are refused with
+`ErrEncoding`. Ordered dates compare by day, timestamps by the truncated
+microsecond, and decimals by value (`1.5` ties `1.50`).
+
+The `Ord` and `OrdOpe` types store an OPE term, which EQL compares as bytes,
+and order by ADR-0002's order key: integers by value, floats as PostgreSQL's
+`float8` sorts them (`-0.0` ties `0.0`, every NaN is one value after
+`+Infinity`), text by its fold (case and accents folded, under Unicode 16).
+A field gets `Lt`, `Lte`, `Gt` and `Gte`, and a text field `Eq` too; sort
+with `ORDER BY eql_v4.ord_term(col)`. `ord_term` returns a `bytea` domain, so
+a plain functional btree index, `CREATE INDEX ON t (eql_v4.ord_term(col))`,
+serves `<`, `>` and `ORDER BY` with no operator class. That is why these
+types work on an install without superuser rights, where the ORE operator
+class is skipped. On a number column SQL's `=` compares
+the order term; stashgen writes no `Eq` method for one yet, since the engine
+answers `Eq` through an equality term only. A text order type also stores
+`TextEq`'s equality term, and `=` reads that, so `Café` and `cafe` are
+neither `<` nor `>` each other and not `=` either. Text holding a code point
+Unicode 16 does not assign has no order term and is refused. There is no
+generated `Between` method on these EQL fields yet, although EQL v4 has
+range query domains and `eql_v4.between` for them.
+
+The `OrdOre` types and `TextSearchOre` order by the same key, through a block
+ORE term (ore-rs's 6-bit schemes) in place of the OPE term. Each term
+carries a random nonce, so EQL v4's own comparator orders them, not their
+bytes: sort with `ORDER BY eql_v4.ord_term_ore(col)`, and index with
+`CREATE INDEX ON t USING btree (eql_v4.ord_term_ore(col))`. That index needs
+the ORE operator class, which only a superuser install creates; elsewhere
+the installer disables these domains, and the `Ord` types are the ones to
+use. Text whose fold is longer than 1023 bytes, or ends in NUL, has no block
+ORE term and is refused, stored or queried.
+
+The catalog in `eql.Types` also lists EQL types the engine does not produce,
+with the reason for each; `stashgen` refuses those types with that reason.
+The guest builds a producible value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
 EQL types and registers it on import, so the program runs that build and
-stores what it returns. `Fields.Email.Query` returns the `eql.TextEqQuery`
-the column's `eql_v3.query_text_eq` operand takes. `mise run
+stores what it returns. `Fields.Email.Eq` returns the `eql.TextEqQuery`
+the column's `eql_v4.query_text_eq` operand takes; `TextEq` answers `eq`
+alone, and a `TextMatch` field's `Matches` returns an
+`encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand with `Verify` and
+`TargetLimit`. `mise run
 wasm:guest:build:eql` builds that guest beside the other. A cipher extended
 with a tenant part refuses a struct with an `encrypt_into` field: an EQL
 value is stored under a table and a column, and the extended label has no
 column.
+
+### Encrypted JSON documents
+
+`JsonSearch` stores a whole JSON document in one `public.eql_v4_json_search`
+column, from a struct, map or slice field, or a `json.RawMessage`
+(`stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`). See the
+[stashgen reference](../cmd/stashgen/README.md#encrypted-json-documents) and
+the [runnable typed-document example](example/json/README.md). A struct is
+marshalled with `encoding/json` when it is
+sealed and read back into its type when it is opened. Its numbers come back
+exactly; the stashgen README lists what `encoding/json` does not keep
+(invalid UTF-8, a nil map or slice, a time's zone). Unlike the types above,
+a type defined over `json.RawMessage` (`type Doc json.RawMessage`) is
+refused; an alias of it (`type Doc = json.RawMessage`) is accepted. One
+entry per node is encrypted, so the database can test containment, equality
+and ordering at a path, return one node with `->`, and walk a subtree,
+without decrypting:
+
+```go
+q, err := users.Fields.Profile.Contains(ctx, cipher, map[string]any{"plan": "pro"})
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @> $1::eql_v4.query_json`, q)
+
+read, err := users.Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{})
+// SELECT e FROM users, eql_v4.json_tree_subtree(profile, $1::text[], 64) AS e WHERE id = $2
+// with read.Tokens() as $1; collect each row's entries, then:
+values, err := read.Open(ctx, entriesPerRow)
+at, err := encrypt.DecodeJSON[int64](values[0][0])
+```
+
+A needle or a value is a `json.RawMessage` of JSON text, or any Go value
+`encoding/json` writes. A document contains a needle when it holds every
+member the needle writes, and `encoding/json` writes a zero struct field
+that has no `omitempty`: that field narrows the query to documents holding
+the zero. Give a needle struct pointer fields with `omitempty`, or use a
+map. `Contains` refuses a needle of the field's own struct type for this
+reason. Each value a read opens is JSON text, and `encrypt.DecodeJSON` reads
+it into a Go type.
+
+A selection or read opens rows only as answers to the request that prepared
+it: the engine derives the selector or the read again from the field, the
+path and the cipher's keyset, and refuses a row that is not one it asked
+for. It does not prove the database returned every row, or rows of the
+database row you meant. `encrypt.JSONTokens` binds as a `text[]` literal,
+and a selector or token as `text`; cast each parameter, as above, so
+PostgreSQL picks EQL's operator and not `jsonb`'s; a zero one is refused
+rather than bound. A token is a capability over its node's subtree in every
+row of the column, and a path's keys can be your customer's data, so
+`JSONToken`, `JSONTokens`, `JSONSelection` and `JSONRead` print and log with
+the tokens, the selector and the path redacted. A `JSONValue` holds the
+plaintext a read opened, and prints it. Numbers order as `float64`,
+so integers past 2^53 can tie at an ordered path; containment and `EqAt`
+compare them exactly. At a wildcard path, `->` returns an unspecified
+element of each row, so an ordering over every element is written over
+`eql_v4.json_tree_path_query(col, $sel)`, its matches (the stashgen README
+shows the SQL).
+
+Two such queries can each be answered by a different element. To test
+several members of one array element together, use `Match` on the array's
+accessor under `Elements`. A field has one for each array whose elements
+have an ordered member (`ordered=$.visits[*].at;$.visits[*].place`). The
+generated `Paths` names those members, nested as the JSON nests them, and
+`encrypt.AtPath` makes a predicate from one:
+
+```go
+q, err := users.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+	encrypt.AtPath(users.Paths.Profile.Visits.Place).Eq("home"),
+	encrypt.AtPath(users.Paths.Profile.Visits.At).Gt(15),
+)
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)`, q)
+```
+
+A path carries its array and the member's Go type from the document's
+struct, so a value of another type, or a predicate on another array's
+member, does not compile. For a filter built at run time, name the member
+with the array's `Member`:
+`users.Fields.Profile.Elements.Visits.Member("place").Eq("home")`. A member
+named so that the field does not order is refused before the engine is
+asked, naming it.
+
+Each comparison is of the member's ordering term, so `Eq` compares text
+case- and accent-folded, and integers past 2^53 can tie; `EqAt` is exact.
+A row whose array is longer than
+`JSONReadOptions.WildcardBound` (64 by default) fails the query with
+SQLSTATE 22023.
+
+A whole filter binds as one parameter with the field's `Match`: a jsonpath
+predicate and its variables, as plaintext `jsonb_path_match(col, $1, $2)`
+takes them. The engine reads the predicate and compiles it into a tree of
+the operands above; the Go side reads none of it.
+
+```go
+q, err := users.Fields.Profile.Match(ctx, cipher,
+	`$."plan" == $plan && $."age" < $max`,
+	map[string]any{"plan": "pro", "max": 40}, encrypt.JSONReadOptions{})
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @@ $1::eql_v4.query_json_predicate`, q)
+```
+
+`eql_v4.json_tree_match(profile, $1::eql_v4.query_json_predicate)` returns
+the same rows. The variables are any value `encoding/json` writes as an
+object, or `nil` for none. The grammar is paths of `.key`, `."key"` and
+`[*]`; `==`, `!=`, `<`, `<=`, `>`, `>=` with a variable or a JSON literal;
+`exists(path)` and `exists(path ? (@.a == $x && @.b > $y))`; `&&`, `||` and
+`!(…)`. An ordering, and each member of a filter of more than one condition,
+needs its path in `ordered=`. Anything else is refused as a `*Diagnostic`
+wrapping `ErrEncoding`, whose `Reason()`, `Construct()` and `At()` give the
+reason, the construct in the grammar's words and the byte offset in the
+predicate, never its text or the values. Each row answers as
+`jsonb_path_match` does over its plaintext, save five cases the stashgen
+README lists: lax unwrapping and wrapping of arrays are not applied, a
+string compared with a number is false under `==`, orderings and
+multi-condition filters compare folded terms, and an ordering of a `null`
+is NULL rather than false outside an odd number of `!`, which returns the
+same rows. The tree is evaluated inside a
+function, so no index engages: where a query needs one, write its leaves
+with `EqAt`, `Contains` and `At.<Path>`, whose `@>` and `->` comparisons
+use the GIN and btree indexes, or put one beside `Match` to narrow the rows.
 
 ## Building
 

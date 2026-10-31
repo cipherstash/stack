@@ -3,10 +3,12 @@ mod common;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use eql_bindings::encryption::NativeCiphertextVisitor as NativeLeaf;
 use eql_bindings::v3::terms::{Ciphertext, Hmac256};
-use eql_bindings::v3::text::{TextEq, TextEqQuery};
-use eql_bindings::{Identifier, SchemaVersion};
+use eql_bindings::v4::text::{TextEq, TextEqQuery};
+use eql_bindings::v4::SchemaVersion;
+use eql_bindings::Identifier;
 use stack_encrypt::target::transcode::{Reader, Transcode};
-use stack_encrypt::{Cipher, Encrypt, IntoAad, NonEmpty};
+use stack_encrypt::{Encrypt, NonEmpty};
+use vitaminc_aead::plaintext::Sink;
 
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "email").unwrap()
@@ -27,11 +29,12 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
         let value = text.to_owned();
         let stored: TextEq = keyset.encrypt_as(&value, column()).await.unwrap();
         let json = serde_json::to_value(&stored).unwrap();
-        assert_eq!(json["v"], 3);
+        assert_eq!(json["v"], 4, "Stack Encrypt writes EQL v4");
         assert_eq!(json["i"], serde_json::json!({"t":"users", "c":"email"}));
         assert_eq!(json.as_object().unwrap().len(), 4);
-        // The marker is the only thing that separates this producer profile
-        // from cipherstash-client ciphertext in the same column. Encryption
+        // The marker is what separates this producer profile from
+        // cipherstash-client ciphertext inside the payload; the `eql_v4`
+        // domain separates them in the database. Encryption
         // and decryption read one constant, so a round trip cannot notice it
         // changing; rows written under the old text would then stop opening.
         let encoded = json["c"].as_str().unwrap();
@@ -118,13 +121,26 @@ async fn independent_queries_match_native_terms_without_requesting_data_keys() {
     let json = serde_json::to_value(&query).unwrap();
     assert!(json.get("c").is_none());
     assert_eq!(serde_json::from_value::<TextEqQuery>(json).unwrap(), query);
-    for different in ["CAFÉ", "cafe\u{301}", "café "] {
-        let probe: TextEqQuery = reader
-            .default_keyset()
-            .encrypt_as(&different.to_owned(), column())
-            .await
-            .unwrap();
-        assert_ne!(query.hm, probe.hm, "no added normalization or case folding");
+    let probe = |text: &str| {
+        let text = text.to_owned();
+        let keyset = reader.default_keyset();
+        async move {
+            let probe: TextEqQuery = keyset.encrypt_as(&text, column()).await.unwrap();
+            probe.hm
+        }
+    };
+    // Unicode 16 NFC: the same text in its other normal form is one value.
+    assert_eq!(
+        probe("cafe\u{301}").await,
+        probe("caf\u{e9}").await,
+        "text is compared in NFC"
+    );
+    for different in ["CAFÉ", "café "] {
+        assert_ne!(
+            query.hm,
+            probe(different).await,
+            "no case folding or trimming"
+        );
     }
     let calls = calls.lock().unwrap();
     assert!(calls.generate.is_empty());
@@ -289,12 +305,13 @@ async fn a_column_batches_generation_and_retrieval_under_the_same_descriptors() 
 #[derive(Clone)]
 struct WithoutSerde(String);
 impl Encrypt for WithoutSerde {
-    fn encrypt_with_aad<'a, C: Cipher, A: IntoAad<'a>>(
-        self,
-        cipher: C,
-        aad: A,
-    ) -> Result<C::Ok, C::Error> {
-        self.0.encrypt_with_aad(cipher, aad)
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit(sink)
+    }
+}
+impl Encrypt for &WithoutSerde {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (&self.0).visit(sink)
     }
 }
 #[tokio::test]
@@ -313,9 +330,9 @@ async fn leaf_transcoding_requires_no_serde_and_refuses_container_shapes() {
         .is_err());
 }
 
-/// Needs an EQL v3 installation; uses fresh real ciphertext with a fake key source.
+/// Needs an EQL v4 installation; uses fresh real ciphertext with a fake key source.
 #[test]
-#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v3 database"]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -329,8 +346,8 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
     )
     .unwrap();
     db.batch_execute(
-        "CREATE TEMP TABLE text_eq_roundtrip (id int PRIMARY KEY, email public.eql_v3_text_eq);
-        CREATE INDEX text_eq_email_idx ON text_eq_roundtrip (eql_v3.eq_term(email));",
+        "CREATE TEMP TABLE text_eq_roundtrip (id int PRIMARY KEY, email public.eql_v4_text_eq);
+        CREATE INDEX text_eq_email_idx ON text_eq_roundtrip (eql_v4.eq_term(email));",
     )
     .unwrap();
     for (id, value) in [
@@ -344,7 +361,7 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
             .unwrap();
         let json = serde_json::to_string(&record).unwrap();
         db.execute(
-            "INSERT INTO text_eq_roundtrip VALUES ($1, $2::text::jsonb::public.eql_v3_text_eq)",
+            "INSERT INTO text_eq_roundtrip VALUES ($1, $2::text::jsonb::public.eql_v4_text_eq)",
             &[&id, &json],
         )
         .unwrap();
@@ -359,7 +376,7 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
         })
         .unwrap();
     let json = serde_json::to_string(&query).unwrap();
-    let rows = db.query("SELECT id, email::text FROM text_eq_roundtrip WHERE email = $1::text::jsonb::eql_v3.query_text_eq ORDER BY id", &[&json]).unwrap();
+    let rows = db.query("SELECT id, email::text FROM text_eq_roundtrip WHERE email = $1::text::jsonb::eql_v4.query_text_eq ORDER BY id", &[&json]).unwrap();
     assert_eq!(
         rows.iter().map(|r| r.get::<_, i32>(0)).collect::<Vec<_>>(),
         [1, 3]
@@ -371,7 +388,7 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
             .unwrap();
         assert_eq!(value, "alice@example.com");
     }
-    let different = db.query("SELECT id FROM text_eq_roundtrip WHERE email <> $1::text::jsonb::eql_v3.query_text_eq ORDER BY id", &[&json]).unwrap();
+    let different = db.query("SELECT id FROM text_eq_roundtrip WHERE email <> $1::text::jsonb::eql_v4.query_text_eq ORDER BY id", &[&json]).unwrap();
     assert_eq!(
         different
             .iter()
@@ -380,7 +397,7 @@ fn postgres_stores_queries_indexes_and_returns_decryptable_text() {
         [2, 4]
     );
     db.batch_execute("SET enable_seqscan = off").unwrap();
-    let plan = db.query("EXPLAIN SELECT * FROM text_eq_roundtrip WHERE email = $1::text::jsonb::eql_v3.query_text_eq", &[&json]).unwrap();
+    let plan = db.query("EXPLAIN SELECT * FROM text_eq_roundtrip WHERE email = $1::text::jsonb::eql_v4.query_text_eq", &[&json]).unwrap();
     assert!(
         plan.iter()
             .any(|r| r.get::<_, &str>(0).contains("text_eq_email_idx")),
