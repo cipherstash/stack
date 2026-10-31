@@ -13,8 +13,9 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(script).toMatch(/cargo nextest run[^\n]*--test conformance/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test declarations/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test runtime_conformance/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test read_conformance/)
     expect(script).toContain(
-      "go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance|TestRuntimeConformance)$' ./encrypt",
+      "go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance|TestRuntimeConformance|TestReadConformance)$' ./encrypt",
     )
   })
 
