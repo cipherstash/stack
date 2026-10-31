@@ -183,3 +183,13 @@ var (
 	WantDiagnostic = wantDiagnostic
 	WantCode       = wantCode
 )
+
+// CheckFrameForTest reaches the engine parser without host Plan validation or
+// lowering, so the shared grammar can include malformed declarations. The
+// checker has no cipher, credentials or usable transport.
+func (k *Checker) CheckFrameForTest(ctx context.Context, encoded []byte) error {
+	_, err := k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.planCheck, buf(encoded))
+	})
+	return err
+}

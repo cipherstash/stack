@@ -3,7 +3,7 @@
 This directory holds a shared test contract for Stack Encrypt bindings. The
 [implementation plan](../../docs/plans/2026-10-31-stack-encrypt-conformance.md)
 sets out the wider work; [coverage.md](coverage.md) maps existing evidence and
-gaps. This first profile is **experimental**, not certification of an entire SDK.
+gaps. These profiles are **experimental**, not certification of an entire SDK.
 
 ## Run
 
@@ -18,11 +18,28 @@ No credentials or database are required. The task refuses a missing test guest.
 It runs native Rust against frozen vectors, Go against the same vectors, then
 native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
+The same task runs the shared declaration acceptance/rejection corpus in both
+languages, with native observations of normalization.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## `record-declarations-v1` contract
+
+The [declaration grammar](declaration-grammar.md) defines the engine's current
+record-plan syntax, defaults, context rules, kind/index table and null policies.
+`v1/declarations.json` contains 201 cases, including malformed frames and all
+21 kinds against five scalar indexes. The resolver is explicitly `none`; EQL
+targets need their own profile.
+
+The runners are `packages/stack-encrypt/tests/declarations.rs` and
+`languages/golang/encrypt/declaration_conformance_test.go`. Both call the engine
+without a cipher. Valid-frame declaration diagnostics agree exactly; malformed
+frames document the different native-parser and WASI-boundary classifications.
+Native Rust also checks normalization observations. Go's checker does not expose
+the parsed plan, so it asserts acceptance and diagnostics.
 
 ## `record-scalars-v1` contract
 

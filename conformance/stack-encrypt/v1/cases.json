@@ -2,9 +2,7 @@
   "version": 1,
   "profile": "record-scalars-v1",
   "seed": "0000000000000000000000000000000000000000000000000000000000000000",
-  "context": [
-    "conformance"
-  ],
+  "context": ["conformance"],
   "field": "value",
   "required_capabilities": [
     "records",
