@@ -39,7 +39,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use base64ct::{Base64, Encoding};
-use proptest::prelude::RngCore;
+use proptest::prelude::Rng;
 use proptest::test_runner::TestRng;
 use serde_json::{json, Value};
 

@@ -150,14 +150,18 @@ const PUBLISHED_MIGRATIONS = [
     //      baseline, `2fdc7caf…` → this hash. Taken in preference to a
     //      second `from: null` genesis edge duplicating the bundle SQL
     //      forever, while adoption is still small.
+    //      Re-pinned once more before 3.1.0 published (`f92f5be5…` /
+    //      `af316179…` → these), when 3.1.0's SQL took the
+    //      constant-operation ORE block comparator; the 3.1.0 edge below
+    //      moved with it (`73432f18…`).
     // The baseline is the ONE migration whose baked digest tracks the
     // pinned release rather than a historical one, which is why the
     // lockstep test below has something to match.
     createdAt: '2026-07-14T20:10:24.325Z',
     migrationHash:
-      'f92f5be5239f3388239dfacb006420452003928ce9dc589a5a934486ada7ba22',
+      'cd203837545c166b28762675b69591310ef35c4ad3783660b1bd7277e40d075c',
     installSqlSha256:
-      'af316179aba627347144f3d93e7e3410b46162e4af4332656178b6f9142f0745',
+      'c9404de3dccd6702c7addf9fa748402e7de2ac11fb2b0f6a751d7ec3813d870a',
   },
   {
     dirName: CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
@@ -165,9 +169,9 @@ const PUBLISHED_MIGRATIONS = [
     ops: v3Upgrade310Ops,
     createdAt: '2026-10-05T06:28:35.158Z',
     migrationHash:
-      '73432f18671f840b97522ca8aafb3a3f021d91b38b1d05981a0efb71c13657a8',
+      'dbf05d613aefeee865fe56b4eec40e9fc29a5261c9b435971d76fa39621fff13',
     installSqlSha256:
-      'af316179aba627347144f3d93e7e3410b46162e4af4332656178b6f9142f0745',
+      'c9404de3dccd6702c7addf9fa748402e7de2ac11fb2b0f6a751d7ec3813d870a',
   },
   {
     dirName: CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,

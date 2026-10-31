@@ -13,9 +13,9 @@ use crate::{AuthError, Token};
 /// reqwest's fetch-backed futures are not `Send` (they reference JS handles
 /// via `Rc<RefCell<...>>`) and edge runtimes are single-threaded anyway.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) trait Refresher: Send + Sync {
+pub(crate) trait Refresher: Send + Sync + 'static {
     /// The credential extracted from the current token before a refresh attempt.
-    type Credential: Send;
+    type Credential: Send + 'static;
 
     /// Persist a token after a successful refresh. Best-effort — implementations
     /// should log on failure rather than returning an error.

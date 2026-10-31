@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use proptest::prelude::RngCore;
+use proptest::prelude::Rng;
 use proptest::test_runner::TestRng;
 
 use super::profile::{

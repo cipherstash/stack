@@ -142,7 +142,7 @@ trybuild = "1"
 # seeded generator its simulator draws from. Default features off, as
 # stack-guest-abi takes it: `std` carries the failure persistence and the
 # ChaCha RNG the runs are seeded with, and nothing else is needed.
-proptest = { version = "1.7", default-features = false, features = ["std"] }
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 
 # The derive diagnostics are recorded with every feature on, as `test:unit`
 # and CI run them. They cannot be relied on to hold under both feature sets
