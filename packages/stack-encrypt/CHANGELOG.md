@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-10-27
 
 ### Breaking
 
@@ -506,6 +506,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry byte is not 0 or 1, which clww-ore's comparator already refuses
   (`TermBytesError::MalformedCllwCiphertext`).
 
+- **stack-encrypt requires stack-kms 0.2 and stack-auth 0.44.** It
+  re-exports `stack_kms::{diagnostic, ErrorPayload}` and stack-kms as
+  `stack_encrypt::kms`, so a crate that names a stack-kms or stack-auth type
+  stack-encrypt takes or returns moves to those versions with it.
 - **stack-encrypt requires the vitaminc 0.8 crates, clww-ore 0.6 and
   ore-rs 0.10.** A crate that names a vitaminc type stack-encrypt takes or
   returns moves to 0.8 with it. What changes for a caller:

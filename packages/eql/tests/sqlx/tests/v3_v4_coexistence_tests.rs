@@ -227,17 +227,24 @@ async fn each_version_matches_its_own_terms(pool: PgPool) -> Result<()> {
 async fn wrong_version_insert_fails_the_domain_check(pool: PgPool) -> Result<()> {
     install_v4(&pool).await?;
 
-    for (domain, version) in [
-        ("public.eql_v3_integer_eq", 4),
-        ("public.eql_v4_integer_eq", 3),
+    // A query domain holds no ciphertext, so its payload drops `c`.
+    for (domain, payload, version) in [
+        ("public.eql_v3_integer_eq", "payload", "4"),
+        ("public.eql_v4_integer_eq", "payload", "3"),
+        // A null version is neither: the CHECK must refuse it, not pass it
+        // as a NULL comparison.
+        ("public.eql_v3_integer_eq", "payload", "null"),
+        ("public.eql_v4_integer_eq", "payload", "null"),
+        ("eql_v3.query_integer_eq", "payload - 'c'", "null"),
+        ("eql_v4.query_integer_eq", "payload - 'c'", "null"),
     ] {
         let err = sqlx::query(&format!(
-            "SELECT jsonb_set(payload, '{{v}}', '{version}')::{domain} \
+            "SELECT jsonb_set({payload}, '{{v}}', '{version}')::{domain} \
              FROM fixtures.eql_v3_integer WHERE plaintext = 42"
         ))
         .execute(&pool)
         .await
-        .expect_err("a payload of the other version must not fit the domain");
+        .expect_err("a payload of another version must not fit the domain");
         assert_eq!(
             sqlstate(&err).as_deref(),
             Some(CHECK_VIOLATION),

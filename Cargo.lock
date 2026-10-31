@@ -3332,7 +3332,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stack-auth"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "aquamarine",
  "axum",
@@ -3474,7 +3474,7 @@ dependencies = [
 
 [[package]]
 name = "stack-kms"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-mutex",
  "base16ct",
@@ -3509,7 +3509,7 @@ dependencies = [
 
 [[package]]
 name = "stack-profile"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "dirs",
  "gethostname",

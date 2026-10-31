@@ -17,7 +17,9 @@ BEGIN
         AND VALUE ? 'v'
         AND VALUE ? 'i'
         AND VALUE ? 'c'
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -35,7 +37,9 @@ BEGIN
         AND VALUE ? 'i'
         AND VALUE ? 'c'
         AND VALUE ? 'hm'
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -53,7 +57,9 @@ BEGIN
         AND VALUE ? 'i'
         AND VALUE ? 'c'
         AND VALUE ? 'bf'
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -80,7 +86,9 @@ BEGIN
         AND jsonb_typeof(VALUE -> 'ob') = 'string'
         AND left(VALUE ->> 'ob', 4) IN ('0202', '0203')
 -- {{/v4}}
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -103,7 +111,9 @@ BEGIN
         AND jsonb_typeof(VALUE -> 'op') = 'string'
         AND left(VALUE ->> 'op', 2) IN ('00', '01')
 -- {{/v4}}
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -126,7 +136,9 @@ BEGIN
         AND jsonb_typeof(VALUE -> 'op') = 'string'
         AND left(VALUE ->> 'op', 2) IN ('00', '01')
 -- {{/v4}}
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -154,7 +166,9 @@ BEGIN
         AND jsonb_typeof(VALUE -> 'ob') = 'string'
         AND left(VALUE ->> 'ob', 4) IN ('0202', '0203')
 -- {{/v4}}
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
@@ -178,7 +192,9 @@ BEGIN
         AND jsonb_typeof(VALUE -> 'op') = 'string'
         AND left(VALUE ->> 'op', 2) IN ('00', '01')
 -- {{/v4}}
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 
