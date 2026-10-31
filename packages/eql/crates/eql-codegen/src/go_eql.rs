@@ -92,8 +92,14 @@ fn table_row(row: &Row) -> String {
     )
 }
 
-/// The four methods every EQL type and query type carries, block-bodied so
-/// gofmt leaves them as written.
+/// The methods every EQL type and query type carries, block-bodied so
+/// gofmt leaves them as written: the driver's and encoding/json's, which
+/// read and write the value as the JSON it is, and fmt's and slog's, which
+/// print and log the type's name and never the value, since a stored value
+/// holds ciphertext and terms and a query value terms. String, Format
+/// (every verb, `%#v` included) and LogValue all write one text, the
+/// helper `text`'s. Reveal is the one way to print the value: the program
+/// asks for it by name at the call that prints or logs it.
 fn methods(out: &mut String, go: &str, domain: &str) {
     let _ = write!(
         out,
@@ -104,7 +110,16 @@ fn methods(out: &mut String, go: &str, domain: &str) {
          \n// MarshalJSON is the EQL value as the JSON it is, or null when empty.\n\
          func (v {go}) MarshalJSON() ([]byte, error) {{\n\treturn marshal(v, {q})\n}}\n\
          \n// UnmarshalJSON reads the EQL value from JSON, as it is.\n\
-         func (v *{go}) UnmarshalJSON(b []byte) error {{\n\treturn unmarshal((*[]byte)(v), b)\n}}\n",
+         func (v *{go}) UnmarshalJSON(b []byte) error {{\n\treturn unmarshal((*[]byte)(v), b)\n}}\n\
+         \n// String names the type and hides the value.\n\
+         func (v {go}) String() string {{\n\treturn text(v, {q})\n}}\n\
+         \n// Format prints String for every verb fmt hands it, %#v included.\n\
+         func (v {go}) Format(f fmt.State, _ rune) {{\n\tformat(f, v, {q})\n}}\n\
+         \n// LogValue is what slog records: String.\n\
+         func (v {go}) LogValue() slog.Value {{\n\treturn logValue(v, {q})\n}}\n\
+         \n// Reveal is the value's JSON as text, ciphertext and terms included, for a\n\
+         // program that means to print or log what String hides.\n\
+         func (v {go}) Reveal() string {{\n\treturn reveal(v)\n}}\n",
         q = quote(go),
     );
 }
@@ -115,7 +130,7 @@ pub fn render_go_eql() -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "{GO_GENERATED_MARKER}\n\npackage eql\n\nimport \"database/sql/driver\"\n"
+        "{GO_GENERATED_MARKER}\n\npackage eql\n\nimport (\n\t\"database/sql/driver\"\n\t\"fmt\"\n\t\"log/slog\"\n)\n"
     );
     out.push_str(
         "// Types is every EQL type the catalog has, in catalog order: what the\n\
@@ -369,6 +384,33 @@ mod tests {
         assert!(out.contains("The engine produces it from an int32."));
         assert!(out.contains("The engine produces it from a float64."));
         assert!(!out.contains("from a int"), "a int32 or a int64");
+    }
+
+    /// Every type the file declares prints and logs through the redacting
+    /// helpers, so none prints its bytes: one String, Format and LogValue
+    /// per `type X []byte`, each the helpers' one text, and one Reveal, the
+    /// named call that gives the JSON. No GoString: fmt reaches Format first
+    /// for `%#v`.
+    #[test]
+    fn every_type_prints_and_logs_redacted() {
+        let out = render_go_eql();
+        let types: Vec<&str> = out
+            .lines()
+            .filter_map(|l| l.strip_prefix("type ")?.strip_suffix(" []byte"))
+            .collect();
+        assert!(types.len() > 50, "{} types", types.len());
+        for go in &types {
+            for method in [
+                format!("func (v {go}) String() string {{\n\treturn text(v, {go:?})\n}}"),
+                format!("func (v {go}) Format(f fmt.State, _ rune) {{\n\tformat(f, v, {go:?})\n}}"),
+                format!("func (v {go}) LogValue() slog.Value {{\n\treturn logValue(v, {go:?})\n}}"),
+                format!("func (v {go}) Reveal() string {{\n\treturn reveal(v)\n}}"),
+            ] {
+                assert_eq!(out.matches(&method).count(), 1, "{method}");
+            }
+        }
+        assert!(!out.contains("GoString"));
+        assert!(out.contains("import (\n\t\"database/sql/driver\"\n\t\"fmt\"\n\t\"log/slog\"\n)\n"));
     }
 
     #[test]

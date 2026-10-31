@@ -241,6 +241,11 @@ func JSONElementMatch[Q ~[]byte, T, E any](context.Context, Field[T], *encrypt.C
 	return nil, nil
 }
 
+// JSONMatch derives match on a JSON field.
+func JSONMatch[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string, any, encrypt.JSONReadOptions) (Q, error) {
+	return nil, nil
+}
+
 // JSONSelect prepares `->` at a path on a JSON field.
 func JSONSelect[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string) (encrypt.JSONSelection[E], error) {
 	return encrypt.JSONSelection[E]{}, nil

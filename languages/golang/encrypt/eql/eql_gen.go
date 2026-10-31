@@ -2,7 +2,11 @@
 
 package eql
 
-import "database/sql/driver"
+import (
+	"database/sql/driver"
+	"fmt"
+	"log/slog"
+)
 
 // Types is every EQL type the catalog has, in catalog order: what the
 // engine's se_targets export lists, as Go. Producible says whether the
@@ -86,6 +90,27 @@ func (v *Integer) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Integer) String() string {
+	return text(v, "Integer")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Integer) Format(f fmt.State, _ rune) {
+	format(f, v, "Integer")
+}
+
+// LogValue is what slog records: String.
+func (v Integer) LogValue() slog.Value {
+	return logValue(v, "Integer")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Integer) Reveal() string {
+	return reveal(v)
+}
+
 // IntegerEq is the EQL type stored in public.eql_v4_integer_eq: the integer family with the eq index.
 // The engine produces it from an int32.
 type IntegerEq []byte
@@ -110,6 +135,27 @@ func (v *IntegerEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v IntegerEq) String() string {
+	return text(v, "IntegerEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerEq) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerEq")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerEq) LogValue() slog.Value {
+	return logValue(v, "IntegerEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerEq) Reveal() string {
+	return reveal(v)
+}
+
 // IntegerEqQuery is the query value for IntegerEq: the operand eql_v4.query_integer_eq takes.
 type IntegerEqQuery []byte
 
@@ -131,6 +177,27 @@ func (v IntegerEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *IntegerEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v IntegerEqQuery) String() string {
+	return text(v, "IntegerEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerEqQuery) LogValue() slog.Value {
+	return logValue(v, "IntegerEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // IntegerOrdOre is the EQL type stored in public.eql_v4_integer_ord_ore: the integer family with the ore_block index.
@@ -157,6 +224,27 @@ func (v *IntegerOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v IntegerOrdOre) String() string {
+	return text(v, "IntegerOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerOrdOre) LogValue() slog.Value {
+	return logValue(v, "IntegerOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // IntegerOrdOreQuery is the query value for IntegerOrdOre: the operand eql_v4.query_integer_ord_ore takes.
 type IntegerOrdOreQuery []byte
 
@@ -178,6 +266,27 @@ func (v IntegerOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *IntegerOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v IntegerOrdOreQuery) String() string {
+	return text(v, "IntegerOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "IntegerOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // IntegerOrd is the EQL type stored in public.eql_v4_integer_ord: the integer family with the ope index.
@@ -204,6 +313,27 @@ func (v *IntegerOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v IntegerOrd) String() string {
+	return text(v, "IntegerOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerOrd")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerOrd) LogValue() slog.Value {
+	return logValue(v, "IntegerOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerOrd) Reveal() string {
+	return reveal(v)
+}
+
 // IntegerOrdQuery is the query value for IntegerOrd: the operand eql_v4.query_integer_ord takes.
 type IntegerOrdQuery []byte
 
@@ -225,6 +355,27 @@ func (v IntegerOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *IntegerOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v IntegerOrdQuery) String() string {
+	return text(v, "IntegerOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerOrdQuery) LogValue() slog.Value {
+	return logValue(v, "IntegerOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // IntegerOrdOpe is the EQL type stored in public.eql_v4_integer_ord_ope: the integer family with the ope index.
@@ -251,6 +402,27 @@ func (v *IntegerOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v IntegerOrdOpe) String() string {
+	return text(v, "IntegerOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerOrdOpe) LogValue() slog.Value {
+	return logValue(v, "IntegerOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // IntegerOrdOpeQuery is the query value for IntegerOrdOpe: the operand eql_v4.query_integer_ord_ope takes.
 type IntegerOrdOpeQuery []byte
 
@@ -272,6 +444,27 @@ func (v IntegerOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *IntegerOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v IntegerOrdOpeQuery) String() string {
+	return text(v, "IntegerOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "IntegerOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Smallint is the EQL type stored in public.eql_v4_smallint: the smallint family with no index.
@@ -298,6 +491,27 @@ func (v *Smallint) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Smallint) String() string {
+	return text(v, "Smallint")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Smallint) Format(f fmt.State, _ rune) {
+	format(f, v, "Smallint")
+}
+
+// LogValue is what slog records: String.
+func (v Smallint) LogValue() slog.Value {
+	return logValue(v, "Smallint")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Smallint) Reveal() string {
+	return reveal(v)
+}
+
 // SmallintEq is the EQL type stored in public.eql_v4_smallint_eq: the smallint family with the eq index.
 // The engine produces it from an int16.
 type SmallintEq []byte
@@ -322,6 +536,27 @@ func (v *SmallintEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v SmallintEq) String() string {
+	return text(v, "SmallintEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintEq) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintEq")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintEq) LogValue() slog.Value {
+	return logValue(v, "SmallintEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintEq) Reveal() string {
+	return reveal(v)
+}
+
 // SmallintEqQuery is the query value for SmallintEq: the operand eql_v4.query_smallint_eq takes.
 type SmallintEqQuery []byte
 
@@ -343,6 +578,27 @@ func (v SmallintEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *SmallintEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v SmallintEqQuery) String() string {
+	return text(v, "SmallintEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintEqQuery) LogValue() slog.Value {
+	return logValue(v, "SmallintEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // SmallintOrdOre is the EQL type stored in public.eql_v4_smallint_ord_ore: the smallint family with the ore_block index.
@@ -369,6 +625,27 @@ func (v *SmallintOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v SmallintOrdOre) String() string {
+	return text(v, "SmallintOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintOrdOre) LogValue() slog.Value {
+	return logValue(v, "SmallintOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // SmallintOrdOreQuery is the query value for SmallintOrdOre: the operand eql_v4.query_smallint_ord_ore takes.
 type SmallintOrdOreQuery []byte
 
@@ -390,6 +667,27 @@ func (v SmallintOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *SmallintOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v SmallintOrdOreQuery) String() string {
+	return text(v, "SmallintOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "SmallintOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // SmallintOrd is the EQL type stored in public.eql_v4_smallint_ord: the smallint family with the ope index.
@@ -416,6 +714,27 @@ func (v *SmallintOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v SmallintOrd) String() string {
+	return text(v, "SmallintOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintOrd")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintOrd) LogValue() slog.Value {
+	return logValue(v, "SmallintOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintOrd) Reveal() string {
+	return reveal(v)
+}
+
 // SmallintOrdQuery is the query value for SmallintOrd: the operand eql_v4.query_smallint_ord takes.
 type SmallintOrdQuery []byte
 
@@ -437,6 +756,27 @@ func (v SmallintOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *SmallintOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v SmallintOrdQuery) String() string {
+	return text(v, "SmallintOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintOrdQuery) LogValue() slog.Value {
+	return logValue(v, "SmallintOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // SmallintOrdOpe is the EQL type stored in public.eql_v4_smallint_ord_ope: the smallint family with the ope index.
@@ -463,6 +803,27 @@ func (v *SmallintOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v SmallintOrdOpe) String() string {
+	return text(v, "SmallintOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintOrdOpe) LogValue() slog.Value {
+	return logValue(v, "SmallintOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // SmallintOrdOpeQuery is the query value for SmallintOrdOpe: the operand eql_v4.query_smallint_ord_ope takes.
 type SmallintOrdOpeQuery []byte
 
@@ -484,6 +845,27 @@ func (v SmallintOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *SmallintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v SmallintOrdOpeQuery) String() string {
+	return text(v, "SmallintOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "SmallintOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Bigint is the EQL type stored in public.eql_v4_bigint: the bigint family with no index.
@@ -510,6 +892,27 @@ func (v *Bigint) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Bigint) String() string {
+	return text(v, "Bigint")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Bigint) Format(f fmt.State, _ rune) {
+	format(f, v, "Bigint")
+}
+
+// LogValue is what slog records: String.
+func (v Bigint) LogValue() slog.Value {
+	return logValue(v, "Bigint")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Bigint) Reveal() string {
+	return reveal(v)
+}
+
 // BigintEq is the EQL type stored in public.eql_v4_bigint_eq: the bigint family with the eq index.
 // The engine produces it from an int64.
 type BigintEq []byte
@@ -534,6 +937,27 @@ func (v *BigintEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v BigintEq) String() string {
+	return text(v, "BigintEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintEq) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintEq")
+}
+
+// LogValue is what slog records: String.
+func (v BigintEq) LogValue() slog.Value {
+	return logValue(v, "BigintEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintEq) Reveal() string {
+	return reveal(v)
+}
+
 // BigintEqQuery is the query value for BigintEq: the operand eql_v4.query_bigint_eq takes.
 type BigintEqQuery []byte
 
@@ -555,6 +979,27 @@ func (v BigintEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *BigintEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v BigintEqQuery) String() string {
+	return text(v, "BigintEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v BigintEqQuery) LogValue() slog.Value {
+	return logValue(v, "BigintEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // BigintOrdOre is the EQL type stored in public.eql_v4_bigint_ord_ore: the bigint family with the ore_block index.
@@ -581,6 +1026,27 @@ func (v *BigintOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v BigintOrdOre) String() string {
+	return text(v, "BigintOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v BigintOrdOre) LogValue() slog.Value {
+	return logValue(v, "BigintOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // BigintOrdOreQuery is the query value for BigintOrdOre: the operand eql_v4.query_bigint_ord_ore takes.
 type BigintOrdOreQuery []byte
 
@@ -602,6 +1068,27 @@ func (v BigintOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *BigintOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v BigintOrdOreQuery) String() string {
+	return text(v, "BigintOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v BigintOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "BigintOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // BigintOrd is the EQL type stored in public.eql_v4_bigint_ord: the bigint family with the ope index.
@@ -628,6 +1115,27 @@ func (v *BigintOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v BigintOrd) String() string {
+	return text(v, "BigintOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintOrd")
+}
+
+// LogValue is what slog records: String.
+func (v BigintOrd) LogValue() slog.Value {
+	return logValue(v, "BigintOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintOrd) Reveal() string {
+	return reveal(v)
+}
+
 // BigintOrdQuery is the query value for BigintOrd: the operand eql_v4.query_bigint_ord takes.
 type BigintOrdQuery []byte
 
@@ -649,6 +1157,27 @@ func (v BigintOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *BigintOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v BigintOrdQuery) String() string {
+	return text(v, "BigintOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v BigintOrdQuery) LogValue() slog.Value {
+	return logValue(v, "BigintOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // BigintOrdOpe is the EQL type stored in public.eql_v4_bigint_ord_ope: the bigint family with the ope index.
@@ -675,6 +1204,27 @@ func (v *BigintOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v BigintOrdOpe) String() string {
+	return text(v, "BigintOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v BigintOrdOpe) LogValue() slog.Value {
+	return logValue(v, "BigintOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // BigintOrdOpeQuery is the query value for BigintOrdOpe: the operand eql_v4.query_bigint_ord_ope takes.
 type BigintOrdOpeQuery []byte
 
@@ -696,6 +1246,27 @@ func (v BigintOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *BigintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v BigintOrdOpeQuery) String() string {
+	return text(v, "BigintOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v BigintOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "BigintOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Date is the EQL type stored in public.eql_v4_date: the date family with no index.
@@ -722,6 +1293,27 @@ func (v *Date) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Date) String() string {
+	return text(v, "Date")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Date) Format(f fmt.State, _ rune) {
+	format(f, v, "Date")
+}
+
+// LogValue is what slog records: String.
+func (v Date) LogValue() slog.Value {
+	return logValue(v, "Date")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Date) Reveal() string {
+	return reveal(v)
+}
+
 // DateEq is the EQL type stored in public.eql_v4_date_eq: the date family with the eq index.
 // The engine produces it from a date.
 type DateEq []byte
@@ -746,6 +1338,27 @@ func (v *DateEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DateEq) String() string {
+	return text(v, "DateEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateEq) Format(f fmt.State, _ rune) {
+	format(f, v, "DateEq")
+}
+
+// LogValue is what slog records: String.
+func (v DateEq) LogValue() slog.Value {
+	return logValue(v, "DateEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateEq) Reveal() string {
+	return reveal(v)
+}
+
 // DateEqQuery is the query value for DateEq: the operand eql_v4.query_date_eq takes.
 type DateEqQuery []byte
 
@@ -767,6 +1380,27 @@ func (v DateEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DateEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DateEqQuery) String() string {
+	return text(v, "DateEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DateEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DateEqQuery) LogValue() slog.Value {
+	return logValue(v, "DateEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DateOrdOre is the EQL type stored in public.eql_v4_date_ord_ore: the date family with the ore_block index.
@@ -793,6 +1427,27 @@ func (v *DateOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DateOrdOre) String() string {
+	return text(v, "DateOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "DateOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v DateOrdOre) LogValue() slog.Value {
+	return logValue(v, "DateOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // DateOrdOreQuery is the query value for DateOrdOre: the operand eql_v4.query_date_ord_ore takes.
 type DateOrdOreQuery []byte
 
@@ -814,6 +1469,27 @@ func (v DateOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DateOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DateOrdOreQuery) String() string {
+	return text(v, "DateOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DateOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DateOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "DateOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DateOrd is the EQL type stored in public.eql_v4_date_ord: the date family with the ope index.
@@ -840,6 +1516,27 @@ func (v *DateOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DateOrd) String() string {
+	return text(v, "DateOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "DateOrd")
+}
+
+// LogValue is what slog records: String.
+func (v DateOrd) LogValue() slog.Value {
+	return logValue(v, "DateOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateOrd) Reveal() string {
+	return reveal(v)
+}
+
 // DateOrdQuery is the query value for DateOrd: the operand eql_v4.query_date_ord takes.
 type DateOrdQuery []byte
 
@@ -861,6 +1558,27 @@ func (v DateOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DateOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DateOrdQuery) String() string {
+	return text(v, "DateOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DateOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DateOrdQuery) LogValue() slog.Value {
+	return logValue(v, "DateOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DateOrdOpe is the EQL type stored in public.eql_v4_date_ord_ope: the date family with the ope index.
@@ -887,6 +1605,27 @@ func (v *DateOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DateOrdOpe) String() string {
+	return text(v, "DateOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "DateOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v DateOrdOpe) LogValue() slog.Value {
+	return logValue(v, "DateOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // DateOrdOpeQuery is the query value for DateOrdOpe: the operand eql_v4.query_date_ord_ope takes.
 type DateOrdOpeQuery []byte
 
@@ -908,6 +1647,27 @@ func (v DateOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DateOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DateOrdOpeQuery) String() string {
+	return text(v, "DateOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DateOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DateOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "DateOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Timestamp is the EQL type stored in public.eql_v4_timestamp: the timestamp family with no index.
@@ -934,6 +1694,27 @@ func (v *Timestamp) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Timestamp) String() string {
+	return text(v, "Timestamp")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Timestamp) Format(f fmt.State, _ rune) {
+	format(f, v, "Timestamp")
+}
+
+// LogValue is what slog records: String.
+func (v Timestamp) LogValue() slog.Value {
+	return logValue(v, "Timestamp")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Timestamp) Reveal() string {
+	return reveal(v)
+}
+
 // TimestampEq is the EQL type stored in public.eql_v4_timestamp_eq: the timestamp family with the eq index.
 // The engine produces it from a timestamp.
 type TimestampEq []byte
@@ -958,6 +1739,27 @@ func (v *TimestampEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TimestampEq) String() string {
+	return text(v, "TimestampEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampEq) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampEq")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampEq) LogValue() slog.Value {
+	return logValue(v, "TimestampEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampEq) Reveal() string {
+	return reveal(v)
+}
+
 // TimestampEqQuery is the query value for TimestampEq: the operand eql_v4.query_timestamp_eq takes.
 type TimestampEqQuery []byte
 
@@ -979,6 +1781,27 @@ func (v TimestampEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TimestampEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TimestampEqQuery) String() string {
+	return text(v, "TimestampEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampEqQuery) LogValue() slog.Value {
+	return logValue(v, "TimestampEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TimestampOrdOre is the EQL type stored in public.eql_v4_timestamp_ord_ore: the timestamp family with the ore_block index.
@@ -1005,6 +1828,27 @@ func (v *TimestampOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TimestampOrdOre) String() string {
+	return text(v, "TimestampOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampOrdOre) LogValue() slog.Value {
+	return logValue(v, "TimestampOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // TimestampOrdOreQuery is the query value for TimestampOrdOre: the operand eql_v4.query_timestamp_ord_ore takes.
 type TimestampOrdOreQuery []byte
 
@@ -1026,6 +1870,27 @@ func (v TimestampOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TimestampOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TimestampOrdOreQuery) String() string {
+	return text(v, "TimestampOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "TimestampOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TimestampOrd is the EQL type stored in public.eql_v4_timestamp_ord: the timestamp family with the ope index.
@@ -1052,6 +1917,27 @@ func (v *TimestampOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TimestampOrd) String() string {
+	return text(v, "TimestampOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampOrd")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampOrd) LogValue() slog.Value {
+	return logValue(v, "TimestampOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampOrd) Reveal() string {
+	return reveal(v)
+}
+
 // TimestampOrdQuery is the query value for TimestampOrd: the operand eql_v4.query_timestamp_ord takes.
 type TimestampOrdQuery []byte
 
@@ -1073,6 +1959,27 @@ func (v TimestampOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TimestampOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TimestampOrdQuery) String() string {
+	return text(v, "TimestampOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampOrdQuery) LogValue() slog.Value {
+	return logValue(v, "TimestampOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TimestampOrdOpe is the EQL type stored in public.eql_v4_timestamp_ord_ope: the timestamp family with the ope index.
@@ -1099,6 +2006,27 @@ func (v *TimestampOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TimestampOrdOpe) String() string {
+	return text(v, "TimestampOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampOrdOpe) LogValue() slog.Value {
+	return logValue(v, "TimestampOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // TimestampOrdOpeQuery is the query value for TimestampOrdOpe: the operand eql_v4.query_timestamp_ord_ope takes.
 type TimestampOrdOpeQuery []byte
 
@@ -1120,6 +2048,27 @@ func (v TimestampOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TimestampOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TimestampOrdOpeQuery) String() string {
+	return text(v, "TimestampOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "TimestampOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Numeric is the EQL type stored in public.eql_v4_numeric: the numeric family with no index.
@@ -1146,6 +2095,27 @@ func (v *Numeric) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Numeric) String() string {
+	return text(v, "Numeric")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Numeric) Format(f fmt.State, _ rune) {
+	format(f, v, "Numeric")
+}
+
+// LogValue is what slog records: String.
+func (v Numeric) LogValue() slog.Value {
+	return logValue(v, "Numeric")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Numeric) Reveal() string {
+	return reveal(v)
+}
+
 // NumericEq is the EQL type stored in public.eql_v4_numeric_eq: the numeric family with the eq index.
 // The engine produces it from a decimal.
 type NumericEq []byte
@@ -1170,6 +2140,27 @@ func (v *NumericEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v NumericEq) String() string {
+	return text(v, "NumericEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericEq) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericEq")
+}
+
+// LogValue is what slog records: String.
+func (v NumericEq) LogValue() slog.Value {
+	return logValue(v, "NumericEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericEq) Reveal() string {
+	return reveal(v)
+}
+
 // NumericEqQuery is the query value for NumericEq: the operand eql_v4.query_numeric_eq takes.
 type NumericEqQuery []byte
 
@@ -1191,6 +2182,27 @@ func (v NumericEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *NumericEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v NumericEqQuery) String() string {
+	return text(v, "NumericEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v NumericEqQuery) LogValue() slog.Value {
+	return logValue(v, "NumericEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // NumericOrdOre is the EQL type stored in public.eql_v4_numeric_ord_ore: the numeric family with the ore_block index.
@@ -1217,6 +2229,27 @@ func (v *NumericOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v NumericOrdOre) String() string {
+	return text(v, "NumericOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v NumericOrdOre) LogValue() slog.Value {
+	return logValue(v, "NumericOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // NumericOrdOreQuery is the query value for NumericOrdOre: the operand eql_v4.query_numeric_ord_ore takes.
 type NumericOrdOreQuery []byte
 
@@ -1238,6 +2271,27 @@ func (v NumericOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *NumericOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v NumericOrdOreQuery) String() string {
+	return text(v, "NumericOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v NumericOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "NumericOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // NumericOrd is the EQL type stored in public.eql_v4_numeric_ord: the numeric family with the ope index.
@@ -1264,6 +2318,27 @@ func (v *NumericOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v NumericOrd) String() string {
+	return text(v, "NumericOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericOrd")
+}
+
+// LogValue is what slog records: String.
+func (v NumericOrd) LogValue() slog.Value {
+	return logValue(v, "NumericOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericOrd) Reveal() string {
+	return reveal(v)
+}
+
 // NumericOrdQuery is the query value for NumericOrd: the operand eql_v4.query_numeric_ord takes.
 type NumericOrdQuery []byte
 
@@ -1285,6 +2360,27 @@ func (v NumericOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *NumericOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v NumericOrdQuery) String() string {
+	return text(v, "NumericOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v NumericOrdQuery) LogValue() slog.Value {
+	return logValue(v, "NumericOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // NumericOrdOpe is the EQL type stored in public.eql_v4_numeric_ord_ope: the numeric family with the ope index.
@@ -1311,6 +2407,27 @@ func (v *NumericOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v NumericOrdOpe) String() string {
+	return text(v, "NumericOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v NumericOrdOpe) LogValue() slog.Value {
+	return logValue(v, "NumericOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // NumericOrdOpeQuery is the query value for NumericOrdOpe: the operand eql_v4.query_numeric_ord_ope takes.
 type NumericOrdOpeQuery []byte
 
@@ -1332,6 +2449,27 @@ func (v NumericOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *NumericOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v NumericOrdOpeQuery) String() string {
+	return text(v, "NumericOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v NumericOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "NumericOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Text is the EQL type stored in public.eql_v4_text: the text family with no index.
@@ -1358,6 +2496,27 @@ func (v *Text) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Text) String() string {
+	return text(v, "Text")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Text) Format(f fmt.State, _ rune) {
+	format(f, v, "Text")
+}
+
+// LogValue is what slog records: String.
+func (v Text) LogValue() slog.Value {
+	return logValue(v, "Text")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Text) Reveal() string {
+	return reveal(v)
+}
+
 // TextEq is the EQL type stored in public.eql_v4_text_eq: the text family with the eq index.
 // The engine produces it from a string.
 type TextEq []byte
@@ -1382,6 +2541,27 @@ func (v *TextEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextEq) String() string {
+	return text(v, "TextEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextEq) Format(f fmt.State, _ rune) {
+	format(f, v, "TextEq")
+}
+
+// LogValue is what slog records: String.
+func (v TextEq) LogValue() slog.Value {
+	return logValue(v, "TextEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextEq) Reveal() string {
+	return reveal(v)
+}
+
 // TextEqQuery is the query value for TextEq: the operand eql_v4.query_text_eq takes.
 type TextEqQuery []byte
 
@@ -1403,6 +2583,27 @@ func (v TextEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextEqQuery) String() string {
+	return text(v, "TextEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextEqQuery) LogValue() slog.Value {
+	return logValue(v, "TextEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TextMatch is the EQL type stored in public.eql_v4_text_match: the text family with the match index.
@@ -1429,6 +2630,27 @@ func (v *TextMatch) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextMatch) String() string {
+	return text(v, "TextMatch")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextMatch) Format(f fmt.State, _ rune) {
+	format(f, v, "TextMatch")
+}
+
+// LogValue is what slog records: String.
+func (v TextMatch) LogValue() slog.Value {
+	return logValue(v, "TextMatch")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextMatch) Reveal() string {
+	return reveal(v)
+}
+
 // TextMatchQuery is the query value for TextMatch: the operand eql_v4.query_text_match takes.
 type TextMatchQuery []byte
 
@@ -1450,6 +2672,27 @@ func (v TextMatchQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextMatchQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextMatchQuery) String() string {
+	return text(v, "TextMatchQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextMatchQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextMatchQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextMatchQuery) LogValue() slog.Value {
+	return logValue(v, "TextMatchQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextMatchQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TextOrdOre is the EQL type stored in public.eql_v4_text_ord_ore: the text family with the eq and ore_block indexes.
@@ -1476,6 +2719,27 @@ func (v *TextOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextOrdOre) String() string {
+	return text(v, "TextOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "TextOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v TextOrdOre) LogValue() slog.Value {
+	return logValue(v, "TextOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // TextOrdOreQuery is the query value for TextOrdOre: the operand eql_v4.query_text_ord_ore takes.
 type TextOrdOreQuery []byte
 
@@ -1497,6 +2761,27 @@ func (v TextOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextOrdOreQuery) String() string {
+	return text(v, "TextOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "TextOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TextOrd is the EQL type stored in public.eql_v4_text_ord: the text family with the eq and ope indexes.
@@ -1523,6 +2808,27 @@ func (v *TextOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextOrd) String() string {
+	return text(v, "TextOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "TextOrd")
+}
+
+// LogValue is what slog records: String.
+func (v TextOrd) LogValue() slog.Value {
+	return logValue(v, "TextOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextOrd) Reveal() string {
+	return reveal(v)
+}
+
 // TextOrdQuery is the query value for TextOrd: the operand eql_v4.query_text_ord takes.
 type TextOrdQuery []byte
 
@@ -1544,6 +2850,27 @@ func (v TextOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextOrdQuery) String() string {
+	return text(v, "TextOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextOrdQuery) LogValue() slog.Value {
+	return logValue(v, "TextOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TextOrdOpe is the EQL type stored in public.eql_v4_text_ord_ope: the text family with the eq and ope indexes.
@@ -1570,6 +2897,27 @@ func (v *TextOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextOrdOpe) String() string {
+	return text(v, "TextOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "TextOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v TextOrdOpe) LogValue() slog.Value {
+	return logValue(v, "TextOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // TextOrdOpeQuery is the query value for TextOrdOpe: the operand eql_v4.query_text_ord_ope takes.
 type TextOrdOpeQuery []byte
 
@@ -1591,6 +2939,27 @@ func (v TextOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextOrdOpeQuery) String() string {
+	return text(v, "TextOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "TextOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TextSearchOre is the EQL type stored in public.eql_v4_text_search_ore: the text family with the eq and ore_block and match indexes.
@@ -1617,6 +2986,27 @@ func (v *TextSearchOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextSearchOre) String() string {
+	return text(v, "TextSearchOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextSearchOre) Format(f fmt.State, _ rune) {
+	format(f, v, "TextSearchOre")
+}
+
+// LogValue is what slog records: String.
+func (v TextSearchOre) LogValue() slog.Value {
+	return logValue(v, "TextSearchOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextSearchOre) Reveal() string {
+	return reveal(v)
+}
+
 // TextSearchOreQuery is the query value for TextSearchOre: the operand eql_v4.query_text_search_ore takes.
 type TextSearchOreQuery []byte
 
@@ -1638,6 +3028,27 @@ func (v TextSearchOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextSearchOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextSearchOreQuery) String() string {
+	return text(v, "TextSearchOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextSearchOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextSearchOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextSearchOreQuery) LogValue() slog.Value {
+	return logValue(v, "TextSearchOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextSearchOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TextSearch is the EQL type stored in public.eql_v4_text_search: the text family with the eq and ope and match indexes.
@@ -1664,6 +3075,27 @@ func (v *TextSearch) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextSearch) String() string {
+	return text(v, "TextSearch")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextSearch) Format(f fmt.State, _ rune) {
+	format(f, v, "TextSearch")
+}
+
+// LogValue is what slog records: String.
+func (v TextSearch) LogValue() slog.Value {
+	return logValue(v, "TextSearch")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextSearch) Reveal() string {
+	return reveal(v)
+}
+
 // TextSearchQuery is the query value for TextSearch: the operand eql_v4.query_text_search takes.
 type TextSearchQuery []byte
 
@@ -1685,6 +3117,27 @@ func (v TextSearchQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextSearchQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextSearchQuery) String() string {
+	return text(v, "TextSearchQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextSearchQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextSearchQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextSearchQuery) LogValue() slog.Value {
+	return logValue(v, "TextSearchQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextSearchQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Boolean is the EQL type stored in public.eql_v4_boolean: the boolean family with no index.
@@ -1711,6 +3164,27 @@ func (v *Boolean) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Boolean) String() string {
+	return text(v, "Boolean")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Boolean) Format(f fmt.State, _ rune) {
+	format(f, v, "Boolean")
+}
+
+// LogValue is what slog records: String.
+func (v Boolean) LogValue() slog.Value {
+	return logValue(v, "Boolean")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Boolean) Reveal() string {
+	return reveal(v)
+}
+
 // Real is the EQL type stored in public.eql_v4_real: the real family with no index.
 // The engine produces it from a float32.
 type Real []byte
@@ -1733,6 +3207,27 @@ func (v Real) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *Real) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v Real) String() string {
+	return text(v, "Real")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Real) Format(f fmt.State, _ rune) {
+	format(f, v, "Real")
+}
+
+// LogValue is what slog records: String.
+func (v Real) LogValue() slog.Value {
+	return logValue(v, "Real")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Real) Reveal() string {
+	return reveal(v)
 }
 
 // RealEq is the EQL type stored in public.eql_v4_real_eq: the real family with the eq index.
@@ -1759,6 +3254,27 @@ func (v *RealEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v RealEq) String() string {
+	return text(v, "RealEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealEq) Format(f fmt.State, _ rune) {
+	format(f, v, "RealEq")
+}
+
+// LogValue is what slog records: String.
+func (v RealEq) LogValue() slog.Value {
+	return logValue(v, "RealEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealEq) Reveal() string {
+	return reveal(v)
+}
+
 // RealEqQuery is the query value for RealEq: the operand eql_v4.query_real_eq takes.
 type RealEqQuery []byte
 
@@ -1780,6 +3296,27 @@ func (v RealEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *RealEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v RealEqQuery) String() string {
+	return text(v, "RealEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "RealEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v RealEqQuery) LogValue() slog.Value {
+	return logValue(v, "RealEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // RealOrdOre is the EQL type stored in public.eql_v4_real_ord_ore: the real family with the ore_block index.
@@ -1806,6 +3343,27 @@ func (v *RealOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v RealOrdOre) String() string {
+	return text(v, "RealOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "RealOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v RealOrdOre) LogValue() slog.Value {
+	return logValue(v, "RealOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // RealOrdOreQuery is the query value for RealOrdOre: the operand eql_v4.query_real_ord_ore takes.
 type RealOrdOreQuery []byte
 
@@ -1827,6 +3385,27 @@ func (v RealOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *RealOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v RealOrdOreQuery) String() string {
+	return text(v, "RealOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "RealOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v RealOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "RealOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // RealOrd is the EQL type stored in public.eql_v4_real_ord: the real family with the ope index.
@@ -1853,6 +3432,27 @@ func (v *RealOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v RealOrd) String() string {
+	return text(v, "RealOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "RealOrd")
+}
+
+// LogValue is what slog records: String.
+func (v RealOrd) LogValue() slog.Value {
+	return logValue(v, "RealOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealOrd) Reveal() string {
+	return reveal(v)
+}
+
 // RealOrdQuery is the query value for RealOrd: the operand eql_v4.query_real_ord takes.
 type RealOrdQuery []byte
 
@@ -1874,6 +3474,27 @@ func (v RealOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *RealOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v RealOrdQuery) String() string {
+	return text(v, "RealOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "RealOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v RealOrdQuery) LogValue() slog.Value {
+	return logValue(v, "RealOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // RealOrdOpe is the EQL type stored in public.eql_v4_real_ord_ope: the real family with the ope index.
@@ -1900,6 +3521,27 @@ func (v *RealOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v RealOrdOpe) String() string {
+	return text(v, "RealOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "RealOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v RealOrdOpe) LogValue() slog.Value {
+	return logValue(v, "RealOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // RealOrdOpeQuery is the query value for RealOrdOpe: the operand eql_v4.query_real_ord_ope takes.
 type RealOrdOpeQuery []byte
 
@@ -1921,6 +3563,27 @@ func (v RealOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *RealOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v RealOrdOpeQuery) String() string {
+	return text(v, "RealOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "RealOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v RealOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "RealOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // Double is the EQL type stored in public.eql_v4_double: the double family with no index.
@@ -1947,6 +3610,27 @@ func (v *Double) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v Double) String() string {
+	return text(v, "Double")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v Double) Format(f fmt.State, _ rune) {
+	format(f, v, "Double")
+}
+
+// LogValue is what slog records: String.
+func (v Double) LogValue() slog.Value {
+	return logValue(v, "Double")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v Double) Reveal() string {
+	return reveal(v)
+}
+
 // DoubleEq is the EQL type stored in public.eql_v4_double_eq: the double family with the eq index.
 // The engine produces it from a float64.
 type DoubleEq []byte
@@ -1971,6 +3655,27 @@ func (v *DoubleEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DoubleEq) String() string {
+	return text(v, "DoubleEq")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleEq) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleEq")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleEq) LogValue() slog.Value {
+	return logValue(v, "DoubleEq")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleEq) Reveal() string {
+	return reveal(v)
+}
+
 // DoubleEqQuery is the query value for DoubleEq: the operand eql_v4.query_double_eq takes.
 type DoubleEqQuery []byte
 
@@ -1992,6 +3697,27 @@ func (v DoubleEqQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DoubleEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DoubleEqQuery) String() string {
+	return text(v, "DoubleEqQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleEqQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleEqQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleEqQuery) LogValue() slog.Value {
+	return logValue(v, "DoubleEqQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleEqQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DoubleOrdOre is the EQL type stored in public.eql_v4_double_ord_ore: the double family with the ore_block index.
@@ -2018,6 +3744,27 @@ func (v *DoubleOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DoubleOrdOre) String() string {
+	return text(v, "DoubleOrdOre")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleOrdOre) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleOrdOre")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleOrdOre) LogValue() slog.Value {
+	return logValue(v, "DoubleOrdOre")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleOrdOre) Reveal() string {
+	return reveal(v)
+}
+
 // DoubleOrdOreQuery is the query value for DoubleOrdOre: the operand eql_v4.query_double_ord_ore takes.
 type DoubleOrdOreQuery []byte
 
@@ -2039,6 +3786,27 @@ func (v DoubleOrdOreQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DoubleOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DoubleOrdOreQuery) String() string {
+	return text(v, "DoubleOrdOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleOrdOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleOrdOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleOrdOreQuery) LogValue() slog.Value {
+	return logValue(v, "DoubleOrdOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleOrdOreQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DoubleOrd is the EQL type stored in public.eql_v4_double_ord: the double family with the ope index.
@@ -2065,6 +3833,27 @@ func (v *DoubleOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DoubleOrd) String() string {
+	return text(v, "DoubleOrd")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleOrd) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleOrd")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleOrd) LogValue() slog.Value {
+	return logValue(v, "DoubleOrd")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleOrd) Reveal() string {
+	return reveal(v)
+}
+
 // DoubleOrdQuery is the query value for DoubleOrd: the operand eql_v4.query_double_ord takes.
 type DoubleOrdQuery []byte
 
@@ -2086,6 +3875,27 @@ func (v DoubleOrdQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DoubleOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DoubleOrdQuery) String() string {
+	return text(v, "DoubleOrdQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleOrdQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleOrdQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleOrdQuery) LogValue() slog.Value {
+	return logValue(v, "DoubleOrdQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleOrdQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DoubleOrdOpe is the EQL type stored in public.eql_v4_double_ord_ope: the double family with the ope index.
@@ -2112,6 +3922,27 @@ func (v *DoubleOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DoubleOrdOpe) String() string {
+	return text(v, "DoubleOrdOpe")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleOrdOpe) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleOrdOpe")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleOrdOpe) LogValue() slog.Value {
+	return logValue(v, "DoubleOrdOpe")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleOrdOpe) Reveal() string {
+	return reveal(v)
+}
+
 // DoubleOrdOpeQuery is the query value for DoubleOrdOpe: the operand eql_v4.query_double_ord_ope takes.
 type DoubleOrdOpeQuery []byte
 
@@ -2133,6 +3964,27 @@ func (v DoubleOrdOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DoubleOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DoubleOrdOpeQuery) String() string {
+	return text(v, "DoubleOrdOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleOrdOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleOrdOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleOrdOpeQuery) LogValue() slog.Value {
+	return logValue(v, "DoubleOrdOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleOrdOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // JSON is the EQL type stored in public.eql_v4_json: the json family with no index.
@@ -2159,6 +4011,27 @@ func (v *JSON) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v JSON) String() string {
+	return text(v, "JSON")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v JSON) Format(f fmt.State, _ rune) {
+	format(f, v, "JSON")
+}
+
+// LogValue is what slog records: String.
+func (v JSON) LogValue() slog.Value {
+	return logValue(v, "JSON")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v JSON) Reveal() string {
+	return reveal(v)
+}
+
 // JSONSearch is the EQL type stored in public.eql_v4_json_search: the json_tree family with the json index.
 // The engine produces it from a json.
 type JSONSearch []byte
@@ -2181,6 +4054,27 @@ func (v JSONSearch) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *JSONSearch) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v JSONSearch) String() string {
+	return text(v, "JSONSearch")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v JSONSearch) Format(f fmt.State, _ rune) {
+	format(f, v, "JSONSearch")
+}
+
+// LogValue is what slog records: String.
+func (v JSONSearch) LogValue() slog.Value {
+	return logValue(v, "JSONSearch")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v JSONSearch) Reveal() string {
+	return reveal(v)
 }
 
 // JSONSearchQuery is the query value for JSONSearch: the operand eql_v4.query_json takes.
@@ -2206,6 +4100,27 @@ func (v *JSONSearchQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v JSONSearchQuery) String() string {
+	return text(v, "JSONSearchQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v JSONSearchQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "JSONSearchQuery")
+}
+
+// LogValue is what slog records: String.
+func (v JSONSearchQuery) LogValue() slog.Value {
+	return logValue(v, "JSONSearchQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v JSONSearchQuery) Reveal() string {
+	return reveal(v)
+}
+
 // JSONSearchLeafQuery is the json_tree family's ordering operand at a path, compared with an entry `->` extracts: the value eql_v4.query_json_leaf holds.
 type JSONSearchLeafQuery []byte
 
@@ -2227,6 +4142,27 @@ func (v JSONSearchLeafQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *JSONSearchLeafQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v JSONSearchLeafQuery) String() string {
+	return text(v, "JSONSearchLeafQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v JSONSearchLeafQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "JSONSearchLeafQuery")
+}
+
+// LogValue is what slog records: String.
+func (v JSONSearchLeafQuery) LogValue() slog.Value {
+	return logValue(v, "JSONSearchLeafQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v JSONSearchLeafQuery) Reveal() string {
+	return reveal(v)
 }
 
 // JSONSearchElementsQuery is the json_tree family's element-scoped predicate, which eql_v4.json_tree_element_match tests: the value eql_v4.query_json_elements holds.
@@ -2252,6 +4188,27 @@ func (v *JSONSearchElementsQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v JSONSearchElementsQuery) String() string {
+	return text(v, "JSONSearchElementsQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v JSONSearchElementsQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "JSONSearchElementsQuery")
+}
+
+// LogValue is what slog records: String.
+func (v JSONSearchElementsQuery) LogValue() slog.Value {
+	return logValue(v, "JSONSearchElementsQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v JSONSearchElementsQuery) Reveal() string {
+	return reveal(v)
+}
+
 // JSONSearchPredicateQuery is the json_tree family's compiled predicate, a boolean tree of the other operands, which eql_v4.json_tree_match and `@@` evaluate: the value eql_v4.query_json_predicate holds.
 type JSONSearchPredicateQuery []byte
 
@@ -2275,6 +4232,27 @@ func (v *JSONSearchPredicateQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v JSONSearchPredicateQuery) String() string {
+	return text(v, "JSONSearchPredicateQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v JSONSearchPredicateQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "JSONSearchPredicateQuery")
+}
+
+// LogValue is what slog records: String.
+func (v JSONSearchPredicateQuery) LogValue() slog.Value {
+	return logValue(v, "JSONSearchPredicateQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v JSONSearchPredicateQuery) Reveal() string {
+	return reveal(v)
+}
+
 // JSONEntry is the json_tree family's entry: one node of a document, as `->` and the walks return it: the value public.eql_v4_json_entry holds.
 type JSONEntry []byte
 
@@ -2296,6 +4274,27 @@ func (v JSONEntry) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *JSONEntry) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v JSONEntry) String() string {
+	return text(v, "JSONEntry")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v JSONEntry) Format(f fmt.State, _ rune) {
+	format(f, v, "JSONEntry")
+}
+
+// LogValue is what slog records: String.
+func (v JSONEntry) LogValue() slog.Value {
+	return logValue(v, "JSONEntry")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v JSONEntry) Reveal() string {
+	return reveal(v)
 }
 
 // IntegerRangeOreQuery is a range query value over the ore_block index of the integer family: both bounds of one BETWEEN,
@@ -2322,6 +4321,27 @@ func (v *IntegerRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v IntegerRangeOreQuery) String() string {
+	return text(v, "IntegerRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "IntegerRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // IntegerRangeOpeQuery is a range query value over the ope index of the integer family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_integer_range_ope takes in eql_v4.between. It ranges over IntegerOrd, IntegerOrdOpe.
 type IntegerRangeOpeQuery []byte
@@ -2344,6 +4364,27 @@ func (v IntegerRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *IntegerRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v IntegerRangeOpeQuery) String() string {
+	return text(v, "IntegerRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v IntegerRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "IntegerRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v IntegerRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "IntegerRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v IntegerRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // SmallintRangeOreQuery is a range query value over the ore_block index of the smallint family: both bounds of one BETWEEN,
@@ -2370,6 +4411,27 @@ func (v *SmallintRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v SmallintRangeOreQuery) String() string {
+	return text(v, "SmallintRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "SmallintRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // SmallintRangeOpeQuery is a range query value over the ope index of the smallint family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_smallint_range_ope takes in eql_v4.between. It ranges over SmallintOrd, SmallintOrdOpe.
 type SmallintRangeOpeQuery []byte
@@ -2392,6 +4454,27 @@ func (v SmallintRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *SmallintRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v SmallintRangeOpeQuery) String() string {
+	return text(v, "SmallintRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v SmallintRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "SmallintRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v SmallintRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "SmallintRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v SmallintRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // BigintRangeOreQuery is a range query value over the ore_block index of the bigint family: both bounds of one BETWEEN,
@@ -2418,6 +4501,27 @@ func (v *BigintRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v BigintRangeOreQuery) String() string {
+	return text(v, "BigintRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v BigintRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "BigintRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // BigintRangeOpeQuery is a range query value over the ope index of the bigint family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_bigint_range_ope takes in eql_v4.between. It ranges over BigintOrd, BigintOrdOpe.
 type BigintRangeOpeQuery []byte
@@ -2440,6 +4544,27 @@ func (v BigintRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *BigintRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v BigintRangeOpeQuery) String() string {
+	return text(v, "BigintRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v BigintRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "BigintRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v BigintRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "BigintRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v BigintRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DateRangeOreQuery is a range query value over the ore_block index of the date family: both bounds of one BETWEEN,
@@ -2466,6 +4591,27 @@ func (v *DateRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DateRangeOreQuery) String() string {
+	return text(v, "DateRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DateRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DateRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "DateRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // DateRangeOpeQuery is a range query value over the ope index of the date family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_date_range_ope takes in eql_v4.between. It ranges over DateOrd, DateOrdOpe.
 type DateRangeOpeQuery []byte
@@ -2488,6 +4634,27 @@ func (v DateRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DateRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DateRangeOpeQuery) String() string {
+	return text(v, "DateRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DateRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DateRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DateRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "DateRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DateRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TimestampRangeOreQuery is a range query value over the ore_block index of the timestamp family: both bounds of one BETWEEN,
@@ -2514,6 +4681,27 @@ func (v *TimestampRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TimestampRangeOreQuery) String() string {
+	return text(v, "TimestampRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "TimestampRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // TimestampRangeOpeQuery is a range query value over the ope index of the timestamp family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_timestamp_range_ope takes in eql_v4.between. It ranges over TimestampOrd, TimestampOrdOpe.
 type TimestampRangeOpeQuery []byte
@@ -2536,6 +4724,27 @@ func (v TimestampRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TimestampRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TimestampRangeOpeQuery) String() string {
+	return text(v, "TimestampRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TimestampRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TimestampRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TimestampRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "TimestampRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TimestampRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // NumericRangeOreQuery is a range query value over the ore_block index of the numeric family: both bounds of one BETWEEN,
@@ -2562,6 +4771,27 @@ func (v *NumericRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v NumericRangeOreQuery) String() string {
+	return text(v, "NumericRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v NumericRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "NumericRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // NumericRangeOpeQuery is a range query value over the ope index of the numeric family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_numeric_range_ope takes in eql_v4.between. It ranges over NumericOrd, NumericOrdOpe.
 type NumericRangeOpeQuery []byte
@@ -2584,6 +4814,27 @@ func (v NumericRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *NumericRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v NumericRangeOpeQuery) String() string {
+	return text(v, "NumericRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v NumericRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "NumericRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v NumericRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "NumericRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v NumericRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // TextRangeOreQuery is a range query value over the ore_block index of the text family: both bounds of one BETWEEN,
@@ -2610,6 +4861,27 @@ func (v *TextRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v TextRangeOreQuery) String() string {
+	return text(v, "TextRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "TextRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // TextRangeOpeQuery is a range query value over the ope index of the text family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_text_range_ope takes in eql_v4.between. It ranges over TextOrd, TextOrdOpe, TextSearch.
 type TextRangeOpeQuery []byte
@@ -2632,6 +4904,27 @@ func (v TextRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *TextRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v TextRangeOpeQuery) String() string {
+	return text(v, "TextRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v TextRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "TextRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v TextRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "TextRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v TextRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // RealRangeOreQuery is a range query value over the ore_block index of the real family: both bounds of one BETWEEN,
@@ -2658,6 +4951,27 @@ func (v *RealRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v RealRangeOreQuery) String() string {
+	return text(v, "RealRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "RealRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v RealRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "RealRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // RealRangeOpeQuery is a range query value over the ope index of the real family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_real_range_ope takes in eql_v4.between. It ranges over RealOrd, RealOrdOpe.
 type RealRangeOpeQuery []byte
@@ -2680,6 +4994,27 @@ func (v RealRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *RealRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v RealRangeOpeQuery) String() string {
+	return text(v, "RealRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v RealRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "RealRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v RealRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "RealRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v RealRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }
 
 // DoubleRangeOreQuery is a range query value over the ore_block index of the double family: both bounds of one BETWEEN,
@@ -2706,6 +5041,27 @@ func (v *DoubleRangeOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// String names the type and hides the value.
+func (v DoubleRangeOreQuery) String() string {
+	return text(v, "DoubleRangeOreQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleRangeOreQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleRangeOreQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleRangeOreQuery) LogValue() slog.Value {
+	return logValue(v, "DoubleRangeOreQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleRangeOreQuery) Reveal() string {
+	return reveal(v)
+}
+
 // DoubleRangeOpeQuery is a range query value over the ope index of the double family: both bounds of one BETWEEN,
 // included, as the one operand eql_v4.query_double_range_ope takes in eql_v4.between. It ranges over DoubleOrd, DoubleOrdOpe.
 type DoubleRangeOpeQuery []byte
@@ -2728,4 +5084,25 @@ func (v DoubleRangeOpeQuery) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the EQL value from JSON, as it is.
 func (v *DoubleRangeOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
+}
+
+// String names the type and hides the value.
+func (v DoubleRangeOpeQuery) String() string {
+	return text(v, "DoubleRangeOpeQuery")
+}
+
+// Format prints String for every verb fmt hands it, %#v included.
+func (v DoubleRangeOpeQuery) Format(f fmt.State, _ rune) {
+	format(f, v, "DoubleRangeOpeQuery")
+}
+
+// LogValue is what slog records: String.
+func (v DoubleRangeOpeQuery) LogValue() slog.Value {
+	return logValue(v, "DoubleRangeOpeQuery")
+}
+
+// Reveal is the value's JSON as text, ciphertext and terms included, for a
+// program that means to print or log what String hides.
+func (v DoubleRangeOpeQuery) Reveal() string {
+	return reveal(v)
 }

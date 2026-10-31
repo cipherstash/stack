@@ -459,7 +459,8 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 			}
 		case target.Name == "JsonSearch":
 			// A document's operators, under the index's defaults: no
-			// ordering without an ordered path. Each through the JSON index.
+			// ordering without an ordered path, and the compiled predicate,
+			// which needs none. Each through the JSON index.
 			var names []string
 			for _, op := range target.Operators {
 				if op.Index != record.JSONIndex || op.Fidelity != record.Exact {
@@ -467,7 +468,7 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 				}
 				names = append(names, op.Name)
 			}
-			if want := []string{"contains", "contained_by", "eq_at", "selector", "subtree", "children", "child_count"}; !slices.Equal(names, want) {
+			if want := []string{"contains", "contained_by", "eq_at", "selector", "subtree", "children", "child_count", "match"}; !slices.Equal(names, want) {
 				t.Fatalf("JsonSearch answers %v, want %v", names, want)
 			}
 		case len(target.Operators) != 0:

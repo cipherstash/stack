@@ -1012,7 +1012,7 @@ var jsonOperators = map[string]bool{
 	"contains": true, "contained_by": true, "eq_at": true, "selector": true,
 	"subtree": true, "children": true, "child_count": true,
 	"lt_at": true, "lte_at": true, "gt_at": true, "gte_at": true, "between_at": true,
-	"element_match": true,
+	"element_match": true, "match": true,
 }
 
 // planJSON checks a document field's operators against the methods the
@@ -1029,6 +1029,13 @@ func planJSON(f *genFile, g *genField) error {
 	// document; the leaf and entry types below are that family's.
 	if !document {
 		return fieldErr(f.typeName, g.GoName, "the engine answers no document operator on %s, and the generator writes document fields of JsonSearch only", g.EQLType)
+	}
+	// The engine answers match on every document field: what a predicate
+	// may use is decided when it is compiled, not by the tag. A document
+	// field with none is the engine and the generator disagreeing. This is
+	// the one rule: jsonEntry writes Match on every field it passes.
+	if !answers(g, "match") {
+		return fieldErr(f.typeName, g.GoName, "the engine answers no match on %s: the generator and its engine disagree, which is a bug in this stashgen", g.EQLType)
 	}
 	g.jsonPaths = nil
 	seen := map[string]string{}
@@ -1320,6 +1327,7 @@ func (w *writer) jsonEntry(g genField, pathsVar string) {
 	leaf := strings.TrimSuffix(needle, "Query") + "LeafQuery"
 	entry := "eql." + EQLGoName("JsonEntry")
 	elementsQuery := strings.TrimSuffix(needle, "Query") + "ElementsQuery"
+	predicateQuery := strings.TrimSuffix(needle, "Query") + "PredicateQuery"
 	// planJSON refuses ordered paths the engine answers no ordering on,
 	// and arrays it answers no element_match on.
 	ordered := len(g.jsonPaths) > 0
@@ -1425,6 +1433,8 @@ func (w *writer) jsonEntry(g genField, pathsVar string) {
 		w.p("\treturn gensupport.JSONNodeToken(ctx, f.field, c, \"child_count\", path)")
 		w.p("}")
 	}
+	// planJSON refuses a document field the engine answers no match on.
+	w.jsonMatch(recv, predicateQuery)
 	if arrays {
 		w.jsonElements(g, field, elementsQuery, pathsVar)
 	}
@@ -1586,4 +1596,25 @@ func (w *writer) paths(f *genFile) {
 	}
 	w.p("\treturn %s", local)
 	w.p("}()")
+}
+
+// jsonMatch writes a document field's Match, which compiles a jsonpath
+// predicate into the operand eql_v4.json_tree_match and `@@` evaluate.
+func (w *writer) jsonMatch(recv, query string) {
+	w.nl()
+	for i, para := range []string{
+		"Match derives the operand for a jsonpath predicate over the document, as plaintext jsonb_path_match(col, predicate, vars) takes one: bind it as col @@ $1::eql_v4.query_json_predicate, or eql_v4.json_tree_match(col, $1::eql_v4.query_json_predicate). vars are the predicate's variables ($name): a map, a struct or a json.RawMessage that writes a JSON object, and an empty map when there are none. A nil vars is SQL NULL, as pgx and database/sql bind it over plaintext: the operand is empty, binds as NULL, and matches no row, as jsonb_path_match does with NULL vars.",
+		"The engine reads the predicate, and nothing in Go does: paths of .key, .\"quoted key\" and [*] steps; ==, !=, <, <=, > and >= between a path and a variable or a JSON literal; exists(path), and exists(path ? (@.m == $v && @.n > $w)) for several members of one array element; &&, || and !(…). Anything else is refused, before any term is derived, as an *encrypt.Diagnostic wrapping encrypt.ErrEncoding whose Reason, Construct and At name the refusal and the byte offset in predicate where it starts. An ordering at a path the tag does not order, or a member of a filter of more than one condition that it does not order, is refused wrapping encrypt.ErrTerm.",
+		"The tree is evaluated inside eql_v4.json_tree_match, which engages no index: every row the scan gives it is opened and tested. The per-operator methods engage the GIN index for @> (EqAt, Contains) and a btree on an ordered path's term (At.<Path>), so a query that needs an index writes those leaves with them, or narrows the rows with one beside Match.",
+		"A query returns jsonb_path_match's rows over the plaintext, and each row answers as it does, true, false or NULL, save five cases. Lax mode's unwrapping of an array the path names no [*] for is not applied: write [*]. Nor is its wrapping of a value that is not an array under [*]. A string compared with a number is false under == and true under !=, where jsonpath says unknown. Orderings, and filters of more than one condition, compare folded ordering terms: text case- and accent-folded, numbers as float64, so such a filter's == is of folded values; == elsewhere is exact. An ordering of a JSON null is NULL where jsonpath says false, except under an odd number of !, which returns the same rows; there the operand also asks that the node is not null, which tells the database which rows hold null at the path.",
+		"A filter of more than one condition reads each array to opts.WildcardBound elements, 64 when it is 0. A row whose array is longer fails the query with SQLSTATE 22023 (invalid_parameter_value) rather than answer over part of it: raise the bound past the longest array.",
+	} {
+		if i > 0 {
+			w.p("//")
+		}
+		w.b.WriteString(wrapComment(para, 80))
+	}
+	w.p("%sMatch(ctx context.Context, c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (%s, error) {", recv, query)
+	w.p("\treturn gensupport.JSONMatch[%s](ctx, f.field, c, predicate, vars, opts)", query)
+	w.p("}")
 }

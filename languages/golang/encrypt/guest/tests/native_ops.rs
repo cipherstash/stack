@@ -1844,7 +1844,8 @@ fn the_catalog_lists_each_types_operators() {
                 ("input", "value"),
             ]),
             // A document's operators under the index's defaults: the
-            // orderings at a path only for a field that orders one.
+            // orderings at a path only for a field that orders one, and
+            // the compiled predicate, which needs none.
             "JsonSearch" => {
                 let json = |operator: &'static str, arity: &'static str, input: &'static str| {
                     vec![
@@ -1865,6 +1866,7 @@ fn the_catalog_lists_each_types_operators() {
                         json("subtree", "one", "path_bound"),
                         json("children", "one", "path"),
                         json("child_count", "one", "path"),
+                        json("match", "one", "predicate"),
                     ],
                     "{name}"
                 );

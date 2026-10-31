@@ -620,8 +620,8 @@ type Operator struct {
 	// Name is the operator's name, as a query names it: eq, lt, lte, gt,
 	// gte, between or matches; for a field that stores a JSON document,
 	// contains, contained_by, eq_at, lt_at, lte_at, gt_at, gte_at,
-	// between_at, selector, subtree, children, child_count or
-	// element_match.
+	// between_at, selector, subtree, children, child_count, element_match
+	// or match.
 	Name string
 	// Fidelity is how far the server's answer can be trusted.
 	Fidelity Fidelity
@@ -632,7 +632,7 @@ type Operator struct {
 	Index Output
 	// Input is the shape of the operator's input, as the engine names it:
 	// value (one value of the field's kind), pair (two, low then high),
-	// json, path_json, path_pair, path, path_bound or path_predicates
-	// (objects of named inputs, for a document's operators).
+	// json, path_json, path_pair, path, path_bound, path_predicates or
+	// predicate (objects of named inputs, for a document's operators).
 	Input string
 }

@@ -162,8 +162,9 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 /// A dynamic-path error as a status code.
 ///
 /// The split the library draws is the one the ABI needs: `Context`, `Term`,
-/// `Plan`, `UntypedIndex`, `Source` and `Record` are each a statement about
-/// the caller's input, decided before any key is minted or retrieved, so they are
+/// `Plan`, `UntypedIndex`, `Source`, `Record` and `Predicate` are each a
+/// statement about the caller's input, decided before any key is minted or
+/// retrieved, so they are
 /// [`STATUS_ENCODING`] — named one by one, because that verdict is the
 /// host's to act on and must be given deliberately. `Cipher` defers to
 /// [`status_for_error`]; `Internal` is the library's own invariant failing
@@ -184,7 +185,11 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
         | Error::Plan { .. }
         | Error::UntypedIndex { .. }
         | Error::Source { .. }
-        | Error::Record { .. } => STATUS_ENCODING,
+        | Error::Record { .. }
+        // A `match` predicate refused at an offset in its text: a construct
+        // the grammar does not read or the index cannot answer, a variable
+        // its vars do not hold, a value its comparison cannot take.
+        | Error::Predicate { .. } => STATUS_ENCODING,
         Error::Cipher(e) => status_for_error(e),
         // A target refusal is a statement about the plan, the label or the
         // value (an unknown or unproducible type, an extended plan, a value
@@ -561,6 +566,15 @@ mod tests {
                 Error::Record {
                     field: age(),
                     reason: Reason::NoCiphertextNode,
+                },
+            ),
+            (
+                "a refused predicate",
+                Error::Predicate {
+                    field: age(),
+                    reason: Reason::JsonPredicateUnsupported,
+                    construct: "`like_regex`",
+                    at: 4,
                 },
             ),
         ] {

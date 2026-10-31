@@ -32,5 +32,9 @@ type JSONSearchLeafQuery []byte
 // JSONSearchElementsQuery is the element match's operand on a JSONSearch.
 type JSONSearchElementsQuery []byte
 
+// JSONSearchPredicateQuery is a compiled jsonpath predicate's operand on a
+// JSONSearch.
+type JSONSearchPredicateQuery []byte
+
 // JSONEntry is one encrypted entry of a JSONSearch document.
 type JSONEntry []byte

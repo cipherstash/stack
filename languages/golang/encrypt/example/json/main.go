@@ -123,6 +123,25 @@ func run(ctx context.Context) error {
 	}
 	fmt.Printf("customer with a visit at home after 15: %d\n", homeLateID)
 
+	// The same test and an age ordering as one jsonpath predicate and its
+	// variables, bound as one parameter. The engine compiles the predicate
+	// into the operands above, so the age is the ordering's term and the
+	// filter is the visit match. The tree is evaluated in a function, which
+	// engages no index: the per-operator queries above are the fast path.
+	predicate, err := Fields.Profile.Match(ctx, cipher,
+		`$."age" < $max && exists($."visits"[*] ? (@."place" == $place && @."at" > $after))`,
+		map[string]any{"max": 30, "place": "home", "after": 15}, encrypt.JSONReadOptions{})
+	if err != nil {
+		return fmt.Errorf("prepare predicate: %w", err)
+	}
+	var matchedID int64
+	if err := conn.QueryRowContext(ctx,
+		`SELECT id FROM customers WHERE profile @@ $1::eql_v4.query_json_predicate`, predicate,
+	).Scan(&matchedID); err != nil {
+		return fmt.Errorf("find by predicate: %w", err)
+	}
+	fmt.Printf("customer under 30 with a visit at home after 15: %d\n", matchedID)
+
 	// Read only the visit times of one row. The database returns encrypted
 	// entries; Open checks them against the prepared read and returns JSON text.
 	read, err := Fields.Profile.Subtree(ctx, cipher, "$.visits[*].at", encrypt.JSONReadOptions{})
