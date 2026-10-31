@@ -6,6 +6,7 @@
 
 - [What a stored row shows](#what-a-stored-row-shows)
 - [What a query shows](#what-a-query-shows)
+- [Native jsonb functions read the envelope](#native-jsonb-functions-read-the-envelope)
 - [What is authenticated](#what-is-authenticated)
 - [Compared with EQL v3 (`public.eql_v3_json_search`)](#compared-with-eql-v3-publiceql_v3_json_search)
 - [The two options that change the picture](#the-two-options-that-change-the-picture)
@@ -50,6 +51,19 @@ A query hands the database a term derived from the plaintext it asks about, and 
   - **What a token is.** A capability over the structure of its node's subtree in *every row of the column*: whoever holds it can find that node in any row (through its self tag `x`), see how the nodes beneath it nest, link each one to its parent, and derive the tokens of the nodes beneath. It also learns whether each node beneath is an object member or an array element, and each element's index: nothing stored says which a node is, but to derive a node's token the database tests its self tag against the member rule and then the element rule, and the one that matches says which; an element's index is the ordinal it is found at. An object's members' ordinals are a random permutation drawn when the row was sealed: they say nothing about the members' keys, and a key's ordinal in one row says nothing about its ordinal in another. It opens no value. Tokens are column-wide and do not expire, so a token sent once is useful to the database for as long as the column lives. Send a token to the database in a query and nowhere else.
   - **The root.** A read of `$` sends the root's token, and a read of anything below `$` does not. With the sealed root on (the default) that token covers no document's structure: it finds the root entry, whose ciphertext is the document, and nothing beneath it, since the top-level fields chain from nothing. With it off, the root's token covers every row's whole document.
   - **`json_tree_children` and `json_tree_child_count`** take one token, of any node a path names, and send nothing else. Under the sealed root the root's token enumerates nothing (its count is NULL), for the same reason.
+
+## Native jsonb functions read the envelope
+
+`public.eql_v4_json_search` and `public.eql_v4_json_entry` are PostgreSQL domains over `jsonb`, so PostgreSQL's own `jsonb` operators and functions accept them. On a column they see the stored envelope (`{v, i, h, sv, q}`), not the document. They reveal nothing beyond what a stored row already shows, but their answers are wrong.
+
+- **Operators are blocked.** `?`, `?|`, `?&`, `@?`, `@@`, `#>`, `#>>`, `-`, `#-`, `||`, `->` and `->>` by position, root-document comparisons, and containment against a plain `jsonb` operand raise `operator … is not supported for public.eql_v4_json_search`. `col @@ '…'` with an untyped right operand is refused as ambiguous (`operator is not unique`).
+- **Functions are not blocked, and fail silently.** `jsonb_path_match(col, '$.score == 3')` returns false for every row, with no error, and so does `jsonb_path_exists(col, '$.score')`, whether the path is a literal, cast, or bound as a parameter. `jsonb_extract_path(col, 'score')` returns NULL. A key of the envelope returns the envelope's own field instead: `jsonb_extract_path(col, 'v')` is `4`, and `jsonb_object_keys(col)` lists `h`, `i`, `q`, `sv` and `v`. The jsonpath functions find nothing on an entry extracted with `->` either. Only `jsonb_array_elements`, `jsonb_array_elements_text` and `jsonb_array_length` raise, because the envelope and an entry are objects.
+
+Query the document with EQL instead: `@>` with an `eql_v4.query_json` needle for equality, `col -> selector` compared with an `eql_v4.query_json_leaf` for ranges, and `col -> selector`, `eql_v4.json_tree_path_query` or `eql_v4.json_tree_subtree` to extract, then decrypt in the client.
+
+EQL cannot make these functions raise. An overload taking the domain as its first argument would be a second candidate for every call whose first argument has no type, such as `jsonb_typeof($1)` from a driver that sends untyped parameters, so installing EQL would make those calls ambiguous on plain `jsonb` too, in the whole database. And it would still lose to the native function whenever any other argument is untyped, as the path is in `jsonb_path_match(col, '$.a == 1')`. A type of its own that `jsonb` functions do not accept would close this, but PostgreSQL lets only a superuser create one, and EQL installs without superuser.
+
+To read the stored envelope on purpose, cast the column: `jsonb_pretty(col::jsonb)`.
 
 ## What is authenticated
 
