@@ -925,7 +925,7 @@ async fn cipher_directed_encrypt_and_decrypt_are_one_batched_call_each() {
         .map(String::from)
         .collect();
     let ct = keyset
-        .encrypt_node(names.clone(), "users/name")
+        .encrypt_tree(names.clone(), "users/name")
         .await
         .unwrap();
     assert_eq!(
@@ -951,7 +951,7 @@ async fn cipher_directed_and_target_directed_ciphertexts_are_interchangeable() {
 
     // Sealed by the cipher-directed API, opened by the target-directed one.
     let ct = keyset
-        .encrypt_node(value.clone(), "users/tags")
+        .encrypt_tree(value.clone(), "users/tags")
         .await
         .unwrap();
     let via_target: Vec<String> = ct

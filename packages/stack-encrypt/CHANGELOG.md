@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`KeysetCipher::encrypt` and `decrypt` are the owned scalar API.**
+  `keyset.encrypt(value)` consumes an `OpaqueEncode` value (`bool`, the fixed-width
+  integers except `u8`, `f32`, `f64`, `String`), wipes it, and returns one
+  opaque `Ciphertext`; `keyset.decrypt::<T>(ciphertext)` opens it to an `OpaqueDecode` type.
+  `encrypt_with_context` and `decrypt_with_context` bind a context. The
+  previous structural forms, which take any `Encrypt` value and a context and
+  return a `StackCipherText`, are renamed `encrypt_tree` and `decrypt_tree`.
+  `Ciphertext`'s bytes are the unchanged `SealedValue` v1 envelope, so
+  stored values open through either API.
+- **The root `EncryptInto` and `DecryptFrom` are new owned conversion
+  traits** over `EncryptTarget` / `DecryptSource`. The borrowed traits they
+  replace, and that `#[derive(EncryptFrom, DecryptInto)]` types use, are
+  `stack_encrypt::target::legacy::{EncryptInto, DecryptFrom}`; import one
+  pair or the other, not both.
 - **`OpSpec`, `Operand` and the query term's wire form grow for documents**
   (#1350). `OpSpec` gains twelve operators and `Operand` gains `Text` and
   `TextList`; a binding that matches on either adds the arms. The query

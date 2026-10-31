@@ -149,7 +149,7 @@ async fn canonical_ciphertext_opens_through_the_record() {
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
     let canonical = keyset
-        .encrypt_node(email.clone(), Identifier::email())
+        .encrypt_tree(email.clone(), Identifier::email())
         .await
         .unwrap();
     let probe = keyset
@@ -468,7 +468,7 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         ("empty".into(), vec![]),
     ]);
     let tree = keyset
-        .encrypt_node(value.clone(), nonempty!("document"))
+        .encrypt_tree(value.clone(), nonempty!("document"))
         .await
         .unwrap();
     let stored = tree.read(TreeVisitor).unwrap();
@@ -492,7 +492,7 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
     );
     // Transcoding keeps the authentication: changing a cryptographic map key fails.
     let tree = keyset
-        .encrypt_node(value, nonempty!("document"))
+        .encrypt_tree(value, nonempty!("document"))
         .await
         .unwrap();
     let Stored::Object(mut entries) = tree.read(TreeVisitor).unwrap() else {
@@ -507,7 +507,7 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         "a map key is part of its entry's authenticated context: renaming it fails to open"
     );
     let tree = keyset
-        .encrypt_node(HashMap::<String, String>::new(), nonempty!("document"))
+        .encrypt_tree(HashMap::<String, String>::new(), nonempty!("document"))
         .await
         .unwrap();
     let Stored::EmptyObject(marker) = tree.read(TreeVisitor).unwrap() else {

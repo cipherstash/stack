@@ -537,7 +537,7 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
     let tenant = cipher.keyset(name("acme")).await.expect("select");
 
     let sealed = tenant
-        .encrypt_node("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
     assert_eq!(
@@ -548,7 +548,7 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
 
     let sealed = cipher
         .default_keyset()
-        .encrypt_node("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
     assert_eq!(
@@ -567,7 +567,7 @@ async fn the_client_opens_a_leaf_from_any_keyset() {
     let cipher = cipher().await;
     let tenant = cipher.keyset(name("acme")).await.expect("select");
     let sealed = tenant
-        .encrypt_node("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
 
@@ -585,11 +585,11 @@ async fn a_keyset_handle_opens_its_own_leaves() {
     let cipher = cipher().await;
     let tenant = cipher.keyset(name("acme")).await.expect("select");
     let sealed = tenant
-        .encrypt_node("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
 
-    let opened: String = tenant.decrypt_node(sealed, "greeting").await.expect("open");
+    let opened: String = tenant.decrypt_tree(sealed, "greeting").await.expect("open");
     assert_eq!(opened, "hello", "a keyset handle opens its own leaf");
 }
 
@@ -599,11 +599,11 @@ async fn a_keyset_handle_refuses_another_keysets_leaf_before_any_retrieve() {
     let acme = cipher.keyset(name("acme")).await.expect("acme");
     let globex = cipher.keyset(name("globex")).await.expect("globex");
     let sealed = acme
-        .encrypt_node("hello".to_string(), "greeting")
+        .encrypt_tree("hello".to_string(), "greeting")
         .await
         .expect("seal");
 
-    let result: Result<String, _> = globex.decrypt_node(sealed, "greeting").await;
+    let result: Result<String, _> = globex.decrypt_tree(sealed, "greeting").await;
     assert!(
         matches!(
             result,
