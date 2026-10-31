@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
+use common::conformance::{value, Input};
 use common::frames::{frame, object};
 use common::{hex, unhex};
 use miette::Diagnostic;
@@ -45,14 +46,6 @@ struct Case {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Input {
-    #[serde(rename = "type")]
-    kind: String,
-    text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExpectedError {
     code: String,
     reason: String,
@@ -79,21 +72,6 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../conformance/stack-encrypt/v1")
 }
 
-fn value(input: &Input) -> ValueFrame {
-    match input.kind.as_str() {
-        "int32" => frame(input.text.parse::<i32>().expect("i32")),
-        "int64" => frame(input.text.parse::<i64>().expect("i64")),
-        "uint64" => frame(input.text.parse::<u64>().expect("u64")),
-        "bool" => frame(input.text.parse::<bool>().expect("bool")),
-        "string" => frame(input.text.clone()),
-        "null" => {
-            assert!(input.text.is_empty());
-            use vitaminc_aead::plaintext::{Physical, Raw};
-            frame(Raw(None, Physical::Null))
-        }
-        other => panic!("unsupported input kind {other}"),
-    }
-}
 
 fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
     let mut context = corpus.context.clone();
