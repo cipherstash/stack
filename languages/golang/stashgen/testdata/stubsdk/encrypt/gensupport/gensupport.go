@@ -236,6 +236,11 @@ func JSONBetweenAt[Q ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher,
 	return encrypt.JSONRange[Q]{}, nil
 }
 
+// JSONElementMatch derives element_match on a JSON field.
+func JSONElementMatch[Q ~[]byte, T, E any](context.Context, Field[T], *encrypt.Cipher, string, encrypt.JSONReadOptions, []encrypt.ElementPredicate[E]) (Q, error) {
+	return nil, nil
+}
+
 // JSONSelect prepares `->` at a path on a JSON field.
 func JSONSelect[E ~[]byte, T any](context.Context, Field[T], *encrypt.Cipher, string) (encrypt.JSONSelection[E], error) {
 	return encrypt.JSONSelection[E]{}, nil

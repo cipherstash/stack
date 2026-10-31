@@ -40,6 +40,7 @@ func emit(f *genFile) ([]byte, error) {
 	w.codec(f)
 	w.functions(f)
 	w.fieldEntries(f)
+	w.paths(f)
 	for i := range f.models {
 		w.model(f, &f.models[i])
 	}
@@ -703,7 +704,7 @@ func (w *writer) fieldEntries(f *genFile) {
 	for _, g := range sealed {
 		w.nl()
 		if g.isJSON() {
-			w.jsonEntry(g)
+			w.jsonEntry(g, f.pathsVar)
 			continue
 		}
 		w.p("type %s struct {", g.fieldType)
@@ -1011,6 +1012,7 @@ var jsonOperators = map[string]bool{
 	"contains": true, "contained_by": true, "eq_at": true, "selector": true,
 	"subtree": true, "children": true, "child_count": true,
 	"lt_at": true, "lte_at": true, "gt_at": true, "gte_at": true, "between_at": true,
+	"element_match": true,
 }
 
 // planJSON checks a document field's operators against the methods the
@@ -1054,6 +1056,66 @@ func planJSON(f *genFile, g *genField) error {
 	if len(g.jsonPaths) > 0 && !answers(g, "lt_at") {
 		return fieldErr(f.typeName, g.GoName, "the tag orders %d paths, and the engine answers no ordering (lt_at) on %s: the generator and its engine disagree, which is a bug in this stashgen", len(g.jsonPaths), g.EQLType)
 	}
+	// An array whose elements have an ordered member gets an accessor
+	// under Elements, named as At names a path, whose Match tests members
+	// of one element together. An array with no ordered member gets none:
+	// Match there could test nothing. A root array ($[*]) is Root. An
+	// array whose keys give no name, or whose name another array's keys
+	// give too, gets no accessor and a notice naming its ordered paths:
+	// the tag stays valid, and At is written as it is for any other field.
+	//
+	// Each accessor's members are named under Paths too, nested as the
+	// JSON nests them: Paths.<Field>.Visits.At for $.visits[*].at. A key
+	// that gives no Go name there, or a name that would stand for two
+	// paths (two keys that give one name, or a member that is also the
+	// object or array above another member), is the same case: the arrays
+	// it touches get no accessor and a notice.
+	g.jsonArrays = nil
+	arrays := g.TargetOptions.ElementArrays()
+	names := make([]string, len(arrays))
+	count := map[string]int{}
+	for i, a := range arrays {
+		names[i] = jsonArrayName(a.Path)
+		if names[i] != "" {
+			count[names[i]]++
+		}
+	}
+	why := make([]string, len(arrays))
+	leaves := make([][]jsonLeaf, len(arrays))
+	for i, a := range arrays {
+		switch {
+		case names[i] == "":
+			why[i] = "its keys give no Go accessor name"
+		case count[names[i]] > 1:
+			why[i] = "another array's keys give the same accessor name, Elements." + names[i]
+		default:
+			leaves[i], why[i] = arrayLeaves(a)
+		}
+	}
+	pathsWhy(f.pathsVar+"."+g.GoName, leaves, why)
+	for i, a := range arrays {
+		if why[i] == "" {
+			ja := jsonArray{name: names[i], path: a.Path, members: a.Members, marker: g.fieldType + "Elements" + names[i], leaves: leaves[i]}
+			for j := range ja.leaves {
+				ja.leaves[j].typeExpr = "any"
+				if g.orderedType != nil {
+					ja.leaves[j].typeExpr = g.orderedType(ja.leaves[j].path)
+				}
+			}
+			g.jsonArrays = append(g.jsonArrays, ja)
+			continue
+		}
+		paths := make([]string, len(a.Members))
+		for j, m := range a.Members {
+			paths[j] = a.Path + "." + m
+		}
+		n := fmt.Sprintf("no Elements accessor for the elements of %s (ordered %s): %s. Their orderings under At are written, and Match on them is not.", a.Path, strings.Join(paths, ", "), why[i])
+		f.notices = append(f.notices, g.GoName+": "+n)
+		f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
+	}
+	if len(g.jsonArrays) > 0 && !answers(g, "element_match") {
+		return fieldErr(f.typeName, g.GoName, "the tag orders members of %d arrays' elements, and the engine answers no element_match on %s: the generator and its engine disagree, which is a bug in this stashgen", len(g.jsonArrays), g.EQLType)
+	}
 	return nil
 }
 
@@ -1093,16 +1155,158 @@ func jsonPathName(path string) (string, error) {
 	return name, nil
 }
 
+// jsonArrayName is an array's accessor name under Elements, named as
+// jsonPathName names a path: $.visits[*] is Visits, and a root array, $[*]
+// or $[*][*], is Root. "" for an array whose keys give no name.
+func jsonArrayName(path string) string {
+	if strings.Trim(strings.TrimPrefix(path, "$"), "[*]") == "" {
+		return "Root"
+	}
+	name, err := jsonPathName(path)
+	if err != nil {
+		return ""
+	}
+	return name
+}
+
+// jsonKeyName is one key's name in Paths, named as jsonPathName names a
+// path: emergency_contacts is EmergencyContacts. "" for a key that gives
+// no name starting with a letter.
+func jsonKeyName(key string) string {
+	var b strings.Builder
+	for _, word := range strings.Split(key, "_") {
+		if word != "" {
+			b.WriteString(strings.ToUpper(word[:1]) + word[1:])
+		}
+	}
+	name := b.String()
+	if !isIdent(name) || name[0] < 'A' || name[0] > 'Z' {
+		return ""
+	}
+	return name
+}
+
+// jsonSteps are a tag-spelled path's keys, each with the wildcards that
+// follow it: $.extra.contacts[*] is extra and contacts[*]. Wildcards
+// before the first key, as in $[*].name, belong to no key and are dropped.
+func jsonSteps(path string) []string {
+	rest := strings.TrimPrefix(path, "$")
+	for strings.HasPrefix(rest, "[") {
+		end := strings.IndexByte(rest, ']')
+		if end < 0 {
+			break
+		}
+		rest = rest[end+1:]
+	}
+	var steps []string
+	for _, step := range strings.Split(strings.TrimPrefix(rest, "."), ".") {
+		if step != "" {
+			steps = append(steps, step)
+		}
+	}
+	return steps
+}
+
+// arrayLeaves are an array's members as Paths names them: each the array's
+// keys, then the member's. Or why the array's members have no names there:
+// a key that gives no Go name.
+func arrayLeaves(a record.ElementArray) ([]jsonLeaf, string) {
+	leaves := make([]jsonLeaf, 0, len(a.Members))
+	for _, m := range a.Members {
+		leaf := jsonLeaf{path: a.Path + "." + m, array: a.Path, member: m}
+		leaf.keys = append(jsonSteps(a.Path), strings.Split(m, ".")...)
+		for _, step := range leaf.keys {
+			key, _, _ := strings.Cut(step, "[")
+			name := jsonKeyName(key)
+			if name == "" {
+				return nil, fmt.Sprintf("the key %q of %s gives no Go name under Paths that starts with a letter", key, leaf.path)
+			}
+			leaf.names = append(leaf.names, name)
+		}
+		leaves = append(leaves, leaf)
+	}
+	return leaves, ""
+}
+
+// pathsWhy finds the names under prefix (Paths.Profile) that would stand
+// for two paths, and gives each array with such a path its reason in why.
+// Two paths meet where their names agree and their keys do not (a_b and
+// aB are both AB), or where one path's names run out along the other's (a
+// member $.a[*].b, and $.a[*].b.c below it): Paths could name one of them
+// only. An array that already has a reason is left out.
+func pathsWhy(prefix string, leaves [][]jsonLeaf, why []string) {
+	type at struct{ array, leaf int }
+	var all []at
+	for i := range leaves {
+		if why[i] != "" {
+			continue
+		}
+		for j := range leaves[i] {
+			all = append(all, at{i, j})
+		}
+	}
+	reasons := make([]string, len(leaves))
+	for x := range all {
+		for y := x + 1; y < len(all); y++ {
+			p, q := leaves[all[x].array][all[x].leaf], leaves[all[y].array][all[y].leaf]
+			n := min(len(p.names), len(q.names))
+			meet := -1
+			for k := range n {
+				if p.names[k] != q.names[k] {
+					break
+				}
+				if p.keys[k] != q.keys[k] || k == n-1 {
+					meet = k
+					break
+				}
+			}
+			if meet < 0 {
+				continue
+			}
+			reason := fmt.Sprintf("%s.%s would name both %s and %s, and can name one of them only", prefix, strings.Join(p.names[:meet+1], "."), p.path, q.path)
+			for _, i := range []int{all[x].array, all[y].array} {
+				if reasons[i] == "" {
+					reasons[i] = reason
+				}
+			}
+		}
+	}
+	for i, r := range reasons {
+		if r != "" {
+			why[i] = r
+		}
+	}
+}
+
 // jsonPath is one ordered path's accessor on a document field's entry.
 type jsonPath struct {
 	name string // "Age"
 	path string // "$.age"
 }
 
+// jsonArray is one array's accessor under a document field's Elements.
+type jsonArray struct {
+	name    string     // "ExtraContacts"
+	path    string     // "$.extra.contacts[*]"
+	members []string   // "relationship", "calls"
+	marker  string     // the array's type, which its predicates carry: "ProfileFieldElementsExtraContacts"
+	leaves  []jsonLeaf // its members as Paths names them
+}
+
+// jsonLeaf is one member of an array's elements, as Paths names it.
+type jsonLeaf struct {
+	path     string   // "$.extra.contacts[*].relationship"
+	array    string   // "$.extra.contacts[*]"
+	member   string   // "relationship"
+	keys     []string // "extra", "contacts[*]", "relationship"
+	names    []string // "Extra", "Contacts", "Relationship"
+	typeExpr string   // the member's Go type: "string", or "any"
+}
+
 // jsonEntry writes a document field's Fields entry: its query methods, a
 // method for each read, and an accessor under At for each ordered path,
 // whose methods are the orderings there.
-func (w *writer) jsonEntry(g genField) {
+func (w *writer) jsonEntry(g genField, pathsVar string) {
 	answered := map[string]bool{}
 	for _, op := range g.operators {
 		answered[op.Name] = true
@@ -1115,8 +1319,11 @@ func (w *writer) jsonEntry(g genField) {
 	// public.eql_v4_json_entry), not for the stored type.
 	leaf := strings.TrimSuffix(needle, "Query") + "LeafQuery"
 	entry := "eql." + EQLGoName("JsonEntry")
-	// planJSON refuses ordered paths the engine answers no ordering on.
+	elementsQuery := strings.TrimSuffix(needle, "Query") + "ElementsQuery"
+	// planJSON refuses ordered paths the engine answers no ordering on,
+	// and arrays it answers no element_match on.
 	ordered := len(g.jsonPaths) > 0
+	arrays := len(g.jsonArrays) > 0
 	field := "gensupport.Field[" + g.valueExpr + "]"
 
 	w.b.WriteString(wrapComment(fmt.Sprintf("%s provides document queries and reads for the %s field.", g.fieldType, g.GoName), 80))
@@ -1127,17 +1334,33 @@ func (w *writer) jsonEntry(g genField) {
 		w.p("\t// are the orderings there.")
 		w.p("\tAt %sAt", g.fieldType)
 	}
+	if arrays {
+		w.p("\t// Elements has one accessor per array whose elements have ordered")
+		w.p("\t// members, whose Match tests the members of one element together.")
+		w.p("\tElements %sElements", g.fieldType)
+	}
 	w.p("}")
 	w.nl()
 	w.p("func new%s(f %s) %s {", g.fieldType, field, g.fieldType)
-	if ordered {
-		w.p("\treturn %s{field: f, At: %sAt{", g.fieldType, g.fieldType)
-		for _, p := range g.jsonPaths {
-			w.p("\t\t%s: %sPath{field: f, path: %q},", p.name, g.fieldType, p.path)
-		}
-		w.p("\t}}")
-	} else {
+	if !ordered {
+		// planJSON writes an array's accessor only beneath an ordered path.
 		w.p("\treturn %s{field: f}", g.fieldType)
+	} else {
+		w.p("\treturn %s{", g.fieldType)
+		w.p("\t\tfield: f,")
+		w.p("\t\tAt: %sAt{", g.fieldType)
+		for _, p := range g.jsonPaths {
+			w.p("\t\t\t%s: %sPath{field: f, path: %q},", p.name, g.fieldType, p.path)
+		}
+		w.p("\t\t},")
+		if arrays {
+			w.p("\t\tElements: %sElements{", g.fieldType)
+			for _, a := range g.jsonArrays {
+				w.p("\t\t\t%s: %sArray[%s]{field: f, path: %q},", a.name, g.fieldType, a.marker, a.path)
+			}
+			w.p("\t\t},")
+		}
+		w.p("\t}")
 	}
 	w.p("}")
 	w.nl()
@@ -1202,6 +1425,9 @@ func (w *writer) jsonEntry(g genField) {
 		w.p("\treturn gensupport.JSONNodeToken(ctx, f.field, c, \"child_count\", path)")
 		w.p("}")
 	}
+	if arrays {
+		w.jsonElements(g, field, elementsQuery, pathsVar)
+	}
 	if !ordered {
 		return
 	}
@@ -1242,4 +1468,122 @@ func (w *writer) jsonEntry(g genField) {
 		w.p("\treturn gensupport.JSONSelect[%s](ctx, p.field, c, p.path)", entry)
 		w.p("}")
 	}
+}
+
+// jsonElements writes a document field's Elements: one accessor per array
+// whose elements have ordered members, each with Match, which derives the
+// operand eql_v4.json_tree_element_match takes.
+func (w *writer) jsonElements(g genField, field, query, pathsVar string) {
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sElements names the arrays of %s whose elements have ordered members. Each accessor's Match tests the members of one element together.", g.fieldType, g.GoName), 80))
+	w.p("type %sElements struct {", g.fieldType)
+	for _, a := range g.jsonArrays {
+		w.p("\t%s %sArray[%s] // %s: %s", a.name, g.fieldType, a.marker, a.path, strings.Join(a.members, ", "))
+	}
+	w.p("}")
+	for _, a := range g.jsonArrays {
+		under := append([]string{pathsVar, g.GoName}, a.leaves[0].names[:len(jsonSteps(a.path))]...)
+		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s is the array %s of %s, as a type: Elements.%s.Match takes an encrypt.ElementPredicate[%s], which encrypt.AtPath makes from a member under %s.", a.marker, a.path, g.GoName, a.name, a.marker, strings.Join(under, ".")), 80))
+		w.p("type %s struct{}", a.marker)
+	}
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sArray is one array of %s whose elements have ordered members. E is the array's own type, which the predicates its Match takes carry.", g.fieldType, g.GoName), 80))
+	w.p("type %sArray[E any] struct {", g.fieldType)
+	w.p("\tfield %s", field)
+	w.p("\tpath  string")
+	w.p("}")
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("Match derives the operand that finds a row where one element of this array passes every predicate: eql_v4.json_tree_element_match(col, $1::eql_v4.query_json_elements). An EqAt and an ordering at the array's paths can each be answered by a different element; Match is answered by one. Make each predicate with encrypt.AtPath and a member of this array under %s, so a member of another array, or a value of another type, does not compile; or with Member, for a member named at run time. No predicates, and a zero ElementPredicate, are refused before the engine is asked.", pathsVar), 80))
+	w.p("//")
+	w.b.WriteString(wrapComment("Each comparison is of the member's ordering term, so Eq is an equality of folded values: text compares case- and accent-folded (\"sibling\" equals \"Sibling\"), and integers past 2^53 can tie. EqAt at a member's full path is exact, of any element.", 80))
+	w.p("//")
+	w.b.WriteString(wrapComment("The operand reads each array to opts.WildcardBound elements, 64 when it is 0. A row whose array is longer fails the query with SQLSTATE 22023 (invalid_parameter_value) rather than answer over part of it: raise the bound past the longest array. The function filters the rows a scan gives it, so narrow them with an indexed predicate first, such as @> on the same values.", 80))
+	w.p("func (a %sArray[E]) Match(ctx context.Context, c *encrypt.Cipher, opts encrypt.JSONReadOptions, predicates ...encrypt.ElementPredicate[E]) (%s, error) {", g.fieldType, query)
+	w.p("\treturn gensupport.JSONElementMatch[%s](ctx, a.field, c, a.path, opts, predicates)", query)
+	w.p("}")
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("Member is the comparisons of the member of this array's elements that member names, for a filter whose members are known only at run time: relationship, or address.city, written as the member is written below the array in the field's ordered paths. Its values are not checked by the compiler, and Match refuses a member the field does not order beneath this array, naming it, the array and the members the field orders there, before the engine is asked. Where the member is known when the program is written, use encrypt.AtPath and %s.", pathsVar), 80))
+	w.p("func (a %sArray[E]) Member(member string) encrypt.MemberTest[E, any] {", g.fieldType)
+	w.p("\treturn encrypt.AtPath(encrypt.NewPath[E, any](a.path, member))")
+	w.p("}")
+}
+
+// paths writes the file's Paths: for each document field with an Elements
+// accessor, the ordered members of its arrays, nested as the JSON nests
+// them. Paths has fields and no methods, so no JSON key is reserved: the
+// operations are on the types it holds and on Fields.
+func (w *writer) paths(f *genFile) {
+	var fields []genField
+	for _, g := range f.fields {
+		if g.isJSON() && len(g.jsonArrays) > 0 {
+			fields = append(fields, g)
+		}
+	}
+	if len(fields) == 0 {
+		return
+	}
+	// One tree per field; a node's children keep the order the tag gives.
+	type node struct {
+		name     string
+		children []*node
+		leaf     *jsonLeaf
+		marker   string
+	}
+	child := func(n *node, name string) *node {
+		for _, c := range n.children {
+			if c.name == name {
+				return c
+			}
+		}
+		c := &node{name: name}
+		n.children = append(n.children, c)
+		return c
+	}
+	// The function's result is named apart from every import, which a
+	// member's type may name in the body.
+	local := "paths"
+	for f.imports.paths[local] != "" {
+		local += "_"
+	}
+	root := &node{}
+	var assigns []string
+	for _, g := range fields {
+		top := child(root, g.GoName)
+		for _, a := range g.jsonArrays {
+			for i := range a.leaves {
+				leaf := &a.leaves[i]
+				n := top
+				for _, name := range leaf.names {
+					n = child(n, name)
+				}
+				n.leaf, n.marker = leaf, a.marker
+				assigns = append(assigns, fmt.Sprintf("\t%s.%s.%s = encrypt.NewPath[%s, %s](%q, %q)", local, g.GoName, strings.Join(leaf.names, "."), a.marker, leaf.typeExpr, leaf.array, leaf.member))
+			}
+		}
+	}
+	var tree func(n *node, indent string)
+	tree = func(n *node, indent string) {
+		for _, c := range n.children {
+			if c.leaf != nil {
+				w.p("%s%s encrypt.Path[%s, %s] // %s", indent, c.name, c.marker, c.leaf.typeExpr, c.leaf.path)
+				continue
+			}
+			w.p("%s%s struct {", indent, c.name)
+			tree(c, indent+"\t")
+			w.p("%s}", indent)
+		}
+	}
+	first := fields[0]
+	example := first.jsonArrays[0].leaves[0]
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s names the ordered members of the arrays of %s's documents, nested as the JSON nests them, for the element match: encrypt.AtPath(%s.%s.%s) makes the predicates %s.%s.Elements.%s.Match takes. Each path's type names its array and the member's Go type, so a predicate on another array's member, or with a value of another type, does not compile.", f.pathsVar, f.typeName, f.pathsVar, first.GoName, strings.Join(example.names, "."), f.fieldsVar, first.GoName, first.jsonArrays[0].name), 80))
+	w.p("var %s = func() (%s struct {", f.pathsVar, local)
+	tree(root, "\t")
+	w.p("}) {")
+	for _, a := range assigns {
+		w.p("%s", a)
+	}
+	w.p("\treturn %s", local)
+	w.p("}()")
 }

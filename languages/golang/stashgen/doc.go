@@ -3,7 +3,8 @@
 // A struct's stash tags declare how each field is encrypted. [FromTags] reads
 // those tags through go/packages and go/types, checks the declaration with an
 // [Engine], and returns the file that the command stashgen writes beside the
-// struct: the encrypted type, Encrypt, Decrypt, Fields and the print methods.
+// struct: the encrypted type, Encrypt, Decrypt, Fields, Paths (for a JSON
+// document whose arrays have ordered members) and the print methods.
 // The command at languages/golang/cmd/stashgen is the go:generate front end
 // for this package.
 //

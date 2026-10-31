@@ -59,7 +59,7 @@ func run(args []string, dir string, stdout, stderr io.Writer, newEngine func(con
 	req := stashgen.Request{Dir: dir}
 	var models modelFlags
 	fs.StringVar(&req.Type, "type", "", "the struct that carries the stash tags (required)")
-	fs.StringVar(&req.Name, "name", "", "write EncryptN, DecryptN and NFields instead of Encrypt, Decrypt and Fields")
+	fs.StringVar(&req.Name, "name", "", "write EncryptN, DecryptN, NFields and NPaths instead of Encrypt, Decrypt, Fields and Paths")
 	fs.StringVar(&req.For, "for", "", "P.F: -type declares the tags for F, a type in package P")
 	fs.Var(&models, "model", "Name=R or Name=R:D: a model R for separate columns; writes EncryptName and DecryptName (repeatable)")
 	fs.BoolVar(&req.Redact, "redact", false, "write String, GoString and LogValue methods on the -type struct")

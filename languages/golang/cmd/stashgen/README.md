@@ -178,6 +178,7 @@ The field's `Fields` entry has a method per operation:
 | `Selector(ctx, c, path)` | `encrypt.JSONSelection`: `Selector()` and `Open` | `col -> $1::text` |
 | `Subtree(ctx, c, path, opts)` | `encrypt.JSONRead`: `Tokens()`, `Open` and `OpenOne` | `eql_v4.json_tree_subtree(col, $1::text[], 64)` |
 | `Children(ctx, c, path)`, `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_children(col, $1::text)`, `eql_v4.json_tree_child_count(col, $1::text)` |
+| `Elements.Visits.Match(ctx, c, opts, predicates...)` | `eql.JSONSearchElementsQuery` | `eql_v4.json_tree_element_match(col, $1::eql_v4.query_json_elements)` |
 
 `At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
 An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
@@ -193,6 +194,50 @@ SELECT id FROM customers ORDER BY (
 ```
 
 with `$1` from `At.VisitsAt.Selector(ctx, c)` and `$2` from `At.VisitsAt.Gt(ctx, c, v)`; for the latest visit, order by `ORDER BY 1 DESC NULLS LAST` inside and `DESC` outside.
+
+Two queries at a wildcard path, an `EqAt` and an ordering say, can each be answered by a different element.
+To test several members of one element together, use `Match` under `Elements`.
+`Elements` has one accessor per array whose elements have an ordered member, named for the array's keys as `At` names a path: with `ordered=$.visits[*].at;$.visits[*].place`, `$.visits[*]` is `Elements.Visits`, with the members `at` and `place`.
+A root array (`ordered=$[*].name`) is `Elements.Root`.
+An ordered path that ends at its wildcard (`$.tags[*]`), or has none, gives no accessor, and a field without one has no `Elements`.
+Two arrays whose keys give one name (`$.a_b[*]` and `$.aB[*]` are both `AB`), and an array whose keys give no name, get no accessor: `stashgen` still writes the field and its `At`, and prints a notice naming the ordered paths, which the generated file repeats in a comment.
+
+The generated `Paths` names each accessor's members, nested as the JSON nests them: `$.visits[*].place` is `Paths.Profile.Visits.Place`.
+`encrypt.AtPath` makes a predicate from one, with `Eq`, `Lt`, `Lte`, `Gt`, `Gte` or `Between` (inclusive).
+
+```go
+// rows with one visit that is at home and after 15
+q, err := customers.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+	encrypt.AtPath(customers.Paths.Profile.Visits.Place).Eq("home"),
+	encrypt.AtPath(customers.Paths.Profile.Visits.At).Gt(15),
+)
+```
+
+```sql
+SELECT id FROM customers WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)
+```
+
+A path is an `encrypt.Path[E, T]`.
+`E` is a type `stashgen` writes for the array (`ProfileFieldElementsVisits`), and `Match` takes only `encrypt.ElementPredicate[E]` of its own array, so a predicate on another array's member does not compile.
+`T` is the member's Go type in the document's struct, read as `encoding/json` reads the document (through pointers, promoted fields, maps and slices), so a value of another type does not compile either.
+It is `any` where the type names none: a `json.RawMessage` document, a path the struct does not hold, or a member inside a type with its own `MarshalJSON`.
+`Paths` holds only fields, and its paths' methods are the SDK's, so any JSON key can name a member.
+With `-name Customer`, it is `CustomerPaths`, as `Fields` is `CustomerFields`.
+
+For a filter built at run time, from text such as `visits:(place = "home" AND at > 15)`, name the member with the array's `Member`, written as it is below the array in the tag (`place`, or `address.city`):
+
+```go
+visits := customers.Fields.Profile.Elements.Visits
+q, err := visits.Match(ctx, cipher, encrypt.JSONReadOptions{}, visits.Member("place").Eq("home"), visits.Member("at").Gt(15))
+```
+
+Its values are `any`, as the orderings take them.
+A member the field does not order is refused before the engine is asked, with `encrypt.ErrTerm`, naming the member, the array and the members it orders; no predicates, a zero `ElementPredicate`, and a member with a wildcard, are refused with `encrypt.ErrEncoding`.
+`Paths` names each key on its own, so an array whose members it cannot name gets no accessor and the same notice: a key that gives no Go name there (`$.a.1[*].x`, whose `1` `At` joins to `A1X`), or one name for two paths (`$.a[*].b` beside `$.a[*].b.c`, or `$.x.a_b[*].m` beside `$.x.aB.n[*].o`).
+Each comparison is of the member's ordering term, so `Eq` is an equality of folded values: text compares case- and accent-folded (`"home"` equals `"Home"`), and integers past 2^53 can tie.
+`EqAt` at the member's full path is exact, of any element.
+`Match` reads each array to `opts.WildcardBound` elements, 64 when it is 0, and a row whose array is longer fails the query with SQLSTATE 22023 rather than answer over part of it: set the bound past the longest array.
+The function runs on each row a scan gives it, so narrow the rows first with an indexed predicate, such as `@>` on the same values.
 `OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
 A needle and a value are Go values: a `json.RawMessage` of JSON text crosses as it is, and anything else is marshalled with `encoding/json`.
 `EqAt` and the orderings take a scalar: a string, a number, a bool, or `nil` for JSON `null`.
@@ -253,6 +298,7 @@ For `-type User`, the file `user_stash.go` holds:
   `encrypt_into=TextMatch` answers `Matches`, which returns an `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand, with `Verify` and `TargetLimit`.
   The query of `Matches` carries `Verify` and `TargetLimit`, because its answer can hold rows that do not match; an exact operator's query carries neither.
   See the encrypt package's README for each method's result and the query with `database/sql`.
+- `Paths`, when a `JsonSearch` field orders members of an array's elements: those members, nested as the JSON nests them, for `encrypt.AtPath` and the array's `Match` (see [Encrypted JSON documents](#encrypted-json-documents)).
 - `String` and `LogValue` on `EncryptedUser`, which print the passthrough fields and hide the sealed ones.
 - A copy of the fields of `User`, so a change to them stops the build.
 
@@ -263,7 +309,7 @@ Generated code uses no reflection, and no function in it panics.
 | Flag | Meaning |
 |---|---|
 | `-type T` | The struct that carries the `stash` tags. Required. |
-| `-name N` | Write `EncryptN`, `DecryptN` and `NFields`. A package holds one `Encrypt`; the second struct in a package needs a name. |
+| `-name N` | Write `EncryptN`, `DecryptN` and `NFields` (and `NPaths`). A package holds one `Encrypt`; the second struct in a package needs a name. |
 | `-for P.F` | `T` declares the tags for `F`, a type in another package. Each field of `T` names a field of `F` with the same name and type, and every exported field of `F` is named. |
 | `-model Name=R` | A model `R` for separate columns: one field for each column, each tagged with the output it holds, `stash:"email"` or `stash:"email,equality"`. Writes `EncryptName` and `DecryptName`. Any number. |
 | `-model Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` in your package declares them. |

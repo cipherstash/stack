@@ -129,13 +129,22 @@ type CustomerProfileField struct {
 	// At has one accessor per path the field orders, whose methods
 	// are the orderings there.
 	At CustomerProfileFieldAt
+	// Elements has one accessor per array whose elements have ordered
+	// members, whose Match tests the members of one element together.
+	Elements CustomerProfileFieldElements
 }
 
 func newCustomerProfileField(f gensupport.Field[json.RawMessage]) CustomerProfileField {
-	return CustomerProfileField{field: f, At: CustomerProfileFieldAt{
-		Age:      CustomerProfileFieldPath{field: f, path: "$.age"},
-		VisitsAt: CustomerProfileFieldPath{field: f, path: "$.visits[*].at"},
-	}}
+	return CustomerProfileField{
+		field: f,
+		At: CustomerProfileFieldAt{
+			Age:      CustomerProfileFieldPath{field: f, path: "$.age"},
+			VisitsAt: CustomerProfileFieldPath{field: f, path: "$.visits[*].at"},
+		},
+		Elements: CustomerProfileFieldElements{
+			Visits: CustomerProfileFieldArray[CustomerProfileFieldElementsVisits]{field: f, path: "$.visits[*]"},
+		},
+	}
 }
 
 // Encrypt seals one Profile document for an update of its stored column.
@@ -202,6 +211,62 @@ func (f CustomerProfileField) Children(ctx context.Context, c *encrypt.Cipher, p
 // empty container, NULL where the row has no node there or for the sealed root.
 func (f CustomerProfileField) ChildCount(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
+}
+
+// CustomerProfileFieldElements names the arrays of Profile whose elements have
+// ordered members. Each accessor's Match tests the members of one element
+// together.
+type CustomerProfileFieldElements struct {
+	Visits CustomerProfileFieldArray[CustomerProfileFieldElementsVisits] // $.visits[*]: at
+}
+
+// CustomerProfileFieldElementsVisits is the array $.visits[*] of Profile, as a
+// type: Elements.Visits.Match takes an
+// encrypt.ElementPredicate[CustomerProfileFieldElementsVisits], which
+// encrypt.AtPath makes from a member under CustomerPaths.Profile.Visits.
+type CustomerProfileFieldElementsVisits struct{}
+
+// CustomerProfileFieldArray is one array of Profile whose elements have ordered
+// members. E is the array's own type, which the predicates its Match takes
+// carry.
+type CustomerProfileFieldArray[E any] struct {
+	field gensupport.Field[json.RawMessage]
+	path  string
+}
+
+// Match derives the operand that finds a row where one element of this array
+// passes every predicate: eql_v4.json_tree_element_match(col,
+// $1::eql_v4.query_json_elements). An EqAt and an ordering at the array's paths
+// can each be answered by a different element; Match is answered by one. Make
+// each predicate with encrypt.AtPath and a member of this array under
+// CustomerPaths, so a member of another array, or a value of another type, does
+// not compile; or with Member, for a member named at run time. No predicates,
+// and a zero ElementPredicate, are refused before the engine is asked.
+//
+// Each comparison is of the member's ordering term, so Eq is an equality of
+// folded values: text compares case- and accent-folded ("sibling" equals
+// "Sibling"), and integers past 2^53 can tie. EqAt at a member's full path is
+// exact, of any element.
+//
+// The operand reads each array to opts.WildcardBound elements, 64 when it is 0.
+// A row whose array is longer fails the query with SQLSTATE 22023
+// (invalid_parameter_value) rather than answer over part of it: raise the bound
+// past the longest array. The function filters the rows a scan gives it, so
+// narrow them with an indexed predicate first, such as @> on the same values.
+func (a CustomerProfileFieldArray[E]) Match(ctx context.Context, c *encrypt.Cipher, opts encrypt.JSONReadOptions, predicates ...encrypt.ElementPredicate[E]) (eql.JSONSearchElementsQuery, error) {
+	return gensupport.JSONElementMatch[eql.JSONSearchElementsQuery](ctx, a.field, c, a.path, opts, predicates)
+}
+
+// Member is the comparisons of the member of this array's elements that member
+// names, for a filter whose members are known only at run time: relationship,
+// or address.city, written as the member is written below the array in the
+// field's ordered paths. Its values are not checked by the compiler, and Match
+// refuses a member the field does not order beneath this array, naming it, the
+// array and the members the field orders there, before the engine is asked.
+// Where the member is known when the program is written, use encrypt.AtPath and
+// CustomerPaths.
+func (a CustomerProfileFieldArray[E]) Member(member string) encrypt.MemberTest[E, any] {
+	return encrypt.AtPath(encrypt.NewPath[E, any](a.path, member))
 }
 
 // CustomerProfileFieldAt names the declared ordered paths of Profile. Use an
@@ -345,3 +410,20 @@ func (f CustomerPrefsField) Children(ctx context.Context, c *encrypt.Cipher, pat
 func (f CustomerPrefsField) ChildCount(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
 }
+
+// CustomerPaths names the ordered members of the arrays of Customer's
+// documents, nested as the JSON nests them, for the element match:
+// encrypt.AtPath(CustomerPaths.Profile.Visits.At) makes the predicates
+// CustomerFields.Profile.Elements.Visits.Match takes. Each path's type names
+// its array and the member's Go type, so a predicate on another array's member,
+// or with a value of another type, does not compile.
+var CustomerPaths = func() (paths struct {
+	Profile struct {
+		Visits struct {
+			At encrypt.Path[CustomerProfileFieldElementsVisits, any] // $.visits[*].at
+		}
+	}
+}) {
+	paths.Profile.Visits.At = encrypt.NewPath[CustomerProfileFieldElementsVisits, any]("$.visits[*]", "at")
+	return paths
+}()

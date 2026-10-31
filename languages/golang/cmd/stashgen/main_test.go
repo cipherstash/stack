@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -442,6 +443,117 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 	if !strings.Contains(written, "func (p ProfileFieldPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[eql.JSONEntry], error)") {
 		t.Error("an ordered path has no Selector of its own")
 	}
+	// The array with an ordered member gets an accessor under Elements,
+	// named as At names its path, whose Match derives the element match.
+	for _, want := range []string{
+		"Elements ProfileFieldElements",
+		"Visits ProfileFieldArray[ProfileFieldElementsVisits] // $.visits[*]: at",
+		`Visits: ProfileFieldArray[ProfileFieldElementsVisits]{field: f, path: "$.visits[*]"},`,
+		"type ProfileFieldElementsVisits struct{}",
+		"type ProfileFieldArray[E any] struct {",
+		"func (a ProfileFieldArray[E]) Match(ctx context.Context, c *encrypt.Cipher, opts encrypt.JSONReadOptions, predicates ...encrypt.ElementPredicate[E]) (eql.JSONSearchElementsQuery, error)",
+		"gensupport.JSONElementMatch[eql.JSONSearchElementsQuery](ctx, a.field, c, a.path, opts, predicates)",
+		"func (a ProfileFieldArray[E]) Member(member string) encrypt.MemberTest[E, any]",
+		"return encrypt.AtPath(encrypt.NewPath[E, any](a.path, member))",
+		// Paths names the array's members, nested as the JSON nests them;
+		// a json.RawMessage document names no Go type, so each is any.
+		"var Paths = func() (paths struct {",
+		"At encrypt.Path[ProfileFieldElementsVisits, any] // $.visits[*].at",
+		`paths.Profile.Visits.At = encrypt.NewPath[ProfileFieldElementsVisits, any]("$.visits[*]", "at")`,
+	} {
+		if !strings.Contains(written, want) {
+			t.Errorf("the generated file lacks %q", want)
+		}
+	}
+	if strings.Contains(written, "PrefsFieldElements") {
+		t.Error("Prefs orders no member, and got Elements")
+	}
+	// The members of one array, named as At names their paths; an ordered
+	// path that ends at its wildcard, or has none, is no array's member.
+	written, stderr, code = generate("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.extra.emergency_contacts[*].relationship;$.extra.emergency_contacts[*].previous_call_count;$.tags[*];$.age)\"`")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	// gofmt aligns the struct fields: read each line's words.
+	words := strings.Join(strings.Fields(written), " ")
+	for _, want := range []string{
+		"ExtraEmergencyContactsRelationship ProfileFieldPath // $.extra.emergency_contacts[*].relationship",
+		"ExtraEmergencyContacts ProfileFieldArray[ProfileFieldElementsExtraEmergencyContacts] // $.extra.emergency_contacts[*]: relationship, previous_call_count",
+		"Profile struct { Extra struct { EmergencyContacts struct { Relationship encrypt.Path[ProfileFieldElementsExtraEmergencyContacts, any] // $.extra.emergency_contacts[*].relationship PreviousCallCount encrypt.Path[ProfileFieldElementsExtraEmergencyContacts, any] // $.extra.emergency_contacts[*].previous_call_count } } }",
+		`paths.Profile.Extra.EmergencyContacts.PreviousCallCount = encrypt.NewPath[ProfileFieldElementsExtraEmergencyContacts, any]("$.extra.emergency_contacts[*]", "previous_call_count")`,
+	} {
+		if !strings.Contains(words, want) {
+			t.Errorf("the generated file lacks %q", want)
+		}
+	}
+	if strings.Contains(written, "Tags ProfileFieldArray") {
+		t.Error("$.tags[*] orders the elements themselves, no member, and got an accessor under Elements")
+	}
+	// A field that orders no member beneath an array has no Elements.
+	written, stderr, code = generate("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.age;$.tags[*])\"`")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if strings.Contains(written, "Elements") || strings.Contains(written, "JSONElementMatch") || strings.Contains(written, "Paths") {
+		t.Error("a field with no ordered member beneath an array got Elements or Paths")
+	}
+	// A root array's accessor is Root, beside its paths' At accessors.
+	written, stderr, code = generate("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$[*].name;$[*].age)\"`")
+	if code != 0 {
+		t.Fatalf("a root array: exit %d\n%s", code, stderr)
+	}
+	words = strings.Join(strings.Fields(written), " ")
+	for _, want := range []string{
+		"Name ProfileFieldPath // $[*].name",
+		"Root ProfileFieldArray[ProfileFieldElementsRoot] // $[*]: name, age",
+		`Root: ProfileFieldArray[ProfileFieldElementsRoot]{field: f, path: "$[*]"},`,
+		// A root array's members are the field's own in Paths.
+		"Profile struct { Name encrypt.Path[ProfileFieldElementsRoot, any] // $[*].name Age encrypt.Path[ProfileFieldElementsRoot, any] // $[*].age }",
+	} {
+		if !strings.Contains(words, want) {
+			t.Errorf("a root array: the generated file lacks %q", want)
+		}
+	}
+	// Arrays whose keys give one accessor name, or none, get no accessor:
+	// the tag still generates, At is as it is without them, and a notice
+	// in the file and on stderr names the paths as the tag writes them.
+	for _, c := range []struct{ name, ordered, at, notice string }{
+		{"two arrays, one name", "$.a_b[*].x;$.aB[*].y;$.c[*].z", "ABX ProfileFieldPath // $.a_b[*].x", "no Elements accessor for the elements of $.a_b[*] (ordered $.a_b[*].x): another array's keys give the same accessor name, Elements.AB"},
+		{"an array with no name", "$.__[*].x;$.c[*].z", "X ProfileFieldPath // $.__[*].x", "no Elements accessor for the elements of $.__[*] (ordered $.__[*].x): its keys give no Go accessor name"},
+		// Paths names each key on its own, so a key of digits, which At
+		// joins to the keys before it, names nothing there.
+		{"a key with no name under Paths", "$.a.1[*].x;$.c[*].z", "A1X ProfileFieldPath // $.a.1[*].x", `no Elements accessor for the elements of $.a.1[*] (ordered $.a.1[*].x): the key "1" of $.a.1[*].x gives no Go name under Paths that starts with a letter`},
+		// Paths nests: a member that is also the object or array above
+		// another member, or two keys that give one name at one place,
+		// would make one name stand for two paths.
+		{"a member above a member", "$.a[*].b;$.a[*].b.c;$.c[*].z", "ABC ProfileFieldPath // $.a[*].b.c", "no Elements accessor for the elements of $.a[*] (ordered $.a[*].b, $.a[*].b.c): Paths.Profile.A.B would name both $.a[*].b and $.a[*].b.c, and can name one of them only"},
+		{"a member above an array", "$.a[*].b;$.a[*].b[*].d;$.c[*].z", "ABD ProfileFieldPath // $.a[*].b[*].d", "no Elements accessor for the elements of $.a[*].b[*] (ordered $.a[*].b[*].d): Paths.Profile.A.B would name both $.a[*].b and $.a[*].b[*].d, and can name one of them only"},
+		{"two keys, one name in Paths", "$.x.a_b[*].m;$.x.aB.n[*].o;$.c[*].z", "XABM ProfileFieldPath // $.x.a_b[*].m", "no Elements accessor for the elements of $.x.aB.n[*] (ordered $.x.aB.n[*].o): Paths.Profile.X.AB would name both $.x.a_b[*].m and $.x.aB.n[*].o, and can name one of them only"},
+	} {
+		written, stderr, code := generate("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=" + c.ordered + ")\"`")
+		if code != 0 {
+			t.Fatalf("%s: exit %d\n%s", c.name, code, stderr)
+		}
+		// A wrapped comment reads as one line.
+		words := strings.Join(strings.Fields(strings.ReplaceAll(written, "\n// ", " ")), " ")
+		for _, want := range []string{c.at, "C ProfileFieldArray[ProfileFieldElementsC] // $.c[*]: z", "Z encrypt.Path[ProfileFieldElementsC, any] // $.c[*].z", "Profile: " + c.notice} {
+			if !strings.Contains(words, want) {
+				t.Errorf("%s: the generated file lacks %q", c.name, want)
+			}
+		}
+		if !strings.Contains(stderr, "stashgen: Customer.Profile: "+c.notice) {
+			t.Errorf("%s: stderr = %q", c.name, stderr)
+		}
+		// $.c[*] alone has an accessor: its field, its initializer and
+		// its Elements struct field.
+		if n := strings.Count(written, "ProfileFieldArray[ProfileFieldElements"); n != 2 {
+			t.Errorf("%s: %d accessors written, want $.c[*]'s alone", c.name, n)
+		}
+	}
+	written, _, code = generate("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a_b[*].x;$.aB[*].y)\"`")
+	if code != 0 || strings.Contains(written, "ProfileFieldElements") || strings.Contains(written, "Paths") || !strings.Contains(written, "ABY ProfileFieldPath // $.aB[*].y") {
+		t.Errorf("two colliding arrays and no other: exit %d, Elements or Paths written, or At changed", code)
+	}
 	// A json.RawMessage sealed any other way is bytes, as it was before
 	// documents; an object key of digits names its accessor.
 	written, stderr, code = generate("\tData json.RawMessage `stash:\"data,encrypt,index=equality\"`\n\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.a.1)\"`")
@@ -473,6 +585,19 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "customer_stash.go")); !os.IsNotExist(err) {
 		t.Fatal("a file was written after the refusal")
 	}
+	// The same for an array whose elements have an ordered member, and an
+	// engine that answers no element_match.
+	dir = writeModule(t, map[string]string{"model.go": source("\tProfile json.RawMessage `stash:\"profile,encrypt_into=JsonSearch(ordered=$.visits[*].at)\"`")})
+	stderrBuf.Reset()
+	if code := run([]string{"-type", "Customer"}, dir, &bytes.Buffer{}, &stderrBuf, withoutOperator("element_match")); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, stderrBuf.String())
+	}
+	if got := stderrBuf.String(); !strings.Contains(got, "Customer.Profile") || !strings.Contains(got, "the engine answers no element_match") {
+		t.Fatalf("stderr = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "customer_stash.go")); !os.IsNotExist(err) {
+		t.Fatal("a file was written after the refusal")
+	}
 	for _, c := range []struct{ name, fields, want string }{
 		{"a sealed null", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch,null=sealed\"`", "Customer.Prefs: a nil has an equality term and no other, so another index's column would show which values are absent; write null=sql"},
 		{"a nil document that does not say null=sql", "\tPrefs *json.RawMessage `stash:\"prefs,encrypt_into=JsonSearch\"`", "null=sql"},
@@ -496,6 +621,73 @@ func TestRunGeneratesJSONSearchFields(t *testing.T) {
 				t.Fatalf("stderr = %q, want %q", stderr, c.want)
 			}
 		})
+	}
+}
+
+// A document of a Go type names each member's Go type in Paths, read as
+// encoding/json reads the document: through pointers, a promoted field, a
+// map and a slice, with any where the type names none. The compiler then
+// refuses a value of another type, and a predicate on another array's
+// member, in a call to Match.
+func TestRunTypesTheElementMatch(t *testing.T) {
+	checker, err := encrypt.NewChecker(context.Background())
+	if err != nil {
+		t.Skip(err)
+	}
+	_ = checker.Close()
+	model := "package users\n\nimport \"time\"\n\ntype Place string\n\ntype Stamp struct {\n\tWhen time.Time `json:\"when\"`\n}\n\ntype Visit struct {\n\tStamp\n\tAt *int64 `json:\"at\"`\n\tPlace Place `json:\"place\"`\n\tNote string\n}\n\ntype Tag struct {\n\tName string `json:\"name\"`\n}\n\ntype Profile struct {\n\tVisits []Visit `json:\"visits\"`\n\tTags map[string][]Tag `json:\"tags\"`\n}\n\ntype Customer struct {\n\t_ struct{} `stash:\"context=customers\"`\n\tID int64 `stash:\"id,passthrough\"`\n\tProfile Profile `stash:\"profile,encrypt_into=JsonSearch(ordered=$.visits[*].at;$.visits[*].place;$.visits[*].when;$.visits[*].Note;$.visits[*].missing;$.tags.home[*].name)\"`\n}\n"
+	dir := writeModule(t, map[string]string{"model.go": model})
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-type", "Customer"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "customer_stash.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	words := strings.Join(strings.Fields(string(data)), " ")
+	for _, want := range []string{
+		"At encrypt.Path[ProfileFieldElementsVisits, int64] // $.visits[*].at",
+		"Place encrypt.Path[ProfileFieldElementsVisits, Place] // $.visits[*].place",
+		"When encrypt.Path[ProfileFieldElementsVisits, time.Time] // $.visits[*].when",
+		"Note encrypt.Path[ProfileFieldElementsVisits, string] // $.visits[*].Note",
+		"Missing encrypt.Path[ProfileFieldElementsVisits, any] // $.visits[*].missing",
+		"Tags struct { Home struct { Name encrypt.Path[ProfileFieldElementsTagsHome, string] // $.tags.home[*].name } }",
+		`paths.Profile.Visits.At = encrypt.NewPath[ProfileFieldElementsVisits, int64]("$.visits[*]", "at")`,
+		`paths.Profile.Tags.Home.Name = encrypt.NewPath[ProfileFieldElementsTagsHome, string]("$.tags.home[*]", "name")`,
+	} {
+		if !strings.Contains(words, want) {
+			t.Errorf("the generated file lacks %q", want)
+		}
+	}
+	// What a program writes compiles, and each mistake the types exist to
+	// catch does not.
+	build := func(probe string) string {
+		t.Helper()
+		src := "package users\n\nimport (\n\t\"context\"\n\n\t\"github.com/cipherstash/stack/languages/golang/encrypt\"\n)\n\nfunc probe(ctx context.Context, c *encrypt.Cipher) {\n" + probe + "}\n"
+		if err := os.WriteFile(filepath.Join(dir, "probe.go"), []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("go", "build", "./...")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GOPROXY=off", "GOWORK=off", "GOFLAGS=-mod=mod", "CGO_ENABLED=0")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return ""
+		}
+		return string(out)
+	}
+	if out := build("\t_, _ = Fields.Profile.Elements.Visits.Match(ctx, c, encrypt.JSONReadOptions{},\n\t\tencrypt.AtPath(Paths.Profile.Visits.Place).Eq(\"home\"),\n\t\tencrypt.AtPath(Paths.Profile.Visits.At).Between(1, 2),\n\t\tFields.Profile.Elements.Visits.Member(\"at\").Gt(\"any value\"),\n\t)\n"); out != "" {
+		t.Fatalf("the element match as a program writes it does not build:\n%s", out)
+	}
+	out := build("\t_, _ = Fields.Profile.Elements.Visits.Match(ctx, c, encrypt.JSONReadOptions{}, encrypt.AtPath(Paths.Profile.Visits.At).Gt(\"15\"))\n\t_, _ = Fields.Profile.Elements.Visits.Match(ctx, c, encrypt.JSONReadOptions{}, encrypt.AtPath(Paths.Profile.Tags.Home.Name).Eq(\"x\"))\n")
+	for _, want := range []string{
+		`cannot use "15" (untyped string constant) as int64 value`,
+		"encrypt.ElementPredicate[ProfileFieldElementsTagsHome]) as encrypt.ElementPredicate[ProfileFieldElementsVisits] value",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the build does not refuse with %q:\n%s", want, out)
+		}
 	}
 }
 

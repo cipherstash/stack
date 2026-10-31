@@ -520,7 +520,7 @@ The EQL types the engine produces, and the Go field types each takes:
 | `Numeric` | `encrypt.Decimal` | none |
 | `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
 | `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
-| `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
+| `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, several members of one array element, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
 is sealed at the type's width, and opens back into the field's type. A type
@@ -657,6 +657,35 @@ compare them exactly. At a wildcard path, `->` returns an unspecified
 element of each row, so an ordering over every element is written over
 `eql_v4.json_tree_path_query(col, $sel)`, its matches (the stashgen README
 shows the SQL).
+
+Two such queries can each be answered by a different element. To test
+several members of one array element together, use `Match` on the array's
+accessor under `Elements`. A field has one for each array whose elements
+have an ordered member (`ordered=$.visits[*].at;$.visits[*].place`). The
+generated `Paths` names those members, nested as the JSON nests them, and
+`encrypt.AtPath` makes a predicate from one:
+
+```go
+q, err := users.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+	encrypt.AtPath(users.Paths.Profile.Visits.Place).Eq("home"),
+	encrypt.AtPath(users.Paths.Profile.Visits.At).Gt(15),
+)
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)`, q)
+```
+
+A path carries its array and the member's Go type from the document's
+struct, so a value of another type, or a predicate on another array's
+member, does not compile. For a filter built at run time, name the member
+with the array's `Member`:
+`users.Fields.Profile.Elements.Visits.Member("place").Eq("home")`. A member
+named so that the field does not order is refused before the engine is
+asked, naming it.
+
+Each comparison is of the member's ordering term, so `Eq` compares text
+case- and accent-folded, and integers past 2^53 can tie; `EqAt` is exact.
+A row whose array is longer than
+`JSONReadOptions.WildcardBound` (64 by default) fails the query with
+SQLSTATE 22023.
 
 ## Building
 

@@ -53,7 +53,7 @@ type customerShape struct {
 var declaration = gensupport.Declare("customers").
 	Passthrough("id").
 	EncryptInto("profile", gensupport.JSON, "JsonSearch").
-	Options("profile", gensupport.TargetOptions{Ordered: []string{"$.age"}})
+	Options("profile", gensupport.TargetOptions{Ordered: []string{"$.age", "$.visits[*].at", "$.visits[*].place"}})
 
 var codec = gensupport.New(gensupport.Generated[Customer, EncryptedCustomer]{
 	TypeName:    "Customer",
@@ -119,12 +119,23 @@ type ProfileField struct {
 	// At has one accessor per path the field orders, whose methods
 	// are the orderings there.
 	At ProfileFieldAt
+	// Elements has one accessor per array whose elements have ordered
+	// members, whose Match tests the members of one element together.
+	Elements ProfileFieldElements
 }
 
 func newProfileField(f gensupport.Field[Profile]) ProfileField {
-	return ProfileField{field: f, At: ProfileFieldAt{
-		Age: ProfileFieldPath{field: f, path: "$.age"},
-	}}
+	return ProfileField{
+		field: f,
+		At: ProfileFieldAt{
+			Age:         ProfileFieldPath{field: f, path: "$.age"},
+			VisitsAt:    ProfileFieldPath{field: f, path: "$.visits[*].at"},
+			VisitsPlace: ProfileFieldPath{field: f, path: "$.visits[*].place"},
+		},
+		Elements: ProfileFieldElements{
+			Visits: ProfileFieldArray[ProfileFieldElementsVisits]{field: f, path: "$.visits[*]"},
+		},
+	}
 }
 
 // Encrypt seals one Profile document for an update of its stored column.
@@ -196,10 +207,67 @@ func (f ProfileField) ChildCount(ctx context.Context, c *encrypt.Cipher, path st
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
 }
 
+// ProfileFieldElements names the arrays of Profile whose elements have ordered
+// members. Each accessor's Match tests the members of one element together.
+type ProfileFieldElements struct {
+	Visits ProfileFieldArray[ProfileFieldElementsVisits] // $.visits[*]: at, place
+}
+
+// ProfileFieldElementsVisits is the array $.visits[*] of Profile, as a type:
+// Elements.Visits.Match takes an
+// encrypt.ElementPredicate[ProfileFieldElementsVisits], which encrypt.AtPath
+// makes from a member under Paths.Profile.Visits.
+type ProfileFieldElementsVisits struct{}
+
+// ProfileFieldArray is one array of Profile whose elements have ordered
+// members. E is the array's own type, which the predicates its Match takes
+// carry.
+type ProfileFieldArray[E any] struct {
+	field gensupport.Field[Profile]
+	path  string
+}
+
+// Match derives the operand that finds a row where one element of this array
+// passes every predicate: eql_v4.json_tree_element_match(col,
+// $1::eql_v4.query_json_elements). An EqAt and an ordering at the array's paths
+// can each be answered by a different element; Match is answered by one. Make
+// each predicate with encrypt.AtPath and a member of this array under Paths, so
+// a member of another array, or a value of another type, does not compile; or
+// with Member, for a member named at run time. No predicates, and a zero
+// ElementPredicate, are refused before the engine is asked.
+//
+// Each comparison is of the member's ordering term, so Eq is an equality of
+// folded values: text compares case- and accent-folded ("sibling" equals
+// "Sibling"), and integers past 2^53 can tie. EqAt at a member's full path is
+// exact, of any element.
+//
+// The operand reads each array to opts.WildcardBound elements, 64 when it is 0.
+// A row whose array is longer fails the query with SQLSTATE 22023
+// (invalid_parameter_value) rather than answer over part of it: raise the bound
+// past the longest array. The function filters the rows a scan gives it, so
+// narrow them with an indexed predicate first, such as @> on the same values.
+func (a ProfileFieldArray[E]) Match(ctx context.Context, c *encrypt.Cipher, opts encrypt.JSONReadOptions, predicates ...encrypt.ElementPredicate[E]) (eql.JSONSearchElementsQuery, error) {
+	return gensupport.JSONElementMatch[eql.JSONSearchElementsQuery](ctx, a.field, c, a.path, opts, predicates)
+}
+
+// Member is the comparisons of the member of this array's elements that member
+// names, for a filter whose members are known only at run time: relationship,
+// or address.city, written as the member is written below the array in the
+// field's ordered paths. Its values are not checked by the compiler, and Match
+// refuses a member the field does not order beneath this array, naming it, the
+// array and the members the field orders there, before the engine is asked.
+// Where the member is known when the program is written, use encrypt.AtPath and
+// Paths.
+func (a ProfileFieldArray[E]) Member(member string) encrypt.MemberTest[E, any] {
+	return encrypt.AtPath(encrypt.NewPath[E, any](a.path, member))
+}
+
 // ProfileFieldAt names the declared ordered paths of Profile. Use an accessor's
 // Selector with its ordering query.
 type ProfileFieldAt struct {
-	Age ProfileFieldPath // $.age
+	Age         ProfileFieldPath // $.age
+	VisitsAt    ProfileFieldPath // $.visits[*].at
+	VisitsPlace ProfileFieldPath // $.visits[*].place
 }
 
 // ProfileFieldPath is one ordered path of Profile. Its orderings derive the
@@ -261,3 +329,22 @@ func (p ProfileFieldPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi
 func (p ProfileFieldPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[eql.JSONEntry], error) {
 	return gensupport.JSONSelect[eql.JSONEntry](ctx, p.field, c, p.path)
 }
+
+// Paths names the ordered members of the arrays of Customer's documents, nested
+// as the JSON nests them, for the element match:
+// encrypt.AtPath(Paths.Profile.Visits.At) makes the predicates
+// Fields.Profile.Elements.Visits.Match takes. Each path's type names its array
+// and the member's Go type, so a predicate on another array's member, or with a
+// value of another type, does not compile.
+var Paths = func() (paths struct {
+	Profile struct {
+		Visits struct {
+			At    encrypt.Path[ProfileFieldElementsVisits, int64]  // $.visits[*].at
+			Place encrypt.Path[ProfileFieldElementsVisits, string] // $.visits[*].place
+		}
+	}
+}) {
+	paths.Profile.Visits.At = encrypt.NewPath[ProfileFieldElementsVisits, int64]("$.visits[*]", "at")
+	paths.Profile.Visits.Place = encrypt.NewPath[ProfileFieldElementsVisits, string]("$.visits[*]", "place")
+	return paths
+}()

@@ -117,7 +117,7 @@ func TestParseQueryTermTakesOnlyWhatTheEngineWrites(t *testing.T) {
 	}
 	for _, name := range []string{"eq", "lt", "lte", "gt", "gte", "between", "matches",
 		"contains", "contained_by", "eq_at", "lt_at", "lte_at", "gt_at", "gte_at", "between_at",
-		"selector", "subtree", "children", "child_count"} {
+		"selector", "subtree", "children", "child_count", "element_match"} {
 		got, err := parseQueryTerm(term(name, "exact", "ore"))
 		if err != nil || got.Operator != name || got.Fidelity != record.Exact || got.Index != record.Ore {
 			t.Errorf("%s: %+v, %v", name, got, err)
