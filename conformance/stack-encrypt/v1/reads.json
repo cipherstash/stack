@@ -1,0 +1,1107 @@
+{
+  "version": 1,
+  "profile": "record-reads-v1",
+  "required_capabilities": [
+    "records",
+    "read-shapes",
+    "authenticated-types",
+    "context-preflight"
+  ],
+  "cases": [
+    {
+      "id": "missing-field",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "drop_value",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "value",
+            "reason": "field_missing"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "field_missing"
+        }
+      }
+    },
+    {
+      "id": "missing-ciphertext",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "drop_c",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "value",
+            "reason": "no_ciphertext_node"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "no_ciphertext_node"
+        }
+      }
+    },
+    {
+      "id": "field-not-map",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "field_plain",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "value",
+            "reason": "outputs_not_map"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "outputs_not_map"
+        }
+      }
+    },
+    {
+      "id": "plaintext-under-c",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "c_plain",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "value",
+            "reason": "passthrough"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "passthrough"
+        }
+      }
+    },
+    {
+      "id": "row-not-map",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "row_plain",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "reason": "not_an_object"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "reason": "not_an_object"
+        }
+      }
+    },
+    {
+      "id": "late-missing-field",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "1"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "2"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "drop_value",
+        "row": 1
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "value",
+            "reason": "field_missing"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "field_missing"
+        }
+      }
+    },
+    {
+      "id": "read-none",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "value": {
+              "type": "int32",
+              "text": "34"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-drop-eq",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "drop_eq",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "value": {
+              "type": "int32",
+              "text": "34"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-extra-output",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "extra_output",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "value": {
+              "type": "int32",
+              "text": "34"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-extra-field",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "extra_field",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "value": {
+              "type": "int32",
+              "text": "34"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "authenticated-int32-as-int64",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int64",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "authenticated",
+        "retrievals": 1,
+        "error": {
+          "code": "stack_encrypt::plan_field_type",
+          "fields": {
+            "field": "value",
+            "expected": "int64"
+          }
+        }
+      }
+    },
+    {
+      "id": "authenticated-int32-as-string",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "string",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "authenticated",
+        "retrievals": 1,
+        "error": {
+          "code": "stack_encrypt::plan_field_type",
+          "fields": {
+            "field": "value",
+            "expected": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "authenticated-int32-as-uint64",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "uint64",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "authenticated",
+        "retrievals": 1,
+        "error": {
+          "code": "stack_encrypt::plan_field_type",
+          "fields": {
+            "field": "value",
+            "expected": "uint64"
+          }
+        }
+      }
+    },
+    {
+      "id": "authenticated-null-as-required",
+      "write": {
+        "kind": "int32",
+        "null": "sealed"
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "authenticated",
+        "retrievals": 1,
+        "error": {
+          "code": "stack_encrypt::plan_field_type",
+          "fields": {
+            "field": "value",
+            "expected": "int32"
+          }
+        }
+      }
+    },
+    {
+      "id": "authenticated-null-as-sql",
+      "write": {
+        "kind": "int32",
+        "null": "sealed"
+      },
+      "read": {
+        "kind": "int32",
+        "null": "sql"
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "value": {
+              "type": "null",
+              "text": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "sql-absent-read",
+      "write": {
+        "kind": "int32",
+        "null": "sql"
+      },
+      "read": {
+        "kind": "int32",
+        "null": "sql"
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "success",
+        "retrievals": 0,
+        "rows": [
+          {
+            "value": {
+              "type": "null",
+              "text": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "sql-absent-as-required",
+      "write": {
+        "kind": "int32",
+        "null": "sql"
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "value",
+            "reason": "field_missing"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "field_missing"
+        }
+      }
+    },
+    {
+      "id": "sql-absent-as-sealed",
+      "write": {
+        "kind": "int32",
+        "null": "sql"
+      },
+      "read": {
+        "kind": "int32",
+        "null": "sealed"
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "value",
+            "reason": "field_missing"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "value",
+          "reason": "field_missing"
+        }
+      }
+    },
+    {
+      "id": "context-unrestricted",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": true,
+      "rows": [
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/acme"
+          },
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "tenant": {
+              "type": "string",
+              "text": "tenants/acme"
+            },
+            "value": {
+              "type": "int32",
+              "text": "34"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "context-expected",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": true,
+      "rows": [
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/acme"
+          },
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "tenant": {
+              "type": "string",
+              "text": "tenants/acme"
+            },
+            "value": {
+              "type": "int32",
+              "text": "34"
+            }
+          }
+        ]
+      },
+      "expected_context": "tenants/acme"
+    },
+    {
+      "id": "context-mismatch",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": true,
+      "rows": [
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/acme"
+          },
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "preflight",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::context_mismatch",
+          "fields": {
+            "stored_len": 12,
+            "stored_parts": 2
+          }
+        }
+      },
+      "expected_context": "tenants/other",
+      "check_error": {
+        "code": "stack_encrypt::context_mismatch",
+        "fields": {
+          "stored_len": 12,
+          "stored_parts": 2
+        }
+      }
+    },
+    {
+      "id": "context-late-mismatch",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": true,
+      "rows": [
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/acme"
+          },
+          "value": {
+            "type": "int32",
+            "text": "1"
+          }
+        },
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/other"
+          },
+          "value": {
+            "type": "int32",
+            "text": "2"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 1
+      },
+      "adapter": true,
+      "expected": {
+        "stage": "preflight",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::context_mismatch",
+          "fields": {
+            "stored_len": 13,
+            "stored_parts": 2
+          }
+        }
+      },
+      "expected_context": "tenants/acme",
+      "check_error": {
+        "code": "stack_encrypt::context_mismatch",
+        "fields": {
+          "stored_len": 13,
+          "stored_parts": 2
+        }
+      }
+    },
+    {
+      "id": "context-drop-tenant",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": true,
+      "rows": [
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/acme"
+          },
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "drop_tenant",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "tenant",
+            "reason": "field_missing"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "tenant",
+          "reason": "field_missing"
+        }
+      }
+    },
+    {
+      "id": "context-tenant-no-payload",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": true,
+      "rows": [
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/acme"
+          },
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "tenant_no_payload",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "tenant",
+            "reason": "no_passthrough_node"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "tenant",
+          "reason": "no_passthrough_node"
+        }
+      }
+    },
+    {
+      "id": "context-tenant-number",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": true,
+      "rows": [
+        {
+          "tenant": {
+            "type": "string",
+            "text": "tenants/acme"
+          },
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "tenant_number",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "shape",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::dynamic_record",
+          "fields": {
+            "field": "tenant",
+            "reason": "field_type"
+          }
+        }
+      },
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "field": "tenant",
+          "reason": "field_type"
+        }
+      }
+    },
+    {
+      "id": "static-context-with-expectation",
+      "write": {
+        "kind": "int32",
+        "null": ""
+      },
+      "read": {
+        "kind": "int32",
+        "null": ""
+      },
+      "context_field": false,
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        }
+      ],
+      "mutation": {
+        "kind": "none",
+        "row": 0
+      },
+      "adapter": false,
+      "expected": {
+        "stage": "preflight",
+        "retrievals": 0,
+        "error": {
+          "code": "stack_encrypt::plan_two_context_sources",
+          "fields": {
+            "first": "the plan",
+            "second": "the call"
+          }
+        }
+      },
+      "expected_context": "tenants/acme",
+      "check_error": {
+        "code": "stack_encrypt::dynamic_record",
+        "fields": {
+          "reason": "refused"
+        }
+      }
+    }
+  ]
+}

@@ -20,12 +20,21 @@ native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
 The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
-runtime cases described below.
+runtime and read cases described below.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## `record-reads-v1` contract
+
+The [read contract](read-contract.md) defines 26 cases in `v1/reads.json` for
+malformed stored records, authenticated read-type failures and context preflight.
+The native runner observes retrieval stages. Go exercises the same cases through
+both an uninitialised guest and an active guest, plus the normal record adapter
+for representable cases. The runners are `tests/read_conformance.rs` in the Rust
+crate and `encrypt/read_conformance_test.go` in the Go module.
 
 ## `record-runtime-v1` contract
 

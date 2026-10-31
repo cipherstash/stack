@@ -39,12 +39,30 @@ batches; Go provider-call instrumentation remains open.
 | Native source validation tests | `late-wrong-type`, `late-missing`, `unknown-field` | Repeated keys, unsupported frame shapes and more output kinds |
 | Existing shared value-kind/operator fixtures | Runtime query cases cover selected conversion edges | Full type/operator matrices, generated SDK calls and verification |
 
+## Read checkpoint
+
+`v1/reads.json` adds 26 cases for stored-shape validation, authenticated types
+and context preflight. The [read contract](read-contract.md) distinguishes native
+shape/pending stages and the guest's earlier `check_record` diagnostics. Native
+data-key counters and Go's uninitialised guest verify preflight boundaries.
+
+| Existing evidence | Shared case IDs | Retained assertions |
+|---|---|---|
+| Native `a_stored_record_that_does_not_fit` | `missing-field`, `missing-ciphertext`, `field-not-map`, `plaintext-under-c`, `row-not-map`, `late-missing-field` | Repeated keys, other passthrough fields and output kinds |
+| Native typed read/null tests | `authenticated-int32-as-*`, `authenticated-null-as-required`, `authenticated-null-as-sql`, `sql-absent-*` | Wider types and declaration combinations |
+| Go `context_field_test.go`, native context tests | `context-unrestricted`, `context-expected`, `context-mismatch`, `context-late-mismatch`, `context-drop-tenant`, `context-tenant-*` | Generated APIs, queries, extension composition and stored-context tampering |
+| Native and guest context-source validation | `static-context-with-expectation` | Other source combinations and empty-batch behavior |
+
+These are overlap mappings, not grounds for deleting whole mixed-purpose tests.
+Repeated-key trees cannot be emitted by Go's map-based tree encoder; a future
+raw-byte profile must cover that boundary explicitly.
+
 ## Consolidation policy
 
 Shared semantic expectations should be maintained once and executed by each
 language runner. Conformance can replace duplicate case tables and fixture
 maintenance. It does not eliminate the need to execute the Rust and Go paths.
-No existing test has been deleted in these first three slices.
+No existing test has been deleted in these first four slices.
 
 | Existing evidence | Relationship to conformance | Consolidation action |
 |---|---|---|
