@@ -364,6 +364,11 @@ async fn serde_stores_base64_text_or_raw_bytes() {
     assert_eq!(strict.to_bytes(), bytes);
 
     assert!(serde_json::from_str::<Ciphertext>("\"not base64!\"").is_err());
+    // A sequence declaring usize::MAX elements over three is an envelope
+    // error, not an allocation of the declared length.
+    let lying: Result<Ciphertext, _> = serde::Deserialize::deserialize(LyingSeq(3));
+    assert!(lying.is_err());
+
     // A value of the wrong type names the form it should have had.
     let wrong = serde_json::from_str::<Ciphertext>("42").unwrap_err();
     assert!(
@@ -474,4 +479,38 @@ async fn opens_pinned_bytes_from_the_structural_writer() {
         42
     );
     assert!(matches!(keyset.decrypt::<i32>(ct).await, Err(Error::Aead)));
+}
+
+/// A binary deserializer whose sequence of `n` bytes claims `usize::MAX`.
+struct LyingSeq(u8);
+impl<'de> serde::de::SeqAccess<'de> for LyingSeq {
+    type Error = serde::de::value::Error;
+    fn next_element_seed<T: serde::de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: T,
+    ) -> Result<Option<T::Value>, Self::Error> {
+        if self.0 == 0 {
+            return Ok(None);
+        }
+        self.0 -= 1;
+        seed.deserialize(serde::de::value::U8Deserializer::new(0))
+            .map(Some)
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(usize::MAX)
+    }
+}
+impl<'de> serde::Deserializer<'de> for LyingSeq {
+    type Error = serde::de::value::Error;
+    fn is_human_readable(&self) -> bool {
+        false
+    }
+    fn deserialize_any<V: serde::de::Visitor<'de>>(self, v: V) -> Result<V::Value, Self::Error> {
+        v.visit_seq(self)
+    }
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
 }

@@ -123,7 +123,10 @@ impl<'de> serde::Deserialize<'de> for Ciphertext {
                 self,
                 mut seq: A,
             ) -> Result<Ciphertext, A::Error> {
-                let mut bytes = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                // The hint is a length the input declares, unchecked: a few
+                // bytes can declare billions. Reserve at most a typical
+                // envelope's worth and let a longer one grow as it is read.
+                let mut bytes = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(256));
                 while let Some(byte) = seq.next_element::<u8>()? {
                     bytes.push(byte);
                 }
