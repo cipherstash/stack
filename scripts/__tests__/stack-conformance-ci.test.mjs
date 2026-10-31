@@ -5,15 +5,16 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
 describe('shared Stack Encrypt conformance is required in CI', () => {
-  it('the conformance task runs both profiles in both languages', () => {
+  it('the conformance task runs all profiles in both languages', () => {
     const script = readFileSync(
       join(REPO_ROOT, 'scripts/stack-conformance.sh'),
       'utf8',
     ).replace(/^\s*#.*$/gm, '')
     expect(script).toMatch(/cargo nextest run[^\n]*--test conformance/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test declarations/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test runtime_conformance/)
     expect(script).toContain(
-      "go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance)$' ./encrypt",
+      "go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance|TestRuntimeConformance)$' ./encrypt",
     )
   })
 

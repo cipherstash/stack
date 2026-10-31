@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: scalar and declaration slices implemented; the complete contract is not frozen.
+Date: 2026-10-31. Status: scalar, declaration and initial runtime slices implemented; the complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -106,6 +106,24 @@ The [coverage map](../../conformance/stack-encrypt/coverage.md#consolidation-pol
 records consolidation candidates. Shared case tables can replace duplicated
 expectations once coverage matches; language-specific and implementation tests
 remain. No existing tests have been removed.
+
+## Runtime checkpoint
+
+The initial runtime slice is on `feat/stack-encrypt-runtime-conformance`, stacked
+on draft [PR #1460](https://github.com/cipherstash/stack/pull/1460). Its 37 shared
+cases cover missing/null storage, typed batch round trips, source refusals, and
+lossless equality query conversions. Native Rust observes data-key call counts.
+Go explicitly records host validation where it precedes guest diagnostics.
+The [runtime contract](../../conformance/stack-encrypt/runtime-contract.md)
+describes the corpus and limits. No production API or existing test is removed.
+
+Local validation passes for all three profiles (249 shared cases), fresh scalar
+ciphertext exchange, Rust clippy/formatting, Go lint, Biome and 34 CI wiring
+checks. The deterministic guest is reused from the unchanged parent engine.
+
+The next runtime extension should cover malformed stored records, authenticated
+read-type failures, and context composition/preflight. Existing wider value-kind,
+query-operator, generated SDK and EQL fixtures remain in place.
 
 ## Follow-up slices
 

@@ -1,0 +1,816 @@
+{
+  "version": 1,
+  "profile": "record-runtime-v1",
+  "required_capabilities": [
+    "records",
+    "equality",
+    "null-policies",
+    "lossless-query-conversion"
+  ],
+  "cases": [
+    {
+      "id": "required-missing",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [{}],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_missing",
+        "field": "value",
+        "go_message": "cipherstash: malformed input: row 0: no value for field \"value\""
+      }
+    },
+    {
+      "id": "required-null",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "required-boundaries",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "-2147483648"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "2147483647"
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "-2147483648"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "2147483647"
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "required-wrong-width",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "int64",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "sql-missing",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [{}],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [false],
+      "equal_lengths": false
+    },
+    {
+      "id": "sql-null",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [false],
+      "equal_lengths": false
+    },
+    {
+      "id": "sql-boundaries",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "-2147483648"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "2147483647"
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "-2147483648"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "2147483647"
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "sql-wrong-width",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {
+          "value": {
+            "type": "int64",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "sealed-missing",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sealed",
+      "rows": [{}],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_missing",
+        "field": "value",
+        "go_message": "cipherstash: malformed input: row 0: no value for field \"value\""
+      }
+    },
+    {
+      "id": "sealed-null",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sealed",
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [true],
+      "equal_lengths": false
+    },
+    {
+      "id": "sealed-boundaries",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sealed",
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "-2147483648"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "2147483647"
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "-2147483648"
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "2147483647"
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "sealed-wrong-width",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sealed",
+      "rows": [
+        {
+          "value": {
+            "type": "int64",
+            "text": "34"
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "sql-mixed-batch",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {},
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [false, true, false],
+      "equal_lengths": false
+    },
+    {
+      "id": "sealed-mixed-batch",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sealed",
+      "rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        },
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [true, true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "sql-all-absent",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {},
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [false, false],
+      "equal_lengths": false
+    },
+    {
+      "id": "empty-batch",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [],
+      "expected_rows": [],
+      "expected_stored": [],
+      "equal_lengths": false
+    },
+    {
+      "id": "late-wrong-type",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "value": {
+            "type": "string",
+            "text": "private-value"
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "late-missing",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {}
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_missing",
+        "field": "value",
+        "go_message": "cipherstash: malformed input: row 1: no value for field \"value\""
+      }
+    },
+    {
+      "id": "unknown-field",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "",
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          },
+          "extra": {
+            "type": "string",
+            "text": "private-value"
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "unknown_field",
+        "field": "extra",
+        "go_message": "cipherstash: malformed input: row 0: the plan has no field \"extra\""
+      }
+    },
+    {
+      "id": "sealed-int64",
+      "operation": "seal",
+      "kind": "int64",
+      "null": "sealed",
+      "rows": [
+        {
+          "value": {
+            "type": "int64",
+            "text": "9223372036854775807"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "int64",
+            "text": "9223372036854775807"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "sealed-uint64",
+      "operation": "seal",
+      "kind": "uint64",
+      "null": "sealed",
+      "rows": [
+        {
+          "value": {
+            "type": "uint64",
+            "text": "18446744073709551615"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "uint64",
+            "text": "18446744073709551615"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "sealed-float64",
+      "operation": "seal",
+      "kind": "float64",
+      "null": "sealed",
+      "rows": [
+        {
+          "value": {
+            "type": "float64",
+            "text": "1.5"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_rows": [
+        {
+          "value": {
+            "type": "float64",
+            "text": "1.5"
+          }
+        },
+        {
+          "value": {
+            "type": "null",
+            "text": ""
+          }
+        }
+      ],
+      "expected_stored": [true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "query-narrow-int",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "int64",
+        "text": "34"
+      },
+      "expected_value": {
+        "type": "int32",
+        "text": "34"
+      }
+    },
+    {
+      "id": "query-integral-float",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "float64",
+        "text": "34"
+      },
+      "expected_value": {
+        "type": "int32",
+        "text": "34"
+      }
+    },
+    {
+      "id": "query-int32-min",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "int64",
+        "text": "-2147483648"
+      },
+      "expected_value": {
+        "type": "int32",
+        "text": "-2147483648"
+      }
+    },
+    {
+      "id": "query-int32-max",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "int64",
+        "text": "2147483647"
+      },
+      "expected_value": {
+        "type": "int32",
+        "text": "2147483647"
+      }
+    },
+    {
+      "id": "query-int32-underflow",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "int64",
+        "text": "-2147483649"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-int32-overflow",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "int64",
+        "text": "2147483648"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-fraction",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "float64",
+        "text": "34.5"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-negative-unsigned",
+      "operation": "query",
+      "kind": "uint64",
+      "null": "",
+      "input": {
+        "type": "int64",
+        "text": "-1"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-exact-integer-float",
+      "operation": "query",
+      "kind": "float64",
+      "null": "",
+      "input": {
+        "type": "uint64",
+        "text": "9007199254740992"
+      },
+      "expected_value": {
+        "type": "float64",
+        "text": "9007199254740992"
+      }
+    },
+    {
+      "id": "query-lossy-integer-float",
+      "operation": "query",
+      "kind": "float64",
+      "null": "",
+      "input": {
+        "type": "uint64",
+        "text": "9007199254740993"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-text-is-not-number",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "string",
+        "text": "34"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-bool-is-not-number",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "bool",
+        "text": "true"
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-required-null",
+      "operation": "query",
+      "kind": "int32",
+      "null": "",
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null_query",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-sql-null",
+      "operation": "query",
+      "kind": "int32",
+      "null": "sql",
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null_query",
+        "field": "value"
+      }
+    },
+    {
+      "id": "query-sealed-null",
+      "operation": "query",
+      "kind": "int32",
+      "null": "sealed",
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_value": {
+        "type": "null",
+        "text": ""
+      }
+    }
+  ]
+}
