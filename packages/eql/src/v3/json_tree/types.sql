@@ -8,7 +8,7 @@
 --!
 --! This is a new domain family beside `public.{{prefix}}_json`, for documents
 --! Stack Encrypt's JSON index writes. It shares no wire shape and no SQL with
---! the SteVec surface. Four jsonb-backed domains (none over another domain,
+--! the SteVec surface. Five jsonb-backed domains (none over another domain,
 --! so the native-jsonb firewall in blockers.sql attaches):
 --!   - public.{{prefix}}_json_search — storage: an EQL envelope `{v, i, h, sv, q}`.
 --!   - public.{{prefix}}_json_entry  — one `sv` element (returned by `->`
@@ -17,6 +17,9 @@
 --!                                    projection of the needle's selectors.
 --!   - {{prefix}}.query_json_leaf    — an ordering operand at a path: a
 --!                                    selector and a leaf ordering term.
+--!   - {{prefix}}.query_json_elements — an element-scoped predicate: per
+--!                                    member of an array's elements, the
+--!                                    member's read tokens and its bounds.
 --!
 --! The design is `docs/plans/2026-10-17-json-tree-index.md`
 --! at the repository root. The document's per-entry fields:
@@ -253,6 +256,25 @@ BEGIN
 END
 $$;
 
+--! @brief Validate an ordering operand at a JSON path.
+--! @internal
+--! @param val jsonb Candidate operand.
+--! @return boolean True when `val` is an object with string `s` and `op`
+--!         and no other key: the {{prefix}}.query_json_leaf CHECK, and each
+--!         bound of a {{prefix}}.query_json_elements member.
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND jsonb_typeof(val -> 's') = 'string'
+     AND jsonb_typeof(val -> 'op') = 'string'
+     AND val - ARRAY['s', 'op']::text[] = '{}'::jsonb,
+    false
+  )
+$$;
+
 --! @brief Domain type for an ordering operand at a JSON path.
 --!
 --! `{"s": "…", "op": "…"}`: the path's selector, which `->` takes, and the
@@ -271,16 +293,112 @@ BEGIN
     CREATE DOMAIN {{prefix}}.query_json_leaf AS jsonb
       CHECK (
         VALUE IS NULL
-        OR COALESCE(
-          jsonb_typeof(VALUE) = 'object'
-           AND jsonb_typeof(VALUE -> 's') = 'string'
-           AND jsonb_typeof(VALUE -> 'op') = 'string'
-           AND VALUE - ARRAY['s', 'op']::text[] = '{}'::jsonb,
-          false
-        )
+        OR {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(VALUE)
       );
   END IF;
 
   COMMENT ON DOMAIN {{prefix}}.query_json_leaf IS 'EQL JSON tree query operand (ordering at a path)';
+END
+$$;
+
+--! @brief Validate one member of an element-scoped predicate.
+--! @internal
+--!
+--! A member is `{"t": ["…", …], "gt" | "gte": leaf, "lt" | "lte": leaf}`:
+--! the tokens of a read of the member's path, one per element below the
+--! wildcard bound in element order and then the probe, and one or two
+--! bounds, each an ordering operand of the shape `{{prefix}}.query_json_leaf`
+--! holds (`{"s", "op"}`). At most one lower bound (`gt` or `gte`) and at most
+--! one upper (`lt` or `lte`), at least one in all, and every bound of the
+--! member at the one selector: the member's path's.
+--!
+--! @param val jsonb Candidate member.
+--! @return boolean True when `val` is a member.
+--! @note plpgsql, for the subqueries over the tokens and bounds, which a
+--!       CHECK expression cannot hold.
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_elements_member(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND val - ARRAY['t', 'gt', 'gte', 'lt', 'lte']::text[] = '{}'::jsonb
+     AND jsonb_typeof(val -> 't') = 'array'
+     AND jsonb_array_length(val -> 't') >= 1
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(val -> 't') AS token
+       WHERE jsonb_typeof(token) <> 'string'
+     )
+     AND val ?| ARRAY['gt', 'gte', 'lt', 'lte']::text[]
+     AND NOT (val ? 'gt' AND val ? 'gte')
+     AND NOT (val ? 'lt' AND val ? 'lte')
+     -- Each bound by the `{{prefix}}.query_json_leaf` CHECK's own rule.
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_each(val - 't') AS bound
+       WHERE NOT {{prefix}}_internal.json_tree_is_valid_leaf_query_payload(bound.value)
+     )
+     AND (SELECT count(DISTINCT bound.value ->> 's') FROM jsonb_each(val - 't') AS bound) = 1,
+    false
+  );
+END;
+$$;
+
+--! @brief Validate an element-scoped predicate.
+--! @internal
+--! @param val jsonb Candidate predicate.
+--! @return boolean True when `val` is `{"m": [member, …]}`, at least one
+--!         member, each valid, every member's tokens as many as every
+--!         other's: one wildcard expansion, at one bound, under each.
+--! @see {{prefix}}_internal.json_tree_is_valid_elements_member
+CREATE OR REPLACE FUNCTION {{prefix}}_internal.json_tree_is_valid_elements_payload(val jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+BEGIN
+  RETURN COALESCE(
+    jsonb_typeof(val) = 'object'
+     AND val - 'm' = '{}'::jsonb
+     AND jsonb_typeof(val -> 'm') = 'array'
+     AND jsonb_array_length(val -> 'm') >= 1
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(val -> 'm') AS member
+       WHERE NOT {{prefix}}_internal.json_tree_is_valid_elements_member(member)
+     )
+     AND (SELECT count(DISTINCT jsonb_array_length(member -> 't'))
+          FROM jsonb_array_elements(val -> 'm') AS member) = 1,
+    false
+  );
+END;
+$$;
+
+--! @brief Domain type for an element-scoped predicate over an array.
+--!
+--! `{"m": [{"t": ["…", …], "gte": {"s", "op"}, "lte": {"s", "op"}}, …]}`:
+--! one member per field of an element the predicate tests, each the
+--! tokens of a subtree read of that field's path through the array's
+--! wildcard and the field's bounds, as Stack Encrypt's `element_match`
+--! operator derives them. {{prefix}}.json_tree_element_match reads it: some
+--! one element of the array satisfies every member's bounds. A member
+--! carries `gt` or `gte` for a lower bound and `lt` or `lte` for an upper
+--! one, each the ordering operand {{prefix}}.query_json_leaf holds; an
+--! equality is `gte` and `lte` at one value.
+--!
+--! @note Construct from inline JSON via the DOMAIN cast:
+--!       `'{"m":[{"t":["…"],"gt":{"s":"…","op":"…"}}]}'::{{prefix}}.query_json_elements`.
+--! @see {{prefix}}.json_tree_element_match
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = 'query_json_elements' AND typnamespace = '{{prefix}}'::regnamespace
+  ) THEN
+    CREATE DOMAIN {{prefix}}.query_json_elements AS jsonb
+      CHECK (
+        {{prefix}}_internal.json_tree_is_valid_elements_payload(VALUE)
+      );
+  END IF;
+
+  COMMENT ON DOMAIN {{prefix}}.query_json_elements IS 'EQL JSON tree query operand (element-scoped predicate)';
 END
 $$;

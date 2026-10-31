@@ -186,6 +186,9 @@ fn document_types(out: &mut String) {
                 DocumentRole::LeafQuery => {
                     "ordering operand at a path, compared with an entry `->` extracts"
                 }
+                DocumentRole::ElementsQuery => {
+                    "element-scoped predicate, which eql_v4.json_tree_element_match tests"
+                }
                 DocumentRole::Entry => {
                     "entry: one node of a document, as `->` and the walks return it"
                 }
@@ -271,6 +274,7 @@ mod tests {
             "JSONSearch",
             "JSONSearchQuery",
             "JSONSearchLeafQuery",
+            "JSONSearchElementsQuery",
             "JSONEntry",
         ] {
             assert_eq!(

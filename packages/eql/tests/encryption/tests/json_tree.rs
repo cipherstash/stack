@@ -516,6 +516,10 @@ mod generated;
 #[path = "json_tree/native_functions.rs"]
 mod native_functions;
 
+/// The element-scoped predicate, through a data plan, against the column.
+#[path = "json_tree/elements.rs"]
+mod elements;
+
 /// Needs an EQL v4 installation. Extraction by selector opens to the leaf;
 /// the subtree walk by a client-derived token returns exactly the nodes
 /// under it and reassembles; the array functions count and list elements;

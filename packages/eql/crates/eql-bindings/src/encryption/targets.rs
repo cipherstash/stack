@@ -152,6 +152,18 @@ impl Target {
         document(self.name).map(|_| crate::v4::json_tree::JsonTreeLeafQuery::sql_domain_static())
     }
 
+    /// The PostgreSQL domain of the type's element-scoped predicate, for a
+    /// type that stores a JSON document (`JsonSearch`:
+    /// `eql_v4.query_json_elements`); `None` for every other type. Stack
+    /// Encrypt binds `element_match` as it
+    /// (`TargetDescriptor::with_elements_query_sql_domain`), and answers
+    /// `element_match` only on a type that names it.
+    pub fn elements_query_sql_domain(&self) -> Option<&'static str> {
+        use crate::v4::DomainType;
+        document(self.name)
+            .map(|_| crate::v4::json_tree::JsonTreeElementsQuery::sql_domain_static())
+    }
+
     /// The options this type's match index is built under, for a type that
     /// carries one (`TextMatch`): [`EqlMatch`](super::EqlMatch)'s, the one
     /// match configuration every EQL type's filter is built under. `None`

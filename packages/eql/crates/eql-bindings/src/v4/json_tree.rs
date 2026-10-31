@@ -177,6 +177,48 @@ pub struct JsonTreeLeafQuery {
     pub op: JsonTreeOrderingTerm,
 }
 
+/// A read token, in [`Base64Text`]: sixteen bytes a client derives from a
+/// concrete path alone, which `eql_v4.json_tree_subtree` and its indexed
+/// form take to find the node at that path in every row.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+pub struct JsonTreeToken(pub Base64Text);
+
+/// One member of an element-scoped predicate: the tokens of a read of one
+/// field's path through the array's wildcard, one per element below the
+/// bound in element order and then the probe, and the field's bounds,
+/// each an ordering operand. `gt` or `gte` is the lower bound, `lt` or
+/// `lte` the upper; equality is `gte` and `lte` at one value.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JsonTreeElementsMember {
+    pub t: Vec<JsonTreeToken>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gt: Option<JsonTreeLeafQuery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub gte: Option<JsonTreeLeafQuery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lt: Option<JsonTreeLeafQuery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lte: Option<JsonTreeLeafQuery>,
+}
+
+/// `eql_v4.query_json_elements`: an element-scoped predicate, `{"m":
+/// [member, …]}`, true of a row where some one element of the array
+/// satisfies every member (`eql_v4.json_tree_element_match`). What Stack
+/// Encrypt's `element_match` operator derives. The domain's CHECK also
+/// holds what this type does not: at least one member, each with at least
+/// one bound and at most one of each side, all its bounds at one selector,
+/// and every member's tokens as many as every other's.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JsonTreeElementsQuery {
+    pub m: Vec<JsonTreeElementsMember>,
+}
+
 /// The entry `col -> selector` returned, with the selector that asked for
 /// it: opens to the scalar the entry holds, or to the whole document for a
 /// sealed root asked for at `$`. The only constructor,
@@ -287,6 +329,7 @@ json_tree_domain_type!(JsonTreeDocument, "public.eql_v4_json_search");
 json_tree_domain_type!(JsonTreeEntry, "public.eql_v4_json_entry");
 json_tree_domain_type!(JsonTreeQuery, "eql_v4.query_json");
 json_tree_domain_type!(JsonTreeLeafQuery, "eql_v4.query_json_leaf");
+json_tree_domain_type!(JsonTreeElementsQuery, "eql_v4.query_json_elements");
 
 // =============================================================================
 // Conversions to and from the engine's types, through their one wire form
@@ -547,6 +590,38 @@ mod tests {
             JsonTreeLeafQuery::sql_domain_static(),
             "eql_v4.query_json_leaf"
         );
+        assert_eq!(
+            JsonTreeElementsQuery::sql_domain_static(),
+            "eql_v4.query_json_elements"
+        );
+    }
+
+    #[test]
+    fn an_elements_query_is_members_of_tokens_and_bounds() {
+        let leaf = serde_json::json!({"s": b64(0xaa), "op": "AQI="});
+        let query = serde_json::json!({"m": [
+            {"t": [b64(1), b64(2)], "gte": leaf, "lte": leaf},
+            {"t": [b64(3), b64(4)], "gt": leaf},
+        ]});
+        let parsed: JsonTreeElementsQuery = serde_json::from_value(query.clone()).unwrap();
+        assert_eq!(parsed.m.len(), 2, "one member per field");
+        assert!(parsed.m[1].lt.is_none(), "an absent bound is none");
+        assert_eq!(
+            serde_json::to_value(&parsed).unwrap(),
+            query,
+            "absent bounds are left out"
+        );
+        for wrong in [
+            serde_json::json!({"m": [{"t": [b64(1)], "eq": leaf}]}),
+            serde_json::json!({"m": [{"gt": leaf}]}),
+            serde_json::json!({"m": [], "x": 1}),
+            serde_json::json!({"m": [{"t": ["not base64"], "gt": leaf}]}),
+        ] {
+            assert!(
+                serde_json::from_value::<JsonTreeElementsQuery>(wrong.clone()).is_err(),
+                "{wrong} should not deserialize"
+            );
+        }
     }
 
     #[test]

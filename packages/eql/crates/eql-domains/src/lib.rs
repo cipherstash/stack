@@ -554,7 +554,7 @@ pub const CATALOG: &[DomainFamily] = &[
 ];
 
 /// The role a domain of a [`DocumentFamily`] plays: the column type, the
-/// two query operands, or the entry the SQL returns from a document.
+/// query operands, or the entry the SQL returns from a document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentRole {
     /// The stored document: the column type, and the target a data plan
@@ -564,6 +564,9 @@ pub enum DocumentRole {
     Query,
     /// The ordering operand at a path.
     LeafQuery,
+    /// The element-scoped predicate: fields of one array element, each
+    /// with its read tokens and its bounds.
+    ElementsQuery,
     /// One node, as `->` and the walks return it.
     Entry,
 }
@@ -621,8 +624,9 @@ impl DocumentFamily {
 /// gives its own (`public.eql_v3_json_search`, the SteVec document):
 /// `JsonSearch` over `public.eql_v4_json_search`, its needle
 /// `JsonSearchQuery` (`eql_v4.query_json`), its ordering operand
-/// `JsonSearchLeafQuery` (`eql_v4.query_json_leaf`) and its entry
-/// `JsonEntry` (`public.eql_v4_json_entry`). The storage-only `Json`
+/// `JsonSearchLeafQuery` (`eql_v4.query_json_leaf`), its element-scoped
+/// predicate `JsonSearchElementsQuery` (`eql_v4.query_json_elements`) and
+/// its entry `JsonEntry` (`public.eql_v4_json_entry`). The storage-only `Json`
 /// (`public.eql_v4_json`) is the `json` family's. The Rust structs keep the
 /// implementation's name, as v3's `SteVecDocument` does.
 pub const JSON_TREE: DocumentFamily = DocumentFamily {
@@ -647,6 +651,12 @@ pub const JSON_TREE: DocumentFamily = DocumentFamily {
             name: "JsonSearchLeafQuery",
             rust: "JsonTreeLeafQuery",
             sql_domain: "eql_v4.query_json_leaf",
+        },
+        DocumentDomain {
+            role: DocumentRole::ElementsQuery,
+            name: "JsonSearchElementsQuery",
+            rust: "JsonTreeElementsQuery",
+            sql_domain: "eql_v4.query_json_elements",
         },
         DocumentDomain {
             role: DocumentRole::Entry,

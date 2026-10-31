@@ -110,6 +110,13 @@ pub struct TargetDescriptor {
     /// [`query_sql_domain`](Self::query_sql_domain) names. Not on the
     /// wire; a generator reads it from the operators' terms.
     pub leaf_query_sql_domain: Option<String>,
+    /// The PostgreSQL domain of the type's element-scoped predicate, for a
+    /// type that stores a JSON document
+    /// ([`with_elements_query_sql_domain`](Self::with_elements_query_sql_domain)):
+    /// what `element_match` binds as. Not on the wire, as
+    /// [`leaf_query_sql_domain`](Self::leaf_query_sql_domain) is not; a type
+    /// that names none does not answer `element_match`.
+    pub elements_query_sql_domain: Option<String>,
 }
 
 /// The descriptor in its wire form: the object a guest's `se_targets`
@@ -178,6 +185,7 @@ impl TargetDescriptor {
             reason,
             match_options: None,
             leaf_query_sql_domain: None,
+            elements_query_sql_domain: None,
         }
     }
 
@@ -186,6 +194,14 @@ impl TargetDescriptor {
     #[must_use]
     pub fn with_leaf_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
         self.leaf_query_sql_domain = Some(domain.into());
+        self
+    }
+
+    /// The descriptor of a type that stores a JSON document, whose
+    /// element-scoped predicate is the domain `domain`.
+    #[must_use]
+    pub fn with_elements_query_sql_domain(mut self, domain: impl Into<String>) -> Self {
+        self.elements_query_sql_domain = Some(domain.into());
         self
     }
 

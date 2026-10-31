@@ -2229,6 +2229,29 @@ func (v *JSONSearchLeafQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
+// JSONSearchElementsQuery is the json_tree family's element-scoped predicate, which eql_v4.json_tree_element_match tests: the value eql_v4.query_json_elements holds.
+type JSONSearchElementsQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v JSONSearchElementsQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_json_elements column.
+func (v *JSONSearchElementsQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "JSONSearchElementsQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v JSONSearchElementsQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "JSONSearchElementsQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *JSONSearchElementsQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
 // JSONEntry is the json_tree family's entry: one node of a document, as `->` and the walks return it: the value public.eql_v4_json_entry holds.
 type JSONEntry []byte
 

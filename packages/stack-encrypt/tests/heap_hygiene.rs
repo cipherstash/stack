@@ -29,6 +29,10 @@
 //! first zeroes the stack below it ([`scrub_stack`]); otherwise residue from
 //! earlier work (a hash's block buffer after a PRF over a marked key name)
 //! would reach a heap block and be blamed on the operation that boxed it.
+//! For the same reason the spy never copies what it looks for onto the
+//! stack: it runs on every free, from inside the watched operation, and a
+//! copy left in its dead frame would be picked up the same way by a future
+//! built later at that depth (see [`holds_key`]).
 //!
 //! Unix only: the spy scans a freed block with libc's `memmem`, not as a
 //! Rust slice (see [`holds_mark`]).
@@ -94,14 +98,23 @@ unsafe fn holds_mark(ptr: *const u8, len: usize) -> bool {
 /// Whether the `len` bytes at `ptr` hold the data key in [`KEY`], read as
 /// [`holds_mark`] reads.
 ///
+/// The key is searched for where [`KEY`] holds it, under the lock, and never
+/// copied out. This runs on every free during a watch, at whatever depth
+/// the operation freed from; a copy in this frame would stay on the dead
+/// stack, and a future the operation builds there next (a `JoinAll` whose
+/// unused variant space the build leaves as it found it) would carry the
+/// key into its box, which the spy would then report as the operation's.
+///
 /// # Safety
 ///
 /// `ptr` must point to `len` allocated bytes.
 unsafe fn holds_key(ptr: *const u8, len: usize) -> bool {
     BUSY.with(|busy| busy.set(true));
-    let key = KEY.lock().map(|key| *key).unwrap_or(None);
+    let found = KEY
+        .lock()
+        .is_ok_and(|key| key.as_ref().is_some_and(|key| find(ptr, len, key)));
     BUSY.with(|busy| busy.set(false));
-    key.is_some_and(|key| find(ptr, len, &key))
+    found
 }
 
 /// [`holds_mark`] for any `needle`.
@@ -412,7 +425,8 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
             true,
             None,
         )
-        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
+        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")
+        .with_elements_query_sql_domain("eql_v4.query_json_elements")]
     }
     fn encrypt<'a, K: 'static>(
         &self,
@@ -580,8 +594,13 @@ mod json_index {
     /// [`KEY`] so the spy can look for it.
     struct Recorded(DeterministicSource);
 
+    /// Written into [`KEY`] in place, not built on the stack and moved in,
+    /// for the reason [`holds_key`] reads it in place.
     fn record(key: &DataKey) {
-        *KEY.lock().unwrap() = Some(*key.key());
+        KEY.lock()
+            .unwrap()
+            .get_or_insert([0; 32])
+            .copy_from_slice(key.key());
     }
 
     impl DataKeySource for Recorded {
@@ -815,7 +834,7 @@ mod json_index {
         let keyset = cipher.default_keyset();
         let wire = json!({
             "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
-                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
+                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age", "$.visits[*].at"]}}}
         });
         let plan = record::plan_with(
             &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
@@ -851,6 +870,28 @@ mod json_index {
                     ("path", frame("$.age")),
                     ("low", frame(quoted.as_str())),
                     ("high", frame(quoted.as_str())),
+                ]),
+            ),
+            (
+                OpSpec::ElementMatch,
+                object(vec![
+                    ("path", frame("$.visits[*]")),
+                    (
+                        "predicates",
+                        frame(vec![
+                            object(vec![
+                                ("member", frame("at")),
+                                ("op", frame("eq")),
+                                ("json", frame(quoted.as_str())),
+                            ]),
+                            object(vec![
+                                ("member", frame("at")),
+                                ("op", frame("between")),
+                                ("low", frame(quoted.as_str())),
+                                ("high", frame(quoted.as_str())),
+                            ]),
+                        ]),
+                    ),
                 ]),
             ),
         ];
