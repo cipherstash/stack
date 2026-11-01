@@ -160,9 +160,7 @@ func TestStackConformance(t *testing.T) {
 	}
 	ctx := context.Background()
 	client, err := encrypt.NewDeterministicClient(ctx, [32]byte(seed))
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}

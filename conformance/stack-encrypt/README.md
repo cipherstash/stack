@@ -21,12 +21,30 @@ native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
 The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
-runtime and read cases described below.
+runtime and read cases, and enrolls the existing value-kind and query-operator
+fixtures described below. Set no fixture-update variables when checking conformance.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## Existing value-kind and query-operator fixtures
+
+The [fixture contract](fixture-contract.md) defines `record-value-kinds-v1` and
+`record-query-operators-v1`. Their [enrollment index](v1/fixture-profiles.json)
+maps stable requirement IDs to the existing Rust and Go tests. The fixtures
+remain under `packages/stack-encrypt/tests/fixtures`; no vectors are copied.
+
+These profiles cover the represented narrow/128-bit integers, dates,
+timestamps, decimals, equality/order terms, query operand metadata, match
+verification and fetch limits. They preserve typed Rust and generated Go API
+checks. The task runs the existing tests directly, and a missing guest fails
+when conformance is required. The ordinary CI suites already execute them.
+
+This is representative fixture coverage, not an exhaustive type/operator
+matrix. Wider fresh artifact exchange, shared query refusals and EQL/JSON
+operations remain separate work.
 
 ## `record-reads-v1` contract
 

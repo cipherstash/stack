@@ -6,11 +6,11 @@ Paths are relative to the repository root. New profile cases run from `v1/`.
 
 | Requirement | Existing evidence | Remaining work |
 |---|---|---|
-| Scalar value widths and lossless transport | `packages/stack-encrypt/tests/value_kinds.rs`; `languages/golang/encrypt/value_kinds_test.go`; initial shared scalar cases | Expand shared cases to decimals, dates, timestamps, floats, bytes and all widths; Python/TS mappings |
+| Scalar value widths and lossless transport | Initial scalar cases and [value-kind requirements](fixture-contract.md#value-kind-requirements), executed by the existing Rust and generated Go runners | Complete per-kind boundary matrices, bytes and broader floats; Python/TS mappings |
 | Owned opaque ciphertext and storage envelope | `packages/stack-encrypt/tests/scalar.rs`, `frozen_bytes.rs`; initial cross-opening cases | Blob profile; encoded targets; supported version matrix |
 | Record declaration and lowering | [Declaration grammar](declaration-grammar.md); `v1/declarations.json` shared by native Rust and Go; native normalization observations; existing record lowering suites | EQL-resolver profile; SDK-to-declaration mappings; runtime source/read shapes |
 | Context binding and composition | `packages/stack-encrypt/tests/target.rs`, `descriptor.rs`, `record_lowering.rs`; `languages/golang/encrypt/context_field_test.go`; initial wrong-context cases | Shared composition vectors; expected-context and required-input matrix |
-| Query terms and diagnostics | `packages/stack-encrypt/tests/query_operators.rs`; `languages/golang/encrypt/query_test.go`; initial equality/query-error cases | Common rejection corpus for every operator, capability and input shape |
+| Query terms and diagnostics | [Query-operator requirements](fixture-contract.md#query-operator-requirements), existing Rust/Go runners and initial equality/query-error cases | Common rejection corpus for every operator, capability and input shape; wider kind/index combinations |
 | Missing, SQL NULL and sealed null | `packages/stack-encrypt/src/dynamic/record.rs` null tests; `languages/golang/encrypt/null_test.go` | Explicit language mappings and common missing/null fixtures |
 | Fresh cross-language storage | `.github/workflows/tests-golang.yml` exports fresh Go EQL rows for Rust; initial scalar artifact exchange | Every producer/consumer/backend pair and supported released versions |
 | JSON queries, extraction and tampering | `packages/stack-encrypt/tests/json_tree_vectors.rs`; `packages/eql/tests/encryption/tests/json_tree.rs`; `languages/golang/encrypt/json_tree_test.go`, `json_postgres_test.go` | Formal operation profile; JSON vectors consumed by all runners |
@@ -59,17 +59,25 @@ raw-byte profile must cover that boundary explicitly.
 
 ## Consolidation policy
 
+The value-kind/query-operator enrollment adds named requirements for the
+existing fixtures through [the enrollment index](v1/fixture-profiles.json).
+The conformance command selects their original runners; CI guards the mapping
+and selection. Typed Rust comparisons, generated Go methods, verification and
+fetch-limit checks stay in those runners. No fixture is copied and no existing
+assertion is removed. Shared negative cases and fresh exchange of the wider
+value kinds remain open.
+
 Shared semantic expectations should be maintained once and executed by each
 language runner. Conformance can replace duplicate case tables and fixture
 maintenance. It does not eliminate the need to execute the Rust and Go paths.
-No existing test has been deleted in these first four slices.
+No existing test has been deleted by conformance enrollment.
 
 | Existing evidence | Relationship to conformance | Consolidation action |
 |---|---|---|
 | Rust `dynamic/record.rs` tests `a_malformed_plan`, `a_null_is_refused_as_its_key`, `a_missing_or_null_index_payload_is_the_default` | Many inputs and diagnostic outcomes are now shared declaration cases | Move the remaining cases and retain any unique display/low-level assertions before removing duplicate rows |
 | Rust kind/index admission tests | The corpus has the complete 21-kind/five-index acceptance matrix | Share case data; retain direct tests that compare declaration admission with actual term execution |
-| Rust `value_kinds.rs`, Go `value_kinds_test.go` | Already share `value_kinds.json`; cover more types and generated SDK code than the initial scalar profile | Enroll that existing fixture under named requirements instead of copying it; keep generated-code assertions |
-| Rust `query_operators.rs`, Go `query_test.go` | Already share operator vectors, including verification and target limits | Reuse their fixture and cases when adding an operator profile; preserve host/generated query mapping tests |
+| Rust `value_kinds.rs`, Go `value_kinds_test.go` | Enrolled as `record-value-kinds-v1`, retaining the shared fixture and generated SDK calls | Extend the existing fixture/requirements for missing boundaries; retain typed and generated-code assertions |
+| Rust `query_operators.rs`, Go `query_test.go` | Enrolled as `record-query-operators-v1`, including verification and target limits | Add shared refusal cases separately; retain host/generated query mapping tests |
 | Go checker and host validation tests in `guest_test.go` | Exercise host rejection and diagnostic forwarding through public checker methods | Keep adapter-specific assertions; representable declaration cases also use `Checker.Check`, while raw frames observe the guest boundary |
 | Native scalar/record round trips and cross-opening | Some behavior overlaps, but existing tests cover more types and API paths | Replace only exact duplicates after matching requirements and execution paths |
 

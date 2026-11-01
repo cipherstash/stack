@@ -28,8 +28,8 @@ import (
 // declaration, the term each query by operator derives (each equal to the
 // typed Rust query chain's), a page of verified values and a few fetch
 // limits. These tests derive, verify and size the same queries through the
-// deterministic test build of the guest and compare. Skipped when that build
-// is absent.
+// deterministic test build of the guest and compare. A missing build skips
+// ordinary tests, but fails when STACK_CONFORMANCE_REQUIRED=1.
 
 type queryFixture struct {
 	KeySource struct {
@@ -129,9 +129,7 @@ func queryFixtureClient(t *testing.T, f queryFixture) *encrypt.Client {
 		t.Fatalf("seed: %v (%d bytes)", err, len(seed))
 	}
 	c, err := encrypt.NewDeterministicClient(context.Background(), [32]byte(seed))
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}

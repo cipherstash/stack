@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -87,9 +86,7 @@ func TestDeclarationConformance(t *testing.T) {
 	for name, load := range map[string]func() ([]byte, error){"release": encrypt.PlainGuest, "deterministic": encrypt.DeterministicGuest} {
 		t.Run(name, func(t *testing.T) {
 			wasm, err := load()
-			if (errors.Is(err, encrypt.ErrGuestNotBuilt) || errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt)) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
-				t.Skip(err)
-			}
+			skipMissingConformanceGuest(t, err)
 			if err != nil {
 				t.Fatal(err)
 			}

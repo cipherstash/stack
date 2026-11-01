@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -149,9 +148,7 @@ func TestReadConformance(t *testing.T) {
 	}
 	ctx := context.Background()
 	client, err := encrypt.NewDeterministicClient(ctx, [32]byte{})
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,9 +446,7 @@ func TestReadCorpusSchema(t *testing.T) {
 func TestReadTreePreservesCipherScope(t *testing.T) {
 	ctx := context.Background()
 	client, err := encrypt.NewDeterministicClient(ctx, [32]byte{})
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
