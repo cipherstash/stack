@@ -549,7 +549,11 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
     // Held non-empty, so a change to `isEqlJob` cannot empty the check.
     expect(EQL_RUST_CACHE_STEPS.length).toBeGreaterThan(0)
     const wrong = EQL_RUST_CACHE_STEPS.filter(
-      ({ step }) => step?.with?.workspaces !== CARGO_WORKSPACE,
+      ({ step }) =>
+        !String(step?.with?.workspaces ?? '')
+          .split('\n')
+          .map((line) => line.split('->')[0].trim())
+          .includes(CARGO_WORKSPACE),
     ).map((entry) =>
       stepLabel(entry, `workspaces: ${entry.step?.with?.workspaces}`),
     )
