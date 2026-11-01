@@ -109,6 +109,7 @@ on:
       # cannot see them (a task body names a cargo package, not a path); the
       # manifest walk in eql-suite-ci.test.mjs does, and fails when one of them
       # is missing from this list.
+      - "conformance/stack-encrypt/**"
       - "packages/stack-encrypt/**"
       - "packages/stack-encrypt-derive/**"
       - "packages/stack-kms/**"
@@ -208,6 +209,7 @@ jobs:
               - "packages/eql/docker/**"
               - "packages/eql/README.md"
               - "packages/eql/SUPABASE.md"
+              - "conformance/stack-encrypt/**"
               - "packages/stack-encrypt/**"
               - "packages/stack-encrypt-derive/**"
               - "packages/stack-kms/**"

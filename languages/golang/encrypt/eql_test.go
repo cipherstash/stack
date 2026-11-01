@@ -25,9 +25,7 @@ import (
 func deterministicEQLClient(t *testing.T) *encrypt.Client {
 	t.Helper()
 	c, err := encrypt.NewDeterministicEQLClient(context.Background(), testSeed)
-	if errors.Is(err, encrypt.ErrDeterministicEQLGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}

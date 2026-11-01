@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "suites": {
+    "engine-queries": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "binary": "json_operators",
+      "features": ["--all-features"]
+    },
+    "engine-reads": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "binary": "json_read_checks",
+      "features": ["--all-features"]
+    },
+    "engine-vectors": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "binary": "json_tree_vectors",
+      "features": ["--all-features"]
+    },
+    "eql-targets": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": "packages/eql",
+      "package": "eql-encryption-tests",
+      "binary": "targets",
+      "features": []
+    },
+    "eql-record": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": "packages/eql",
+      "package": "eql-encryption-tests",
+      "binary": "json_tree_data_plan",
+      "features": []
+    },
+    "eql-typed": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": "packages/eql",
+      "package": "eql-encryption-tests",
+      "binary": "json_tree",
+      "features": []
+    },
+    "postgres": {
+      "language": "rust",
+      "lane": "postgres",
+      "workspace": "packages/eql",
+      "package": "eql-encryption-tests",
+      "binary": "json_tree",
+      "features": []
+    },
+    "go": {
+      "language": "go",
+      "lane": "fast"
+    },
+    "go-postgres": {
+      "language": "go",
+      "lane": "postgres"
+    }
+  },
+  "requirements": [
+    {
+      "id": "eql-resolver-catalog-v1",
+      "evidence": {
+        "eql-targets": [
+          "the_table::names_every_stored_catalog_domain_in_order",
+          "the_table::every_row_is_a_compiled_domain_type_and_so_is_its_query",
+          "the_table::the_producible_types_are_the_ones_with_a_rust_plaintext",
+          "given_an_unknown_name::every_entry_point_says_no_such_type",
+          "given_a_name_the_engine_cannot_produce::every_entry_point_refuses_it_with_the_table_reason"
+        ],
+        "eql-record": [
+          "the_engine_and_the_table_agree_on_which_targets_take_json_options"
+        ],
+        "go": [
+          "TestTheCatalogListsEachTypesOperators",
+          "TestTextEqIsRefusedByTheBuildWithoutEQLTypes",
+          "TestTargetWithoutEQLIsRefusedBeforeTheGuest"
+        ]
+      }
+    },
+    {
+      "id": "json-write-v1",
+      "evidence": {
+        "eql-record": [
+          "a_batch_of_documents_round_trips_in_one_request",
+          "the_data_plan_and_the_typed_layout_agree",
+          "text_that_is_not_a_document_is_refused_before_any_key",
+          "a_sql_null_stores_no_document",
+          "a_document_does_not_open_under_another_column"
+        ],
+        "eql-typed": ["a_document_round_trips_through_the_typed_target"],
+        "engine-vectors": [
+          "the_derivations_are_pinned_under_the_deterministic_source"
+        ],
+        "go": [
+          "TestJSONDocumentsRoundTripThroughTheGuest",
+          "TestJSONDocumentsDoNotOpenUnderAnotherColumn",
+          "TestJSONTextThatIsNotADocumentIsErrEncoding",
+          "TestACustomersDocumentsRoundTrip",
+          "TestASubscribersTypedDocumentsRoundTrip"
+        ],
+        "go-postgres": ["TestJSONTypedDocumentsInPostgres"]
+      }
+    },
+    {
+      "id": "json-query-v1",
+      "evidence": {
+        "eql-record": [
+          "a_document_field_answers_the_json_operators",
+          "every_operand_is_the_typed_chains",
+          "a_json_operator_refuses_what_it_cannot_answer",
+          "a_document_has_no_one_plaintext_query"
+        ],
+        "engine-queries": [
+          "every_operator_derives_its_tagged_operand",
+          "the_orderings_follow_the_resolved_options",
+          "malformed_inputs_are_refused_with_their_reason"
+        ],
+        "eql-typed": [
+          "the_query_operands_are_the_engines_terms_in_the_sql_contract"
+        ],
+        "go": [
+          "TestJSONOperatorsDeriveTaggedTerms",
+          "TestACustomersFieldsDeriveEachQuery",
+          "TestASubscribersTypedNeedlesDeriveTheRawQuery"
+        ],
+        "postgres": [
+          "postgres_containment_over_the_encrypted_column_is_jsonb_containment",
+          "generated::given_generated_documents_in_postgres::contains_selects_the_rows_jsonb_contains_on_both_plans",
+          "generated::given_generated_documents_in_postgres::contained_by_selects_the_rows_jsonb_does_except_a_root_scalar_in_a_root_array"
+        ],
+        "go-postgres": ["TestJSONDocumentsQueryAndReadInPostgres"]
+      }
+    },
+    {
+      "id": "json-request-bound-reads-v1",
+      "evidence": {
+        "eql-record": ["reads_open_against_the_request_that_prepared_them"],
+        "engine-queries": [
+          "reads_open_against_the_request_that_prepared_them",
+          "rows_that_are_not_the_reads_are_refused",
+          "a_malformed_read_is_refused_before_any_key"
+        ],
+        "engine-reads": [
+          "given_the_entry_arrow_returned::another_paths_entry_is_refused_before_any_key_is_retrieved",
+          "given_the_rows_of_a_read::the_honest_rows_open_to_the_nodes_value_in_any_order",
+          "given_the_rows_of_a_read::another_position_of_the_array_is_refused_by_its_label",
+          "given_the_rows_of_a_read::a_truncated_subtree_is_refused_by_the_cascade",
+          "given_the_rows_of_a_read::rows_of_two_documents_are_refused",
+          "given_answers_the_check_cannot_tell_apart::rows_withheld_whole_read_as_no_node",
+          "given_answers_the_check_cannot_tell_apart::another_rows_node_at_the_same_path_opens"
+        ],
+        "go": [
+          "TestJSONSelectorReadsOpenAgainstTheirRequest",
+          "TestJSONReadTypesPrintAndLogRedacted"
+        ],
+        "postgres": [
+          "postgres_every_subtree_read_answers_as_jsonb_does",
+          "postgres_wildcard_reads_answer_as_jsonb_path_query",
+          "postgres_a_position_reaches_array_elements_only",
+          "postgres_hostile_answers_are_refused_by_the_client",
+          "postgres_reads_never_answer_wrongly_under_tampering",
+          "generated::given_generated_documents_in_postgres::arrow_opens_a_leaf_to_the_value_jsonb_holds"
+        ]
+      }
+    },
+    {
+      "id": "json-element-match-v1",
+      "evidence": {
+        "engine-queries": [
+          "element_match::given_documents::one_element_must_satisfy_every_member",
+          "element_match::given_documents::answers_as_the_jsonpath_over_the_plaintext",
+          "element_match::given_the_fields_type::does_not_answer_it_when_the_type_names_no_domain",
+          "element_match::given_the_fields_type::does_not_list_it_without_an_ordered_path"
+        ],
+        "go": [
+          "TestElementMatchIsTheReadsAndTheOrderingsOfEachMember",
+          "TestElementMatchRefusesBeforeTheEngine",
+          "TestElementMatchEngineRefusalsAreTypedErrors",
+          "TestAtPathMakesThePredicatesOfItsMember"
+        ],
+        "postgres": [
+          "elements::postgres_an_element_predicate_holds_of_one_element",
+          "elements::postgres_one_element_must_satisfy_every_member",
+          "elements::postgres_a_probe_hit_raises",
+          "elements::postgres_the_elements_operand_domain_checks_each_member"
+        ],
+        "go-postgres": ["TestJSONElementMatchInPostgres"]
+      }
+    },
+    {
+      "id": "json-predicate-match-v1",
+      "evidence": {
+        "engine-queries": [
+          "compiled_match::given_an_input_it_cannot_answer::shared_predicate_refusals",
+          "compiled_match::given_documents::unknown_null_and_absent_answer_as_jsonpath_does",
+          "compiled_match::given_the_fields_type::does_not_answer_it_when_the_type_names_no_domain",
+          "compiled_match::given_a_predicate::each_leaf_is_its_operators_operand"
+        ],
+        "go": [
+          "TestMatchCompilesToTheOperandsOfTheOtherOperators",
+          "TestMatchTakesItsVarsAsAnyJSONObject",
+          "TestMatchRefusalsNameTheConstructAndItsOffset",
+          "TestMatchOperandPrintsAndLogsRedacted"
+        ],
+        "postgres": [
+          "predicate::postgres_a_compiled_predicate_answers_as_jsonb_path_match",
+          "predicate::postgres_a_compiled_predicate_answers_as_the_operators_written_out",
+          "predicate::postgres_a_null_leaf_is_unknown_under_and_or_and_not",
+          "predicate::postgres_the_predicate_domain_checks_each_node",
+          "predicate::postgres_the_operator_takes_a_typed_predicate_and_jsonpath_stays_blocked"
+        ],
+        "go-postgres": ["TestJSONPredicateMatchInPostgres"]
+      }
+    }
+  ]
+}

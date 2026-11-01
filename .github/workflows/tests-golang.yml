@@ -60,6 +60,7 @@ on:
       - scripts/go-binding-test.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
+      - scripts/stack-eql-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -99,6 +100,7 @@ on:
       - scripts/go-binding-test.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
+      - scripts/stack-eql-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -257,6 +259,17 @@ jobs:
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      - name: Required EQL and JSON conformance
+        env:
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/eql-conformance-fast
+        run: mise run test:conformance:eql
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-conformance-fast
+          path: ${{ runner.temp }}/eql-conformance-fast/*.json
+          if-no-files-found: error
 
       - name: Fresh Go scalar artifacts open in Rust
         env:
@@ -463,6 +476,18 @@ jobs:
         env:
           EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
         run: mise run go:test:postgres
+
+      - name: Required EQL and JSON PostgreSQL conformance
+        env:
+          EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/eql-conformance-postgres
+        run: mise run test:conformance:eql:postgres
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-conformance-postgres
+          path: ${{ runner.temp }}/eql-conformance-postgres/*.json
+          if-no-files-found: error
 
   # Round trips through real ZeroKMS. The Go live tests skip without their
   # STACK_ENCRYPT_TEST_* variables, so the secrets pre-flight runs first and
