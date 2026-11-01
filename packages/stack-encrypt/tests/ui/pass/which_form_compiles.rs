@@ -2,7 +2,8 @@
 //! must compile; `tests/ui/leaf_without_context.rs` and
 //! `tests/ui/bare_context.rs` pin the lines that must not.
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+
+use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, KeysetCipher, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 

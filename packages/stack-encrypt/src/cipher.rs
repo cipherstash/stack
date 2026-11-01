@@ -23,7 +23,7 @@
 //!
 //! * **Encrypt** — [`PendingStackCipherText::plan`] walks the value into
 //!   vitaminc's pending tree and does no I/O. A single
-//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt`]
+//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt_tree`]
 //!   convenience) then batches **one** `generate_keys` call for the whole
 //!   tree, under the handle's keyset, and seals every leaf through
 //!   `MintedKeys`, the sealing half of this crate's [`Cipher`], one key per
@@ -667,7 +667,7 @@ impl<K: IndexKeySource> StackCipher<K> {
     ///     .init()
     ///     .await?;
     /// let tenant = cipher.keyset(IdentifiedBy::Name("acme".to_string().into())).await?;
-    /// let sealed = tenant.encrypt("hello".to_string(), nonempty!("greeting")).await?;
+    /// let sealed = tenant.encrypt_tree("hello".to_string(), nonempty!("greeting")).await?;
     /// # Ok(())
     /// # }
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
@@ -1010,10 +1010,15 @@ fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::Hm
 }
 
 impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
+    /// Encrypt a value into a tree of individually sealed leaves.
+    ///
+    /// For one opaque scalar use
+    /// [`Self::encrypt`] or [`Self::encrypt_with_context`].
+    ///
     /// Encrypt a value, binding `aad`, and seal it against fresh ZeroKMS data
     /// keys in a single batched `generate_keys` call under this keyset.
     /// Every key is requested under the [`Descriptor`] of `aad`.
-    pub async fn encrypt<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
+    pub async fn encrypt_tree<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
     where
         T: Encrypt,
         A: IntoContext<'a>,
@@ -1023,10 +1028,16 @@ impl<K: DataKeySource + IndexKeySource> KeysetCipher<'_, K> {
         pending.seal(self, context).await
     }
 
-    /// [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
+    /// Decrypt a tree of individually sealed leaves.
+    ///
+    /// Like [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
     /// under any other is [`Error::ForeignKeyset`], refused before any key
     /// is retrieved.
-    pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
+    pub async fn decrypt_tree<'a, T, A>(
+        &self,
+        ciphertext: StackCipherText,
+        aad: A,
+    ) -> Result<T, Error>
     where
         T: Decrypt,
         A: IntoContext<'a>,
@@ -1075,7 +1086,9 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// Not keyset-scoped: each leaf carries the id of the keyset it was
     /// sealed under, and this opens leaves from any keyset the client is
     /// authorised for. To insist on one keyset, decrypt through its
-    /// [`KeysetCipher`] instead.
+    /// [`KeysetCipher::decrypt_tree`] instead. For an owned scalar
+    /// [`Ciphertext`](crate::Ciphertext), use [`DecryptFrom`](crate::DecryptFrom):
+    /// `i32::decrypt_from(ciphertext, &cipher)`.
     ///
     /// # Fan-out
     ///
@@ -1087,7 +1100,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// assembled from many tenants' leaves costs a round trip per tenant to
     /// open here, whoever assembled it. A service opening rows it does not
     /// trust — one tenant's data at a time — should hold that tenant's
-    /// [`KeysetCipher`], whose decrypt is one round trip at most and refuses
+    /// [`KeysetCipher::decrypt_tree`], which is one round trip at most and refuses
     /// a foreign leaf before any.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
@@ -1497,7 +1510,7 @@ impl PendingStackCipherText {
     /// [`plan`](Self::plan), in the same shape (see the
     /// [descriptor docs](crate::descriptor)). The tree itself only carries
     /// the *derived* per-leaf AADs, so the root is named here; nothing can
-    /// check that the two agree, which is why [`KeysetCipher::encrypt`], which
+    /// check that the two agree, which is why [`KeysetCipher::encrypt_tree`], which
     /// does both steps from one value, is the form to prefer.
     ///
     /// Settles through the target layer's request carrier
@@ -1784,13 +1797,16 @@ mod tests {
             .await
             .unwrap();
         let keyset = cipher.default_keyset();
-        let leaf = keyset.encrypt(7u32, "users/age").await.unwrap();
+        let leaf = keyset.encrypt_tree(7u32, "users/age").await.unwrap();
         let opened: Result<String, _> = cipher.decrypt(leaf, "users/age").await;
         assert!(
             matches!(opened, Err(Error::OpenedType { .. })),
             "{opened:?}"
         );
-        let seq = keyset.encrypt(vec![7u32, 8], "users/age").await.unwrap();
+        let seq = keyset
+            .encrypt_tree(vec![7u32, 8], "users/age")
+            .await
+            .unwrap();
         let opened: Result<u32, _> = cipher.decrypt(seq, "users/age").await;
         assert!(
             matches!(opened, Err(Error::OpenedType { .. })),

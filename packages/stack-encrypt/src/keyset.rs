@@ -6,9 +6,10 @@
 //! it is what every operation that *mints* something binds to: sealing
 //! values, sealing records, deriving index terms. Decrypting is not
 //! keyset-scoped (a sealed leaf carries the id of the keyset it was sealed
-//! under), so it lives on [`StackCipher`] as well, with the [`KeysetCipher`]
-//! form adding a constraint rather than a capability — see
-//! [`KeysetCipher::decrypt`].
+//! under). For an owned scalar, import [`DecryptFrom`](crate::DecryptFrom)
+//! and use `i32::decrypt_from(ciphertext, &cipher)`; [`KeysetCipher::decrypt`]
+//! adds the keyset constraint. For a structural tree, [`StackCipher::decrypt`]
+//! opens across keysets and [`KeysetCipher::decrypt_tree`] adds that constraint.
 //!
 //! Keysets load lazily. [`StackCipher::keyset`] resolves an id or a name
 //! through a bounded cache and loads the keyset from ZeroKMS on a miss —

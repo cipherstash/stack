@@ -72,17 +72,23 @@ building it needs a `T` that is both `IntoAad` and `IntoPrfContext`. A record
 made only of ciphertexts needs only the first, and the leaf it wraps
 (`StackCipherText`) asks for only that: its context is `AeadContext`. Such a
 record says so with `#[stash(context_type = AeadContext)]`, and then accepts
-every context the canonical `keyset.encrypt(value, context)` path accepts,
+every context the canonical `keyset.encrypt_tree(value, context)` path accepts,
 including a type that implements `IntoAad` alone:
 
-```rust,ignore
+```rust,no_run
+use stack_encrypt::{DecryptInto, EncryptFrom, NonEmpty, StackCipherText};
+use stack_encrypt::target::{AeadContext, legacy::EncryptInto};
+
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = String, context_type = AeadContext)]
 struct SealedName {
     c: StackCipherText,
 }
 
+# async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static>(keyset: stack_encrypt::KeysetCipher<'_, K>, name: String, tenant: &str) -> Result<(), Box<dyn std::error::Error>> {
 let record: SealedName = name.encrypt_into_with_context(&keyset, NonEmpty::new(tenant)?).await?;
+# Ok(())
+# }
 ```
 
 The derive cannot pick this for you: it sees the field types' names, not
@@ -93,8 +99,8 @@ record with a `context_field`, or a `struct` derive, settles its context
 itself and refuses the attribute.
 
 A declaration is executed by `keyset.encrypt_as(&value, context)` and
-`cipher.decrypt_as(record, context)`, or through the blanket `EncryptInto` and
-`DecryptFrom` traits for the source-side spelling (`value.encrypt_into(&keyset)`,
+`cipher.decrypt_as(record, context)`, or through the blanket
+`stack_encrypt::target::legacy::{EncryptInto, DecryptFrom}` traits for the source-side spelling (`value.encrypt_into(&keyset)`,
 `record.decrypt_into(&cipher, context)`). A hand-written target implements the
 same two declaration methods the derives emit, `EncryptFrom::encryption` and
 `DecryptInto::decryption`; neither receives the plaintext or a cipher.
