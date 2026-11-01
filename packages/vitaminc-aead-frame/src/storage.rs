@@ -1124,6 +1124,9 @@ impl ser::Serializer for KeyWriter<'_> {
     }
 }
 
+#[cfg(kani)]
+mod proofs;
+
 #[cfg(test)]
 mod tests {
     use super::*;

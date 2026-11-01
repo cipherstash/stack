@@ -32,7 +32,7 @@ fn kind(refusal: Refusal) -> ErrorKind {
     match refusal {
         Refusal::NotABlob => ErrorKind::NotABlob,
         Refusal::UnsupportedVersion => ErrorKind::UnsupportedVersion,
-        Refusal::Malformed => ErrorKind::Malformed,
+        Refusal::Malformed(_) => ErrorKind::Malformed,
     }
 }
 

@@ -15,6 +15,11 @@ rust-version.workspace = true
 # crate a dependent builds.
 exclude = ["scripts/"]
 
+[lints.rust]
+# Set by `cargo kani`, which builds the proof harnesses in
+# src/storage/proofs.rs.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
 [package.metadata.docs.rs]
 all-features = true
 
