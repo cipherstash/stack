@@ -808,7 +808,33 @@
         "text": ""
       }
     },
-    {"id": "sql-mixed-equal-lengths", "operation": "seal", "kind": "int32", "null": "sql", "rows": [{}, {"value": {"type": "int32", "text": "1"}}, {"value": {"type": "int32", "text": "2"}}], "expected_rows": [{"value": {"type": "null", "text": ""}}, {"value": {"type": "int32", "text": "1"}}, {"value": {"type": "int32", "text": "2"}}], "expected_stored": [false, true, true], "equal_lengths": true},
-    {"id": "sql-empty-equal-lengths", "operation": "seal", "kind": "int32", "null": "sql", "rows": [], "expected_rows": [], "expected_stored": [], "equal_lengths": true}
+    {
+      "id": "sql-mixed-equal-lengths",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {},
+        { "value": { "type": "int32", "text": "1" } },
+        { "value": { "type": "int32", "text": "2" } }
+      ],
+      "expected_rows": [
+        { "value": { "type": "null", "text": "" } },
+        { "value": { "type": "int32", "text": "1" } },
+        { "value": { "type": "int32", "text": "2" } }
+      ],
+      "expected_stored": [false, true, true],
+      "equal_lengths": true
+    },
+    {
+      "id": "sql-empty-equal-lengths",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [],
+      "expected_rows": [],
+      "expected_stored": [],
+      "equal_lengths": true
+    }
   ]
 }
