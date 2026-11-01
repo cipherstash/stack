@@ -444,3 +444,7 @@ mise -C packages/eql run clean
 mise -C packages/eql run build
 node scripts/stack-eql-conformance.mjs postgres
 """
+
+[tasks."test:conformance:lifecycle"]
+description = "Required native/Go lifecycle, cleanup and key-I/O evidence (Unix; build the normal and deterministic guests first)"
+run = "node scripts/stack-lifecycle-conformance.mjs"

@@ -29,6 +29,14 @@ is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
 
+## Lifecycle, cleanup and key I/O
+
+The [lifecycle contract](lifecycle-contract.md) maps native/Go ownership,
+cancellation, partial-output cleanup, diagnostics, validation-before-I/O and
+batching evidence. Run `mise run test:conformance:lifecycle` on a supported Unix
+host with the normal and deterministic guests built. Reports retain known
+cleanup gaps and unobserved behavior alongside the passing requirements.
+
 ## EQL and JSON operations
 
 The [EQL/JSON contract](eql-json-contract.md) enrolls resolver capabilities,

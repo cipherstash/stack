@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: scalar, declaration, initial runtime, read and context-composition slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. The complete contract is not frozen.
+Date: 2026-10-31. Status: scalar, declaration, initial runtime, read, context, EQL/JSON and lifecycle slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. Wider boundaries, artifact exchange, Python/TypeScript enrollment and release gates remain. The complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -227,7 +227,7 @@ and the wider fresh artifact exchange remain separate planned work.
 
 ## EQL/JSON operation checkpoint
 
-Implemented the six requirements in
+Implemented the EQL/JSON requirements in
 `conformance/stack-encrypt/eql-json-contract.md`, enrolling the existing engine,
 EQL binding, Go SDK and independent PostgreSQL suites. A shared corpus replaces
 duplicate write/refusal tables; existing typed, generated, property and
@@ -240,3 +240,18 @@ and batching requirements. Python/TypeScript enrollment and the broader fresh
 artifact/version exchange remain separate delivery slices. The EQL/JSON profile
 does not complete the refactoring track or introduce the future binding/search
 scope split.
+
+## Lifecycle and key-I/O checkpoint
+
+Implemented `lifecycle-v1` with eight named requirements and required native/Go
+CI evidence. Reuses the pending, KMS chunking, heap, ABI, cancellation, memory,
+diagnostic and shared runtime/read suites. New observations cover unpolled and
+in-flight operation drops, provider failure, cleanup of decoded prefixes on
+late read errors, and bounded chunk concurrency/cancellation. The runner shares
+inventory and no-skip checks with EQL conformance.
+
+Reports distinguish passing requirements from known residue, observer exclusions,
+caller-owned values, unobserved live-provider behavior and unenrolled languages.
+This does not complete secure-buffer/key-copy refactoring. Next conformance
+slices remain value/refusal/raw-frame gaps, broader fresh artifact exchange,
+Python/TypeScript enrollment and explicit release gates/version combinations.

@@ -61,6 +61,8 @@ on:
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
       - scripts/stack-eql-conformance.mjs
+      - scripts/stack-conformance-evidence.mjs
+      - scripts/stack-lifecycle-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -101,6 +103,8 @@ on:
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
       - scripts/stack-eql-conformance.mjs
+      - scripts/stack-conformance-evidence.mjs
+      - scripts/stack-lifecycle-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -269,6 +273,17 @@ jobs:
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      - name: Required lifecycle and key-I/O conformance
+        env:
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/lifecycle-conformance
+        run: mise run test:conformance:lifecycle
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lifecycle-conformance
+          path: ${{ runner.temp }}/lifecycle-conformance/*.json
+          if-no-files-found: error
 
       - name: Required EQL and JSON conformance
         env:
