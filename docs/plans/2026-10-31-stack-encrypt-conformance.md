@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: scalar, declaration, initial runtime and read slices implemented; existing value-kind and query-operator fixtures enrolled. The complete contract is not frozen.
+Date: 2026-10-31. Status: scalar, declaration, initial runtime, read and context-composition slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. The complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -209,3 +209,17 @@ open in native Rust, fixed native values open in Go, and malformed query inputs
 produce the specified diagnostics. Python and TypeScript remain visibly pending
 until their runners execute. The complete specification, SQL profile, and all
 language SDK mappings remain follow-up work.
+
+
+## Context composition checkpoint (#1475)
+
+Implemented shared composition and boundary cases in
+`conformance/stack-encrypt/context-contract.md`: 18 typed extension cases,
+nine read/preflight cases, generated Go calls and native typed chains. Existing
+context-field fixture tests and the native plan-grammar suite are required by
+`test:conformance`. Repeated Rust `.extend()` now appends, resolving #1120;
+the changelog documents compatibility for records written under the old behavior.
+The current shared binding/search context remains distinct from future #1487.
+
+Next: #1476, the EQL/JSON operation profile. Python and TypeScript runner delivery
+and the wider fresh artifact exchange remain separate planned work.

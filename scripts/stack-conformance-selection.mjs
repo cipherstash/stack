@@ -9,6 +9,8 @@ export function goSelection(index) {
     'TestDeclarationConformance',
     'TestRuntimeConformance',
     'TestReadConformance',
+    'TestContextConformance',
+    'TestContextBoundaries',
     'TestFixtureConformanceRequiresGuest',
   ])
   for (const profile of index.profiles) {

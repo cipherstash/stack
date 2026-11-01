@@ -557,10 +557,9 @@ async fn an_index_only_field_matches_its_query_and_mints_no_data_key() {
     assert_eq!(matching.to_bytes(), sealed.terms.1.to_bytes());
 }
 
-/// A second `.extend(..)` replaces the first: every data key is asked for
-/// under the last extension only, and the record opens with it alone.
+/// Repeated extensions append in order, and opening needs both parts.
 #[tokio::test]
-async fn a_second_extend_replaces_the_first() {
+async fn a_second_extend_appends_to_the_first() {
     let (cipher, sent) = recording_cipher().await;
     let users_plan: Plan<User, _> = users_plan();
     let row = cipher
@@ -573,12 +572,17 @@ async fn a_second_extend_replaces_the_first() {
     assert_eq!(
         sent.lock().unwrap().generated(),
         [
-            "(users/email)/7u64",
-            "(users/age)/7u64",
-            "(users/notes)/7u64"
+            "((users/email)/1u64)/7u64",
+            "((users/age)/1u64)/7u64",
+            "((users/notes)/1u64)/7u64"
         ]
     );
-    let back = cipher.open(row).using(&users_plan).extend(7u64).await;
+    let back = cipher
+        .open(row)
+        .using(&users_plan)
+        .extend(1u64)
+        .extend(7u64)
+        .await;
     assert!(back.is_ok(), "{back:?}");
 }
 

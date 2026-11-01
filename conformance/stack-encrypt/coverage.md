@@ -91,3 +91,17 @@ For each removal, link the old assertion to stable case IDs, compare coverage
 and failure behavior, and run both runners in CI. Preserve unrelated assertions
 from mixed tests. Enroll Python and TypeScript against the existing corpus so
 adding a language does not create another copy of the expected behavior.
+
+## Context checkpoint
+
+The [context contract](context-contract.md) adds 18 shared composition cases and
+nine shared boundary cases, plus enrollment of the existing record-lowering
+context-field fixture. Rust typed write/query/open chains and Go generated
+methods execute the composition cases. Required native plan-grammar tests cover
+caller-provided bases and empty-batch source validation. Existing context tests
+remain: no mixed-purpose Rust or Go test is removed.
+
+Go proves canonical AAD indirectly through its exact context frame and native
+ciphertext opening; provider-call instrumentation remains a separate gap.
+Nested composite extensions remain a native API capability rather than an
+unsupported feature silently advertised by the Go/dynamic record profile.

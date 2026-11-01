@@ -44,6 +44,8 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(script).toMatch(/cargo nextest run[^\n]*--test declarations/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test runtime_conformance/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test read_conformance/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test context_conformance/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test plan_grammar/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test fixture_safety/)
     const selected = goSelection(script)
     for (const test of [
@@ -51,6 +53,8 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
       'TestDeclarationConformance',
       'TestRuntimeConformance',
       'TestReadConformance',
+      'TestContextConformance',
+      'TestContextBoundaries',
       'TestFixtureConformanceRequiresGuest',
     ]) {
       expect(selected.test(test), test).toBe(true)
@@ -67,6 +71,8 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
         'TestDeclarationConformance',
         'TestRuntimeConformance',
         'TestReadConformance',
+        'TestContextConformance',
+        'TestContextBoundaries',
         'TestFixtureConformanceRequiresGuest',
         ...index.profiles.flatMap((p) =>
           p.requirements.flatMap((r) => r.go_tests),
@@ -97,6 +103,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(Object.keys(index).sort()).toEqual(['profiles', 'version'])
     expect(index.version).toBe(1)
     expect(index.profiles.map((profile) => profile.id).sort()).toEqual([
+      'record-context-fields-v1',
       'record-query-operators-v1',
       'record-value-kinds-v1',
     ])
@@ -140,7 +147,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
           'id',
           'rust_tests',
         ])
-        expect(requirement.id).toMatch(/^(values|queries)\.[a-z-]+$/)
+        expect(requirement.id).toMatch(/^(values|queries|contexts)\.[a-z-]+$/)
         expect(requirements.has(requirement.id), requirement.id).toBe(false)
         requirements.add(requirement.id)
         expect(contract).toContain(`\`${requirement.id}\``)
@@ -160,7 +167,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
       }
     }
     const documented = [
-      ...contract.matchAll(/\| `((?:values|queries)\.[a-z-]+)` \|/g),
+      ...contract.matchAll(/\| `((?:values|queries|contexts)\.[a-z-]+)` \|/g),
     ].map((match) => match[1])
     expect([...requirements].sort()).toEqual(documented.sort())
   })

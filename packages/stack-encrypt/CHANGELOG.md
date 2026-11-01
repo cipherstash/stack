@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Repeated plan-chain `.extend(..)` calls now append parts in order, matching
+  Go's `Cipher.Extend`, instead of replacing earlier extensions (#1120).
+  `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
+  Records written using the previous replacement behavior must still be opened
+  with the final extension alone; this does not migrate stored ciphertext.
+
 ## [0.3.0] - 2026-10-27
 
 ### Breaking

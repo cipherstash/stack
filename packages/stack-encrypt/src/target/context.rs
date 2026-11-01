@@ -184,6 +184,11 @@ impl DeclaredContext {
         self
     }
 
+    /// Append the caller's parts, preserving each part's grouping.
+    pub(crate) fn append(&mut self, other: Self) {
+        self.0.extend(other.0);
+    }
+
     /// The context one field is derived under: its own `own`, extended by
     /// the caller's context if one was given — `("users", "age")` as it is
     /// under `()`, `(("users", "age"), id)` under a caller's `id`, and

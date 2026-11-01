@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "profile": "context-boundaries-v1",
+  "cases": [
+    {
+      "id": "unrestricted",
+      "tenants": ["tenants/acme", "tenants/globex"],
+      "expected": "",
+      "mutation": "none",
+      "outcome": "success",
+      "retrievals": 1
+    },
+    {
+      "id": "expected",
+      "tenants": ["tenants/acme"],
+      "expected": "tenants/acme",
+      "mutation": "none",
+      "outcome": "success",
+      "retrievals": 1
+    },
+    {
+      "id": "late-mismatch",
+      "tenants": ["tenants/acme", "tenants/globex"],
+      "expected": "tenants/acme",
+      "mutation": "none",
+      "outcome": "mismatch",
+      "retrievals": 0
+    },
+    {
+      "id": "empty",
+      "tenants": [],
+      "expected": "tenants/acme",
+      "mutation": "none",
+      "outcome": "success",
+      "retrievals": 0
+    },
+    {
+      "id": "tampered",
+      "tenants": ["tenants/acme"],
+      "expected": "",
+      "mutation": "tamper",
+      "outcome": "authentication",
+      "retrievals": 1
+    },
+    {
+      "id": "tampered-matching-expectation",
+      "tenants": ["tenants/acme"],
+      "expected": "tenants/globex",
+      "mutation": "tamper",
+      "outcome": "authentication",
+      "retrievals": 1
+    },
+    {
+      "id": "tampered-mismatching-expectation",
+      "tenants": ["tenants/acme"],
+      "expected": "tenants/acme",
+      "mutation": "tamper",
+      "outcome": "mismatch",
+      "retrievals": 0
+    },
+    {
+      "id": "late-missing",
+      "tenants": ["tenants/acme", "tenants/globex"],
+      "expected": "",
+      "mutation": "missing",
+      "outcome": "shape",
+      "retrievals": 0
+    },
+    {
+      "id": "late-empty",
+      "tenants": ["tenants/acme", "tenants/globex"],
+      "expected": "",
+      "mutation": "empty",
+      "outcome": "shape",
+      "retrievals": 0
+    }
+  ]
+}

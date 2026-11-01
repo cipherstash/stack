@@ -21,13 +21,22 @@ native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
 The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
-runtime and read cases, and enrolls the existing value-kind and query-operator
+runtime, read and context cases, and enrolls the existing value-kind, context-field and query-operator
 fixtures described below. Set no fixture-update variables when checking conformance.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## Context composition and expectations
+
+The [context contract](context-contract.md) covers ordered extensions, canonical
+context encodings, typed/generated API calls, stored-context expectations,
+tampering and preflight boundaries. The required command runs the new
+`context_conformance` Rust binary and `TestContextConformance` /
+`TestContextBoundaries` Go runners, together with native `plan_grammar` and
+existing context-field fixture tests.
 
 ## Existing value-kind and query-operator fixtures
 
