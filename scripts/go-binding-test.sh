@@ -41,18 +41,20 @@ go vet ./...
 # independent guest instances sharing one auth.json.
 CGO_ENABLED=0 go test -v ./auth -run '^TestDeviceRefresh'
 # A producer must execute even if Go has cached a previous successful run.
-conformance_flags=()
+# The guest paths have been checked; reuse positional arguments for test flags.
+# Unlike an empty array, "$@" is safe under nounset in macOS's Bash 3.2.
+set --
 if [[ -n "${STACK_CONFORMANCE_OUTPUT:-}" ]]; then
-  conformance_flags=(-count=1)
+  set -- -count=1
 fi
-CGO_ENABLED=0 go test "${conformance_flags[@]}" ./...
+CGO_ENABLED=0 go test "$@" ./...
 
 # The transport codec's u32-bound guards are load-bearing where int is 32
 # bits (vitaminc's vcffi runs this sweep too); the binding's own reflection
 # and buffer arithmetic must hold there as well. Linux hosts execute 386
 # natively; elsewhere the binary cannot run, so only vet.
 if [ "$(uname -s)" = "Linux" ]; then
-  CGO_ENABLED=0 GOOS=linux GOARCH=386 go test "${conformance_flags[@]}" ./...
+  CGO_ENABLED=0 GOOS=linux GOARCH=386 go test "$@" ./...
 else
   CGO_ENABLED=0 GOOS=linux GOARCH=386 go vet ./...
 fi

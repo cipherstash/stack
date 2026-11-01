@@ -67,8 +67,8 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
       join(REPO_ROOT, 'scripts/go-binding-test.sh'),
       'utf8',
     )
-    expect(goTests).toContain('conformance_flags=(-count=1)')
-    expect(goTests).toMatch(/go test "\$\{conformance_flags\[@\]\}" \.\/\.\.\./)
+    expect(goTests).toContain('set -- -count=1')
+    expect(goTests).toContain('go test "$@" ./...')
     expect(steps[exchange].if).toBeUndefined()
     expect(steps[exchange]['continue-on-error']).toBeUndefined()
   })
