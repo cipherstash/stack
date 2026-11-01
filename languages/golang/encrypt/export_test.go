@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 )
 
@@ -198,4 +199,23 @@ func DeterministicGuest() ([]byte, error) {
 		return nil, ErrDeterministicGuestNotBuilt
 	}
 	return wasm, err
+}
+
+// OpenTreeForTest accepts stored shapes that record.Sealed cannot express,
+// while preserving Cipher validation, extension, context and production decoding.
+func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan) ([]record.Source, error) {
+	if cph == nil {
+		return nil, fmt.Errorf("%w: Open on a nil *Cipher", ErrEncoding)
+	}
+	p, err := cph.plan(plan)
+	if err != nil {
+		return nil, err
+	}
+	return cph.client.openTree(ctx, cph.keyset, cph.context, p, tree)
+}
+
+// OpenTreeForTest deliberately bypasses host plan validation to observe the
+// uninitialised guest's preflight, including plans the host refuses earlier.
+func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan, expected string) ([]record.Source, error) {
+	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, plan, tree)
 }

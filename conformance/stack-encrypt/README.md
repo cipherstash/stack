@@ -11,6 +11,7 @@ From the repository root, with the pinned mise tools installed:
 
 ```sh
 mise run wasm:guest:build:deterministic
+mise run wasm:guest:build
 mise run test:conformance
 ```
 
@@ -20,12 +21,22 @@ native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
 The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
-runtime cases described below.
+runtime and read cases described below.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## `record-reads-v1` contract
+
+The [read contract](read-contract.md) defines cases in `v1/reads.json` for
+malformed stored records, authenticated read-type failures and context preflight.
+The native runner observes retrieval stages. Go exercises the same cases through
+an uninitialised guest and a configured cipher, plus the normal record adapter
+for representable cases. The contract records the static-context combination
+that the host refuses before calling the guest. The runners are `tests/read_conformance.rs` in the Rust
+crate and `encrypt/read_conformance_test.go` in the Go module.
 
 ## `record-runtime-v1` contract
 
@@ -34,7 +45,7 @@ missing and explicit null values, SQL-null omission, sealed-null storage and
 equality, typed batch round trips, write validation and lossless query conversions.
 The runners are `packages/stack-encrypt/tests/runtime_conformance.rs` and
 `languages/golang/encrypt/runtime_conformance_test.go`. Native Rust also checks
-data-key call counts; Go records where its host adapter refuses inputs earlier.
+data-key call counts; Go host source validation preserves shared structured diagnostics.
 
 ## `record-declarations-v1` contract
 
@@ -49,7 +60,9 @@ The runners are `packages/stack-encrypt/tests/declarations.rs` and
 without a cipher. Valid-frame declaration diagnostics agree exactly; malformed
 frames document the different native-parser and WASI-boundary classifications.
 Native Rust also checks normalization observations. Go's checker does not expose
-the parsed plan, so it asserts acceptance and diagnostics.
+the parsed plan, so it asserts acceptance and diagnostics against both release
+and deterministic guests. Representable cases also exercise `Checker.Check`
+through explicit host plan fixtures in `v1/go-declarations.json`.
 
 ## `record-scalars-v1` contract
 
