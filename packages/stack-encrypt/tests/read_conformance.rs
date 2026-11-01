@@ -41,6 +41,7 @@ struct Case {
     context_field_name: String,
     rows: Vec<Row>,
     mutation: Mutation,
+    #[serde(default, deserialize_with = "deserialize_expected_context")]
     expected_context: Option<String>,
     check_error: Option<Refusal>,
     expected: Expected,
@@ -48,6 +49,17 @@ struct Case {
     #[serde(rename = "adapter")]
     _adapter: bool,
 }
+
+// Only omission means unrestricted. Deserialize a supplied value as a label,
+// rather than letting Option treat an explicit null as absence.
+fn deserialize_expected_context<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let context = String::deserialize(deserializer)?;
+    Label::parse(&context).map_err(serde::de::Error::custom)?;
+    Ok(Some(context))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Mutation {
@@ -314,4 +326,33 @@ async fn check_case(case: Case) {
         case.expected.retrievals,
         "retrieval stage"
     );
+}
+
+#[test]
+fn expected_context_must_be_a_nonempty_label_when_present() {
+    let corpus: Value = serde_json::from_str(include_str!(
+        "../../../conformance/stack-encrypt/v1/reads.json"
+    ))
+    .unwrap();
+    let mut case = corpus["cases"][0].clone();
+    case.as_object_mut().unwrap().remove("expected_context");
+    assert!(serde_json::from_value::<Case>(case.clone())
+        .unwrap()
+        .expected_context
+        .is_none());
+    case["expected_context"] = json!("tenants/acme");
+    assert_eq!(
+        serde_json::from_value::<Case>(case.clone())
+            .unwrap()
+            .expected_context
+            .as_deref(),
+        Some("tenants/acme")
+    );
+    for invalid in [Value::Null, json!(""), json!(42), json!([]), json!({})] {
+        case["expected_context"] = invalid.clone();
+        assert!(
+            serde_json::from_value::<Case>(case.clone()).is_err(),
+            "accepted expected_context: {invalid}"
+        );
+    }
 }

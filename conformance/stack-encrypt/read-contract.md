@@ -15,7 +15,8 @@ This supplies real ciphertext, including for negative reads.
 Without `context_field`, the context is `["conformance", "value"]`. With it,
 `tenant` is a string passthrough supplying the row context; `value` is its
 field identity. An optional `expected_context` constrains the stored context.
-Its value must be a nonempty plain label.
+Omit it for an unrestricted read; when present it must be a nonempty plain
+label string. Explicit JSON null is invalid, not another spelling of omission.
 
 `expected` describes the native opener's stage, complete diagnostic code and
 payload on refusal, typed ordered rows on success, and data-key retrieval

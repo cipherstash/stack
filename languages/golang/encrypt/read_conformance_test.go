@@ -290,6 +290,12 @@ func (c *readCase) UnmarshalJSON(data []byte) error {
 	if err := require(fields, "id", "write", "read", "context_field", "rows", "mutation", "adapter", "expected"); err != nil {
 		return err
 	}
+	// A supplied null must not decode to nil and become an unrestricted read.
+	if _, present := fields["expected_context"]; present {
+		if err := require(fields, "expected_context"); err != nil {
+			return err
+		}
+	}
 	for key, names := range map[string][]string{"write": {"kind", "null"}, "read": {"kind", "null"}, "mutation": {"kind", "row"}, "expected": {"stage", "retrievals"}} {
 		var nested map[string]json.RawMessage
 		if err := json.Unmarshal(fields[key], &nested); err != nil {
@@ -361,6 +367,33 @@ func TestReadCorpusSchema(t *testing.T) {
 	}
 	if err := check([]byte(valid)); err != nil {
 		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"null", "null", false},
+		{"empty", `""`, false},
+		{"number", "42", false},
+		{"array", "[]", false},
+		{"object", "{}", false},
+		{"label", `"tenants/acme"`, true},
+	} {
+		t.Run("expected-context-"+test.name, func(t *testing.T) {
+			var data map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(valid), &data); err != nil {
+				t.Fatal(err)
+			}
+			data["expected_context"] = json.RawMessage(test.value)
+			encoded, err := json.Marshal(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := check(encoded); (err == nil) != test.valid {
+				t.Fatalf("expected_context=%s: valid=%t, error=%v", test.value, test.valid, err)
+			}
+		})
 	}
 	for _, path := range [][]string{{"context_field"}, {"adapter"}, {"mutation", "row"}, {"expected", "retrievals"}, {"write", "kind"}} {
 		t.Run("missing-"+path[len(path)-1], func(t *testing.T) {
