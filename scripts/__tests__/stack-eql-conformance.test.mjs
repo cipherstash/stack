@@ -172,6 +172,22 @@ describe('required EQL/JSON conformance', () => {
       expect(jobs[0].env.MISE_ENV).toBe('test')
       expect(step.env.STACK_CONFORMANCE_REPORT_DIR).toBeTruthy()
       if (task.endsWith(':postgres')) {
+        const steps = jobs[0].steps
+        const repair = steps.findIndex((s) =>
+          s.run?.includes('mise install --force rust'),
+        )
+        const cache = steps.findIndex((s) =>
+          s.uses?.startsWith('Swatinem/rust-cache@'),
+        )
+        expect(repair).toBeGreaterThan(-1)
+        expect(cache).toBeGreaterThan(repair)
+        expect(steps[repair].run).toContain(
+          'mise -C packages/eql install --force rust',
+        )
+        expect(steps[repair].run).toContain('mise x -- cargo --version')
+        expect(steps[repair].run).toContain(
+          'mise -C packages/eql x -- cargo --version',
+        )
         expect(jobs[0].services.postgres).toBeDefined()
         expect(step.env.EQL_TEST_DATABASE_URL).toContain(
           'job.services.postgres.ports',
