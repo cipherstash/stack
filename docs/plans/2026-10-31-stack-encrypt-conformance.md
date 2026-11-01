@@ -152,8 +152,7 @@ Python and TypeScript consumers remain pending.
 
 ## Value-kind and query-operator checkpoint
 
-The next slice is on `feat/stack-encrypt-value-query-conformance`, stacked on
-[PR #1462](https://github.com/cipherstash/stack/pull/1462). The
+Building on the read-compatibility profile, the
 [fixture contract](../../conformance/stack-encrypt/fixture-contract.md) and
 [enrollment index](../../conformance/stack-encrypt/v1/fixture-profiles.json)
 assign stable requirement IDs to the existing `value_kinds.json` and
@@ -162,13 +161,14 @@ existing Rust and Go tests. Typed Rust comparisons, generated Go methods,
 match verification and fetch sizing remain intact.
 
 The fixture files stay in place with no duplicated expectations. CI guards
-the requirement-to-test mapping and test selection. Required Go runs fail if
+the requirement-to-test mapping, compiled test availability and exact test
+selection. The Go selection is generated from the enrollment index. Required Go runs fail if
 the guest is missing; required checks cannot regenerate frozen fixtures.
 This is consolidation of inventory and execution, not removal of assertions.
 
 Local validation passes for the expanded conformance command, fresh scalar
 artifact exchange, missing-guest regressions, Rust clippy/formatting, Go lint,
-Biome and CI wiring checks. Both enrolled Rust writers refuse regeneration in
+Biome and CI wiring checks. All four Rust fixture writers refuse regeneration in
 required mode, and the frozen fixture files remain unchanged.
 
 The coverage is representative, not a complete kind/operator boundary matrix.

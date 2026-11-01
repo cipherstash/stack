@@ -3,8 +3,6 @@ package encrypt_test
 import (
 	"bytes"
 	"context"
-	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -59,9 +57,7 @@ func TestRuntimeConformance(t *testing.T) {
 	}
 	ctx := context.Background()
 	client, err := encrypt.NewDeterministicClient(ctx, [32]byte{})
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}

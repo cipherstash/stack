@@ -18,10 +18,12 @@ pages or fetch limits are copied into this directory.
 [`v1/fixture-profiles.json`](v1/fixture-profiles.json) maps stable requirement IDs
 to the existing Rust test functions and Go tests that provide their evidence.
 It is an enrollment index, not another input corpus or a runtime capability
-negotiation format. The CI wiring test checks that its fixtures/tests exist,
-that each requirement is documented here, and that the conformance command
-selects every listed test. Both language implementations are mandatory for
-these profiles; Python and TypeScript remain pending.
+negotiation format. The CI wiring test checks fixture paths, source declarations,
+requirement documentation and exact command selection. Rust also checks each
+binary’s compiled test inventory and rejects missing or ignored enrolled tests.
+The Go missing-guest regression checks each indexed test’s actual failure/skip
+outcome, so a test excluded from compilation cannot silently pass enrollment.
+Both language implementations are mandatory for these profiles; Python and TypeScript remain pending.
 
 ## Value-kind requirements
 
@@ -66,21 +68,29 @@ which the record-interface test covers. Its existing SQL parameter conversion,
 empty-page, zero-query, inverted-range and floating-point ordering assertions
 remain in those selected tests. Wider operator refusal and secret-diagnostic
 tests remain in the full suites; this slice does not turn them into shared
-negative cases.
+negative cases. In Go, `TestAQueryTheFieldDoesNotAnswerIsRefused` and
+`TestAMatchesQueryNeverPrintsItsText` share the fixture client, so they also
+fail on a missing guest in required mode. They remain outside the aggregate
+selection and the shared requirements; the missing-guest regression covers them.
 
 ## Running and maintaining the profiles
 
 `mise run test:conformance` selects the existing `value_kinds` and
 `query_operators` Rust binaries and the Go tests listed in the enrollment index,
-alongside the earlier profiles. Each existing test runs once per invocation;
-no wrapper test invokes another test a second time. The ordinary Rust and Go
+alongside the earlier profiles. The Go selection is generated from the index;
+adding an enrolled Go test does not require editing a shell regular expression.
+Fixture assertions stay in their owning tests; the separate missing-guest probes
+stop at client creation. The ordinary Rust and Go
 CI suites already run these tests, so enrollment adds no duplicate CI suite.
 
 When `STACK_CONFORMANCE_REQUIRED=1`, a missing deterministic guest fails the
 enrolled Go tests instead of skipping them. The aggregate command rejects both
 `STACK_CONFORMANCE_UPDATE` and `STACK_ENCRYPT_UPDATE_FIXTURES`, even when set to
-an empty value. The enrolled Rust fixture writers independently reject updates
-in required mode. Deliberate fixture maintenance remains available outside
+an empty value. All four Rust fixture writers, including the two record-lowering
+writers,
+independently reject updates in required mode. A subprocess regression exercises
+the guard with absent, empty and nonempty update flags without writing fixtures.
+Deliberate fixture maintenance remains available outside
 required mode through the existing documented regeneration commands.
 
 Keep requirement IDs stable. Add a new profile version for incompatible

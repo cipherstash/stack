@@ -59,6 +59,7 @@ on:
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
       - scripts/stack-conformance.sh
+      - scripts/stack-conformance-selection.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -97,6 +98,7 @@ on:
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
       - scripts/stack-conformance.sh
+      - scripts/stack-conformance-selection.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**

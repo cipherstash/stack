@@ -129,9 +129,7 @@ func queryFixtureClient(t *testing.T, f queryFixture) *encrypt.Client {
 		t.Fatalf("seed: %v (%d bytes)", err, len(seed))
 	}
 	c, err := encrypt.NewDeterministicClient(context.Background(), [32]byte(seed))
-	if (errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt)) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}

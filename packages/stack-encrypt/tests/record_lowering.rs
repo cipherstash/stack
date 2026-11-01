@@ -421,14 +421,16 @@ async fn the_chain_and_the_lowering_are_one_engine_today() {
 /// The committed fixture: records each author sealed in an earlier run,
 /// opened by the other now, their terms the ones derived now. With
 /// `STACK_ENCRYPT_UPDATE_FIXTURES=1` the records are sealed afresh and
-/// written; the terms and the plaintext never change.
+/// written; the terms and the plaintext never change. Updates panic when
+/// `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
 async fn the_committed_fixture_opens_both_ways() {
+    let update = common::fixture_updates_requested_or_panic();
     let cipher = deterministic_cipher(SEED).await;
     let plan = record::plan(&frame_of_json(&data_plan_json())).expect("the data plan parses");
     let path = fixture_path();
 
-    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+    if update {
         let mut fixture = committed_fixture(&path);
         let entries = fixture.as_object_mut().expect("an object");
         let _ = entries.insert("_comment".into(), json!("Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
@@ -736,14 +738,15 @@ async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
 /// The committed context-field case, under the fixture's `context_field`
 /// key: sealed by each author in an earlier run, opened by the other now.
 /// With `STACK_ENCRYPT_UPDATE_FIXTURES=1` this test rewrites that key and
-/// nothing else in the file.
+/// nothing else in the file. Updates panic when `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
 async fn the_committed_context_field_case_opens_both_ways() {
+    let update = common::fixture_updates_requested_or_panic();
     let cipher = deterministic_cipher(SEED).await;
     let plan = record::plan(&frame_of_json(&note_plan_json())).expect("the data plan parses");
     let path = fixture_path();
 
-    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+    if update {
         let mut fixture = committed_fixture(&path);
         let _ = fixture.as_object_mut().expect("an object").insert(
             "context_field".into(),

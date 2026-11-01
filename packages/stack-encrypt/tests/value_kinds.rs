@@ -445,10 +445,10 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
 /// The committed fixture: the record sealed in an earlier run opens now, its
 /// terms and frames are today's, and each folded query lands on its stored
 /// term. With `STACK_ENCRYPT_UPDATE_FIXTURES=1` the record is sealed afresh
-/// and the file written.
+/// and the file written. Updates panic when `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
 async fn the_committed_fixture_opens_and_its_terms_are_todays() {
-    let update = common::fixture_updates_requested();
+    let update = common::fixture_updates_requested_or_panic();
     let cipher = deterministic_cipher(SEED).await;
     let keyset = cipher.default_keyset();
     let plan = data_plan();
@@ -524,4 +524,9 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
         let term = query(&keyset, &plan, field, OpSpec::Eq, input).await;
         assert_eq!(json!(hex(&term)), entry["term"], "{field}: today's");
     }
+}
+
+#[test]
+fn enrolled_fixture_tests_are_compiled_and_enabled() {
+    common::assert_fixture_tests_registered("value_kinds");
 }

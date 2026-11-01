@@ -362,10 +362,11 @@ fn fixture_path() -> PathBuf {
 }
 
 /// The committed fixture is what this run derives. With
-/// `STACK_ENCRYPT_UPDATE_FIXTURES=1` it is written first.
+/// `STACK_ENCRYPT_UPDATE_FIXTURES=1` it is written first. Updates panic when
+/// `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
 async fn the_committed_query_fixture_is_what_the_engine_derives() {
-    let update = common::fixture_updates_requested();
+    let update = common::fixture_updates_requested_or_panic();
     let now = derived().await;
     let path = fixture_path();
     if update {
@@ -394,4 +395,9 @@ async fn the_fixture_pins_both_outcomes() {
         .collect();
     assert!(limits.iter().any(|limit| limit.is_u64()));
     assert!(limits.iter().any(|limit| limit.is_null()));
+}
+
+#[test]
+fn enrolled_fixture_tests_are_compiled_and_enabled() {
+    common::assert_fixture_tests_registered("query_operators");
 }

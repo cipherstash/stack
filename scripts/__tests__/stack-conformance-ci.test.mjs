@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { goSelection as selectGoTests } from '../stack-conformance-selection.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -10,12 +11,20 @@ const conformanceScript = () =>
   readRepo('scripts/stack-conformance.sh').replace(/^\s*#.*$/gm, '')
 
 function goSelection(script) {
-  const match = /go test -count=1 -v -run '([^']+)' \.\/encrypt/.exec(script)
-  expect(
-    match,
-    'the Go conformance command must execute uncached',
-  ).not.toBeNull()
-  return new RegExp(match[1])
+  expect(script).toContain(
+    'go_tests=$(node scripts/stack-conformance-selection.mjs)',
+  )
+  expect(script).toContain('go test -count=1 -v -run "$go_tests" ./encrypt')
+  const result = spawnSync(
+    process.execPath,
+    ['scripts/stack-conformance-selection.mjs'],
+    {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    },
+  )
+  expect(result.status, result.stderr).toBe(0)
+  return new RegExp(result.stdout.trim())
 }
 
 describe('shared Stack Encrypt conformance is required in CI', () => {
@@ -26,7 +35,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     ).replace(/^\s*#.*$/gm, '')
     const commands = script.replace(/\\\r?\n\s*/g, ' ')
     expect(commands).toMatch(
-      /STACK_CONFORMANCE_OUTPUT=[^\n]+go test[^\n]+TestStackConformance/,
+      /STACK_CONFORMANCE_OUTPUT=[^\n]+go test[^\n]+"\$go_tests"/,
     )
     expect(commands).toMatch(
       /STACK_CONFORMANCE_INPUT=[^\n]+cargo nextest run[^\n]+--test conformance/,
@@ -35,6 +44,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(script).toMatch(/cargo nextest run[^\n]*--test declarations/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test runtime_conformance/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test read_conformance/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test fixture_safety/)
     const selected = goSelection(script)
     for (const test of [
       'TestStackConformance',
@@ -45,6 +55,39 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     ]) {
       expect(selected.test(test), test).toBe(true)
     }
+  })
+
+  it('selects exactly the core runners and indexed fixture tests', () => {
+    const index = JSON.parse(
+      readRepo('conformance/stack-encrypt/v1/fixture-profiles.json'),
+    )
+    const expected = [
+      ...new Set([
+        'TestStackConformance',
+        'TestDeclarationConformance',
+        'TestRuntimeConformance',
+        'TestReadConformance',
+        'TestFixtureConformanceRequiresGuest',
+        ...index.profiles.flatMap((p) =>
+          p.requirements.flatMap((r) => r.go_tests),
+        ),
+      ]),
+    ].sort()
+    const selected = goSelection(conformanceScript())
+    expect(selected.source).toBe(`^(${expected.join('|')})$`)
+    for (const name of expected) {
+      expect(selected.test(`${name}Extra`)).toBe(false)
+      expect(selected.test(`Prefix${name}`)).toBe(false)
+    }
+    const extended = structuredClone(index)
+    extended.profiles[0].requirements[0].go_tests.push(
+      'TestNewFixtureRequirement',
+    )
+    expect(
+      new RegExp(selectGoTests(extended)).test('TestNewFixtureRequirement'),
+    ).toBe(true)
+    extended.profiles[0].requirements[0].go_tests.push('Test.*')
+    expect(() => selectGoTests(extended)).toThrow('Invalid Go test name')
   })
 
   it('enrolls existing fixture evidence without copying or dropping tests', () => {

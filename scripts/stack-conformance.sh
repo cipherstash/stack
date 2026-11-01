@@ -15,14 +15,15 @@ if [[ ! -s languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.w
   exit 1
 fi
 
+go_tests=$(node scripts/stack-conformance-selection.mjs)
 artifacts=$(mktemp -d)
 trap 'rm -rf "$artifacts"' EXIT
 
-mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test value_kinds --test query_operators
+mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test value_kinds --test query_operators --test fixture_safety
 (
   cd languages/golang
   STACK_CONFORMANCE_OUTPUT="$artifacts/go.json" CGO_ENABLED=0 \
-    go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance|TestRuntimeConformance|TestReadConformance|TestFixtureConformanceRequiresGuest|TestGeneratedCodeOpensTheRustValueKindsFixture|TestQueryTermsAreTheRustFixtures|TestVerifyIsTheRustFixtures|TestTargetLimitIsTheRustFixtures|TestGeneratedQueriesAreTheRustFixtures|TestAMatchesQueryVerifiesAndSizesAsTheRustFixtures)$' ./encrypt
+    go test -count=1 -v -run "$go_tests" ./encrypt
 )
 test -s "$artifacts/go.json"
 STACK_CONFORMANCE_INPUT="$artifacts/go.json" mise x --env test -- \
