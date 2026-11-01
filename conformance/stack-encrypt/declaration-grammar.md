@@ -243,7 +243,10 @@ The corpus is `v1/declarations.json`. Its version, profile and resolver are
 required. Case IDs are unique and stable. Every case contains exactly one input:
 
 - `{"json": value}` converts JSON objects in lexical key order. Nonnegative
-  integers become uint64, negative integers int64, and fractional values float64.
+  integer tokens become uint64; tokens beginning with `-` (including `-0`)
+  become int64. Decimal/exponent tokens become finite float64. Integer tokens
+  outside the corresponding 64-bit range and non-finite floats are invalid
+  corpus inputs; runners must refuse them without rounding.
   Arrays preserve order. This is fixture conversion, not SDK policy.
 - `{"frame_hex": text}` supplies exact transport bytes, including typed contexts,
   original field order and malformed frames that JSON cannot represent.
@@ -265,7 +268,7 @@ no credentials and uses a refusing transport.
 
 ## Evidence and limits
 
-The corpus covers 201 cases: 91 accepted and 110 refused, including the complete
+The corpus covers accepted and refused cases, including the complete
 scalar kind/index matrix. The native runner also checks selected normalization
 observations. Existing codec tests own exhaustive frame validity, depth limits,
 and integer-reader behavior. Existing EQL tests own resolver/catalog behavior.
@@ -274,3 +277,10 @@ Runtime operations and language-specific declarations remain separate layers.
 See [coverage.md](coverage.md) for the consolidation policy. New Python and
 TypeScript runners can adopt these inputs and expectations without copying the
 engine's validation rules.
+
+The Go runner checks both the release and deterministic guests. Go-specific
+`v1/go-declarations.json` supplies explicit `record.Plan` inputs for the subset
+representable by that host model, keyed by the shared case ID. Those cases also
+run through production `Checker.Check` (Validate, Wire and the engine), with the
+same acceptance outcome. Raw malformed frames and shapes the Go plan cannot
+express remain engine-boundary checks.

@@ -8,13 +8,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
@@ -61,17 +61,7 @@ func declarationValue(t *testing.T, value any) any {
 		}
 		return v
 	case json.Number:
-		text := v.String()
-		var value any
-		var err error
-		switch {
-		case strings.ContainsAny(text, ".eE"):
-			value, err = strconv.ParseFloat(text, 64)
-		case strings.HasPrefix(text, "-"):
-			value, err = strconv.ParseInt(text, 10, 64)
-		default:
-			value, err = strconv.ParseUint(text, 10, 64)
-		}
+		value, err := declarationNumber(v.String())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,21 +82,44 @@ func TestDeclarationConformance(t *testing.T) {
 	if corpus.Version != 1 || corpus.Profile != "record-declarations-v1" || corpus.Resolver != "none" || len(corpus.Cases) == 0 {
 		t.Fatal("unsupported or empty declaration corpus")
 	}
-	wasm, err := os.ReadFile("testdata/stack_encrypt_guest_deterministic.wasm")
-	if errors.Is(err, os.ErrNotExist) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
-		t.Skip(err)
+	var hostPlans map[string]record.Plan
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "go-declarations.json"), &hostPlans)
+	for name, load := range map[string]func() ([]byte, error){"release": encrypt.PlainGuest, "deterministic": encrypt.DeterministicGuest} {
+		t.Run(name, func(t *testing.T) {
+			wasm, err := load()
+			if (errors.Is(err, encrypt.ErrGuestNotBuilt) || errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt)) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
+				t.Skip(err)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			checker, err := encrypt.NewCheckerOver(context.Background(), wasm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = checker.Close() })
+			checkDeclarationCases(t, checker, corpus.Cases, hostPlans)
+		})
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
+}
+
+func checkDeclarationCases(t *testing.T, checker *encrypt.Checker, cases []declarationCase, hostPlans map[string]record.Plan) {
+	t.Helper()
 	ctx := context.Background()
-	checker, err := encrypt.NewCheckerOver(ctx, wasm)
-	if err != nil {
-		t.Fatal(err)
+	for id := range hostPlans {
+		found := false
+		for _, c := range cases {
+			if c.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("host plan has no shared case: %s", id)
+		}
 	}
-	t.Cleanup(func() { _ = checker.Close() })
 	seen := map[string]bool{}
-	for _, c := range corpus.Cases {
+	for _, c := range cases {
 		if c.ID == "" || seen[c.ID] {
 			t.Fatalf("empty or duplicate case ID %q", c.ID)
 		}
@@ -138,6 +151,15 @@ func TestDeclarationConformance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if plan, ok := hostPlans[c.ID]; ok {
+				hostErr := checker.Check(ctx, &plan)
+				if (hostErr == nil) != accepted {
+					t.Fatalf("host Check: %v; accepted=%v", hostErr, accepted)
+				}
+				if hostErr != nil && !errors.Is(hostErr, encrypt.ErrEncoding) {
+					t.Fatalf("host Check: expected ErrEncoding, got %v", hostErr)
+				}
+			}
 			err = checker.CheckFrameForTest(ctx, frame)
 			expected := c.ExpectedError
 			if c.BoundaryError != nil {
@@ -159,9 +181,55 @@ func TestDeclarationConformance(t *testing.T) {
 			if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &diagnostic) {
 				t.Fatalf("expected encoding diagnostic, got %v", err)
 			}
-			if diagnostic.Code != expected.Code || !reflect.DeepEqual(diagnostic.Fields, expected.Fields) {
+			if diagnostic.Code != expected.Code || !sameDiagnosticFields(t, diagnostic.Fields, expected.Fields) {
 				t.Fatalf("got %s %#v; expected %s %#v", diagnostic.Code, diagnostic.Fields, expected.Code, expected.Fields)
 			}
 		})
+	}
+}
+
+// Compare JSON payload values without float64 rounding or int64/uint64 type
+// accidents. UseNumber in readConformanceJSON preserves expected integers.
+func sameDiagnosticFields(t *testing.T, actual, expected map[string]any) bool {
+	t.Helper()
+	a, err := json.Marshal(actual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.Equal(a, b)
+}
+
+func TestDiagnosticNumericFields(t *testing.T) {
+	if !sameDiagnosticFields(t, map[string]any{"n": uint64(18446744073709551615), "m": int64(-1)}, map[string]any{"n": json.Number("18446744073709551615"), "m": json.Number("-1")}) {
+		t.Fatal("integer payload changed")
+	}
+	if sameDiagnosticFields(t, map[string]any{"n": uint64(18446744073709551615)}, map[string]any{"n": json.Number("18446744073709551614")}) {
+		t.Fatal("integer precision lost")
+	}
+}
+
+func declarationNumber(text string) (any, error) {
+	switch {
+	case strings.ContainsAny(text, ".eE"):
+		return strconv.ParseFloat(text, 64)
+	case strings.HasPrefix(text, "-"):
+		return strconv.ParseInt(text, 10, 64)
+	default:
+		return strconv.ParseUint(text, 10, 64)
+	}
+}
+func TestDeclarationNumberProjection(t *testing.T) {
+	zero, err := declarationNumber("-0")
+	if err != nil || zero != int64(0) {
+		t.Fatalf("-0: %v %v", zero, err)
+	}
+	for _, invalid := range []string{"18446744073709551616", "-9223372036854775809", "1e400"} {
+		if _, err := declarationNumber(invalid); err == nil {
+			t.Fatalf("accepted %s", invalid)
+		}
 	}
 }

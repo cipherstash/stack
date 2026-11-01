@@ -66,6 +66,7 @@ func readConformanceJSON(t *testing.T, path string, out any) {
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
+	d.UseNumber()
 	if err := d.Decode(out); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +223,7 @@ func TestStackConformance(t *testing.T) {
 			if _, err := cipher.Open(ctx, &wrong, frozen); !errors.Is(err, encrypt.ErrForbidden) {
 				t.Fatalf("wrong context: expected forbidden key retrieval, got %v", err)
 			}
-			output.Cases[c.ID] = conformanceArtifact{Frame: want.Frame, Ciphertext: hex.EncodeToString(fresh[0][corpus.Field].Ciphertext), Equality: hex.EncodeToString(query.Terms[0])}
+			output.Cases[c.ID] = conformanceArtifact{Frame: hex.EncodeToString(encoded), Ciphertext: hex.EncodeToString(fresh[0][corpus.Field].Ciphertext), Equality: hex.EncodeToString(query.Terms[0])}
 		})
 	}
 	if t.Failed() {

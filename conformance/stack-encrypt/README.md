@@ -30,7 +30,7 @@ Python and TypeScript runners are pending; their absence is not a passing result
 
 The [declaration grammar](declaration-grammar.md) defines the engine's current
 record-plan syntax, defaults, context rules, kind/index table and null policies.
-`v1/declarations.json` contains 201 cases, including malformed frames and all
+`v1/declarations.json` contains cases, including malformed frames and all
 21 kinds against five scalar indexes. The resolver is explicitly `none`; EQL
 targets need their own profile.
 

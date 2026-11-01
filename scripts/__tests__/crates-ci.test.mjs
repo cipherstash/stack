@@ -199,6 +199,10 @@ function reachableFrom(workflows) {
  * is nothing for CI to do.
  */
 const CI_EXEMPT_TASKS = new Map([
+  [
+    'test:conformance',
+    'Local aggregate: CI runs Rust profiles in tests-crates, Go profiles in go:test, and the fresh artifact consumer in tests-golang; rerunning the aggregate would duplicate both suites.',
+  ],
   ...[
     'stack-auth',
     'stack-encrypt',

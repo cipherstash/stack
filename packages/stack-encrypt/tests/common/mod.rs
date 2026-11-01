@@ -292,3 +292,18 @@ pub mod frames {
         }
     }
 }
+
+/// Canonical hex helpers for shared conformance artifacts.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+pub fn unhex(text: &str) -> Vec<u8> {
+    assert!(
+        text.is_ascii() && text.len().is_multiple_of(2),
+        "invalid hex"
+    );
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex byte"))
+        .collect()
+}

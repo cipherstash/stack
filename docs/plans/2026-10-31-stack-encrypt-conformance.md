@@ -77,7 +77,7 @@ The coverage map there identifies existing evidence and remaining gaps.
 Implemented on `feat/stack-encrypt-conformance`, based directly on #1404.
 The corpus has eight positive cases and three query refusals. Local validation
 passes for native Rust, Go WASI, and fresh Go-to-Rust artifact exchange through
-`mise run test:conformance`. Rust clippy, the enabled Go linters, and 33 CI wiring
+`mise run test:conformance`. Rust clippy, the enabled Go linters, and the CI wiring
 checks also pass. The work is in draft [PR #1460](https://github.com/cipherstash/stack/pull/1460),
 targeting #1404's branch. Local validation is distinct from hosted CI status.
 
@@ -91,7 +91,7 @@ SQL requirements and Python/TypeScript runners remain open.
 The [declaration grammar](../../conformance/stack-encrypt/declaration-grammar.md)
 records the implemented syntax and semantic rules, including accepted enum
 aliases, defaults, context composition, all 21 kinds against five scalar indexes,
-null policies and target-capability refusal. Its 201 cases run in native Rust
+null policies and target-capability refusal. Its cases run in native Rust
 and Go WASI without a cipher. Native Rust checks selected normalized plan
 observations; Go's existing checker exposes acceptance and diagnostics only.
 
@@ -99,8 +99,8 @@ The profile fixes `NoTargets`. EQL resolver/catalog behavior and full JSON/SQL
 operation semantics remain later profiles. Malformed frames explicitly distinguish
 the native parser's diagnostic from the WASI boundary's earlier refusal.
 
-Local validation passes for both profiles (212 shared cases), fresh ciphertext
-exchange, Rust clippy/formatting, Go lint, Biome and 34 CI wiring checks.
+Local validation passes for both profiles, fresh ciphertext
+exchange, Rust clippy/formatting, Go lint, Biome and the CI wiring checks.
 
 The [coverage map](../../conformance/stack-encrypt/coverage.md#consolidation-policy)
 records consolidation candidates. Shared case tables can replace duplicated

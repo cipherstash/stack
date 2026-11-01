@@ -40,14 +40,19 @@ go vet ./...
 # Windows. These tests exercise the platform lock implementation with two
 # independent guest instances sharing one auth.json.
 CGO_ENABLED=0 go test -v ./auth -run '^TestDeviceRefresh'
-CGO_ENABLED=0 go test ./...
+# A producer must execute even if Go has cached a previous successful run.
+conformance_flags=()
+if [[ -n "${STACK_CONFORMANCE_OUTPUT:-}" ]]; then
+  conformance_flags=(-count=1)
+fi
+CGO_ENABLED=0 go test "${conformance_flags[@]}" ./...
 
 # The transport codec's u32-bound guards are load-bearing where int is 32
 # bits (vitaminc's vcffi runs this sweep too); the binding's own reflection
 # and buffer arithmetic must hold there as well. Linux hosts execute 386
 # natively; elsewhere the binary cannot run, so only vet.
 if [ "$(uname -s)" = "Linux" ]; then
-  CGO_ENABLED=0 GOOS=linux GOARCH=386 go test ./...
+  CGO_ENABLED=0 GOOS=linux GOARCH=386 go test "${conformance_flags[@]}" ./...
 else
   CGO_ENABLED=0 GOOS=linux GOARCH=386 go vet ./...
 fi

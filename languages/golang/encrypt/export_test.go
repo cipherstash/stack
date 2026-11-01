@@ -81,9 +81,9 @@ var ErrDeterministicGuestNotBuilt = errors.New("encrypt: deterministic guest not
 // name the build they run against (NewDeterministicEQLClient is the other),
 // so each build keeps its own coverage.
 func NewDeterministicClient(ctx context.Context, seed [32]byte) (*Client, error) {
-	wasm, err := os.ReadFile(deterministicGuestPath)
+	wasm, err := DeterministicGuest()
 	if err != nil {
-		return nil, ErrDeterministicGuestNotBuilt
+		return nil, err
 	}
 	return deterministicClient(ctx, wasm, seed)
 }
@@ -188,8 +188,14 @@ var (
 // lowering, so the shared grammar can include malformed declarations. The
 // checker has no cipher, credentials or usable transport.
 func (k *Checker) CheckFrameForTest(ctx context.Context, encoded []byte) error {
-	_, err := k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
-		return inst.call(ctx, inst.planCheck, buf(encoded))
-	})
-	return err
+	return k.checkFrame(ctx, encoded)
+}
+
+// DeterministicGuest reads the named test build without embedding it.
+func DeterministicGuest() ([]byte, error) {
+	wasm, err := os.ReadFile(deterministicGuestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrDeterministicGuestNotBuilt
+	}
+	return wasm, err
 }

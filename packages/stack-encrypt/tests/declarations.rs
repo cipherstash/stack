@@ -1,11 +1,14 @@
 //! Executable acceptance and normalization contract for record declarations.
 #![cfg(feature = "dynamic")]
 
-use std::collections::BTreeSet;
+mod common;
+use common::{hex, unhex};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use miette::Diagnostic;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::record::{self, NullMode, Output};
 use stack_encrypt::{ContextPiece, ErrorPayload};
@@ -33,7 +36,7 @@ struct Case {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Input {
-    Json(Value),
+    Json(Box<RawValue>),
     FrameHex(String),
 }
 
@@ -44,18 +47,10 @@ struct ExpectedError {
     fields: serde_json::Map<String, Value>,
 }
 
-fn unhex(text: &str) -> Vec<u8> {
-    assert!(text.is_ascii() && text.len().is_multiple_of(2));
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
-        .collect()
-}
-
 fn extension(piece: &ContextPiece<'_>) -> Value {
     let (kind, text) = match piece {
         ContextPiece::Text(text) => ("string", text.to_string()),
-        ContextPiece::Bytes(bytes) => ("bytes", bytes.iter().map(|b| format!("{b:02x}")).collect()),
+        ContextPiece::Bytes(bytes) => ("bytes", hex(bytes)),
         ContextPiece::I32(n) => ("int32", n.to_string()),
         ContextPiece::I64(n) => ("int64", n.to_string()),
         ContextPiece::U32(n) => ("uint32", n.to_string()),
@@ -118,7 +113,9 @@ fn shared_declaration_grammar() {
             case.id
         );
         let frame = match case.input {
-            Input::Json(value) => vitaminc_aead_frame::serde::to_vec(&value).unwrap(),
+            Input::Json(value) => {
+                vitaminc_aead_frame::serde::to_vec(&projection(&value).unwrap()).unwrap()
+            }
             Input::FrameHex(text) => unhex(&text),
         };
         if let Some(boundary) = case.boundary_error {
@@ -164,4 +161,64 @@ fn shared_declaration_grammar() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// Explicit lexical JSON projection, independent of serde_json's Number and
+// preserve_order features. -0 is an int64 zero; out-of-range integers are
+// invalid corpus inputs, not silently rounded floats.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Projection {
+    Null,
+    Bool(bool),
+    Signed(i64),
+    Unsigned(u64),
+    Float(f64),
+    Text(String),
+    List(Vec<Projection>),
+    Object(BTreeMap<String, Projection>),
+}
+fn projection(raw: &RawValue) -> Result<Projection, Box<dyn std::error::Error>> {
+    let text = raw.get().trim();
+    Ok(match text.as_bytes()[0] {
+        b'{' => Projection::Object(
+            serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(text)?
+                .into_iter()
+                .map(|(k, v)| Ok((k, projection(&v)?)))
+                .collect::<Result<_, Box<dyn std::error::Error>>>()?,
+        ),
+        b'[' => Projection::List(
+            serde_json::from_str::<Vec<Box<RawValue>>>(text)?
+                .iter()
+                .map(|v| projection(v))
+                .collect::<Result<_, _>>()?,
+        ),
+        b'"' => Projection::Text(serde_json::from_str(text)?),
+        b'n' => Projection::Null,
+        b't' | b'f' => Projection::Bool(serde_json::from_str(text)?),
+        _ if text.contains(['.', 'e', 'E']) => {
+            let value: f64 = text.parse()?;
+            if !value.is_finite() {
+                return Err("non-finite JSON number".into());
+            }
+            Projection::Float(value)
+        }
+        b'-' => Projection::Signed(text.parse()?),
+        _ => Projection::Unsigned(text.parse()?),
+    })
+}
+#[test]
+fn json_projection_is_lexical_and_lossless() {
+    fn encoded(text: &str) -> Vec<u8> {
+        let raw = serde_json::from_str::<Box<RawValue>>(text).unwrap();
+        vitaminc_aead_frame::serde::to_vec(&projection(&raw).unwrap()).unwrap()
+    }
+    assert_eq!(
+        encoded("-0"),
+        vitaminc_aead_frame::serde::to_vec(&0i64).unwrap()
+    );
+    assert_eq!(encoded(r#"{"z":1,"a":2}"#), encoded(r#"{"a":2,"z":1}"#));
+    for invalid in ["18446744073709551616", "-9223372036854775809", "1e400"] {
+        assert!(projection(&serde_json::from_str::<Box<RawValue>>(invalid).unwrap()).is_err());
+    }
 }

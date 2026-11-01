@@ -250,13 +250,18 @@ jobs:
       - name: Go binding
         env:
           STACK_ENCRYPT_TESTS_REQUIRE_LOCK: "1"
+          STACK_CONFORMANCE_OUTPUT: ${{ runner.temp }}/stack-conformance-go.json
         run: |
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
 
-      - name: Shared Stack Encrypt conformance and fresh Go to Rust opening
-        run: mise run test:conformance
+      - name: Fresh Go scalar artifacts open in Rust
+        env:
+          STACK_CONFORMANCE_INPUT: ${{ runner.temp }}/stack-conformance-go.json
+        run: |
+          test -s "$STACK_CONFORMANCE_INPUT"
+          mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance
 
       # The Rust suite opens the committed v4_rows.json and
       # v4_smallint_rows.json, whose ciphertexts the Go SDK sealed when each
