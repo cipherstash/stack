@@ -482,6 +482,50 @@
       }
     },
     {
+      "id": "sql-missing-with-unknown-field",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {
+          "extra": {
+            "type": "string",
+            "text": "private-value"
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "unknown_field",
+        "field": "extra"
+      }
+    },
+    {
+      "id": "sql-late-missing-with-unknown-field",
+      "operation": "seal",
+      "kind": "int32",
+      "null": "sql",
+      "rows": [
+        {
+          "value": {
+            "type": "int32",
+            "text": "34"
+          }
+        },
+        {
+          "extra": {
+            "type": "string",
+            "text": "private-value"
+          }
+        }
+      ],
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "unknown_field",
+        "field": "extra"
+      }
+    },
+    {
       "id": "sealed-int64",
       "operation": "seal",
       "kind": "int64",

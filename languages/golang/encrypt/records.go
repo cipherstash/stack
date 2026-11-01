@@ -225,18 +225,17 @@ func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 
 // sourceRow renders one row for the guest: the context field first, when
 // the plan has one, then the plan's fields, in plan order, each with its
-// value. Fail closed in both directions: a field with no value and a value
-// with no field are both refused before anything is sent.
+// value. Unknown fields and missing required values are refused before anything
+// is sent; SQL-null fields may be omitted.
 func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 	expected := len(p.Fields)
 	if p.ContextField != "" {
 		expected++
 	}
-	if len(row) != expected {
-		for name := range row {
-			if p.Field(name) == nil && name != p.ContextField {
-				return nil, sourceDiagnostic("unknown_field", name, fmt.Sprintf("the plan has no field %q", name))
-			}
+	// Counts can match even when an unknown key replaces an omitted SQL-null field.
+	for name := range row {
+		if p.Field(name) == nil && name != p.ContextField {
+			return nil, sourceDiagnostic("unknown_field", name, fmt.Sprintf("the plan has no field %q", name))
 		}
 	}
 	out := make(vcvalue.Object, 0, expected)

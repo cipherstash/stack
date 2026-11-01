@@ -96,9 +96,7 @@ async fn shared_record_runtime_profile() {
         assert!(!case.id.is_empty() && ids.insert(case.id.clone()));
         eprintln!("runtime conformance: {}", case.id);
         assert!(["", "sql", "sealed"].contains(&case.null.as_str()));
-        assert!(
-            ["int32", "int64", "uint64", "float64", "bool", "string"].contains(&case.kind.as_str())
-        );
+        assert!(["int32", "int64", "uint64", "float64", "string"].contains(&case.kind.as_str()));
         let mut spec =
             json!({"context":["conformance", "value"], "outputs":["c", "eq"], "type":case.kind});
         if !case.null.is_empty() {

@@ -77,7 +77,7 @@ func TestRuntimeConformance(t *testing.T) {
 			if c.Null != "" && c.Null != "sql" && c.Null != "sealed" {
 				t.Fatalf("unknown null policy %q", c.Null)
 			}
-			if c.Kind != "int32" && c.Kind != "int64" && c.Kind != "uint64" && c.Kind != "float64" && c.Kind != "bool" && c.Kind != "string" {
+			if c.Kind != "int32" && c.Kind != "int64" && c.Kind != "uint64" && c.Kind != "float64" && c.Kind != "string" {
 				t.Fatalf("unsupported runtime kind %q", c.Kind)
 			}
 			plan := &record.Plan{Context: []string{"conformance"}, Fields: []record.Field{{Name: "value", Kind: record.Kind(c.Kind), Null: record.Null(c.Null), Outputs: []record.Output{record.Ciphertext, record.Equality}}}}

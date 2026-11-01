@@ -9,7 +9,7 @@ outputs, under context `["conformance", "value"]`. `kind` declares its type;
 `null` is empty for a required value, `sql`, or `sealed`. Values use the scalar
 profile's `{type, text}` representation, extended with `float64` decimal text.
 Runners construct typed values before calling the engine. This profile admits
-`int32`, `int64`, `uint64`, `float64`, `bool`, and `string` as declared kinds;
+`int32`, `int64`, `uint64`, `float64`, and `string` as declared kinds;
 both runners reject unknown kinds and null-policy spellings.
 
 ## Write and read
@@ -28,7 +28,8 @@ each row stores the field at all. Both must have the input row count.
   ciphertext and equality, then opens as null.
 - Runtime writes require the declared numeric type. A losslessly convertible
   value of another width is still refused on this path.
-- Unknown fields are refused; they cannot be silently dropped.
+- Unknown fields are refused, including when an omitted SQL-null field makes
+  the input field count match the declaration; they cannot be silently dropped.
 - An invalid later row rejects the whole batch before data-key generation.
 - An empty batch succeeds with no data-key calls.
 
