@@ -25,7 +25,7 @@ absence is a delivery gap, not a test skip that counts toward certification.
 
 ## Runtime checkpoint
 
-`v1/runtime.json` adds 37 shared cases for typed writes and reads, null storage,
+`v1/runtime.json` adds shared cases for typed writes and reads, null storage,
 batches, equality queries and lossless numeric conversion. See the
 [runtime contract](runtime-contract.md) for exact observations and limits.
 Native data-key counters cover zero-call preflight failures and single-call

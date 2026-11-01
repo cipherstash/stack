@@ -177,13 +177,7 @@ func TestStackConformance(t *testing.T) {
 			input := conformanceValue(t, c.Input)
 			query, err := cipher.QueryTerm(ctx, plan, corpus.Field, "eq", input)
 			if c.ExpectedError != nil {
-				var diagnostic *encrypt.Diagnostic
-				if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &diagnostic) {
-					t.Fatalf("expected encoding diagnostic, got %v", err)
-				}
-				if diagnostic.Code != c.ExpectedError.Code || diagnostic.Reason() != c.ExpectedError.Reason || diagnostic.Field() != corpus.Field {
-					t.Fatalf("unexpected diagnostic: %s reason=%s field=%s", diagnostic.Code, diagnostic.Reason(), diagnostic.Field())
-				}
+				assertConformanceDiagnostic(t, err, c.ExpectedError.Code, c.ExpectedError.Reason, corpus.Field)
 				return
 			}
 			if c.Kind != c.Input.Type {
@@ -245,5 +239,16 @@ func TestStackConformance(t *testing.T) {
 		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func assertConformanceDiagnostic(t *testing.T, err error, code, reason, field string) {
+	t.Helper()
+	var diagnostic *encrypt.Diagnostic
+	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &diagnostic) {
+		t.Fatalf("expected encoding diagnostic, got %v", err)
+	}
+	if diagnostic.Code != code || diagnostic.Reason() != reason || diagnostic.Field() != field {
+		t.Fatalf("unexpected diagnostic: %s reason=%s field=%s", diagnostic.Code, diagnostic.Reason(), diagnostic.Field())
 	}
 }

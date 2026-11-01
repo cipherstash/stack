@@ -25,10 +25,9 @@ type runtimeCase struct {
 	Input          *conformanceInput              `json:"input"`
 	ExpectedValue  *conformanceInput              `json:"expected_value"`
 	ExpectedError  *struct {
-		GoMessage string `json:"go_message"`
-		Code      string `json:"code"`
-		Reason    string `json:"reason"`
-		Field     string `json:"field"`
+		Code   string `json:"code"`
+		Reason string `json:"reason"`
+		Field  string `json:"field"`
 	} `json:"expected_error"`
 }
 
@@ -42,24 +41,6 @@ func runtimeRows(t *testing.T, input []map[string]conformanceInput) []record.Sou
 		}
 	}
 	return rows
-}
-
-func runtimeRefusal(t *testing.T, err error, c runtimeCase) {
-	t.Helper()
-	var diagnostic *encrypt.Diagnostic
-	if c.ExpectedError.GoMessage != "" {
-		if !errors.Is(err, encrypt.ErrEncoding) || errors.As(err, &diagnostic) || err.Error() != c.ExpectedError.GoMessage {
-			t.Fatalf("unexpected host refusal: %v", err)
-		}
-		return
-	}
-	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &diagnostic) {
-		t.Fatalf("expected encoding diagnostic, got %v", err)
-	}
-	want := c.ExpectedError
-	if diagnostic.Code != want.Code || diagnostic.Reason() != want.Reason || diagnostic.Field() != want.Field {
-		t.Fatalf("unexpected diagnostic: %s reason=%s field=%s", diagnostic.Code, diagnostic.Reason(), diagnostic.Field())
-	}
 }
 
 func TestRuntimeConformance(t *testing.T) {
@@ -93,6 +74,12 @@ func TestRuntimeConformance(t *testing.T) {
 		}
 		seen[c.ID] = true
 		t.Run(c.ID, func(t *testing.T) {
+			if c.Null != "" && c.Null != "sql" && c.Null != "sealed" {
+				t.Fatalf("unknown null policy %q", c.Null)
+			}
+			if c.Kind != "int32" && c.Kind != "int64" && c.Kind != "uint64" && c.Kind != "float64" && c.Kind != "bool" && c.Kind != "string" {
+				t.Fatalf("unsupported runtime kind %q", c.Kind)
+			}
 			plan := &record.Plan{Context: []string{"conformance"}, Fields: []record.Field{{Name: "value", Kind: record.Kind(c.Kind), Null: record.Null(c.Null), Outputs: []record.Output{record.Ciphertext, record.Equality}}}}
 			switch c.Operation {
 			case "seal":
@@ -104,7 +91,7 @@ func TestRuntimeConformance(t *testing.T) {
 					if c.ExpectedRows != nil || c.ExpectedStored != nil || c.EqualLengths {
 						t.Fatal("ambiguous seal outcome")
 					}
-					runtimeRefusal(t, err, c)
+					assertConformanceDiagnostic(t, err, c.ExpectedError.Code, c.ExpectedError.Reason, c.ExpectedError.Field)
 					return
 				}
 				if err != nil {
@@ -165,7 +152,7 @@ func TestRuntimeConformance(t *testing.T) {
 					if c.ExpectedValue != nil {
 						t.Fatal("ambiguous query outcome")
 					}
-					runtimeRefusal(t, err, c)
+					assertConformanceDiagnostic(t, err, c.ExpectedError.Code, c.ExpectedError.Reason, c.ExpectedError.Field)
 					return
 				}
 				if err != nil {

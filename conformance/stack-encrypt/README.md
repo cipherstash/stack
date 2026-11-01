@@ -29,7 +29,7 @@ Python and TypeScript runners are pending; their absence is not a passing result
 
 ## `record-runtime-v1` contract
 
-The [runtime contract](runtime-contract.md) defines 37 cases in `v1/runtime.json`:
+The [runtime contract](runtime-contract.md) defines cases in `v1/runtime.json`:
 missing and explicit null values, SQL-null omission, sealed-null storage and
 equality, typed batch round trips, write validation and lossless query conversions.
 The runners are `packages/stack-encrypt/tests/runtime_conformance.rs` and

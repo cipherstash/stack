@@ -39,7 +39,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	for i, row := range rows {
 		source[i], err = sourceRow(p, row)
 		if err != nil {
-			return nil, fmt.Errorf("%w: row %d: %v", ErrEncoding, i, err)
+			return nil, fmt.Errorf("%w: row %d: %w", ErrEncoding, i, err)
 		}
 		if cph.context != "" {
 			// The cipher names the context every row is under: a value
@@ -235,7 +235,7 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 	if len(row) != expected {
 		for name := range row {
 			if p.Field(name) == nil && name != p.ContextField {
-				return nil, fmt.Errorf("the plan has no field %q", name)
+				return nil, sourceDiagnostic("unknown_field", name, fmt.Sprintf("the plan has no field %q", name))
 			}
 		}
 	}
@@ -257,7 +257,7 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 			continue
 		}
 		if !ok {
-			return nil, fmt.Errorf("no value for field %q", f.Name)
+			return nil, sourceDiagnostic("field_missing", f.Name, fmt.Sprintf("no value for field %q", f.Name))
 		}
 		out = append(out, vcvalue.Field{Key: f.Name, Value: v})
 	}
@@ -506,4 +506,11 @@ func indexWord(o record.Output) string {
 		return "ope"
 	}
 	return string(o)
+}
+
+// The adapter reports the same source semantics as the engine, even when it
+// can refuse the row before encoding it. Seal preserves this diagnostic chain.
+func sourceDiagnostic(reason, field, message string) error {
+	return &Diagnostic{Code: "stack_encrypt::dynamic_source", Message: message,
+		Fields: map[string]any{"reason": reason, "field": field}}
 }

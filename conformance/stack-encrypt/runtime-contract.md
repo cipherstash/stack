@@ -8,7 +8,9 @@ Each case uses one field, `value`, with ciphertext (`c`) and equality (`eq`)
 outputs, under context `["conformance", "value"]`. `kind` declares its type;
 `null` is empty for a required value, `sql`, or `sealed`. Values use the scalar
 profile's `{type, text}` representation, extended with `float64` decimal text.
-Runners construct typed values before calling the engine.
+Runners construct typed values before calling the engine. This profile admits
+`int32`, `int64`, `uint64`, `float64`, `bool`, and `string` as declared kinds;
+both runners reject unknown kinds and null-policy spellings.
 
 ## Write and read
 
@@ -55,11 +57,14 @@ A null equality query succeeds only for sealed-null fields.
 Native Rust must reject before producing a pending operation. Go must expose
 `ErrEncoding` and the same diagnostic when the request reaches the guest.
 
-Missing and unknown fields are rejected earlier by Go's record adapter.
-Those cases additionally specify `go_message`, an exact adapter regression
-observation, and require no engine diagnostic. This prose is not a portable
-engine error contract. A future SDK should report equivalent semantics at its
-earliest supported stage, without adopting Go's wording.
+Missing and unknown fields can be rejected earlier by Go's record adapter.
+The adapter preserves the same structured source diagnostic (code, reason and
+field); the corpus does not require a particular English message or rejection
+at the host boundary. Forwarding to the guest later remains conformant.
+
+Each refused source row contains exactly one independent fault. The corpus does
+not specify precedence between multiple faults or source-object traversal order.
+Batch cases may place that single invalid row after valid rows to test preflight.
 
 The native runner instruments data-key generation and retrieval calls. A
 successful batch makes one of each when it stores ciphertext, and zero when
@@ -71,7 +76,7 @@ guest's lack of network requests is not proof of logical key-call counts.
 
 ## Scope and remaining work
 
-The 37 cases cover runtime writes, corresponding reads, and equality queries.
+The cases cover runtime writes, corresponding reads, and equality queries.
 They do not cover malformed stored records, authenticated type mismatches on
 read, context composition/preflight, provider failures, or other operators.
 Fresh cross-language artifact exchange remains the scalar profile's coverage.

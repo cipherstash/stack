@@ -17,8 +17,7 @@
       "expected_error": {
         "code": "stack_encrypt::dynamic_source",
         "reason": "field_missing",
-        "field": "value",
-        "go_message": "cipherstash: malformed input: row 0: no value for field \"value\""
+        "field": "value"
       }
     },
     {
@@ -200,8 +199,7 @@
       "expected_error": {
         "code": "stack_encrypt::dynamic_source",
         "reason": "field_missing",
-        "field": "value",
-        "go_message": "cipherstash: malformed input: row 0: no value for field \"value\""
+        "field": "value"
       }
     },
     {
@@ -457,8 +455,7 @@
       "expected_error": {
         "code": "stack_encrypt::dynamic_source",
         "reason": "field_missing",
-        "field": "value",
-        "go_message": "cipherstash: malformed input: row 1: no value for field \"value\""
+        "field": "value"
       }
     },
     {
@@ -481,8 +478,7 @@
       "expected_error": {
         "code": "stack_encrypt::dynamic_source",
         "reason": "unknown_field",
-        "field": "extra",
-        "go_message": "cipherstash: malformed input: row 0: the plan has no field \"extra\""
+        "field": "extra"
       }
     },
     {
@@ -811,6 +807,8 @@
         "type": "null",
         "text": ""
       }
-    }
+    },
+    {"id": "sql-mixed-equal-lengths", "operation": "seal", "kind": "int32", "null": "sql", "rows": [{}, {"value": {"type": "int32", "text": "1"}}, {"value": {"type": "int32", "text": "2"}}], "expected_rows": [{"value": {"type": "null", "text": ""}}, {"value": {"type": "int32", "text": "1"}}, {"value": {"type": "int32", "text": "2"}}], "expected_stored": [false, true, true], "equal_lengths": true},
+    {"id": "sql-empty-equal-lengths", "operation": "seal", "kind": "int32", "null": "sql", "rows": [], "expected_rows": [], "expected_stored": [], "equal_lengths": true}
   ]
 }

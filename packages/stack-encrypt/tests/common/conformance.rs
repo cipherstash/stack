@@ -27,3 +27,39 @@ pub fn value(input: &Input) -> ValueFrame {
         other => panic!("unsupported input kind {other}"),
     }
 }
+
+/// Inspect actual stored output, shared by scalar and runtime profiles.
+pub fn stored_outputs(
+    tree: &stack_encrypt::StackCipherText,
+    field: &str,
+) -> Option<(Vec<u8>, usize)> {
+    use stack_encrypt::CipherText;
+    let CipherText::Map(fields) = tree else {
+        panic!("expected record")
+    };
+    assert!(fields.len() <= 1 && fields.iter().all(|(name, _)| name == field));
+    let (_, node) = fields.iter().find(|(name, _)| name == field)?;
+    let CipherText::Map(outputs) = node else {
+        panic!("expected outputs")
+    };
+    assert_eq!(outputs.len(), 2);
+    let CipherText::Single(leaf) = &outputs.iter().find(|(name, _)| name == "c").unwrap().1 else {
+        panic!("expected ciphertext")
+    };
+    let CipherText::Passthrough(term) = &outputs.iter().find(|(name, _)| name == "eq").unwrap().1
+    else {
+        panic!("expected equality bytes")
+    };
+    Some((
+        vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
+            .unwrap()
+            .to_vec(),
+        leaf.to_bytes().len(),
+    ))
+}
+pub fn refusal(error: &stack_encrypt::dynamic::Error, code: &str, reason: &str, field: &str) {
+    use miette::Diagnostic;
+    assert_eq!(error.code().unwrap().to_string(), code);
+    assert_eq!(error.reason().unwrap().as_str(), reason);
+    assert_eq!(error.field(), Some(field));
+}

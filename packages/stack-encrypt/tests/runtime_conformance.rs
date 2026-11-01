@@ -3,14 +3,13 @@
 mod common;
 
 use common::{
-    conformance::{value, Input},
+    conformance::{refusal, stored_outputs, value, Input},
     frames::{frame, object},
 };
-use miette::Diagnostic;
 use serde::Deserialize;
 use serde_json::json;
 use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, Scope, ValueFrame};
-use stack_encrypt::{CipherText, StackCipherText};
+use stack_encrypt::CipherText;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::Ordering,
@@ -57,18 +56,9 @@ enum Operation {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExpectedError {
-    // Go can refuse record shape before entering the guest.
-    #[serde(rename = "go_message")]
-    _go_message: Option<String>,
     code: String,
     reason: String,
     field: String,
-}
-
-fn refusal(error: dynamic::Error, expected: &ExpectedError) {
-    assert_eq!(error.code().unwrap().to_string(), expected.code);
-    assert_eq!(error.reason().unwrap().as_str(), expected.reason);
-    assert_eq!(error.field(), Some(expected.field.as_str()));
 }
 
 fn rows(input: &[Row]) -> ValueFrame {
@@ -78,34 +68,6 @@ fn rows(input: &[Row]) -> ValueFrame {
             .map(|row| object(row.iter().map(|(key, input)| (key, value(input))).collect()))
             .collect::<Vec<_>>(),
     )
-}
-
-// Return the actual bytes and length, rather than deriving storage from input.
-fn outputs(tree: &StackCipherText) -> Option<(Vec<u8>, usize)> {
-    let CipherText::Map(fields) = tree else {
-        panic!("record map")
-    };
-    if fields.is_empty() {
-        return None;
-    }
-    assert_eq!(fields.len(), 1);
-    assert_eq!(fields[0].0, "value");
-    let CipherText::Map(outputs) = &fields[0].1 else {
-        panic!("output map")
-    };
-    assert_eq!(outputs.len(), 2);
-    let CipherText::Single(leaf) = &outputs.iter().find(|(k, _)| k == "c").unwrap().1 else {
-        panic!("ciphertext")
-    };
-    let CipherText::Passthrough(term) = &outputs.iter().find(|(k, _)| k == "eq").unwrap().1 else {
-        panic!("term")
-    };
-    Some((
-        vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
-            .unwrap()
-            .to_vec(),
-        leaf.to_bytes().len(),
-    ))
 }
 
 #[tokio::test]
@@ -127,10 +89,16 @@ async fn shared_record_runtime_profile() {
     );
     assert!(!corpus.cases.is_empty());
     let mut ids = BTreeSet::new();
+    let (cipher, generates, retrieves) = common::counting_cipher().await;
     for case in corpus.cases {
+        generates.store(0, Ordering::SeqCst);
+        retrieves.store(0, Ordering::SeqCst);
         assert!(!case.id.is_empty() && ids.insert(case.id.clone()));
         eprintln!("runtime conformance: {}", case.id);
         assert!(["", "sql", "sealed"].contains(&case.null.as_str()));
+        assert!(
+            ["int32", "int64", "uint64", "float64", "bool", "string"].contains(&case.kind.as_str())
+        );
         let mut spec =
             json!({"context":["conformance", "value"], "outputs":["c", "eq"], "type":case.kind});
         if !case.null.is_empty() {
@@ -139,7 +107,6 @@ async fn shared_record_runtime_profile() {
         let plan =
             record::plan(&vitaminc_aead_frame::serde::to_vec(&json!({"value":spec})).unwrap())
                 .unwrap();
-        let (cipher, generates, retrieves) = common::counting_cipher().await;
         let keyset = cipher.default_keyset();
         match case.operation {
             Operation::Seal {
@@ -152,7 +119,12 @@ async fn shared_record_runtime_profile() {
                 let result = record::encrypt(&keyset, rows(&input), &plan);
                 if let Some(expected) = expected_error {
                     assert!(expected_rows.is_none() && expected_stored.is_none() && !equal_lengths);
-                    refusal(result.err().expect("preflight refusal"), &expected);
+                    refusal(
+                        &result.err().expect("preflight refusal"),
+                        &expected.code,
+                        &expected.reason,
+                        &expected.field,
+                    );
                     assert_eq!(generates.load(Ordering::SeqCst), 0);
                     assert_eq!(retrieves.load(Ordering::SeqCst), 0);
                     continue;
@@ -166,7 +138,10 @@ async fn shared_record_runtime_profile() {
                     panic!("batch")
                 };
                 assert_eq!(batch.len(), input.len());
-                let stored: Vec<_> = batch.iter().map(outputs).collect();
+                let stored: Vec<_> = batch
+                    .iter()
+                    .map(|row| stored_outputs(row, "value"))
+                    .collect();
                 assert_eq!(
                     stored.iter().map(Option::is_some).collect::<Vec<_>>(),
                     expected_stored
@@ -179,11 +154,9 @@ async fn shared_record_runtime_profile() {
                 );
                 assert_eq!(retrieves.load(Ordering::SeqCst), 0);
                 if equal_lengths {
-                    let lengths: BTreeSet<_> = stored
-                        .iter()
-                        .map(|v| v.as_ref().expect("stored field").1)
-                        .collect();
-                    assert_eq!(lengths.len(), 1, "null and value ciphertext lengths");
+                    let lengths: BTreeSet<_> =
+                        stored.iter().flatten().map(|(_, len)| *len).collect();
+                    assert!(lengths.len() <= 1, "stored ciphertext lengths differ");
                 }
                 for (expected, stored) in expected_rows.iter().zip(&stored) {
                     if let Some((bytes, _)) = stored {
@@ -246,7 +219,12 @@ async fn shared_record_runtime_profile() {
                 );
                 if let Some(expected) = expected_error {
                     assert!(expected_value.is_none());
-                    refusal(result.err().expect("preflight refusal"), &expected);
+                    refusal(
+                        &result.err().expect("preflight refusal"),
+                        &expected.code,
+                        &expected.reason,
+                        &expected.field,
+                    );
                 } else {
                     let term = result.unwrap().await.unwrap();
                     assert_eq!(generates.load(Ordering::SeqCst), 0);
@@ -257,7 +235,10 @@ async fn shared_record_runtime_profile() {
                             .unwrap()
                             .await
                             .unwrap();
-                    assert_eq!(term.operand(), &Operand::One(outputs(&sealed).unwrap().0));
+                    assert_eq!(
+                        term.operand(),
+                        &Operand::One(stored_outputs(&sealed, "value").unwrap().0)
+                    );
                     // This generation belongs to the independent stored-value oracle.
                     assert_eq!(generates.load(Ordering::SeqCst), 1);
                     continue;

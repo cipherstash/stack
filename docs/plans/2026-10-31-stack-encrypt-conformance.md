@@ -110,15 +110,15 @@ remain. No existing tests have been removed.
 ## Runtime checkpoint
 
 The initial runtime slice is on `feat/stack-encrypt-runtime-conformance`, stacked
-on draft [PR #1460](https://github.com/cipherstash/stack/pull/1460). Its 37 shared
+on draft [PR #1460](https://github.com/cipherstash/stack/pull/1460). Its shared
 cases cover missing/null storage, typed batch round trips, source refusals, and
 lossless equality query conversions. Native Rust observes data-key call counts.
 Go explicitly records host validation where it precedes guest diagnostics.
 The [runtime contract](../../conformance/stack-encrypt/runtime-contract.md)
 describes the corpus and limits. No production API or existing test is removed.
 
-Local validation passes for all three profiles (249 shared cases), fresh scalar
-ciphertext exchange, Rust clippy/formatting, Go lint, Biome and 34 CI wiring
+Local validation passes for all three profiles, fresh scalar
+ciphertext exchange, Rust clippy/formatting, Go lint, Biome and the CI wiring
 checks. The deterministic guest is reused from the unchanged parent engine.
 
 The next runtime extension should cover malformed stored records, authenticated
