@@ -14,6 +14,9 @@ native Rust and Go. Python and TypeScript have no enrolled runner yet.
 | `json-write-v1` | JSON documents, including scalar roots, empty containers, JSON null and integer boundaries, round-trip as values. SQL null stores no document. Invalid text is refused without exposing it; native tests observe no key request. Typed and dynamic plans agree on search terms and can open each other's output. | Native typed/data-plan suites, Go raw and generated typed document APIs; existing seeded derivation fixture |
 | `json-query-v1` | Containment, reverse containment, equality at a path, ordered bounds, selectors and child operations derive their documented operand shapes. Unsupported requests fail. | Native engine/EQL operand comparisons, Go generated queries, independent PostgreSQL `jsonb` containment oracles |
 | `json-request-bound-reads-v1` | Extraction and subtree/wildcard reads open against the prepared path, column, position and bounds. Wrong requests and detectable tampering fail. | Native adversarial read suite, EQL request/open tests, Go selector reads, PostgreSQL extraction/subtree and hostile-row suites |
+| `json-extraction-v1` | Single-node extraction opens the requested scalar. | Native scalar extraction, Go selectors and PostgreSQL plaintext extraction oracle |
+| `json-subtree-v1` | Complete bounded subtrees and wildcard reads match plaintext queries. | Native/EQL prepared reads and Go/PostgreSQL read paths |
+| `json-tamper-v1` | Detectable mixed-document, truncated-chain and substituted-column answers are refused. | Native and PostgreSQL adversarial suites; Go observes wrong-column rejection |
 | `json-element-match-v1` | Every condition must hold on one element. Ordering paths and resolver capability are required; a probe beyond the declared bound raises rather than silently truncating. | Native operator/capability tests, Go generated member APIs, SQL domain and independent plaintext predicate tests |
 | `json-predicate-match-v1` | Supported text compiles to existing operators; refusals preserve reason, construct and byte offset, with no caller text in diagnostics. Missing and null paths obey the documented truth rules. | Shared negative corpus, native compiler/property tests, Go generated `Match`, SQL `jsonb_path_match` and handwritten-operator oracles |
 
@@ -56,7 +59,9 @@ are unsupported. `!=` at a wildcard is refused. The corpus pins representative
 syntax, unsupported-construct, variable, type, depth and path diagnostics.
 Existing parser tests retain the wider grammar matrix and adapter-specific
 invalid-input checks; the shared corpus is not an exhaustive grammar fuzzer.
-Offsets are UTF-8 byte offsets, not character indices.
+Offsets are UTF-8 byte offsets, not character indices. Each refusal also names
+`at_text`, the suffix beginning at that offset. Omitted `vars` exercises absent
+variables rather than an explicit empty object.
 
 ## Nulls, oracles and intentional differences
 
@@ -107,16 +112,16 @@ EQL_TEST_DATABASE_URL='host=localhost port=5432 user=postgres password=postgres 
   mise run test:conformance:eql:postgres
 ```
 
-No CipherStash credentials are required. Both lanes are required steps in
-`tests-golang.yml`; conformance changes trigger them. The database lane rebuilds
+No CipherStash credentials are required. Both lanes are required in
+`tests-golang.yml` (the PostgreSQL lane is called by `go:test:postgres`); conformance changes trigger them. The database lane rebuilds
 SQL from this tree, installs exactly the bundle whose SHA-256 it records, and
 passes the same connection to both languages. It fails without a database or
-required guests. A fast-lane pass alone is not SQL conformance.
+required guests. Required mode deliberately applies to every Go test using
+`deterministicEQLClient`, including tests outside the enrollment index. A fast-lane pass alone is not SQL conformance.
 
 Reports include the native engine and EQL binding package versions, root/EQL
 lockfile hashes, corpus/enrollment hashes, deterministic guest hashes, executed
-requirement test names, and (for PostgreSQL) the installed EQL version, schema
-version, PostgreSQL version and actual SQL bundle hash. Development bundles can
+requirement test names, and (for PostgreSQL) the installed EQL version and schema name, the expected schema name, PostgreSQL version and actual SQL bundle hash. Development bundles can
 report `DEV`; their hash distinguishes them. CI uploads reports and fails if
 none were produced. Locally set `STACK_CONFORMANCE_REPORT_DIR` to retain them;
 the same report is always printed after success. These describe this checkout

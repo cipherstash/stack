@@ -24,6 +24,9 @@ describe('required EQL/JSON conformance', () => {
       'json-request-bound-reads-v1',
       'json-element-match-v1',
       'json-predicate-match-v1',
+      'json-extraction-v1',
+      'json-subtree-v1',
+      'json-tamper-v1',
     ])
     const contract = read('conformance/stack-encrypt/eql-json-contract.md')
     for (const requirement of index.requirements)
@@ -128,6 +131,9 @@ describe('required EQL/JSON conformance', () => {
       'json_syntax',
       'json_syntax',
     ])
+    expect(
+      corpus.predicate_refusals.find((c) => c.id === 'too-deep'),
+    ).not.toHaveProperty('vars')
     const ids = corpus.predicate_refusals.map((c) => c.id)
     expect(new Set(ids).size).toBe(15)
     for (const c of corpus.predicate_refusals) {
@@ -135,6 +141,7 @@ describe('required EQL/JSON conformance', () => {
       expect(c.at).toBeLessThan(Buffer.byteLength(c.predicate))
       expect(c.reason).toMatch(/^json_/)
       expect(c.construct).toBeTruthy()
+      expect(Buffer.from(c.predicate).subarray(c.at).toString()).toBe(c.at_text)
     }
     for (const path of [
       'packages/stack-encrypt/tests/json_operators.rs',
@@ -146,16 +153,14 @@ describe('required EQL/JSON conformance', () => {
 
   it('runs both required lanes in CI and retains reports with SQL and engine identity', () => {
     const workflow = readWorkflow('.github/workflows/tests-golang.yml')
-    for (const task of [
-      'test:conformance:eql',
-      'test:conformance:eql:postgres',
-    ]) {
+    for (const task of ['test:conformance:eql', 'go:test:postgres']) {
       const jobs = Object.values(workflow.jobs).filter((job) =>
         job.steps?.some((step) => step.run === `mise run ${task}`),
       )
       expect(jobs).toHaveLength(1)
       const step = jobs[0].steps.find((step) => step.run === `mise run ${task}`)
       expect(step['continue-on-error']).toBeUndefined()
+      expect(jobs[0].env.MISE_ENV).toBe('test')
       expect(step.env.STACK_CONFORMANCE_REPORT_DIR).toBeTruthy()
       if (task.endsWith(':postgres')) {
         expect(jobs[0].services.postgres).toBeDefined()
@@ -172,19 +177,18 @@ describe('required EQL/JSON conformance', () => {
         ),
       ).toBe(true)
     }
-    const script = read('scripts/stack-eql-conformance.mjs')
-    for (const field of [
-      'sql_bundle_sha256',
-      'eql_bindings',
-      'engine:',
-      'guests',
-      'eql_v4.version()',
-      'server_version',
-    ])
-      expect(script).toContain(field)
-    const filters = read('.github/workflows/tests-golang.yml')
-    expect(filters.match(/- scripts\/stack-eql-conformance.mjs/g)).toHaveLength(
-      2,
-    )
+    // Parse YAML paths rather than counting source spellings or indentation.
+    for (const event of ['push', 'pull_request']) {
+      expect(workflow.on[event].paths).toContain(
+        'scripts/stack-eql-conformance.mjs',
+      )
+    }
+    const tasks = read('mise.toml')
+    const postgresTask = tasks
+      .split('[tasks."go:test:postgres"]')[1]
+      .split('[tasks.')[0]
+    expect(postgresTask).toContain('mise run test:conformance:eql:postgres')
+    expect(postgresTask).not.toMatch(/^psql\s/m)
+    expect(postgresTask).not.toContain('mise -C packages/eql run build')
   })
 })

@@ -4,6 +4,7 @@ import { dirname, join, relative, sep } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { includes } from './lib/rust-compiled-files.mjs'
 import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -407,13 +408,15 @@ describe('the relevance filter still selects the imported tree', () => {
     // The EQL data-plan suite compiles the shared corpus from outside its
     // subtree. Keep this exception tied to that actual dependency.
     const sharedCorpus = 'conformance/stack-encrypt/v1/eql-json.json'
-    const usesSharedCorpus = readFileSync(
-      join(
-        REPO_ROOT,
-        'packages/eql/tests/encryption/tests/json_tree_data_plan.rs',
+    const usesSharedCorpus = includes(
+      readFileSync(
+        join(
+          REPO_ROOT,
+          'packages/eql/tests/encryption/tests/json_tree_data_plan.rs',
+        ),
+        'utf8',
       ),
-      'utf8',
-    ).includes(sharedCorpus)
+    ).some((entry) => entry.literal?.endsWith(`/${sharedCorpus}`))
     const offenders = filterPaths.filter(
       (path) =>
         path !== EQL_WORKFLOW &&

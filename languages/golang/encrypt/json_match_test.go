@@ -275,15 +275,21 @@ func TestMatchRefusalsNameTheConstructAndItsOffset(t *testing.T) {
 	cipher := c.DefaultKeyset()
 	f := testusers.EntityFields.CustomFieldValues
 	for _, tc := range jsonConformanceCases(t).PredicateRefusals {
-		_, err := f.Match(ctx, cipher, tc.Predicate, tc.Vars, encrypt.JSONReadOptions{})
+		var vars any
+		if tc.Vars != nil {
+			vars = tc.Vars
+		}
+		if strings.Index(tc.Predicate, tc.AtText) != tc.At {
+			t.Fatalf("%s: offset does not name at_text", tc.ID)
+		}
+		_, err := f.Match(ctx, cipher, tc.Predicate, vars, encrypt.JSONReadOptions{})
 		var d *encrypt.Diagnostic
 		if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) {
 			t.Errorf("%s: %v, want ErrEncoding with a Diagnostic", tc.ID, err)
 			continue
 		}
-		want := tc.At
-		if at, ok := d.At(); d.Reason() != tc.Reason || d.Construct() != tc.Construct || !ok || at != want {
-			t.Errorf("%s: reason %q, construct %q, at %d (%v); want %q, %q, %d: %v", tc.ID, d.Reason(), d.Construct(), at, ok, tc.Reason, tc.Construct, want, err)
+		if at, ok := d.At(); d.Reason() != tc.Reason || d.Construct() != tc.Construct || !ok || at != tc.At {
+			t.Errorf("%s: reason %q, construct %q, at %d (%v); want %q, %q, %d: %v", tc.ID, d.Reason(), d.Construct(), at, ok, tc.Reason, tc.Construct, tc.At, err)
 		}
 		if d.Field() != "custom_field_values" || d.Code != "stack_encrypt::dynamic_predicate" {
 			t.Errorf("%s: field %q, code %q", tc.ID, d.Field(), d.Code)
