@@ -225,6 +225,27 @@ fn tracked() -> (Tracked, std::sync::Arc<std::sync::atomic::AtomicBool>) {
     )
 }
 #[tokio::test]
+async fn mapped_scalar_preserves_its_authenticated_context() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let (source, _) = tracked();
+    let encrypted: TrackedCiphertext = source
+        .encrypt_into_with_context(&keyset, "users/secret")
+        .await
+        .unwrap();
+    assert!(matches!(
+        keyset.decrypt::<String>(encrypted.0.clone()).await,
+        Err(Error::Aead)
+    ));
+    assert_eq!(
+        keyset
+            .decrypt_with_context::<String>(encrypted.0, "users/secret")
+            .await
+            .unwrap(),
+        "secret"
+    );
+}
+#[tokio::test]
 async fn owned_source_is_wiped_before_await_or_discard() {
     use std::sync::atomic::Ordering;
     let (cipher, generates, _) = common::counting_cipher().await;
@@ -314,7 +335,9 @@ async fn no_caller_context_preserves_the_declared_context() {
 async fn debug_names_the_type_and_nothing_else() {
     let cipher = common::stack_cipher().await;
     let ct = cipher.default_keyset().encrypt(42i32).await.unwrap();
-    assert_eq!(format!("{ct:?}"), "Ciphertext { .. }");
+    fn opaque<T: vitaminc_protected::OpaqueDebug>(_: &T) {}
+    opaque(&ct);
+    assert!(format!("{ct:?}").ends_with("Ciphertext(\"***\")"));
 }
 
 #[test]

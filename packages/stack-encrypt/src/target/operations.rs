@@ -463,7 +463,15 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S
     }
 }
 /// Encrypt a supported scalar as one opaque ciphertext, permitting empty context.
-/// This reads the source under the owned conversion API's zeroization guard.
+///
+/// This operation borrows its source. The owned [`EncryptInto`](super::EncryptInto)
+/// conversions supply a [`Protected`](vitaminc_protected::Protected) owner and
+/// wipe it after planning. Calling [`KeysetCipher::run`] directly leaves source
+/// cleanup with the caller; this operation alone does not wipe that borrow.
+/// Mapping the encrypted output preserves the scalar's optional-context policy;
+/// it does not turn this into an EQL ciphertext or term operation. A wrapper may
+/// require caller context with [`RequiredContext`](super::RequiredContext), or
+/// declare a nonempty context with [`Encryption::under`].
 pub fn scalar_ciphertext<'s, S: crate::OpaqueEncode, K: 'static>(
 ) -> Encryption<'s, S, crate::Ciphertext, K, super::OptionalContext<super::ScalarContext>> {
     Encryption {

@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return a `StackCipherText`, are renamed `encrypt_tree` and `decrypt_tree`.
   `Ciphertext`'s bytes are the unchanged `SealedValue` v1 envelope, so
   stored values open through either API.
+  Nullable `Option<T>` values remain on `encrypt_tree` / `decrypt_tree` in this
+  slice, including Vitamin C's padded-null encoding for fixed-width types.
 - **The root `EncryptInto` and `DecryptFrom` are new owned conversion
   traits** over `EncryptTarget` / `DecryptSource`. The borrowed traits they
   replace, and that `#[derive(EncryptFrom, DecryptInto)]` types use, are

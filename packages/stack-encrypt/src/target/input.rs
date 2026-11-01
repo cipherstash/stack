@@ -80,6 +80,21 @@ impl<C> AcceptsContext for OptionalContext<C> {
 /// Contexts use the existing canonical encoding. No extra tuple, prefix or
 /// presence marker is added to AAD. Convert ordinary contexts with `Into`;
 /// the conversion methods do this automatically.
+///
+/// Keep an owned context when the same value is needed for sealing and opening:
+///
+/// ```no_run
+/// use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, target::ScalarContext};
+/// # async fn example<K: stack_encrypt::kms::DataKeySource + stack_encrypt::kms::IndexKeySource + Sync + 'static>(cipher: &stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
+/// let context = ScalarContext::from(("users", "age"));
+/// let encrypted: Ciphertext = 42i32
+///     .encrypt_into_with_context(&cipher.default_keyset(), context.clone())
+///     .await?;
+/// let age = i32::decrypt_from_with_context(encrypted, cipher, context).await?;
+/// assert_eq!(age, 42);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug)]
 pub struct ScalarContext(ContextPiece<'static>);
 impl<'c, C: IntoContext<'c>> From<C> for ScalarContext {

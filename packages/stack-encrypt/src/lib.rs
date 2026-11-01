@@ -71,8 +71,11 @@ assert_eq!(plaintext, "secret message");
 //!
 //! Encrypting binds to a keyset (every data key is minted under one); decrypting
 //! does not (every sealed leaf carries the id of the keyset it was sealed
-//! under), so it goes through the client-scoped `cipher` — or through the
-//! `keyset`, which then refuses leaves from any other keyset.
+//! under). Open an owned scalar through the client with
+//! `String::decrypt_from(ciphertext, &cipher)` (import [`DecryptFrom`]), or
+//! through [`KeysetCipher::decrypt`] to refuse leaves from any other keyset.
+//! [`StackCipher::decrypt`] still opens structural [`StackCipherText`] values;
+//! its keyset-constrained counterpart is [`KeysetCipher::decrypt_tree`].
 //! [`default_keyset`](StackCipher::default_keyset) is the client's own —
 //! the keyset a ZeroKMS administrator set for it — and is always that one.
 //! A client may use many others, one per tenant say; [`StackCipher::keyset`]

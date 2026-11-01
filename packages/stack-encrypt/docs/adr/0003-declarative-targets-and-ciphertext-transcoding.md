@@ -61,12 +61,17 @@ not close it. A concrete associated context type does not implicitly accept
 arbitrary context extensions; any extension facility must preserve the declared
 base context and be specified explicitly.
 
-Amended 2026-10-31: the opaque scalar `Ciphertext` is the one target-directed
-output that accepts empty context, because it is the cipher-directed
+Amended 2026-10-31, clarified 2026-11-01: the opaque scalar operation producing
+`Ciphertext` accepts empty context, because it is the cipher-directed
 contract in owned form: `keyset.encrypt(value)` seals what
 `keyset.encrypt_tree(value, ())` seals. It reaches the shared core through a
-separate entry. Every other target goes through the entry that takes a
-`NonEmpty`, so the nonempty requirement stays in the type.
+separate entry. Context policy belongs to the encryption operation, not the
+Rust type wrapping its output: `scalar_ciphertext().map(Wrapper)` retains the
+scalar policy and the same authenticated bytes. Mapping already-encrypted output
+does not derive a term or change its AAD. EQL ciphertext and term operations
+still require `NonEmpty`; wrapping a scalar does not bypass their constructors.
+Custom scalar wrappers can require caller context with `RequiredContext`, or
+declare a nonempty context with `under`.
 
 Transcoding consumes native encryption output through a custom encrypted-data
 protocol. It distinguishes sealed leaves, sequences, maps, authenticated absence

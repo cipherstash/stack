@@ -4,11 +4,12 @@ use super::{
     AcceptsContext, AllowsNoContext, CipherScope, ContextInput, Decryption, Encryption, Pending,
 };
 use crate::KeysetCipher;
-use zeroize::{Zeroize, Zeroizing};
+use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 
 /// Declare how to encrypt an owned plaintext into this target.
 ///
-/// The library guards the source with `Zeroizing`, then synchronously runs
+/// The library guards the source with [`Protected`], then synchronously runs
 /// this description over a borrow of it. The description may select core
 /// operations and map their outputs; it never receives the cipher and
 /// plaintext together. Source buffers are wiped before the pending request
@@ -39,8 +40,12 @@ pub trait EncryptInto: Zeroize + Sized {
         T: EncryptTarget<Self>,
         T::ContextInput: AllowsNoContext,
     {
-        let source = Zeroizing::new(self);
-        cipher.run(T::encryption(), &*source, T::ContextInput::omitted())
+        let source = Protected::new(self);
+        cipher.run(
+            T::encryption(),
+            source.risky_ref(),
+            T::ContextInput::omitted(),
+        )
     }
 
     /// Encrypt with a supplied context, without manually wrapping its presence.
@@ -53,9 +58,9 @@ pub trait EncryptInto: Zeroize + Sized {
         T: EncryptTarget<Self>,
         T::ContextInput: AcceptsContext,
     {
-        let source = Zeroizing::new(self);
+        let source = Protected::new(self);
         let context = T::ContextInput::supplied(context.into());
-        cipher.run(T::encryption(), &*source, context)
+        cipher.run(T::encryption(), source.risky_ref(), context)
     }
 }
 impl<S: Zeroize> EncryptInto for S {}

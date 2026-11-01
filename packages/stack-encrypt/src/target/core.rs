@@ -41,9 +41,9 @@ pub(crate) fn open_native<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext
 ) -> Pending<'a, P, K> {
     open_opaque(tree, cipher, context)
 }
-/// [`encrypt_native`] for an opaque scalar, the one output whose context may
-/// be empty. Every other target goes through `encrypt_native`, so the
-/// nonempty requirement stays in its type.
+/// [`encrypt_native`] for the opaque scalar operation, whose context may
+/// be empty. Mapping its encrypted output preserves that policy. Structural
+/// target operations use `encrypt_native` and retain its nonempty requirement.
 pub(crate) fn encrypt_opaque<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
     source: S,
     cipher: &'a KeysetCipher<'_, K>,

@@ -177,4 +177,4 @@ all-features = true
 
 [[example]]
 name = "scalar"
-required-features = ["test-support"]
+required-features = ["http"]

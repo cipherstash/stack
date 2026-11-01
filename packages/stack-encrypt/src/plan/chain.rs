@@ -269,7 +269,7 @@ impl<K: 'static> StackCipher<K> {
     ///
     /// This is the fluent spelling of the cipher-directed and
     /// target-directed entry points on [`KeysetCipher`]
-    /// ([`encrypt`](KeysetCipher::encrypt), [`encrypt_as`](KeysetCipher::encrypt_as),
+    /// ([`encrypt_tree`](KeysetCipher::encrypt_tree), [`encrypt_as`](KeysetCipher::encrypt_as),
     /// [`run`](KeysetCipher::run)), which stay; see the [`plan`](crate::plan)
     /// module for the whole chain.
     pub fn encrypt<'a, S: ?Sized>(&'a self, value: &'a S) -> EncryptBuilder<'a, S, K> {

@@ -1086,7 +1086,9 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// Not keyset-scoped: each leaf carries the id of the keyset it was
     /// sealed under, and this opens leaves from any keyset the client is
     /// authorised for. To insist on one keyset, decrypt through its
-    /// [`KeysetCipher`] instead.
+    /// [`KeysetCipher::decrypt_tree`] instead. For an owned scalar
+    /// [`Ciphertext`](crate::Ciphertext), use [`DecryptFrom`](crate::DecryptFrom):
+    /// `i32::decrypt_from(ciphertext, &cipher)`.
     ///
     /// # Fan-out
     ///
@@ -1098,7 +1100,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipher<K> {
     /// assembled from many tenants' leaves costs a round trip per tenant to
     /// open here, whoever assembled it. A service opening rows it does not
     /// trust — one tenant's data at a time — should hold that tenant's
-    /// [`KeysetCipher`], whose decrypt is one round trip at most and refuses
+    /// [`KeysetCipher::decrypt_tree`], which is one round trip at most and refuses
     /// a foreign leaf before any.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
@@ -1508,7 +1510,7 @@ impl PendingStackCipherText {
     /// [`plan`](Self::plan), in the same shape (see the
     /// [descriptor docs](crate::descriptor)). The tree itself only carries
     /// the *derived* per-leaf AADs, so the root is named here; nothing can
-    /// check that the two agree, which is why [`KeysetCipher::encrypt`], which
+    /// check that the two agree, which is why [`KeysetCipher::encrypt_tree`], which
     /// does both steps from one value, is the form to prefer.
     ///
     /// Settles through the target layer's request carrier

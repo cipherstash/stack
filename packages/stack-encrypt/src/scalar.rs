@@ -5,12 +5,14 @@ use crate::target::{
     OptionalContext, Pending, ScalarContext,
 };
 use crate::{CipherText, Decrypt, Error, KeysetCipher, LeafBytesError, SealedValue};
-use base64ct::{Base64, Encoding};
 use vitaminc_aead::plaintext::{Encrypt, Sink};
+use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroize;
 
 mod sealed {
     pub trait Encode {
+        const DEPTH: Option<usize>;
+        const FIXED: Option<vitaminc_aead::plaintext::FixedType>;
         fn visit<S: vitaminc_aead::plaintext::Sink>(&self, sink: S) -> Result<S::Ok, S::Error>;
     }
     pub trait Decode {}
@@ -24,6 +26,9 @@ mod sealed {
 /// `u8` waits on separating Vitamin C's byte-buffer and element
 /// representations, and must not make `Vec<u8>` an implicit single
 /// ciphertext.
+/// Nullable `Option<T>` values are also deferred in this scalar slice. Use
+/// [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`] for them;
+/// fixed-width nullable values retain Vitamin C's padded-null representation.
 pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to: the types
@@ -33,6 +38,8 @@ pub trait OpaqueDecode: sealed::Decode + Decrypt + Zeroize + Send + 'static {}
 macro_rules! opaque {
     ($($ty:ty),* $(,)?) => {$(
         impl sealed::Encode for $ty {
+            const DEPTH: Option<usize> = <&$ty as Encrypt>::DEPTH;
+            const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <&$ty as Encrypt>::FIXED;
             fn visit<S: Sink>(&self, sink: S) -> Result<S::Ok, S::Error> {
                 Encrypt::visit(self, sink)
             }
@@ -45,8 +52,12 @@ macro_rules! opaque {
 opaque!(bool, i8, i16, i32, i64, i128, u16, u32, u64, u128, f32, f64, String);
 
 pub(crate) struct ScalarRef<'a, S>(pub &'a S);
+// Vitamin C 0.8 implements Encrypt for &Protected<T>, but not ProtectedRef<T>.
+// This bridge preserves its encoding metadata while the owned conversion keeps
+// the source in Protected. Replace it when the encoder accepts protected borrows.
 impl<S: OpaqueEncode> Encrypt for ScalarRef<'_, S> {
-    const DEPTH: Option<usize> = Some(0);
+    const DEPTH: Option<usize> = <S as sealed::Encode>::DEPTH;
+    const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <S as sealed::Encode>::FIXED;
     fn visit<V: Sink>(self, sink: V) -> Result<V::Ok, V::Error> {
         sealed::Encode::visit(self.0, sink)
     }
@@ -57,13 +68,8 @@ impl<S: OpaqueEncode> Encrypt for ScalarRef<'_, S> {
 /// Its bytes are exactly the existing [`SealedValue`] v1 envelope. Parsing
 /// validates the envelope shape, not authenticity; only decryption authenticates
 /// it. No new storage framing or cryptographic context is introduced.
-#[derive(Clone)]
+#[derive(Clone, OpaqueDebug)]
 pub struct Ciphertext(pub(crate) SealedValue);
-impl std::fmt::Debug for Ciphertext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Ciphertext").finish_non_exhaustive()
-    }
-}
 impl Ciphertext {
     /// Encode the existing canonical sealed-leaf storage format.
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -98,7 +104,7 @@ impl serde::Serialize for Ciphertext {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let bytes = self.to_bytes();
         if serializer.is_human_readable() {
-            serializer.serialize_str(&Base64::encode_string(&bytes))
+            serializer.serialize_str(&crate::json::base64(&bytes))
         } else {
             serializer.serialize_bytes(&bytes)
         }
@@ -113,7 +119,7 @@ impl<'de> serde::Deserialize<'de> for Ciphertext {
                 f.write_str("a sealed ciphertext as Base64 text or bytes")
             }
             fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Ciphertext, E> {
-                let bytes = Base64::decode_vec(text).map_err(E::custom)?;
+                let bytes = crate::json::unbase64(text).map_err(E::custom)?;
                 self.visit_bytes(&bytes)
             }
             fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Ciphertext, E> {
@@ -199,5 +205,56 @@ impl<K: 'static> KeysetCipher<'_, K> {
         context: impl crate::IntoContext<'c>,
     ) -> Pending<'_, P, K> {
         P::decrypt_from_with_context(ciphertext, self, ScalarContext::from(context))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScalarRef;
+    use crate::{CipherText, StackCipher};
+
+    #[tokio::test]
+    async fn scalar_ref_preserves_fixed_width_nullable_padding() {
+        let cipher = StackCipher::builder()
+            .kms(stack_kms::FakeDataKeySource::new())
+            .init()
+            .await
+            .unwrap();
+        let keyset = cipher.default_keyset();
+        macro_rules! check {
+            ($value:expr, $ty:ty) => {{
+                let value: $ty = $value;
+                let some = keyset
+                    .encrypt_tree(Some(ScalarRef(&value)), "nullable")
+                    .await
+                    .unwrap();
+                let none = keyset
+                    .encrypt_tree(None::<ScalarRef<'_, $ty>>, "nullable")
+                    .await
+                    .unwrap();
+                let (CipherText::Single(present), CipherText::Single(absent)) = (&some, &none)
+                else {
+                    panic!("nullable scalars must remain single leaves");
+                };
+                assert_eq!(present.to_bytes().len(), absent.to_bytes().len());
+                assert_eq!(
+                    keyset
+                        .decrypt_tree::<Option<$ty>, _>(some, "nullable")
+                        .await
+                        .unwrap(),
+                    Some(value)
+                );
+                assert_eq!(
+                    keyset
+                        .decrypt_tree::<Option<$ty>, _>(none, "nullable")
+                        .await
+                        .unwrap(),
+                    None
+                );
+            }};
+        }
+        check!(42, i32);
+        check!(42, u128);
+        check!(42.5, f64);
     }
 }

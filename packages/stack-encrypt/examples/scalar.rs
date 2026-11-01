@@ -1,13 +1,11 @@
-//! Run without credentials: cargo run -p stack-encrypt --example scalar --features test-support
+//! Run with ZeroKMS credentials: `cargo run -p stack-encrypt --example scalar`.
+//! Authenticate with `npx stash auth login`, or configure the `CS_*` credentials
+//! described in the crate's quick start. Initialization fails without credentials.
 use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // In production, use StackCipher::new().await? with ZeroKMS credentials.
-    let cipher = StackCipher::builder()
-        .kms(stack_encrypt::kms::FakeDataKeySource::new())
-        .init()
-        .await?;
+    let cipher = StackCipher::new().await?;
     let keyset = cipher.default_keyset();
 
     let encrypted = keyset.encrypt(42i32).await?;
