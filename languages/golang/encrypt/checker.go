@@ -57,7 +57,12 @@ func (k *Checker) engineCheck(ctx context.Context, plan *record.Plan) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	_, err = k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+	return k.checkFrame(ctx, encoded)
+}
+
+// checkFrame is the common engine boundary for lowered plans and raw-frame tests.
+func (k *Checker) checkFrame(ctx context.Context, encoded []byte) error {
+	_, err := k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.planCheck, buf(encoded))
 	})
 	return err

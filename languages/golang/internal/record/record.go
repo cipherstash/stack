@@ -412,7 +412,7 @@ func (p *Plan) Validate() error {
 		seen := map[Output]bool{}
 		for _, o := range f.Outputs {
 			switch o {
-			case Ciphertext, Equality, Match, Ore, Ope:
+			case Ciphertext, Equality, Match, Ore, Ope, OreBlock:
 			default:
 				return fmt.Errorf("record: field %q: unknown output %q", f.Name, o)
 			}

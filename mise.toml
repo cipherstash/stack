@@ -40,6 +40,10 @@ golangci-lint = "2.14.0"
 # short name in mise's registry).
 "aqua:wasm-bindgen/wasm-pack" = "0.13.1"
 
+[tasks."test:conformance"]
+description = "Run shared Rust/Go cases (build the deterministic guest first)"
+run = "bash scripts/stack-conformance.sh"
+
 [tasks."test:doc"]
 description = "Run documentation tests"
 run = "mise x --env test -- cargo test --doc --all-features --workspace"

@@ -122,6 +122,8 @@ rust_decimal = ["dep:rust_decimal", "vitaminc-aead/rust_decimal"]
 test-support = ["stack-kms/test-support"]
 
 [dev-dependencies]
+# Preserve JSON number spellings for the shared declaration projection.
+serde_json = { workspace = true, features = ["raw_value"] }
 # `default-features = false` here too: dev-dependency features unify into the
 # `cargo test -p stack-encrypt --no-default-features` graph, so leaving the
 # default on would silently pull `stack-kms/http` -> `stack-auth/http` ->
