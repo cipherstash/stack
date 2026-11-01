@@ -18,7 +18,7 @@ import (
 // remain failures in the caller, including errors wrapping neither sentinel.
 func skipMissingConformanceGuest(t *testing.T, err error) {
 	t.Helper()
-	if (errors.Is(err, encrypt.ErrGuestNotBuilt) || errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt)) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
+	if (errors.Is(err, encrypt.ErrGuestNotBuilt) || errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrDeterministicEQLGuestNotBuilt)) && os.Getenv("STACK_CONFORMANCE_REQUIRED") != "1" {
 		t.Skip(err)
 	}
 }
@@ -74,6 +74,8 @@ func TestFixtureConformanceRequiresGuest(t *testing.T) {
 	}
 	// These full-suite tests also share queryFixtureClient's required-mode policy;
 	// they remain outside the shared fixture requirements and aggregate selection.
+	names["TestJSONDocumentsRoundTripThroughTheGuest"] = true
+	names["TestMatchRefusalsNameTheConstructAndItsOffset"] = true
 	names["TestContextConformance"] = true
 	names["TestContextBoundaries"] = true
 	names["TestAQueryTheFieldDoesNotAnswerIsRefused"] = true

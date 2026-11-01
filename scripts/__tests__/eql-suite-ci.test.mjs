@@ -400,16 +400,27 @@ describe('the relevance filter still selects the imported tree', () => {
   })
 
   it('prefixes every source path with the subtree root', () => {
-    // Three legitimate exceptions, all outside the subtree by nature: the
+    // Legitimate exceptions, all outside the subtree by nature: the
     // workflow's own path, a composite action it `uses:`, and a crate the
     // workspace compiles by path (plus the root manifest it inherits from).
     const external = externalPathDependencies.dirs.map((dir) => `${dir}/**`)
+    // The EQL data-plan suite compiles the shared corpus from outside its
+    // subtree. Keep this exception tied to that actual dependency.
+    const sharedCorpus = 'conformance/stack-encrypt/v1/eql-json.json'
+    const usesSharedCorpus = readFileSync(
+      join(
+        REPO_ROOT,
+        'packages/eql/tests/encryption/tests/json_tree_data_plan.rs',
+      ),
+      'utf8',
+    ).includes(sharedCorpus)
     const offenders = filterPaths.filter(
       (path) =>
         path !== EQL_WORKFLOW &&
         !path.startsWith(EQL_PREFIX) &&
         !localActionPrefixes.some((prefix) => path.startsWith(prefix)) &&
         !external.includes(path) &&
+        !(usesSharedCorpus && path === 'conformance/stack-encrypt/**') &&
         !(externalPathDependencies.inherits && path === 'Cargo.toml'),
     )
 

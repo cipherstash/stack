@@ -2187,6 +2187,30 @@ mod compiled_match {
         /// caller's text, and the field; the input's own shape is refused
         /// as the other operators refuse theirs.
         #[test]
+        fn shared_predicate_refusals() {
+            let cases: Value = serde_json::from_str(include_str!(
+                "../../../conformance/stack-encrypt/v1/eql-json.json"
+            ))
+            .unwrap();
+            assert_eq!(cases["version"], 1);
+            for case in cases["predicate_refusals"].as_array().unwrap() {
+                let predicate = case["predicate"].as_str().unwrap();
+                let error = check(&input(predicate, case["vars"].clone())).unwrap_err();
+                let payload = stack_encrypt::ErrorPayload::payload(&error);
+                assert_eq!(
+                    error.reason().map(Reason::as_str),
+                    case["reason"].as_str(),
+                    "{}",
+                    case["id"]
+                );
+                assert_eq!(payload["at"], case["at"], "{}", case["id"]);
+                assert_eq!(payload["construct"], case["construct"], "{}", case["id"]);
+                assert_eq!(error.field(), Some("profile"));
+                assert!(!format!("{error} {payload:?}").contains("secret"));
+            }
+        }
+
+        #[test]
         fn is_refused_with_its_reason_and_offset() {
             for (predicate, vars, reason, at) in [
                 ("$.age + 1 > 2", json!({}), "json_predicate_unsupported", 6),

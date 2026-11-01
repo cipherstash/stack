@@ -29,6 +29,15 @@ is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
 
+## EQL and JSON operations
+
+The [EQL/JSON contract](eql-json-contract.md) enrolls resolver capabilities,
+document writes, queries, extraction/subtree reads, element-match and predicate
+matching. It reuses the native, Go and independent PostgreSQL suites and shares
+write/predicate case data. Run `mise run test:conformance:eql` and the separate
+required `test:conformance:eql:postgres` task; see the contract for guest builds,
+disposable database setup, intentional SQL differences and version reports.
+
 ## Context composition and expectations
 
 The [context contract](context-contract.md) covers ordered extensions, canonical
@@ -52,8 +61,8 @@ checks. The task runs the existing tests directly, and a missing guest fails
 when conformance is required. The ordinary CI suites already execute them.
 
 This is representative fixture coverage, not an exhaustive type/operator
-matrix. Wider fresh artifact exchange, shared query refusals and EQL/JSON
-operations remain separate work.
+matrix. Wider fresh artifact exchange and shared scalar query refusals remain
+separate work. The EQL/JSON profiles are described below.
 
 ## `record-reads-v1` contract
 
