@@ -178,6 +178,12 @@ bytes, so whole bodies are left to the property tests and fuzzing. Run
 the proofs with `cargo kani -p vitaminc-aead-frame --features serde`; CI
 runs them in `.github/workflows/kani-storage.yml`.
 
+`tests/storage_wipe.rs` and `tests/transport_wipe.rs` install an
+allocator that inspects every block as it is freed, and fail if one still
+holds a key or a value the storage writer, the transport writer or
+`to_frame` wrote: through growth, `Display` values, a map's keys, a
+failed write, or the dropped result.
+
 `tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
 the new path and gets the frame it was sealed from, so the leaf format,
 the AAD derivations and the container rules stay what shipped.

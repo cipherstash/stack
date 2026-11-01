@@ -709,7 +709,9 @@ fn a_text_key_reads_in_the_mode_it_was_written_in() {
     assert_eq!(from_slice::<BTreeMap<Modal, u8>>(&blob), Ok(map));
 
     let map = BTreeMap::from([(Modal(1), 10u8)]);
-    let frame = vitaminc_aead_frame::serde::to_vec(&map).expect("writes");
+    let frame = vitaminc_aead_frame::serde::to_vec(&map)
+        .expect("writes")
+        .risky_unwrap();
     assert!(frame.windows(7).any(|w| w == b"human-1"));
     let back: BTreeMap<Modal, u8> = vitaminc_aead_frame::serde::from_slice(&frame).expect("reads");
     assert_eq!(back, map);
@@ -759,7 +761,9 @@ fn a_key_that_reads_nothing_is_refused() {
 #[test]
 fn a_transport_frame_and_a_blob_never_read_as_each_other() {
     let value = BTreeMap::from([("a", Some(1u8))]);
-    let frame = vitaminc_aead_frame::serde::to_vec(&value).expect("writes");
+    let frame = vitaminc_aead_frame::serde::to_vec(&value)
+        .expect("writes")
+        .risky_unwrap();
     let stored = to_vec(&value).expect("writes");
     let error = from_slice::<BTreeMap<String, Option<u8>>>(&frame).expect_err("not a blob");
     assert_eq!(error.kind(), ErrorKind::NotABlob);
