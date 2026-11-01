@@ -476,6 +476,16 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2204
 
+      # mise caches Rust symlinks, not ~/.rustup. A cache hit can leave a
+      # toolchain directory without cargo and still report "all tools installed".
+      # Reconcile both workspaces' configured toolchains before cargo is used.
+      - name: Restore Rust toolchains behind the cached mise links
+        run: |
+          mise install --force rust
+          mise -C packages/eql install --force rust
+          mise x -- cargo --version
+          mise -C packages/eql x -- cargo --version
+
       # `mise run build` compiles eql-codegen to write the bundle.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:

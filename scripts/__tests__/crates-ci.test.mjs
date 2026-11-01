@@ -35,6 +35,20 @@ const ROOT_MISE = 'mise.toml'
 const IMPORTED_WORKFLOW_DIR = '.github/imported-workflows'
 
 describe('the test toolchain installs from a shared mise cache', () => {
+  it('runs the prebuilt CRAP executable on a compatible image before coverage', () => {
+    const workflow = readWorkflow('.github/workflows/crap-crates.yml')
+    for (const name of ['crap-stack-auth', 'crap-stack-encrypt']) {
+      const job = workflow.jobs[name]
+      expect(job['runs-on']).toMatch(/ubuntu-2404$/)
+      const probe = job.steps.findIndex((s) => s.run === 'cargo crap --version')
+      const gate = job.steps.findIndex((s) =>
+        s.run?.startsWith('mise run crap:'),
+      )
+      expect(probe).toBeGreaterThan(-1)
+      expect(gate).toBeGreaterThan(probe)
+    }
+  })
+
   it('selects the prebuilt cargo-binstall before installing cargo tools', () => {
     // EQL installs cargo-binstall. A restored shim with no selected version
     // makes mise's cargo backend fail instead of falling back to cargo install.
