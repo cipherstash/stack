@@ -3274,7 +3274,59 @@
         ]
       }
     },
-    {"id": "json-negative-zero","input": {"json": {"value": {"context": [["users","value"],-0],"outputs": ["c"]}}},"accepted": true,"normalized": {"label": ["users"],"context_field": null,"extension": [{"type": "int64","text": "0"}],"fields": [{"name": "value","label": ["users","value"],"type": null,"null": null,"outputs": ["c"]}]}},
-    {"id": "json-lexical-field-order","input": {"json": {"zeta": {"context": ["users","zeta"],"outputs": ["c"]},"alpha": {"context": ["users","alpha"],"outputs": ["c"]}}},"accepted": true,"normalized": {"label": ["users"],"context_field": null,"extension": [],"fields": [{"name": "alpha","label": ["users","alpha"],"type": null,"null": null,"outputs": ["c"]},{"name": "zeta","label": ["users","zeta"],"type": null,"null": null,"outputs": ["c"]}]}}
+    {
+      "id": "json-negative-zero",
+      "input": {
+        "json": {
+          "value": { "context": [["users", "value"], -0], "outputs": ["c"] }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [{ "type": "int64", "text": "0" }],
+        "fields": [
+          {
+            "name": "value",
+            "label": ["users", "value"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "json-lexical-field-order",
+      "input": {
+        "json": {
+          "zeta": { "context": ["users", "zeta"], "outputs": ["c"] },
+          "alpha": { "context": ["users", "alpha"], "outputs": ["c"] }
+        }
+      },
+      "accepted": true,
+      "normalized": {
+        "label": ["users"],
+        "context_field": null,
+        "extension": [],
+        "fields": [
+          {
+            "name": "alpha",
+            "label": ["users", "alpha"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          },
+          {
+            "name": "zeta",
+            "label": ["users", "zeta"],
+            "type": null,
+            "null": null,
+            "outputs": ["c"]
+          }
+        ]
+      }
+    }
   ]
 }
