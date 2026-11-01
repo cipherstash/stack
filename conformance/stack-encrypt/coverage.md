@@ -41,7 +41,7 @@ batches; Go provider-call instrumentation remains open.
 
 ## Read checkpoint
 
-`v1/reads.json` adds 26 cases for stored-shape validation, authenticated types
+`v1/reads.json` adds cases for stored-shape validation, authenticated types
 and context preflight. The [read contract](read-contract.md) distinguishes native
 shape/pending stages and the guest's earlier `check_record` diagnostics. Native
 data-key counters and Go's uninitialised guest verify preflight boundaries.
@@ -70,7 +70,7 @@ No existing test has been deleted in these first four slices.
 | Rust kind/index admission tests | The corpus has the complete 21-kind/five-index acceptance matrix | Share case data; retain direct tests that compare declaration admission with actual term execution |
 | Rust `value_kinds.rs`, Go `value_kinds_test.go` | Already share `value_kinds.json`; cover more types and generated SDK code than the initial scalar profile | Enroll that existing fixture under named requirements instead of copying it; keep generated-code assertions |
 | Rust `query_operators.rs`, Go `query_test.go` | Already share operator vectors, including verification and target limits | Reuse their fixture and cases when adding an operator profile; preserve host/generated query mapping tests |
-| Go checker and host validation tests in `guest_test.go` | Exercise host rejection and diagnostic forwarding through public checker methods | Keep adapter-specific assertions; raw-frame conformance bypasses host validation deliberately |
+| Go checker and host validation tests in `guest_test.go` | Exercise host rejection and diagnostic forwarding through public checker methods | Keep adapter-specific assertions; representable declaration cases also use `Checker.Check`, while raw frames observe the guest boundary |
 | Native scalar/record round trips and cross-opening | Some behavior overlaps, but existing tests cover more types and API paths | Replace only exact duplicates after matching requirements and execution paths |
 
 Keep Rust compile-fail, ownership/zeroization, batching, fuzz/property, and

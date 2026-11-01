@@ -113,7 +113,7 @@ The initial runtime slice is on `feat/stack-encrypt-runtime-conformance`, stacke
 on draft [PR #1460](https://github.com/cipherstash/stack/pull/1460). Its shared
 cases cover missing/null storage, typed batch round trips, source refusals, and
 lossless equality query conversions. Native Rust observes data-key call counts.
-Go explicitly records host validation where it precedes guest diagnostics.
+Go host source validation preserves the shared structured diagnostic fields.
 The [runtime contract](../../conformance/stack-encrypt/runtime-contract.md)
 describes the corpus and limits. No production API or existing test is removed.
 
@@ -128,7 +128,7 @@ generated SDK and EQL fixtures remain in place.
 ## Read checkpoint
 
 The read slice is on `feat/stack-encrypt-read-conformance`, stacked on draft
-[PR #1461](https://github.com/cipherstash/stack/pull/1461). Its 26 shared cases
+[PR #1461](https://github.com/cipherstash/stack/pull/1461). Its shared cases
 cover malformed stored shapes, authenticated type failures, null read-policy
 changes and context preflight, including late failures in batches.
 
@@ -137,10 +137,12 @@ type refusal using data-key counters. Go checks each case against an uninitialis
 guest and an active guest; representable cases additionally use `Cipher.Open`.
 A test-only entry point supplies shapes the record adapter cannot represent.
 The [read contract](../../conformance/stack-encrypt/read-contract.md) records
-exact diagnostics and the remaining gaps. No production API or old test changes.
+exact diagnostics and the remaining gaps. The tree hook shares the production
+open/decode path, including field-order validation before conversion to maps.
+No public API or existing test is removed.
 
-Local validation passes for all four profiles (275 shared cases), fresh scalar
-artifact exchange, Rust clippy/formatting, Go lint, Biome and 34 CI wiring checks.
+Local validation passes for all four profiles, fresh scalar
+artifact exchange, Rust clippy/formatting, Go lint, Biome and the CI wiring checks.
 The deterministic guest is reused from the unchanged parent engine.
 
 Next, enroll the existing wider value-kind and operator fixtures under named

@@ -406,6 +406,11 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, 
 		}
 		trees[i] = tree
 	}
+	return c.openTree(ctx, sel, expected, p, trees)
+}
+
+// openTree owns the shared transport, opening and typed-row validation path.
+func (c *Client) openTree(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, trees []any) ([]record.Source, error) {
 	encodedTree, err := marshalCipherText(trees)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
@@ -431,14 +436,31 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, 
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
 	items, ok := decoded.([]any)
-	if !ok || len(items) != len(records) {
-		return nil, fmt.Errorf("%w: %d records came back as %T", ErrInternal, len(records), decoded)
+	if !ok || len(items) != len(trees) {
+		return nil, fmt.Errorf("%w: %d records came back as %T", ErrInternal, len(trees), decoded)
+	}
+	order := make([]string, 0, len(p.Fields)+1)
+	if p.ContextField != "" {
+		order = append(order, p.ContextField)
+	}
+	for _, f := range p.Fields {
+		if f.HasCiphertext() {
+			order = append(order, f.Name)
+		}
 	}
 	sources := make([]record.Source, len(items))
 	for i, item := range items {
 		obj, ok := item.(vcvalue.Object)
 		if !ok {
 			return nil, fmt.Errorf("%w: record %d decrypted as %T", ErrInternal, i, item)
+		}
+		if len(obj) != len(order) {
+			return nil, fmt.Errorf("%w: record %d has %d fields, expected %d", ErrInternal, i, len(obj), len(order))
+		}
+		for j, f := range obj {
+			if f.Key != order[j] {
+				return nil, fmt.Errorf("%w: record %d field %d is %q, expected %q", ErrInternal, i, j, f.Key, order[j])
+			}
 		}
 		src := make(record.Source, len(obj))
 		for _, f := range obj {

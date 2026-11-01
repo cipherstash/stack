@@ -37,6 +37,8 @@ struct Case {
     write: Declaration,
     read: Declaration,
     context_field: bool,
+    #[serde(default)]
+    context_field_name: String,
     rows: Vec<Row>,
     mutation: Mutation,
     expected_context: Option<String>,
@@ -79,7 +81,7 @@ fn refusal(error: &impl ErrorPayload, want: &Refusal) {
     assert_eq!(error.code().unwrap().to_string(), want.code);
     assert_eq!(error.payload(), want.fields);
 }
-fn plan(decl: &Declaration, context_field: bool) -> record::Plan {
+fn plan(decl: &Declaration, context_field: bool, context_name: &str) -> record::Plan {
     assert!(["", "sql", "sealed"].contains(&decl.null.as_str()));
     let context = if context_field {
         vec!["value"]
@@ -90,18 +92,32 @@ fn plan(decl: &Declaration, context_field: bool) -> record::Plan {
     if !decl.null.is_empty() {
         spec["null"] = json!(decl.null);
     }
-    let mut plan = json!({"value":spec});
+    // Match Go Plan.Wire's declaration order explicitly, regardless of the
+    // serde_json map backend or the context field's lexical position.
+    let framed = |v: &Value| {
+        ValueFrame::from_bytes(&vitaminc_aead_frame::serde::to_vec(v).unwrap()).unwrap()
+    };
+    let mut fields = Vec::new();
     if context_field {
-        plan["context_field"] = json!("tenant");
-        plan["tenant"] = json!({"context":["tenant"],"outputs":["passthrough"],"type":"string"});
+        fields.push(("context_field", frame(context_name.to_owned())));
+        fields.push((
+            context_name,
+            framed(&json!({"context":[context_name],"outputs":["passthrough"],"type":"string"})),
+        ));
     }
-    record::plan(&vitaminc_aead_frame::serde::to_vec(&plan).unwrap()).unwrap()
+    fields.push(("value", framed(&spec)));
+    record::plan(object(fields).risky_ref()).unwrap()
 }
-fn rows(input: &[Row]) -> ValueFrame {
+fn rows(input: &[Row], context_name: Option<&str>) -> ValueFrame {
     frame(
         input
             .iter()
-            .map(|row| object(row.iter().map(|(k, v)| (k, value(v))).collect()))
+            .map(|row| {
+                let mut entries: Vec<_> = row.iter().collect();
+                entries
+                    .sort_by_key(|(name, _)| (Some(name.as_str()) != context_name, name.as_str()));
+                object(entries.into_iter().map(|(k, v)| (k, value(v))).collect())
+            })
             .collect::<Vec<_>>(),
     )
 }
@@ -133,7 +149,7 @@ fn copy_tree(tree: &StackCipherText) -> StackCipherText {
     }
 }
 
-fn mutate(tree: &mut StackCipherText, mutation: &Mutation) {
+fn mutate(tree: &mut StackCipherText, mutation: &Mutation, context_name: &str) {
     let CipherText::Sequence(batch) = tree else {
         panic!("batch")
     };
@@ -148,9 +164,9 @@ fn mutate(tree: &mut StackCipherText, mutation: &Mutation) {
         "drop_value" => fields.retain(|(k, _)| k != "value"),
         "field_plain" => *slot(fields, "value") = plain(),
         "extra_field" => fields.push(("extra".into(), plain())),
-        "drop_tenant" => fields.retain(|(k, _)| k != "tenant"),
-        "tenant_no_payload" => map(slot(fields, "tenant")).clear(),
-        "tenant_number" => *slot(map(slot(fields, "tenant")), "passthrough") = plain(),
+        "drop_tenant" => fields.retain(|(k, _)| k != context_name),
+        "tenant_no_payload" => map(slot(fields, context_name)).clear(),
+        "tenant_number" => *slot(map(slot(fields, context_name)), "passthrough") = plain(),
         kind => {
             let outputs = map(slot(fields, "value"));
             match kind {
@@ -164,8 +180,8 @@ fn mutate(tree: &mut StackCipherText, mutation: &Mutation) {
     }
 }
 
-#[tokio::test]
-async fn shared_record_read_profile() {
+#[test]
+fn shared_record_read_profile() {
     let corpus: Corpus = serde_json::from_str(include_str!(
         "../../../conformance/stack-encrypt/v1/reads.json"
     ))
@@ -182,67 +198,120 @@ async fn shared_record_read_profile() {
         ]
     );
     assert!(!corpus.cases.is_empty());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut failures = Vec::new();
     let mut ids = BTreeSet::new();
     for case in corpus.cases {
         assert!(!case.id.is_empty() && ids.insert(case.id.clone()));
         eprintln!("read conformance: {}", case.id);
-        let write = plan(&case.write, case.context_field);
-        let read = plan(&case.read, case.context_field);
-        let expected = case
-            .expected_context
-            .as_deref()
-            .map(|s| Label::parse(s).unwrap());
-        let (cipher, generates, retrieves) = common::counting_cipher().await;
-        let keyset = cipher.default_keyset();
-        let mut stored = record::encrypt(&keyset, rows(&case.rows), &write)
-            .unwrap()
-            .await
-            .unwrap();
-        generates.store(0, Ordering::SeqCst);
-        retrieves.store(0, Ordering::SeqCst);
-        mutate(&mut stored, &case.mutation);
-        let checked = record::check_record(copy_tree(&stored), &read, expected.as_ref());
-        if let Some(want) = &case.check_error {
-            refusal(&checked.unwrap_err(), want);
-        } else {
-            checked.unwrap();
+        let id = case.id.clone();
+        if let Err(error) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rt.block_on(check_case(case))
+        })) {
+            let message = error
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| error.downcast_ref::<&str>().copied())
+                .unwrap_or("non-string panic");
+            failures.push(format!("{id}: {message}"));
         }
-        let result = record::decrypt(Scope::Keyset(keyset), stored, &read, expected);
-        match case.expected.stage {
-            Stage::Shape => {
-                assert!(case.expected.rows.is_none());
-                refusal(
-                    &result.err().expect("shape rejection before pending"),
-                    case.expected.error.as_ref().unwrap(),
-                );
-            }
-            Stage::Success => {
-                assert!(case.expected.error.is_none());
-                let opened = result.unwrap().await.unwrap();
-                assert_eq!(
-                    opened.risky_ref(),
-                    rows(case.expected.rows.as_ref().unwrap()).risky_ref()
-                );
-            }
-            Stage::Preflight | Stage::Authenticated => {
-                assert!(case.expected.rows.is_none());
-                let err = result.unwrap().await.unwrap_err();
-                refusal(&err, case.expected.error.as_ref().unwrap());
-                assert_eq!(
-                    case.expected.retrievals,
-                    usize::from(case.expected.stage == Stage::Authenticated)
-                );
-            }
-        }
-        assert_eq!(
-            generates.load(Ordering::SeqCst),
-            0,
-            "reads never generate data keys"
-        );
-        assert_eq!(
-            retrieves.load(Ordering::SeqCst),
-            case.expected.retrievals,
-            "retrieval stage"
-        );
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+async fn check_case(case: Case) {
+    let context_name = if case.context_field_name.is_empty() {
+        "tenant"
+    } else {
+        assert!(case.context_field);
+        Label::new([case.context_field_name.as_str()]).unwrap();
+        &case.context_field_name
+    };
+    match case.expected.stage {
+        Stage::Success => {
+            assert!(
+                case.check_error.is_none()
+                    && case.expected.error.is_none()
+                    && case.expected.rows.is_some()
+            );
+            assert!(case.expected.retrievals <= 1);
+        }
+        Stage::Authenticated => {
+            assert!(case.check_error.is_none());
+            assert_eq!(case.expected.retrievals, 1);
+        }
+        Stage::Shape | Stage::Preflight => {
+            assert!(case.check_error.is_some());
+            assert_eq!(case.expected.retrievals, 0);
+        }
+    }
+    let write = plan(&case.write, case.context_field, context_name);
+    let read = plan(&case.read, case.context_field, context_name);
+    let expected = case
+        .expected_context
+        .as_deref()
+        .map(|s| Label::parse(s).unwrap());
+    let (cipher, generates, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let mut stored = record::encrypt(
+        &keyset,
+        rows(&case.rows, case.context_field.then_some(context_name)),
+        &write,
+    )
+    .unwrap()
+    .await
+    .unwrap();
+    generates.store(0, Ordering::SeqCst);
+    retrieves.store(0, Ordering::SeqCst);
+    mutate(&mut stored, &case.mutation, context_name);
+    let checked = record::check_record(copy_tree(&stored), &read, expected.as_ref());
+    if let Some(want) = &case.check_error {
+        refusal(&checked.unwrap_err(), want);
+    } else {
+        checked.unwrap();
+    }
+    let result = record::decrypt(Scope::Keyset(keyset), stored, &read, expected);
+    match case.expected.stage {
+        Stage::Shape => {
+            assert!(case.expected.rows.is_none());
+            refusal(
+                &result.err().expect("shape rejection before pending"),
+                case.expected.error.as_ref().unwrap(),
+            );
+        }
+        Stage::Success => {
+            assert!(case.expected.error.is_none());
+            let opened = result.unwrap().await.unwrap();
+            assert_eq!(
+                opened.risky_ref(),
+                rows(
+                    case.expected.rows.as_ref().unwrap(),
+                    case.context_field.then_some(context_name)
+                )
+                .risky_ref()
+            );
+        }
+        Stage::Preflight | Stage::Authenticated => {
+            assert!(case.expected.rows.is_none());
+            let err = result.unwrap().await.unwrap_err();
+            refusal(&err, case.expected.error.as_ref().unwrap());
+            assert_eq!(
+                case.expected.retrievals,
+                usize::from(case.expected.stage == Stage::Authenticated)
+            );
+        }
+    }
+    assert_eq!(
+        generates.load(Ordering::SeqCst),
+        0,
+        "reads never generate data keys"
+    );
+    assert_eq!(
+        retrieves.load(Ordering::SeqCst),
+        case.expected.retrievals,
+        "retrieval stage"
+    );
 }

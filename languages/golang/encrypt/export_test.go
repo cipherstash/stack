@@ -201,34 +201,21 @@ func DeterministicGuest() ([]byte, error) {
 	return wasm, err
 }
 
-// OpenTreeForTest accepts stored tree shapes that record.Sealed cannot express.
-// It uses the normal guest export, transport codec and keyset options. The
-// returned plaintext transport buffer is wiped after decoding, as in Open.
-func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree any, plan *record.Plan, expected string) (any, error) {
-	encodedTree, err := marshalCipherText(tree)
+// OpenTreeForTest accepts stored shapes that record.Sealed cannot express,
+// while preserving Cipher validation, extension, context and production decoding.
+func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan) ([]record.Source, error) {
+	if cph == nil {
+		return nil, fmt.Errorf("%w: Open on a nil *Cipher", ErrEncoding)
+	}
+	p, err := cph.plan(plan)
 	if err != nil {
 		return nil, err
 	}
-	encodedPlan, err := vcffi.Marshal(plan.Wire())
-	if err != nil {
-		return nil, err
-	}
-	opts, err := vcffi.Marshal(options(cph.keyset, expected))
-	if err != nil {
-		return nil, err
-	}
-	out, err := cph.client.callKMS(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
-		return inst.call(ctx, inst.decryptRecord, buf(encodedTree), buf(encodedPlan), buf(opts))
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer wipe(out)
-	return vcffi.Unmarshal(out)
+	return cph.client.openTree(ctx, cph.keyset, cph.context, p, tree)
 }
 
-// OpenTreeForTest asks an uninitialised guest to run its normal read preflight.
-// A valid request reaches ErrState; an invalid one must fail before that point.
-func (k *Checker) OpenTreeForTest(ctx context.Context, tree any, plan *record.Plan, expected string) (any, error) {
-	return k.c.DefaultKeyset().OpenTreeForTest(ctx, tree, plan, expected)
+// OpenTreeForTest deliberately bypasses host plan validation to observe the
+// uninitialised guest's preflight, including plans the host refuses earlier.
+func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan, expected string) ([]record.Source, error) {
+	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, plan, tree)
 }

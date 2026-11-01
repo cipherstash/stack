@@ -1,6 +1,6 @@
 # Record read profile
 
-`record-reads-v1` adds 26 shared cases in `v1/reads.json` for stored record
+`record-reads-v1` adds shared cases in `v1/reads.json` for stored record
 shapes, authenticated type checks and context preflight. It fixes the resolver
 to `NoTargets`. It is experimental and covers native Rust and Go WASI.
 
@@ -35,8 +35,9 @@ or Go's logical provider calls.
 
 `check_error` independently describes `record::check_record`, which needs no
 cipher. An absent `check_error` requires acceptance. The Go guest runs this
-check before looking up its cipher state. Both an uninitialised guest and an
-active guest execute each case: preflight errors must have the specified
+check before looking up its cipher state. Both an uninitialised guest and a
+configured cipher execute each case (subject to the host context refusal
+described below): guest preflight errors must have the specified
 diagnostic in either; accepted shapes must reach `ErrState` without a cipher.
 Consequently, a concealed type mismatch must pass preflight and fail only when
 the active guest opens it.
@@ -44,7 +45,9 @@ the active guest opens it.
 The Go runner uses a test-only entry point to the existing `se_decrypt_record`
 export. This permits shapes the host's `record.Sealed` type cannot express,
 including a passthrough directly under `c`. It uses the binding's existing
-tree codec, options and transport-buffer cleanup. Cases marked `adapter` also
+tree codec, Cipher validation/context/extension, production decoding and
+transport-buffer cleanup. Only the uninitialised checker deliberately bypasses
+host plan checks to observe the guest boundary. Cases marked `adapter` also
 run the normal `Cipher.Open` path; they retain their original stored shape.
 This does not certify generated SDK mappings.
 
@@ -69,7 +72,11 @@ This does not certify generated SDK mappings.
 - A static-context plan cannot also take a call context. Native `check_record`
   and the guest report `dynamic_record` with reason `refused`; the native pending
   opener reports `plan_two_context_sources`, naming the plan and the call.
-  The corpus records both existing diagnostics explicitly.
+  The corpus records both engine diagnostics explicitly. Go's configured
+  `Cipher.Context(...).Open` refuses this combination earlier in `Cipher.plan`
+  with `ErrEncoding`. The case also exercises that host refusal through both
+  `Open` and the validated tree hook; it does not require its English wording
+  or the absence of a diagnostic.
 
 Context-mismatch diagnostic payloads expose only stored descriptor length and
 part count, not its value. Go diagnostic numeric metadata is compared as JSON
@@ -103,3 +110,16 @@ composition or cryptographic tampering case.
 No existing tests are removed. Python and TypeScript runners, EQL/JSON read
 shapes, provider failures, version compatibility and runtime artifact exchange
 remain follow-up work.
+
+Opened row order follows the input batch. Within a row the engine emits fields
+in declaration order. Both runners
+construct declarations with the context field first, followed by recoverable
+fields. Native expected frames use that order; Go's shared production decoder validates it
+before converting objects to maps. `context_field_name` may override the default
+`tenant` name when `context_field` is true; a `zone` case prevents lexical object
+ordering from masquerading as declaration ordering.
+
+Both runners require `context_field`, `adapter`, and `mutation.row` (including
+explicit false/zero values), reject empty supplied `expected_context`, and reject
+contradictory stage, check-error and retrieval-count expectations. The Rust runner
+collects per-case failures so later cases still execute after an earlier failure.
