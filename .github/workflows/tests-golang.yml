@@ -152,11 +152,13 @@ jobs:
 
       # Native EQL conformance uses the EQL workspace's toolchain. Install it
       # before root setup, so ordinary guest commands retain the root pin.
+      # Its local DATABASE_URL must not enable database tests in this job.
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
           install: true
           working_directory: packages/eql
+          env: false
           cache: true
           cache_key_prefix: mise-v1-ubuntu-2204
 

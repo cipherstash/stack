@@ -153,6 +153,15 @@ describe('required EQL/JSON conformance', () => {
 
   it('runs both required lanes in CI and retains reports with SQL and engine identity', () => {
     const workflow = readWorkflow('.github/workflows/tests-golang.yml')
+    const eqlSetup = workflow.jobs['wasi-check'].steps.find(
+      (step) =>
+        step.uses?.startsWith('jdx/mise-action@') &&
+        step.with?.working_directory === 'packages/eql',
+    )
+    // Installing the EQL tools must not export its local DATABASE_URL into
+    // the hermetic Go job, which has no PostgreSQL service.
+    expect(eqlSetup).toBeDefined()
+    expect(eqlSetup.with.env).toBe(false)
     for (const task of ['test:conformance:eql', 'go:test:postgres']) {
       const jobs = Object.values(workflow.jobs).filter((job) =>
         job.steps?.some((step) => step.run === `mise run ${task}`),
