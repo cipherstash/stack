@@ -34,6 +34,19 @@ const readRepo = (relPath) => readFileSync(join(REPO_ROOT, relPath), 'utf8')
 const ROOT_MISE = 'mise.toml'
 const IMPORTED_WORKFLOW_DIR = '.github/imported-workflows'
 
+describe('the test toolchain installs from a shared mise cache', () => {
+  it('selects the prebuilt cargo-binstall before installing cargo tools', () => {
+    // EQL installs cargo-binstall. A restored shim with no selected version
+    // makes mise's cargo backend fail instead of falling back to cargo install.
+    const tools = readRepo('mise.test.toml')
+      .split(/^\[tools\]\s*$/m)[1]
+      .split(/^\[/m)[0]
+    expect(tools).toMatch(/^"cargo:cargo-nextest"\s*=/m)
+    expect(tools).toMatch(/^"cargo-binstall"\s*=\s*"\d+\.\d+\.\d+"\s*$/m)
+    expect(tools).not.toMatch(/^"cargo:cargo-binstall"\s*=/m)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // The task graph
 // ---------------------------------------------------------------------------
