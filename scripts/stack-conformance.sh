@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [[ -n "${STACK_CONFORMANCE_UPDATE:-}" ]]; then
+if [[ -n "${STACK_CONFORMANCE_UPDATE+x}" || -n "${STACK_ENCRYPT_UPDATE_FIXTURES+x}" ]]; then
   echo 'Conformance checks must not update frozen artifacts.' >&2
   exit 1
 fi
@@ -18,11 +18,11 @@ fi
 artifacts=$(mktemp -d)
 trap 'rm -rf "$artifacts"' EXIT
 
-mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance
+mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test value_kinds --test query_operators
 (
   cd languages/golang
   STACK_CONFORMANCE_OUTPUT="$artifacts/go.json" CGO_ENABLED=0 \
-    go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance|TestRuntimeConformance|TestReadConformance)$' ./encrypt
+    go test -count=1 -v -run '^(TestStackConformance|TestDeclarationConformance|TestRuntimeConformance|TestReadConformance|TestFixtureConformanceRequiresGuest|TestGeneratedCodeOpensTheRustValueKindsFixture|TestQueryTermsAreTheRustFixtures|TestVerifyIsTheRustFixtures|TestTargetLimitIsTheRustFixtures|TestGeneratedQueriesAreTheRustFixtures|TestAMatchesQueryVerifiesAndSizesAsTheRustFixtures)$' ./encrypt
 )
 test -s "$artifacts/go.json"
 STACK_CONFORMANCE_INPUT="$artifacts/go.json" mise x --env test -- \

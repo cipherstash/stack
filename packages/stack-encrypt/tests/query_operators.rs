@@ -365,9 +365,10 @@ fn fixture_path() -> PathBuf {
 /// `STACK_ENCRYPT_UPDATE_FIXTURES=1` it is written first.
 #[tokio::test]
 async fn the_committed_query_fixture_is_what_the_engine_derives() {
+    let update = common::fixture_updates_requested();
     let now = derived().await;
     let path = fixture_path();
-    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+    if update {
         let mut text = serde_json::to_string_pretty(&now).expect("serialise");
         text.push('\n');
         std::fs::write(&path, text).expect("write the fixture");

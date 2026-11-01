@@ -19,6 +19,17 @@ use stack_kms::{
 };
 use uuid::Uuid;
 
+/// Fixture regeneration is an explicit maintenance operation, never evidence
+/// for a required conformance run. Check before deriving or writing any fixture.
+pub fn fixture_updates_requested() -> bool {
+    let update = std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some();
+    assert!(
+        !update || std::env::var("STACK_CONFORMANCE_REQUIRED").as_deref() != Ok("1"),
+        "conformance checks must not update frozen fixtures"
+    );
+    update
+}
+
 /// A cipher over the deterministic fake source. The fake index key is
 /// deterministic per keyset, so two separately built ciphers stand in for the
 /// write path and a query path in another process.

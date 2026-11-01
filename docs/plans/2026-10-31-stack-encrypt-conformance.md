@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: scalar, declaration, initial runtime and read slices implemented; the complete contract is not frozen.
+Date: 2026-10-31. Status: scalar, declaration, initial runtime and read slices implemented; existing value-kind and query-operator fixtures enrolled. The complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -145,10 +145,36 @@ Local validation passes for all four profiles, fresh scalar
 artifact exchange, Rust clippy/formatting, Go lint, Biome and the CI wiring checks.
 The deterministic guest is reused from the unchanged parent engine.
 
-Next, enroll the existing wider value-kind and operator fixtures under named
-requirements, then extend context composition and EQL/JSON operation profiles.
+The fixture checkpoint below enrolls the existing wider value-kind and operator
+fixtures. Next, extend context composition and EQL/JSON operation profiles.
 Repeated-key and malformed-leaf cases need an explicit raw-byte transport path.
 Python and TypeScript consumers remain pending.
+
+## Value-kind and query-operator checkpoint
+
+The next slice is on `feat/stack-encrypt-value-query-conformance`, stacked on
+[PR #1462](https://github.com/cipherstash/stack/pull/1462). The
+[fixture contract](../../conformance/stack-encrypt/fixture-contract.md) and
+[enrollment index](../../conformance/stack-encrypt/v1/fixture-profiles.json)
+assign stable requirement IDs to the existing `value_kinds.json` and
+`query_operators.json` evidence. The conformance task directly runs their
+existing Rust and Go tests. Typed Rust comparisons, generated Go methods,
+match verification and fetch sizing remain intact.
+
+The fixture files stay in place with no duplicated expectations. CI guards
+the requirement-to-test mapping and test selection. Required Go runs fail if
+the guest is missing; required checks cannot regenerate frozen fixtures.
+This is consolidation of inventory and execution, not removal of assertions.
+
+Local validation passes for the expanded conformance command, fresh scalar
+artifact exchange, missing-guest regressions, Rust clippy/formatting, Go lint,
+Biome and CI wiring checks. Both enrolled Rust writers refuse regeneration in
+required mode, and the frozen fixture files remain unchanged.
+
+The coverage is representative, not a complete kind/operator boundary matrix.
+Shared operator refusals, wider fresh artifact exchange, Python/TypeScript
+consumers and version matrices remain open. The next implementation slice is
+shared context-composition vectors, followed by EQL/JSON operation profiles.
 
 ## Follow-up slices
 

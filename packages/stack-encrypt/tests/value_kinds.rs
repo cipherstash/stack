@@ -448,6 +448,7 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
 /// and the file written.
 #[tokio::test]
 async fn the_committed_fixture_opens_and_its_terms_are_todays() {
+    let update = common::fixture_updates_requested();
     let cipher = deterministic_cipher(SEED).await;
     let keyset = cipher.default_keyset();
     let plan = data_plan();
@@ -466,7 +467,7 @@ async fn the_committed_fixture_opens_and_its_terms_are_todays() {
             .collect()
     };
 
-    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+    if update {
         let record = json_of_record(seal(&cipher, &plan).await);
         let mut queries = Vec::new();
         for (field, text, input) in folded_queries() {

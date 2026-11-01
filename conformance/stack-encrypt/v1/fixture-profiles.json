@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "record-value-kinds-v1",
+      "fixture": "packages/stack-encrypt/tests/fixtures/value_kinds.json",
+      "rust_binary": "value_kinds",
+      "go_source": "languages/golang/encrypt/value_kinds_test.go",
+      "requirements": [
+        {
+          "id": "values.typed-frames",
+          "rust_tests": [
+            "the_committed_fixture_opens_and_its_terms_are_todays"
+          ],
+          "go_tests": ["TestGeneratedCodeOpensTheRustValueKindsFixture"]
+        },
+        {
+          "id": "values.frozen-open",
+          "rust_tests": [
+            "the_committed_fixture_opens_and_its_terms_are_todays"
+          ],
+          "go_tests": ["TestGeneratedCodeOpensTheRustValueKindsFixture"]
+        },
+        {
+          "id": "values.stored-terms",
+          "rust_tests": [
+            "every_new_kind_seals_opens_and_queries_as_the_typed_path",
+            "the_committed_fixture_opens_and_its_terms_are_todays"
+          ],
+          "go_tests": ["TestGeneratedCodeOpensTheRustValueKindsFixture"]
+        },
+        {
+          "id": "values.normalized-queries",
+          "rust_tests": [
+            "every_new_kind_seals_opens_and_queries_as_the_typed_path",
+            "the_committed_fixture_opens_and_its_terms_are_todays"
+          ],
+          "go_tests": ["TestGeneratedCodeOpensTheRustValueKindsFixture"]
+        }
+      ]
+    },
+    {
+      "id": "record-query-operators-v1",
+      "fixture": "packages/stack-encrypt/tests/fixtures/query_operators.json",
+      "rust_binary": "query_operators",
+      "go_source": "languages/golang/encrypt/query_test.go",
+      "requirements": [
+        {
+          "id": "queries.term-contract",
+          "rust_tests": [
+            "the_committed_query_fixture_is_what_the_engine_derives"
+          ],
+          "go_tests": [
+            "TestQueryTermsAreTheRustFixtures",
+            "TestGeneratedQueriesAreTheRustFixtures"
+          ]
+        },
+        {
+          "id": "queries.match-verification",
+          "rust_tests": [
+            "the_committed_query_fixture_is_what_the_engine_derives",
+            "the_fixture_pins_both_outcomes"
+          ],
+          "go_tests": [
+            "TestVerifyIsTheRustFixtures",
+            "TestAMatchesQueryVerifiesAndSizesAsTheRustFixtures"
+          ]
+        },
+        {
+          "id": "queries.fetch-limits",
+          "rust_tests": [
+            "the_committed_query_fixture_is_what_the_engine_derives",
+            "the_fixture_pins_both_outcomes"
+          ],
+          "go_tests": [
+            "TestTargetLimitIsTheRustFixtures",
+            "TestAMatchesQueryVerifiesAndSizesAsTheRustFixtures"
+          ]
+        }
+      ]
+    }
+  ]
+}
