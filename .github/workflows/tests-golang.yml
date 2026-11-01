@@ -146,6 +146,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # Native EQL conformance uses the EQL workspace's toolchain. Install it
+      # before root setup, so ordinary guest commands retain the root pin.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: packages/eql
+          cache: true
+          cache_key_prefix: mise-v1-ubuntu-2204
+
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
@@ -405,6 +415,8 @@ jobs:
   # v4 bundle under packages/eql's mise config, which pins its own Rust; the
   # guests are the ones wasi-check built and checked.
   eql-postgres:
+    env:
+      MISE_ENV: test
     name: Go rows and queries in PostgreSQL with EQL v4
     needs: wasi-check
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -472,16 +484,11 @@ jobs:
 
       # Builds the bundle from the tree, installs it, and runs the tests; a
       # skip fails the task, so a missing guest or database cannot pass.
-      - name: Go rows and queries through EQL v4
-        env:
-          EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
-        run: mise run go:test:postgres
-
-      - name: Required EQL and JSON PostgreSQL conformance
+      - name: Go rows, queries and required JSON conformance through EQL v4
         env:
           EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
           STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/eql-conformance-postgres
-        run: mise run test:conformance:eql:postgres
+        run: mise run go:test:postgres
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

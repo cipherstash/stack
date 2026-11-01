@@ -122,13 +122,14 @@ function command(program, args, { capture = false, ...options } = {}) {
   return result.stdout
 }
 
-function cargo(args, capture = false) {
+function cargo(args, capture = false, workspace = '.') {
   return command('mise', ['x', '--env', 'test', '--', 'cargo', ...args], {
     capture,
+    cwd: join(root, workspace),
   })
 }
 
-function metadata(manifest) {
+function metadata(workspace) {
   return JSON.parse(
     cargo(
       [
@@ -138,9 +139,10 @@ function metadata(manifest) {
         '--format-version',
         '1',
         '--manifest-path',
-        manifest,
+        'Cargo.toml',
       ],
       true,
+      workspace,
     ),
   )
 }
@@ -164,10 +166,9 @@ export function main(args = process.argv.slice(2)) {
     profile: 'eql-json-v1',
     lane,
     language,
-    engine: metadata('Cargo.toml').packages.find(
-      (p) => p.name === 'stack-encrypt',
-    ).version,
-    eql_bindings: metadata('packages/eql/Cargo.toml').packages.find(
+    engine: metadata('.').packages.find((p) => p.name === 'stack-encrypt')
+      .version,
+    eql_bindings: metadata('packages/eql').packages.find(
       (p) => p.name === 'eql-bindings',
     ).version,
     corpus_sha256: hash('conformance/stack-encrypt/v1/eql-json.json'),
@@ -197,6 +198,7 @@ export function main(args = process.argv.slice(2)) {
         'Set EQL_TEST_DATABASE_URL to a disposable PostgreSQL database',
       )
     const bundle = 'packages/eql/release/cipherstash-encrypt-v4.sql'
+    report.expected_schema = 'eql_v4'
     report.sql_bundle_sha256 = hash(bundle)
     // Install exactly the bytes whose identity is recorded, into the same
     // database both runners use. Never report a merely adjacent bundle's hash.
@@ -211,7 +213,7 @@ export function main(args = process.argv.slice(2)) {
           '-v',
           'ON_ERROR_STOP=1',
           '-c',
-          "select json_build_object('postgres', current_setting('server_version'), 'eql', eql_v4.version(), 'schema', 4)",
+          "select json_build_object('postgres', current_setting('server_version'), 'eql', eql_v4.version(), 'schema', (select nspname from pg_namespace where oid = to_regnamespace('eql_v4')))",
         ],
         { capture: true },
       ),
@@ -224,7 +226,7 @@ export function main(args = process.argv.slice(2)) {
       const common = [
         '--locked',
         '--manifest-path',
-        `${suite.workspace}/Cargo.toml`,
+        'Cargo.toml',
         '-p',
         suite.package,
         '--test',
@@ -234,18 +236,26 @@ export function main(args = process.argv.slice(2)) {
         lane === 'postgres' ? 'only' : 'default',
       ]
       const inventory = JSON.parse(
-        cargo(['nextest', 'list', ...common, '--message-format', 'json'], true),
+        cargo(
+          ['nextest', 'list', ...common, '--message-format', 'json'],
+          true,
+          suite.workspace,
+        ),
       )
       checkRustInventory(inventory, suite)
       // Run the whole original suite, retaining unindexed regression and property
       // tests. PostgreSQL tests are intentionally #[ignore] outside this lane.
-      cargo([
-        'nextest',
-        'run',
-        ...common,
-        '--success-output',
-        lane === 'postgres' ? 'immediate' : 'never',
-      ])
+      cargo(
+        [
+          'nextest',
+          'run',
+          ...common,
+          '--success-output',
+          lane === 'postgres' ? 'immediate' : 'never',
+        ],
+        false,
+        suite.workspace,
+      )
     } else {
       const pattern = `^(${[...suite.tests].sort().join('|')})$`
       const output = command(

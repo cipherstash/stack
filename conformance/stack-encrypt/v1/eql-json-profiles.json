@@ -221,6 +221,46 @@
         ],
         "go-postgres": ["TestJSONPredicateMatchInPostgres"]
       }
+    },
+    {
+      "id": "json-extraction-v1",
+      "evidence": {
+        "engine-reads": [
+          "given_the_entry_arrow_returned::the_entry_at_the_path_opens_to_its_scalar"
+        ],
+        "go": ["TestJSONSelectorReadsOpenAgainstTheirRequest"],
+        "postgres": [
+          "generated::given_generated_documents_in_postgres::arrow_opens_a_leaf_to_the_value_jsonb_holds"
+        ]
+      }
+    },
+    {
+      "id": "json-subtree-v1",
+      "evidence": {
+        "eql-record": ["reads_open_against_the_request_that_prepared_them"],
+        "engine-reads": [
+          "given_the_rows_of_a_read::the_honest_rows_open_to_the_nodes_value_in_any_order"
+        ],
+        "postgres": [
+          "postgres_every_subtree_read_answers_as_jsonb_does",
+          "postgres_wildcard_reads_answer_as_jsonb_path_query"
+        ],
+        "go-postgres": ["TestJSONDocumentsQueryAndReadInPostgres"]
+      }
+    },
+    {
+      "id": "json-tamper-v1",
+      "evidence": {
+        "engine-reads": [
+          "given_the_rows_of_a_read::a_truncated_subtree_is_refused_by_the_cascade",
+          "given_the_rows_of_a_read::rows_of_two_documents_are_refused"
+        ],
+        "postgres": [
+          "postgres_hostile_answers_are_refused_by_the_client",
+          "postgres_reads_never_answer_wrongly_under_tampering"
+        ],
+        "go": ["TestJSONDocumentsDoNotOpenUnderAnotherColumn"]
+      }
     }
   ]
 }

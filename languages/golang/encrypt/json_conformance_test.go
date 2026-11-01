@@ -21,6 +21,7 @@ type jsonConformanceCorpus struct {
 		Reason    string          `json:"reason"`
 		Construct string          `json:"construct"`
 		At        int             `json:"at"`
+		AtText    string          `json:"at_text"`
 	} `json:"predicate_refusals"`
 }
 
