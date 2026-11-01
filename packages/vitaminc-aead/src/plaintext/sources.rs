@@ -273,13 +273,15 @@ where
 /// walks as the borrow it wraps, exactly as `&Protected<T>` does: the
 /// same depth, fixed type and visit, so a fixed-width `None` behind it is
 /// still a typed null. Nothing is cloned or copied out, and the walk wipes
-/// nothing: the owner the borrow came from still does the wiping, whether
-/// the walk finishes or not.
+/// nothing, whether it finishes or not. Wiping is up to whatever owns the
+/// borrowed value: a `Protected`, `Equatable`, `Exportable` or `Locked`
+/// owner wipes it when it drops, but a `ProtectedRef` lent by a bare
+/// `[u8; N]`, `str` or `Cow<str>` has nothing behind it that ever wipes.
 ///
-/// `T` may be unsized: `ProtectedRef<'_, [u8]>` is a byte leaf. Note that
-/// `str::as_protected_ref` gives a `ProtectedRef<'_, [u8]>`, so a string
-/// borrowed that way walks as bytes, not text; borrow a
-/// `Protected<String>` for a text leaf.
+/// `T` may be unsized. `ProtectedRef<'_, str>` is a text leaf and
+/// `ProtectedRef<'_, [u8]>` a byte leaf. A `str` lends either, so
+/// annotate which one you mean: a string sealed as bytes reads back only
+/// as bytes, never as a `String`.
 impl<'a, T: ?Sized> Encrypt for ProtectedRef<'a, T>
 where
     &'a T: Encrypt,
@@ -297,9 +299,11 @@ impl<'a, T: ?Sized> Encrypt for &ProtectedRef<'a, T>
 where
     &'a T: Encrypt,
 {
-    const DEPTH: Option<usize> = <&'a T as Encrypt>::DEPTH;
-    const FIXED: Option<FixedType> = <&'a T as Encrypt>::FIXED;
+    const DEPTH: Option<usize> = <ProtectedRef<'a, T> as Encrypt>::DEPTH;
+    const FIXED: Option<FixedType> = <ProtectedRef<'a, T> as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        // `ProtectedRef` is not `Copy`, so walk the borrow it wraps, which
+        // is what the owned impl does.
         self.risky_ref().visit(sink)
     }
 }
@@ -811,10 +815,16 @@ mod tests {
         same!(vec![vec![1i64], vec![]]);
         same!(vec![Some(1u16), None]);
 
-        // An unsized borrow: `str` lends its bytes as a `ProtectedRef<[u8]>`,
-        // so it walks as a byte leaf, not text.
+        // Unsized borrows: a `str` lends itself as text or as bytes, and the
+        // caller has to say which.
+        let text: ProtectedRef<'_, str> = "pw".as_protected_ref();
+        assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
+        let cow = std::borrow::Cow::Borrowed("pw");
+        let text: ProtectedRef<'_, str> = cow.as_protected_ref();
+        assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
+        let bytes: ProtectedRef<'_, [u8]> = "pw".as_protected_ref();
         assert_eq!(
-            record("pw".as_protected_ref()).expect("records"),
+            record(bytes).expect("records"),
             [scalar(Owned::Bytes(b"pw".to_vec()))]
         );
 

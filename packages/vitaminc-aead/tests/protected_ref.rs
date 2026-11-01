@@ -4,7 +4,7 @@
 //! back. Sealing goes through a cipher that keeps the plaintext in the
 //! clear, so a leaf's length is its plaintext's.
 
-use vitaminc_aead::{decrypt, encrypt, tags, CipherText, Context, Decrypt, Encrypt};
+use vitaminc_aead::{decrypt, encrypt, tags, CipherText, Context, Decrypt, Encrypt, Node};
 use vitaminc_protected::{AsProtectedRef, Controlled, Protected, ProtectedRef};
 
 #[derive(Debug)]
@@ -135,24 +135,28 @@ struct ProfileRead {
     born: Option<i32>,
 }
 
+/// The lengths of a sealed record's leaves, entry by entry.
+fn leaf_lengths(node: Node<Leaf>) -> Vec<(String, usize)> {
+    let CipherText::Map(entries) = node else {
+        panic!("not a map: {node:?}");
+    };
+    entries
+        .into_iter()
+        .map(|(key, value)| match value {
+            CipherText::Single(leaf) => (key, leaf.plaintext.len()),
+            other => panic!("{key}: not one leaf: {other:?}"),
+        })
+        .collect()
+}
+
 /// A derived struct of protected borrows seals its optional field at the
 /// same length either way, and reads back.
+// The borrows are the point: each one picks the reference impl.
+#[allow(clippy::needless_borrows_for_generic_args)]
 #[test]
 fn a_derived_struct_of_protected_refs_round_trips() {
     let name = Protected::new(String::from("Ada"));
     let born = Protected::new(1815i32);
-    let lengths = |p: Profile<'_>| -> Vec<(String, usize)> {
-        let CipherText::Map(entries) = encrypt(p, &Mock, "ctx").expect("encrypts") else {
-            panic!("not a map");
-        };
-        entries
-            .into_iter()
-            .map(|(key, value)| match value {
-                CipherText::Single(leaf) => (key, leaf.plaintext.len()),
-                other => panic!("{key}: not one leaf: {other:?}"),
-            })
-            .collect()
-    };
     let present = || Profile {
         name: name.as_protected_ref(),
         born: Some(born.as_protected_ref()),
@@ -161,7 +165,15 @@ fn a_derived_struct_of_protected_refs_round_trips() {
         name: name.as_protected_ref(),
         born: None,
     };
-    assert_eq!(lengths(present()), lengths(absent()));
+    let owned = |p: Profile<'_>| leaf_lengths(encrypt(p, &Mock, "ctx").expect("encrypts"));
+    assert_eq!(owned(present()), owned(absent()));
+    // By reference, each field is walked as `&ProtectedRef` (or
+    // `&Option<ProtectedRef>`), which must seal exactly as the owned walk.
+    let by_ref = |p: &Profile<'_>| leaf_lengths(encrypt(p, &Mock, "ctx").expect("encrypts"));
+    assert_eq!(by_ref(&present()), owned(present()));
+    assert_eq!(by_ref(&absent()), owned(absent()));
+    let read: ProfileRead = round_trip(&absent());
+    assert_eq!(read.born, None);
 
     let read: ProfileRead = round_trip(present());
     assert_eq!(
@@ -179,4 +191,36 @@ fn a_derived_struct_of_protected_refs_round_trips() {
             born: None
         }
     );
+}
+
+/// A `Locked` value lends a `ProtectedRef` too, and seals as the same
+/// value held in a `Protected`.
+#[test]
+fn a_locked_value_is_a_source_through_its_protected_ref() {
+    use vitaminc_protected::Locked;
+
+    let locked = Locked::new(Some(1815u32)).expect("allocates");
+    let protected = Protected::new(Some(1815u32));
+    assert_eq!(sealed(locked.as_protected_ref()), sealed(&protected));
+    let read: Option<u32> = round_trip(locked.as_protected_ref());
+    assert_eq!(read, Some(1815));
+
+    let locked = Locked::new(None::<u32>).expect("allocates");
+    assert_eq!(
+        sealed(locked.as_protected_ref()).len(),
+        sealed(&protected).len(),
+        "a locked None still pads"
+    );
+}
+
+/// A borrowed string seals as text only when the caller asks for text.
+#[test]
+fn a_borrowed_str_seals_as_what_the_caller_asks_for() {
+    let text: ProtectedRef<'_, str> = "pw".as_protected_ref();
+    let read: String = round_trip(text);
+    assert_eq!(read, "pw");
+
+    let bytes: ProtectedRef<'_, [u8]> = "pw".as_protected_ref();
+    let read: Vec<u8> = round_trip(bytes);
+    assert_eq!(read, b"pw");
 }
