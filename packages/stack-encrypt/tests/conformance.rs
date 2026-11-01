@@ -7,9 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
+use common::conformance::{refusal, stored_outputs, value, Input};
 use common::frames::{frame, object};
 use common::{hex, unhex};
-use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use stack_encrypt::dynamic::{
@@ -45,14 +45,6 @@ struct Case {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Input {
-    #[serde(rename = "type")]
-    kind: String,
-    text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExpectedError {
     code: String,
     reason: String,
@@ -79,22 +71,6 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../conformance/stack-encrypt/v1")
 }
 
-fn value(input: &Input) -> ValueFrame {
-    match input.kind.as_str() {
-        "int32" => frame(input.text.parse::<i32>().expect("i32")),
-        "int64" => frame(input.text.parse::<i64>().expect("i64")),
-        "uint64" => frame(input.text.parse::<u64>().expect("u64")),
-        "bool" => frame(input.text.parse::<bool>().expect("bool")),
-        "string" => frame(input.text.clone()),
-        "null" => {
-            assert!(input.text.is_empty());
-            use vitaminc_aead::plaintext::{Physical, Raw};
-            frame(Raw(None, Physical::Null))
-        }
-        other => panic!("unsupported input kind {other}"),
-    }
-}
-
 fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
     let mut context = corpus.context.clone();
     context.push(corpus.field.clone());
@@ -118,23 +94,6 @@ fn stored(corpus: &Corpus, artifact: &Artifact) -> StackCipherText {
             ),
         ]),
     )])
-}
-
-fn stored_equality(tree: &StackCipherText, field: &str) -> Vec<u8> {
-    let CipherText::Map(fields) = tree else {
-        panic!("expected record")
-    };
-    let (_, CipherText::Map(outputs)) = fields.iter().find(|(name, _)| name == field).unwrap()
-    else {
-        panic!("expected outputs")
-    };
-    let (_, CipherText::Passthrough(term)) = outputs.iter().find(|(name, _)| name == "eq").unwrap()
-    else {
-        panic!("expected equality bytes")
-    };
-    vitaminc_aead_frame::serde::from_slice::<&[u8]>(&term.0)
-        .unwrap()
-        .to_vec()
 }
 
 // Exercise the owned scalar API independently of dynamic record lowering.
@@ -265,19 +224,7 @@ async fn shared_record_scalar_profile() {
                 Err(error) => error,
                 Ok(_) => panic!("{}: expected preflight rejection", case.id),
             };
-            assert_eq!(
-                error.code().unwrap().to_string(),
-                expected.code,
-                "{}",
-                case.id
-            );
-            assert_eq!(
-                error.reason().unwrap().as_str(),
-                expected.reason,
-                "{}",
-                case.id
-            );
-            assert_eq!(error.field(), Some(corpus.field.as_str()));
+            refusal(&error, &expected.code, &expected.reason, &corpus.field);
             assert_eq!(generates.load(Ordering::SeqCst), 0);
             assert_eq!(retrieves.load(Ordering::SeqCst), 0);
             continue;
@@ -289,7 +236,7 @@ async fn shared_record_scalar_profile() {
             .unwrap()
             .await
             .unwrap();
-        let stored_term = stored_equality(&fresh, &corpus.field);
+        let stored_term = stored_outputs(&fresh, &corpus.field).unwrap().0;
         let opened = record::decrypt(Scope::Keyset(keyset.clone()), fresh, &plan, None)
             .unwrap()
             .await

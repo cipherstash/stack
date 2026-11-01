@@ -33,12 +33,9 @@ type conformanceCorpus struct {
 }
 
 type conformanceCase struct {
-	ID    string `json:"id"`
-	Kind  string `json:"kind"`
-	Input struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"input"`
+	ID            string           `json:"id"`
+	Kind          string           `json:"kind"`
+	Input         conformanceInput `json:"input"`
 	ExpectedError *struct {
 		Code   string `json:"code"`
 		Reason string `json:"reason"`
@@ -75,15 +72,20 @@ func readConformanceJSON(t *testing.T, path string, out any) {
 	}
 }
 
-func conformanceValue(t *testing.T, c conformanceCase) any {
+type conformanceInput struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func conformanceValue(t *testing.T, input conformanceInput) any {
 	t.Helper()
-	switch c.Input.Type {
+	switch input.Type {
 	case "int32", "int64":
 		bits := 64
-		if c.Input.Type == "int32" {
+		if input.Type == "int32" {
 			bits = 32
 		}
-		n, err := strconv.ParseInt(c.Input.Text, 10, bits)
+		n, err := strconv.ParseInt(input.Text, 10, bits)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,25 +94,31 @@ func conformanceValue(t *testing.T, c conformanceCase) any {
 		}
 		return n
 	case "uint64":
-		n, err := strconv.ParseUint(c.Input.Text, 10, 64)
+		n, err := strconv.ParseUint(input.Text, 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	case "float64":
+		n, err := strconv.ParseFloat(input.Text, 64)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return n
 	case "bool":
-		if c.Input.Text != "true" && c.Input.Text != "false" {
+		if input.Text != "true" && input.Text != "false" {
 			t.Fatal("bool must be true or false")
 		}
-		return c.Input.Text == "true"
+		return input.Text == "true"
 	case "string":
-		return c.Input.Text
+		return input.Text
 	case "null":
-		if c.Input.Text != "" {
+		if input.Text != "" {
 			t.Fatal("null has empty text")
 		}
 		return nil
 	default:
-		t.Fatalf("unsupported input type %q", c.Input.Type)
+		t.Fatalf("unsupported input type %q", input.Type)
 		return nil
 	}
 }
@@ -166,16 +174,10 @@ func TestStackConformance(t *testing.T) {
 			plan := &record.Plan{Context: corpus.Context, Fields: []record.Field{{
 				Name: corpus.Field, Kind: record.Kind(c.Kind), Outputs: []record.Output{record.Ciphertext, record.Equality},
 			}}}
-			input := conformanceValue(t, c)
+			input := conformanceValue(t, c.Input)
 			query, err := cipher.QueryTerm(ctx, plan, corpus.Field, "eq", input)
 			if c.ExpectedError != nil {
-				var diagnostic *encrypt.Diagnostic
-				if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &diagnostic) {
-					t.Fatalf("expected encoding diagnostic, got %v", err)
-				}
-				if diagnostic.Code != c.ExpectedError.Code || diagnostic.Reason() != c.ExpectedError.Reason || diagnostic.Field() != corpus.Field {
-					t.Fatalf("unexpected diagnostic: %s reason=%s field=%s", diagnostic.Code, diagnostic.Reason(), diagnostic.Field())
-				}
+				assertConformanceDiagnostic(t, err, c.ExpectedError.Code, c.ExpectedError.Reason, corpus.Field)
 				return
 			}
 			if c.Kind != c.Input.Type {
@@ -237,5 +239,16 @@ func TestStackConformance(t *testing.T) {
 		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func assertConformanceDiagnostic(t *testing.T, err error, code, reason, field string) {
+	t.Helper()
+	var diagnostic *encrypt.Diagnostic
+	if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &diagnostic) {
+		t.Fatalf("expected encoding diagnostic, got %v", err)
+	}
+	if diagnostic.Code != code || diagnostic.Reason() != reason || diagnostic.Field() != field {
+		t.Fatalf("unexpected diagnostic: %s reason=%s field=%s", diagnostic.Code, diagnostic.Reason(), diagnostic.Field())
 	}
 }
