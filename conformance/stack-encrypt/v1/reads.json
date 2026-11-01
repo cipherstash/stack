@@ -1103,6 +1103,30 @@
         }
       }
     },
-    {"id": "context-field-after-value-lexically", "write": {"kind": "int32", "null": ""}, "read": {"kind": "int32", "null": ""}, "context_field": true, "rows": [{"value": {"type": "int32", "text": "34"}, "zone": {"type": "string", "text": "tenants/acme"}}], "mutation": {"kind": "none", "row": 0}, "adapter": true, "expected": {"stage": "success", "retrievals": 1, "rows": [{"value": {"type": "int32", "text": "34"}, "zone": {"type": "string", "text": "tenants/acme"}}]}, "context_field_name": "zone"}
+    {
+      "id": "context-field-after-value-lexically",
+      "write": { "kind": "int32", "null": "" },
+      "read": { "kind": "int32", "null": "" },
+      "context_field": true,
+      "rows": [
+        {
+          "value": { "type": "int32", "text": "34" },
+          "zone": { "type": "string", "text": "tenants/acme" }
+        }
+      ],
+      "mutation": { "kind": "none", "row": 0 },
+      "adapter": true,
+      "expected": {
+        "stage": "success",
+        "retrievals": 1,
+        "rows": [
+          {
+            "value": { "type": "int32", "text": "34" },
+            "zone": { "type": "string", "text": "tenants/acme" }
+          }
+        ]
+      },
+      "context_field_name": "zone"
+    }
   ]
 }
