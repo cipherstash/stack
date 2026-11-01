@@ -37,6 +37,7 @@ struct Case {
 #[serde(deny_unknown_fields)]
 struct Vector {
     context_frame: String,
+    plan_context_frame: String,
     descriptor: String,
     aad: String,
     prf: String,
@@ -65,6 +66,12 @@ fn extension(input: &Input) -> DeclaredContext {
         _ => panic!("unsupported context part"),
     }
 }
+fn nest(head: ValueFrame, parts: &[Input]) -> ValueFrame {
+    parts
+        .iter()
+        .fold(head, |head, p| frame(vec![head, part(p)]))
+}
+
 fn context(case: &Case, field_only: bool) -> ValueFrame {
     let mut label = if field_only {
         vec![]
@@ -72,9 +79,7 @@ fn context(case: &Case, field_only: bool) -> ValueFrame {
         case.label.split('/').map(str::to_owned).collect::<Vec<_>>()
     };
     label.push("text".into());
-    case.parts
-        .iter()
-        .fold(frame(label), |head, p| frame(vec![head, part(p)]))
+    nest(frame(label), &case.parts)
 }
 fn plan(case: &Case) -> record::Plan {
     let mut fields = vec![];
@@ -83,12 +88,7 @@ fn plan(case: &Case) -> record::Plan {
         fields.push((
             "tenant",
             object(vec![
-                (
-                    "context",
-                    case.parts
-                        .iter()
-                        .fold(frame(vec!["tenant"]), |head, p| frame(vec![head, part(p)])),
-                ),
+                ("context", nest(frame(vec!["tenant"]), &case.parts)),
                 ("outputs", frame(vec!["passthrough"])),
                 ("type", frame("string")),
             ]),
@@ -204,6 +204,7 @@ async fn shared_context_composition() {
             .unwrap();
         let vector = Vector {
             context_frame: hex(context_frame.risky_ref()),
+            plan_context_frame: hex(context(&case, case.base == "field").risky_ref()),
             descriptor,
             aad,
             prf,
@@ -262,6 +263,7 @@ async fn shared_context_composition() {
         }
         let expected = if update { &vector } else { &baseline[&case.id] };
         assert_eq!(vector.context_frame, expected.context_frame);
+        assert_eq!(vector.plan_context_frame, expected.plan_context_frame);
         assert_eq!(vector.descriptor, expected.descriptor);
         assert_eq!(vector.aad, expected.aad);
         assert_eq!(vector.prf, expected.prf);
@@ -286,7 +288,12 @@ async fn shared_context_composition() {
         assert_eq!(plain, "hello");
 
         // Native public chains: repeated calls, not one preassembled extension.
-        if !case.parts.iter().any(|p| p.text.is_empty()) {
+        if case.parts.iter().any(|p| p.text.is_empty()) {
+            assert!(
+                NonEmpty::new(String::new()).is_err(),
+                "typed empty extension must refuse"
+            );
+        } else {
             let note = Note {
                 tenant: case.label.clone(),
                 text: "hello".into(),
@@ -304,7 +311,7 @@ async fn shared_context_composition() {
             for p in &case.parts {
                 chain = chain.extend(extension(p));
             }
-            // A no-op extension must not clear earlier calls (#1120).
+            // A no-op extension must not clear earlier calls.
             let mut row = chain.extend(()).await.unwrap();
             let field_plan = typed.field("text").unwrap();
             let mut query = cipher.query(stack_encrypt::op::Eq, "hello");
@@ -367,6 +374,7 @@ struct Boundaries {
     version: u32,
     profile: String,
     cases: Vec<Boundary>,
+    queries: Vec<QueryBoundary>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -376,7 +384,16 @@ struct Boundary {
     expected: String,
     mutation: String,
     outcome: String,
-    retrievals: usize,
+    native_retrievals: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueryBoundary {
+    id: String,
+    context: String,
+    outcome: String,
+    matches: bool,
 }
 
 #[tokio::test]
@@ -422,6 +439,23 @@ async fn shared_context_boundaries() {
         };
         match case.mutation.as_str() {
             "none" => {}
+            "ciphertext" => {
+                let CipherText::Map(fields) = batch.last_mut().unwrap() else {
+                    panic!("row")
+                };
+                let CipherText::Map(outputs) =
+                    &mut fields.iter_mut().find(|(k, _)| k == "text").unwrap().1
+                else {
+                    panic!("outputs")
+                };
+                let node = &mut outputs.iter_mut().find(|(k, _)| k == "c").unwrap().1;
+                let CipherText::Single(leaf) = node else {
+                    panic!("leaf")
+                };
+                let mut bytes = leaf.to_bytes();
+                *bytes.last_mut().unwrap() ^= 1;
+                *node = CipherText::Single(SealedValue::from_bytes(&bytes).unwrap());
+            }
             "tamper" | "empty" | "missing" => {
                 let CipherText::Map(fields) = batch.last_mut().expect("mutation requires a row")
                 else {
@@ -444,6 +478,71 @@ async fn shared_context_boundaries() {
             }
             _ => panic!("unknown mutation"),
         }
+        let typed_rows = batch
+            .iter()
+            .map(|row| {
+                let CipherText::Map(fields) = row else {
+                    panic!("row")
+                };
+                let mut values = stack_encrypt::plan::FieldValues::new();
+                for (name, node) in fields {
+                    let CipherText::Map(outputs) = node else {
+                        panic!("outputs")
+                    };
+                    for (output, node) in outputs {
+                        match (output.as_str(), node) {
+                            ("passthrough", CipherText::Passthrough(payload)) => {
+                                values.insert(
+                                    name,
+                                    vitaminc_aead_frame::serde::from_slice::<String>(&payload.0)
+                                        .unwrap(),
+                                );
+                            }
+                            ("c", CipherText::Single(leaf)) => {
+                                values.insert(
+                                    name,
+                                    StackCipherText::Single(
+                                        SealedValue::from_bytes(&leaf.to_bytes()).unwrap(),
+                                    ),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                values
+            })
+            .collect::<Vec<_>>();
+        let typed = Plan::fields()
+            .context_field(pick("tenant", |n: &Note| &n.tenant))
+            .encrypt_index(pick("text", |n: &Note| &n.text), Equality)
+            .build()
+            .unwrap();
+        retrieves.store(0, Ordering::SeqCst);
+        let mut open = cipher.open(typed_rows);
+        if !case.expected.is_empty() {
+            open = open.context(case.expected.as_str());
+        }
+        let typed_result = open.using(&typed).await;
+        assert_eq!(
+            typed_result.is_ok(),
+            case.outcome == "success",
+            "typed {}",
+            case.id
+        );
+        if let Ok(opened) = typed_result {
+            assert_eq!(opened.len(), case.tenants.len());
+            for (row, tenant) in opened.iter().zip(&case.tenants) {
+                assert_eq!(row.get::<String>("text").unwrap(), "hello");
+                assert_eq!(row.get::<String>("tenant").unwrap(), tenant);
+            }
+        }
+        assert_eq!(
+            retrieves.load(Ordering::SeqCst),
+            case.native_retrievals,
+            "typed {}",
+            case.id
+        );
         generates.store(0, Ordering::SeqCst);
         retrieves.store(0, Ordering::SeqCst);
         let expected = if case.expected.is_empty() {
@@ -458,7 +557,7 @@ async fn shared_context_boundaries() {
         match case.outcome.as_str() {
             "success" => assert_eq!(result.unwrap().risky_ref(), rows.risky_ref()),
             "mismatch" => assert_eq!(result.unwrap_err(), "stack_encrypt::context_mismatch"),
-            "authentication" => assert_eq!(result.unwrap_err(), "stack_encrypt::aead"),
+            "authentication" | "aead" => assert_eq!(result.unwrap_err(), "stack_encrypt::aead"),
             "shape" => {
                 let code = if case.mutation == "missing" {
                     "stack_encrypt::dynamic_record"
@@ -471,11 +570,44 @@ async fn shared_context_boundaries() {
         }
         assert_eq!(
             retrieves.load(Ordering::SeqCst),
-            case.retrievals,
+            case.native_retrievals,
             "{}",
             case.id
         );
         assert_eq!(generates.load(Ordering::SeqCst), 0);
+    }
+    assert!(!corpus.queries.is_empty());
+    for query in corpus.queries {
+        assert!(!query.id.is_empty() && ids.insert(query.id.clone()));
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let typed = Plan::fields()
+            .context_field(pick("tenant", |n: &Note| &n.tenant))
+            .encrypt_index(pick("text", |n: &Note| &n.text), Equality)
+            .build()
+            .unwrap();
+        let note = Note {
+            tenant: "tenants/acme".into(),
+            text: "hello".into(),
+        };
+        let mut stored = cipher.encrypt(&note).using(&typed).await.unwrap();
+        let field: Encrypted<EqualityTerm> = stored.take("text").unwrap();
+        generates.store(0, Ordering::SeqCst);
+        let field_plan = typed.field("text").unwrap();
+        let mut call = cipher.query(stack_encrypt::op::Eq, "hello");
+        if !query.context.is_empty() {
+            call = call.context(query.context.as_str());
+        }
+        let result: Result<EqualityTerm, _> = call.on(&field_plan).await;
+        match query.outcome.as_str() {
+            "refused" => {
+                assert!(result.is_err());
+                assert!(!query.matches);
+            }
+            "success" => assert_eq!(result.unwrap() == field.terms, query.matches),
+            _ => panic!("unknown query outcome"),
+        }
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
     }
 }
 
@@ -527,4 +659,42 @@ async fn a_grouped_extension_remains_one_part_when_appended() {
         ]),
     )]);
     assert!(record::plan(declaration.risky_ref()).is_err());
+}
+
+#[tokio::test]
+async fn replacement_context_records_keep_their_original_read_and_query_context() {
+    let cipher = common::deterministic_cipher([0; 32]).await;
+    let plan = Plan::context("users/age")
+        .with::<u32, _>(Equality)
+        .build()
+        .unwrap();
+    // The old chain discarded the first extension before sealing. Writing with
+    // its surviving part exactly reproduces that context without an old API.
+    let old = cipher
+        .encrypt(&34u32)
+        .using(&plan)
+        .extend(7u64)
+        .await
+        .unwrap();
+    let old_term = old.terms.clone();
+    let current = cipher
+        .query(stack_encrypt::op::Eq, &34u32)
+        .on(&plan)
+        .extend(1u64)
+        .extend(7u64)
+        .await
+        .unwrap();
+    assert_ne!(
+        current, old_term,
+        "the changed query succeeds but silently misses old rows"
+    );
+    let compatible = cipher
+        .query(stack_encrypt::op::Eq, &34u32)
+        .on(&plan)
+        .extend(7u64)
+        .await
+        .unwrap();
+    assert_eq!(compatible, old_term);
+    let value: u32 = cipher.open(old).using(&plan).extend(7u64).await.unwrap();
+    assert_eq!(value, 34);
 }

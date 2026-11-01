@@ -11,6 +11,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/tetratelabs/wazero/api"
 )
 
 // The test-only ways to give a client a token. The public API takes tokens
@@ -218,4 +219,31 @@ func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree []any, plan *record
 // uninitialised guest's preflight, including plans the host refuses earlier.
 func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan, expected string) ([]record.Source, error) {
 	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, plan, tree)
+}
+
+// ObserveEncryptPlansForTest copies the actual plan buffer at the WASM call
+// boundary. Install and restore only while this test's client is idle.
+func ObserveEncryptPlansForTest(c *Client, observe func([]byte)) func() {
+	original := c.inst.encryptRecord
+	c.inst.encryptRecord = &observedEncryptCall{Function: original, module: c.inst.module, observe: observe}
+	return func() { c.inst.encryptRecord = original }
+}
+
+type observedEncryptCall struct {
+	api.Function
+	module  api.Module
+	observe func([]byte)
+}
+
+func (f *observedEncryptCall) Call(ctx context.Context, params ...uint64) ([]uint64, error) {
+	// se_encrypt_record(source_ptr, source_len, plan_ptr, plan_len, opts_ptr, opts_len).
+	if len(params) != 6 {
+		return nil, fmt.Errorf("unexpected encrypt ABI: %d arguments", len(params))
+	}
+	plan, ok := f.module.Memory().Read(uint32(params[2]), uint32(params[3]))
+	if !ok {
+		return nil, errors.New("plan outside guest memory")
+	}
+	f.observe(append([]byte(nil), plan...))
+	return f.Function.Call(ctx, params...)
 }

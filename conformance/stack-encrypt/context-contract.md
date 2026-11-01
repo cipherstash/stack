@@ -34,10 +34,13 @@ Rust's lower-level context APIs; the dynamic record grammar and Go `Extend`
 accept scalar extension parts only. Their refusal of a grouped extension is
 part of the supported API boundary, not permission to flatten it.
 
-These tests fix #1120: repeated Rust chain extensions previously replaced the
-first extension. Previously written records from such chains still require the
+Previously, repeated Rust chain extensions replaced earlier parts. Records
+written by those chains still require the
 **last extension alone** when opening them; callers must explicitly retain that
-old context when reading old records. This change does not rewrite ciphertext.
+old context when reading and querying old records. A query using repeated
+extensions now succeeds with different terms, silently missing old rows.
+Re-encrypt and re-index old rows to adopt the appended context. This change
+does not rewrite ciphertext or migrate stored terms.
 
 The native base and each appended scalar retain their type and structure.
 `7i32`, `7i64`, `7u64`, text `eu`, and bytes `6575` do not collapse to one AAD
@@ -57,17 +60,21 @@ Every case encrypts and queries the string `hello` in the `text` field, using
 the public all-zero deterministic-provider test seed.
 
 `v1/contexts-native.json` is keyed by exactly those case IDs. It pins the
-context frame, descriptor, AAD, PRF bytes, one Rust ciphertext and equality
-term. Rust checks actual descriptors sent to the key provider, fresh typed and
+resolved context frame, the field context frame sent in a plan, descriptor,
+AAD, PRF bytes, one Rust ciphertext and equality term. Rust checks actual descriptors sent to the key provider, fresh typed and
 dynamic writes, queries, opens, and frozen ciphertexts. The typed chain calls
-`extend` repeatedly, including a final no-op, so #1120 cannot regress unnoticed.
+`extend` repeatedly, including a final no-op, so replacement behavior cannot
+regress unnoticed.
 
-Go compares its exact context tree encoding against the frozen frame and opens
-the Rust ciphertext. It compares fresh stored and query terms, both variadic
-and repeated extensions, and generated `Note` methods for context-field cases.
-Go does not expose a separate descriptor/AAD encoder: equality of the input
-frame and successful authenticated cross-opening are its evidence for those
-observations. Ciphertext bytes are randomized and are not compared for equality.
+Go observes the actual plan buffer at the `se_encrypt_record` WASM boundary
+through a test-only function wrapper. It compares the field context in those
+bytes with the frozen native plan-context frame, then opens the Rust ciphertext.
+It compares fresh stored and query terms, both variadic and repeated extensions,
+and generated `Note` (field base) and `LiteralNote` (literal base) methods.
+Go does not expose a separate descriptor/AAD encoder: matching the actual plan
+and successful authenticated cross-opening provide indirect evidence for those
+observations. Native Rust checks the canonical descriptor/AAD/PRF bytes directly.
+Ciphertext bytes are randomized and are not compared for equality.
 
 Regenerate deliberately with `STACK_ENCRYPT_UPDATE_FIXTURES=1` and the native
 `context_conformance` binary. Required conformance rejects fixture updates.
@@ -77,13 +84,22 @@ Changes to frozen context encodings require compatibility review.
 
 Boundary cases specify rows' `tenants`, the caller's `expected` label (the empty
 string explicitly means no expectation in this corpus), a mutation of the last
-stored row, an `outcome`, and native `retrievals`. All properties are required;
+stored row, an `outcome`, and `native_retrievals`. All properties are required;
 null is not an alternative spelling for omission or the empty string.
 
 Cases cover unrestricted reads, matching expectations, late mismatches, empty
 batches, changed stored labels with and without matching expectations, and
-missing/empty stored contexts late in a batch. Key-independent refusals must
-make no retrieval. An empty valid batch also makes none. Changing the stored
+missing/empty stored contexts late in a batch. A two-row ciphertext-tampering
+case reaches AEAD after retrieval in both languages and returns no partial
+plaintext. Typed Rust opening and generated Go opening exercise the boundary
+cases too, except that an absent member cannot be represented by a generated Go
+struct and is tested at the raw-tree boundary.
+
+The separate `queries` array specifies a caller `context`, an `outcome` and
+whether the query `matches` the stored term for `tenants/acme`. Missing and
+invalid contexts refuse; another tenant produces a valid nonmatching query.
+Rust typed query chains and generated Go query methods execute these cases.
+Key-independent refusals must make no retrieval. An empty valid batch also makes none. Changing the stored
 label does not confer permission to open the ciphertext even if the caller's
 expectation matches the replacement label.
 
@@ -105,6 +121,6 @@ labels, caller-derived queries and empty-batch validation before keyset loading.
 
 This profile describes the current shared context: it feeds the data-key
 descriptor, ciphertext AAD and index PRF context. It does not introduce separate
-ciphertext-binding and search-scope contexts. That API design remains #1487;
+ciphertext-binding and search-scope contexts. That API design remains separate work;
 any future split needs explicit compatibility rules and new profile coverage.
 It also does not assert plaintext erasure in Go, Python or TypeScript heaps.

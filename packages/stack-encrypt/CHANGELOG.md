@@ -7,13 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Breaking
 
 - Repeated plan-chain `.extend(..)` calls now append parts in order, matching
-  Go's `Cipher.Extend`, instead of replacing earlier extensions (#1120).
+  Go's `Cipher.Extend`, instead of replacing earlier extensions.
   `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
   Records written using the previous replacement behavior must still be opened
-  with the final extension alone; this does not migrate stored ciphertext.
+  with the final extension alone. Queries using repeated extensions now derive
+  different terms and silently miss those old rows: they return no error. Keep
+  the final extension alone for both reads and queries of old data, or re-encrypt
+  and re-index it under the appended context. This does not migrate stored data.
 
 ## [0.3.0] - 2026-10-27
 

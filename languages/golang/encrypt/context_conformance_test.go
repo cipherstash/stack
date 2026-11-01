@@ -25,12 +25,13 @@ type contextCase struct {
 	Parts []contextPart `json:"parts"`
 }
 type contextVector struct {
-	ContextFrame string `json:"context_frame"`
-	Descriptor   string `json:"descriptor"`
-	AAD          string `json:"aad"`
-	PRF          string `json:"prf"`
-	Ciphertext   string `json:"ciphertext"`
-	Equality     string `json:"equality"`
+	ContextFrame     string `json:"context_frame"`
+	PlanContextFrame string `json:"plan_context_frame"`
+	Descriptor       string `json:"descriptor"`
+	AAD              string `json:"aad"`
+	PRF              string `json:"prf"`
+	Ciphertext       string `json:"ciphertext"`
+	Equality         string `json:"equality"`
 }
 
 func TestContextConformance(t *testing.T) {
@@ -113,25 +114,29 @@ func TestContextConformance(t *testing.T) {
 				parts = append(parts, v)
 				cipher = cipher.Extend(v)
 			}
-			// Compare the precise context tree that native Rust encoded to AAD/PRF.
-			// Go has no independent public AAD or descriptor encoder.
-			resolved := *p
-			resolved.Context = label
-			resolved.ContextField = ""
-			resolved.Extension = parts
-			framed, e := vcffi.Marshal(resolved.FieldContext(p.Fields[0]))
-			if e != nil {
-				t.Fatal(e)
-			}
-			if hex.EncodeToString(framed) != want.ContextFrame {
-				t.Fatal("context tree differs from native")
-			}
-			if want.Descriptor == "" || len(decode(want.AAD)) == 0 || len(decode(want.PRF)) == 0 {
-				t.Fatal("missing canonical context observations")
-			}
+			// Inspect the bytes actually passed to se_encrypt_record, not a
+			// separately reconstructed copy of the host's plan.
+			var sentPlans [][]byte
+			restore := encrypt.ObserveEncryptPlansForTest(client, func(plan []byte) { sentPlans = append(sentPlans, plan) })
 			fresh, e := cipher.Seal(ctx, p, source)
+			restore()
 			if e != nil {
 				t.Fatal(e)
+			}
+			if len(sentPlans) != 1 {
+				t.Fatalf("expected one encrypt call, got %d", len(sentPlans))
+			}
+			decoded, e := vcffi.Unmarshal(sentPlans[0])
+			if e != nil {
+				t.Fatal(e)
+			}
+			field := contextObjectField(t, contextObjectField(t, decoded, "text"), "context")
+			framed, e := vcffi.Marshal(field)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if hex.EncodeToString(framed) != want.PlanContextFrame {
+				t.Fatal("actual guest context differs from native plan")
 			}
 			if !bytes.Equal(fresh[0]["text"].Terms[record.Equality], decode(want.Equality)) {
 				t.Fatal("stored term differs")
@@ -166,6 +171,28 @@ func TestContextConformance(t *testing.T) {
 			if e != nil || !reflect.DeepEqual(q.Terms, query.Terms) {
 				t.Fatalf("combined extensions: %v", e)
 			}
+			if c.Base == "literal" {
+				if c.Label != "tenants/acme" {
+					t.Fatal("literal generated declaration has a fixed base")
+				}
+				notes := []testusers.LiteralNote{{Text: "hello"}}
+				sealed, err := testusers.EncryptLiteralNote(ctx, cipher, notes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !sealed[0].Text.Equality.Equal(decode(want.Equality)) {
+					t.Fatal("literal generated write differs")
+				}
+				sealed[0].Text.Ciphertext = decode(want.Ciphertext)
+				opened, err := testusers.DecryptLiteralNote(ctx, cipher, sealed)
+				if err != nil || !reflect.DeepEqual(opened, notes) {
+					t.Fatalf("literal generated open: %v", err)
+				}
+				q, err := testusers.LiteralNoteFields.Text.Eq(ctx, cipher, "hello")
+				if err != nil || !q.Equal(decode(want.Equality)) {
+					t.Fatalf("literal generated query: %v", err)
+				}
+			}
 			if c.Base == "field" {
 				notes := []testusers.Note{{Tenant: c.Label, Text: "hello", ID: 0}}
 				sealed, e := testusers.EncryptNote(ctx, cipher, notes)
@@ -189,13 +216,20 @@ func TestContextConformance(t *testing.T) {
 	}
 }
 
+type contextQueryBoundary struct {
+	ID      string `json:"id"`
+	Context string `json:"context"`
+	Outcome string `json:"outcome"`
+	Matches bool   `json:"matches"`
+}
+
 type contextBoundary struct {
-	ID         string   `json:"id"`
-	Tenants    []string `json:"tenants"`
-	Expected   string   `json:"expected"`
-	Mutation   string   `json:"mutation"`
-	Outcome    string   `json:"outcome"`
-	Retrievals int      `json:"retrievals"`
+	ID               string   `json:"id"`
+	Tenants          []string `json:"tenants"`
+	Expected         string   `json:"expected"`
+	Mutation         string   `json:"mutation"`
+	Outcome          string   `json:"outcome"`
+	NativeRetrievals int      `json:"native_retrievals"`
 }
 
 func TestContextBoundaries(t *testing.T) {
@@ -216,9 +250,10 @@ func TestContextBoundaries(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = checker.Close() })
 	var corpus struct {
-		Version int               `json:"version"`
-		Profile string            `json:"profile"`
-		Cases   []contextBoundary `json:"cases"`
+		Version int                    `json:"version"`
+		Profile string                 `json:"profile"`
+		Cases   []contextBoundary      `json:"cases"`
+		Queries []contextQueryBoundary `json:"queries"`
 	}
 	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "context-boundaries.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "context-boundaries-v1" || len(corpus.Cases) == 0 {
@@ -247,6 +282,12 @@ func TestContextBoundaries(t *testing.T) {
 			}
 			switch c.Mutation {
 			case "none":
+			case "ciphertext":
+				row := tree[len(tree)-1].(map[string]any)
+				field := row["text"].(map[string]any)
+				ciphertext := append(encrypt.Ciphertext(nil), field["c"].(encrypt.Ciphertext)...)
+				ciphertext[len(ciphertext)-1] ^= 1
+				field["c"] = ciphertext
 			case "tamper", "empty", "missing":
 				if len(tree) == 0 {
 					t.Fatal("mutation requires a row")
@@ -267,7 +308,7 @@ func TestContextBoundaries(t *testing.T) {
 			_, preflight := checker.OpenTreeForTest(ctx, tree, p, c.Expected)
 			// An uninitialised guest cannot retrieve keys: valid shapes reach ErrState.
 			switch c.Outcome {
-			case "success", "authentication":
+			case "success", "authentication", "aead":
 				if !errors.Is(preflight, encrypt.ErrState) {
 					t.Fatalf("preflight: %v", preflight)
 				}
@@ -282,7 +323,34 @@ func TestContextBoundaries(t *testing.T) {
 			if c.Expected != "" {
 				reader = reader.Context(c.Expected)
 			}
+			// A generated Go struct cannot represent an absent tenant member;
+			// the raw-tree path above owns that shape refusal.
+			if c.Mutation != "missing" {
+				generated := make([]testusers.EncryptedNote, len(tree))
+				for i, row := range tree {
+					fields := row.(map[string]any)
+					tenant := fields["tenant"].(map[string]any)["passthrough"].(vcvalue.Plain).V.(string)
+					ciphertext := fields["text"].(map[string]any)["c"].(encrypt.Ciphertext)
+					generated[i] = testusers.EncryptedNote{Tenant: tenant, Text: testusers.EncryptedNoteText{Ciphertext: ciphertext}}
+				}
+				opened, err := testusers.DecryptNote(ctx, reader, generated)
+				if c.Outcome == "success" {
+					if err != nil || len(opened) != len(c.Tenants) {
+						t.Fatalf("generated boundary: %v", err)
+					}
+					for i, row := range opened {
+						if row.Tenant != c.Tenants[i] || row.Text != "hello" {
+							t.Fatal("generated values differ")
+						}
+					}
+				} else if err == nil || len(opened) != 0 {
+					t.Fatalf("generated failure must return no rows: %v", err)
+				}
+			}
 			opened, e := reader.OpenTreeForTest(ctx, tree, p)
+			if e != nil && len(opened) != 0 {
+				t.Fatal("batch failure returned partial plaintext")
+			}
 			switch c.Outcome {
 			case "success":
 				if e != nil || !reflect.DeepEqual(opened, rows) {
@@ -292,24 +360,61 @@ func TestContextBoundaries(t *testing.T) {
 				if len(rows) == 0 {
 					want = 0
 				}
-				if c.Retrievals != want {
+				if c.NativeRetrievals != want {
 					t.Fatal("invalid retrieval expectation")
 				}
 			case "mismatch":
-				if !errors.Is(e, encrypt.ErrContextMismatch) || c.Retrievals != 0 {
+				if !errors.Is(e, encrypt.ErrContextMismatch) || c.NativeRetrievals != 0 {
 					t.Fatalf("mismatch: %v", e)
 				}
 			case "shape":
-				if !errors.Is(e, encrypt.ErrEncoding) || c.Retrievals != 0 {
+				if !errors.Is(e, encrypt.ErrEncoding) || c.NativeRetrievals != 0 {
 					t.Fatalf("shape: %v", e)
 				}
+			case "aead":
+				if !errors.Is(e, encrypt.ErrAuthentication) || c.NativeRetrievals != 1 {
+					t.Fatalf("AEAD failure: %v", e)
+				}
 			case "authentication":
-				if !errors.Is(e, encrypt.ErrForbidden) || c.Retrievals != 1 {
+				if !errors.Is(e, encrypt.ErrForbidden) || c.NativeRetrievals != 1 {
 					t.Fatalf("tampering: %v", e)
 				}
 			}
 		})
 	}
+	if len(corpus.Queries) == 0 {
+		t.Fatal("missing query boundaries")
+	}
+	for _, q := range corpus.Queries {
+		if q.ID == "" || seen[q.ID] {
+			t.Fatal("empty or repeated query ID")
+		}
+		seen[q.ID] = true
+		t.Run(q.ID, func(t *testing.T) {
+			cipher := client.DefaultKeyset()
+			stored, err := testusers.EncryptNote(ctx, cipher, []testusers.Note{{Tenant: "tenants/acme", Text: "hello"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if q.Context != "" {
+				cipher = cipher.Context(q.Context)
+			}
+			term, err := testusers.NoteFields.Text.Eq(ctx, cipher, "hello")
+			switch q.Outcome {
+			case "refused":
+				if !errors.Is(err, encrypt.ErrEncoding) || q.Matches {
+					t.Fatalf("query refusal: %v", err)
+				}
+			case "success":
+				if err != nil || term.Equal(stored[0].Text.Equality) != q.Matches {
+					t.Fatalf("query match: %v", err)
+				}
+			default:
+				t.Fatal("unknown query outcome")
+			}
+		})
+	}
+
 }
 
 // Go's zero values must not make a missing or null field valid when Rust's
@@ -342,9 +447,29 @@ func (c *contextCase) UnmarshalJSON(data []byte) error {
 }
 func (v *contextVector) UnmarshalJSON(data []byte) error {
 	type plain contextVector
-	return decodeRequiredContextJSON(data, (*plain)(v), "context_frame", "descriptor", "aad", "prf", "ciphertext", "equality")
+	return decodeRequiredContextJSON(data, (*plain)(v), "context_frame", "plan_context_frame", "descriptor", "aad", "prf", "ciphertext", "equality")
 }
 func (c *contextBoundary) UnmarshalJSON(data []byte) error {
 	type plain contextBoundary
-	return decodeRequiredContextJSON(data, (*plain)(c), "id", "tenants", "expected", "mutation", "outcome", "retrievals")
+	return decodeRequiredContextJSON(data, (*plain)(c), "id", "tenants", "expected", "mutation", "outcome", "native_retrievals")
+}
+
+func contextObjectField(t *testing.T, value any, name string) any {
+	t.Helper()
+	object, ok := value.(vcvalue.Object)
+	if !ok {
+		t.Fatalf("expected object, got %T", value)
+	}
+	for _, field := range object {
+		if field.Key == name {
+			return field.Value
+		}
+	}
+	t.Fatalf("missing field %s", name)
+	return nil
+}
+
+func (q *contextQueryBoundary) UnmarshalJSON(data []byte) error {
+	type plain contextQueryBoundary
+	return decodeRequiredContextJSON(data, (*plain)(q), "id", "context", "outcome", "matches")
 }

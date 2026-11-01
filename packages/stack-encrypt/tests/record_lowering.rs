@@ -842,6 +842,6 @@ async fn the_fixture_records_are_bound_to_their_labels() {
 }
 
 #[test]
-fn enrolled_context_tests_are_registered() {
+fn enrolled_fixture_tests_are_registered() {
     common::assert_fixture_tests_registered("record_lowering");
 }

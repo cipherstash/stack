@@ -210,16 +210,17 @@ produce the specified diagnostics. Python and TypeScript remain visibly pending
 until their runners execute. The complete specification, SQL profile, and all
 language SDK mappings remain follow-up work.
 
-
-## Context composition checkpoint (#1475)
+## Context composition checkpoint
 
 Implemented shared composition and boundary cases in
 `conformance/stack-encrypt/context-contract.md`: 18 typed extension cases,
-nine read/preflight cases, generated Go calls and native typed chains. Existing
+eleven read/preflight cases and four query cases, generated Go calls and native
+typed chains. Existing
 context-field fixture tests and the native plan-grammar suite are required by
-`test:conformance`. Repeated Rust `.extend()` now appends, resolving #1120;
+`test:conformance`. Repeated Rust `.extend()` now appends, aligning Rust with Go;
 the changelog documents compatibility for records written under the old behavior.
-The current shared binding/search context remains distinct from future #1487.
+The current shared binding/search context remains distinct from the future
+binding/search-scope split.
 
-Next: #1476, the EQL/JSON operation profile. Python and TypeScript runner delivery
+Next: the EQL/JSON operation profile. Python and TypeScript runner delivery
 and the wider fresh artifact exchange remain separate planned work.

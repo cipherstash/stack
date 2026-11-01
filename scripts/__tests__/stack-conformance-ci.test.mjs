@@ -2,7 +2,10 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { goSelection as selectGoTests } from '../stack-conformance-selection.mjs'
+import {
+  coreGoTests,
+  goSelection as selectGoTests,
+} from '../stack-conformance-selection.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -48,15 +51,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(script).toMatch(/cargo nextest run[^\n]*--test plan_grammar/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test fixture_safety/)
     const selected = goSelection(script)
-    for (const test of [
-      'TestStackConformance',
-      'TestDeclarationConformance',
-      'TestRuntimeConformance',
-      'TestReadConformance',
-      'TestContextConformance',
-      'TestContextBoundaries',
-      'TestFixtureConformanceRequiresGuest',
-    ]) {
+    for (const test of coreGoTests) {
       expect(selected.test(test), test).toBe(true)
     }
   })
@@ -67,13 +62,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     )
     const expected = [
       ...new Set([
-        'TestStackConformance',
-        'TestDeclarationConformance',
-        'TestRuntimeConformance',
-        'TestReadConformance',
-        'TestContextConformance',
-        'TestContextBoundaries',
-        'TestFixtureConformanceRequiresGuest',
+        ...coreGoTests,
         ...index.profiles.flatMap((p) =>
           p.requirements.flatMap((r) => r.go_tests),
         ),

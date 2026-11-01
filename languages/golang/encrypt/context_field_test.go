@@ -233,7 +233,7 @@ func TestGeneratedCodeOpensTheRustContextFieldFixture(t *testing.T) {
 	}
 }
 
-// Required conformance must fail if its guest is absent.
+// A missing guest skips optional runs and fails required conformance.
 func contextFixtureClient(t *testing.T) *encrypt.Client {
 	t.Helper()
 	c, err := encrypt.NewDeterministicClient(context.Background(), testSeed)

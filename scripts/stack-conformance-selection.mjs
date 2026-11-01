@@ -3,16 +3,18 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
+export const coreGoTests = [
+  'TestStackConformance',
+  'TestDeclarationConformance',
+  'TestRuntimeConformance',
+  'TestReadConformance',
+  'TestContextConformance',
+  'TestContextBoundaries',
+  'TestFixtureConformanceRequiresGuest',
+]
+
 export function goSelection(index) {
-  const tests = new Set([
-    'TestStackConformance',
-    'TestDeclarationConformance',
-    'TestRuntimeConformance',
-    'TestReadConformance',
-    'TestContextConformance',
-    'TestContextBoundaries',
-    'TestFixtureConformanceRequiresGuest',
-  ])
+  const tests = new Set(coreGoTests)
   for (const profile of index.profiles) {
     for (const requirement of profile.requirements) {
       for (const name of requirement.go_tests) {

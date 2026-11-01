@@ -8,7 +8,7 @@
       "expected": "",
       "mutation": "none",
       "outcome": "success",
-      "retrievals": 1
+      "native_retrievals": 1
     },
     {
       "id": "expected",
@@ -16,7 +16,7 @@
       "expected": "tenants/acme",
       "mutation": "none",
       "outcome": "success",
-      "retrievals": 1
+      "native_retrievals": 1
     },
     {
       "id": "late-mismatch",
@@ -24,7 +24,7 @@
       "expected": "tenants/acme",
       "mutation": "none",
       "outcome": "mismatch",
-      "retrievals": 0
+      "native_retrievals": 0
     },
     {
       "id": "empty",
@@ -32,7 +32,7 @@
       "expected": "tenants/acme",
       "mutation": "none",
       "outcome": "success",
-      "retrievals": 0
+      "native_retrievals": 0
     },
     {
       "id": "tampered",
@@ -40,7 +40,7 @@
       "expected": "",
       "mutation": "tamper",
       "outcome": "authentication",
-      "retrievals": 1
+      "native_retrievals": 1
     },
     {
       "id": "tampered-matching-expectation",
@@ -48,7 +48,7 @@
       "expected": "tenants/globex",
       "mutation": "tamper",
       "outcome": "authentication",
-      "retrievals": 1
+      "native_retrievals": 1
     },
     {
       "id": "tampered-mismatching-expectation",
@@ -56,7 +56,7 @@
       "expected": "tenants/acme",
       "mutation": "tamper",
       "outcome": "mismatch",
-      "retrievals": 0
+      "native_retrievals": 0
     },
     {
       "id": "late-missing",
@@ -64,7 +64,7 @@
       "expected": "",
       "mutation": "missing",
       "outcome": "shape",
-      "retrievals": 0
+      "native_retrievals": 0
     },
     {
       "id": "late-empty",
@@ -72,7 +72,49 @@
       "expected": "",
       "mutation": "empty",
       "outcome": "shape",
-      "retrievals": 0
+      "native_retrievals": 0
+    },
+    {
+      "id": "late-tampered-context",
+      "tenants": ["tenants/acme", "tenants/acme"],
+      "expected": "",
+      "mutation": "tamper",
+      "outcome": "authentication",
+      "native_retrievals": 1
+    },
+    {
+      "id": "late-tampered-ciphertext",
+      "tenants": ["tenants/acme", "tenants/acme"],
+      "expected": "",
+      "mutation": "ciphertext",
+      "outcome": "aead",
+      "native_retrievals": 1
+    }
+  ],
+  "queries": [
+    {
+      "id": "query-missing",
+      "context": "",
+      "outcome": "refused",
+      "matches": false
+    },
+    {
+      "id": "query-invalid",
+      "context": "tenants/(acme)",
+      "outcome": "refused",
+      "matches": false
+    },
+    {
+      "id": "query-matching",
+      "context": "tenants/acme",
+      "outcome": "success",
+      "matches": true
+    },
+    {
+      "id": "query-other-tenant",
+      "context": "tenants/globex",
+      "outcome": "success",
+      "matches": false
     }
   ]
 }
