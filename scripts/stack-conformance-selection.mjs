@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The fixture index owns enrollment; the command adds the earlier runners.
 import { readFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 export function goSelection(index) {
   const tests = new Set([
@@ -24,10 +24,7 @@ export function goSelection(index) {
   return `^(${[...tests].sort().join('|')})$`
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const index = JSON.parse(
     readFileSync(
       new URL(
