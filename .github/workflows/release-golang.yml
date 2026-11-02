@@ -18,13 +18,22 @@ name: Release (Go)
 #   gh workflow run release-golang.yml -f version=0.1.0-alpha.1 --ref <branch>
 #
 # The ref must carry the EQL v4 bundle (packages/eql's v4 build), or the
-# build job stops at "Build the EQL SQL bundles". A version with a pre-release
+# build job stops at "Build the EQL SQL bundles". Its
+# languages/golang/CHANGELOG.md must have a `## [<version>]` section, which
+# becomes the release notes, or the run stops at the `notes` job. A version with a pre-release
 # suffix may be cut from any branch and is published as a GitHub pre-release;
 # a final version is cut from main only, and not while go.mod pins vitaminc's
 # Go bindings at a pseudo-version (scripts/go-release-version.mjs).
 #
-# Three jobs, split by what they may touch:
+# Four jobs, split by what they may touch:
 #
+# - `notes` holds no write token and runs no third-party code: it takes the
+#   version's section of languages/golang/CHANGELOG.md
+#   (scripts/go-release-notes.mjs, Node built-ins only) and refuses a version
+#   that has none. `build` waits for it, so a missing section stops the
+#   release before anything is built. `publish` puts its output on the
+#   release page; that is safe because nothing in this job could have
+#   written it but the script.
 # - `build` holds no write token. It is the only job that runs third-party
 #   code (the toolchain installs, cargo build scripts and proc macros, the Go
 #   tests), and it hands the guests, their hashes and the SQL to `publish` as
@@ -70,8 +79,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  notes:
+    name: Release notes from the CHANGELOG
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    env:
+      VERSION: ${{ inputs.version }}
+    outputs:
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # A multi-line output needs a delimiter no line of the notes can be,
+      # so it is random. Empty notes are refused here too, whatever the
+      # script's exit status: the release page is the one place they show.
+      - name: Take this version's section of the CHANGELOG
+        id: notes
+        run: |
+          set -euo pipefail
+          node scripts/go-release-notes.mjs "$VERSION" > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::scripts/go-release-notes.mjs gave no notes for $VERSION"
+            exit 1
+          fi
+          delimiter="notes_$(openssl rand -hex 16)"
+          {
+            echo "notes<<$delimiter"
+            cat notes.md
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
   build:
     name: Build and test the release
+    needs: notes
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 90
     env:
@@ -242,7 +284,7 @@ jobs:
 
   publish:
     name: Tag and release
-    needs: build
+    needs: [notes, build]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     # Required reviewers set on this environment in the repository settings
@@ -336,9 +378,12 @@ jobs:
           git tag -a "$tag" -m "Go module v$VERSION (built from $GITHUB_SHA)"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
 
+      # The CHANGELOG section arrives through the environment, never
+      # interpolated into the script, so its text is data to the shell.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ needs.notes.outputs.notes }}
         run: |
           set -euo pipefail
           tag="languages/golang/v$VERSION"
@@ -349,6 +394,7 @@ jobs:
             exit 0
           fi
           {
+            printf '%s\n\n### Install\n\n' "$NOTES"
             echo "Go module \`github.com/cipherstash/stack/languages/golang\` v$VERSION, built from $GITHUB_SHA."
             echo
             echo '```sh'
