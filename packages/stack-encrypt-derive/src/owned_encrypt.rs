@@ -183,15 +183,20 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         })
         .collect();
     // The plaintext destructured into one local per participating field,
-    // every other field dropped as it is (`..`).
+    // exhaustively: the owned form replaces the guard over the whole value,
+    // so a plaintext field the record neither seals nor carries would be
+    // dropped unwiped. Without `..`, such a field is refused at compile
+    // time ("pattern does not mention field"), at the `struct = ..` path, as
+    // the decrypt side already refuses a plaintext it cannot rebuild.
     let bindings = fields.iter().map(|field| {
         let from = field.from().unwrap_or_else(|| unreachable!("a `from`"));
         let local = &field.local;
         quote!(#from: #local)
     });
     let nested = nested_tuple(&locals);
+    let pattern = quote_spanned!(source.span()=> #source { #(#bindings),* });
     let divide = quote!(|__source: #source| {
-        let #source { #(#bindings),*, .. } = __source;
+        let #pattern = __source;
         #nested
     });
     let split = match locals.as_slice() {
