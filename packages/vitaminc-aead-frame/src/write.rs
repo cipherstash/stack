@@ -6,13 +6,13 @@
 //!
 //! - A storage blob starts with its header. [`write`] writes the node
 //!   alone, and [`storage::to_vec`] puts the header in front of it.
-//! - A storage blob marks an `Option`'s `Some` with [`SOME`], a level of
-//!   its own, so `Some(())` and `Some(None)` are not `None`. The transport
-//!   writes what the `Some` holds, with no marker.
-//! - A storage map is a [`MAP`], whose keys are nodes: an integer key keeps
-//!   its width, and bytes stay bytes. A transport map is an object, whose
-//!   keys are text: a key is written as its text, and a key that has none
-//!   is refused.
+//! - A storage blob marks an `Option`'s `Some` with [`STORAGE_SOME`], a
+//!   level of its own, so `Some(())` and `Some(None)` are not `None`. The
+//!   transport writes what the `Some` holds, with no marker.
+//! - A storage map is a [`STORAGE_MAP`], whose keys are nodes: an integer
+//!   key keeps its width, and bytes stay bytes. A transport map is an
+//!   object, whose keys are text: a key is written as its text, and a key
+//!   that has none is refused.
 //!
 //! The writer writes straight into the caller's [`Buffer`]. A container's
 //! count is patched in at its end, a map's keys are checked for a repeat
@@ -31,10 +31,10 @@ use ::serde::ser::{self, Serialize};
 use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT};
 use vitaminc_aead::leaf::{self, Form, ScalarError};
 use vitaminc_aead::plaintext::{Float, Int, Physical};
-use vitaminc_aead::tags;
+use vitaminc_aead::tags::{self, STORAGE_MAP, STORAGE_SOME};
 use vitaminc_protected::{Buffer, Controlled};
 
-use crate::serde::{At, Error, Profile, MAP, SOME};
+use crate::serde::{At, Error, Profile};
 use crate::storage::{distinct, Invalid, MapKey};
 
 /// A [`Profile`] as a type, so the writer is compiled once for each
@@ -398,14 +398,14 @@ impl<'o, P: Profiled> ser::Serializer for Writer<'o, P> {
     fn serialize_none(self) -> Result<(), Error> {
         self.scalar(Physical::Null)
     }
-    /// The storage profile marks a `Some` with [`SOME`], a level of its
-    /// own. The transport has no marker, and writes what it holds.
+    /// The storage profile marks a `Some` with [`STORAGE_SOME`], a level of
+    /// its own. The transport has no marker, and writes what it holds.
     fn serialize_some<T: Serialize + ?Sized>(self, value: &T) -> Result<(), Error> {
         match P::PROFILE {
             Profile::Transport => value.serialize(self),
             Profile::Storage => {
                 self.check_depth()?;
-                self.out.push(SOME);
+                self.out.push(STORAGE_SOME);
                 value.serialize(Writer {
                     out: self.out,
                     depth: self.depth + 1,
@@ -468,11 +468,11 @@ impl<'o, P: Profiled> ser::Serializer for Writer<'o, P> {
     ) -> Result<Container<'o, P>, Error> {
         self.variant(variant, ARRAY, len)
     }
-    /// A storage map is a [`MAP`], whose keys are nodes. A transport map is
-    /// an object, whose keys are text.
+    /// A storage map is a [`STORAGE_MAP`], whose keys are nodes. A transport
+    /// map is an object, whose keys are text.
     fn serialize_map(self, len: Option<usize>) -> Result<MapWriter<'o, P>, Error> {
         let tag = match P::PROFILE {
-            Profile::Storage => MAP,
+            Profile::Storage => STORAGE_MAP,
             Profile::Transport => OBJECT,
         };
         Ok(MapWriter {
@@ -1041,7 +1041,7 @@ mod tests {
         let some = Some(1u8);
         assert_eq!(
             written_as::<AsStorage, _>(&some).expect("writes"),
-            [SOME, tags::UINT8, 1],
+            [STORAGE_SOME, tags::UINT8, 1],
             "storage marks a Some"
         );
         assert_eq!(
@@ -1054,7 +1054,7 @@ mod tests {
         assert_eq!(
             written_as::<AsStorage, _>(&map).expect("writes"),
             [
-                MAP,
+                STORAGE_MAP,
                 1,
                 0,
                 0,
