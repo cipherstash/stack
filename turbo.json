@@ -96,6 +96,14 @@
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false
     },
+    // The protect-dynamodb compatibility suite (`e2e`), which `test:e2e`
+    // leaves out because it fails without CS_* credentials. Workflows run it
+    // with `--env-mode=loose` so those reach it.
+    "test:protect-compat": {
+      "dependsOn": ["^build", "build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "cache": false
+    },
     "test:integration": {
       "dependsOn": ["^build", "build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
