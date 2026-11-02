@@ -15,7 +15,7 @@ use pyo3::types::{PyDict, PyList, PyType};
 use stackencrypt_core::encrypt::plaintext::{Encrypt, MapSink, SeqSink, Sink, SourceError};
 use stackencrypt_core::encrypt::{self as core, Column, Field, ModelPlan};
 use stackencrypt_core::refusal::Refusal;
-use stackencrypt_core::values::{self, Kind, Value};
+use stackencrypt_core::values::{self, Kind};
 
 use crate::errors::raise;
 use crate::values::{read, to_python, PyKind};
@@ -227,10 +227,10 @@ impl Models<'_, '_> {
                 reason: None,
             }));
         }
-        match engine_kind {
-            Some(_) => values::write(sink, engine_kind, value),
-            None => sink.passthrough(Carried(value)),
-        }
+        // A passthrough is written as a plain scalar: the plan's
+        // `"passthrough"` output carries the field's frame as it is, so a
+        // passthrough node here would come back nested in one.
+        values::write(sink, engine_kind, value)
     }
 }
 
@@ -247,15 +247,5 @@ impl Encrypt for Models<'_, '_> {
             row.end()?;
         }
         rows.end()
-    }
-}
-
-/// A passthrough value: written as it is, with no kind.
-#[derive(Clone, Copy)]
-struct Carried<'a>(Value<'a>);
-
-impl Encrypt for Carried<'_> {
-    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        values::write(sink, None, self.0)
     }
 }
