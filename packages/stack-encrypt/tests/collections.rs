@@ -577,3 +577,106 @@ async fn a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_pat
     );
     assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
 }
+
+/// Seals a `Flagged`, and panics while declaring the element whose
+/// plaintext is `"panics"`.
+// The ciphertext is never read: the declaration panics before one exists.
+struct PanickingTarget(#[allow(dead_code)] Ciphertext);
+impl EncryptTarget<Flagged> for PanickingTarget {
+    type ContextInput = OptionalContext<ScalarContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Flagged, Self, K, Self::ContextInput> {
+        stack_encrypt::target::scalar_ciphertext::<String, K>()
+            .project(|source: &Flagged| {
+                assert!(source.value != "panics", "element declaration failed");
+                &source.value
+            })
+            .map(Self)
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_element_declaration_wipes_the_elements_after_it() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let flags: Vec<Arc<AtomicBool>> = (0..3).map(|_| Arc::default()).collect();
+    let column: Vec<Flagged> = ["panics", "second", "third"]
+        .iter()
+        .zip(&flags)
+        .map(|(value, wiped)| Flagged {
+            value: (*value).to_owned(),
+            wiped: wiped.clone(),
+        })
+        .collect();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        drop(column.encrypt_into::<Vec<PanickingTarget>, _>(&keyset));
+    }));
+    assert!(result.is_err(), "the first element's declaration panicked");
+    assert!(
+        all_wiped(&flags),
+        "the element that panicked and every element not yet handed over are wiped during the unwind"
+    );
+}
+
+// --- A structural record with a column field wipes its recovered prefix ----
+
+impl stack_encrypt::target::Decryptable for TrackedCiphertext {
+    const DECRYPTABLE: bool = true;
+}
+impl<Ctx: Into<stack_encrypt::target::AeadContext>> stack_encrypt::target::DecryptField<Tracked, Ctx>
+    for TrackedCiphertext
+{
+    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<Tracked, K>> {
+        Some(stack_encrypt::DecryptInto::decryption(self, context.into()))
+    }
+}
+
+struct Rows {
+    // Never read: the column fails, so no `Rows` is built.
+    #[allow(dead_code)]
+    items: Vec<Tracked>,
+}
+/// A column as a field: the structural `Vec<T>: DecryptField<Vec<P>, _>`
+/// impl is the one that opens `items`.
+#[derive(stack_encrypt::DecryptInto)]
+#[stash(struct = Rows, context = "rows")]
+struct StoredRows {
+    items: Vec<TrackedCiphertext>,
+}
+
+#[tokio::test]
+async fn a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix() {
+    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let first = keyset
+        .encrypt_with_context("recovered first".to_owned(), ("rows", "items"))
+        .await
+        .unwrap();
+    // Sealed under another context: fails authentication only once its key
+    // has arrived, by which time the first element has been recovered.
+    let second = keyset
+        .encrypt_with_context("never recovered".to_owned(), "elsewhere")
+        .await
+        .unwrap();
+    let stored = StoredRows {
+        items: vec![
+            TrackedCiphertext::new(first),
+            TrackedCiphertext::new(second),
+        ],
+    };
+    let wiped: Vec<_> = stored.items.iter().map(|t| t.wiped.clone()).collect();
+    // `Tracked::drop` fails the test if the recovered prefix is dropped
+    // unwiped.
+    let result = cipher
+        .decrypt_as::<Rows, _>(stored, stack_encrypt::target::DeclaredContext::default())
+        .await;
+    assert!(matches!(result, Err(Error::Aead)), "{:?}", result.err());
+    assert!(
+        wiped[0].load(Ordering::SeqCst),
+        "the recovered prefix is wiped"
+    );
+    assert!(
+        !wiped[1].load(Ordering::SeqCst),
+        "nothing was recovered to wipe"
+    );
+    assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
+}

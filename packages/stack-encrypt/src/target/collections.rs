@@ -73,12 +73,35 @@ where
             // element left unvisited after an earlier failure would be
             // dropped as it is. The column still reports a refused
             // context once, since `collect` keeps the first failure.
-            let elements: Vec<_> = source
-                .into_iter()
-                .map(|element| cipher.run(T::owned_encryption(), element, context.clone()))
-                .collect();
+            //
+            // The elements not yet handed over stay in a guard that wipes
+            // them if a declaration panics, as the whole vector's guard
+            // did before each element was handed to its own. An element
+            // is taken out only once its description and context exist,
+            // so nothing that can panic runs while it is held unguarded.
+            let mut unvisited = Unvisited(source.into_iter());
+            let mut elements = Vec::with_capacity(unvisited.0.len());
+            while !unvisited.0.as_slice().is_empty() {
+                let description = T::owned_encryption();
+                let context = context.clone();
+                let Some(element) = unvisited.0.next() else {
+                    break;
+                };
+                elements.push(cipher.run(description, element, context));
+            }
             Pending::collect(cipher, elements)
         })
+    }
+}
+
+/// The elements of an owned column not yet handed to their declaration.
+/// Dropped, by an unwind out of a declaration or once every element has
+/// been handed over, it wipes whatever it still holds.
+struct Unvisited<S: Zeroize>(std::vec::IntoIter<S>);
+
+impl<S: Zeroize> Drop for Unvisited<S> {
+    fn drop(&mut self) {
+        self.0.as_mut_slice().iter_mut().for_each(Zeroize::zeroize);
     }
 }
 
