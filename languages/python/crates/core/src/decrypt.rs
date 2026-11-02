@@ -443,20 +443,20 @@ impl Sink for OpenedValue<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::encrypt::{encrypt_with, Column};
     use crate::values::Kind;
     use stack_kms::FakeDataKeySource;
 
-    fn run<F: Future>(future: F) -> F::Output {
+    pub(crate) fn run<F: Future>(future: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
             .block_on(future)
     }
 
-    fn cipher() -> StackCipher<FakeDataKeySource> {
+    pub(crate) fn cipher() -> StackCipher<FakeDataKeySource> {
         run(StackCipher::builder().kms(FakeDataKeySource::new()).init()).unwrap()
     }
 
@@ -474,7 +474,7 @@ mod tests {
         }
     }
 
-    fn users() -> ModelPlan {
+    pub(crate) fn users() -> ModelPlan {
         ModelPlan::new(
             "users",
             vec![sealed("email", "TextEq", Kind::String), passthrough("age")],
@@ -501,7 +501,7 @@ mod tests {
     }
 
     /// Encrypt one `users` row per email, with `age` 30 + its index.
-    fn stored(
+    pub(crate) fn stored(
         cipher: &StackCipher<FakeDataKeySource>,
         plan: &ModelPlan,
         emails: &[&str],

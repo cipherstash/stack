@@ -2,7 +2,7 @@
 
 `stackencrypt` is the Python SDK for CipherStash Stack. It encrypts the fields of a Python model into values you store in PostgreSQL with EQL v4. EQL is CipherStash's set of PostgreSQL types for encrypted values.
 
-This is a stub. The package is not released. Today it can encrypt a model and decrypt it again. Querying comes in a later release.
+This is a stub. The package is not released. Today it can encrypt a model, decrypt it again, and search an encrypted column by equality.
 
 ## Before you start
 
@@ -83,6 +83,27 @@ with psycopg.connect(DATABASE_URL) as conn:
 A passthrough `datetime` field needs a `timestamptz` column. psycopg reads a `timestamp` column as a naive `datetime`, with no `tzinfo`. `decrypt` refuses a naive `datetime` with `value_naive_datetime`, as `encrypt` does.
 
 `decrypt` checks every row before it sends anything. A value stored under another table or column raises `DecryptError` with the code `decrypt_foreign_row`. A passthrough value of another type than the field declares raises `InvalidValueError`. When any row fails, `decrypt` returns no instances.
+
+## Search by equality
+
+`cipher.query` takes a field's name and a value, and returns a query term as a `str`. Cast the term to the field's query type in the SQL:
+
+```python
+term = cipher.query("email", "a@example.com")
+with psycopg.connect(DATABASE_URL) as conn:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT email, age FROM users WHERE email = %s::eql_v4.query_text_eq",
+            (term,),
+        )
+        users = cipher.decrypt(cur.fetchall())
+```
+
+The query type is the marker's `query_sql_domain`. For `TextEq` it is `eql_v4.query_text_eq`. The `users_email_eq` index from "Create the table" lets PostgreSQL find the row without reading every row.
+
+`query` sends no request to CipherStash after the first operation of the process. The term is made from a key that the first operation loads.
+
+A field whose marker answers no query, such as `Text` or `Passthrough`, raises `stackencrypt.QueryError` with the code `query_unsupported`. A name that is not a declared field raises `QueryError` with the code `query_unknown_field`. The value is checked as `encrypt` checks it.
 
 ## Declare a SQLAlchemy relationship
 

@@ -1,5 +1,5 @@
-"""``Cipher.encrypt`` and ``Cipher.decrypt`` against ZeroKMS and a PostgreSQL
-with the EQL v4 bundle.
+"""``Cipher.encrypt``, ``Cipher.decrypt`` and ``Cipher.query`` against ZeroKMS
+and a PostgreSQL with the EQL v4 bundle.
 
 These tests need CipherStash credentials (``CS_CLIENT_ACCESS_KEY``,
 ``CS_WORKSPACE_CRN``, ``CS_CLIENT_ID``, ``CS_CLIENT_KEY``) and a database
@@ -248,3 +248,64 @@ def test_1001_rows_open_with_three_key_requests():
     # ceil(1001 / 500): the keys for the whole list, 500 per request.
     assert _engine.request_count() - before == 3
     assert decrypted[1000].email == "user1000@example.com"
+
+
+@needs_database
+def test_a_query_term_finds_the_one_matching_row():
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg.rows import dict_row
+
+    cipher = Cipher(User)
+    rows = cipher.encrypt(
+        [User(email="a@example.com", age=1), User(email="b@example.com", age=2)]
+    )
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("CREATE TEMPORARY TABLE users (email public.eql_v4_text_eq, age int)")
+        for row in rows:
+            cur.execute("INSERT INTO users (email, age) VALUES (%s, %s)", (row["email"], row["age"]))
+        # The README's query: the term cast to the marker's query domain.
+        cur.execute(
+            f"SELECT * FROM users WHERE email = %s::{TextEq.query_sql_domain}",
+            (cipher.query("email", "a@example.com"),),
+        )
+        found = cipher.decrypt(cur.fetchall())
+
+    assert found == [User(email="a@example.com", age=1)]
+
+
+@needs_database
+def test_a_query_uses_the_eq_term_index():
+    psycopg = pytest.importorskip("psycopg")
+
+    cipher = Cipher(User)
+    rows = cipher.encrypt([User(email=f"user{i}@example.com", age=i) for i in range(20)])
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor() as cur:
+        cur.execute("CREATE TEMPORARY TABLE users (email public.eql_v4_text_eq, age int)")
+        # The README's index.
+        cur.execute("CREATE INDEX users_email_eq ON users USING hash (eql_v4.eq_term(email))")
+        for row in rows:
+            cur.execute("INSERT INTO users (email, age) VALUES (%s, %s)", (row["email"], row["age"]))
+        cur.execute("ANALYZE users")
+        # A table this small is cheaper to scan, so the planner is told not
+        # to. The test is that the index can answer the query at all.
+        cur.execute("SET LOCAL enable_seqscan = off")
+        cur.execute(
+            "EXPLAIN SELECT * FROM users WHERE email = %s::eql_v4.query_text_eq",
+            (cipher.query("email", "user7@example.com"),),
+        )
+        plan = "\n".join(line for (line,) in cur.fetchall())
+
+    assert "users_email_eq" in plan, plan
+
+
+def test_100_queries_make_no_request():
+    cipher = Cipher(User)
+    # The first call in the process may build the client and load the
+    # keyset. Warm it up first, so the count below is the queries alone.
+    cipher.query("email", "warm@example.com")
+    before = _engine.request_count()
+
+    terms = {cipher.query("email", f"user{i}@example.com") for i in range(100)}
+
+    assert _engine.request_count() == before
+    assert len(terms) == 100
