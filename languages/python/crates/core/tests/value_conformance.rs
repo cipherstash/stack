@@ -233,14 +233,46 @@ fn every_malformed_vector_is_refused() {
 #[test]
 fn every_normalized_vector_reads_as_its_canonical_value() {
     let corpus = corpus();
+    let mut written = 0;
     for vector in corpus["normalized"].as_array().expect("normalized") {
         let name = vector["name"].as_str().expect("a name");
         let transport = unhex(vector["transport"].as_str().expect("transport"));
         let reencode = unhex(vector["reencode"].as_str().expect("reencode"));
+        assert_ne!(
+            transport, reencode,
+            "{name}: a vector that normalizes nothing"
+        );
+        // The canonical value, as the corpus states it, read as a vector.
+        let canonical = serde_json::json!({
+            "kind": vector["kind"],
+            "value": vector["reencode_value"],
+        });
+        let (mut text, mut bytes) = (String::new(), Vec::new());
+        let expected = match vector["kind"].as_str() {
+            // A typed null is a null leaf padded to its type's length: it
+            // reads as a plain null.
+            Some("null") => None,
+            _ => Some(host(&canonical, &mut text, &mut bytes).expect("a kind the SDK writes")),
+        };
 
-        let read = values::read(&transport);
+        let read =
+            values::read(&transport).unwrap_or_else(|error| panic!("{name}: refused: {error:?}"));
 
-        let read = read.unwrap_or_else(|error| panic!("{name}: refused: {error:?}"));
-        assert_eq!(Ok(read), values::read(&reencode), "{name}");
+        match expected {
+            None => assert_eq!(read, Scalar::Null, "{name}"),
+            Some((kind, expected)) => {
+                assert_eq!(read, expected, "{name}: the read value");
+                // Written back, the canonical value is the canonical bytes.
+                let frame = ValueFrame::of(Written(kind, value_of(&read))).expect("frames");
+                assert_eq!(
+                    frame.risky_ref(),
+                    &reencode[..],
+                    "{name}: the written bytes"
+                );
+                written += 1;
+            }
+        }
     }
+    // decimal-negative-zero, at this commit.
+    assert_eq!(written, 1);
 }

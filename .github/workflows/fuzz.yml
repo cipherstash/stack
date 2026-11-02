@@ -177,13 +177,16 @@ jobs:
         run: mise run ${{ matrix.task }} -- "-max_total_time=$MAX_TOTAL_TIME"
 
       # Drops inputs that add no coverage, so the saved corpus stays small.
-      # Skipped when the fuzz step found a crash.
+      # Skipped when the fuzz step found a crash. Run from the root, naming
+      # the fuzz crate: from languages/python, mise would load that folder's
+      # mise.toml and install its Python and uv, which this job does not
+      # cache.
       - name: Minimise the corpus (${{ matrix.slug }})
-        working-directory: ${{ matrix.dir }}
         env:
           TARGET: ${{ matrix.target }}
+          FUZZ_DIR: ${{ matrix.dir }}/fuzz
         run: |
-          cargo +nightly fuzz cmin "$TARGET" --sanitizer none --target "$(rustc -vV | sed -n 's/^host: //p')"
+          cargo +nightly fuzz cmin "$TARGET" --fuzz-dir "$FUZZ_DIR" --sanitizer none --target "$(rustc -vV | sed -n 's/^host: //p')"
 
       # Saved even on a crash: the grown corpus is still worth keeping, and the
       # crash input lives in artifacts/, not corpus/.

@@ -14,6 +14,7 @@ import decimal
 import json
 import math
 import os
+import struct
 from typing import Annotated, List, NamedTuple
 
 import attrs
@@ -376,11 +377,24 @@ def test_every_producible_type_round_trips_through_postgres():
         cur.execute("SELECT * FROM every_type")
         [decrypted] = cipher.decrypt(cur.fetchall())
 
-    assert decrypted == model
-    # The same instant, whatever zone it comes back in.
-    timestamp = KIND_VALUES["timestamp"][1]
-    assert decrypted.timestamp == timestamp
-    assert decrypted.timestamp.utcoffset() is not None
+    for marker in PRODUCIBLE:
+        name = marker.name.lower()
+        assert exact(getattr(decrypted, name)) == exact(getattr(model, name)), name
+
+
+def exact(value):
+    """A value in a form whose == also compares what Python's == does not:
+    a Decimal's scale (1.50 == 1.5 in Python), a float's sign (-0.0 == 0.0),
+    and a datetime's instant with no tzinfo dropped."""
+    if isinstance(value, decimal.Decimal):
+        return value.as_tuple()
+    if isinstance(value, float):
+        return struct.pack("<d", value)
+    if isinstance(value, datetime.datetime):
+        assert value.utcoffset() is not None, value
+        # The same instant, whatever zone it comes back in.
+        return value.astimezone(datetime.timezone.utc)
+    return (type(value), value)
 
 
 @stackencrypt.model("floats")
