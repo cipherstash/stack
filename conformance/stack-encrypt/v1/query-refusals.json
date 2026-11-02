@@ -232,6 +232,636 @@
       }
     },
     {
+      "id": "lte-on-equality-only",
+      "field": "email",
+      "operator": "lte",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "email"
+      }
+    },
+    {
+      "id": "gt-on-equality-only",
+      "field": "email",
+      "operator": "gt",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "email"
+      }
+    },
+    {
+      "id": "gte-on-equality-only",
+      "field": "email",
+      "operator": "gte",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "email"
+      }
+    },
+    {
+      "id": "between-on-equality-only",
+      "field": "email",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "string",
+            "text": "a"
+          },
+          {
+            "type": "string",
+            "text": "b"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "email"
+      }
+    },
+    {
+      "id": "lt-on-match-only",
+      "field": "name",
+      "operator": "lt",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "name"
+      }
+    },
+    {
+      "id": "gt-on-match-only",
+      "field": "name",
+      "operator": "gt",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "name"
+      }
+    },
+    {
+      "id": "gte-on-match-only",
+      "field": "name",
+      "operator": "gte",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "name"
+      }
+    },
+    {
+      "id": "between-on-match-only",
+      "field": "name",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "string",
+            "text": "a"
+          },
+          {
+            "type": "string",
+            "text": "b"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "name"
+      }
+    },
+    {
+      "id": "eq-on-ore-only",
+      "field": "nickname",
+      "operator": "eq",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "nickname"
+      }
+    },
+    {
+      "id": "matches-on-ore-only",
+      "field": "nickname",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "nickname"
+      }
+    },
+    {
+      "id": "eq-on-ore-block-only",
+      "field": "title",
+      "operator": "eq",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "title"
+      }
+    },
+    {
+      "id": "matches-on-ore-block-only",
+      "field": "title",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "title"
+      }
+    },
+    {
+      "id": "matches-on-order-only",
+      "field": "score",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "score"
+      }
+    },
+    {
+      "id": "matches-on-ope",
+      "field": "big",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "big"
+      }
+    },
+    {
+      "id": "lt-on-bool",
+      "field": "flag",
+      "operator": "lt",
+      "input": {
+        "type": "bool",
+        "text": "true"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "flag"
+      }
+    },
+    {
+      "id": "lte-on-bool",
+      "field": "flag",
+      "operator": "lte",
+      "input": {
+        "type": "bool",
+        "text": "true"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "flag"
+      }
+    },
+    {
+      "id": "gt-on-bool",
+      "field": "flag",
+      "operator": "gt",
+      "input": {
+        "type": "bool",
+        "text": "true"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "flag"
+      }
+    },
+    {
+      "id": "gte-on-bool",
+      "field": "flag",
+      "operator": "gte",
+      "input": {
+        "type": "bool",
+        "text": "true"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "flag"
+      }
+    },
+    {
+      "id": "between-on-bool",
+      "field": "flag",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "bool",
+            "text": "false"
+          },
+          {
+            "type": "bool",
+            "text": "true"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "flag"
+      }
+    },
+    {
+      "id": "matches-on-bool",
+      "field": "flag",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "flag"
+      }
+    },
+    {
+      "id": "lt-on-ciphertext-only",
+      "field": "note",
+      "operator": "lt",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "note"
+      }
+    },
+    {
+      "id": "lte-on-ciphertext-only",
+      "field": "note",
+      "operator": "lte",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "note"
+      }
+    },
+    {
+      "id": "gt-on-ciphertext-only",
+      "field": "note",
+      "operator": "gt",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "note"
+      }
+    },
+    {
+      "id": "between-on-ciphertext-only",
+      "field": "note",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "string",
+            "text": "a"
+          },
+          {
+            "type": "string",
+            "text": "b"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "note"
+      }
+    },
+    {
+      "id": "matches-on-ciphertext-only",
+      "field": "note",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "note"
+      }
+    },
+    {
+      "id": "lt-on-equality-only-integer",
+      "field": "sealed_age",
+      "operator": "lt",
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "sealed_age"
+      }
+    },
+    {
+      "id": "lte-on-equality-only-integer",
+      "field": "sealed_age",
+      "operator": "lte",
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "sealed_age"
+      }
+    },
+    {
+      "id": "gt-on-equality-only-integer",
+      "field": "sealed_age",
+      "operator": "gt",
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "sealed_age"
+      }
+    },
+    {
+      "id": "gte-on-equality-only-integer",
+      "field": "sealed_age",
+      "operator": "gte",
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "sealed_age"
+      }
+    },
+    {
+      "id": "between-on-equality-only-integer",
+      "field": "sealed_age",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "int64",
+            "text": "1"
+          },
+          {
+            "type": "int64",
+            "text": "2"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "sealed_age"
+      }
+    },
+    {
+      "id": "matches-on-equality-only-integer",
+      "field": "sealed_age",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "sealed_age"
+      }
+    },
+    {
+      "id": "lte-on-bytes-order-index",
+      "field": "data",
+      "operator": "lte",
+      "input": {
+        "type": "bytes",
+        "text": "00"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "data"
+      }
+    },
+    {
+      "id": "gt-on-bytes-order-index",
+      "field": "data",
+      "operator": "gt",
+      "input": {
+        "type": "bytes",
+        "text": "00"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "data"
+      }
+    },
+    {
+      "id": "gte-on-bytes-order-index",
+      "field": "data",
+      "operator": "gte",
+      "input": {
+        "type": "bytes",
+        "text": "00"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "data"
+      }
+    },
+    {
+      "id": "between-on-bytes-order-index",
+      "field": "data",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "bytes",
+            "text": "00"
+          },
+          {
+            "type": "bytes",
+            "text": "01"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "data"
+      }
+    },
+    {
+      "id": "matches-on-bytes-order-index",
+      "field": "data",
+      "operator": "matches",
+      "input": {
+        "type": "string",
+        "text": "alice"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "data"
+      }
+    },
+    {
       "id": "between-scalar",
       "field": "age",
       "operator": "between",
