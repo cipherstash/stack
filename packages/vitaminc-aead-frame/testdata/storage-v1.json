@@ -880,6 +880,33 @@
         ]
       },
       "blob": "56435301f001000000f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f000000000"
+    },
+    {
+      "name": "map_integer_text_and_bytes_keys_of_the_same_bytes",
+      "rule": "text and bytes never equal each other or an integer, even with the same bytes: 49, \"1\" and the byte 0x31 are three keys",
+      "value": {
+        "map": [
+          [
+            {
+              "u8": "49"
+            },
+            null
+          ],
+          [
+            {
+              "text": "1"
+            },
+            null
+          ],
+          [
+            {
+              "bytes": "31"
+            },
+            null
+          ]
+        ]
+      },
+      "blob": "56435301f6030000000d31000a0100000031000b010000003100"
     }
   ],
   "refused": [
@@ -1240,6 +1267,16 @@
       "name": "depth_129_mixed",
       "refusal": "malformed",
       "blob": "56435301f001000000f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f500"
+    },
+    {
+      "name": "map_key_true",
+      "refusal": "malformed",
+      "blob": "56435301f6010000000300"
+    },
+    {
+      "name": "map_key_unknown_tag",
+      "refusal": "malformed",
+      "blob": "56435301f601000000ff00"
     }
   ],
   "reads": [
@@ -2813,6 +2850,95 @@
       },
       "blob": "564353010b03000000526564",
       "refusal": "mismatch"
+    },
+    {
+      "name": "struct_denying_unknown_keys_reads_its_own",
+      "rule": "a struct ignores unknown keys unless it denies them",
+      "type": {
+        "struct_deny_unknown": [
+          [
+            "x",
+            "i32"
+          ]
+        ]
+      },
+      "blob": "56435301f10100000001000000780401000000",
+      "reads_as": {
+        "object": [
+          [
+            "x",
+            {
+              "i32": "1"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "struct_denying_unknown_keys_refuses_one",
+      "type": {
+        "struct_deny_unknown": [
+          [
+            "x",
+            "i32"
+          ]
+        ]
+      },
+      "blob": "56435301f10200000001000000780401000000010000007a00",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "struct_refuses_an_integer_key_beside_its_fields",
+      "type": {
+        "struct": [
+          [
+            "x",
+            "i32"
+          ],
+          [
+            "y",
+            {
+              "option": "u8"
+            }
+          ]
+        ]
+      },
+      "blob": "56435301f6020000000a0100000078040100000007070000000000000000",
+      "refusal": "mismatch"
+    },
+    {
+      "name": "option_of_unit_struct_reads_null_as_none",
+      "rule": "a unit struct, written as null, reads its old null as None in an Option",
+      "type": {
+        "option": {
+          "unit_struct": "Marker"
+        }
+      },
+      "blob": "5643530100",
+      "reads_as": null
+    },
+    {
+      "name": "option_of_unit_struct_reads_some_null",
+      "type": {
+        "option": {
+          "unit_struct": "Marker"
+        }
+      },
+      "blob": "56435301f500",
+      "reads_as": {
+        "some": null
+      }
+    },
+    {
+      "name": "option_of_option_reads_null_as_none",
+      "rule": "an Option, written as null, reads its old null as None in an Option",
+      "type": {
+        "option": {
+          "option": "u8"
+        }
+      },
+      "blob": "5643530100",
+      "reads_as": null
     }
   ]
 }

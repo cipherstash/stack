@@ -82,6 +82,7 @@
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};
+//! use vitaminc_protected::Controlled;
 //!
 //! #[derive(Serialize, Deserialize, PartialEq, Debug)]
 //! #[serde(deny_unknown_fields)]
@@ -100,10 +101,22 @@
 //!
 //! let options = Options { keyset: Keyset::Name("acme".into()), context: None };
 //! let bytes = vitaminc_aead_frame::serde::to_vec(&options)?;
-//! let back: Options = vitaminc_aead_frame::serde::from_slice(&bytes)?;
+//! let back: Options = vitaminc_aead_frame::serde::from_slice(bytes.risky_ref())?;
 //! assert_eq!(back, options);
 //! # Ok::<(), vitaminc_aead_frame::serde::Error>(())
 //! ```
+//!
+//! # Memory
+//!
+//! What a host sends may be secret even when it is not plaintext to seal,
+//! so the writer leaves no copy of a value on the heap. Its buffer grows
+//! into a fresh allocation and wipes the old one. A `Display` value is
+//! formatted into a buffer that is wiped. A map's keys are checked for a
+//! repeat where they lie in the frame, rather than copied. The frame is
+//! returned [`Protected`]. `tests/transport_wipe.rs` checks this. Copies
+//! on the stack and in registers are not wiped, as for the storage
+//! profile (STORAGE.md, *Memory and timing*). The reader borrows text and
+//! bytes from its input.
 
 use std::fmt;
 
@@ -117,7 +130,8 @@ use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT, PASSTHROUG
 use vitaminc_aead::leaf::{self, Form};
 use vitaminc_aead::plaintext::{Float, Int, Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{tags, Encrypt, Frame, FrameWriter};
-use zeroize::Zeroizing;
+use vitaminc_protected::Protected;
+use zeroize::{Zeroize, Zeroizing};
 
 // =============================================================================
 // Errors
@@ -1042,8 +1056,13 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 
 /// Write `value` as frame bytes.
 ///
-/// The buffer grows without leaving copies of what it held behind, as every
-/// frame vitaminc writes does, and is wiped if writing fails part way.
+/// What a host and Rust exchange this way is not plaintext to seal, but may
+/// still be secret (a credential in a configuration, say). So the frame is
+/// returned [`Protected`], and wiped when it is dropped. The buffer grows
+/// without leaving copies of what it held behind, as every frame vitaminc
+/// writes does, and is wiped if writing fails part way. A value written
+/// through `Display` (`collect_str`) is formatted into a buffer that is
+/// wiped too.
 ///
 /// # Errors
 ///
@@ -1058,10 +1077,10 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 /// refused ("container length does not match its children"). `serde_json`
 /// ignores a wrong length, so a hand-written impl that works there can fail
 /// here. Pass `None` when the count is not known up front.
-pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
+pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Protected<Vec<u8>>, Error> {
     let mut out = Zeroizing::new(Vec::new());
     value.serialize(Serializer(FrameWriter::new(&mut out)))?;
-    Ok(core::mem::take(&mut *out))
+    Ok(Protected::new(core::mem::take(&mut *out)))
 }
 
 /// Write `value` as a frame of its own, for a node `depth` levels below
@@ -1078,6 +1097,53 @@ pub(crate) fn written(error: FrameWriteError) -> Error {
 }
 
 /// Writes one node into a [`FrameWriter`].
+/// Make room for `additional` more bytes. A `Vec` that regrows frees its
+/// old allocation without wiping it, so grow into a fresh allocation and
+/// wipe the old one instead.
+///
+/// The same as `reserve` in `vitaminc_aead::frame`, which the frame writer
+/// uses; that one is private to its crate. A fix to either belongs in both.
+pub(crate) fn reserve(out: &mut Vec<u8>, additional: usize) {
+    if out.capacity() - out.len() >= additional {
+        return;
+    }
+    let capacity = out
+        .len()
+        .saturating_add(additional)
+        .max(out.len().saturating_mul(2))
+        .max(64);
+    let mut grown = Vec::with_capacity(capacity);
+    grown.extend_from_slice(out);
+    out.zeroize();
+    *out = grown;
+}
+
+/// Appends formatted text to a buffer, growing it as [`reserve`] does.
+pub(crate) struct Appender<'o>(pub(crate) &'o mut Vec<u8>);
+
+impl fmt::Write for Appender<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        reserve(self.0, s.len());
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
+/// `value`'s `Display`, in a buffer that grows as [`reserve`] does and is
+/// wiped when it is dropped. serde's default `collect_str` formats into a
+/// `String` of its own and frees it unwiped.
+fn displayed<T: fmt::Display + ?Sized>(value: &T) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let mut out = Zeroizing::new(Vec::new());
+    fmt::write(&mut Appender(&mut out), format_args!("{value}"))
+        .map_err(|_| <Error as ser::Error>::custom(""))?;
+    Ok(out)
+}
+
+/// The text [`displayed`] wrote, which `fmt` only ever writes as `&str`.
+fn text(bytes: &[u8]) -> Result<&str, Error> {
+    core::str::from_utf8(bytes).map_err(|_| <Error as ser::Error>::custom(""))
+}
+
 struct Serializer<'o>(FrameWriter<'o>);
 
 impl<'o> Serializer<'o> {
@@ -1155,6 +1221,10 @@ impl<'o> ser::Serializer for Serializer<'o> {
     }
     fn serialize_str(self, v: &str) -> Result<(), Error> {
         self.scalar(Physical::Text(v))
+    }
+    fn collect_str<T: fmt::Display + ?Sized>(self, value: &T) -> Result<(), Error> {
+        let shown = displayed(value)?;
+        self.serialize_str(text(&shown)?)
     }
     fn serialize_bytes(self, v: &[u8]) -> Result<(), Error> {
         self.scalar(Physical::Bytes(v))
@@ -1491,6 +1561,12 @@ impl ser::Serializer for KeySerializer {
 
     fn serialize_str(self, v: &str) -> Result<String, Error> {
         Ok(v.to_owned())
+    }
+    fn collect_str<T: fmt::Display + ?Sized>(self, value: &T) -> Result<String, Error> {
+        // The key itself is kept `Zeroizing` by the map; only the text it
+        // is copied from is this function's to wipe.
+        let shown = displayed(value)?;
+        self.serialize_str(text(&shown)?)
     }
     fn serialize_char(self, v: char) -> Result<String, Error> {
         Ok(v.to_string())

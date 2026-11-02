@@ -114,6 +114,9 @@ Stable, and covered by this specification:
   and `storage::MAP`;
 - `storage::ErrorKind`, the class of a refusal.
 
+The Go module `bindings/go/vcffi` implements the same format
+(`MarshalStorage`, `UnmarshalStorage`).
+
 Not stable, and not covered: everything else in `vitaminc-aead-frame`.
 The transport frame (`Frame`, `FrameWriter`, `to_frame`), the transport
 serde format (`serde::to_vec`, `serde::from_slice`, `serde::from_frame`)
@@ -241,6 +244,8 @@ returning it.
 
 A field skipped with `skip_serializing_if` is not written. A `Vec<u8>` is a
 sequence of `u8` in serde, so it is an array; `serde_bytes` makes it bytes.
+Go's `[]byte` is always bytes, so a type whose values Go also reads keeps its
+byte strings as bytes.
 serde writes a struct with a `#[serde(flatten)]` field as a map, so it is a
 map node whose keys are text. A value serialized through `Display`
 (`collect_str`) is text.
@@ -320,6 +325,12 @@ write different bytes (`1u8` and `1u32`), NaN payloads are kept, and a
 reader accepts the extra forms listed above. Compare values, not blobs,
 unless the type is one whose bytes are fixed.
 
+Writers in other languages make the same choice. Go's `vcffi` writes a
+non-nil pointer as its value, unmarked, as `encoding/json` does, where Rust
+writes `Some(x)` as `some`, then `x`. So `&int32(5)` in Go and
+`Some(5i32)` in Rust are different blobs. Both readers read both forms, as
+the same value.
+
 ## Versions
 
 The version names both the byte grammar and the serde mapping. Version 1
@@ -384,6 +395,20 @@ formats a `Display` value straight into the blob, keeps no copy of a key,
 and wipes everything if writing fails. The blob it returns is `Protected`,
 and wiped when dropped. The reader borrows text and bytes from the blob
 rather than copying them, and finds a repeated map key by comparing keys
-where they lie in the blob. None of it is constant time, and
-serde's own impls are not. A `T: Zeroize` does not wipe fields it read
-before a later field failed.
+where they lie in the blob. The writer frees no heap block that still
+holds the value, and a zeroize audit checked in LLVM IR and assembly that
+every wipe survives optimization.
+
+Copies on the stack and in registers are not wiped:
+
+- a `char`'s UTF-8 while it is written;
+- a scalar while it is encoded or decoded;
+- an integer map key, decoded each time it is compared with another;
+- `core::fmt`'s own buffers while a `Display` value is written;
+- the digits serde's default `visit_i128` and `visit_u128` format a 128-bit
+  integer into when a type does not take one.
+
+Rust has no way to reach every copy the compiler makes, and wiping the one
+copy the source names would claim more than it gives. The heap holds no
+such copy. None of it is constant time, and serde's own impls are not. A
+`T: Zeroize` does not wipe fields it read before a later field failed.

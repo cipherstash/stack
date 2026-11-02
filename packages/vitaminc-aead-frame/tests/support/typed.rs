@@ -9,7 +9,10 @@
 //! `{"struct": [[name, T], …]}`, or `{"enum": [[name, "unit"],
 //! [name, "newtype", T], [name, "tuple", [T, …]], [name, "struct",
 //! [[name, T], …]], …]}`. A struct ignores unknown keys, and reads a
-//! missing `Option` field as `None`, as serde's derive does.
+//! missing `Option` field as `None`, as serde's derive does;
+//! `{"struct_deny_unknown": [[name, T], …]}` is a struct with
+//! `#[serde(deny_unknown_fields)]`, which refuses them. `{"unit_struct":
+//! name}` is a unit struct of that name.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -22,6 +25,7 @@ use super::{leak, Model};
 
 pub enum Schema {
     Unit,
+    UnitStruct(&'static str),
     Bool,
     I8,
     I16,
@@ -47,6 +51,7 @@ pub enum Schema {
 pub struct Fields {
     names: &'static [&'static str],
     types: Vec<Schema>,
+    deny_unknown: bool,
 }
 
 pub struct Variant {
@@ -88,9 +93,14 @@ pub fn schema(json: &Json) -> Schema {
     let (kind, value) = object.iter().next().expect("one entry");
     match kind.as_str() {
         "option" => Schema::Option(Box::new(schema(value))),
+        "unit_struct" => Schema::UnitStruct(leak(value.as_str().expect("a unit struct's name"))),
         "seq" => Schema::Seq(Box::new(schema(value))),
         "map" => Schema::Map(Box::new(schema(&value[0])), Box::new(schema(&value[1]))),
         "struct" => Schema::Struct(fields(value)),
+        "struct_deny_unknown" => Schema::Struct(Fields {
+            deny_unknown: true,
+            ..fields(value)
+        }),
         "enum" => Schema::Enum(
             value
                 .as_array()
@@ -123,6 +133,7 @@ fn fields(json: &Json) -> Fields {
     Fields {
         names: Box::leak(names.into_boxed_slice()),
         types: pairs.iter().map(|p| schema(&p[1])).collect(),
+        deny_unknown: false,
     }
 }
 
@@ -160,6 +171,7 @@ impl<'de> DeserializeSeed<'de> for &Schema {
                 <()>::deserialize(d)?;
                 Model::Null
             }
+            Schema::UnitStruct(name) => d.deserialize_unit_struct(name, UnitStructV)?,
             Schema::Bool => Model::Bool(bool::deserialize(d)?),
             Schema::I8 => Model::I8(i8::deserialize(d)?),
             Schema::I16 => Model::I16(i16::deserialize(d)?),
@@ -277,6 +289,18 @@ impl<'de> Visitor<'de> for Name {
     }
 }
 
+struct UnitStructV;
+
+impl<'de> Visitor<'de> for UnitStructV {
+    type Value = Model;
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a unit struct")
+    }
+    fn visit_unit<E: de::Error>(self) -> Result<Model, E> {
+        Ok(Model::Null)
+    }
+}
+
 struct StructV<'s>(&'s Fields);
 
 impl<'de> Visitor<'de> for StructV<'_> {
@@ -293,6 +317,9 @@ impl<'de> Visitor<'de> for StructV<'_> {
                     return Err(de::Error::duplicate_field(fields.names[i]));
                 }
                 Some(i) => values[i] = Some(map.next_value_seed(&fields.types[i])?),
+                None if fields.deny_unknown => {
+                    return Err(de::Error::unknown_field("", fields.names));
+                }
                 None => {
                     map.next_value::<IgnoredAny>()?;
                 }
