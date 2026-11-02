@@ -54,6 +54,15 @@ function pointer that destructures the struct: it captures nothing, so like
 the accepted plaintext-ownership rule made mechanical: the conversion wipes
 what it seals and transfers what the caller chose to keep in the clear.
 
+The destructure is exhaustive. The owned form replaces the guard over the
+whole value, so a plaintext field the record neither seals nor carries
+would be dropped unwiped; it is a compile error at the `struct = ..` path
+instead, as the decrypt side already refuses a plaintext it cannot rebuild.
+A plaintext with a destructor (`ZeroizeOnDrop`) cannot be destructured, so
+it is not an owned `struct` record source. On the way back, the fields open
+through `Decryption::zip_wiping`: a field recovered before a later field is
+refused is wiped, as the column's recovered prefix is.
+
 A passthrough field is not encrypted and not authenticated (ADR-0010). It
 is `Clone` because the borrowed form, which a plan or a structural record
 runs, has to copy it; the owned form never does, and a test with a `Clone`
