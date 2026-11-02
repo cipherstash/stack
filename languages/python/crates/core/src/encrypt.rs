@@ -185,11 +185,13 @@ fn read_row(plan: &ModelPlan, row: StackCipherText) -> Result<Vec<Column>, Refus
     Ok(columns)
 }
 
-fn engine_fault(what: &str) -> Refusal {
+/// A refusal for an engine result of another shape than the SDK reads:
+/// a bug, never the caller's input.
+pub(crate) fn engine_fault(what: &str) -> Refusal {
     Refusal {
         code: "stack_encrypt_unknown".to_owned(),
         message: format!(
-            "the engine's output does not have the shape the SDK reads: {what}. \
+            "the engine's result does not have the shape the SDK reads: {what}. \
              Report this message as a stackencrypt bug."
         ),
         field: None,

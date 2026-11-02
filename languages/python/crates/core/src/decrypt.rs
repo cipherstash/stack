@@ -12,20 +12,19 @@
 
 use std::future::Future;
 
-use stack_encrypt::dynamic::plaintext::{
-    Error as SinkError, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
-};
+use stack_encrypt::dynamic::frame;
+use stack_encrypt::dynamic::plaintext::{FixedType, Logical, MapSink, Physical, SeqSink, Sink};
 use stack_encrypt::dynamic::record::{self, EQL_KEY};
 use stack_encrypt::dynamic::{Output, Scope, ValueFrame};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
 use stack_encrypt::{CipherText, Encrypt, PassthroughFrame, StackCipher, StackCipherText};
 
 use crate::client;
-use crate::encrypt::{Field, ModelPlan};
+use crate::encrypt::{engine_fault, Field, ModelPlan};
 use crate::plan;
 use crate::refusal::Refusal;
 use crate::targets;
-use crate::values::{self, Misfit, Scalar, Value};
+use crate::values::{self, Misfit, Never, ReadError, Scalar, Value};
 
 /// The stored rows of one `decrypt` call, as the engine's record tree.
 #[derive(Default)]
@@ -99,9 +98,7 @@ impl Row {
                 ),
             ));
         }
-        let frame = ValueFrame::of(Carried(Value::Bytes(json)))
-            .map_err(|_| refusal("stack_encrypt_unknown", field, "bytes".to_owned()))?;
-        self.add(field, EQL_KEY, frame);
+        self.add(field, EQL_KEY, eql_frame(json));
         Ok(())
     }
 
@@ -116,17 +113,31 @@ impl Row {
         values::scalar(None, value)?;
         // A value that fits always writes.
         let frame = ValueFrame::of(Carried(value)).map_err(|_| Misfit::OutOfRange)?;
-        self.add(field, Output::Passthrough.key(), frame);
+        self.add(field, Output::Passthrough.key(), frame.risky_ref().to_vec());
         Ok(())
     }
 
-    fn add(&mut self, field: &Field, key: &str, frame: ValueFrame) {
-        let node = CipherText::Passthrough(PassthroughFrame(frame.risky_ref().to_vec()));
+    fn add(&mut self, field: &Field, key: &str, frame: Vec<u8>) {
+        let node = CipherText::Passthrough(PassthroughFrame(frame));
         self.fields.push((
             field.name.clone(),
             CipherText::Map(vec![(key.to_owned(), node)]),
         ));
     }
+}
+
+/// An EQL value's JSON text as the frame of one bytes scalar, the way the
+/// engine stores it: written straight into the frame's buffer, so the text
+/// is copied once. Bytes are ciphertext here, not plaintext.
+fn eql_frame(json: &[u8]) -> Vec<u8> {
+    struct Bytes<'a>(&'a [u8]);
+    impl serde::Serialize for Bytes<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_bytes(self.0)
+        }
+    }
+    // One bytes scalar always encodes.
+    frame::serde::to_vec(&Bytes(json)).expect("a bytes scalar encodes as a frame")
 }
 
 /// The `i.t` and `i.c` of an EQL value's JSON text, or `None` when it is not
@@ -170,8 +181,10 @@ pub fn decrypt(plan: &ModelPlan, rows: Rows) -> Result<Vec<Vec<Scalar>>, Refusal
     client.block_on(decrypt_with(client.cipher(), plan, rows))
 }
 
-/// [`decrypt`] on `cipher`, under its default keyset: a value sealed under
-/// another keyset is refused before any key is requested.
+/// [`decrypt`] on `cipher`. Each value opens under the keyset that sealed
+/// it, with the keys requested per keyset, as the Go SDK's `Client.Open`
+/// does: rows another SDK wrote under another keyset of the same client
+/// decrypt here too.
 ///
 /// # Errors
 ///
@@ -186,7 +199,7 @@ where
 {
     let count = rows.len();
     async move {
-        let scope = Scope::Keyset(cipher.default_keyset());
+        let scope = Scope::Client(cipher);
         let tree = CipherText::Sequence(rows.rows);
         let pending = record::decrypt_with(scope, tree, plan.plan(), None, &targets::resolver())
             .map_err(|error| opening(plan, &plan::refusal(&error)))?;
@@ -204,7 +217,7 @@ where
 /// an `i` but is not the field's EQL type. `stack_encrypt_opened_type` comes
 /// after: the value opened, but was sealed as another type. The engine does
 /// not say which field that was. So the field is named only when the plan
-/// has one sealed field.
+/// has one sealed field. #1508 tracks the engine change that names it.
 fn opening(plan: &ModelPlan, refused: &Refusal) -> Refusal {
     let code = match refused.code.as_str() {
         "stack_encrypt_target_stored" => "decrypt_malformed",
@@ -248,18 +261,6 @@ fn read_rows(
     Ok(rows)
 }
 
-fn engine_fault(what: &str) -> Refusal {
-    Refusal {
-        code: "stack_encrypt_unknown".to_owned(),
-        message: format!(
-            "the engine's opened record does not have the shape the SDK reads: {what}. \
-             Report this message as a stackencrypt bug."
-        ),
-        field: None,
-        reason: None,
-    }
-}
-
 /// A value the engine reads as it is: what [`Row`] stores.
 #[derive(Clone, Copy)]
 struct Carried<'a>(Value<'a>);
@@ -267,15 +268,6 @@ struct Carried<'a>(Value<'a>);
 impl Encrypt for Carried<'_> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         values::write(sink, None, self.0)
-    }
-}
-
-#[derive(Debug)]
-struct ReadError(&'static str);
-
-impl SinkError for ReadError {
-    fn source(_: SourceError) -> Self {
-        ReadError("the frame could not be walked")
     }
 }
 
@@ -293,7 +285,7 @@ impl<'a> Sink for Opened<'a> {
     type Ok = ();
     type Error = ReadError;
     type Seq = Self;
-    type Map = Nothing;
+    type Map = Never<(), OpenedValue<'static>>;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), ReadError> {
         not_expected("a scalar in place of the rows")
@@ -307,7 +299,7 @@ impl<'a> Sink for Opened<'a> {
         Ok(self)
     }
 
-    fn map(self, _: Option<usize>) -> Result<Nothing, ReadError> {
+    fn map(self, _: Option<usize>) -> Result<Never<(), OpenedValue<'static>>, ReadError> {
         not_expected("one record in place of the rows")
     }
 
@@ -345,7 +337,7 @@ struct OpenedRow<'a> {
 impl<'a> Sink for OpenedRow<'a> {
     type Ok = ();
     type Error = ReadError;
-    type Seq = Nothing;
+    type Seq = Never<(), OpenedValue<'static>>;
     type Map = OpenedFields<'a>;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), ReadError> {
@@ -356,7 +348,7 @@ impl<'a> Sink for OpenedRow<'a> {
         not_expected("a null in place of a row")
     }
 
-    fn seq(self, _: Option<usize>) -> Result<Nothing, ReadError> {
+    fn seq(self, _: Option<usize>) -> Result<Never<(), OpenedValue<'static>>, ReadError> {
         not_expected("a sequence in place of a row")
     }
 
@@ -414,66 +406,39 @@ struct OpenedValue<'a> {
     slot: &'a mut Option<Scalar>,
 }
 
-impl Sink for OpenedValue<'_> {
-    type Ok = ();
-    type Error = ReadError;
-    type Seq = Nothing;
-    type Map = Nothing;
-
-    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), ReadError> {
-        let scalar = values::scalar_of(ty, value).map_err(ReadError)?;
+impl OpenedValue<'_> {
+    fn put(self, scalar: Scalar) -> Result<(), ReadError> {
         if self.slot.replace(scalar).is_some() {
             return not_expected("a field twice in one row");
         }
         Ok(())
     }
+}
 
-    fn typed_null(self, _: FixedType) -> Result<(), ReadError> {
-        *self.slot = Some(Scalar::Null);
-        Ok(())
+impl Sink for OpenedValue<'_> {
+    type Ok = ();
+    type Error = ReadError;
+    type Seq = Never<(), OpenedValue<'static>>;
+    type Map = Never<(), OpenedValue<'static>>;
+
+    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), ReadError> {
+        self.put(values::scalar_of(ty, value).map_err(ReadError)?)
     }
 
-    fn seq(self, _: Option<usize>) -> Result<Nothing, ReadError> {
+    fn typed_null(self, _: FixedType) -> Result<(), ReadError> {
+        self.put(Scalar::Null)
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Never<(), OpenedValue<'static>>, ReadError> {
         not_expected("a sequence in place of a value")
     }
 
-    fn map(self, _: Option<usize>) -> Result<Nothing, ReadError> {
+    fn map(self, _: Option<usize>) -> Result<Never<(), OpenedValue<'static>>, ReadError> {
         not_expected("a map in place of a value")
     }
 
     fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), ReadError> {
         not_expected("a nested passthrough")
-    }
-}
-
-/// A container sink that is never built.
-enum Nothing {}
-
-impl SeqSink for Nothing {
-    type Ok = ();
-    type Error = ReadError;
-    type Element<'s> = OpenedValue<'s>;
-
-    fn element(&mut self) -> Result<OpenedValue<'_>, ReadError> {
-        match *self {}
-    }
-
-    fn end(self) -> Result<(), ReadError> {
-        match self {}
-    }
-}
-
-impl MapSink for Nothing {
-    type Ok = ();
-    type Error = ReadError;
-    type Entry<'s> = OpenedValue<'s>;
-
-    fn entry(&mut self, _: &str) -> Result<OpenedValue<'_>, ReadError> {
-        match *self {}
-    }
-
-    fn end(self) -> Result<(), ReadError> {
-        match self {}
     }
 }
 
@@ -588,6 +553,13 @@ mod tests {
     }
 
     #[test]
+    fn an_eql_frame_is_the_frame_of_one_bytes_scalar() {
+        let json = br#"{"i":{"t":"users","c":"email"}}"#;
+        let scalar = ValueFrame::of(Carried(Value::Bytes(json))).unwrap();
+        assert_eq!(eql_frame(json), scalar.risky_ref());
+    }
+
+    #[test]
     fn a_batch_round_trips_through_encrypt_and_decrypt() {
         let cipher = cipher();
         let plan = users();
@@ -601,6 +573,30 @@ mod tests {
                 vec![Scalar::Text("a@example.com".to_owned()), Scalar::Int(30)],
                 vec![Scalar::Text("b@example.com".to_owned()), Scalar::Int(31)],
             ]
+        );
+    }
+
+    #[test]
+    fn a_row_sealed_under_another_keyset_of_the_client_decrypts() {
+        let cipher = cipher();
+        let plan = users();
+        let named = stack_kms::IdentifiedBy::Name("acme".to_owned().into());
+        let acme = run(cipher.keyset(named)).unwrap();
+        let source = ValueFrame::of(Source(vec![vec![
+            ("email", Some(Kind::String), Value::Text("a@example.com")),
+            ("age", None, Value::Int(3)),
+        ]]))
+        .unwrap();
+        let stored = run(encrypt_with(&acme, &plan, source, 1)).unwrap();
+
+        let opened = run(decrypt_with(&cipher, &plan, rows_of(&plan, &stored))).unwrap();
+
+        assert_eq!(
+            opened,
+            vec![vec![
+                Scalar::Text("a@example.com".to_owned()),
+                Scalar::Int(3)
+            ]]
         );
     }
 
