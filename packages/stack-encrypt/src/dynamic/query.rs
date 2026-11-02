@@ -1887,6 +1887,40 @@ mod tests {
         assert_eq!(negative_zero.operand, zero.operand);
     }
 
+    /// Block ORE's refusals and the text it accepts are shared query-refusal
+    /// cases; a refusal table records only that a case is accepted. What
+    /// stays here is which index answers: the longest text, text with an
+    /// interior NUL and empty text derive a block ORE term, either bound of
+    /// a range included.
+    #[tokio::test]
+    async fn accepted_block_ore_text_derives_a_block_ore_term() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = record::plan(&frame_of(&Tree::Object(vec![field(
+            "title",
+            "string",
+            vec![text("c"), text("ore_block")],
+        )])))
+        .expect("the plan parses");
+        let one = |text: &str| ValueFrame::of(text).expect("a value");
+        let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
+        let longest = "a".repeat(1023);
+        let accepted = [
+            (OpSpec::Lt, one(&longest)),
+            (OpSpec::Lt, one("a\0b")),
+            (OpSpec::Lt, one("")),
+            (OpSpec::Between, two("", &longest)),
+            (OpSpec::Between, two("a\0b", "b")),
+        ];
+        for (op, input) in accepted {
+            let term = query_term(&keyset, &plan, "title", op, &input, &NoTargets)
+                .expect("a query")
+                .await
+                .expect("a term");
+            assert_eq!(term.index, IndexSpec::OreBlock, "{op:?}");
+        }
+    }
+
     /// A plan whose context is a field of each record has no context a
     /// query could derive under; the binding sends the plan under the
     /// context it names.
