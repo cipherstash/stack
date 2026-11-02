@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -77,34 +78,90 @@ type conformanceInput struct {
 	Text string `json:"text"`
 }
 
+// conformanceValue is the typed Go value an input names: every integer at
+// its own width, the SDK's Int128, Uint128, Date and Decimal, a time.Time
+// for a timestamp, and bytes from hex. A text the type cannot carry fails
+// the test; nothing is rounded.
 func conformanceValue(t *testing.T, input conformanceInput) any {
 	t.Helper()
-	switch input.Type {
-	case "int32", "int64":
-		bits := 64
-		if input.Type == "int32" {
-			bits = 32
-		}
+	signed := func(bits int) int64 {
 		n, err := strconv.ParseInt(input.Text, 10, bits)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bits == 32 {
-			return int32(n)
+		return n
+	}
+	unsigned := func(bits int) uint64 {
+		n, err := strconv.ParseUint(input.Text, 10, bits)
+		if err != nil {
+			t.Fatal(err)
 		}
 		return n
+	}
+	float := func(bits int) float64 {
+		n, err := strconv.ParseFloat(input.Text, bits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	switch input.Type {
+	case "int8":
+		return int8(signed(8))
+	case "int16":
+		return int16(signed(16))
+	case "int32":
+		return int32(signed(32))
+	case "int64":
+		return signed(64)
+	case "int128":
+		n, err := encrypt.ParseInt128(input.Text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	case "uint8":
+		return uint8(unsigned(8))
+	case "uint16":
+		return uint16(unsigned(16))
+	case "uint32":
+		return uint32(unsigned(32))
 	case "uint64":
-		n, err := strconv.ParseUint(input.Text, 10, 64)
+		return unsigned(64)
+	case "uint128":
+		n, err := encrypt.ParseUint128(input.Text)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return n
+	case "float32":
+		return float32(float(32))
 	case "float64":
-		n, err := strconv.ParseFloat(input.Text, 64)
+		return float(64)
+	case "bytes":
+		b, err := hex.DecodeString(input.Text)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return n
+		return b
+	case "date":
+		d, err := time.Parse(time.DateOnly, input.Text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encrypt.DateOf(d)
+	case "timestamp":
+		at, err := time.Parse(time.RFC3339Nano, input.Text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return at
+	case "decimal":
+		d, err := encrypt.ParseDecimal(input.Text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
 	case "bool":
 		if input.Text != "true" && input.Text != "false" {
 			t.Fatal("bool must be true or false")
