@@ -33,8 +33,10 @@ type refusalCase struct {
 		Field  *string `json:"field"`
 	} `json:"expected_error"`
 	// How the typed Rust chain answers: a native observation this runner
-	// parses and does not execute.
-	Typed json.RawMessage `json:"typed"`
+	// validates and does not execute.
+	Typed *struct {
+		Refusal string `json:"refusal"`
+	} `json:"typed"`
 }
 
 // refusalInput is a scalar input, or for between a list of two: the
@@ -115,6 +117,23 @@ func TestQueryRefusalConformance(t *testing.T) {
 			if c.Accepted == nil || *c.Accepted != (c.ExpectedError == nil) {
 				t.Fatal("contradictory outcome")
 			}
+			if c.Typed != nil {
+				switch c.Typed.Refusal {
+				case "none":
+					if c.ExpectedError != nil {
+						t.Fatal("the typed chain accepts only what the binding accepts")
+					}
+				case "before_keyset", "after_keyset":
+					if c.ExpectedError == nil || c.ExpectedError.Class != "term" {
+						t.Fatal("the typed chain's stage is recorded for term refusals alone")
+					}
+				default:
+					t.Fatalf("unknown typed stage %q", c.Typed.Refusal)
+				}
+			}
+			if want := c.ExpectedError; want != nil && (want.Class == "term") != (want.Reason == nil && want.Field == nil) {
+				t.Fatal("a term refusal alone has no reason or field")
+			}
 			input := refusalInput(t, c.Input)
 			want := c.ExpectedError
 			check := func(path string, err error) {
@@ -142,11 +161,19 @@ func TestQueryRefusalConformance(t *testing.T) {
 				if diagnostic.Code != want.Code {
 					t.Fatalf("%s: code %s, want %s", path, diagnostic.Code, want.Code)
 				}
-				if want.Reason != nil && diagnostic.Reason() != *want.Reason {
-					t.Fatalf("%s: reason %q, want %q", path, diagnostic.Reason(), *want.Reason)
+				// A term refusal carries neither a reason nor a field.
+				var reason, field string
+				if want.Reason != nil {
+					reason = *want.Reason
 				}
-				if want.Field != nil && diagnostic.Field() != *want.Field {
-					t.Fatalf("%s: field %q, want %q", path, diagnostic.Field(), *want.Field)
+				if want.Field != nil {
+					field = *want.Field
+				}
+				if diagnostic.Reason() != reason {
+					t.Fatalf("%s: reason %q, want %q", path, diagnostic.Reason(), reason)
+				}
+				if diagnostic.Field() != field {
+					t.Fatalf("%s: field %q, want %q", path, diagnostic.Field(), field)
 				}
 			}
 			_, err := cipher.QueryTerm(ctx, plan, c.Field, c.Operator, input)
