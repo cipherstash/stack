@@ -252,7 +252,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! key source may still split a logical batch across several provider
 //! requests. The column is held in one guard and wiped before the pending
 //! request is returned, as a scalar is, and a column that fails after some
-//! elements were recovered wipes those before reporting the error.
+//! elements were recovered wipes those before reporting the error (or
+//! before unwinding, when an element's conversion panics).
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {

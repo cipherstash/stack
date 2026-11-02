@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider requests). The vector is held in one guard and wiped before the
   pending request is returned, including when the context is refused, with
   no `Clone` bound; a column that fails after some elements were recovered
-  wipes those before returning the error. `Vec<u8>` is not a column of
+  wipes those before returning the error, and before unwinding when an
+  element's conversion panics. `Vec<u8>` is not a column of
   scalars: `u8` is not `OpaqueEncode`, because Vitamin C keeps `Vec<u8>` a
   byte leaf, so it compiles to neither a column of bytes nor one ciphertext.
   Direct `keyset.encrypt` still takes one scalar; `encrypt_tree` remains the

@@ -413,3 +413,68 @@ async fn a_late_element_failure_wipes_the_plaintext_recovered_before_it() {
     );
     assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
 }
+
+// Opens to a `Flagged`, and panics in its conversion when told to. `Flagged`
+// has no drop check of its own, so an unwiped drop during the unwind is seen
+// through the flag rather than as an abort.
+struct Flagged {
+    value: String,
+    wiped: Arc<AtomicBool>,
+}
+impl zeroize::Zeroize for Flagged {
+    fn zeroize(&mut self) {
+        self.value.zeroize();
+        self.wiped.store(true, Ordering::SeqCst);
+    }
+}
+struct PanickingCiphertext {
+    ciphertext: Ciphertext,
+    panics: bool,
+    wiped: Arc<AtomicBool>,
+}
+impl DecryptSource<Flagged> for PanickingCiphertext {
+    type ContextInput = OptionalContext<ScalarContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<Flagged, K> {
+        let (panics, wiped) = (self.panics, self.wiped);
+        self.ciphertext
+            .decryption(context)
+            .map(move |value: String| {
+                assert!(!panics, "element conversion failed");
+                Flagged { value, wiped }
+            })
+    }
+}
+
+#[test]
+fn a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column: Vec<_> = rt
+        .block_on(async {
+            vec![
+                keyset.encrypt("recovered first".to_owned()).await.unwrap(),
+                keyset.encrypt("never recovered".to_owned()).await.unwrap(),
+            ]
+        })
+        .into_iter()
+        .enumerate()
+        .map(|(row, ciphertext)| PanickingCiphertext {
+            ciphertext,
+            panics: row == 1,
+            wiped: Arc::default(),
+        })
+        .collect();
+    let wiped: Vec<_> = column.iter().map(|c| c.wiped.clone()).collect();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rt.block_on(async { Vec::<Flagged>::decrypt_from(column, &keyset).await })
+    }));
+    assert!(result.is_err(), "the element conversion panicked");
+    assert!(
+        wiped[0].load(Ordering::SeqCst),
+        "the prefix recovered before the panic is wiped during the unwind"
+    );
+}

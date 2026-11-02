@@ -345,10 +345,10 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
 
     /// [`collect`](Self::collect) for a collection of recovered plaintext.
     /// When a later item fails at fulfilment (an authentication or type
-    /// failure after its key arrived), the items recovered before it are
-    /// wiped before the error is returned, not dropped as they are. A
-    /// failure before fulfilment recovers nothing, so there is nothing to
-    /// wipe.
+    /// failure after its key arrived, or a panic in its conversion), the
+    /// items recovered before it are wiped before the error is returned or
+    /// the panic unwinds, not dropped as they are. A failure before
+    /// fulfilment recovers nothing, so there is nothing to wipe.
     pub(crate) fn collect_wiping(
         scope: impl CipherScope<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
@@ -362,7 +362,8 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     }
 
     /// The one collection builder. `release` is handed the items fulfilled
-    /// before a later item failed; it is not called when every item succeeds.
+    /// before a later item failed or panicked; it is not called when every
+    /// item succeeds.
     fn collect_releasing(
         scope: impl CipherScope<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
@@ -393,18 +394,41 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             fulfil: Box::new(move |responses| {
-                let mut recovered = Vec::with_capacity(fulfils.len());
+                // Held in a guard so that an item whose fulfilment panics
+                // releases the prefix during the unwind, as an error does.
+                let mut recovered = Recovered {
+                    items: Vec::with_capacity(fulfils.len()),
+                    release: Some(release),
+                };
                 for fulfil in fulfils {
-                    match fulfil(responses) {
-                        Ok(item) => recovered.push(item),
-                        Err(error) => {
-                            release(recovered);
-                            return Err(error);
-                        }
-                    }
+                    recovered.items.push(fulfil(responses)?);
                 }
-                Ok(recovered)
+                Ok(recovered.keep())
             }),
+        }
+    }
+}
+
+/// The items a collection has recovered so far. Dropped before
+/// [`keep`](Self::keep), by an early return or an unwind, it hands them to
+/// `release`.
+struct Recovered<T, R: FnOnce(Vec<T>)> {
+    items: Vec<T>,
+    release: Option<R>,
+}
+
+impl<T, R: FnOnce(Vec<T>)> Recovered<T, R> {
+    /// Every item succeeded: the collection is the output, not released.
+    fn keep(mut self) -> Vec<T> {
+        self.release = None;
+        std::mem::take(&mut self.items)
+    }
+}
+
+impl<T, R: FnOnce(Vec<T>)> Drop for Recovered<T, R> {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            release(std::mem::take(&mut self.items));
         }
     }
 }
