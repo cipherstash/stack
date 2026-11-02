@@ -97,6 +97,22 @@ on:
       - 'packages/eql/crates/eql-bindings/src/v3/**'
       - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      # EQL v4 and the codec the migration suites (`tests/migrate-v*-to-v4.test.ts`)
+      # re-encrypt through. `eql:v4:install` builds the v4 bundle from the SQL
+      # source with `tasks/build.sh` (which runs eql-codegen), and `eql:v4:codec`
+      # builds `tests/encryption/examples/v4_codec.rs` over eql-bindings' v4
+      # targets, stack-encrypt and stack-kms. No published package carries any of
+      # it, so these paths are the only inputs that change what those suites run.
+      # `packages/eql/crates/**` (eql-codegen, eql-bindings' v4 module) is left
+      # out on purpose: wasm-build-inputs-paths-filter.test.mjs holds this
+      # filter to the crate files the native binding compiles, and test-eql.yml
+      # already runs on every change there.
+      - 'packages/eql/Cargo.lock'
+      - 'packages/eql/src/**'
+      - 'packages/eql/tasks/**'
+      - 'packages/eql/tests/encryption/**'
+      - 'packages/stack-encrypt/**'
+      - 'packages/stack-kms/**'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/build-auth-binding/**'
@@ -146,6 +162,12 @@ on:
       - 'packages/eql/crates/eql-bindings/src/v3/**'
       - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      - 'packages/eql/Cargo.lock'
+      - 'packages/eql/src/**'
+      - 'packages/eql/tasks/**'
+      - 'packages/eql/tests/encryption/**'
+      - 'packages/stack-encrypt/**'
+      - 'packages/stack-kms/**'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/build-auth-binding/**'
@@ -361,11 +383,24 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2404
 
-      # One task, four things the suite cannot run without (see
+      # The EQL workspace's Rust, which `mise run setup` compiles for the
+      # migration suites: eql-codegen (the v4 bundle) and the v4 codec. Without
+      # a cache that is a cold build of stack-encrypt and its HTTP stack on every
+      # run. Keyed apart from the `sqlx-tests` cache test-eql.yml saves, which
+      # carries the SQLx graph this job never builds.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: eql-v4-codec
+
+      # One task, six things the suite cannot run without (see
       # integration-tests/tasks.toml): `pnpm install --frozen-lockfile` (a
       # no-op here — the step above already ran it), `docker compose up` for
-      # Postgres, the EQL **v2** bundle from a GitHub release, and EQL **v3**
-      # built from the in-tree `@cipherstash/eql`.
+      # Postgres, the EQL **v2** bundle from a GitHub release, EQL **v3**
+      # built from the in-tree `@cipherstash/eql`, EQL **v4** built from the
+      # in-tree EQL source, and the Rust v4 codec. The last two serve
+      # `tests/migrate-v*-to-v4.test.ts`: Stack Encrypt is the only v4
+      # producer, and no TypeScript SDK reaches it yet.
       #
       # BOTH EQL versions are required and nothing else in this repo installs
       # v2: `tests/postgres.test.ts` creates `eql_v2_encrypted` columns and
@@ -381,7 +416,7 @@ jobs:
       # `integration-db`'s per-job project names deliberately do not produce.
       # The fixed host port (5436) that comes with it cannot collide with the
       # shared stacks, which publish on ephemeral ports.
-      - name: Provision the suite (Postgres, EQL v2 + v3)
+      - name: Provision the suite (Postgres, EQL v2 + v3 + v4, v4 codec)
         working-directory: languages/typescript/packages/protect-ffi
         run: mise run setup
 

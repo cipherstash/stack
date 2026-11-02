@@ -2,7 +2,7 @@
   "name": "@cipherstash/ffi-integration-tests",
   "version": "1.0.2",
   "private": true,
-  "description": "Live integration coverage for @cipherstash/protect-ffi — real ZeroKMS, real Postgres, EQL v2 and v3",
+  "description": "Live integration coverage for @cipherstash/protect-ffi — real ZeroKMS, real Postgres, EQL v2, v3 and v4",
   "license": "MIT",
   "scripts": {
     "typecheck": "tsc",
