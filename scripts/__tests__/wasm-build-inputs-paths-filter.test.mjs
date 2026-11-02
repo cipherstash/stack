@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { eqlV4SuiteFilterEntries } from './lib/eql-v4-suite-inputs.mjs'
 import { filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
@@ -548,12 +549,23 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
   // compile. The key now names the compiled files (held to them by
   // ffi-binding-action.test.mjs); a filter entry under the EQL crates must be
   // one of its entries, not a wider glob.
+  //
+  // One workflow builds more than the binding: integration-protect-ffi.yml
+  // runs the EQL v4 migration suites, which compile eql-bindings' v4 modules
+  // into a codec and render the v4 SQL through eql-codegen. It may also name
+  // exactly the entries lib/eql-v4-suite-inputs.mjs derives for those builds
+  // (eql-v4-suite-triggers.test.mjs requires them), and nothing wider.
   const EQL_CRATES = 'packages/eql/crates'
   const nativeInputs = new Set(buildInputs(NATIVE_CACHE_STEP))
+  const V4_SUITE_WORKFLOW = '.github/workflows/integration-protect-ffi.yml'
+  const v4SuiteEntries = new Set(eqlV4SuiteFilterEntries(REPO_ROOT).entries)
   for (const { relPath, event, paths } of KEYS[0].workflows.flatMap(
     filteredEvents,
   )) {
     it(`${relPath} (${event}) names no EQL crate path the binding does not compile`, () => {
+      const allowed = (entry) =>
+        nativeInputs.has(entry) ||
+        (relPath === V4_SUITE_WORKFLOW && v4SuiteEntries.has(entry))
       const wider = paths.filter(
         (entry) =>
           !entry.startsWith('!') &&
@@ -561,7 +573,7 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
             literalPrefix(entry).startsWith(`${EQL_CRATES}/`) ||
             EQL_CRATES.startsWith(`${literalPrefix(entry)}/`)) &&
           literalPrefix(entry) !== '' &&
-          !nativeInputs.has(entry),
+          !allowed(entry),
       )
       expect(
         wider,

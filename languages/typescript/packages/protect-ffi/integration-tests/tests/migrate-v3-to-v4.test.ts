@@ -8,7 +8,7 @@ import {
   newClient,
 } from '@cipherstash/protect-ffi'
 import { Client } from 'pg'
-import { beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import {
   CHECK_VIOLATION,
   decryptV4,
@@ -143,6 +143,7 @@ const emails = (rows: Customer[]) => rows.map((row) => row.email)
 
 describe('EQL v3 -> v4 migration', () => {
   const pg = new Client()
+  let connected = false
   let v3Client: Awaited<ReturnType<typeof newClient>>
 
   /** Ids the query returns, read as emails through the plaintext oracle. */
@@ -177,6 +178,7 @@ describe('EQL v3 -> v4 migration', () => {
   beforeAll(async () => {
     v3Client = await newClient({ encryptConfig, eqlVersion: 3 })
     await pg.connect()
+    connected = true
     await requireEqlV4(pg)
 
     // Step 1: the table as Stack 1.x left it — v3 columns only.
@@ -208,9 +210,16 @@ describe('EQL v3 -> v4 migration', () => {
         [index + 1, ...row],
       )
     }
+  })
 
-    return async () => {
+  // In `afterAll`, not returned from `beforeAll`: a returned teardown runs only
+  // when setup succeeds, so a throw after `connect()` would leave the socket
+  // open and the table behind.
+  afterAll(async () => {
+    if (!connected) return
+    try {
       await pg.query(`DROP TABLE IF EXISTS ${TABLE}`)
+    } finally {
       await pg.end()
     }
   })
@@ -288,6 +297,9 @@ describe('EQL v3 -> v4 migration', () => {
         value: 'alan@example.com',
       },
     ])
+    // Both terms must exist, or `not.toEqual` passes on `undefined`.
+    expect(typeof v4Query.hm).toBe('string')
+    expect(typeof relabelled.hm).toBe('string')
     expect(v4Query.hm).not.toEqual(relabelled.hm)
   })
 
