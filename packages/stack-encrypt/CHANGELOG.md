@@ -86,7 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record or a typed plan field without a second derive; derive one pair or
   the other, not both. The crate docs' "Records" section and the derive
   crate's "Owned records" section show the forms; `tests/ui` pins the ones
-  that are refused, at the field.
+  that are refused, at the field. A `struct` record names every field of
+  its plaintext, sealed or passthrough: the owned conversion destructures
+  the struct, so an unaccounted field is a compile error rather than a
+  field dropped unwiped, and the plaintext cannot implement `Drop`. A field
+  opened before a later field is refused is wiped.
+- **`Decryption::zip_wiping`**: `zip` for recovered plaintext. When the
+  right side fails after its key arrived, or panics in its conversion, the
+  left side's plaintext is wiped rather than dropped as it is. The owned
+  record derive opens its fields through it.
 - **`EncryptTarget::owned_encryption` and `indexes`**: the description over
   the plaintext by value, in `Owned` source mode, defaulting to guard the
   value with `Protected`, run `encryption` over a borrow and wipe it before
@@ -113,17 +121,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target that has no structural declaration, such as a `Ciphertext`.
   Lowers to `<T as EncryptTarget<F>>::encryption().accepting::<CallerContext>()`.
 
-### Deprecated
-
-- The structural derives `#[derive(EncryptFrom, DecryptInto)]` and the
-  `target::legacy` conversion traits remain for the plans and the dynamic
-  engine that run them, and are the migration path's starting point, not its
-  end: new records derive `EncryptTarget` / `DecryptSource`, which emit the
-  structural declarations too. Their removal is tracked separately (#1488)
-  and follows once every consumer has an owned equivalent. No
-  `#[deprecated]` attribute is applied yet, since the crate's own plan and
-  dynamic modules still implement them.
-
 - **Owned collections: `EncryptInto` encrypts a `Vec<S>` into a `Vec<T>`,
   and `DecryptFrom` decrypts it back** (#1482). `Vec<T>` implements
   `EncryptTarget<Vec<S>>` and `DecryptSource<Vec<P>>` for any owned element
@@ -144,9 +141,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     call for each keyset to decrypt it. An empty collection makes no call. The key
     source can still split a logical batch into several requests to its
     provider.
-  - The plaintext `Vec` is wiped before the pending request is returned, even
-    when the context is refused. The elements do not need to implement
-    `Clone`.
+  - Each element is wiped by its own declaration before the pending request
+    is returned, even when the context is refused. If a declaration panics,
+    the elements not yet handed over are wiped too. The elements do not need
+    to implement `Clone`.
   - If an element fails after earlier elements were decrypted, the earlier
     plaintexts are wiped before the error is returned. If an element's
     conversion panics, they are wiped before the panic unwinds.
@@ -264,6 +262,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vitaminc-aead-frame` is now always built, with its `serde` feature.
   Before, it was built only with the `dynamic` feature. The `dynamic`
   feature now adds no dependency.
+
+### Deprecated
+
+- The structural derives `#[derive(EncryptFrom, DecryptInto)]` and the
+  `target::legacy` conversion traits remain for the plans and the dynamic
+  engine that run them, and are the migration path's starting point, not its
+  end: new records derive `EncryptTarget` / `DecryptSource`, which emit the
+  structural declarations too. Their removal is tracked separately (#1488)
+  and follows once every consumer has an owned equivalent. No
+  `#[deprecated]` attribute is applied yet, since the crate's own plan and
+  dynamic modules still implement them.
 
 ## [0.3.0] - 2026-10-27
 

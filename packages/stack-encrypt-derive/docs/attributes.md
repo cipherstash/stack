@@ -97,6 +97,15 @@ field is moved into the record by the owned conversion; its type is `Clone`
 too, since the record's borrowed form, which a plan or a structural record
 runs, copies it.
 
+A `struct` record accounts for every field of its plaintext, sealing it or
+carrying it through: the owned conversion destructures the struct, and a
+field it does neither would be dropped unwiped, so it is refused at the
+`struct = ..` path ("pattern does not mention field"). For the same reason
+the plaintext struct cannot implement `Drop` (so not `ZeroizeOnDrop`
+either): a type with a destructor cannot be destructured. On decryption a
+field opened before a later field is refused is wiped, not dropped as it
+is.
+
 A `plaintext` record's fields are all handed the one context the record
 requires, so a term beside an `AeadContext`-only record is refused at the
 term. Omitting a required context is refused at the call
