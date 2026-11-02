@@ -25,8 +25,10 @@ eql = []
 eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["targets"] }
 # For the engine error's diagnostic code.
 miette = "7.5.0"
-# For the plan's frame: the fields in declaration order.
-serde = "1"
+# For the plan's frame: the fields in declaration order. With derive, for
+# the `i` of a stored EQL value, read before any key request.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 stack-auth = { workspace = true }
 stack-encrypt = { workspace = true }
 stack-kms = { workspace = true }
@@ -38,5 +40,5 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 zerokms-protocol = "0.12.31"
 
 [dev-dependencies]
-# The shared resolver file's own tests use it.
-serde_json = "1"
+# The engine's in-memory key source, for the round trip with no ZeroKMS.
+stack-kms = { workspace = true, features = ["test-support"] }

@@ -87,6 +87,11 @@ impl Client {
         self.cipher.default_keyset()
     }
 
+    /// The cipher itself.
+    pub fn cipher(&self) -> &StackCipher<Kms> {
+        &self.cipher
+    }
+
     /// Run `future` to completion on the shared runtime, blocking this
     /// thread. The caller releases the GIL around this.
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {

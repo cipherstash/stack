@@ -3,8 +3,9 @@
 //! The exception classes live in `stackencrypt._errors`, in Python, so that
 //! the pure-Python checks and the extension raise the same ones. The class
 //! is chosen by the code's prefix, as the spec's "Errors" section assigns
-//! them: `value_*` is `InvalidValueError`, `stack_auth_*` is
-//! `AuthenticationError`, and anything else is the base `StashError`.
+//! them: `value_*` is `InvalidValueError`, `decrypt_*` is `DecryptError`,
+//! `stack_auth_*` is `AuthenticationError`, and anything else is the base
+//! `StashError`.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -26,6 +27,8 @@ pub fn raise(py: Python<'_>, refused: Refusal) -> PyErr {
 fn exception(py: Python<'_>, refused: &Refusal) -> PyResult<PyErr> {
     let class = if refused.code.starts_with("value_") {
         "InvalidValueError"
+    } else if refused.code.starts_with("decrypt_") {
+        "DecryptError"
     } else if refused.code.starts_with("stack_auth_") {
         "AuthenticationError"
     } else {

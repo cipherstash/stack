@@ -2,7 +2,7 @@
 
 `stackencrypt` is the Python SDK for CipherStash Stack. It encrypts the fields of a Python model into values you store in PostgreSQL with EQL v4. EQL is CipherStash's set of PostgreSQL types for encrypted values.
 
-This is a stub. The package is not released. Today it can encrypt a model. Decrypting and querying come in later releases.
+This is a stub. The package is not released. Today it can encrypt a model and decrypt it again. Querying comes in a later release.
 
 ## Before you start
 
@@ -64,6 +64,23 @@ with psycopg.connect(DATABASE_URL) as conn:
 `encrypt` returns one dict per model. A sealed field such as `email` is a `str` of EQL JSON. psycopg sends it with a plain `%s`. PostgreSQL reads it as the column's type, so the insert needs no cast. A `Passthrough` field such as `age` is the value itself.
 
 `encrypt` checks every value before it sends anything. A value of the wrong type, such as `True` for an `int` field, raises `stackencrypt.InvalidValueError`. The error names the field. It never contains the value.
+
+## Read the rows back
+
+Read the rows with psycopg's `dict_row`, then decrypt them with the same `Cipher`:
+
+```python
+from psycopg.rows import dict_row
+
+with psycopg.connect(DATABASE_URL) as conn:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT email, age FROM users")
+        users = cipher.decrypt(cur.fetchall())   # a list of User
+```
+
+`decrypt` builds whole `User` instances, so the `SELECT` must name every declared column, passthrough columns included. A row without one raises `stackencrypt.DecryptError` with the code `decrypt_missing_column`. Other columns in the row are ignored.
+
+`decrypt` checks every row before it sends anything. A value stored under another table or column raises `DecryptError` with the code `decrypt_foreign_row`. A passthrough value of another type than the field declares raises `InvalidValueError`. When any row fails, `decrypt` returns no instances.
 
 ## Run the tests
 

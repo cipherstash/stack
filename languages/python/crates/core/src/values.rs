@@ -245,6 +245,38 @@ pub fn read(bytes: &[u8]) -> Result<Scalar, Refusal> {
         .map_err(|ReadError(what)| malformed(what))
 }
 
+/// An opened scalar as a host value.
+///
+/// # Errors
+///
+/// What the value is, when the SDK has no host value for it: an integer
+/// wider than 128 bits, a date or timestamp outside the range, or a logical
+/// type the SDK does not read.
+pub fn scalar_of(ty: Option<Logical>, value: Physical<'_>) -> Result<Scalar, &'static str> {
+    Ok(match (ty, value) {
+        (None, Physical::Null) => Scalar::Null,
+        (None, Physical::Bool(b)) => Scalar::Bool(b),
+        (None, Physical::Int(i)) => Scalar::Int(i.to_i128().ok_or("an integer too wide")?),
+        (None, Physical::Float(Float::F32(f))) => Scalar::Float(f64::from(f)),
+        (None, Physical::Float(Float::F64(f))) => Scalar::Float(f),
+        (None, Physical::Text(s)) => Scalar::Text(s.to_owned()),
+        (None, Physical::Bytes(b)) => Scalar::Bytes(b.to_vec()),
+        (Some(Logical::Date), Physical::Int(days)) => Scalar::Date(
+            days.to_i128()
+                .and_then(|d| i32::try_from(d).ok())
+                .ok_or("a date outside the range")?,
+        ),
+        (Some(Logical::Timestamp(unit)), Physical::Int(count)) => Scalar::Timestamp(
+            kinds::timestamp_nanos(unit, count).ok_or("a timestamp outside the range")?,
+        ),
+        (Some(Logical::Decimal { scale }), Physical::Int(mantissa)) => Scalar::Decimal {
+            mantissa: mantissa.to_i128().ok_or("a decimal too wide")?,
+            scale,
+        },
+        _ => return Err("a logical type the SDK does not read"),
+    })
+}
+
 fn malformed(what: &str) -> Refusal {
     Refusal {
         code: "stack_encrypt_unknown".to_owned(),
@@ -272,31 +304,7 @@ impl Sink for Reader {
     type Map = Never;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Scalar, ReadError> {
-        Ok(match (ty, value) {
-            (None, Physical::Null) => Scalar::Null,
-            (None, Physical::Bool(b)) => Scalar::Bool(b),
-            (None, Physical::Int(i)) => {
-                Scalar::Int(i.to_i128().ok_or(ReadError("an integer too wide"))?)
-            }
-            (None, Physical::Float(Float::F32(f))) => Scalar::Float(f64::from(f)),
-            (None, Physical::Float(Float::F64(f))) => Scalar::Float(f),
-            (None, Physical::Text(s)) => Scalar::Text(s.to_owned()),
-            (None, Physical::Bytes(b)) => Scalar::Bytes(b.to_vec()),
-            (Some(Logical::Date), Physical::Int(days)) => Scalar::Date(
-                days.to_i128()
-                    .and_then(|d| i32::try_from(d).ok())
-                    .ok_or(ReadError("a date outside the range"))?,
-            ),
-            (Some(Logical::Timestamp(unit)), Physical::Int(count)) => Scalar::Timestamp(
-                kinds::timestamp_nanos(unit, count)
-                    .ok_or(ReadError("a timestamp outside the range"))?,
-            ),
-            (Some(Logical::Decimal { scale }), Physical::Int(mantissa)) => Scalar::Decimal {
-                mantissa: mantissa.to_i128().ok_or(ReadError("a decimal too wide"))?,
-                scale,
-            },
-            _ => return Err(ReadError("a logical type the SDK does not read")),
-        })
+        scalar_of(ty, value).map_err(ReadError)
     }
 
     fn typed_null(self, _: FixedType) -> Result<Scalar, ReadError> {
