@@ -24,12 +24,12 @@ import datetime
 import decimal
 import json
 import struct
+from pathlib import Path
 from typing import Annotated
 
 import pytest
 
 import stackencrypt
-from conftest import FIXTURES
 from stackencrypt import (
     Bigint,
     BigintEq,
@@ -122,8 +122,13 @@ class Ledger:
     amount: Annotated[decimal.Decimal, NumericEq]
 
 
+# The Go SDK's EQL fixtures. Not imported from conftest.py: `from conftest`
+# resolves to whichever conftest.py is first on sys.path.
+FIXTURES = Path(__file__).resolve().parents[3] / "packages/eql/tests/encryption/fixtures"
+
 # (fixture, model, the row ids Python's types can hold). Ledger rows 1 and 2
-# hold years past Python's 1 to 9999 and nanosecond timestamps.
+# hold years past Python's 1 to 9999 and nanosecond timestamps: the tests
+# at the end check each refusal on its own.
 CASES = [
     ("stored_v4_rows_v1.json", Profile, [1, 2]),
     ("v4_ordered_rows.json", Ranking, [1, 2, 3]),
@@ -241,11 +246,50 @@ def test_every_case_compares_terms():
     assert terms == {"hm", "op", "bf"}
 
 
+@stackencrypt.model("profiles")
+@dataclasses.dataclass
+class Opened:
+    id: Annotated[int, Passthrough]
+    opened: Annotated[datetime.date, Date]
+
+
+@stackencrypt.model("profiles")
+@dataclasses.dataclass
+class Created:
+    id: Annotated[int, Passthrough]
+    created: Annotated[datetime.datetime, Timestamp]
+
+
 @pytest.mark.parametrize("row_id", [1, 2])
-def test_a_go_row_python_cannot_hold_is_refused_not_rounded(row_id):
+def test_a_date_outside_pythons_years_is_refused(row_id):
+    # -262143-01-01 and +262142-12-31: datetime holds years 1 to 9999.
     [row] = rows_of("v4_ledger_rows.json", [row_id])
 
     with pytest.raises(DecryptError) as raised:
-        Cipher(Ledger).decrypt([stored_row(Ledger, row)])
+        Cipher(Opened).decrypt([stored_row(Opened, row)])
 
     assert raised.value.code == "decrypt_not_representable"
+    assert raised.value.field == "opened"
+
+
+@pytest.mark.parametrize("row_id", [1, 2])
+def test_a_timestamp_with_nanoseconds_is_refused_not_rounded(row_id):
+    # 1969-12-31T23:59:59.999999999Z and 2024-02-29T12:34:56.123456789Z:
+    # years datetime holds, with nanoseconds it does not. Rounded, a value
+    # would seal to another equality term than the one Go stored.
+    [row] = rows_of("v4_ledger_rows.json", [row_id])
+    assert row["plaintext"]["created"].endswith("9Z")
+
+    with pytest.raises(DecryptError) as raised:
+        Cipher(Created).decrypt([stored_row(Created, row)])
+
+    assert raised.value.code == "decrypt_not_representable"
+    assert raised.value.field == "created"
+
+
+def test_a_timestamp_in_whole_microseconds_opens():
+    [row] = rows_of("v4_ledger_rows.json", [3])
+
+    [created] = Cipher(Created).decrypt([stored_row(Created, row)])
+
+    assert created.created == datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)

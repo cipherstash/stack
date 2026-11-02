@@ -41,6 +41,9 @@ stack-kms = { workspace = true }
 # One multi-thread runtime per process, beside the shared client: an
 # operation blocks its own thread on it with the GIL released.
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# To wipe the opened text and bytes a `Scalar` holds when it is dropped.
+# The version the workspace already resolves.
+zeroize = "1"
 # For the request-counting connection: the trait a ZeroKMS request
 # implements. The version stack-kms resolves.
 zerokms-protocol = "0.12.31"
