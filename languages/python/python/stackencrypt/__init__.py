@@ -3,7 +3,8 @@
 Walking skeleton. The package loads its native extension, ``_engine``, exposes
 two facts about the build, exports the markers a model's fields are declared
 with, reads a model's declaration with ``model``, and builds a ``Cipher`` for
-a declared class that encrypts its instances.
+a declared class that encrypts its instances, decrypts them, and makes
+query terms.
 """
 
 from stackencrypt import _engine, _eql
@@ -17,6 +18,7 @@ from stackencrypt._errors import (
     DeclarationError,
     DecryptError,
     InvalidValueError,
+    QueryError,
     StashError,
 )
 from stackencrypt._markers import Ignore, Passthrough
@@ -34,6 +36,7 @@ __all__ = [
     "Ignore",
     "InvalidValueError",
     "Passthrough",
+    "QueryError",
     "StashError",
     "__engine__",
     "__version__",

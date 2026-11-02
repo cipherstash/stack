@@ -35,6 +35,11 @@ def decrypt(plan: Plan, cls: type, rows: Sequence[Any]) -> List[Any]:
     keyword arguments. Raises ``DecryptError`` or ``InvalidValueError``
     before any request for what the rows themselves can answer."""
 
+def query(plan: Plan, field: str, value: Any) -> str:
+    """The equality query term for ``value`` on the sealed field ``field``.
+    Raises ``InvalidValueError`` before any request for a value that does
+    not fit the field."""
+
 def client_builds() -> int:
     """How many times the shared engine client has been built. For tests."""
 
