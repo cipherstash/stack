@@ -192,6 +192,11 @@ pub enum Int {
 
 impl Int {
     /// The value as an `i128`, unless it is a `u128` above `i128::MAX`.
+    // Inline, so a caller in another crate can compile this into its own
+    // code: called across the crate boundary, the 32-byte result comes back
+    // through a slot on the caller's stack that nothing wipes, and the value
+    // is plaintext. (ZA-0104 to ZA-0106 in the zeroize re-audit of #489.)
+    #[inline]
     pub fn to_i128(self) -> Option<i128> {
         match self {
             Int::I8(v) => Some(v.into()),
@@ -217,6 +222,11 @@ impl Int {
 
     /// The value as a sign and a two's-complement 128-bit word: one layout
     /// covering `i128::MIN` to `u128::MAX`, for equality encodings.
+    // Inline, so a caller in another crate can compile this into its own
+    // code: called across the crate boundary, the 32-byte result comes back
+    // through a slot on the caller's stack that nothing wipes, and the value
+    // is plaintext. (ZA-0104 to ZA-0106 in the zeroize re-audit of #489.)
+    #[inline]
     pub fn sign_and_word(self) -> (bool, u128) {
         let (sign, word) = self.sign_bit_and_word();
         (sign == 1, word)
@@ -230,6 +240,7 @@ impl Int {
     /// word's top bit, taken by shift rather than by comparing the value
     /// with zero, so no branch depends on the value. This also covers a
     /// `u128` above `i128::MAX` without a second path.
+    #[inline]
     fn sign_bit_and_word(self) -> (u8, u128) {
         let (word, signed) = match self {
             Int::I8(v) => (i128::from(v) as u128, 1),
@@ -517,6 +528,7 @@ pub enum TimeUnit {
 
 impl TimeUnit {
     /// Nanoseconds per unit.
+    #[inline]
     pub fn nanos(self) -> i128 {
         match self {
             TimeUnit::Seconds => 1_000_000_000,
@@ -738,6 +750,11 @@ fn date_in_range(days: Int) -> bool {
 
 /// A timestamp's count of `unit`s as nanoseconds since the epoch, if it is
 /// in range.
+// Inline, so a caller in another crate can compile this into its own
+// code: called across the crate boundary, the 32-byte result comes back
+// through a slot on the caller's stack that nothing wipes, and the value
+// is plaintext. (ZA-0104 to ZA-0106 in the zeroize re-audit of #489.)
+#[inline]
 pub fn timestamp_nanos(unit: TimeUnit, count: Int) -> Option<i128> {
     let nanos = count.to_i128()?.checked_mul(unit.nanos())?;
     (MIN_TIMESTAMP_NANOS..=MAX_TIMESTAMP_NANOS)
