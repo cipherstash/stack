@@ -85,8 +85,10 @@ pub async fn stack_cipher() -> StackCipher<FakeDataKeySource> {
         .expect("build cipher")
 }
 
-pub struct CountingSource {
-    inner: FakeDataKeySource,
+/// Over the fake source by default; [`CountingSource::over`] counts the
+/// calls another source answers, such as a seeded deterministic one.
+pub struct CountingSource<S = FakeDataKeySource> {
+    inner: S,
     generate_calls: Arc<AtomicUsize>,
     retrieve_calls: Arc<AtomicUsize>,
     load_calls: Arc<AtomicUsize>,
@@ -94,8 +96,14 @@ pub struct CountingSource {
 
 impl CountingSource {
     pub fn new() -> Self {
+        Self::over(FakeDataKeySource::new())
+    }
+}
+
+impl<S> CountingSource<S> {
+    pub fn over(inner: S) -> Self {
         Self {
-            inner: FakeDataKeySource::new(),
+            inner,
             generate_calls: Arc::new(AtomicUsize::new(0)),
             retrieve_calls: Arc::new(AtomicUsize::new(0)),
             load_calls: Arc::new(AtomicUsize::new(0)),
@@ -113,7 +121,7 @@ impl CountingSource {
     }
 }
 
-impl DataKeySource for CountingSource {
+impl<S: DataKeySource + Sync> DataKeySource for CountingSource<S> {
     async fn generate_keys(
         &self,
         payloads: Vec<GenerateKeyPayload<'_>>,
@@ -139,7 +147,7 @@ impl DataKeySource for CountingSource {
     }
 }
 
-impl IndexKeySource for CountingSource {
+impl<S: IndexKeySource + Sync> IndexKeySource for CountingSource<S> {
     async fn load_index_key(
         &self,
         keyset_id: Option<IdentifiedBy>,
