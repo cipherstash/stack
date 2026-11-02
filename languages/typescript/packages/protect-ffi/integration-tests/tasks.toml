@@ -45,6 +45,30 @@ fi
 docker exec -i protect-ffi-postgres psql postgresql://cipherstash:password@postgres:5432/cipherstash -f- < "$tmp"
 """
 
+# EQL v4, for the migration suites (`tests/migrate-v*-to-v4.test.ts`). No npm
+# package ships the v4 bundle yet, so it is built from the in-tree EQL source:
+# `tasks/build.sh` is what `mise run build` runs in `packages/eql`, called
+# directly so this task needs only cargo, not that directory's mise config (which
+# a runner has not trusted). It writes both bundles; only v4 is installed here,
+# v3 comes from `eql:v3:install` above.
+["eql:v4:install"]
+description = "Build EQL v4 from the in-tree source and install it beside v2 and v3"
+dir = "{{ config_root }}/../../../../packages/eql"
+run = """
+set -e
+bash tasks/build.sh
+test -s release/cipherstash-encrypt-v4.sql
+docker exec -i protect-ffi-postgres psql -v ON_ERROR_STOP=1 -q postgresql://cipherstash:password@postgres:5432/cipherstash -f- < release/cipherstash-encrypt-v4.sql
+"""
+
+# The Rust codec the migration suites re-encrypt through: Stack Encrypt is the
+# only EQL v4 producer and no TypeScript SDK reaches it yet. See
+# `tests/v4-codec.ts` and `packages/eql/tests/encryption/examples/v4_codec.rs`.
+["eql:v4:codec"]
+description = "Build the EQL v4 codec the migration suites call"
+dir = "{{ config_root }}/../../../../packages/eql"
+run = "cargo build --locked -p eql-encryption-tests --example v4_codec"
+
 # `pnpm install`, not `npm ci`: this directory is a pnpm workspace member as of
 # CIP-3744, so its dependencies come from the repo lockfile and its
 # `@cipherstash/protect-ffi` and `@cipherstash/eql` resolve to the packages in
@@ -62,6 +86,8 @@ run = [
     "mise run eql:download",
     "mise run eql:install",
     "mise run eql:v3:install",
+    "mise run eql:v4:install",
+    "mise run eql:v4:codec",
 ]
 
 ["test:integration"]

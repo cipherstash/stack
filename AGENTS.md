@@ -225,10 +225,10 @@ stays optional for everyone else.
 
 `languages/typescript/packages/protect-ffi/integration-tests/` is 19 files of **live** coverage —
 encrypt/decrypt, lock context, keysets, JS auth strategies, JSON SteVec,
-Postgres (EQL v2 *and* v3), and a WASM round trip — and it is the only place
-several of those paths are exercised at all. It needs three things a normal
-`pnpm test` does not have: **Docker**, **CipherStash credentials**, and **both
-EQL versions installed** in the database.
+Postgres (EQL v2 *and* v3), EQL v3 -> v4 migration, and a WASM round trip — and
+it is the only place several of those paths are exercised at all. It needs
+three things a normal `pnpm test` does not have: **Docker**, **CipherStash
+credentials**, and **EQL v2, v3 and v4 installed** in the database.
 
 - **It is a pnpm workspace member, and `pnpm test` must never reach it.** Named
   literally in `pnpm-workspace.yaml` (the `languages/typescript/packages/*` glob is one level deep and
@@ -290,6 +290,16 @@ EQL versions installed** in the database.
   `eql_v2.add_encrypted_constraint`) while `tests/postgres-v3.test.ts` needs the
   `eql_v3_*` domains. Skip either and half the suite fails on missing SQL
   functions.
+- **The migration suites need EQL v4 and a Rust codec.**
+  `tests/migrate-v*-to-v4.test.ts` decrypt legacy rows with protect-ffi and
+  re-encrypt them as v4, and Stack Encrypt is the only v4 producer, so they call
+  `packages/eql/tests/encryption/examples/v4_codec.rs` through
+  `tests/v4-codec.ts`. `eql:v4:install` builds the v4 bundle from the in-tree
+  EQL source (`bash tasks/build.sh`, called directly so it needs cargo and not
+  `packages/eql`'s mise config) and `eql:v4:codec` builds the codec; both are
+  part of `mise run setup`. The CI filter cannot name `packages/eql/crates/**`
+  (`wasm-build-inputs-paths-filter.test.mjs`), so an edit to eql-codegen or
+  eql-bindings' v4 module reaches this suite only through `test-eql.yml`.
 - **`eql:v3:install` builds `@cipherstash/eql` first, and has to.** The task
   reads the bundle through `@cipherstash/eql/sql`, which the package's `exports`
   map resolves to `dist/sql.js` — a tsup output. That was free while `npm ci`
