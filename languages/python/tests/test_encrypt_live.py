@@ -8,6 +8,7 @@ installs the bundle and runs them, and fails if any skips.
 """
 
 import dataclasses
+import decimal
 import os
 from typing import Annotated
 
@@ -88,3 +89,18 @@ def test_two_ciphers_share_one_engine_client():
     Cipher(User).encrypt([User(email="a@example.com", age=1)])
     Cipher(Contact).encrypt([Contact(email="b@example.com")])
     assert _engine.client_builds() == 1
+
+
+@stackencrypt.model("prices")
+@dataclasses.dataclass
+class Price:
+    sku: Annotated[str, TextEq]
+    amount: Annotated[decimal.Decimal, Passthrough]
+
+
+def test_a_decimal_passthrough_comes_back_as_the_same_decimal():
+    rows = Cipher(Price).encrypt([Price(sku="a", amount=decimal.Decimal("19.50"))])
+    amount = rows[0]["amount"]
+    assert type(amount) is decimal.Decimal
+    # The scale is kept: 19.50, not 19.5.
+    assert str(amount) == "19.50"
