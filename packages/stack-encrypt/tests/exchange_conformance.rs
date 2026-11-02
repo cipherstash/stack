@@ -725,10 +725,9 @@ async fn consume(
                 .record
                 .fields
                 .iter()
-                .filter(|field| {
-                    !field.passthrough
-                        && !(is_null(&row.values[&field.name]) && field.null == "sql")
-                })
+                .filter(|field| !field.passthrough)
+                // A SQL null stores nothing.
+                .filter(|field| !(is_null(&row.values[&field.name]) && field.null == "sql"))
                 .map(|field| field.name.as_str())
                 .collect(),
             "{what}: sealed fields"
