@@ -60,8 +60,8 @@ export function readWorkflow(relPath) {
  * the file quoted it. A workflow with no usable `on:` gives `{}`, so a caller
  * can read `.pull_request` or test `'workflow_dispatch' in` without a guard.
  * `workflow_dispatch:` with no value parses as null, so membership, not
- * truthiness, is what says a trigger is declared. Before this helper, eight
- * guards each wrote their own `wf.on ?? wf[true]`.
+ * truthiness, is what says a trigger is declared. Before this helper, the
+ * guards wrote their own `wf.on ?? wf[true]`.
  */
 export function triggers(wf) {
   const on = wf?.on ?? wf?.[true]

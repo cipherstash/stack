@@ -76,10 +76,10 @@ const SUITE_TASKS = [
  * The part of a workflow that runs an EQL task: the `run:` bodies of the steps
  * that execute inside `packages/eql`, with shell comment lines stripped.
  *
- * Only `run:` bodies, so a claim is satisfied by a step and not by prose (the
- * reason `integrationSuiteCi.test.ts` cuts at `jobs:`); this file's own header
- * names all three suite tasks, and so does a `paths:` filter, which is a
- * trigger and not a run.
+ * Only `run:` bodies, so a claim is satisfied by a step and not by prose.
+ * That is the reason `integrationSuiteCi.test.ts` cuts at `jobs:`. This
+ * file's own header names all three suite tasks. So does a `paths:` filter,
+ * and a filter is a trigger, not a run.
  *
  * Only the steps whose working directory is under `packages/eql`. A mise
  * task name is scoped to the config mise finds from the current directory,
@@ -87,8 +87,8 @@ const SUITE_TASKS = [
  * workspace's `test` task. Read without the directory, it counted as EQL's
  * `test`, and EQL's `test` depends on `test:sqlx` and `test:lint`. So the
  * two exemptions below were wrong from the first commit of
- * `tests-python.yml`: a false "CI runs this", in the direction this file
- * exists to rule out. The directory is resolved by `runWorkingDirectory`.
+ * `tests-python.yml`. They were a false "CI runs this", the direction this
+ * file exists to rule out. The directory is resolved by `runWorkingDirectory`.
  * AGENTS.md records that every EQL task must run that way, and every EQL
  * workflow does. A composite action's bodies are appended by the caller
  * unscoped, as before. An action is reached by `uses:`, and `uses:` has no
