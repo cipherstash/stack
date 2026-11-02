@@ -34,14 +34,7 @@ from stackencrypt import _engine
 SECRET = "secret@example.com"
 
 
-@pytest.fixture(autouse=True)
-def credentials(monkeypatch, tmp_path):
-    """Credentials that parse, so ``Cipher`` builds. Nothing here sends them."""
-    for name in ("CS_CLIENT_ID", "CS_CLIENT_KEY", "CS_CTS_HOST", "CS_ZEROKMS_HOST", "CS_VITUR_HOST"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("CS_CLIENT_ACCESS_KEY", "CSAKtestKeyId.testKeySecret")
-    monkeypatch.setenv("CS_WORKSPACE_CRN", "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY")
-    monkeypatch.setenv("CS_CONFIG_PATH", str(tmp_path / "no-profile"))
+pytestmark = pytest.mark.usefixtures("credentials")
 
 
 @pytest.fixture

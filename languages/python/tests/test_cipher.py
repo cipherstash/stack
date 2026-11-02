@@ -16,22 +16,9 @@ from stackencrypt import (
     TextEq,
 )
 
-ACCESS_KEY = "CSAKtestKeyId.testKeySecret"
-WORKSPACE_CRN = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
+from conftest import ACCESS_KEY, WORKSPACE_CRN
 
-
-@pytest.fixture(autouse=True)
-def no_credentials(monkeypatch, tmp_path):
-    """No credentials in the environment, and an empty profile store."""
-    for name in ("CS_CLIENT_ACCESS_KEY", "CS_WORKSPACE_CRN", "CS_CLIENT_ID", "CS_CLIENT_KEY"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("CS_CONFIG_PATH", str(tmp_path / "no-profile"))
-
-
-@pytest.fixture
-def credentials(monkeypatch):
-    monkeypatch.setenv("CS_CLIENT_ACCESS_KEY", ACCESS_KEY)
-    monkeypatch.setenv("CS_WORKSPACE_CRN", WORKSPACE_CRN)
+pytestmark = pytest.mark.usefixtures("no_credentials")
 
 
 def declared():

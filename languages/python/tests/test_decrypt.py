@@ -28,14 +28,7 @@ from stackencrypt import _engine
 STORED = json.dumps({"i": {"t": "users", "c": "email"}, "v": 2})
 
 
-@pytest.fixture(autouse=True)
-def credentials(monkeypatch, tmp_path):
-    """Credentials that parse, so ``Cipher`` builds. Nothing here sends them."""
-    for name in ("CS_CLIENT_ID", "CS_CLIENT_KEY", "CS_CTS_HOST", "CS_ZEROKMS_HOST", "CS_VITUR_HOST"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("CS_CLIENT_ACCESS_KEY", "CSAKtestKeyId.testKeySecret")
-    monkeypatch.setenv("CS_WORKSPACE_CRN", "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY")
-    monkeypatch.setenv("CS_CONFIG_PATH", str(tmp_path / "no-profile"))
+pytestmark = pytest.mark.usefixtures("credentials")
 
 
 @pytest.fixture
@@ -115,6 +108,14 @@ def test_a_value_that_is_not_eql_json_is_malformed(untouched, value):
     error = refused([{"email": value, "age": 3}])
     assert error.code == "decrypt_malformed"
     assert error.field == "email"
+
+
+@pytest.mark.parametrize("value", [None, ""], ids=["null", "empty"])
+def test_a_malformed_value_names_its_row(untouched, value):
+    rows = [{"email": STORED, "age": i} for i in range(2)] + [{"email": value, "age": 2}]
+    error = refused(rows)
+    assert error.code == "decrypt_malformed"
+    assert "row 2" in error.message
 
 
 def test_a_passthrough_int_that_arrives_as_str_is_the_wrong_type(untouched):

@@ -9,6 +9,8 @@
 //! only after every value has been turned into a Python object, so a call
 //! that fails returns no instance.
 
+use std::borrow::Cow;
+
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString};
@@ -106,9 +108,10 @@ fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
             )
         };
         match &field.eql {
-            Some(_) => stored
-                .eql(&plan.plan, field, &eql_text(field, &value)?)
-                .map_err(in_row)?,
+            Some(_) => {
+                let text = eql_text(field, &value)?.map_err(in_row)?;
+                stored.eql(&plan.plan, field, &text).map_err(in_row)?;
+            }
             None => passthrough(&mut stored, field, *kind, &value).map_err(in_row)?,
         }
     }
@@ -116,45 +119,53 @@ fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
 }
 
 /// An EQL column's JSON text, as UTF-8 bytes: from a `str`, from `bytes`
-/// that are UTF-8, or from a `dict` the driver already parsed.
-fn eql_text(field: &Field, value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+/// that are UTF-8, or from a `dict` the driver already parsed. A `str` or
+/// `bytes` value is borrowed, not copied: the text is copied once, into the
+/// engine's frame.
+///
+/// The outer error is Python's own; the inner one is the refusal, for the
+/// caller to name the row in.
+fn eql_text<'a>(
+    field: &Field,
+    value: &'a Bound<'_, PyAny>,
+) -> PyResult<Result<Cow<'a, [u8]>, Refusal>> {
     let py = value.py();
     let malformed = |what: String| {
-        raise(
-            py,
-            Refusal {
-                code: "decrypt_malformed".to_owned(),
-                message: format!("field {:?}: the column value {what}.", field.name),
-                field: Some(field.name.clone()),
-                reason: None,
-            },
-        )
+        Ok(Err(Refusal {
+            code: "decrypt_malformed".to_owned(),
+            message: format!("field {:?}: the column value {what}.", field.name),
+            field: Some(field.name.clone()),
+            reason: None,
+        }))
     };
     if let Ok(text) = value.cast::<PyString>() {
-        return Ok(text.to_cow()?.as_bytes().to_vec());
+        return Ok(Ok(match text.to_cow()? {
+            Cow::Borrowed(text) => Cow::Borrowed(text.as_bytes()),
+            Cow::Owned(text) => Cow::Owned(text.into_bytes()),
+        }));
     }
     if let Ok(bytes) = value.cast::<PyBytes>() {
         let bytes = bytes.as_bytes();
         return match std::str::from_utf8(bytes) {
-            Ok(_) => Ok(bytes.to_vec()),
-            Err(_) => Err(malformed("is bytes that are not UTF-8".to_owned())),
+            Ok(_) => Ok(Ok(Cow::Borrowed(bytes))),
+            Err(_) => malformed("is bytes that are not UTF-8".to_owned()),
         };
     }
     if value.cast::<PyDict>().is_ok() {
         return match dumps(py)?.call1((value,)) {
-            Ok(text) => Ok(text.cast::<PyString>()?.to_cow()?.as_bytes().to_vec()),
-            Err(_) => Err(malformed("is a dict that is not JSON".to_owned())),
+            Ok(text) => Ok(Ok(Cow::Owned(
+                text.cast::<PyString>()?.to_cow()?.into_owned().into_bytes(),
+            ))),
+            Err(_) => malformed("is a dict that is not JSON".to_owned()),
         };
     }
     if value.is_none() {
-        return Err(malformed(
-            "is None, a SQL NULL, not an EQL value".to_owned(),
-        ));
+        return malformed("is None, a SQL NULL, not an EQL value".to_owned());
     }
-    Err(malformed(format!(
+    malformed(format!(
         "is a {}, not the str, bytes or dict of an EQL value",
         type_name(value)
-    )))
+    ))
 }
 
 /// A passthrough column's value, checked by exact type as on `encrypt`.

@@ -18,6 +18,9 @@ use stack_encrypt::dynamic::plaintext::{
     SourceError, TimeUnit,
 };
 
+use std::convert::Infallible;
+use std::marker::PhantomData;
+
 use stack_encrypt::Encrypt;
 
 use crate::refusal::Refusal;
@@ -286,8 +289,9 @@ fn malformed(what: &str) -> Refusal {
     }
 }
 
+/// Why a frame the engine returned could not be read: what was found.
 #[derive(Debug)]
-struct ReadError(&'static str);
+pub(crate) struct ReadError(pub(crate) &'static str);
 
 impl SinkError for ReadError {
     fn source(_: SourceError) -> Self {
@@ -300,8 +304,8 @@ struct Reader;
 impl Sink for Reader {
     type Ok = Scalar;
     type Error = ReadError;
-    type Seq = Never;
-    type Map = Never;
+    type Seq = Never<Scalar, Reader>;
+    type Map = Never<Scalar, Reader>;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Scalar, ReadError> {
         scalar_of(ty, value).map_err(ReadError)
@@ -311,11 +315,11 @@ impl Sink for Reader {
         Ok(Scalar::Null)
     }
 
-    fn seq(self, _: Option<usize>) -> Result<Never, ReadError> {
+    fn seq(self, _: Option<usize>) -> Result<Never<Scalar, Reader>, ReadError> {
         Err(ReadError("a sequence"))
     }
 
-    fn map(self, _: Option<usize>) -> Result<Never, ReadError> {
+    fn map(self, _: Option<usize>) -> Result<Never<Scalar, Reader>, ReadError> {
         Err(ReadError("a map"))
     }
 
@@ -324,34 +328,52 @@ impl Sink for Reader {
     }
 }
 
-/// A container sink that is never built: a passthrough is one scalar.
-enum Never {}
+/// A container sink that is never built, for a sink that refuses
+/// containers: `O` is its `Ok`, `E` the sink of its elements and entries.
+pub(crate) enum Never<O, E> {
+    #[allow(dead_code)]
+    Void(Infallible, PhantomData<fn() -> (O, E)>),
+}
 
-impl SeqSink for Never {
-    type Ok = Scalar;
+impl<O, E: Sink<Error = ReadError>> SeqSink for Never<O, E> {
+    type Ok = O;
     type Error = ReadError;
-    type Element<'s> = Reader;
+    type Element<'s>
+        = E
+    where
+        Self: 's;
 
-    fn element(&mut self) -> Result<Reader, ReadError> {
-        match *self {}
+    fn element(&mut self) -> Result<E, ReadError> {
+        match self {
+            Self::Void(never, _) => match *never {},
+        }
     }
 
-    fn end(self) -> Result<Scalar, ReadError> {
-        match self {}
+    fn end(self) -> Result<O, ReadError> {
+        match self {
+            Self::Void(never, _) => match never {},
+        }
     }
 }
 
-impl MapSink for Never {
-    type Ok = Scalar;
+impl<O, E: Sink<Error = ReadError>> MapSink for Never<O, E> {
+    type Ok = O;
     type Error = ReadError;
-    type Entry<'s> = Reader;
+    type Entry<'s>
+        = E
+    where
+        Self: 's;
 
-    fn entry(&mut self, _: &str) -> Result<Reader, ReadError> {
-        match *self {}
+    fn entry(&mut self, _: &str) -> Result<E, ReadError> {
+        match self {
+            Self::Void(never, _) => match *never {},
+        }
     }
 
-    fn end(self) -> Result<Scalar, ReadError> {
-        match self {}
+    fn end(self) -> Result<O, ReadError> {
+        match self {
+            Self::Void(never, _) => match never {},
+        }
     }
 }
 
