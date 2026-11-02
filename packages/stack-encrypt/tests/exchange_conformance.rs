@@ -717,6 +717,22 @@ async fn consume(
                 .collect(),
             "{what}: passthrough fields"
         );
+        // Every stored sealed field is a declared one: an undeclared field
+        // would otherwise be dropped before decryption and never checked.
+        assert_eq!(
+            ids(stored.fields.keys()),
+            corpus
+                .record
+                .fields
+                .iter()
+                .filter(|field| {
+                    !field.passthrough
+                        && !(is_null(&row.values[&field.name]) && field.null == "sql")
+                })
+                .map(|field| field.name.as_str())
+                .collect(),
+            "{what}: sealed fields"
+        );
         let opened = record::decrypt(
             Scope::Keyset(keyset.clone()),
             CipherText::Map(tree),
@@ -764,6 +780,56 @@ fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> T {
 /// the other runner. Nothing frozen is read or written.
 #[tokio::test]
 async fn fresh_artifact_exchange() {
+    let (corpus, values) = corpora();
+    let seed: [u8; 32] = unhex(&corpus.seed).try_into().expect("a 32-byte seed");
+    let cipher = common::deterministic_cipher(seed).await;
+    let keyset = cipher.default_keyset();
+
+    let fresh = produce(&corpus, &values, &keyset).await;
+    consume(&corpus, &values, &keyset, &fresh, "self").await;
+
+    if let Some(path) = std::env::var_os("STACK_EXCHANGE_OUTPUT") {
+        std::fs::write(path, serde_json::to_string_pretty(&fresh).unwrap() + "\n").unwrap();
+    }
+    if let Some(path) = std::env::var_os("STACK_EXCHANGE_INPUT") {
+        let path = PathBuf::from(path);
+        let foreign: Artifacts = read(&path);
+        let origin = format!("{} artifacts", foreign.producer.language);
+        eprintln!(
+            "exchange: opening {origin} from {} {} over {} ({})",
+            foreign.producer.sdk,
+            foreign.producer.sdk_version,
+            foreign.producer.backend,
+            path.display()
+        );
+        consume(&corpus, &values, &keyset, &foreign, &origin).await;
+    }
+}
+
+/// A record artifact carrying a sealed field the corpus does not declare is
+/// refused, though every declared field still opens.
+#[tokio::test]
+#[should_panic(expected = "sealed fields")]
+async fn an_undeclared_record_field_is_refused() {
+    let (corpus, values) = corpora();
+    let seed: [u8; 32] = unhex(&corpus.seed).try_into().expect("a 32-byte seed");
+    let cipher = common::deterministic_cipher(seed).await;
+    let keyset = cipher.default_keyset();
+
+    let fresh = produce(&corpus, &values, &keyset).await;
+    let mut tampered = serde_json::to_value(&fresh).unwrap();
+    let row = &corpus.record.rows[0].id;
+    let fields = tampered["record"][row]["fields"]
+        .as_object_mut()
+        .expect("a record's sealed fields");
+    let copy = fields.values().next().expect("a sealed field").clone();
+    assert!(fields.insert("undeclared".into(), copy).is_none());
+    let tampered: Artifacts = serde_json::from_value(tampered).unwrap();
+    consume(&corpus, &values, &keyset, &tampered, "self").await;
+}
+
+/// The exchange corpus and the value corpus it draws on, checked for shape.
+fn corpora() -> (Corpus, ValuesCorpus) {
     let corpus: Corpus = read(&root().join("exchange.json"));
     assert_eq!(corpus.version, 1);
     assert_eq!(corpus.profile, PROFILE);
@@ -810,30 +876,7 @@ async fn fresh_artifact_exchange() {
             row.id
         );
     }
-
-    let seed: [u8; 32] = unhex(&corpus.seed).try_into().expect("a 32-byte seed");
-    let cipher = common::deterministic_cipher(seed).await;
-    let keyset = cipher.default_keyset();
-
-    let fresh = produce(&corpus, &values, &keyset).await;
-    consume(&corpus, &values, &keyset, &fresh, "self").await;
-
-    if let Some(path) = std::env::var_os("STACK_EXCHANGE_OUTPUT") {
-        std::fs::write(path, serde_json::to_string_pretty(&fresh).unwrap() + "\n").unwrap();
-    }
-    if let Some(path) = std::env::var_os("STACK_EXCHANGE_INPUT") {
-        let path = PathBuf::from(path);
-        let foreign: Artifacts = read(&path);
-        let origin = format!("{} artifacts", foreign.producer.language);
-        eprintln!(
-            "exchange: opening {origin} from {} {} over {} ({})",
-            foreign.producer.sdk,
-            foreign.producer.sdk_version,
-            foreign.producer.backend,
-            path.display()
-        );
-        consume(&corpus, &values, &keyset, &foreign, &origin).await;
-    }
+    (corpus, values)
 }
 
 /// A frame of a null, for the record rows that carry one: pinned so the
