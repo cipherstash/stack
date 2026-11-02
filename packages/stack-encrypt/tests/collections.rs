@@ -622,8 +622,8 @@ async fn a_panicking_element_declaration_wipes_the_elements_after_it() {
 impl stack_encrypt::target::Decryptable for TrackedCiphertext {
     const DECRYPTABLE: bool = true;
 }
-impl<Ctx: Into<stack_encrypt::target::AeadContext>> stack_encrypt::target::DecryptField<Tracked, Ctx>
-    for TrackedCiphertext
+impl<Ctx: Into<stack_encrypt::target::AeadContext>>
+    stack_encrypt::target::DecryptField<Tracked, Ctx> for TrackedCiphertext
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<Tracked, K>> {
         Some(stack_encrypt::DecryptInto::decryption(self, context.into()))
