@@ -448,3 +448,7 @@ node scripts/stack-eql-conformance.mjs postgres
 [tasks."test:conformance:lifecycle"]
 description = "Required native/Go lifecycle, cleanup and key-I/O evidence (Unix; build the normal and deterministic guests first)"
 run = "node scripts/stack-lifecycle-conformance.mjs"
+
+[tasks."test:conformance:exchange"]
+description = "Required fresh cross-language artifact exchange: Rust and Go each write values, records, blobs and EQL rows the other opens (build both deterministic guests first)"
+run = "node scripts/stack-exchange-conformance.mjs"
