@@ -52,9 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any key is requested), and after the leaf authenticated, `blob_not_a_blob`,
   `blob_unsupported_version` (a later storage version: upgrade the reader),
   `blob_malformed` and `blob_mismatch` (a well-formed blob of another shape or
-  type). Every decrypt-side `Blob` error means the ciphertext was authentic;
-  tampering and a wrong context are still `Aead`, and a blob opened as a
-  scalar or a scalar as a blob is `OpenedType`. No message or payload names a
+  type). Every decrypt-side `Blob` error means the ciphertext was authentic.
+  Tampering is still `Aead`; a wrong context is refused by ZeroKMS before
+  the AEAD runs and surfaces as `Kms` (only a key source that ignores
+  descriptors, such as `FakeDataKeySource`, lets it reach the AEAD as
+  `Aead`); and a blob opened as a scalar or a scalar as a blob is
+  `OpenedType`. No message or payload names a
   value; a mismatch's payload names the declared field.
 - **`Zeroizing<T>` as the opt-in drop-guarded result** of the scalar API:
   `OpaqueDecode` is implemented for `Zeroizing<P>` of any decodable `P`, so

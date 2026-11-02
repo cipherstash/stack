@@ -148,10 +148,15 @@
 //!
 //! Decryption **authenticates before it decodes**. The leaf opens first,
 //! under its key and context; only then does the profile's reader see the
-//! bytes. So the errors tell three things apart:
+//! bytes. A context other than the one the blob was sealed under is
+//! normally refused before that: ZeroKMS binds each data key to its
+//! context's descriptor and denies the retrieve, so it surfaces as
+//! [`Error::Kms`] and nothing is decrypted. Past key retrieval, the errors
+//! tell three things apart:
 //!
-//! - [`Error::Aead`]: the leaf did not open. Wrong key, wrong context, or
-//!   altered bytes; the blob was never looked at.
+//! - [`Error::Aead`]: the leaf did not open. Altered bytes, the wrong key,
+//!   or a wrong context under a key source that ignores descriptors
+//!   (`FakeDataKeySource`, in tests); the blob was never looked at.
 //! - [`Error::OpenedType`]: the leaf opened but is not a bytes leaf: it was
 //!   sealed as a `String` or an integer, say, not as a blob.
 //! - [`Error::Blob`]: the leaf opened as bytes and they are not a blob this
@@ -160,9 +165,10 @@
 //!   of version 1 ([`BlobError::Malformed`]), or a well-formed blob that is
 //!   not a `T` ([`BlobError::Mismatch`]).
 //!
-//! All three are refusals of an authentic ciphertext, so an `Error::Blob`
-//! never says the data was tampered with; it says the data was written as
-//! something else. The whole blob is validated before `T`'s `Deserialize`
+//! [`Error::OpenedType`] and [`Error::Blob`] are refusals of an authentic
+//! ciphertext, so neither says the data was tampered with; each says the
+//! data was written as something else. Only [`Error::Aead`] (or
+//! [`Error::Kms`]) leaves the ciphertext's authenticity unestablished. The whole blob is validated before `T`'s `Deserialize`
 //! sees any of it: every length is checked against the end of the blob, so
 //! a forged length allocates nothing, and a `Deserialize` impl never builds
 //! part of a value from a malformed blob. No refusal names a value or a map
@@ -238,6 +244,7 @@
 //! with its marker; both readers read either form).
 //!
 //! [`Error::Aead`]: crate::Error::Aead
+//! [`Error::Kms`]: crate::Error::Kms
 //! [`Error::OpenedType`]: crate::Error::OpenedType
 //! [`Error::Blob`]: crate::Error::Blob
 //! [`KeysetCipher::encrypt`]: crate::KeysetCipher::encrypt
