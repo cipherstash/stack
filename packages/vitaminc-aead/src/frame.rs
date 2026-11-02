@@ -170,6 +170,10 @@ const FEW_KEYS: usize = 16;
 /// pay for. Past sixteen they are hashed, so an object a host sends
 /// with thousands of keys is still checked in linear time. The keys are
 /// borrowed from the frame, so nothing is copied.
+///
+/// Not an API: it is public only so `vitaminc-aead-frame`'s storage reader
+/// can share this one copy, and it may change in any release.
+#[doc(hidden)]
 #[derive(Default)]
 pub struct SeenKeys<'a> {
     few: [&'a str; FEW_KEYS],
