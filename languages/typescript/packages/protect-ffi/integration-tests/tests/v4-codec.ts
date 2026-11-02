@@ -24,6 +24,7 @@ export const codecPath =
 /** An EQL v4 type name, e.g. `TextEq`, as `targets::targets()` lists it. */
 export type V4Type =
   | 'Boolean'
+  | 'DoubleOrdOre'
   | 'IntegerOrdOpe'
   | 'IntegerOrdOre'
   | 'TextEq'
