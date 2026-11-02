@@ -63,6 +63,7 @@ on:
       - scripts/stack-eql-conformance.mjs
       - scripts/stack-conformance-evidence.mjs
       - scripts/stack-lifecycle-conformance.mjs
+      - scripts/stack-exchange-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -105,6 +106,7 @@ on:
       - scripts/stack-eql-conformance.mjs
       - scripts/stack-conformance-evidence.mjs
       - scripts/stack-lifecycle-conformance.mjs
+      - scripts/stack-exchange-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -304,6 +306,22 @@ jobs:
         run: |
           test -s "$STACK_CONFORMANCE_INPUT"
           mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance
+
+      # Both directions, in a fresh directory: Rust and Go each write values
+      # of every kind, records with terms, opaque blobs and EQL rows, and the
+      # other opens them and derives the same query terms. The task fails on
+      # a missing guest or runner and on an empty output, and its report
+      # records the producers, engines, guests and storage versions.
+      - name: Required fresh cross-language artifact exchange
+        env:
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/exchange-conformance
+        run: mise run test:conformance:exchange
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: exchange-conformance
+          path: ${{ runner.temp }}/exchange-conformance/*.json
+          if-no-files-found: error
 
       # The Rust suite opens the committed v4_rows.json and
       # v4_smallint_rows.json, whose ciphertexts the Go SDK sealed when each
