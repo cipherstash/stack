@@ -1,10 +1,10 @@
 //! Typed inputs shared by conformance profiles.
 use super::frames::frame;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use stack_encrypt::dynamic::ValueFrame;
 use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     #[serde(rename = "type")]
