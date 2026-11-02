@@ -1,7 +1,8 @@
 name: Fuzz (crates)
 
 # libFuzzer fuzzing for the stack crates' untrusted-input parsers (the
-# detached `packages/*/fuzz/` crates and the `fuzz:*` mise tasks). Ported from
+# detached `packages/*/fuzz/` crates and the `fuzz:*` mise tasks), and the
+# Python SDK's value conversion (`languages/python/crates/core/fuzz/`). Ported from
 # cipherstash-suite's `fuzz.yml`, for the six targets in the imported set; the
 # suite keeps its three cts-common targets. Two jobs with different roles:
 #
@@ -24,6 +25,10 @@ on:
       - packages/stack-auth/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
+      # The Python SDK's core crate and the manifest its dependencies come
+      # from: the fuzz:python-values target.
+      - languages/python/crates/core/**
+      - languages/python/Cargo.toml
       - Cargo.toml
       - Cargo.lock
       - mise.toml
@@ -116,6 +121,7 @@ jobs:
           - { task: "fuzz:plan-build", slug: plan-build }
           - { task: "fuzz:json-wire", slug: json-wire }
           - { task: "fuzz:json-text", slug: json-text }
+          - { task: "fuzz:python-values", slug: python-values }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -140,6 +146,7 @@ jobs:
             packages/stack-auth/fuzz
             packages/stack-kms/fuzz
             packages/stack-encrypt/fuzz
+            languages/python/crates/core/fuzz
           key: ${{ matrix.slug }}
 
       # `-runs=0` replays the committed seed corpus once and exits without
@@ -166,6 +173,7 @@ jobs:
           - { task: "fuzz:plan-build",   slug: plan-build,   dir: packages/stack-encrypt, target: plan_build }
           - { task: "fuzz:json-wire",    slug: json-wire,    dir: packages/stack-encrypt, target: json_wire_decode }
           - { task: "fuzz:json-text",    slug: json-text,    dir: packages/stack-encrypt, target: json_text }
+          - { task: "fuzz:python-values", slug: python-values, dir: languages/python/crates/core, target: value_frame }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:

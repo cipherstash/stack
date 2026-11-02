@@ -1,0 +1,38 @@
+# Fuzz crate for the Python SDK's value conversion (stackencrypt-core's
+# `values` module).
+#
+# This is a DETACHED crate: the `[workspace]` table at the bottom makes it its
+# own workspace root, so the libfuzzer-sys dependency and the nightly-only
+# build never touch the Python workspace in `languages/python`. Run via the
+# root `fuzz:python-values` mise task, which invokes `cargo +nightly fuzz run`.
+[package]
+name = "stackencrypt-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# Structure-aware inputs: the mirror types derive `Arbitrary`, so the fuzzer
+# mutates a kind and a host value, not bytes.
+arbitrary = { version = "1", features = ["derive"] }
+stackencrypt-core = { path = ".." }
+
+[dependencies.stack-encrypt]
+path = "../../../../../packages/stack-encrypt"
+# The frame types only. The core crate turns on the features it needs.
+default-features = false
+features = ["dynamic"]
+
+[[bin]]
+name = "value_frame"
+path = "fuzz_targets/value_frame.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+resolver = "2"
