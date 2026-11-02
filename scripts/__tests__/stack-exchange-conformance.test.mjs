@@ -9,6 +9,7 @@ import {
   checkArtifacts,
   checkCorpus,
   checkRows,
+  compared,
   GUESTS,
   lanes,
   lockedVersions,
@@ -202,18 +203,37 @@ describe('fresh cross-language artifact exchange', () => {
     }
   })
 
-  it('requires nonempty fresh EQL rows of the fixture table', () => {
+  it('requires nonempty fresh EQL rows of the fixture table and producer', () => {
     const path = join(tempDir(), 'rows.json')
-    expect(() => checkRows(path, corpus)).toThrow('Empty fresh output')
+    expect(() => checkRows(path, 'rust', corpus)).toThrow('Empty fresh output')
     writeFileSync(path, JSON.stringify({ table: 'profiles', rows: [] }))
-    expect(() => checkRows(path, corpus)).toThrow('not profiles rows')
+    expect(() => checkRows(path, 'rust', corpus)).toThrow('not profiles rows')
     writeFileSync(path, JSON.stringify({ table: 'other', rows: [{}] }))
-    expect(() => checkRows(path, corpus)).toThrow('not profiles rows')
-    writeFileSync(
-      path,
-      JSON.stringify({ _comment: 'rust', table: 'profiles', rows: [{}, {}] }),
+    expect(() => checkRows(path, 'rust', corpus)).toThrow('not profiles rows')
+    const producer = {
+      language: 'rust',
+      sdk: 'eql-bindings',
+      sdk_version: '1.0.0',
+      backend: 'native',
+      engine: { name: 'stack-encrypt', version: '0.0.0', guest_sha256: null },
+      schema: 'eql_v4',
+    }
+    const rows = (p) => ({ producer: p, table: 'profiles', rows: [{}, {}] })
+    writeFileSync(path, JSON.stringify(rows(producer)))
+    expect(checkRows(path, 'rust', corpus)).toEqual({ rows: 2, producer })
+    // A misrouted file, or one with no manifest, is refused.
+    expect(() => checkRows(path, 'go', corpus)).toThrow(
+      'produced by rust, expected go',
     )
-    expect(checkRows(path, corpus)).toEqual({ rows: 2, comment: 'rust' })
+    for (const [name, bad] of [
+      ['no producer', undefined],
+      ['no sdk', { ...producer, sdk: '' }],
+      ['no engine', { ...producer, engine: { name: 'stack-encrypt' } }],
+      ['another schema', { ...producer, schema: 'eql_v3' }],
+    ]) {
+      writeFileSync(path, JSON.stringify(rows(bad)))
+      expect(() => checkRows(path, 'rust', corpus), name).toThrow()
+    }
   })
 
   it('reads engine versions from the three lockfiles', () => {
@@ -325,6 +345,17 @@ describe('fresh cross-language artifact exchange', () => {
       )
     } finally {
       print.mockRestore()
+    }
+  })
+
+  it('compares derived query terms in every direction that stores terms', () => {
+    for (const lane of lanes()) {
+      const what = compared(lane)
+      expect(what, `${lane.kind} ${lane.producer}`).not.toMatch(/ciphertext/)
+      if (lane.kind !== 'blobs')
+        expect(what, `${lane.kind} ${lane.producer}`).toContain(
+          "the consumer's derived query terms",
+        )
     }
   })
 })
