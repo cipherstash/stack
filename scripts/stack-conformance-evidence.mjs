@@ -113,6 +113,8 @@ export function checkEnvironment(env) {
     'STACK_CONFORMANCE_UPDATE',
     'STACK_ENCRYPT_UPDATE_FIXTURES',
     'STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS',
+    // The Go EQL v4 row tests rewrite their committed fixtures under it.
+    'EQL_UPDATE_FIXTURES',
   ]) {
     if (Object.hasOwn(env, name))
       throw new Error(`Conformance cannot update fixtures: ${name}`)

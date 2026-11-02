@@ -79,7 +79,8 @@ task requires it before any consumer runs.
 
 `mise run test:conformance:exchange` (the `scripts/stack-exchange-conformance.mjs`
 script, also run at the end of `test:conformance`) refuses every
-fixture-update variable, requires both deterministic guests to be present
+fixture-update variable, `EQL_UPDATE_FIXTURES` included (the Go EQL producer
+rewrites its committed rows under it), requires both deterministic guests to be present
 and nonempty, requires the `go` and Rust toolchains, and only then creates a
 fresh temporary directory. It runs each producer with its output variable
 set (`STACK_EXCHANGE_OUTPUT`, `EQL_V4_RUST_ROWS_OUT`, `EQL_V4_ROWS_OUT`),
@@ -87,8 +88,9 @@ checks every output is nonempty and of the right shape and producer, and
 runs each consumer with its input variable set (`STACK_EXCHANGE_INPUT`,
 `EQL_V4_RUST_ROWS`, `EQL_V4_ROWS`). Producer caches are bypassed: nextest
 reruns its binaries, Go runs with `-count=1`, and the fresh directory is
-new every run: a passing run removes it, and a failing one keeps it and
-prints its path. A missing runner, a missing or empty guest, an empty fresh
+new every run: a passing run removes it once the report is written, and a
+failing one, a failure while reading the lockfiles or writing the report
+included, keeps it and prints its path. A missing runner, a missing or empty guest, an empty fresh
 output, a skipped or failed test, or a consumer refusal fails the task.
 `STACK_CONFORMANCE_REQUIRED=1` is set throughout, so a Go test that would
 skip on a missing guest fails instead.

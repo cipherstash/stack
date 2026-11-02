@@ -185,6 +185,26 @@ export function lockedVersions(lock, names) {
   return versions
 }
 
+/**
+ * Run `work` in a fresh temporary directory. Removed only once `work`,
+ * report included, has finished; on any failure it is kept and its path
+ * printed, for the artifacts the failing step read or wrote.
+ */
+export function inFreshDirectory(
+  work,
+  { parent = tmpdir(), log = console.error } = {},
+) {
+  const fresh = mkdtempSync(join(parent, 'stack-exchange-'))
+  try {
+    work(fresh)
+  } catch (error) {
+    log(`Exchange conformance: artifacts kept in ${fresh}`)
+    throw error
+  }
+  rmSync(fresh, { recursive: true, force: true })
+  return fresh
+}
+
 const rustSuite = (binary, tests, workspace = '.', pkg = 'stack-encrypt') => ({
   language: 'rust',
   lane: 'fast',
@@ -261,14 +281,6 @@ export function main(args = process.argv.slice(2)) {
   process.env.STACK_CONFORMANCE_REQUIRED = '1'
   for (const name of EXCHANGE_VARIABLES) delete process.env[name]
 
-  // Fresh every run: nothing here is read from or written to the tree.
-  const fresh = mkdtempSync(join(tmpdir(), 'stack-exchange-'))
-  const paths = {
-    rust: join(fresh, 'rust.json'),
-    go: join(fresh, 'go.json'),
-    eqlGo: join(fresh, 'eql-go-rows.json'),
-    eqlRust: join(fresh, 'eql-rust-rows.json'),
-  }
   const stackRust = rustSuite('exchange_conformance', [
     'fresh_artifact_exchange',
   ])
@@ -288,14 +300,22 @@ export function main(args = process.argv.slice(2)) {
   const eqlGoProducer = goSuite(['TestV4RowsMatchTheCommittedFixture'])
   const eqlGoConsumer = goSuite(['TestV4RowsTheRustSuiteSealedOpenInGo'])
 
-  let produced
-  try {
+  // Fresh every run: nothing here is read from or written to the tree. The
+  // report is written inside, so a failure anywhere up to and including it
+  // keeps the directory.
+  inFreshDirectory((fresh) => {
+    const paths = {
+      rust: join(fresh, 'rust.json'),
+      go: join(fresh, 'go.json'),
+      eqlGo: join(fresh, 'eql-go-rows.json'),
+      eqlRust: join(fresh, 'eql-rust-rows.json'),
+    }
     console.log('Exchange conformance: producing fresh artifacts')
     exchange(stackRust, { STACK_EXCHANGE_OUTPUT: paths.rust })
     exchange(stackGo, { STACK_EXCHANGE_OUTPUT: paths.go })
     exchange(eqlRustProducer, { EQL_V4_RUST_ROWS_OUT: paths.eqlRust })
     exchange(eqlGoProducer, { EQL_V4_ROWS_OUT: paths.eqlGo })
-    produced = {
+    const produced = {
       rust: checkArtifacts(paths.rust, 'rust', corpus),
       go: checkArtifacts(paths.go, 'go', corpus),
       eqlRust: checkRows(paths.eqlRust, 'rust', corpus),
@@ -309,84 +329,84 @@ export function main(args = process.argv.slice(2)) {
     exchange(stackGo, { STACK_EXCHANGE_INPUT: paths.rust })
     exchange(eqlRustConsumer, { EQL_V4_ROWS: paths.eqlGo })
     exchange(eqlGoConsumer, { EQL_V4_RUST_ROWS: paths.eqlRust })
-  } catch (error) {
-    // Kept for inspection: the artifacts the failing lane read or wrote.
-    console.error(`Exchange conformance: artifacts kept in ${fresh}`)
-    throw error
-  }
-  rmSync(fresh, { recursive: true, force: true })
 
-  const rootLock = read('Cargo.lock')
-  const guestLock = read('languages/golang/encrypt/guest/Cargo.lock')
-  const eqlLock = read('packages/eql/Cargo.lock')
-  const metadata = JSON.parse(
-    cargo(['metadata', '--locked', '--no-deps', '--format-version', '1'], true),
-  )
-  const eqlPackage = JSON.parse(read('packages/eql/packages/eql/package.json'))
-  const report = {
-    profile: PROFILE,
-    corpus_sha256: hash(CORPUS),
-    values_corpus_sha256: hash('conformance/stack-encrypt/v1/values.json'),
-    eql_fixture_sha256: hash(corpus.eql.fixture),
-    commit: command('git', ['rev-parse', 'HEAD'], { capture: true }).trim(),
-    toolchains,
-    engine: {
-      stack_encrypt: metadata.packages.find((p) => p.name === 'stack-encrypt')
-        .version,
-      native: lockedVersions(rootLock, ENGINE_CRATES),
-      guest: lockedVersions(guestLock, ENGINE_CRATES),
-      eql_workspace: lockedVersions(eqlLock, [
-        ...ENGINE_CRATES,
-        'eql-bindings',
-      ]),
-    },
-    storage: {
-      eql_schema: corpus.eql.schema,
-      eql_package: eqlPackage.version,
-      eql_bindings: lockedVersions(eqlLock, ['eql-bindings'])['eql-bindings'],
-      sql_lane:
-        'The PostgreSQL oracle lane is tests-golang.yml eql-postgres (go:test:postgres), whose report records the installed bundle; this report records the versions the exchanged rows were derived under.',
-    },
-    locks: {
-      root_sha256: hash('Cargo.lock'),
-      guest_sha256: hash('languages/golang/encrypt/guest/Cargo.lock'),
-      eql_sha256: hash('packages/eql/Cargo.lock'),
-    },
-    guests: Object.fromEntries(
-      GUESTS.map((guest) => [guest, hash(`languages/golang/${guest}`)]),
-    ),
-    producers: {
-      rust: produced.rust.producer,
-      go: produced.go.producer,
-      'eql-rows-rust': produced.eqlRust.producer,
-      'eql-rows-go': produced.eqlGo.producer,
-    },
-    exchanged: lanes().map((lane) => ({
-      ...lane,
-      artifacts:
-        lane.kind === 'eql-rows'
-          ? produced[lane.producer === 'rust' ? 'eqlRust' : 'eqlGo'].rows
-          : produced[lane.producer].counts[lane.kind],
-      compared: compared(lane),
-    })),
-    not_enrolled: NOT_ENROLLED.map((language) => ({
-      language,
-      status: 'no runner',
-    })),
-    released_versions: {
-      status: 'not defined',
-      note: 'Only this checkout exchanged with itself. Supported released-version combinations follow the EQL v4 and Stack Encrypt compatibility policy, which is not written yet; rows are added when it is.',
-      row_shape: {
-        producer: { sdk: '<name>', version: '<release>' },
-        consumer: { sdk: '<name>', version: '<release>' },
-        storage: { eql_bundle: '<release>', schema: 'eql_v4' },
-        kinds: ['values', 'record', 'blobs', 'eql-rows'],
-        result: 'opens | refused (<documented reason>)',
+    const rootLock = read('Cargo.lock')
+    const guestLock = read('languages/golang/encrypt/guest/Cargo.lock')
+    const eqlLock = read('packages/eql/Cargo.lock')
+    const metadata = JSON.parse(
+      cargo(
+        ['metadata', '--locked', '--no-deps', '--format-version', '1'],
+        true,
+      ),
+    )
+    const eqlPackage = JSON.parse(
+      read('packages/eql/packages/eql/package.json'),
+    )
+    const report = {
+      profile: PROFILE,
+      corpus_sha256: hash(CORPUS),
+      values_corpus_sha256: hash('conformance/stack-encrypt/v1/values.json'),
+      eql_fixture_sha256: hash(corpus.eql.fixture),
+      commit: command('git', ['rev-parse', 'HEAD'], { capture: true }).trim(),
+      toolchains,
+      engine: {
+        stack_encrypt: metadata.packages.find((p) => p.name === 'stack-encrypt')
+          .version,
+        native: lockedVersions(rootLock, ENGINE_CRATES),
+        guest: lockedVersions(guestLock, ENGINE_CRATES),
+        eql_workspace: lockedVersions(eqlLock, [
+          ...ENGINE_CRATES,
+          'eql-bindings',
+        ]),
       },
-      rows: [],
-    },
-  }
-  writeReport('exchange.json', report)
+      storage: {
+        eql_schema: corpus.eql.schema,
+        eql_package: eqlPackage.version,
+        eql_bindings: lockedVersions(eqlLock, ['eql-bindings'])['eql-bindings'],
+        sql_lane:
+          'The PostgreSQL oracle lane is tests-golang.yml eql-postgres (go:test:postgres), whose report records the installed bundle; this report records the versions the exchanged rows were derived under.',
+      },
+      locks: {
+        root_sha256: hash('Cargo.lock'),
+        guest_sha256: hash('languages/golang/encrypt/guest/Cargo.lock'),
+        eql_sha256: hash('packages/eql/Cargo.lock'),
+      },
+      guests: Object.fromEntries(
+        GUESTS.map((guest) => [guest, hash(`languages/golang/${guest}`)]),
+      ),
+      producers: {
+        rust: produced.rust.producer,
+        go: produced.go.producer,
+        'eql-rows-rust': produced.eqlRust.producer,
+        'eql-rows-go': produced.eqlGo.producer,
+      },
+      exchanged: lanes().map((lane) => ({
+        ...lane,
+        artifacts:
+          lane.kind === 'eql-rows'
+            ? produced[lane.producer === 'rust' ? 'eqlRust' : 'eqlGo'].rows
+            : produced[lane.producer].counts[lane.kind],
+        compared: compared(lane),
+      })),
+      not_enrolled: NOT_ENROLLED.map((language) => ({
+        language,
+        status: 'no runner',
+      })),
+      released_versions: {
+        status: 'not defined',
+        note: 'Only this checkout exchanged with itself. Supported released-version combinations follow the EQL v4 and Stack Encrypt compatibility policy, which is not written yet; rows are added when it is.',
+        row_shape: {
+          producer: { sdk: '<name>', version: '<release>' },
+          consumer: { sdk: '<name>', version: '<release>' },
+          storage: { eql_bundle: '<release>', schema: 'eql_v4' },
+          kinds: ['values', 'record', 'blobs', 'eql-rows'],
+          result: 'opens | refused (<documented reason>)',
+        },
+        rows: [],
+      },
+    }
+    writeReport('exchange.json', report)
+  })
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

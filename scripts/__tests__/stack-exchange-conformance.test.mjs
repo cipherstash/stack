@@ -1,9 +1,18 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { writeReport } from '../stack-conformance-evidence.mjs'
+import {
+  checkEnvironment,
+  writeReport,
+} from '../stack-conformance-evidence.mjs'
 import {
   CORPUS,
   checkArtifacts,
@@ -11,6 +20,7 @@ import {
   checkRows,
   compared,
   GUESTS,
+  inFreshDirectory,
   lanes,
   lockedVersions,
   NOT_ENROLLED,
@@ -159,6 +169,68 @@ describe('fresh cross-language artifact exchange', () => {
     expect(result.status).not.toBe(0)
     expect(result.stderr).toMatch(/Missing (or empty guest|runner)/)
     expect(result.stdout).not.toContain('Exchange conformance:')
+  })
+
+  it('refuses the EQL fixture-update variable before running anything', () => {
+    // TestV4RowsMatchTheCommittedFixture, the Go EQL producer, rewrites
+    // v4_rows.json under it.
+    for (const value of ['', '0', '1'])
+      expect(() => checkEnvironment({ EQL_UPDATE_FIXTURES: value })).toThrow(
+        'EQL_UPDATE_FIXTURES',
+      )
+    const result = spawnSync(
+      process.execPath,
+      ['scripts/stack-exchange-conformance.mjs'],
+      {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        env: { ...process.env, EQL_UPDATE_FIXTURES: '1' },
+      },
+    )
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain(
+      'Conformance cannot update fixtures: EQL_UPDATE_FIXTURES',
+    )
+    expect(result.stdout).not.toContain('Exchange conformance:')
+  })
+
+  it('keeps the fresh directory and prints its path when the report step fails', () => {
+    const parent = tempDir()
+    const log = vi.fn()
+    let fresh
+    expect(() =>
+      inFreshDirectory(
+        (dir) => {
+          fresh = dir
+          writeFileSync(join(dir, 'rust.json'), '{}')
+          // The report's tail: a lockfile without the engine crates.
+          lockedVersions('', ['stack-encrypt'])
+        },
+        { parent, log },
+      ),
+    ).toThrow('stack-encrypt is not in the lockfile')
+    expect(existsSync(join(fresh, 'rust.json'))).toBe(true)
+    expect(log).toHaveBeenCalledWith(
+      `Exchange conformance: artifacts kept in ${fresh}`,
+    )
+
+    const passed = inFreshDirectory(
+      (dir) => writeFileSync(join(dir, 'rust.json'), '{}'),
+      { parent, log: vi.fn() },
+    )
+    expect(existsSync(passed)).toBe(false)
+  })
+
+  it('writes the report before the fresh directory is removed', () => {
+    // The tail (lockfiles, cargo metadata, git, the report) runs inside the
+    // fresh directory's scope, so its failure keeps the artifacts too.
+    const script = read('scripts/stack-exchange-conformance.mjs')
+    const main = script.slice(script.indexOf('export function main('))
+    const scope = main.slice(main.indexOf('inFreshDirectory((fresh) => {'))
+    expect(scope).toContain("writeReport('exchange.json', report)")
+    expect(scope).toContain('lockedVersions(rootLock')
+    expect(main).not.toContain('rmSync(')
+    expect(main).not.toContain('mkdtempSync(')
   })
 
   it('requires nonempty fresh outputs of every kind from the named producer', () => {
