@@ -4,6 +4,9 @@
 //! executed by [`EncryptInto`] and [`DecryptFrom`]. Their `ContextInput`
 //! capabilities explicitly allow omission or supply; `Default` does not
 //! determine either. [`scalar_ciphertext`] is the first owned operation.
+//! A `Vec<S>` of owned plaintexts encrypts into a `Vec<T>` of any owned
+//! target, under the element's `ContextInput`, as one logical batch of
+//! independently authenticated elements; `Vec<T>` decrypts back the same way.
 //!
 //! # Structural API during migration
 //!
@@ -79,10 +82,12 @@
 //!
 //! # Collections and authentication
 //!
-//! `Vec<Target>` describes independently encrypted rows under the same context.
-//! Encrypting a plaintext `Vec<T>` into `StackCipherText` instead follows Vitamin
-//! C's native sequence model, including its authenticated empty marker. The same
-//! distinction applies to `Option<Target>` versus a native encrypted option.
+//! `Vec<Target>` describes independently encrypted rows under the same context,
+//! on the owned path (`Vec<S>` into a `Vec` of [`EncryptTarget`]s) as on the
+//! structural one. Encrypting a plaintext `Vec<T>` into `StackCipherText` instead
+//! follows Vitamin C's native sequence model, including its authenticated empty
+//! marker. The same distinction applies to `Option<Target>` versus a native
+//! encrypted option.
 //! Readers preserve marker ciphertext and map keys; changing a key changes the
 //! authenticated context when opening. Passthrough metadata and query terms are
 //! not presented as AEAD-authenticated values.
@@ -95,6 +100,7 @@
 //! `cipher.decrypt_as(record, context)`, or import [`legacy::EncryptInto`] and
 //! [`legacy::DecryptFrom`] while migrating these declarations. New scalar
 //! targets implement [`EncryptTarget`] and [`DecryptSource`].
+mod collections;
 mod context;
 mod conversion;
 pub(crate) mod core;

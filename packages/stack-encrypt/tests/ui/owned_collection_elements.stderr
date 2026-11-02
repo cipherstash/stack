@@ -1,0 +1,71 @@
+error[E0277]: the trait bound `u8: OpaqueEncode` is not satisfied
+ --> tests/ui/owned_collection_elements.rs:8:26
+  |
+8 |     let _ = vec![1u8, 2].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+  |                          ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `u8`
+  |
+  = help: the following other types implement trait `OpaqueEncode`:
+            f32
+            f64
+            i128
+            i16
+            i32
+            i64
+            i8
+            u128
+          and $N others
+  = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<u8>`
+  = note: 1 redundant requirement hidden
+  = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: the trait bound `Option<i32>: OpaqueEncode` is not satisfied
+ --> tests/ui/owned_collection_elements.rs:9:36
+  |
+9 |     let _ = vec![Some(1i32), None].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+  |                                    ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `Option<i32>`
+  |
+  = help: the following other types implement trait `OpaqueEncode`:
+            bool
+            f32
+            f64
+            i128
+            i16
+            i32
+            i64
+            i8
+          and $N others
+  = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Option<i32>>`
+  = note: 1 redundant requirement hidden
+  = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<Option<i32>>>`
+
+error[E0599]: the method `encrypt_into` exists for struct `Vec<&str>`, but its trait bounds were not satisfied
+  --> tests/ui/owned_collection_elements.rs:10:43
+   |
+10 |     let _ = vec!["borrowed", "plaintext"].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+   |                                           ^^^^^^^^^^^^
+   |
+  ::: $RUST/alloc/src/vec/mod.rs
+   |
+   | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
+   | ------------------------------------------------------------------------------------------------ doesn't satisfy `Vec<&str>: stack_encrypt::EncryptInto` or `Vec<&str>: zeroize::Zeroize`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Vec<&str>: zeroize::Zeroize`
+           which is required by `Vec<&str>: stack_encrypt::EncryptInto`
+           `&Vec<&str>: zeroize::Zeroize`
+           which is required by `&Vec<&str>: stack_encrypt::EncryptInto`
+           `&mut Vec<&str>: zeroize::Zeroize`
+           which is required by `&mut Vec<&str>: stack_encrypt::EncryptInto`
+           `[&str]: Sized`
+           which is required by `[&str]: stack_encrypt::EncryptInto`
+           `[&str]: zeroize::Zeroize`
+           which is required by `[&str]: stack_encrypt::EncryptInto`
+           `&[&str]: zeroize::Zeroize`
+           which is required by `&[&str]: stack_encrypt::EncryptInto`
+           `&mut [&str]: zeroize::Zeroize`
+           which is required by `&mut [&str]: stack_encrypt::EncryptInto`
+   = help: items from traits can only be used if the trait is in scope
+help: trait `LegacyEncryptInto` which provides `encrypt_into` is implemented but not in scope; perhaps you want to import it
+   |
+ 6 + use stack_encrypt::target::legacy::EncryptInto;
+   |

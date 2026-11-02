@@ -239,6 +239,53 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
+//! # Collections
+//!
+//! A `Vec` of owned plaintexts encrypts into a `Vec` of any owned target
+//! through the same two traits, with or without a caller context, and back.
+//! Each element is sealed under its own data key and authenticated on its
+//! own: the elements are rows, so neither their order nor their number is
+//! authenticated, and any one of them opens alone through
+//! [`KeysetCipher::decrypt`]. The whole column is one logical batch: one
+//! `generate_keys` call to seal it, one `retrieve_keys` call per keyset to
+//! open it, in element order, and no call at all for an empty column. The
+//! key source may still split a logical batch across several provider
+//! requests. The column is held in one guard and wiped before the pending
+//! request is returned, as a scalar is, and a column that fails after some
+//! elements were recovered wipes those before reporting the error.
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
+//! let cipher = StackCipher::builder()
+//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! let keyset = cipher.default_keyset();
+//!
+//! // No caller context: every element seals under the empty context.
+//! let ages: Vec<Ciphertext> = vec![29i32, 34, 41].encrypt_into(&keyset).await?;
+//! assert_eq!(Vec::<i32>::decrypt_from(ages.clone(), &keyset).await?, [29, 34, 41]);
+//! // An element is an ordinary ciphertext.
+//! assert_eq!(keyset.decrypt::<i32>(ages[1].clone()).await?, 34);
+//!
+//! // With a caller context, bound to every element.
+//! let names: Vec<Ciphertext> = vec!["ada".to_owned(), "grace".to_owned()]
+//!     .encrypt_into_with_context(&keyset, ("users", "name"))
+//!     .await?;
+//! let names = Vec::<String>::decrypt_from_with_context(names, &keyset, ("users", "name")).await?;
+//! assert_eq!(names, ["ada", "grace"]);
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! The column takes the element target's caller-context capability as its
+//! own, so a column of a target that requires a context cannot omit it, and
+//! a column of a target that accepts none cannot be given one. A `Vec<u8>`
+//! is not a column of scalars: `u8` is not an [`OpaqueEncode`] type, since
+//! Vitamin C keeps `Vec<u8>` a byte leaf and gives `u8` no source of its
+//! own, so `Vec<u8>` neither encrypts byte by byte nor as one `Ciphertext`
+//! here.
+//!
 //! Existing structural plans and derives still use [`StackCipherText`], a tree
 //! of sealed leaves. Their low-level direct entry points are
 //! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their

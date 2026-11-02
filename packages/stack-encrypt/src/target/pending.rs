@@ -340,6 +340,34 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         scope: impl CipherScope<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
+        Self::collect_releasing(scope, items, drop)
+    }
+
+    /// [`collect`](Self::collect) for a collection of recovered plaintext.
+    /// When a later item fails at fulfilment (an authentication or type
+    /// failure after its key arrived), the items recovered before it are
+    /// wiped before the error is returned, not dropped as they are. A
+    /// failure before fulfilment recovers nothing, so there is nothing to
+    /// wipe.
+    pub(crate) fn collect_wiping(
+        scope: impl CipherScope<'a, K>,
+        items: impl IntoIterator<Item = Pending<'a, T, K>>,
+    ) -> Pending<'a, Vec<T>, K>
+    where
+        T: zeroize::Zeroize,
+    {
+        Self::collect_releasing(scope, items, |mut recovered| {
+            zeroize::Zeroize::zeroize(&mut recovered)
+        })
+    }
+
+    /// The one collection builder. `release` is handed the items fulfilled
+    /// before a later item failed; it is not called when every item succeeds.
+    fn collect_releasing(
+        scope: impl CipherScope<'a, K>,
+        items: impl IntoIterator<Item = Pending<'a, T, K>>,
+        release: impl FnOnce(Vec<T>) + MaybeSend + 'a,
+    ) -> Pending<'a, Vec<T>, K> {
         let items = items.into_iter();
         let cipher = scope.cipher();
         let mut keyset = scope.keyset();
@@ -365,10 +393,17 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             fulfil: Box::new(move |responses| {
-                fulfils
-                    .into_iter()
-                    .map(|fulfil| fulfil(responses))
-                    .collect()
+                let mut recovered = Vec::with_capacity(fulfils.len());
+                for fulfil in fulfils {
+                    match fulfil(responses) {
+                        Ok(item) => recovered.push(item),
+                        Err(error) => {
+                            release(recovered);
+                            return Err(error);
+                        }
+                    }
+                }
+                Ok(recovered)
             }),
         }
     }

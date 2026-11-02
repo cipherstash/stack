@@ -23,9 +23,11 @@ mod sealed {
 /// Implemented for `bool`, the fixed-width signed integers, the unsigned
 /// integers from `u16` through `u128`, `f32`, `f64` and `String`. The trait is
 /// sealed: collections and borrowed values deliberately do not implement it.
-/// `u8` waits on separating Vitamin C's byte-buffer and element
-/// representations, and must not make `Vec<u8>` an implicit single
-/// ciphertext.
+/// A `Vec` of these encrypts element by element into a `Vec<Ciphertext>`
+/// through [`EncryptInto`] instead; see the crate docs on collections.
+/// `u8` is deliberately absent: Vitamin C keeps `Vec<u8>` a byte leaf and
+/// gives `u8` no source of its own, so a byte vector is neither a column of
+/// scalars nor an implicit single ciphertext here.
 /// Nullable `Option<T>` values are also deferred in this scalar slice. Use
 /// [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`] for them;
 /// fixed-width nullable values retain Vitamin C's padded-null representation.

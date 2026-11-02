@@ -18,6 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the final extension alone for both reads and queries of old data, or re-encrypt
   and re-index it under the appended context. This does not migrate stored data.
 
+### Added
+
+- **Owned collections: `Vec<S>` encrypts into `Vec<T>` and back through
+  `EncryptInto` and `DecryptFrom`** (#1482). `Vec<T>` implements
+  `EncryptTarget<Vec<S>>` and `DecryptSource<Vec<P>>` for any owned element
+  target, so `vec![29i32, 34].encrypt_into::<Vec<Ciphertext>, _>(&keyset)`
+  needs no caller context and `Vec::<i32>::decrypt_from(column, &keyset)`
+  opens it. The column's `ContextInput` is the element's: a column of a
+  `RequiredContext` target still cannot omit its context, a column of a
+  `NoCallerContext` target still cannot be given one, and `Default` grants
+  neither. Each element is sealed under its own data key and authenticated
+  on its own, in one logical batch per column (one `generate_keys` call,
+  one `retrieve_keys` call per keyset, element order kept, no call for an
+  empty column; the key source may still split a logical batch into several
+  provider requests). The vector is held in one guard and wiped before the
+  pending request is returned, including when the context is refused, with
+  no `Clone` bound; a column that fails after some elements were recovered
+  wipes those before returning the error. `Vec<u8>` is not a column of
+  scalars: `u8` is not `OpaqueEncode`, because Vitamin C keeps `Vec<u8>` a
+  byte leaf, so it compiles to neither a column of bytes nor one ciphertext.
+  Direct `keyset.encrypt` still takes one scalar; `encrypt_tree` remains the
+  structural path.
+
 ## [0.3.0] - 2026-10-27
 
 ### Breaking
