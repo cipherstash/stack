@@ -103,6 +103,7 @@ describe('required EQL/JSON conformance', () => {
       'STACK_CONFORMANCE_UPDATE',
       'STACK_ENCRYPT_UPDATE_FIXTURES',
       'STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS',
+      'EQL_UPDATE_FIXTURES',
     ]) {
       for (const value of ['', '0', '1'])
         expect(() => checkEnvironment({ [name]: value })).toThrow(name)
