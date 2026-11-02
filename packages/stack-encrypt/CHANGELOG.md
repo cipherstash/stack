@@ -101,7 +101,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the pending is returned; `EncryptInto` and the owned column run it. A
   record overrides it to divide the struct between its fields with the new
   `Encryption::split` (two descriptions over two parts of one value, one
-  context) and `Encryption::project_owned`. `indexes` is what a plan field
+  context, and a `wipe` for the part that waits while the first part's
+  description runs, called if that description panics) and
+  `Encryption::project_owned`. `EncryptInto` guards the plaintext until the
+  declaration and its context have been constructed, so a declaration that
+  panics while it is constructed wipes it. `indexes` is what a plan field
   typed with the target answers queries by; the terms, `Encrypted<Terms>`
   and `plaintext` records report theirs.
 - **The core leaves implement the owned declarations**: `StackCipherText`

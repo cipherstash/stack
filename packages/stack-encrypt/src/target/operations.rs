@@ -417,19 +417,61 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
     /// nesting a `split` per field, so a passthrough field is moved into
     /// the output and never copied, and a sealed field is guarded by its own
     /// target's description. Nothing is cloned, so `P` need not be `Clone`.
+    ///
+    /// `self` runs first while `other`'s part waits, and `wipe` is what
+    /// keeps that part safe meanwhile: if `self`'s description panics
+    /// before `other` has received its part, the part is handed to `wipe`
+    /// during the unwind instead of being dropped as it is. `wipe` wipes
+    /// what `other` seals and leaves what it stores in the clear, so a part
+    /// that is all passthrough takes `|_| {}`, and no `Zeroize` bound falls
+    /// on a part that is not sealed. Once `other` has its part, wiping it is
+    /// `other`'s responsibility, as it is for any owned source.
     pub fn split<P: 's, U: 's, V: 'static>(
         self,
         other: Encryption<'s, U, V, K, Ctx, Owned>,
         divide: fn(P) -> (S, U),
+        wipe: fn(&mut U),
     ) -> Encryption<'s, P, (T, V), K, Ctx, Owned>
     where
         Ctx: Clone,
     {
         Encryption {
-            build: Box::new(move |source, cipher, cx| {
+            build: Box::new(move |source, cipher, cx: Ctx| {
+                let first_cx = cx.clone();
                 let (mine, theirs) = divide(source);
-                (self.build)(mine, cipher, cx.clone()).zip((other.build)(theirs, cipher, cx))
+                let waiting = Waiting {
+                    part: Some(theirs),
+                    wipe,
+                };
+                let first = (self.build)(mine, cipher, first_cx);
+                first.zip((other.build)(waiting.hand_over(), cipher, cx))
             }),
+        }
+    }
+}
+
+/// The part of a [`split`](Encryption::split) value that waits while the
+/// other part's description runs. Dropped before
+/// [`hand_over`](Self::hand_over), by an unwind out of that description, it
+/// hands the part to `wipe`.
+struct Waiting<U> {
+    part: Option<U>,
+    wipe: fn(&mut U),
+}
+
+impl<U> Waiting<U> {
+    /// The description before it returned: the part goes to its own.
+    fn hand_over(mut self) -> U {
+        self.part
+            .take()
+            .unwrap_or_else(|| unreachable!("a waiting part is handed over once"))
+    }
+}
+
+impl<U> Drop for Waiting<U> {
+    fn drop(&mut self) {
+        if let Some(part) = self.part.as_mut() {
+            (self.wipe)(part);
         }
     }
 }

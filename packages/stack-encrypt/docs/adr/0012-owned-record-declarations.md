@@ -54,6 +54,20 @@ function pointer that destructures the struct: it captures nothing, so like
 the accepted plaintext-ownership rule made mechanical: the conversion wipes
 what it seals and transfers what the caller chose to keep in the clear.
 
+Each `split` runs its first part's description while the other part waits,
+and it is handed a `wipe` for that waiting part. If the first description
+panics (a declaration's selector, say), the waiting part goes to `wipe`
+during the unwind rather than being dropped as it is, as an owned column's
+unvisited elements are. The derive writes each `wipe` to zeroize the sealed
+fields still waiting and to leave the passthrough ones. A sealed field's
+plaintext is `Zeroize` already, as every `EncryptTarget` source is, so this
+adds no bound, and a passthrough field, stored in the clear, takes none. A
+`Zeroize` bound on `split`'s waiting part would have done the same work,
+but it would have fallen on passthrough field types too. `EncryptInto`
+holds the whole plaintext in a `Protected` guard until the declaration and
+its context exist, so a declaration that panics while it is constructed
+wipes the plaintext too.
+
 The destructure is exhaustive. The owned form replaces the guard over the
 whole value, so a plaintext field the record neither seals nor carries
 would be dropped unwiped; it is a compile error at the `struct = ..` path

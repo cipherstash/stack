@@ -371,6 +371,61 @@ impl Decryptable for FlaggedCiphertext {
     const DECRYPTABLE: bool = false;
 }
 
+#[derive(Zeroize)]
+struct Trio {
+    first: Flagged,
+    #[zeroize(skip)]
+    handle: u64,
+    third: Flagged,
+    fourth: Flagged,
+}
+// Only encrypted, and never completed: its fields are never read.
+#[allow(dead_code)]
+#[derive(EncryptTarget)]
+#[stash(struct = Trio, context = "trios")]
+struct EncryptedTrio {
+    first: FlaggedCiphertext,
+    #[stash(passthrough)]
+    handle: u64,
+    third: FlaggedCiphertext,
+    fourth: FlaggedCiphertext,
+}
+
+#[tokio::test]
+async fn a_panicking_field_declaration_wipes_the_sealed_fields_after_it() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    // The outer `split` (the first field panics, the rest wait as one part)
+    // and a nested one (the third panics, the fourth waits on its own).
+    for panicking in ["first", "third"] {
+        let value = |field: &'static str| if field == panicking { "panics" } else { field };
+        let (first, first_wiped) = flagged(value("first"));
+        let (third, third_wiped) = flagged(value("third"));
+        let (fourth, fourth_wiped) = flagged(value("fourth"));
+        let trio = Trio {
+            first,
+            handle: 7,
+            third,
+            fourth,
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            drop(trio.encrypt_into::<EncryptedTrio, _>(&keyset));
+        }));
+        assert!(
+            result.is_err(),
+            "the {panicking} field's declaration panicked"
+        );
+        assert!(
+            first_wiped.load(Ordering::SeqCst) && third_wiped.load(Ordering::SeqCst),
+            "the fields handed over are wiped by their own guards ({panicking} panicked)"
+        );
+        assert!(
+            fourth_wiped.load(Ordering::SeqCst),
+            "the sealed fields not yet handed over are wiped during the unwind ({panicking} panicked)"
+        );
+    }
+}
+
 /// Seals a `Flagged` through a declaration whose construction panics: what
 /// `encrypt_into` is holding then is the plaintext alone.
 struct UnconstructedCiphertext(#[allow(dead_code)] Ciphertext);

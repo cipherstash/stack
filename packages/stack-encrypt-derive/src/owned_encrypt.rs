@@ -204,15 +204,20 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         [first, rest @ ..] => {
             // `rest` as one description over the nested tuple of its parts,
             // divided by identity; then the struct divided into `first` and
-            // that tuple.
+            // that tuple. Each `split` is told how to wipe the parts still
+            // waiting for their descriptions, should an earlier field's
+            // description panic.
             let mut tail = {
                 let last = rest[rest.len() - 1];
                 quote!(#last)
             };
-            for local in rest[..rest.len() - 1].iter().rev() {
-                tail = quote!(#local.split(#tail, |__parts| __parts));
+            for index in (1..locals.len() - 1).rev() {
+                let local = locals[index];
+                let wipe = wipe_waiting(krate, &fields[index + 1..]);
+                tail = quote!(#local.split(#tail, |__parts| __parts, #wipe));
             }
-            quote!(#first.split(#tail, #divide))
+            let wipe = wipe_waiting(krate, &fields[1..]);
+            quote!(#first.split(#tail, #divide, #wipe))
         }
         [] => unreachable!("a record has a derived field"),
     };
@@ -249,6 +254,37 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         false,
     );
     quote!(#encrypt_target #bridge)
+}
+
+/// The `wipe` a `split` is handed for the parts still waiting, the nested
+/// tuple of `waiting`: every sealed field in it wiped, every passthrough
+/// field left as it is. A sealed field's plaintext is `Zeroize` already, as
+/// every `EncryptTarget` source is, so this adds no bound; a passthrough
+/// field is stored in the clear and takes none.
+fn wipe_waiting(krate: &syn::Path, waiting: &[&Field]) -> TokenStream {
+    let mut wipes = Vec::new();
+    let mut base = quote!((*__parts));
+    for (index, field) in waiting.iter().enumerate() {
+        let last = index == waiting.len() - 1;
+        let place = if last {
+            base.clone()
+        } else {
+            let first = syn::Index::from(0);
+            quote!(#base.#first)
+        };
+        if field.is_derived() {
+            wipes.push(quote!(#krate::target::Zeroize::zeroize(&mut #place);));
+        }
+        if !last {
+            let rest = syn::Index::from(1);
+            base = quote!(#base.#rest);
+        }
+    }
+    if wipes.is_empty() {
+        quote!(|_| {})
+    } else {
+        quote!(|__parts| { #(#wipes)* })
+    }
 }
 
 /// The nested tuple `(a, (b, (c, d)))` of the locals: how `split` divides
