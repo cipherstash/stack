@@ -17,10 +17,8 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use stack_encrypt::dynamic::plaintext::Sink;
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::Encrypt;
-use stackencrypt_core::values::{self, Kind, Scalar, Value};
+use stackencrypt_core::values::{self, Kind, Scalar, Typed, Value};
 
 #[derive(Arbitrary, Debug)]
 enum Input {
@@ -93,14 +91,6 @@ impl Host {
     }
 }
 
-struct Written<'a>(Option<Kind>, Value<'a>);
-
-impl Encrypt for Written<'_> {
-    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        values::write(sink, self.0, self.1)
-    }
-}
-
 /// The scalar an accepted value reads back as: the value, narrowed to its
 /// kind.
 fn expected(kind: Option<Kind>, value: Value<'_>) -> Scalar {
@@ -147,24 +137,6 @@ fn same(a: &Scalar, b: &Scalar) -> bool {
     }
 }
 
-/// The scalar as the value the SDK writes, or `None` for a null.
-fn value_of(scalar: &Scalar) -> Option<Value<'_>> {
-    Some(match scalar {
-        Scalar::Null => return None,
-        Scalar::Text(s) => Value::Text(s),
-        Scalar::Int(i) => Value::Int(*i),
-        Scalar::Float(f) => Value::Float(*f),
-        Scalar::Bool(b) => Value::Bool(*b),
-        Scalar::Bytes(b) => Value::Bytes(b),
-        Scalar::Date(d) => Value::Date(i64::from(*d)),
-        Scalar::Timestamp(t) => Value::Timestamp(*t),
-        Scalar::Decimal { mantissa, scale } => Value::Decimal {
-            mantissa: *mantissa,
-            scale: u32::from(*scale),
-        },
-    })
-}
-
 fuzz_target!(|input: Input| {
     match input {
         Input::Write(kind, host) => {
@@ -172,7 +144,7 @@ fuzz_target!(|input: Input| {
             if values::scalar(kind, value).is_err() {
                 return;
             }
-            let frame = ValueFrame::of(Written(kind, value)).expect("an accepted value frames");
+            let frame = ValueFrame::of(Typed(kind, value)).expect("an accepted value frames");
             let read = values::read(frame.risky_ref()).expect("a written frame reads");
             assert!(
                 same(&read, &expected(kind, value)),
@@ -186,17 +158,19 @@ fuzz_target!(|input: Input| {
             let Ok(read) = values::read(&bytes) else {
                 return;
             };
-            let Some(value) = value_of(&read) else {
+            let Some(value) = read.value() else {
                 return;
             };
-            // A frame can hold a timestamp in seconds whose count, in
-            // nanoseconds, is past the range the SDK writes. The engine only
-            // returns a passthrough the SDK wrote, so read accepting more
-            // than write is not a defect.
+            // `values::read` range-checks a timestamp, but not a date or a
+            // decimal: it reads any `i32` day count, and any scale and
+            // mantissa. `values::scalar` refuses a date outside the engine's
+            // range, a scale over 28, and a mantissa over 96 bits. The engine
+            // only returns a passthrough the SDK wrote, so read accepting
+            // more than write is not a defect.
             if values::scalar(None, value).is_err() {
                 return;
             }
-            let frame = ValueFrame::of(Written(None, value)).expect("a read scalar writes back");
+            let frame = ValueFrame::of(Typed(None, value)).expect("a read scalar writes back");
             let again = values::read(frame.risky_ref()).expect("a written frame reads");
             assert!(same(&again, &read), "{again:?} after {read:?}");
         }

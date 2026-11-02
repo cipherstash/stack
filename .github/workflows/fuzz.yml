@@ -25,10 +25,18 @@ on:
       - packages/stack-auth/**
       - packages/stack-kms/**
       - packages/stack-encrypt/**
-      # The Python SDK's core crate and the manifest its dependencies come
-      # from: the fuzz:python-values target.
+      # Every other crate a target compiles, from each fuzz crate's
+      # Cargo.lock: scripts/__tests__/fuzz-workflow-paths.test.mjs derives
+      # this list and fails when a path dependency is missing from it.
+      - packages/stack-profile/**
+      - packages/stack-encrypt-derive/**
+      - packages/eql/crates/eql-bindings/**
+      # The Python SDK's core crate, the manifest its dependencies come
+      # from, and the Go guest's EQL resolver it compiles by #[path]: the
+      # fuzz:python-values target.
       - languages/python/crates/core/**
       - languages/python/Cargo.toml
+      - languages/golang/encrypt/guest/src/targets.rs
       - Cargo.toml
       - Cargo.lock
       - mise.toml

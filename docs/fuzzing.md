@@ -133,11 +133,13 @@ Two jobs with deliberately different roles:
 The `pull_request` trigger is path-filtered to these paths:
 
 - `packages/stack-auth/**`, `packages/stack-kms/**`, and `packages/stack-encrypt/**`
-- `languages/python/crates/core/**` and `languages/python/Cargo.toml`
+- the other crates a target compiles: `packages/stack-profile/**`, `packages/stack-encrypt-derive/**`, and `packages/eql/crates/eql-bindings/**`
+- `languages/python/crates/core/**`, `languages/python/Cargo.toml`, and `languages/golang/encrypt/guest/src/targets.rs`
 - the root `Cargo.toml`, `Cargo.lock`, and `mise.toml`
 - the workflow file
 
 The `!**.md` and `!**.example` excludes come last, so a change to documents only is skipped.
+`scripts/__tests__/fuzz-workflow-paths.test.mjs` reads each fuzz crate's `Cargo.lock`. It fails when the filter misses a crate that a target compiles.
 
 ## Adding a new target
 
