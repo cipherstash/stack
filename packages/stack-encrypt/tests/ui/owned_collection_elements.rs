@@ -9,7 +9,7 @@ use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto};
 fn unsupported<K: 'static>(keyset: &stack_encrypt::KeysetCipher<'_, K>, column: Vec<Ciphertext>) {
     let _ = vec![1u8, 2].encrypt_into::<Vec<Ciphertext>, _>(keyset);
     let _ = vec![Some(1i32), None].encrypt_into::<Vec<Ciphertext>, _>(keyset);
-    let _ = vec!["borrowed", "plaintext"].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+    let _ = EncryptInto::encrypt_into::<Vec<Ciphertext>, _>(vec!["borrowed", "plaintext"], keyset);
     let _ = vec![1u8, 2].encrypt_into::<Ciphertext, _>(keyset);
     let _ = vec![1i32, 2].encrypt_into::<Ciphertext, _>(keyset);
     let _ = Vec::<u8>::decrypt_from(column.clone(), keyset);

@@ -38,37 +38,51 @@ error[E0277]: the trait bound `Option<i32>: OpaqueEncode` is not satisfied
    = note: 1 redundant requirement hidden
    = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<Option<i32>>>`
 
-error[E0599]: the method `encrypt_into` exists for struct `Vec<&str>`, but its trait bounds were not satisfied
-  --> tests/ui/owned_collection_elements.rs:12:43
+error[E0277]: the trait bound `&str: OpaqueEncode` is not satisfied
+  --> tests/ui/owned_collection_elements.rs:12:41
    |
-12 |     let _ = vec!["borrowed", "plaintext"].encrypt_into::<Vec<Ciphertext>, _>(keyset);
-   |                                           ^^^^^^^^^^^^
+12 |     let _ = EncryptInto::encrypt_into::<Vec<Ciphertext>, _>(vec!["borrowed", "plaintext"], keyset);
+   |                                         ^^^^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `&str`
    |
-  ::: $RUST/alloc/src/vec/mod.rs
+help: the trait `OpaqueEncode` is implemented for `std::string::String`
+  --> src/scalar.rs
    |
-   | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
-   | ------------------------------------------------------------------------------------------------ doesn't satisfy `Vec<&str>: stack_encrypt::EncryptInto` or `Vec<&str>: zeroize::Zeroize`
+   |         impl OpaqueEncode for $ty {}
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+   | opaque!(bool, i8, i16, i32, i64, i128, u16, u32, u64, u128, f32, f64, String);
+   | ----------------------------------------------------------------------------- in this macro invocation
+   = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<&str>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<&str>>`
+note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into`
+  --> src/target/conversion.rs
    |
-   = note: the following trait bounds were not satisfied:
-           `Vec<&str>: zeroize::Zeroize`
-           which is required by `Vec<&str>: stack_encrypt::EncryptInto`
-           `&Vec<&str>: zeroize::Zeroize`
-           which is required by `&Vec<&str>: stack_encrypt::EncryptInto`
-           `&mut Vec<&str>: zeroize::Zeroize`
-           which is required by `&mut Vec<&str>: stack_encrypt::EncryptInto`
-           `[&str]: Sized`
-           which is required by `[&str]: stack_encrypt::EncryptInto`
-           `[&str]: zeroize::Zeroize`
-           which is required by `[&str]: stack_encrypt::EncryptInto`
-           `&[&str]: zeroize::Zeroize`
-           which is required by `&[&str]: stack_encrypt::EncryptInto`
-           `&mut [&str]: zeroize::Zeroize`
-           which is required by `&mut [&str]: stack_encrypt::EncryptInto`
-   = help: items from traits can only be used if the trait is in scope
-help: trait `LegacyEncryptInto` which provides `encrypt_into` is implemented but not in scope; perhaps you want to import it
+   |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+   |        ------------ required by a bound in this associated function
+   |     where
+   |         T: EncryptTarget<Self>,
+   |            ^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   = note: this error originates in the macro `opaque` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `&str: zeroize::Zeroize` is not satisfied
+  --> tests/ui/owned_collection_elements.rs:12:13
    |
- 8 + use stack_encrypt::target::legacy::EncryptInto;
+12 |     let _ = EncryptInto::encrypt_into::<Vec<Ciphertext>, _>(vec!["borrowed", "plaintext"], keyset);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `zeroize::DefaultIsZeroes` is not implemented for `&str`
    |
+   = help: the following other types implement trait `zeroize::DefaultIsZeroes`:
+             ()
+             PhantomPinned
+             bool
+             char
+             f32
+             f64
+             i128
+             i16
+           and $N others
+   = note: required for `&str` to implement `zeroize::Zeroize`
+   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<&str>>`
 
 error[E0277]: the trait bound `Vec<u8>: OpaqueEncode` is not satisfied
   --> tests/ui/owned_collection_elements.rs:13:26
