@@ -109,12 +109,8 @@ func TestRawFrameConformance(t *testing.T) {
 			}
 			out, err := cipher.OpenFrameForTest(ctx, frame, 1, plan)
 			if refused {
-				if c.Class == "authenticated" && want.Code == "stack_encrypt::aead" {
-					if !errors.Is(err, encrypt.ErrAuthentication) {
-						t.Fatalf("expected an authentication failure, got %v", err)
-					}
-					return
-				}
+				// An authentication failure is held to its code and fields
+				// like any other refusal, under ErrAuthentication.
 				readRefusal(t, err, want)
 				return
 			}

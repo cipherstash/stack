@@ -46,7 +46,8 @@ declared type: `stack_encrypt::plan_field_type` naming the field and the
 expected kind, as the read profile's authenticated cases do. A leaf moved
 into another role (the single leaf under an empty-sequence tag) fails
 authentication itself: `stack_encrypt::aead`, which Go reports as
-`ErrAuthentication`. Neither is a shape refusal: a container's membership
+`ErrAuthentication` carrying that code. Both runners compare the code and
+fields of either outcome, as they do for every refusal. Neither is a shape refusal: a container's membership
 and order are not authenticated, so a tree that fits the plan passes
 preflight and is judged leaf by leaf.
 
