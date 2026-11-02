@@ -12,10 +12,8 @@
 //! vector in the corpus fails here until it is handled or listed.
 
 use serde_json::Value as Json;
-use stack_encrypt::dynamic::plaintext::Sink;
 use stack_encrypt::dynamic::ValueFrame;
-use stack_encrypt::Encrypt;
-use stackencrypt_core::values::{self, Kind, Scalar, Value};
+use stackencrypt_core::values::{self, Kind, Scalar, Typed};
 
 const CORPUS: &str = include_str!("../testdata/value-conformance.json");
 
@@ -51,15 +49,6 @@ fn unhex(text: &str) -> Vec<u8> {
         .step_by(2)
         .map(|at| u8::from_str_radix(&text[at..at + 2], 16).expect("hex"))
         .collect()
-}
-
-/// A value written as `kind`, or as a passthrough for `None`.
-struct Written<'a>(Option<Kind>, Value<'a>);
-
-impl Encrypt for Written<'_> {
-    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        values::write(sink, self.0, self.1)
-    }
 }
 
 /// The SDK's kind for a vector, its value, and the scalar it reads back as.
@@ -112,24 +101,6 @@ fn host(vector: &Json, text: &mut String, bytes: &mut Vec<u8>) -> Option<(Option
         }
         _ => return None,
     })
-}
-
-/// The scalar as the value the SDK writes.
-fn value_of<'a>(scalar: &'a Scalar) -> Value<'a> {
-    match scalar {
-        Scalar::Bool(b) => Value::Bool(*b),
-        Scalar::Int(i) => Value::Int(*i),
-        Scalar::Float(f) => Value::Float(*f),
-        Scalar::Text(s) => Value::Text(s),
-        Scalar::Bytes(b) => Value::Bytes(b),
-        Scalar::Date(d) => Value::Date(i64::from(*d)),
-        Scalar::Timestamp(t) => Value::Timestamp(*t),
-        Scalar::Decimal { mantissa, scale } => Value::Decimal {
-            mantissa: *mantissa,
-            scale: u32::from(*scale),
-        },
-        Scalar::Null => panic!("the SDK never writes a null"),
-    }
 }
 
 /// Days since 1970-01-01 of a proleptic Gregorian date, `[+-]YYYY-MM-DD`.
@@ -201,7 +172,7 @@ fn every_vector_the_sdk_writes_gives_its_bytes_and_reads_back() {
         );
         let transport = unhex(vector["transport"].as_str().expect("transport"));
 
-        let frame = ValueFrame::of(Written(kind, value_of(&expected)))
+        let frame = ValueFrame::of(Typed(kind, expected.value().expect("not a null")))
             .unwrap_or_else(|error| panic!("{name}: refused: {error}"));
 
         assert_eq!(
@@ -263,7 +234,8 @@ fn every_normalized_vector_reads_as_its_canonical_value() {
             Some((kind, expected)) => {
                 assert_eq!(read, expected, "{name}: the read value");
                 // Written back, the canonical value is the canonical bytes.
-                let frame = ValueFrame::of(Written(kind, value_of(&read))).expect("frames");
+                let frame =
+                    ValueFrame::of(Typed(kind, read.value().expect("not a null"))).expect("frames");
                 assert_eq!(
                     frame.risky_ref(),
                     &reencode[..],

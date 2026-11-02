@@ -135,6 +135,19 @@ pub fn write<S: Sink>(sink: S, kind: Option<Kind>, value: Value<'_>) -> Result<S
     sink.scalar(logical, physical)
 }
 
+/// `value` as the engine's input on its own: [`write`] of it as `kind`, or
+/// as it is for a passthrough (`None`). A query's value, a stored
+/// passthrough, and the tests' and fuzz target's frames are written
+/// through this.
+#[derive(Clone, Copy, Debug)]
+pub struct Typed<'a>(pub Option<Kind>, pub Value<'a>);
+
+impl Encrypt for Typed<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        write(sink, self.0, self.1)
+    }
+}
+
 /// The engine's scalar for `value` under `kind`.
 ///
 /// # Errors
@@ -233,6 +246,27 @@ pub enum Scalar {
         mantissa: i128,
         scale: u8,
     },
+}
+
+impl Scalar {
+    /// The scalar as the value the SDK writes, or `None` for a null, which
+    /// the SDK never writes.
+    pub fn value(&self) -> Option<Value<'_>> {
+        Some(match self {
+            Self::Null => return None,
+            Self::Text(s) => Value::Text(s),
+            Self::Int(i) => Value::Int(*i),
+            Self::Float(f) => Value::Float(*f),
+            Self::Bool(b) => Value::Bool(*b),
+            Self::Bytes(b) => Value::Bytes(b),
+            Self::Date(d) => Value::Date(i64::from(*d)),
+            Self::Timestamp(t) => Value::Timestamp(*t),
+            Self::Decimal { mantissa, scale } => Value::Decimal {
+                mantissa: *mantissa,
+                scale: u32::from(*scale),
+            },
+        })
+    }
 }
 
 /// Read the one scalar a passthrough frame holds.
@@ -481,7 +515,7 @@ mod tests {
                 },
             ),
         ] {
-            let frame = ValueFrame::of(Written { kind, value }).unwrap();
+            let frame = ValueFrame::of(Typed(kind, value)).unwrap();
             assert_eq!(read(frame.risky_ref()).unwrap(), expected, "{value:?}");
         }
     }
@@ -491,16 +525,5 @@ mod tests {
         assert!(read(b"not a frame").is_err());
         let seq = ValueFrame::of(vec!["a", "b"]).unwrap();
         assert!(read(seq.risky_ref()).is_err());
-    }
-
-    struct Written<'a> {
-        kind: Option<Kind>,
-        value: Value<'a>,
-    }
-
-    impl Encrypt for Written<'_> {
-        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            write(sink, self.kind, self.value)
-        }
     }
 }
