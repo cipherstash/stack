@@ -8,11 +8,10 @@
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
-  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +24,7 @@ import {
   read,
   root,
   runSuite,
+  writeReport,
 } from './stack-conformance-evidence.mjs'
 
 export const PROFILE = 'artifact-exchange-v1'
@@ -273,25 +273,33 @@ export function main(args = process.argv.slice(2)) {
   const eqlGoProducer = goSuite(['TestV4RowsMatchTheCommittedFixture'])
   const eqlGoConsumer = goSuite(['TestV4RowsTheRustSuiteSealedOpenInGo'])
 
-  console.log('Exchange conformance: producing fresh artifacts')
-  exchange(stackRust, { STACK_EXCHANGE_OUTPUT: paths.rust })
-  exchange(stackGo, { STACK_EXCHANGE_OUTPUT: paths.go })
-  exchange(eqlRustProducer, { EQL_V4_RUST_ROWS_OUT: paths.eqlRust })
-  exchange(eqlGoProducer, { EQL_V4_ROWS_OUT: paths.eqlGo })
-  const produced = {
-    rust: checkArtifacts(paths.rust, 'rust', corpus),
-    go: checkArtifacts(paths.go, 'go', corpus),
-    eqlRust: checkRows(paths.eqlRust, corpus),
-    eqlGo: checkRows(paths.eqlGo, corpus),
-  }
+  let produced
+  try {
+    console.log('Exchange conformance: producing fresh artifacts')
+    exchange(stackRust, { STACK_EXCHANGE_OUTPUT: paths.rust })
+    exchange(stackGo, { STACK_EXCHANGE_OUTPUT: paths.go })
+    exchange(eqlRustProducer, { EQL_V4_RUST_ROWS_OUT: paths.eqlRust })
+    exchange(eqlGoProducer, { EQL_V4_ROWS_OUT: paths.eqlGo })
+    produced = {
+      rust: checkArtifacts(paths.rust, 'rust', corpus),
+      go: checkArtifacts(paths.go, 'go', corpus),
+      eqlRust: checkRows(paths.eqlRust, corpus),
+      eqlGo: checkRows(paths.eqlGo, corpus),
+    }
 
-  console.log(
-    "Exchange conformance: opening each runner's artifacts in the other",
-  )
-  exchange(stackRust, { STACK_EXCHANGE_INPUT: paths.go })
-  exchange(stackGo, { STACK_EXCHANGE_INPUT: paths.rust })
-  exchange(eqlRustConsumer, { EQL_V4_ROWS: paths.eqlGo })
-  exchange(eqlGoConsumer, { EQL_V4_RUST_ROWS: paths.eqlRust })
+    console.log(
+      "Exchange conformance: opening each runner's artifacts in the other",
+    )
+    exchange(stackRust, { STACK_EXCHANGE_INPUT: paths.go })
+    exchange(stackGo, { STACK_EXCHANGE_INPUT: paths.rust })
+    exchange(eqlRustConsumer, { EQL_V4_ROWS: paths.eqlGo })
+    exchange(eqlGoConsumer, { EQL_V4_RUST_ROWS: paths.eqlRust })
+  } catch (error) {
+    // Kept for inspection: the artifacts the failing lane read or wrote.
+    console.error(`Exchange conformance: artifacts kept in ${fresh}`)
+    throw error
+  }
+  rmSync(fresh, { recursive: true, force: true })
 
   const rootLock = read('Cargo.lock')
   const guestLock = read('languages/golang/encrypt/guest/Cargo.lock')
@@ -363,14 +371,7 @@ export function main(args = process.argv.slice(2)) {
       rows: [],
     },
   }
-  console.log(JSON.stringify(report, null, 2))
-  if (process.env.STACK_CONFORMANCE_REPORT_DIR) {
-    mkdirSync(process.env.STACK_CONFORMANCE_REPORT_DIR, { recursive: true })
-    writeFileSync(
-      join(process.env.STACK_CONFORMANCE_REPORT_DIR, 'exchange.json'),
-      `${JSON.stringify(report, null, 2)}\n`,
-    )
-  }
+  writeReport('exchange.json', report)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

@@ -2,7 +2,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { writeReport } from '../stack-conformance-evidence.mjs'
 import {
   CORPUS,
   checkArtifacts,
@@ -304,6 +305,26 @@ describe('fresh cross-language artifact exchange', () => {
         'packages/eql/tests/encryption/**',
       ])
         expect(triggers[event].paths).toContain(path)
+    }
+  })
+
+  it('prints its report and writes it only under the report directory', () => {
+    const print = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    try {
+      const dir = join(tempDir(), 'reports')
+      writeReport('exchange.json', { a: 1 }, {})
+      expect(print).toHaveBeenLastCalledWith('{\n  "a": 1\n}\n')
+      expect(() => readFileSync(join(dir, 'exchange.json'))).toThrow()
+      writeReport(
+        'exchange.json',
+        { a: 1 },
+        { STACK_CONFORMANCE_REPORT_DIR: dir },
+      )
+      expect(readFileSync(join(dir, 'exchange.json'), 'utf8')).toBe(
+        '{\n  "a": 1\n}\n',
+      )
+    } finally {
+      print.mockRestore()
     }
   })
 })
