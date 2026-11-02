@@ -868,7 +868,9 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
         match (self.inner, other.inner) {
             (Opening::Failed(error), _) | (_, Opening::Failed(error)) => Decryption::failed(error),
             (Opening::Open(left), Opening::Open(right)) => {
-                Decryption::open(Box::new(move |cipher| left(cipher).zip_wiping(right(cipher))))
+                Decryption::open(Box::new(move |cipher| {
+                    left(cipher).zip_wiping(right(cipher))
+                }))
             }
         }
     }
