@@ -152,6 +152,17 @@
       "frame": "10ffffffffffffffffffffffffffffff7f"
     },
     {
+      "id": "i128-min",
+      "kind": "int128",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "int128",
+        "text": "-170141183460469231731687303715884105728"
+      },
+      "frame": "1000000000000000000000000000000080"
+    },
+    {
       "id": "i128-below-i64",
       "kind": "int128",
       "null": "",
@@ -194,6 +205,17 @@
         "text": "18446744073709551616"
       },
       "frame": "1100000000000000000100000000000000"
+    },
+    {
+      "id": "u128-max",
+      "kind": "uint128",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "uint128",
+        "text": "340282366920938463463374607431768211455"
+      },
+      "frame": "11ffffffffffffffffffffffffffffffff"
     },
     {
       "id": "f32-max",
@@ -519,6 +541,34 @@
       }
     },
     {
+      "id": "sealed-int16",
+      "kind": "int16",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "int16",
+        "text": "-32768"
+      }
+    },
+    {
+      "id": "sealed-uint8",
+      "kind": "uint8",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "uint8",
+        "text": "255"
+      }
+    },
+    {
       "id": "sealed-uint16",
       "kind": "uint16",
       "null": "sealed",
@@ -533,6 +583,20 @@
       }
     },
     {
+      "id": "sealed-uint32",
+      "kind": "uint32",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "uint32",
+        "text": "4294967295"
+      }
+    },
+    {
       "id": "sealed-int128",
       "kind": "int128",
       "null": "sealed",
@@ -544,6 +608,20 @@
       "companion": {
         "type": "int128",
         "text": "-170141183460469231731687303715884105728"
+      }
+    },
+    {
+      "id": "sealed-uint128",
+      "kind": "uint128",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "uint128",
+        "text": "340282366920938463463374607431768211455"
       }
     },
     {
