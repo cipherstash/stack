@@ -271,10 +271,7 @@ async fn typed(
             run!(plan, op::Between, &u32s(query))
         }
         ("int128", "ope", OpSpec::Between) => {
-            let plan = Plan::context(context)
-                .with::<i128, _>(Ope)
-                .build()
-                .unwrap();
+            let plan = Plan::context(context).with::<i128, _>(Ope).build().unwrap();
             run!(plan, op::Between, &i128s(query), Ope)
         }
         other => panic!("{field}: the typed chain is not spelled for {other:?}"),
