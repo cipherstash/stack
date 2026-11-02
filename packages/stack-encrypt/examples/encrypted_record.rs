@@ -48,7 +48,9 @@ struct EncryptedAge {
 }
 
 /// The plaintext.
-#[derive(Debug, Clone, PartialEq)]
+// `Zeroize`: a column of users opens through the wiping collection path,
+// which wipes the rows recovered before a late failure.
+#[derive(Debug, Clone, PartialEq, zeroize::Zeroize)]
 struct User {
     age: u32,
     email: String,

@@ -58,7 +58,10 @@ use std::marker::PhantomData;
 use super::context::{AeadContext, CallerContext};
 use super::operations::{ciphertext, equality, json_terms, matching, ope, open, ore, ore_block};
 use super::source::{ConsumeSource, ShareSource};
-use super::{DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption};
+use super::{
+    DecryptField, DecryptInto, DecryptSource, Decryptable, Decryption, EncryptFrom, EncryptTarget,
+    Encryption, RequiredContext,
+};
 use crate::json::{JsonOptions, JsonTerms};
 use crate::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreBlockTerm,
@@ -614,6 +617,33 @@ where
     }
 }
 
+/// The owned declaration of the same layout: the ciphertext with its terms,
+/// under the one caller context the record field or the caller supplies.
+impl<S, Terms> EncryptTarget<S> for Encrypted<Terms>
+where
+    S: crate::Encrypt + Clone + zeroize::Zeroize,
+    Terms: TermSet<S>,
+{
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        indexed(Terms::INDEXES).accepting()
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        Terms::INDEXES.specs()
+    }
+}
+impl<P: crate::Decrypt + zeroize::Zeroize + Send + 'static, Terms> DecryptSource<P>
+    for Encrypted<Terms>
+{
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
+        open(self.ciphertext, context.into_inner())
+    }
+}
+
 /// The ciphertext is what a record opens; the terms are one-way.
 impl<Terms> Decryptable for Encrypted<Terms> {
     const DECRYPTABLE: bool = true;
@@ -624,7 +654,7 @@ where
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(<Self as DecryptInto<P>>::decryption(self, context.into()))
     }
 }
 

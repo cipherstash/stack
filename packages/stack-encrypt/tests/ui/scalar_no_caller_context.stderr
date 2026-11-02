@@ -12,6 +12,12 @@ help: the following other types implement trait `AcceptsContext`
 ...
    | impl<C> AcceptsContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl<C> AcceptsContext for ContextExtension<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ContextExtension<C>`
+...
+   | impl<T> AcceptsContext for ExpectedContext<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
 
 error[E0277]: the trait bound `NoCallerContext: AcceptsContext` is not satisfied
   --> tests/ui/scalar_no_caller_context.rs:18:44
@@ -29,6 +35,12 @@ help: the following other types implement trait `AcceptsContext`
 ...
    | impl<C> AcceptsContext for OptionalContext<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+...
+   | impl<C> AcceptsContext for ContextExtension<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ContextExtension<C>`
+...
+   | impl<T> AcceptsContext for ExpectedContext<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ExpectedContext<T>`
 note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from_with_context`
   --> src/target/conversion.rs
    |

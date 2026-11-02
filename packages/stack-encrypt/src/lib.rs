@@ -314,11 +314,81 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! [`OpaqueEncode`] type. So a `Vec<u8>` encrypts into one `Ciphertext`, and
 //! a `Vec<Vec<u8>>` is a collection of byte strings.
 //!
-//! Existing structural plans and derives still use [`StackCipherText`], a tree
-//! of sealed leaves. Their low-level direct entry points are
+//! # Records
+//!
+//! A struct encrypts field by field into a record type that states its own
+//! layout: `#[derive(EncryptTarget, DecryptSource)]` with
+//! `#[stash(struct = User, context = "users")]`. A field whose type is a
+//! target (a [`Ciphertext`], a record, a term) is derived from the plaintext
+//! field of its name under the pair `("users", "<field>")`; a
+//! `#[stash(passthrough)]` field is carried into the record in the clear,
+//! **moved** rather than copied and neither encrypted nor authenticated; a
+//! `#[stash(from = ..)]` renames the plaintext field a field is taken from.
+//! The conversion wipes the plaintext fields it seals and moves the ones it
+//! passes through, so the plaintext type is `Zeroize` and nothing is cloned.
+//! A caller's context extends every field's pair
+//! ([`ContextExtension`]); omitted, the pairs stand as declared.
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::target::{DecryptSource, EncryptTarget};
+//! use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
+//!
+//! #[derive(Debug, PartialEq, zeroize::Zeroize)]
+//! struct User { id: u64, name: String, email: String }
+//!
+//! #[derive(EncryptTarget, DecryptSource, serde::Serialize, serde::Deserialize)]
+//! #[stash(struct = User, context = "users")]
+//! struct EncryptedUser {
+//!     #[stash(passthrough)]
+//!     id: u64,
+//!     name: Ciphertext,   // under ("users", "name")
+//!     email: Ciphertext,  // under ("users", "email")
+//! }
+//!
+//! let cipher = StackCipher::builder()
+//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! let keyset = cipher.default_keyset();
+//! let user = User { id: 42, name: "Alice".into(), email: "alice@example.com".into() };
+//!
+//! // One conversion, one batched key request for both sealed fields.
+//! let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
+//! assert_eq!(encrypted.id, 42);
+//! let stored = serde_json::to_vec(&encrypted).unwrap();
+//!
+//! let loaded: EncryptedUser = serde_json::from_slice(&stored).unwrap();
+//! let restored = User::decrypt_from(loaded, &cipher).await?;
+//! assert_eq!(restored.email, "alice@example.com");
+//!
+//! // Bound to a row: the same extension is needed to open it.
+//! let user = User { id: 43, name: "Bob".into(), email: "bob@example.com".into() };
+//! let encrypted: EncryptedUser = user.encrypt_into_with_context(&keyset, 43u64).await?;
+//! let restored = User::decrypt_from_with_context(encrypted, &cipher, 43u64).await?;
+//! assert_eq!(restored.id, 43);
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! A `#[stash(plaintext = String)]` record is the other shape: every field
+//! is derived from the whole value under the one context the caller must
+//! supply ([`target::RequiredContext`]) — a [`Ciphertext`] beside an
+//! [`sem::EqualityTerm`] is a searchable scalar — and it is a field of a
+//! `struct` record like any target. A `Vec` of plaintext structs encrypts
+//! into a `Vec` of records as one batch. The derive crate's documentation
+//! lists every attribute; [`target`] describes the declaration traits a
+//! hand-written target implements, and how a record field's context is
+//! composed.
+//!
+//! Existing structural plans and derives (`#[derive(EncryptFrom, DecryptInto)]`)
+//! still use [`StackCipherText`], a tree
+//! of sealed leaves, over a borrowed plaintext. Their low-level direct entry points are
 //! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their
 //! borrowed conversion helpers live in [`target::legacy`]. They are separate
-//! from the owned scalar API. There is no generic `Serialize` fallback.
+//! from the owned scalar API. An owned record is also a structural
+//! declaration (its derive emits the bridge), so it is a field of a
+//! structural record or a typed plan field too. There is no generic
+//! `Serialize` fallback.
 //!
 //! # What is authenticated
 //!
@@ -401,10 +471,10 @@ pub use stack_kms as kms;
 /// crate, so a binding encodes an error from any of them the same way.
 pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
-    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, DecryptSource, Decryptable,
-    Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted, Encryption, Equality, Index,
-    IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending, PendingFuture, Request,
-    Responses, TermSet,
+    CallerContext, CipherScope, ContextExtension, DecryptField, DecryptFrom, DecryptInto,
+    DecryptSource, Decryptable, Decryption, EncryptFrom, EncryptInto, EncryptTarget, Encrypted,
+    Encryption, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock, Pending,
+    PendingFuture, Request, Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

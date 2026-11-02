@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **The structural `Vec<T>: DecryptInto<Vec<P>>` and `DecryptField<Vec<P>, _>`
+  impls require `P: Zeroize`** (#1483). They opened through `Decryption::all`,
+  which dropped the elements recovered before a late element failure as they
+  were; they now open through the wiping collection path the owned
+  `Vec<T>: DecryptSource<Vec<P>>` uses, so the recovered prefix is wiped
+  before the error is returned. A struct plaintext a structural record
+  opens a column into derives `Zeroize`; every scalar the engine opens
+  into already carries it.
 - Repeated plan-chain `.extend(..)` calls now append parts in order, matching
   Go's `Cipher.Extend`, instead of replacing earlier extensions.
   `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
@@ -47,6 +55,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     for the field.
 
 ### Added
+
+- **Owned records: `#[derive(EncryptTarget, DecryptSource)]`** (#1483). A
+  struct encrypts field by field into a record type that states its own
+  layout: `#[stash(struct = User, context = "users")]` hands each field's
+  target the pair `("users", "<field>")`, `#[stash(passthrough)]` carries a
+  plaintext field into the record in the clear — moved, never copied, and
+  neither encrypted nor authenticated — and `#[stash(from = ..)]` and
+  `identity = ".."` rename the source field and pin the segment as on the
+  structural derive. `user.encrypt_into(&keyset)` consumes the plaintext,
+  wipes every field it seals and moves the passthrough fields;
+  `User::decrypt_from(record, &cipher)` opens each field under its pair and
+  moves them back; `encrypt_into_with_context(&keyset, 7u64)` extends every
+  pair by the row id and the same extension opens it. Records nest (a
+  record-typed field's own pairs are extended by the outer pair), a
+  `#[stash(plaintext = String)]` record is a searchable scalar (a
+  `Ciphertext` beside an `EqualityTerm`) and a field of a `struct` record,
+  a `context_field` record stores its context and opens under an
+  `ExpectedContext`, and a `Vec<User>` encrypts into a `Vec<Record>` as
+  one batch. The plaintext type is `Zeroize`. Both derives also emit the
+  structural `EncryptFrom` / `DecryptInto` / `DecryptField` declarations as a
+  bridge, so an owned record is a field of a `#[derive(EncryptFrom)]`
+  record or a typed plan field without a second derive; derive one pair or
+  the other, not both. The crate docs' "Records" section and the derive
+  crate's "Owned records" section show the forms; `tests/ui` pins the ones
+  that are refused, at the field.
+- **`EncryptTarget::owned_encryption` and `indexes`**: the description over
+  the plaintext by value, in `Owned` source mode, defaulting to guard the
+  value with `Protected`, run `encryption` over a borrow and wipe it before
+  the pending is returned; `EncryptInto` and the owned column run it. A
+  record overrides it to divide the struct between its fields with the new
+  `Encryption::split` (two descriptions over two parts of one value, one
+  context) and `Encryption::project_owned`. `indexes` is what a plan field
+  typed with the target answers queries by; the terms, `Encrypted<Terms>`
+  and `plaintext` records report theirs.
+- **The core leaves implement the owned declarations**: `StackCipherText`
+  (`RequiredContext<AeadContext>`, both ways), `Encrypted<Terms>`
+  (`RequiredContext<CallerContext>` to seal, `RequiredContext<AeadContext>`
+  to open), and `EqualityTerm`, `MatchTerms`, `OreTerm`, `OpeTerm` and
+  `OreBlockTerm` as `EncryptTarget` alone; `Ciphertext` is `Decryptable` and
+  a `DecryptField`, so it is a record field.
+- **`ContextExtension<C>`**, the caller input of a record whose fields carry
+  their own contexts: omission keeps them, a supplied part extends each.
+  **`ExpectedContext<T>` is a `ContextInput`**: omission opens a stored
+  context as stored, a supplied `NonEmpty<T>` also checks it. Both convert
+  from the structural contexts (`DeclaredContext`, `CallerContext`), as the
+  `RequiredContext` wrappers of the core contexts now do, which is how a
+  record field is handed its pair.
+- **`FieldsBuilder::target::<T, _>()`**: a plan field laid out by an owned
+  target that has no structural declaration, such as a `Ciphertext`.
+  Lowers to `<T as EncryptTarget<F>>::encryption().accepting::<CallerContext>()`.
+
+### Deprecated
+
+- The structural derives `#[derive(EncryptFrom, DecryptInto)]` and the
+  `target::legacy` conversion traits remain for the plans and the dynamic
+  engine that run them, and are the migration path's starting point, not its
+  end: new records derive `EncryptTarget` / `DecryptSource`, which emit the
+  structural declarations too. Their removal is tracked separately (#1488)
+  and follows once every consumer has an owned equivalent. No
+  `#[deprecated]` attribute is applied yet, since the crate's own plan and
+  dynamic modules still implement them.
 
 - **Owned collections: `EncryptInto` encrypts a `Vec<S>` into a `Vec<T>`,
   and `DecryptFrom` decrypts it back** (#1482). `Vec<T>` implements

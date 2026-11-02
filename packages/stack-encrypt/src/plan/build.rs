@@ -11,7 +11,7 @@ use super::values::Slot;
 use super::{FieldValues, PlanError};
 use crate::target::{
     ciphertext, indexed, inspect, open, passthrough, AeadContext, Borrowed, CallerContext,
-    DeclaredContext, DecryptField, Decryptable, Decryption, EncryptFrom, Encryption,
+    DeclaredContext, DecryptField, Decryptable, Decryption, EncryptFrom, EncryptTarget, Encryption,
     ExpectedContext, IndexSpec, Indexes, Pending,
 };
 use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipherText};
@@ -965,6 +965,86 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
             Arc::new(move |_| {
                 lifted(
                     T::encryption::<K>().accepting::<CallerContext>(),
+                    &field,
+                    &read,
+                )
+            }),
+            open,
+        )
+    }
+
+    /// Lay the field `field` out as the owned target `T` does: `T`'s own
+    /// [`EncryptTarget<F>`] decides what is sealed and which terms sit
+    /// beside it, all under `<context>/<identity>`, and the record holds a
+    /// `T`. The owned sibling of [`encrypt_into`](Self::encrypt_into), for
+    /// a target that declares itself through `EncryptTarget` alone — an
+    /// opaque [`Ciphertext`](crate::Ciphertext), or a record deriving
+    /// `EncryptTarget` (which also answers through `encrypt_into`, by its
+    /// bridge). Lowers to
+    /// `<T as EncryptTarget<F>>::encryption().accepting::<CallerContext>()`,
+    /// so the field's pair reaches the target as its caller context: the
+    /// target's `ContextInput` must take a `CallerContext`, which a target
+    /// that accepts no caller context ([`NoCallerContext`](crate::target::NoCallerContext)) or requires
+    /// something else does not, and that is refused at the call.
+    ///
+    /// The plan runs the target over a borrow of the value, as it does every
+    /// field, so the value stays the caller's and nothing is wiped here;
+    /// the owned conversions are [`EncryptInto`](crate::EncryptInto)'s.
+    ///
+    /// ```
+    /// # use stack_encrypt::plan::pick;
+    /// # struct User { age: u32 }
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::{Ciphertext, Plan, StackCipher};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let users_plan = Plan::context("users")
+    ///     .fields()
+    ///     .target::<Ciphertext, _>(pick("age", |u: &User| &u.age))
+    ///     .build()?;
+    ///
+    /// let user = User { age: 34 };
+    /// let mut record = cipher.encrypt(&user).using(&users_plan).await?;
+    /// let age: Ciphertext = record.take("age")?;
+    /// // An ordinary opaque ciphertext under the field's pair.
+    /// assert_eq!(cipher.default_keyset().decrypt_with_context::<u32>(age, ("users", "age")).await?, 34);
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    pub fn target<T, F>(self, field: impl FieldRef<S, F>) -> Self
+    where
+        F: Send + zeroize::Zeroize + 'static,
+        T: EncryptTarget<F> + Decryptable + DecryptField<F, CallerContext> + Send,
+        T::ContextInput: From<CallerContext>,
+    {
+        let (name, access) = resolve(field);
+        let read = Arc::clone(&access.read);
+        let field = Arc::clone(&name);
+        let open: Option<FieldOpener<K>> = if T::DECRYPTABLE {
+            Some(FieldOpener {
+                holds: holds::<T>,
+                open: Arc::new(|field, slot, context| {
+                    Ok(stored::<T>(field, slot)?
+                        .decryption_field::<K>(context)
+                        .map_or_else(
+                            || Decryption::failed(Error::NotOpened),
+                            |d| d.map(Slot::new),
+                        ))
+                }),
+            })
+        } else {
+            None
+        };
+        self.declare::<F>(
+            name,
+            &access,
+            FieldKind::EncryptInto,
+            <T as EncryptTarget<F>>::indexes(),
+            Arc::new(move |_| {
+                lifted(
+                    <T as EncryptTarget<F>>::encryption::<K>().accepting::<CallerContext>(),
                     &field,
                     &read,
                 )
