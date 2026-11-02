@@ -3,14 +3,23 @@ use crate::Nonce;
 use bytes::BytesMut;
 use vitaminc_protected::{Controlled, Protected};
 
+/// Staged construction of a local sealed leaf.
+///
+/// Supply a nonce, then plaintext, then an encryption closure that returns
+/// ciphertext followed by its authentication tag. This builder only assembles
+/// bytes: the closure must perform encryption and bind [`crate::WIRE_VERSION`]
+/// into the AAD. It does not validate nonce uniqueness, tag size, or encryption.
 #[derive(Default)]
 pub struct CipherTextBuilder();
 
 impl CipherTextBuilder {
+    /// Start a leaf with no nonce or payload.
     pub fn new() -> Self {
         Default::default()
     }
 
+    /// Supply the nonce to store in the leaf. Its size and per-key uniqueness
+    /// policy must match the cipher; this builder does not check them.
     pub fn append_nonce<const N: usize>(self, nonce: Nonce<N>) -> NonceWritten<N> {
         NonceWritten(nonce)
     }

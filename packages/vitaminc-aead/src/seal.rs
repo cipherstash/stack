@@ -31,7 +31,10 @@ pub type Node<L> = CipherText<L, PassthroughFrame>;
 /// A leaf the walk has planned but nobody has sealed: its tagged plaintext
 /// and the AAD derived for its place in the tree.
 pub struct Pending {
+    /// Owned tagged scalar bytes, or an empty buffer for an empty-container marker.
+    /// Dropping this wrapper wipes its buffer.
     pub plaintext: Protected<Vec<u8>>,
+    /// Owned tree context before the cipher adds its leaf wire version.
     pub aad: Context<'static>,
 }
 
@@ -43,18 +46,47 @@ pub type Opened = Protected<Vec<u8>>;
 /// The `aad` is the caller-visible context for the leaf's position. The
 /// cipher binds the wire version into it itself
 /// ([`Context::for_leaf`]) at the AEAD boundary.
+/// Map keys refine the context; sequence indices and lengths do not. The
+/// tree traversal does not authenticate passthrough data or establish whole-
+/// document integrity. Implementations must authenticate the supplied context
+/// and the complete leaf plaintext, and enforce their algorithm's nonce policy.
 pub trait Cipher {
     /// The sealed leaf.
     type Leaf;
     /// Kept opaque: see [`Unspecified`](crate::Unspecified).
     type Error;
 
+    /// Consume and encrypt one leaf, authenticating `aad` without encrypting it.
+    ///
+    /// Preserve the exact plaintext bytes, including tags and padding. Empty
+    /// plaintext is valid: it authenticates an empty-container marker. Include
+    /// the nonce and tag needed by [`open`](Self::open) in the returned leaf;
+    /// for [`LocalCipherText`](crate::LocalCipherText), bind its wire version
+    /// using [`Context::for_leaf`]. Follow the algorithm's per-key nonce policy
+    /// and usage limits even across repeated calls with the same input.
+    ///
+    /// # Errors
+    ///
+    /// Return an error if randomness, key access, or encryption fails. The
+    /// input is consumed on failure too. Any temporary plaintext moved out of
+    /// its `Protected` wrapper must be wiped by the implementation.
     fn seal(
         &self,
         plaintext: Protected<Vec<u8>>,
         aad: &Context<'_>,
     ) -> Result<Self::Leaf, Self::Error>;
 
+    /// Consume a leaf and return its exact original plaintext after authentication.
+    ///
+    /// Authenticate the entire leaf with the same effective AAD as sealing.
+    /// Do not return plaintext before tag verification succeeds. Scalar decoding
+    /// belongs to the traversal, so return the original tags and padding too.
+    ///
+    /// # Errors
+    ///
+    /// Reject malformed or unsupported leaves, wrong keys, wrong AAD, and invalid
+    /// tags, as well as backend failures. Do not expose unauthenticated plaintext
+    /// through an error; wipe temporary decrypted bytes on failure.
     fn open(&self, leaf: Self::Leaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, Self::Error>;
 }
 
@@ -68,16 +100,34 @@ pub trait Cipher {
 /// order, or the document is refused.
 ///
 /// `Sync`, because an async cipher is shared across tasks.
+/// The authentication and plaintext-handling obligations are those of [`Cipher`].
+///
+/// # Failure and cancellation
+///
+/// The default batch methods return the first error observed in input order
+/// and drop pending futures and collected outputs. They expose no partial
+/// result. Dropping the batch future also drops its owned state, including
+/// protected plaintext buffers. Work already submitted to a remote service
+/// may still complete; there is no rollback or exactly-once guarantee.
+/// Overrides must document any additional side effects or retry requirements.
 pub trait AsyncCipher: Sync {
+    /// Owned sealed leaf, transferable between tasks.
     type Leaf: Send;
+    /// Authentication, format, randomness, or backend failure.
     type Error: Send;
 
+    /// Seal one owned plaintext with owned AAD; see [`Cipher::seal`] for the
+    /// authentication, nonce, ownership, and error contract.
+    /// Dropping the future abandons the result, not necessarily remote work.
     fn seal(
         &self,
         plaintext: Protected<Vec<u8>>,
         aad: Context<'static>,
     ) -> impl Future<Output = Result<Self::Leaf, Self::Error>> + Send;
 
+    /// Open one owned leaf with owned AAD; see [`Cipher::open`] for the
+    /// authentication and error contract. Only authenticated plaintext may
+    /// be returned. Dropping the future need not cancel remote work.
     fn open(
         &self,
         leaf: Self::Leaf,
@@ -85,6 +135,10 @@ pub trait AsyncCipher: Sync {
     ) -> impl Future<Output = Result<Protected<Vec<u8>>, Self::Error>> + Send;
 
     /// Every pending leaf of one document, in walk order.
+    ///
+    /// Return exactly one sealed leaf per input in the same order. The default
+    /// handles an empty batch without calling [`seal`](Self::seal). On error,
+    /// return no partial vector; see the trait's cancellation contract.
     fn seal_many(
         &self,
         leaves: Vec<Pending>,
@@ -97,6 +151,10 @@ pub trait AsyncCipher: Sync {
 
     /// Every sealed leaf of one document with the AAD its position derives,
     /// in walk order.
+    ///
+    /// Return exactly one authenticated plaintext per input in the same order.
+    /// The default handles an empty batch without calling [`open`](Self::open).
+    /// On error, return no partial vector; see the trait's cancellation contract.
     fn open_many(
         &self,
         leaves: Vec<(Self::Leaf, Context<'static>)>,
@@ -116,8 +174,10 @@ pub const DEFAULT_CONCURRENCY: usize = 32;
 /// A cipher returned a different number of leaves than it was given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LeafCount {
+    /// Fewer results than the planned tree requires.
     #[error("too few leaves")]
     TooFew,
+    /// Results remain after every planned position has been filled.
     #[error("too many leaves")]
     TooMany,
 }
@@ -162,8 +222,10 @@ pub async fn seal_all_async<C: AsyncCipher>(
 /// the `source()`, so a cipher error type need not implement `Error`.
 #[derive(Debug, thiserror::Error)]
 pub enum SealError<E> {
+    /// A leaf operation or batch failed; no completed tree is returned.
     #[error("cipher failed: {0}")]
     Cipher(E),
+    /// A batch violated the one-result-per-input contract.
     #[error("cipher returned {0}")]
     Count(LeafCount),
 }

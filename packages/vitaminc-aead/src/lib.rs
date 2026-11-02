@@ -1,3 +1,29 @@
+// These definitions precede the README so rustdoc links to the version being built.
+// The README supplies published-API URLs for GitHub. See docs/documentation.md.
+//! [`AsyncCipher`]: crate::AsyncCipher
+//! [`CipherText`]: crate::CipherText
+//! [`Cipher`]: crate::Cipher
+//! [`ContextTag`]: crate::ContextTag
+//! [`Decrypt`]: trait@crate::Decrypt
+//! [`Encrypt`]: trait@crate::Encrypt
+//! [`FrameWriter`]: crate::FrameWriter
+//! [`Frame`]: crate::Frame
+//! [`IntoAad`]: crate::IntoAad
+//! [`LeafTypeAad`]: crate::LeafTypeAad
+//! [`PassthroughFrame`]: crate::PassthroughFrame
+//! [`Sink::passthrough`]: crate::Sink::passthrough
+//! [`Sink`]: crate::Sink
+//! [`Tee`]: crate::Tee
+//! [`Unspecified`]: crate::Unspecified
+//! [`decrypt_async`]: crate::decrypt_async
+//! [`decrypt_into`]: crate::decrypt_into
+//! [`decrypt`]: crate::decrypt
+//! [`encrypt_async`]: crate::encrypt_async
+//! [`encrypt`]: crate::encrypt
+//! [`to_frame`]: crate::to_frame
+//!
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(clippy::unwrap_used, clippy::todo, unsafe_code, unused_imports)]
 #![doc = include_str!("../README.md")]
 mod aad;
@@ -7,6 +33,7 @@ mod context;
 mod encrypt_sink;
 pub mod frame;
 #[cfg(feature = "hlist")]
+#[cfg_attr(docsrs, doc(cfg(feature = "hlist")))]
 pub mod hlist;
 pub mod leaf;
 mod nonce;
@@ -15,6 +42,7 @@ pub mod seal;
 pub mod shape;
 pub mod tags;
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 mod timestamp;
 pub mod typed;
 mod unspecified;
@@ -49,6 +77,7 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 // A UTC instant that always encrypts.
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 #[doc(inline)]
 pub use timestamp::{LeapSecond, Timestamp};
 

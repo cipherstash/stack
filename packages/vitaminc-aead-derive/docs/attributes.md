@@ -20,12 +20,23 @@ Enum variants take no attributes.
 Points the generated code at a re-export of `vitaminc_aead`, for callers who
 depend on it through an umbrella crate rather than directly:
 
-```ignore
+```rust
+use vitaminc::aead::{Decrypt, Encrypt};
+
 #[derive(Encrypt, Decrypt)]
 #[aead(crate = "::vitaminc::aead")]
 struct User {
     name: String,
 }
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let user = round_trip(User { name: "Ada".into() });
+# assert_eq!(user.name, "Ada");
 ```
 
 Every path the expansion emits is redirected, so the deriving crate needs no
@@ -47,13 +58,23 @@ type that names itself in a field, directly or as `Self`, the derive sees this
 and leaves the check to the walk, which refuses a value that is too deep when
 it is encrypted:
 
-```ignore
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
 #[derive(Encrypt, Decrypt)]
 struct Tree {
     label: String,
     children: Vec<Tree>, // detected: no attribute needed
 }
+# assert_eq!(Tree::DEPTH, None);
+# let tree = Tree { label: "root".into(), children: vec![Tree { label: "child".into(), children: vec![] }] };
+# let bytes = vitaminc_aead::to_frame(tree).unwrap();
+# use vitaminc::protected::Controlled;
+# assert!(vitaminc_aead::Frame::parse(bytes.risky_ref()).is_ok());
 ```
+
+This example checks recursive encoding. Decoding this `Tree` with
+`Frame::visit(Tree::sink())` currently hits a compiler recursion limit.
 
 The derive looks for the type's bare name. A field that names the type
 through a path, such as `crate::models::Tree`, is read as another type with the
@@ -63,7 +84,9 @@ Recursion through another type, or through a path, cannot be seen from one
 derive, and fails to compile with `error[E0391]: cycle detected when simplifying constant`, naming
 each type's `DEPTH`. Mark every type in the cycle `recursive`:
 
-```ignore
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
 #[derive(Encrypt, Decrypt)]
 #[aead(recursive)]
 struct Even {
@@ -75,6 +98,16 @@ struct Even {
 struct Odd {
     next: Vec<Even>,
 }
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let even = round_trip(Even { next: vec![Odd { next: vec![] }] });
+# assert_eq!(even.next.len(), 1);
+# assert!(even.next[0].next.is_empty());
 ```
 
 A type that contains a recursive type is not checked either, since its depth
@@ -85,13 +118,27 @@ concrete type, under `cargo build` rather than `cargo check`.
 
 Changes the map key a field is stored under:
 
-```ignore
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
 #[derive(Encrypt, Decrypt)]
 struct User {
     #[aead(rename = "n")]
     name: String,
 }
 // ciphertext: Map { "n": … }
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let user = round_trip(User { name: "Ada".into() });
+# assert_eq!(user.name, "Ada");
+# let plan = vitaminc_aead::plan::<_, std::convert::Infallible, _>(user, ()).unwrap();
+# let vitaminc_aead::CipherText::Map(entries) = plan else { panic!("expected a map") };
+# assert_eq!(entries[0].0, "n");
 ```
 
 Field names are part of the ciphertext contract — each key is bound into the
@@ -109,13 +156,25 @@ and there is nothing to rename.
 Stores a field as a cleartext map entry, so it can be an ordinary database
 column that other queries select, filter, and update without holding the key:
 
-```ignore
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
 #[derive(Encrypt, Decrypt)]
 struct Row {
     #[aead(passthrough)]
     tenant: String,   // a plain column
     ssn: String,      // encrypted
 }
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let row = round_trip(Row { tenant: "acme".into(), ssn: "example-only".into() });
+# assert_eq!(row.tenant, "acme");
+# assert_eq!(row.ssn, "example-only");
 ```
 
 ### ⚠️ The field gives up all protection
@@ -162,13 +221,25 @@ Leaves a field out of the ciphertext altogether, for data that lives
 somewhere else, such as an ordinary column alongside the ciphertext, or a
 value derived from the others:
 
-```ignore
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
 #[derive(Encrypt, Decrypt)]
 struct User {
     #[aead(skip)]
     id: u64,          // not in the ciphertext at all
     password: String, // encrypted
 }
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let user = round_trip(User { id: 42, password: "example-only".into() });
+# assert_eq!(user.id, 0);
+# assert_eq!(user.password, "example-only");
 ```
 
 On encrypt the field contributes nothing: no entry, no key binding, and it
@@ -190,9 +261,21 @@ cannot be destructured, so its fields cannot be moved out to be walked. `take`
 swaps the field for its default with `core::mem::take` instead, and the empty
 value left behind is dropped, and wiped, with `self`:
 
-```ignore
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+use zeroize::ZeroizeOnDrop;
+
 #[derive(Encrypt, Decrypt, ZeroizeOnDrop)]
 struct SecretToken(#[aead(take)] String);
+# fn round_trip<T: vitaminc_aead::Encrypt + vitaminc_aead::Decrypt>(value: T) -> T {
+#     use vitaminc::protected::Controlled;
+#     use vitaminc_aead::Encrypt;
+#     let bytes = vitaminc_aead::to_frame(value).unwrap();
+#     let frame = vitaminc_aead::Frame::parse(bytes.risky_ref()).unwrap();
+#     frame.visit(T::sink()).unwrap()
+# }
+# let token = round_trip(SecretToken("example-only".into()));
+# assert_eq!(token.0, "example-only");
 ```
 
 The field's type must implement `Default`. Every stored field of a `Drop`

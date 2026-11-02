@@ -12,6 +12,10 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+features = ["chrono", "rust_decimal", "uuid", "hlist"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 vitaminc-aead-derive = { version = "0.8.1", path = "../aead-derive" }
 vitaminc-context = { version = "0.8.1", path = "../context" }

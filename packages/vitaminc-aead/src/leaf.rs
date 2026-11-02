@@ -22,7 +22,7 @@
 //! `TIMESTAMP` and `DECIMAL` payloads are written from, and read into, the
 //! int they are logical types over.
 //!
-//! Two encodings the `Value` codec accepted before ADR 0001 have no
+//! Two encodings accepted by `vitaminc-aead-value` 0.5 have no
 //! physical-plus-logical form, so this codec does not round-trip them:
 //!
 //! - A `TIMESTAMP` with nanoseconds of 1,000,000,000 or more is chrono's

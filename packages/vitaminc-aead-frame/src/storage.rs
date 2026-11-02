@@ -4,8 +4,8 @@
 //!
 //! Unlike the rest of this crate, which is transport and ships in lockstep
 //! with its peer, the bytes these two functions write and read are a
-//! compatibility commitment. The specification below is normative, and the
-//! golden corpus in `testdata/storage-v1.json` pins it.
+//! compatibility commitment. The specification below defines their format
+//! and compatibility rules.
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};

@@ -4,7 +4,7 @@
 //! Both are re-exported from `vitaminc_aead`, so depend on that crate
 //! rather than this one:
 //!
-//! ```ignore
+//! ```rust
 //! use vitaminc_aead::{Decrypt, Encrypt};
 //!
 //! #[derive(Encrypt, Decrypt)]
@@ -12,11 +12,24 @@
 //!     name: String,
 //!     age: u32,
 //! }
+//! # let user = User { name: "Ada".into(), age: 37 };
+//! # let plan = vitaminc_aead::plan::<_, std::convert::Infallible, _>(user, ()).unwrap();
+//! # assert!(matches!(plan, vitaminc_aead::CipherText::Map(entries) if entries.len() == 2));
 //! ```
 //!
 //! `#[derive(Encrypt)]` walks the struct into a sink as a map with one
 //! entry per field. `#[derive(Decrypt)]` generates the map sink that builds
 //! the struct back, routing each entry to the field's own sink.
+//!
+//! # Installation and compatibility
+//!
+//! Install the parent crate with `cargo add vitaminc-aead`. This macro crate
+//! has no Cargo feature flags and requires Rust <!-- msrv:vitaminc-aead-derive -->**1.88.0**<!-- /msrv -->. The macros run on
+//! the compiler host; the parent crate requires `std`.
+//! MSRV increases require a minor release; patch releases retain the existing
+//! floor. See the [workspace policy](https://github.com/cipherstash/vitaminc#compatibility).
+//!
+//! License: MIT.
 //!
 //! # Wire shape
 //!
@@ -62,8 +75,15 @@
 //! explicitly, as a struct with a fieldless discriminant and `Option`
 //! fields.
 //!
-//! [`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
-//! [`Decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html
+// The derive and parent crates release together. Keep parent API links on the
+// version being documented without adding a normal dependency cycle.
+#![deny(missing_docs)]
+#![doc = concat!(
+    "\n[`Encrypt`]: https://docs.rs/vitaminc-aead/", env!("CARGO_PKG_VERSION"),
+    "/vitaminc_aead/trait.Encrypt.html\n",
+    "[`Decrypt`]: https://docs.rs/vitaminc-aead/", env!("CARGO_PKG_VERSION"),
+    "/vitaminc_aead/trait.Decrypt.html\n"
+)]
 #![doc = include_str!("../docs/attributes.md")]
 #![deny(unsafe_code)]
 
@@ -77,7 +97,8 @@ mod shape;
 mod test_support;
 mod typed_decrypt;
 
-/// Derive [`Encrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html)
+#[doc = concat!("Derive [`Encrypt`](https://docs.rs/vitaminc-aead/",
+    env!("CARGO_PKG_VERSION"), "/vitaminc_aead/trait.Encrypt.html)")]
 /// for a struct or a fieldless enum. See the [crate documentation](crate) for
 /// the wire shape this produces; the attributes it accepts are reproduced
 /// below.
@@ -90,7 +111,8 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derive [`Decrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html)
+#[doc = concat!("Derive [`Decrypt`](https://docs.rs/vitaminc-aead/",
+    env!("CARGO_PKG_VERSION"), "/vitaminc_aead/trait.Decrypt.html)")]
 /// for a struct or a fieldless enum: the sink that builds it. See the
 /// [crate documentation](crate) for the wire shape this consumes; the
 /// attributes it accepts are reproduced below.

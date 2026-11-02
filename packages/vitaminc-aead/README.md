@@ -7,6 +7,12 @@ Authenticated Encryption with Associated Data (AEAD) primitives for building sec
 
 This crate is part of the [Vitamin C](https://github.com/cipherstash/vitaminc) framework to make cryptography code healthy.
 
+## Installation
+
+```sh
+cargo add vitaminc-aead
+```
+
 ## What is AEAD?
 
 AEAD (Authenticated Encryption with Associated Data) is a form of encryption that provides both confidentiality and authenticity. It ensures that:
@@ -419,8 +425,50 @@ let nonce = generator.generate()?;
 - Map keys and passthrough subtrees travel in the clear; keys are bound into the AAD of their values, passthrough is not bound at all
 - A sequence's order and length are not authenticated: each element is bound to its sequence, not to its index, so elements can be reordered or dropped without a cipher failure. A caller who needs them should put them in a map or in the AAD
 
+For durable encoded blobs, use the [frame storage profile](https://github.com/cipherstash/vitaminc/blob/main/packages/aead-frame/STORAGE.md).
+
+## Cargo features
+
+No optional features are enabled by default.
+
+| Feature | Effect |
+| --- | --- |
+| `chrono` | Adds date and UTC timestamp conversions, including `Timestamp` and its leap-second checks. |
+| `rust_decimal` | Adds `rust_decimal::Decimal` encoding and decoding. |
+| `uuid` | Adds `uuid::Uuid` encoding and decoding. |
+| `hlist` | Exposes the static heterogeneous-list API in `hlist`. |
+
+## Compatibility
+
+Requires Rust <!-- msrv:vitaminc-aead -->**1.88.0**<!-- /msrv --> and the Rust standard library (`std`).
+MSRV increases require a minor release; patch releases retain the existing
+floor. See the [workspace compatibility policy](https://github.com/cipherstash/vitaminc#compatibility).
+
 ## CipherStash
 
 Vitamin C is brought to you by the team at [CipherStash](https://cipherstash.com).
 
 License: MIT
+
+<!-- GitHub API links target the latest release; src/lib.rs resolves these for rustdoc. -->
+[`AsyncCipher`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.AsyncCipher.html
+[`CipherText`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/enum.CipherText.html
+[`Cipher`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Cipher.html
+[`ContextTag`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.ContextTag.html
+[`Decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html
+[`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
+[`FrameWriter`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.FrameWriter.html
+[`Frame`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.Frame.html
+[`IntoAad`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.IntoAad.html
+[`LeafTypeAad`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.LeafTypeAad.html
+[`PassthroughFrame`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.PassthroughFrame.html
+[`Sink::passthrough`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html#tymethod.passthrough
+[`Sink`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html
+[`Tee`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.Tee.html
+[`Unspecified`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.Unspecified.html
+[`decrypt_async`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/fn.decrypt_async.html
+[`decrypt_into`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/fn.decrypt_into.html
+[`decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/fn.decrypt.html
+[`encrypt_async`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/fn.encrypt_async.html
+[`encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/fn.encrypt.html
+[`to_frame`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/fn.to_frame.html

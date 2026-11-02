@@ -51,8 +51,8 @@ use crate::{CipherText, Context, IntoAad};
 /// A cipher's own error is printed in the message rather than chained as
 /// the `source()`, so a cipher error type need not implement `Error`.
 ///
-/// Every failure is an error, never a panic, including the ones that look
-/// like contract violations: a value too long for the frame's `u32` length
+/// Detected data-model and batch-count violations are errors, including
+/// a value too long for the frame's `u32` length
 /// prefixes ([`Unencryptable::Unwritable`],
 /// [`Unencryptable::UnframablePassthrough`]) and a cipher that returns the
 /// wrong number of leaves ([`EncryptError::Count`]). The value often comes
@@ -114,6 +114,21 @@ impl<E> From<SealError<E>> for EncryptError<E> {
 
 /// Walk a source into a tree of pending leaves. No cipher is involved:
 /// this is the whole of the data-model work, and it is synchronous.
+///
+/// # Errors
+///
+/// Returns [`EncryptError::Source`] or [`EncryptError::Shape`] if the source
+/// fails or violates the tree/leaf rules. No partial plan is returned. The
+/// owned `value` is consumed even on failure; pass a borrow to retain it.
+///
+/// # Examples
+///
+/// ```
+/// use vitaminc_aead::{plan, CipherText};
+/// let tree = plan::<_, std::convert::Infallible, _>(42u32, "account")?;
+/// assert!(matches!(tree, CipherText::Single(_)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn plan<'a, P, E, A>(value: P, aad: A) -> Result<Node<Pending>, EncryptError<E>>
 where
     P: Encrypt,
@@ -123,6 +138,14 @@ where
 }
 
 /// Encrypt any source.
+///
+/// Plans and validates the whole source before calling the cipher. Passthrough
+/// data stays in the clear. The source is consumed even if planning or sealing
+/// fails; no partial ciphertext tree is returned.
+///
+/// # Errors
+///
+/// Returns source/shape errors from [`plan`] or a cipher error from sealing.
 pub fn encrypt<'a, P, C, A>(
     value: P,
     cipher: &C,
@@ -142,6 +165,13 @@ where
 /// The walk happens here, before this returns, and the future holds only
 /// the planned leaves. So the future is `Send` even when the source is not
 /// (a JavaScript object behind a host binding).
+///
+/// # Errors and cancellation
+///
+/// Planning failures are stored in the returned future and reported when it is
+/// polled. Sealing errors and incorrect batch result counts return no tree.
+/// Dropping the future drops its plan and protected buffers; any remote work
+/// already submitted by the cipher may still finish. See [`AsyncCipher`].
 pub fn encrypt_async<'a, 'c, P, C, A>(
     value: P,
     cipher: &'c C,

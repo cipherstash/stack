@@ -463,6 +463,7 @@ where
 // source says which, and the int it stands for.
 
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 mod chrono_sources {
     use super::*;
     use crate::plaintext::kinds::{chrono as conv, Int, TimeUnit};
@@ -518,6 +519,7 @@ mod chrono_sources {
 }
 
 #[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
 impl Encrypt for rust_decimal::Decimal {
     const DEPTH: Option<usize> = depth::SCALAR;
     /// Every scale shares the one typed null: the scale is in the payload.
@@ -533,6 +535,7 @@ impl Encrypt for rust_decimal::Decimal {
 }
 
 #[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
 impl Encrypt for &rust_decimal::Decimal {
     const DEPTH: Option<usize> = depth::SCALAR;
     const FIXED: Option<FixedType> = <rust_decimal::Decimal as Encrypt>::FIXED;
@@ -542,6 +545,7 @@ impl Encrypt for &rust_decimal::Decimal {
 }
 
 #[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
 impl Encrypt for uuid::Uuid {
     const DEPTH: Option<usize> = depth::SCALAR;
     /// Sixteen bytes under the uuid type: the one bytes leaf whose width is
@@ -553,6 +557,7 @@ impl Encrypt for uuid::Uuid {
 }
 
 #[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
 impl Encrypt for &uuid::Uuid {
     const DEPTH: Option<usize> = depth::SCALAR;
     const FIXED: Option<FixedType> = <uuid::Uuid as Encrypt>::FIXED;

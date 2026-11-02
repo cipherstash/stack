@@ -95,11 +95,17 @@ use zeroize::Zeroize;
 /// itself; [`Int`] and [`Float`], which are owned, do.
 #[derive(Clone, Copy, OpaqueDebug, TimingSafeEq)]
 pub enum Physical<'a> {
+    /// An absent value with no payload.
     Null,
+    /// A Boolean value.
     Bool(bool),
+    /// An integer whose original width is retained.
     Int(Int),
+    /// An IEEE floating-point value whose width and bits are retained.
     Float(Float),
+    /// UTF-8 text borrowed from the source.
     Text(&'a str),
+    /// Opaque bytes borrowed from the source.
     Bytes(&'a [u8]),
 }
 
@@ -109,11 +115,17 @@ pub enum Physical<'a> {
 /// [`LeafTypeAad`](crate::LeafTypeAad).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
+    /// An absent value with no payload.
     Null,
+    /// The bool physical kind.
     Bool,
+    /// The int physical kind.
     Int,
+    /// The float physical kind.
     Float,
+    /// The text physical kind.
     Text,
+    /// The bytes physical kind.
     Bytes,
 }
 
@@ -156,15 +168,25 @@ impl Physical<'_> {
 /// [`sign_and_word`]: Int::sign_and_word
 #[derive(Clone, Copy, OpaqueDebug, Eq, Zeroize)]
 pub enum Int {
+    /// Signed 8-bit integer.
     I8(i8),
+    /// Signed 16-bit integer.
     I16(i16),
+    /// Signed 32-bit integer.
     I32(i32),
+    /// Signed 64-bit integer.
     I64(i64),
+    /// Signed 128-bit integer.
     I128(i128),
+    /// Unsigned 8-bit integer.
     U8(u8),
+    /// Unsigned 16-bit integer.
     U16(u16),
+    /// Unsigned 32-bit integer.
     U32(u32),
+    /// Unsigned 64-bit integer.
     U64(u64),
+    /// Unsigned 128-bit integer.
     U128(u128),
 }
 
@@ -246,7 +268,9 @@ int_from! {
 /// pattern, so `NaN` payloads and `-0.0` survive, and `-0.0 != 0.0`.
 #[derive(Clone, Copy, OpaqueDebug, TimingSafeEq, Zeroize)]
 pub enum Float {
+    /// 32-bit IEEE floating-point value.
     F32(f32),
+    /// 64-bit IEEE floating-point value.
     F64(f64),
 }
 
@@ -260,17 +284,29 @@ pub enum Float {
 /// for a uuid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Width {
+    /// Signed 8-bit integer storage.
     I8,
+    /// Signed 16-bit integer storage.
     I16,
+    /// Signed 32-bit integer storage.
     I32,
+    /// Signed 64-bit integer storage.
     I64,
+    /// Signed 128-bit integer storage.
     I128,
+    /// Unsigned 8-bit integer storage.
     U8,
+    /// Unsigned 16-bit integer storage.
     U16,
+    /// Unsigned 32-bit integer storage.
     U32,
+    /// Unsigned 64-bit integer storage.
     U64,
+    /// Unsigned 128-bit integer storage.
     U128,
+    /// 32-bit IEEE floating-point storage.
     F32,
+    /// 64-bit IEEE floating-point storage.
     F64,
     /// Sixteen bytes.
     Bytes16,
@@ -455,7 +491,10 @@ pub enum Logical {
     /// a `Date` outside it.
     Timestamp(TimeUnit),
     /// `int × 10^-scale`, scale at most 28 and `|int| < 2^96`. Over int.
-    Decimal { scale: u8 },
+    Decimal {
+        /// Number of fractional decimal digits, from 0 through 28.
+        scale: u8,
+    },
     /// Sixteen bytes. Over bytes.
     Uuid,
     /// A logical type this build does not know. Structural sinks carry it
@@ -466,9 +505,13 @@ pub enum Logical {
 /// The unit of a [`Logical::Timestamp`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimeUnit {
+    /// Seconds since the Unix epoch.
     Seconds,
+    /// Milliseconds since the Unix epoch.
     Millis,
+    /// Microseconds since the Unix epoch.
     Micros,
+    /// Nanoseconds since the Unix epoch.
     Nanos,
 }
 
@@ -503,10 +546,12 @@ pub struct UnknownLogical {
 }
 
 impl UnknownLogical {
+    /// Unrecognized logical wire identifier, preserved without interpretation.
     pub fn id(self) -> u8 {
         self.id
     }
 
+    /// Unrecognized logical parameter byte, preserved without interpretation.
     pub fn param(self) -> u8 {
         self.param
     }
@@ -518,14 +563,16 @@ pub const MAX_DECIMAL_SCALE: u8 = 28;
 /// Decimal mantissas are 96-bit: `|mantissa| < 2^96`.
 const DECIMAL_MANTISSA_LIMIT: i128 = 1 << 96;
 
-/// chrono's `NaiveDate::MIN` (year -262143) and `NaiveDate::MAX` (year
-/// 262142) as days since 1970-01-01. Pinned against chrono in a test.
+/// Earliest supported date as days since 1970-01-01 (chrono's minimum date,
+/// in year -262143). Pinned against chrono in a test.
 pub const MIN_DATE_DAYS: i32 = -96_465_292;
+/// Latest supported date as days since 1970-01-01 (chrono's maximum date).
 pub const MAX_DATE_DAYS: i32 = 95_026_236;
 
-/// chrono's `NaiveDateTime::MIN` and `NaiveDateTime::MAX` as nanoseconds
-/// since the Unix epoch. Pinned against chrono in a test.
+/// Earliest supported UTC instant in nanoseconds since the Unix epoch,
+/// inclusive. Pinned against chrono in a test.
 pub const MIN_TIMESTAMP_NANOS: i128 = MIN_DATE_DAYS as i128 * NANOS_PER_DAY;
+/// Latest supported UTC instant in nanoseconds since the Unix epoch, inclusive.
 pub const MAX_TIMESTAMP_NANOS: i128 = (MAX_DATE_DAYS as i128 + 1) * NANOS_PER_DAY - 1;
 
 const NANOS_PER_DAY: i128 = 86_400 * 1_000_000_000;
@@ -536,10 +583,15 @@ const NANOS_PER_DAY: i128 = 86_400 * 1_000_000_000;
 pub mod id {
     /// No logical type.
     pub const NONE: u8 = 0;
+    /// Wire identifier for [`Logical::Undefined`](super::Logical::Undefined).
     pub const UNDEFINED: u8 = 1;
+    /// Wire identifier for [`Logical::Date`](super::Logical::Date).
     pub const DATE: u8 = 2;
+    /// Wire identifier for [`Logical::Timestamp`](super::Logical::Timestamp).
     pub const TIMESTAMP: u8 = 3;
+    /// Wire identifier for [`Logical::Decimal`](super::Logical::Decimal).
     pub const DECIMAL: u8 = 4;
+    /// Wire identifier for [`Logical::Uuid`](super::Logical::Uuid).
     pub const UUID: u8 = 5;
     /// The highest id this build knows. Any id above it is
     /// [`Logical::Unknown`](super::Logical::Unknown).
@@ -702,6 +754,7 @@ fn decimal_in_range(scale: u8, mantissa: Int) -> bool {
 
 /// Conversions between the chrono types and the ints they are stored as.
 #[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 pub mod chrono {
     use super::{Int, TimeUnit};
     use ::chrono::{DateTime, Datelike, NaiveDate, Utc};
@@ -830,6 +883,7 @@ pub mod chrono {
 
 /// Conversions between `rust_decimal::Decimal` and its scale and mantissa.
 #[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
 pub mod decimal {
     use super::Int;
     use rust_decimal::Decimal;
