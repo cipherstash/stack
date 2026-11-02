@@ -4,11 +4,11 @@ name: Tests (Python)
 # and stackencrypt-engine, and the pure-Python package `stackencrypt`. It is
 # the fourth Cargo workspace. No other workflow runs its checks.
 # tests-crates.yml compiles the stack-* crates but never links them into
-# pyo3. tests.yml's gate excludes those crates on purpose. So this workflow
-# is the only one that catches a stack-encrypt change that breaks the engine
-# crate. scripts/__tests__/python-ci.test.mjs derives the `pull_request`
-# filter below from the workspace's Cargo.lock. A new path dependency fails
-# that test until the filter follows.
+# pyo3. tests.yml's `changes` filter excludes those crates on purpose. So
+# this workflow is the only one that catches a stack-encrypt change that
+# breaks the engine crate. scripts/__tests__/python-ci.test.mjs derives the
+# `pull_request` filter below from the workspace's Cargo.lock. A new path
+# dependency fails that test until the filter follows.
 #
 # Two jobs. `python` runs the Rust checks and the pure-Python suite on two
 # interpreters: the oldest supported one (the `requires-python` floor) and
@@ -230,9 +230,10 @@ jobs:
             native: true
     runs-on: ${{ matrix.os }}
     # A release build of the stack-encrypt graph, cross-compiled on two legs,
-    # on a 4 vCPU runner with no registry cache inside the container. No run
-    # has measured it yet, so this is wider than the other jobs on purpose.
-    timeout-minutes: 90
+    # on a 4 vCPU runner. Both green runs of 2026-10-28 took 1 to 5 minutes
+    # per leg. A cold cache adds a registry fetch and a full compile, so this
+    # leaves room for one.
+    timeout-minutes: 30
     steps:
       # Git for Windows defaults to CRLF on checkout. `cargo fmt` does not
       # run here, but maturin would read a CRLF pyproject.toml.
@@ -306,8 +307,8 @@ jobs:
 
       # The commit `stackencrypt.__engine__` reports. The core crate's build
       # script reads it from git. The three Linux legs build in a container,
-      # as root, on a bind mount the runner user owns, and there git refused
-      # to answer: the first run failed on all three with "no engine commit".
+      # as root, on a bind mount the runner user owns. There git refused to
+      # answer. The first run failed on all three with "no engine commit".
       # So the host reads the commit and hands it over in the variable the
       # build script accepts instead of git. All six legs get it, so every
       # wheel names its engine the same way. The checkout is clean here, so
@@ -375,7 +376,7 @@ jobs:
       # On the legs whose runner is the wheel's platform, install it into the
       # floor interpreter and load both halves. The cross-compiled legs
       # (linux-arm64-gnu, linux-x64-musl, darwin-x64) cannot run theirs here.
-      # For them the filename check above is the whole verification.
+      # For them the filename check above is the only check.
       - name: Import the wheel on Python 3.9
         if: ${{ matrix.native }}
         run: |
