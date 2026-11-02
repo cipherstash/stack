@@ -90,7 +90,9 @@
         "lifecycle": [
           "dropping_unpolled_work_releases_captures_without_key_io",
           "dropping_unpolled_decrypt_releases_captures_without_key_io",
-          "success_and_provider_failure_release_captures_once"
+          "success_and_provider_failure_release_captures_once",
+          "dropping_an_unpolled_owned_column_releases_captures_without_key_io",
+          "an_owned_column_is_one_logical_batch_and_releases_captures_once"
         ],
         "pending": [
           "target::pending::tests::zipped_fulfilments_never_share_key_material"
@@ -108,7 +110,8 @@
       "evidence": {
         "lifecycle": [
           "cancelling_in_flight_work_drops_provider_and_captures",
-          "cancelling_in_flight_decrypt_drops_provider_and_captures"
+          "cancelling_in_flight_decrypt_drops_provider_and_captures",
+          "cancelling_an_owned_column_in_flight_drops_provider_and_captures"
         ],
         "guest-abi": [
           "step::tests::an_aborted_operation_is_dropped_and_its_handle_spent",
@@ -127,7 +130,10 @@
     {
       "id": "lifecycle-partial-output-v1",
       "evidence": {
-        "heap": ["a_late_read_type_failure_leaves_no_plaintext_on_the_heap"],
+        "heap": [
+          "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
+          "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap"
+        ],
         "contexts": ["shared_context_boundaries"],
         "go": [
           "TestContextBoundaries",
@@ -142,6 +148,7 @@
       "evidence": {
         "heap": [
           "a_record_encrypted_from_a_value_frame_leaves_no_plaintext_on_the_heap",
+          "an_owned_column_encrypted_leaves_no_plaintext_on_the_heap",
           "a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap",
           "a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap",
           "the_spy_sees_an_unwiped_free"
@@ -205,6 +212,10 @@
       "id": "lifecycle-logical-batching-v1",
       "evidence": {
         "runtime": ["shared_record_runtime_profile"],
+        "lifecycle": [
+          "an_owned_column_is_one_logical_batch_and_releases_captures_once",
+          "an_empty_owned_column_makes_no_provider_call"
+        ],
         "pending": [
           "target::pending::tests::one_pending_asking_for_many_keys_is_one_call",
           "target::pending::tests::all_merges_a_column_into_one_call_preserving_order",

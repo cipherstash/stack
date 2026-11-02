@@ -13,7 +13,7 @@ use std::task::{Context, Waker};
 
 use common::frames::frame;
 use stack_encrypt::dynamic::{record, Scope, ValueFrame};
-use stack_encrypt::{Pending, StackCipher, StackCipherText};
+use stack_encrypt::{Ciphertext, EncryptInto, Pending, StackCipher, StackCipherText};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyError,
     GenerateKeyPayload, IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload,
@@ -249,4 +249,73 @@ async fn cancelling_in_flight_decrypt_drops_provider_and_captures() {
     assert_eq!(opened.risky_ref(), rows(3).risky_ref());
     assert_eq!(*calls.retrievals.lock().unwrap(), vec![3, 3]);
     assert_eq!(calls.retrieve_drops.load(Ordering::SeqCst), 2);
+}
+
+// The owned collection conversion, `Vec<S>` to `Vec<T>`, runs the element
+// declaration once per element and merges the results into one pending. The
+// probes below hold it to the same lifecycle as a record operation.
+fn owned_column<'a>(
+    keyset: &'a stack_encrypt::KeysetCipher<'_, Source>,
+    count: usize,
+) -> Pending<'a, Vec<Ciphertext>, Source> {
+    vec![String::from("lifecycle-input"); count].encrypt_into(keyset)
+}
+
+#[tokio::test]
+async fn dropping_an_unpolled_owned_column_releases_captures_without_key_io() {
+    let (cipher, calls) = cipher().await;
+    let keyset = cipher.default_keyset();
+    let drops = Arc::new(AtomicUsize::new(0));
+    let pending = observed(owned_column(&keyset, 2), drops.clone());
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    assert!(calls.batches.lock().unwrap().is_empty());
+    drop(pending);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert!(calls.batches.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cancelling_an_owned_column_in_flight_drops_provider_and_captures() {
+    let (cipher, calls) = cipher().await;
+    calls.block.store(true, Ordering::SeqCst);
+    let keyset = cipher.default_keyset();
+    let drops = Arc::new(AtomicUsize::new(0));
+    let mut future = observed(owned_column(&keyset, 3), drops.clone()).into_future();
+    assert!(future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    assert_eq!(*calls.batches.lock().unwrap(), vec![3]);
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.provider_drops.load(Ordering::SeqCst), 0);
+    drop(future);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert_eq!(calls.provider_drops.load(Ordering::SeqCst), 1);
+    calls.block.store(false, Ordering::SeqCst);
+    owned_column(&keyset, 1).await.unwrap();
+    assert_eq!(*calls.batches.lock().unwrap(), vec![3, 1]);
+}
+
+#[tokio::test]
+async fn an_owned_column_is_one_logical_batch_and_releases_captures_once() {
+    for fail in [false, true] {
+        let (cipher, calls) = cipher().await;
+        calls.fail.store(fail, Ordering::SeqCst);
+        let keyset = cipher.default_keyset();
+        let drops = Arc::new(AtomicUsize::new(0));
+        let result = observed(owned_column(&keyset, 4), drops.clone()).await;
+        assert_eq!(result.is_err(), fail);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.provider_drops.load(Ordering::SeqCst), 1);
+        assert_eq!(*calls.batches.lock().unwrap(), vec![4]);
+    }
+}
+
+#[tokio::test]
+async fn an_empty_owned_column_makes_no_provider_call() {
+    let (cipher, calls) = cipher().await;
+    let keyset = cipher.default_keyset();
+    let sealed = owned_column(&keyset, 0).await.unwrap();
+    assert!(sealed.is_empty());
+    assert!(calls.batches.lock().unwrap().is_empty());
 }
