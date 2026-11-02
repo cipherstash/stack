@@ -78,5 +78,5 @@ quickcheck_macros = "1.2.0"
 # Compile-fail tests for the derive macros' guards — see tests/derive_ui.rs.
 trybuild = "1.0.118"
 futures-executor = "0.3.31"
-serde_json = "1"
+serde_json = { workspace = true }
 chrono = { version = "0.4.44", default-features = false, features = ["std"] }
