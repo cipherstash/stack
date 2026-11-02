@@ -1,0 +1,895 @@
+{
+  "version": 1,
+  "profile": "record-values-v1",
+  "required_capabilities": [
+    "records",
+    "equality",
+    "value-kinds",
+    "null-policies"
+  ],
+  "cases": [
+    {
+      "id": "bool-true",
+      "kind": "bool",
+      "null": "",
+      "outputs": ["c"],
+      "input": {
+        "type": "bool",
+        "text": "true"
+      },
+      "frame": "03"
+    },
+    {
+      "id": "bool-false",
+      "kind": "bool",
+      "null": "",
+      "outputs": ["c"],
+      "input": {
+        "type": "bool",
+        "text": "false"
+      },
+      "frame": "02"
+    },
+    {
+      "id": "i8-min",
+      "kind": "int8",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "int8",
+        "text": "-128"
+      },
+      "frame": "0c80"
+    },
+    {
+      "id": "i8-max",
+      "kind": "int8",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "int8",
+        "text": "127"
+      },
+      "frame": "0c7f"
+    },
+    {
+      "id": "u8-zero",
+      "kind": "uint8",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "uint8",
+        "text": "0"
+      },
+      "frame": "0d00"
+    },
+    {
+      "id": "u8-max",
+      "kind": "uint8",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "uint8",
+        "text": "255"
+      },
+      "frame": "0dff"
+    },
+    {
+      "id": "i16-min",
+      "kind": "int16",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "int16",
+        "text": "-32768"
+      },
+      "frame": "0e0080"
+    },
+    {
+      "id": "i16-max",
+      "kind": "int16",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "int16",
+        "text": "32767"
+      },
+      "frame": "0eff7f"
+    },
+    {
+      "id": "u16-zero",
+      "kind": "uint16",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "uint16",
+        "text": "0"
+      },
+      "frame": "0f0000"
+    },
+    {
+      "id": "u16-max",
+      "kind": "uint16",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "uint16",
+        "text": "65535"
+      },
+      "frame": "0fffff"
+    },
+    {
+      "id": "u32-zero",
+      "kind": "uint32",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "uint32",
+        "text": "0"
+      },
+      "frame": "0600000000"
+    },
+    {
+      "id": "u32-max",
+      "kind": "uint32",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "uint32",
+        "text": "4294967295"
+      },
+      "frame": "06ffffffff"
+    },
+    {
+      "id": "i128-max",
+      "kind": "int128",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "int128",
+        "text": "170141183460469231731687303715884105727"
+      },
+      "frame": "10ffffffffffffffffffffffffffffff7f"
+    },
+    {
+      "id": "i128-below-i64",
+      "kind": "int128",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "int128",
+        "text": "-9223372036854775809"
+      },
+      "frame": "10ffffffffffffff7fffffffffffffffff"
+    },
+    {
+      "id": "i128-above-i64",
+      "kind": "int128",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "int128",
+        "text": "9223372036854775808"
+      },
+      "frame": "1000000000000000800000000000000000"
+    },
+    {
+      "id": "u128-zero",
+      "kind": "uint128",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "uint128",
+        "text": "0"
+      },
+      "frame": "1100000000000000000000000000000000"
+    },
+    {
+      "id": "u128-above-u64",
+      "kind": "uint128",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "uint128",
+        "text": "18446744073709551616"
+      },
+      "frame": "1100000000000000000100000000000000"
+    },
+    {
+      "id": "f32-max",
+      "kind": "float32",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float32",
+        "text": "3.4028235e38"
+      },
+      "frame": "08ffff7f7f"
+    },
+    {
+      "id": "f32-min-positive",
+      "kind": "float32",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float32",
+        "text": "1e-45"
+      },
+      "frame": "0801000000"
+    },
+    {
+      "id": "f32-negative-zero",
+      "kind": "float32",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float32",
+        "text": "-0"
+      },
+      "frame": "0800000080"
+    },
+    {
+      "id": "f32-inf",
+      "kind": "float32",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float32",
+        "text": "inf"
+      },
+      "frame": "080000807f"
+    },
+    {
+      "id": "f32-neg-inf",
+      "kind": "float32",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float32",
+        "text": "-inf"
+      },
+      "frame": "08000080ff"
+    },
+    {
+      "id": "f64-max",
+      "kind": "float64",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float64",
+        "text": "1.7976931348623157e308"
+      },
+      "frame": "09ffffffffffffef7f"
+    },
+    {
+      "id": "f64-min-positive",
+      "kind": "float64",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float64",
+        "text": "5e-324"
+      },
+      "frame": "090100000000000000"
+    },
+    {
+      "id": "f64-negative-zero",
+      "kind": "float64",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float64",
+        "text": "-0"
+      },
+      "frame": "090000000000000080"
+    },
+    {
+      "id": "f64-inf",
+      "kind": "float64",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float64",
+        "text": "inf"
+      },
+      "frame": "09000000000000f07f"
+    },
+    {
+      "id": "f64-neg-inf",
+      "kind": "float64",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "float64",
+        "text": "-inf"
+      },
+      "frame": "09000000000000f0ff"
+    },
+    {
+      "id": "bytes-empty",
+      "kind": "bytes",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "bytes",
+        "text": ""
+      },
+      "frame": "0b00000000"
+    },
+    {
+      "id": "bytes-binary",
+      "kind": "bytes",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "bytes",
+        "text": "00ff10"
+      },
+      "frame": "0b0300000000ff10",
+      "unanswered": ["ore"]
+    },
+    {
+      "id": "string-nul",
+      "kind": "string",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "string",
+        "text": "a\u0000b"
+      },
+      "frame": "0a03000000610062"
+    },
+    {
+      "id": "decimal-scale-0",
+      "kind": "decimal",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "decimal",
+        "text": "42"
+      },
+      "frame": "14000000002a0000000000000000000000"
+    },
+    {
+      "id": "decimal-scale-28",
+      "kind": "decimal",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "decimal",
+        "text": "0.0000000000000000000000000001"
+      },
+      "frame": "1400001c00010000000000000000000000"
+    },
+    {
+      "id": "decimal-trailing-zeros",
+      "kind": "decimal",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "decimal",
+        "text": "-1234.5600"
+      },
+      "frame": "14000004800061bc000000000000000000",
+      "equal_query": {
+        "type": "decimal",
+        "text": "-1234.56"
+      }
+    },
+    {
+      "id": "decimal-max-mantissa",
+      "kind": "decimal",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "decimal",
+        "text": "79228162514264337593543950335"
+      },
+      "frame": "1400000000ffffffffffffffffffffffff"
+    },
+    {
+      "id": "date-epoch",
+      "kind": "date",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "date",
+        "text": "1970-01-01"
+      },
+      "frame": "123bf90a00"
+    },
+    {
+      "id": "date-before-epoch",
+      "kind": "date",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "date",
+        "text": "1969-12-31"
+      },
+      "frame": "123af90a00"
+    },
+    {
+      "id": "date-year-one",
+      "kind": "date",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "date",
+        "text": "0001-01-01"
+      },
+      "frame": "1201000000"
+    },
+    {
+      "id": "date-year-9999",
+      "kind": "date",
+      "null": "",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "date",
+        "text": "9999-12-31"
+      },
+      "frame": "12dbb93700"
+    },
+    {
+      "id": "timestamp-epoch",
+      "kind": "timestamp",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "timestamp",
+        "text": "1970-01-01T00:00:00Z"
+      },
+      "frame": "13000000000000000000000000"
+    },
+    {
+      "id": "timestamp-nanosecond",
+      "kind": "timestamp",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "timestamp",
+        "text": "2026-10-17T01:02:03.000000001Z"
+      },
+      "frame": "130bc9d26a0000000001000000"
+    },
+    {
+      "id": "timestamp-before-epoch",
+      "kind": "timestamp",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "timestamp",
+        "text": "1969-12-31T23:59:59.999999999Z"
+      },
+      "frame": "13ffffffffffffffffffc99a3b"
+    },
+    {
+      "id": "timestamp-microsecond-query",
+      "kind": "timestamp",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "timestamp",
+        "text": "2026-10-17T01:02:03.123456789Z"
+      },
+      "frame": "130bc9d26a0000000015cd5b07",
+      "equal_query": {
+        "type": "timestamp",
+        "text": "2026-10-17T01:02:03.123456Z"
+      }
+    },
+    {
+      "id": "timestamp-year-9999",
+      "kind": "timestamp",
+      "null": "",
+      "outputs": ["c", "eq", "ope"],
+      "input": {
+        "type": "timestamp",
+        "text": "9999-12-31T23:59:59.999999999Z"
+      },
+      "frame": "137f41f4ff3a000000ffc99a3b"
+    },
+    {
+      "id": "sealed-bool",
+      "kind": "bool",
+      "null": "sealed",
+      "outputs": ["c"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "bool",
+        "text": "true"
+      }
+    },
+    {
+      "id": "sealed-int8",
+      "kind": "int8",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "int8",
+        "text": "-1"
+      }
+    },
+    {
+      "id": "sealed-uint16",
+      "kind": "uint16",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "uint16",
+        "text": "65535"
+      }
+    },
+    {
+      "id": "sealed-int128",
+      "kind": "int128",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "int128",
+        "text": "-170141183460469231731687303715884105728"
+      }
+    },
+    {
+      "id": "sealed-float32",
+      "kind": "float32",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "float32",
+        "text": "1.5"
+      }
+    },
+    {
+      "id": "sealed-date",
+      "kind": "date",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "date",
+        "text": "2024-02-29"
+      }
+    },
+    {
+      "id": "sealed-timestamp",
+      "kind": "timestamp",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "timestamp",
+        "text": "2026-10-17T01:02:03.123456789Z"
+      }
+    },
+    {
+      "id": "sealed-decimal",
+      "kind": "decimal",
+      "null": "sealed",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "companion": {
+        "type": "decimal",
+        "text": "1.50"
+      }
+    },
+    {
+      "id": "sql-bool",
+      "kind": "bool",
+      "null": "sql",
+      "outputs": ["c"],
+      "input": {
+        "type": "null",
+        "text": ""
+      }
+    },
+    {
+      "id": "sql-bytes",
+      "kind": "bytes",
+      "null": "sql",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      }
+    },
+    {
+      "id": "sql-string",
+      "kind": "string",
+      "null": "sql",
+      "outputs": ["c", "eq", "ore"],
+      "input": {
+        "type": "null",
+        "text": ""
+      }
+    },
+    {
+      "id": "int8-given-int16",
+      "kind": "int8",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "int16",
+        "text": "1"
+      },
+      "frame": "0e0100",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "uint8-given-int8",
+      "kind": "uint8",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "int8",
+        "text": "1"
+      },
+      "frame": "0c01",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "int128-given-int64",
+      "kind": "int128",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "int64",
+        "text": "1"
+      },
+      "frame": "050100000000000000",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "uint128-given-uint64",
+      "kind": "uint128",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "uint64",
+        "text": "1"
+      },
+      "frame": "070100000000000000",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "float32-given-float64",
+      "kind": "float32",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "float64",
+        "text": "1.5"
+      },
+      "frame": "09000000000000f83f",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "decimal-given-float64",
+      "kind": "decimal",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "float64",
+        "text": "1.5"
+      },
+      "frame": "09000000000000f83f",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "date-given-int32",
+      "kind": "date",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "int32",
+        "text": "0"
+      },
+      "frame": "0400000000",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "timestamp-given-int64",
+      "kind": "timestamp",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "int64",
+        "text": "0"
+      },
+      "frame": "050000000000000000",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "bytes-given-string",
+      "kind": "bytes",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "string",
+        "text": ""
+      },
+      "frame": "0a00000000",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "string-given-bytes",
+      "kind": "string",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "bytes",
+        "text": "00"
+      },
+      "frame": "0b0100000000",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "bool-given-int32",
+      "kind": "bool",
+      "null": "",
+      "outputs": ["c"],
+      "input": {
+        "type": "int32",
+        "text": "1"
+      },
+      "frame": "0401000000",
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "required-bool-null",
+      "kind": "bool",
+      "null": "",
+      "outputs": ["c"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "required-bytes-null",
+      "kind": "bytes",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    },
+    {
+      "id": "required-decimal-null",
+      "kind": "decimal",
+      "null": "",
+      "outputs": ["c", "eq"],
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "value"
+      }
+    }
+  ],
+  "host_conversions": [
+    {
+      "id": "go-zero-date",
+      "language": "go",
+      "kind": "date",
+      "value": "zero_date"
+    },
+    {
+      "id": "go-decimal-scale-29",
+      "language": "go",
+      "kind": "decimal",
+      "value": "decimal_scale_29"
+    },
+    {
+      "id": "go-timestamp-year-300000",
+      "language": "go",
+      "kind": "timestamp",
+      "value": "timestamp_year_300000"
+    },
+    {
+      "id": "go-complex128",
+      "language": "go",
+      "kind": "float64",
+      "value": "complex128"
+    },
+    {
+      "id": "go-map-int-key",
+      "language": "go",
+      "kind": "string",
+      "value": "map_int_key"
+    },
+    {
+      "id": "go-channel",
+      "language": "go",
+      "kind": "string",
+      "value": "channel"
+    }
+  ]
+}
