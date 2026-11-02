@@ -157,15 +157,16 @@ describe('the real CHANGELOG', () => {
     expect(new Set(versions).size).toBe(versions.length)
   })
 
-  it.each(
-    versions,
-  )('gives notes for %s with no relative link left', (version) => {
-    const notes = releaseNotes(changelog, version)
-    expect(notes.length).toBeGreaterThan(0)
-    for (const [, target] of notes.matchAll(/\]\(([^)\s]+)\)/g)) {
-      expect(target).toMatch(/^(https?:|mailto:|#)/)
-    }
-  })
+  it.each(versions)(
+    'gives notes for %s with no relative link left',
+    (version) => {
+      const notes = releaseNotes(changelog, version)
+      expect(notes.length).toBeGreaterThan(0)
+      for (const [, target] of notes.matchAll(/\]\(([^)\s]+)\)/g)) {
+        expect(target).toMatch(/^(https?:|mailto:|#)/)
+      }
+    },
+  )
 })
 
 describe('release-golang.yml', () => {
