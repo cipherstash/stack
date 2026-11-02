@@ -37,6 +37,7 @@ export const codecPath = codecPathFor(process.env)
  */
 export type V4Type =
   | 'Boolean'
+  | 'DoubleOrdOre'
   | 'IntegerOrdOpe'
   | 'IntegerOrdOre'
   | 'TextEq'
