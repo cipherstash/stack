@@ -69,6 +69,60 @@ pub fn shared() -> Result<&'static Client, Refusal> {
     Ok(CLIENT.get_or_init(|| client))
 }
 
+/// The client of the `deterministic-kms` test build, with its own runtime.
+#[cfg(feature = "deterministic-kms")]
+pub type Deterministic = (
+    StackCipher<stack_kms::DeterministicSource>,
+    tokio::runtime::Runtime,
+);
+
+#[cfg(feature = "deterministic-kms")]
+static DETERMINISTIC: OnceLock<Deterministic> = OnceLock::new();
+
+/// Make every later operation in the process use a client whose keys come
+/// from `seed` through `DeterministicSource`, not from ZeroKMS. For the
+/// `deterministic-kms` test build only: rows sealed under the same seed open
+/// in any process, the Go SDK's frozen rows among them.
+///
+/// # Errors
+///
+/// A refusal when the live client is already built, when a deterministic
+/// client is already in place, or when the client does not build.
+#[cfg(feature = "deterministic-kms")]
+pub fn use_deterministic(seed: [u8; 32]) -> Result<(), Refusal> {
+    let refused = |message: String| Refusal {
+        code: "stack_test_build".to_owned(),
+        message,
+        field: None,
+        reason: None,
+    };
+    if CLIENT.get().is_some() || DETERMINISTIC.get().is_some() {
+        return Err(refused(
+            "the process already has a client; call this before any operation".to_owned(),
+        ));
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| refused(format!("the runtime could not start: {error}")))?;
+    let cipher = runtime
+        .block_on(
+            StackCipher::builder()
+                .kms(stack_kms::DeterministicSource::new(seed))
+                .init(),
+        )
+        .map_err(|error| Refusal::of(&error))?;
+    DETERMINISTIC
+        .set((cipher, runtime))
+        .map_err(|_| refused("a deterministic client is already in place".to_owned()))
+}
+
+/// The deterministic client, once `use_deterministic` has made one.
+#[cfg(feature = "deterministic-kms")]
+pub fn deterministic() -> Option<&'static Deterministic> {
+    DETERMINISTIC.get()
+}
+
 /// How many times the shared client has been built in this process: 0
 /// before the first operation, 1 after it. For the tests.
 pub fn build_count() -> u64 {

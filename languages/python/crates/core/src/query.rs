@@ -35,6 +35,16 @@ pub fn query(
     value: Value<'_>,
 ) -> Result<String, Refusal> {
     answers_equality(plan, field)?;
+    #[cfg(feature = "deterministic-kms")]
+    if let Some((cipher, runtime)) = client::deterministic() {
+        return runtime.block_on(query_with(
+            &cipher.default_keyset(),
+            plan,
+            field,
+            kind,
+            value,
+        ));
+    }
     let client = client::shared()?;
     client.block_on(query_with(&client.keyset(), plan, field, kind, value))
 }

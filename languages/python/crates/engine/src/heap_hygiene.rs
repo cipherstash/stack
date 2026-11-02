@@ -1,0 +1,257 @@
+//! No heap block the extension frees during `encrypt` or `query` still
+//! contains the plaintext it was given.
+//!
+//! The scope is the extension's own copies: what this crate and the engine
+//! allocate in Rust while they read a Python value, write the input frame,
+//! seal it, and derive a query term. Python's own objects are not watched.
+//! CPython allocates them with its own allocator, and the caller owns them, so
+//! the SDK makes no promise about them. This includes the `bytes` object that
+//! pyo3 makes on its way to a `str`'s UTF-8 under `abi3-py39`.
+//!
+//! The test binary installs a spy as its global allocator, as stack-encrypt's
+//! `tests/heap_hygiene.rs` does. While a test watches its own thread, the spy
+//! scans every block freed on that thread for a marker that the plaintext
+//! contains. A block freed with the marker still in it is plaintext that a
+//! later allocation can read back, and fails the test. The Go SDK's test reads
+//! the guest's memory after the call instead, which allocator reuse has
+//! mostly overwritten by then. This one sees each free as it happens.
+//!
+//! One free is excluded by name, as in stack-encrypt's test: vitaminc's
+//! aws-lc backend frees an unwiped plaintext buffer on every seal, which is
+//! vitaminc's to fix. The spy counts those, and recognises them by their
+//! backtrace, so a build without symbols fails rather than passes.
+//!
+//! Unix only: the spy scans a freed block with libc's `memmem`. CI runs it on
+//! Linux.
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+use std::ffi::c_void;
+use std::sync::Mutex;
+
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyString};
+use stack_encrypt::StackCipher;
+use stack_kms::FakeDataKeySource;
+
+use crate::encrypt::{build_plan, field_value, input_frame, Plan};
+
+/// What every plaintext under test contains.
+const MARK: &[u8] = b"zq-heap-marker-7f3a9c";
+
+thread_local! {
+    static WATCHING: Cell<bool> = const { Cell::new(false) };
+    static BUSY: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Held for the whole of a watch: the harness runs tests on several threads,
+/// and the findings below are one set.
+static GATE: Mutex<()> = Mutex::new(());
+
+/// The marked frees seen, as backtraces; and how many were vitaminc's.
+static FOUND: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static UPSTREAM: Mutex<usize> = Mutex::new(0);
+
+/// The vitaminc frame whose free is excluded (see the module docs).
+const UPSTREAM_SEAL: &str = "vitaminc_encrypt::backend::aws_lc::CipherKey::seal";
+
+/// Whether the `len` bytes at `ptr` contain [`MARK`]. A freed block can hold
+/// bytes Rust never initialised, and reading those through a `&[u8]` is
+/// undefined behaviour, so the scan is libc's `memmem`.
+///
+/// # Safety
+///
+/// `ptr` must point to `len` allocated bytes.
+unsafe fn has_mark(ptr: *const u8, len: usize) -> bool {
+    extern "C" {
+        fn memmem(
+            haystack: *const c_void,
+            haystack_len: usize,
+            needle: *const c_void,
+            needle_len: usize,
+        ) -> *mut c_void;
+    }
+    !memmem(ptr.cast(), len, MARK.as_ptr().cast(), MARK.len()).is_null()
+}
+
+struct Spy;
+
+unsafe impl GlobalAlloc for Spy {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // Zeroed, so a block holds only what was written into it during its
+        // own lifetime, not what an earlier free left there.
+        System.alloc_zeroed(layout)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let watching = WATCHING.with(Cell::get) && !BUSY.with(Cell::get);
+        // SAFETY: `ptr` is a live block of `layout.size()` bytes until the
+        // `System.dealloc` below.
+        if watching && has_mark(ptr, layout.size()) {
+            BUSY.with(|busy| busy.set(true));
+            let trace = std::backtrace::Backtrace::force_capture().to_string();
+            // Linux writes `<…::CipherKey>::seal`, macOS `…::CipherKey::seal`.
+            if trace.replace(['<', '>'], "").contains(UPSTREAM_SEAL) {
+                *UPSTREAM.lock().unwrap() += 1;
+            } else {
+                FOUND
+                    .lock()
+                    .unwrap()
+                    .push(format!("{} bytes freed unwiped:\n{trace}", layout.size()));
+            }
+            BUSY.with(|busy| busy.set(false));
+        }
+        System.dealloc(ptr, layout)
+    }
+}
+
+#[global_allocator]
+static SPY: Spy = Spy;
+
+/// Zero the stack below the caller's frame, so that a future the engine
+/// boxes copies zeros, not what earlier work left on the stack.
+#[inline(never)]
+fn scrub_stack() {
+    let mut pad = [0u8; 256 * 1024];
+    for byte in pad.iter_mut() {
+        // SAFETY: a volatile write to a live local, so it is not elided.
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::hint::black_box(&pad);
+}
+
+/// Run `f` with this thread watched, and fail if any block it freed still
+/// contained the marker.
+fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
+    let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    FOUND.lock().unwrap().clear();
+    *UPSTREAM.lock().unwrap() = 0;
+    scrub_stack();
+    WATCHING.with(|on| on.set(true));
+    let out = f();
+    WATCHING.with(|on| on.set(false));
+    let found = std::mem::take(&mut *FOUND.lock().unwrap());
+    let upstream = std::mem::take(&mut *UPSTREAM.lock().unwrap());
+    if upstream > 0 {
+        eprintln!("{what}: skipped {upstream} unwiped frees in vitaminc's aws-lc seal");
+    }
+    assert!(
+        found.is_empty(),
+        "{what}: {} heap blocks were freed with plaintext in them:\n{}",
+        found.len(),
+        found.join("\n---\n")
+    );
+    out
+}
+
+fn marked(tail: &str) -> String {
+    format!("{}-{tail}", std::str::from_utf8(MARK).unwrap())
+}
+
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+}
+
+/// A plan for `users` with two sealed text fields: one with an equality
+/// index, one with none.
+fn plan(py: Python<'_>) -> Plan {
+    let text = || py.get_type::<PyString>();
+    build_plan(
+        py,
+        "users",
+        vec![
+            (
+                "email".into(),
+                Some("TextEq".into()),
+                Some("string".into()),
+                text(),
+            ),
+            (
+                "note".into(),
+                Some("Text".into()),
+                Some("string".into()),
+                text(),
+            ),
+        ],
+    )
+    .unwrap()
+}
+
+/// A model as `encrypt` reads it: an object with one attribute per field.
+fn model<'py>(py: Python<'py>, email: &str, note: &str) -> Bound<'py, PyAny> {
+    let fields = PyDict::new(py);
+    fields.set_item("email", email).unwrap();
+    fields.set_item("note", note).unwrap();
+    py.import("types")
+        .unwrap()
+        .getattr("SimpleNamespace")
+        .unwrap()
+        .call((), Some(&fields))
+        .unwrap()
+}
+
+#[test]
+fn encrypt_frees_no_copy_of_the_plaintext_unwiped() {
+    Python::initialize();
+    let runtime = runtime();
+    let cipher = runtime
+        .block_on(StackCipher::builder().kms(FakeDataKeySource::new()).init())
+        .unwrap();
+    Python::attach(|py| {
+        let plan = plan(py);
+        // The Python objects are made before the watch: they are the
+        // caller's, not the extension's.
+        let models = vec![
+            model(py, &marked("a@example.com"), &marked("a note")),
+            model(py, &marked("b@example.com"), &marked("another note")),
+        ];
+
+        let rows = watched("encrypt", || {
+            let frame = input_frame(py, &plan, &models).unwrap();
+            runtime
+                .block_on(stackencrypt_core::encrypt::encrypt_with(
+                    &cipher.default_keyset(),
+                    &plan.plan,
+                    frame,
+                    models.len(),
+                ))
+                .unwrap()
+        });
+
+        assert_eq!(rows.len(), 2);
+    });
+}
+
+#[test]
+fn query_frees_no_copy_of_the_plaintext_unwiped() {
+    Python::initialize();
+    let runtime = runtime();
+    let cipher = runtime
+        .block_on(StackCipher::builder().kms(FakeDataKeySource::new()).init())
+        .unwrap();
+    Python::attach(|py| {
+        let plan = plan(py);
+        let value = PyString::new(py, &marked("a@example.com")).into_any();
+        let (field, kind) = (&plan.plan.fields()[0], plan.kinds[0]);
+        let Some((_, engine_kind)) = field.eql else {
+            panic!("email is sealed");
+        };
+
+        let term = watched("query", || {
+            let read = field_value(&value, field, kind).unwrap().unwrap();
+            runtime
+                .block_on(stackencrypt_core::query::query_with(
+                    &cipher.default_keyset(),
+                    &plan.plan,
+                    "email",
+                    engine_kind,
+                    read.value(),
+                ))
+                .unwrap()
+        });
+
+        assert!(!term.as_bytes().windows(MARK.len()).any(|w| w == MARK));
+    });
+}

@@ -53,6 +53,18 @@ description = "Run the pure-Python test suite against the package `build` instal
 depends = ["build"]
 run = ".venv/bin/python -m pytest"
 
+[tasks."test:deterministic"]
+description = "Build the extension with the deterministic-kms test feature into .venv and run tests_deterministic/: Python against the Go SDK's frozen EQL rows, with no credentials"
+shell = "bash -c"
+# The deterministic client replaces the live one for the whole process, so
+# these tests run in their own pytest process, from their own folder. The
+# build is a test build: run `mise run build` afterwards for a normal one.
+run = """
+set -euo pipefail
+MATURIN_PEP517_ARGS="--profile dev --features deterministic-kms" mise run build
+.venv/bin/python -m pytest tests_deterministic
+"""
+
 [tasks."test:cargo"]
 description = "Run both crates' Rust tests with --locked; puts libpython on the loader path so the engine crate's tests link"
 shell = "bash -c"

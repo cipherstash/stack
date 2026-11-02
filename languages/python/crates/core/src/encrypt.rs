@@ -11,7 +11,9 @@
 //! out as a [`Column`], which the extension turns into the dict's value.
 
 use stack_encrypt::dynamic::record::{self, Plan, EQL_KEY};
-use stack_encrypt::dynamic::{self, Output, ValueFrame};
+/// The engine's input frame, which the extension writes the models into.
+pub use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::{self, Output};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, StackCipherText};
 
@@ -104,6 +106,10 @@ pub fn encrypt(
     source: ValueFrame,
     rows: usize,
 ) -> Result<Vec<Vec<Column>>, Refusal> {
+    #[cfg(feature = "deterministic-kms")]
+    if let Some((cipher, runtime)) = client::deterministic() {
+        return runtime.block_on(encrypt_with(&cipher.default_keyset(), plan, source, rows));
+    }
     let client = client::shared()?;
     client.block_on(encrypt_with(&client.keyset(), plan, source, rows))
 }

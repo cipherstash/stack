@@ -17,6 +17,12 @@ default = ["eql"]
 # reads a feature of exactly this name. Every build of the SDK holds the EQL
 # types, so the crate refuses to compile without it.
 eql = []
+# A test build: the shared client takes its keys from stack-kms's
+# `DeterministicSource` and a seed, not from ZeroKMS, once
+# `client::use_deterministic` is called. The frozen-row tests read rows the Go
+# SDK sealed under the same source (the Go guest's `deterministic-kms` build).
+# Never in a wheel a user installs.
+deterministic-kms = ["stack-kms/test-support"]
 
 [dependencies]
 # By path, like every other eql-bindings dependency in the repository: the

@@ -7,6 +7,7 @@
 //! never changes a value: nothing here converts, only reads.
 
 use std::borrow::Cow;
+use zeroize::Zeroize;
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -118,10 +119,22 @@ impl PyKind {
 /// A field's value as read from its attribute. Text and bytes borrow from
 /// the attribute object where they can, so the plaintext is not copied
 /// before the engine writes it into the protected frame.
+///
+/// Under `abi3-py39`, pyo3 cannot borrow a `str`'s UTF-8, so `Text` is an
+/// owned copy on every Python version. That copy is the extension's own, and
+/// is wiped when the `Read` is dropped (`src/heap_hygiene.rs` checks it).
 pub enum Read<'a> {
     Text(Cow<'a, str>),
     Bytes(&'a [u8]),
     Other(Value<'static>),
+}
+
+impl Drop for Read<'_> {
+    fn drop(&mut self) {
+        if let Self::Text(Cow::Owned(text)) = self {
+            text.zeroize();
+        }
+    }
 }
 
 impl Read<'_> {

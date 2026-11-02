@@ -6,6 +6,8 @@
 mod decrypt;
 mod encrypt;
 mod errors;
+#[cfg(all(test, unix))]
+mod heap_hygiene;
 mod query;
 mod values;
 
@@ -88,6 +90,18 @@ fn _probe_detached_sleep(py: Python<'_>, millis: u64) -> u64 {
     })
 }
 
+/// Make every later operation in this process use keys derived from `seed`
+/// (32 bytes) by stack-kms's `DeterministicSource`, not ZeroKMS. Only in the
+/// `deterministic-kms` test build. Call it before any operation.
+#[cfg(feature = "deterministic-kms")]
+#[pyfunction]
+fn _use_deterministic_keys(py: Python<'_>, seed: &[u8]) -> PyResult<()> {
+    let seed: [u8; 32] = seed
+        .try_into()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("the seed is 32 bytes"))?;
+    stackencrypt_core::client::use_deterministic(seed).map_err(|refused| errors::raise(py, refused))
+}
+
 #[pymodule]
 fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_info, module)?)?;
@@ -102,6 +116,8 @@ fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(encrypt::request_count, module)?)?;
     #[cfg(feature = "gate-probe")]
     module.add_function(wrap_pyfunction!(_probe_detached_sleep, module)?)?;
+    #[cfg(feature = "deterministic-kms")]
+    module.add_function(wrap_pyfunction!(_use_deterministic_keys, module)?)?;
     Ok(())
 }
 
