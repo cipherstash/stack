@@ -519,6 +519,29 @@ async fn the_owned_source_is_wiped_when_context_validation_fails() {
     assert_eq!(generates.load(Ordering::SeqCst), 0);
 }
 
+/// The context is checked before the value is encoded, as a scalar's is: a
+/// value that would refuse to encode, under a context no request can
+/// carry, is refused for the context, so no encoding ran.
+#[tokio::test]
+async fn the_context_is_refused_before_the_value_is_encoded() {
+    let (cipher, generates, _) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let wiped = Arc::new(AtomicBool::new(false));
+    let pending = keyset.encrypt_with_context(
+        OpaqueBlob::new(Refusing {
+            secret: "secret".into(),
+            wiped: wiped.clone(),
+        }),
+        "x".repeat(65536),
+    );
+    assert!(wiped.load(Ordering::SeqCst));
+    assert!(matches!(
+        pending.await,
+        Err(Error::DescriptorTooLong { .. })
+    ));
+    assert_eq!(generates.load(Ordering::SeqCst), 0);
+}
+
 /// `OpaqueBlob<Zeroizing<T>>` is the opt-in drop guard: a `Zeroizing<T>`
 /// serializes as its `T`, so the guarded and the unguarded blob store the
 /// same bytes and each opens the other's ciphertext.

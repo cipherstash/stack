@@ -360,6 +360,12 @@ impl<T: Serialize + Zeroize + Send + 'static> sealed::Encode for OpaqueBlob<T> {
         cipher: &'a KeysetCipher<'_, K>,
         context: ContextPiece<'static>,
     ) -> Pending<'a, Ciphertext, K> {
+        // Refuse a context no request could carry before the value is
+        // encoded, as a scalar is: no plaintext copy is made for a request
+        // that cannot be sent, and the refusal is the same as a scalar's.
+        if let Err(error) = crate::Descriptor::from_piece(&context).check() {
+            return Pending::failed(cipher, error);
+        }
         let blob = match self.encode() {
             Ok(blob) => blob,
             Err(error) => return Pending::failed(cipher, error.into()),
@@ -562,10 +568,6 @@ mod tests {
         assert!(matches!(read(b"VCS\x01\xff"), BlobError::Malformed(_)));
 
         // A well-formed blob of another shape names the declared field.
-        let other = OpaqueBlob::new(Pair {
-            left: "l".into(),
-            right: 7,
-        });
         #[derive(Serialize, Zeroize)]
         struct Renamed {
             left: String,
@@ -581,7 +583,6 @@ mod tests {
         assert!(matches!(mismatch, BlobError::Mismatch(_)));
         let shown = format!("{mismatch} / {:?}", mismatch.payload());
         assert!(!shown.contains("\"l\""), "{shown}");
-        drop(other);
     }
 
     #[test]
