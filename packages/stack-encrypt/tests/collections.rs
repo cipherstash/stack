@@ -525,3 +525,55 @@ fn a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it() {
         "the prefix recovered before the panic is wiped during the unwind"
     );
 }
+
+// --- The structural `Vec` declarations wipe what they recovered too --------
+
+/// The same column, declared the structural way (`DecryptInto`), so the
+/// legacy `Vec<T>: DecryptInto<Vec<P>>` path is the one under test.
+impl stack_encrypt::DecryptInto<Tracked> for TrackedCiphertext {
+    type Context = stack_encrypt::target::AeadContext;
+    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Tracked, K> {
+        let wiped = self.wiped;
+        self.ciphertext
+            .decryption(OptionalContext::<ScalarContext>::supplied(context.into()))
+            .map(move |value: String| Tracked { value, wiped })
+    }
+}
+
+#[tokio::test]
+async fn a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_path_too() {
+    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let context = stack_encrypt::nonempty!("rows");
+    let first = keyset
+        .encrypt_with_context("recovered first".to_owned(), context)
+        .await
+        .unwrap();
+    // Sealed under another context: fails authentication only once its key
+    // has arrived, by which time the first element has been recovered.
+    let second = keyset
+        .encrypt_with_context("never recovered".to_owned(), "elsewhere")
+        .await
+        .unwrap();
+    let column = vec![
+        TrackedCiphertext::new(first),
+        TrackedCiphertext::new(second),
+    ];
+    let wiped: Vec<_> = column.iter().map(|t| t.wiped.clone()).collect();
+    // `Tracked::drop` fails the test if the recovered prefix is dropped
+    // unwiped, which is what the structural path did before it opened
+    // through the wiping collection.
+    let result = cipher
+        .decrypt_as::<Vec<Tracked>, _>(column, stack_encrypt::target::AeadContext::from(context))
+        .await;
+    assert!(matches!(result, Err(Error::Aead)), "{:?}", result.err());
+    assert!(
+        wiped[0].load(Ordering::SeqCst),
+        "the recovered prefix is wiped"
+    );
+    assert!(
+        !wiped[1].load(Ordering::SeqCst),
+        "nothing was recovered to wipe"
+    );
+    assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
+}

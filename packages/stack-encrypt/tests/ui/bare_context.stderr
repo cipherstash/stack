@@ -8,13 +8,13 @@ error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
    |
    = help: the following other types implement trait `From<T>`:
              `CallerContext` implements `From<NonEmpty<T>>`
+             `CallerContext` implements `From<RequiredContext<C>>`
              `CallerContext` implements `From<i128>`
              `CallerContext` implements `From<i16>`
              `CallerContext` implements `From<i32>`
              `CallerContext` implements `From<i64>`
              `CallerContext` implements `From<i8>`
              `CallerContext` implements `From<u128>`
-             `CallerContext` implements `From<u16>`
            and $N others
    = note: required for `&str` to implement `Into<CallerContext>`
 note: required by a bound in `stack_encrypt::target::legacy::EncryptInto::encrypt_into_with_context`
@@ -37,12 +37,12 @@ error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
    = help: the following other types implement trait `From<T>`:
              `DeclaredContext` implements `From<()>`
              `DeclaredContext` implements `From<CallerContext>`
+             `DeclaredContext` implements `From<ContextExtension<C>>`
              `DeclaredContext` implements `From<NoCallerContext>`
              `DeclaredContext` implements `From<NonEmpty<T>>`
              `DeclaredContext` implements `From<i128>`
              `DeclaredContext` implements `From<i16>`
              `DeclaredContext` implements `From<i32>`
-             `DeclaredContext` implements `From<i64>`
            and $N others
    = note: required for `&str` to implement `Into<DeclaredContext>`
 note: required by a bound in `stack_encrypt::target::legacy::EncryptInto::encrypt_into_with_context`
@@ -64,13 +64,13 @@ error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
    |
    = help: the following other types implement trait `From<T>`:
              `CallerContext` implements `From<NonEmpty<T>>`
+             `CallerContext` implements `From<RequiredContext<C>>`
              `CallerContext` implements `From<i128>`
              `CallerContext` implements `From<i16>`
              `CallerContext` implements `From<i32>`
              `CallerContext` implements `From<i64>`
              `CallerContext` implements `From<i8>`
              `CallerContext` implements `From<u128>`
-             `CallerContext` implements `From<u16>`
            and $N others
    = note: required for `&str` to implement `Into<CallerContext>`
 note: required by a bound in `stack_encrypt::target::legacy::EncryptInto::encrypt_into_with_context`
@@ -93,12 +93,12 @@ error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
    = help: the following other types implement trait `From<T>`:
              `DeclaredContext` implements `From<()>`
              `DeclaredContext` implements `From<CallerContext>`
+             `DeclaredContext` implements `From<ContextExtension<C>>`
              `DeclaredContext` implements `From<NoCallerContext>`
              `DeclaredContext` implements `From<NonEmpty<T>>`
              `DeclaredContext` implements `From<i128>`
              `DeclaredContext` implements `From<i16>`
              `DeclaredContext` implements `From<i32>`
-             `DeclaredContext` implements `From<i64>`
            and $N others
    = note: required for `&str` to implement `Into<DeclaredContext>`
 note: required by a bound in `stack_encrypt::target::legacy::DecryptFrom::decrypt_from_with_context`
@@ -121,12 +121,12 @@ error[E0277]: the trait bound `AeadContext: From<&str>` is not satisfied
    = help: the following other types implement trait `From<T>`:
              `AeadContext` implements `From<CallerContext>`
              `AeadContext` implements `From<NonEmpty<T>>`
+             `AeadContext` implements `From<RequiredContext<C>>`
              `AeadContext` implements `From<i128>`
              `AeadContext` implements `From<i16>`
              `AeadContext` implements `From<i32>`
              `AeadContext` implements `From<i64>`
              `AeadContext` implements `From<i8>`
-             `AeadContext` implements `From<u128>`
            and $N others
    = note: required for `&str` to implement `Into<AeadContext>`
 note: required by a bound in `decrypt_into`

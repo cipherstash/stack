@@ -1,0 +1,23 @@
+error: `passthrough` is a field of an owned record: derive `EncryptTarget` and `DecryptSource`, which move the plaintext field into the record and back. The structural `EncryptFrom` / `DecryptInto` derives have no form for it
+  --> tests/ui/passthrough_misuse.rs:18:9
+   |
+18 |     id: u64,
+   |         ^^^
+
+error: `passthrough` carries one field of the plaintext struct into the record in the clear, which is what `#[stash(struct = ..)]` reaches: a `plaintext` record derives every field from the whole value
+  --> tests/ui/passthrough_misuse.rs:27:9
+   |
+27 |     id: u64,
+   |         ^^^
+
+error: a `passthrough` field is moved through as it is, so `identity`, `default` and `decrypt` do not apply to it: it is keyed under nothing, filled from the plaintext and moved back on decryption
+  --> tests/ui/passthrough_misuse.rs:36:9
+   |
+36 |     id: u64,
+   |         ^^^
+
+error: `plain_email` and `email` are both derived from the plaintext field `email`: a plaintext field has one output. For a ciphertext with search terms beside it, make it one field of type `Encrypted<Terms>`, e.g. `plain_email: Encrypted<(EqualityTerm, MatchTerms)>`
+  --> tests/ui/passthrough_misuse.rs:46:5
+   |
+46 |     email: Ciphertext,
+   |     ^^^^^

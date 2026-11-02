@@ -51,6 +51,14 @@ pub(crate) enum Kind {
     /// Not derived: `Default::default()` or the given expression.
     Default(Option<Expr>),
     Context,
+    /// `#[stash(passthrough)]`, with `struct = ..` on the owned derives:
+    /// the plaintext field `from` is moved into the record as it is, not
+    /// encrypted and not authenticated, and moved back on decryption.
+    Passthrough {
+        /// The plaintext field carried through: its own name, or the
+        /// `#[stash(from = field)]` override.
+        from: Member,
+    },
 }
 
 /// What a field of a `struct = ..` derive has and a field of a `plaintext`
@@ -71,10 +79,15 @@ impl Field {
         matches!(self.kind, Kind::Derived { .. })
     }
 
-    /// The `from` member, if this is a derived field with one.
+    pub(crate) fn is_passthrough(&self) -> bool {
+        matches!(self.kind, Kind::Passthrough { .. })
+    }
+
+    /// The `from` member, if this is a derived or passthrough field with one.
     pub(crate) fn from(&self) -> Option<&Member> {
         match &self.kind {
             Kind::Derived { by_field } => by_field.as_ref().map(|by_field| &by_field.from),
+            Kind::Passthrough { from } => Some(from),
             Kind::Default(_) | Kind::Context => None,
         }
     }
@@ -99,7 +112,9 @@ impl Field {
                 by_field: Some(by_field),
             } => FieldContext::Own(&by_field.context),
             Kind::Derived { by_field: None } => FieldContext::Caller,
-            Kind::Default(_) | Kind::Context => unreachable!("a `default` field has no context"),
+            Kind::Default(_) | Kind::Context | Kind::Passthrough { .. } => {
+                unreachable!("a `default` or `passthrough` field has no context")
+            }
         }
     }
 }
@@ -135,6 +150,18 @@ pub(crate) enum FieldContext<'a> {
     Caller,
 }
 
+/// Which pair of declaration traits a derive emits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug))]
+pub(crate) enum Flavor {
+    /// `EncryptFrom` / `DecryptInto`: the structural declarations, run over
+    /// a borrowed plaintext.
+    Structural,
+    /// `EncryptTarget` / `DecryptSource`: the owned declarations, which
+    /// also emit the structural pair as a bridge.
+    Owned,
+}
+
 /// The record a derive input describes.
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Record {
@@ -159,6 +186,10 @@ impl Record {
     }
 
     pub(crate) fn parse(input: &DeriveInput) -> Result<Self> {
+        Self::parse_as(input, Flavor::Structural)
+    }
+
+    pub(crate) fn parse_as(input: &DeriveInput, flavor: Flavor) -> Result<Self> {
         let attrs = ContainerAttrs::parse(&input.attrs)?;
 
         let data = match &input.data {
@@ -181,6 +212,16 @@ impl Record {
         // `ContainerAttrs::parse` has established that `context` is present
         // exactly when `struct` is.
         let fields = collect(&data.fields, attrs.context.as_ref())?;
+        if flavor == Flavor::Structural {
+            if let Some(field) = fields.iter().find(|f| f.is_passthrough()) {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "`passthrough` is a field of an owned record: derive `EncryptTarget` and \
+                     `DecryptSource`, which move the plaintext field into the record and back. \
+                     The structural `EncryptFrom` / `DecryptInto` derives have no form for it",
+                ));
+            }
+        }
         if fields
             .iter()
             .filter(|f| matches!(f.kind, Kind::Context))
@@ -244,7 +285,10 @@ impl Record {
 /// `Encrypted<Terms>` instead; two fields keyed under one segment would
 /// share their data's identity.
 fn one_output_per_plaintext_field(fields: &[Field]) -> Result<()> {
-    let derived: Vec<&Field> = fields.iter().filter(|f| f.is_derived()).collect();
+    let derived: Vec<&Field> = fields
+        .iter()
+        .filter(|f| f.is_derived() || f.is_passthrough())
+        .collect();
     for (at, field) in derived.iter().enumerate() {
         let name = |f: &Field| f.member.to_token_stream().to_string();
         for earlier in &derived[..at] {
@@ -264,6 +308,9 @@ fn one_output_per_plaintext_field(fields: &[Field]) -> Result<()> {
                         ),
                     ));
                 }
+            }
+            if field.is_passthrough() || earlier.is_passthrough() {
+                continue;
             }
             if let (FieldContext::Own(own), FieldContext::Own(earlier_own)) =
                 (field.field_context(), earlier.field_context())
@@ -355,15 +402,39 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                 && (attrs.default.is_some()
                     || attrs.identity.is_some()
                     || attrs.from.is_some()
-                    || attrs.decrypt)
+                    || attrs.decrypt
+                    || attrs.passthrough)
             {
                 return Err(syn::Error::new_spanned(
                     &field.ty,
-                    "`context_field` is metadata and cannot also be derived or defaulted",
+                    "`context_field` is metadata and cannot also be derived, defaulted or \
+                     passed through",
                 ));
+            }
+            if attrs.passthrough {
+                if prefix.is_none() {
+                    return Err(syn::Error::new_spanned(
+                        &field.ty,
+                        "`passthrough` carries one field of the plaintext struct into the record \
+                         in the clear, which is what `#[stash(struct = ..)]` reaches: a \
+                         `plaintext` record derives every field from the whole value",
+                    ));
+                }
+                if attrs.default.is_some() || attrs.identity.is_some() || attrs.decrypt {
+                    return Err(syn::Error::new_spanned(
+                        &field.ty,
+                        "a `passthrough` field is moved through as it is, so `identity`, \
+                         `default` and `decrypt` do not apply to it: it is keyed under nothing, \
+                         filled from the plaintext and moved back on decryption",
+                    ));
+                }
             }
             let kind = if attrs.context_field {
                 Kind::Context
+            } else if attrs.passthrough {
+                Kind::Passthrough {
+                    from: attrs.from.unwrap_or_else(|| member.clone()),
+                }
             } else {
                 match attrs.default {
                     Some(default) => {

@@ -57,6 +57,29 @@ where
             },
         )
     }
+    /// Each element is moved to the element declaration's own owned form,
+    /// so an element that moves part of itself into its output (a record's
+    /// passthrough fields) does so here too, and each element is guarded
+    /// and wiped by its own declaration before the column's pending is
+    /// returned.
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, Vec<S>, Self, K, Self::ContextInput, super::Owned>
+    where
+        S: 's,
+    {
+        Encryption::from_build(move |source: Vec<S>, cipher, context: T::ContextInput| {
+            // Every element is run, whatever the elements before it did:
+            // the element's own declaration is what wipes it, so an
+            // element left unvisited after an earlier failure would be
+            // dropped as it is. The column still reports a refused
+            // context once, since `collect` keeps the first failure.
+            let elements: Vec<_> = source
+                .into_iter()
+                .map(|element| cipher.run(T::owned_encryption(), element, context.clone()))
+                .collect();
+            Pending::collect(cipher, elements)
+        })
+    }
 }
 
 impl<P: Zeroize + 'static, T: DecryptSource<P>> DecryptSource<Vec<P>> for Vec<T>

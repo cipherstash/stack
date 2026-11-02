@@ -1,7 +1,13 @@
-//! Derive operation declarations for encrypted records. `EncryptFrom<P>`
-//! declares how to produce a target; `DecryptInto<P>` selects ciphertext for
-//! recovery. Stack Encrypt owns execution through Vitamin C's plaintext traits.
-//! Generated code receives context and encrypted outputs, never a cipher.
+//! Derive operation declarations for encrypted records. The owned pair,
+//! `EncryptTarget<P>` / `DecryptSource<P>`, declares a record the owned
+//! conversions (`value.encrypt_into(&keyset)`, `P::decrypt_from(record, &cipher)`)
+//! run, consuming and wiping the plaintext; the structural pair,
+//! `EncryptFrom<P>` / `DecryptInto<P>`, declares one run over a borrowed
+//! plaintext by `keyset.encrypt_as` and `cipher.decrypt_as`. Both take the
+//! same attributes (see [Owned records](#owned-records) for what only the
+//! owned pair adds). Stack Encrypt owns execution through Vitamin C's
+//! plaintext traits. Generated code receives context and encrypted outputs,
+//! never a cipher.
 //!
 //! ```
 //! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, nonempty};
@@ -204,6 +210,8 @@ use syn::{parse_macro_input, DeriveInput};
 mod attrs;
 mod decrypt;
 mod encrypt;
+mod owned_decrypt;
+mod owned_encrypt;
 mod shape;
 
 /// Derive `EncryptFrom` for a record struct. See the [crate
@@ -226,6 +234,32 @@ pub fn derive_encrypt_from(input: TokenStream) -> TokenStream {
 pub fn derive_decrypt_into(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     decrypt::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derive the owned `EncryptTarget` declaration for a record struct, with
+/// the structural `EncryptFrom` beside it as a bridge. Takes the same
+/// attributes as `EncryptFrom`, plus `#[stash(passthrough)]` on a field of
+/// a `struct = ..` record. See [Owned records](crate#owned-records).
+#[doc = include_str!("../docs/attributes.md")]
+#[proc_macro_derive(EncryptTarget, attributes(stash))]
+pub fn derive_encrypt_target(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    owned_encrypt::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derive the owned `DecryptSource<Plaintext>` declaration for a record
+/// struct, one impl per `plaintext` type, with the structural `DecryptInto`
+/// and `DecryptField` beside it as a bridge. See
+/// [Owned records](crate#owned-records).
+#[doc = include_str!("../docs/attributes.md")]
+#[proc_macro_derive(DecryptSource, attributes(stash))]
+pub fn derive_decrypt_source(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    owned_decrypt::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

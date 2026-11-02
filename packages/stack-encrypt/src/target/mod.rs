@@ -10,9 +10,55 @@
 //! target's `ContextInput`. The collection makes one logical batch of key
 //! requests. Each element is authenticated on its own.
 //!
+//! # The owned declarations
+//!
+//! | Trait | Implemented on | Methods | Source |
+//! |---|---|---|---|
+//! | [`EncryptTarget<S>`] | an encrypted output or term | `encryption` (borrowed `&S`), `owned_encryption` (`S` by value, defaulting to guard-and-wipe), `indexes` | `S: Zeroize` |
+//! | [`DecryptSource<P>`] | a recoverable encrypted output | `decryption(self, ContextInput)` | opens to `P: Zeroize` |
+//! | [`EncryptInto`] | every `Zeroize` plaintext | `encrypt_into`, `encrypt_into_with_context` | consumes and wipes |
+//! | [`DecryptFrom`] | every `Zeroize` plaintext | `decrypt_from`, `decrypt_from_with_context` | returns the owned value |
+//!
+//! The core leaves implement both: [`Ciphertext`](crate::Ciphertext) takes
+//! an [`OptionalContext`] (empty is a context); [`StackCipherText`](crate::StackCipherText)
+//! and [`Encrypted<Terms>`] require an [`AeadContext`] to open and the
+//! terms ([`EqualityTerm`](crate::sem::EqualityTerm), [`MatchTerms`](crate::sem::MatchTerms),
+//! the order terms) require a [`CallerContext`] to derive, each as a
+//! [`RequiredContext`]. A term implements [`EncryptTarget`] alone.
+//!
+//! # Records
+//!
+//! `#[derive(EncryptTarget, DecryptSource)]` composes the field declarations.
+//! A `struct = User, context = "users"` record hands each field its pair
+//! `("users", "<field>")`, extended by the caller's [`ContextExtension`] if
+//! one is given, through [`Encryption::under`]: the field target's
+//! `ContextInput` must therefore be `From<CallerContext>`, which an
+//! [`OptionalContext`], a [`RequiredContext`] of a core context and a
+//! nested record's [`ContextExtension`] are, and a [`NoCallerContext`] or a
+//! `RequiredContext<u64>` is not — refused at that field. Its borrowed
+//! `encryption` picks each field out of a borrow ([`Encryption::project`],
+//! cloning a passthrough field); its `owned_encryption` divides the struct
+//! between the fields ([`Encryption::split`]), so a `#[stash(passthrough)]`
+//! field is moved into the record and each sealed field is guarded by its
+//! own target's owned form. Decryption opens each field under the same pair
+//! and moves the passthrough fields back.
+//!
+//! A `plaintext = T` record runs every field over the whole value under the
+//! one [`RequiredContext<CallerContext>`] (or `RequiredContext<AeadContext>`
+//! with `context_type = AeadContext`) the caller supplies; a
+//! `#[stash(context_field)]` record requires the `NonEmpty<T>` it stores and
+//! opens under an [`ExpectedContext`]. Both derives also emit the structural
+//! declarations ([`EncryptFrom`], [`DecryptInto`], [`DecryptField`]) as a
+//! bridge, so an owned record is a field of a structural record or a typed
+//! plan field ([`FieldsBuilder::encrypt_into`](crate::plan::FieldsBuilder::encrypt_into),
+//! or [`target`](crate::plan::FieldsBuilder::target) for an owned-only target
+//! such as a `Ciphertext`). A hand-written owned target used as a record
+//! field implements [`Decryptable`] and [`DecryptField`] beside
+//! [`DecryptSource`], as a hand-written structural one does.
+//!
 //! # Structural API during migration
 //!
-//! Existing derives, plans and dynamic targets still use the declarations
+//! Existing structural derives, plans and dynamic targets still use the declarations
 //! below. Their borrowed convenience methods are isolated in [`legacy`].
 //!
 //! [`EncryptFrom<S>`] describes ciphertext and/or term operations and has an
@@ -146,6 +192,10 @@ pub mod legacy {
 }
 pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
 pub use input::{
-    AcceptsContext, AllowsNoContext, ContextInput, NoCallerContext, OptionalContext,
-    RequiredContext, ScalarContext,
+    AcceptsContext, AllowsNoContext, ContextExtension, ContextInput, NoCallerContext,
+    OptionalContext, RequiredContext, ScalarContext,
 };
+pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};
+/// The cleanup bound every owned plaintext carries, named here so the
+/// derives can spell it without a `zeroize` dependency of the caller's.
+pub use zeroize::Zeroize;

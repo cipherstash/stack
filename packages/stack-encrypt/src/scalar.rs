@@ -296,6 +296,18 @@ impl<P: OpaqueDecode> DecryptSource<P> for Ciphertext {
         Decryption::from_open(move |cipher| P::open(self.0, cipher, context))
     }
 }
+/// A ciphertext is what a record opens: as a field of a derived record it is
+/// the recoverable one among the terms beside it.
+impl crate::target::Decryptable for Ciphertext {
+    const DECRYPTABLE: bool = true;
+}
+impl<P: OpaqueDecode, Ctx: Into<OptionalContext<ScalarContext>>> crate::target::DecryptField<P, Ctx>
+    for Ciphertext
+{
+    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+        Some(self.decryption(context.into()))
+    }
+}
 impl<K: 'static> KeysetCipher<'_, K> {
     /// Consume and encrypt a scalar as one opaque ciphertext with empty context.
     /// The owned source is wiped before this returns the batched pending request.
