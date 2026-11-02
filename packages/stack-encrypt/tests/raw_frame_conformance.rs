@@ -8,7 +8,7 @@ mod common;
 use common::{
     conformance::{value, Input},
     frames::{frame, object},
-    unhex, DeterministicSource,
+    unhex, CountingSource, DeterministicSource,
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -16,15 +16,8 @@ use stack_encrypt::dynamic::{record, Scope};
 use stack_encrypt::{
     CipherText, ErrorPayload, Node, PassthroughFrame, SealedValue, StackCipher, StackCipherText,
 };
-use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, GenerateKeyPayload, IdentifiedBy, IndexKey,
-    IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
-};
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use uuid::Uuid;
+use std::sync::atomic::Ordering;
 use vitaminc_aead_frame::{decode_ciphertext, Frame};
 
 type Row = BTreeMap<String, Input>;
@@ -100,49 +93,6 @@ fn refusal(error: &impl ErrorPayload, want: &Refusal) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-/// The deterministic source with ZeroKMS call counters, so a frozen leaf
-/// opens and the stage of a refusal is observed.
-struct Counting {
-    inner: DeterministicSource,
-    generates: Arc<AtomicUsize>,
-    retrieves: Arc<AtomicUsize>,
-}
-
-impl DataKeySource for Counting {
-    async fn generate_keys(
-        &self,
-        payloads: Vec<GenerateKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<Cow<'_, UnverifiedContext>>,
-    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
-        self.generates.fetch_add(1, Ordering::SeqCst);
-        self.inner
-            .generate_keys(payloads, keyset_id, unverified_context)
-            .await
-    }
-
-    async fn retrieve_keys(
-        &self,
-        payloads: Vec<RetrieveKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<&UnverifiedContext>,
-    ) -> Result<Vec<DataKey>, stack_kms::Error> {
-        self.retrieves.fetch_add(1, Ordering::SeqCst);
-        self.inner
-            .retrieve_keys(payloads, keyset_id, unverified_context)
-            .await
-    }
-}
-
-impl IndexKeySource for Counting {
-    async fn load_index_key(
-        &self,
-        keyset_id: Option<IdentifiedBy>,
-    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
-        self.inner.load_index_key(keyset_id).await
-    }
 }
 
 /// The transport codec, read as the guest reads a stored record: the tree,
@@ -264,14 +214,14 @@ async fn shared_raw_frame_profile() {
     );
     assert!(corpus.boundary_error.fields.is_empty());
     assert!(!corpus.cases.is_empty());
-    let generates = Arc::new(AtomicUsize::new(0));
-    let retrieves = Arc::new(AtomicUsize::new(0));
+    // The deterministic source with ZeroKMS call counters, so a frozen leaf
+    // opens and the stage of a refusal is observed.
+    let source = CountingSource::over(DeterministicSource::new(
+        unhex(&corpus.seed).try_into().expect("32-byte seed"),
+    ));
+    let (generates, retrieves) = source.counters();
     let cipher = StackCipher::builder()
-        .kms(Counting {
-            inner: DeterministicSource::new(unhex(&corpus.seed).try_into().expect("32-byte seed")),
-            generates: generates.clone(),
-            retrieves: retrieves.clone(),
-        })
+        .kms(source)
         .init()
         .await
         .expect("build cipher");
@@ -336,6 +286,21 @@ async fn shared_raw_frame_profile() {
             continue;
         }
         let want = case.expected.as_ref();
+        // The key-free preflight judges the shape alone: it refuses a shape
+        // case as decrypt does, and passes every tree that fits the plan.
+        let Ok(Ok(preflight)) = decode(&bytes) else {
+            unreachable!("decoded once already")
+        };
+        match (case.class, record::check_record(preflight, &plan, None)) {
+            (Class::Shape, Err(error)) => {
+                if let Err(message) = refusal(&error, want.unwrap()) {
+                    fail(format!("check_record: {message}"));
+                }
+            }
+            (Class::Shape, Ok(())) => fail("check_record accepted the shape".into()),
+            (_, Err(error)) => fail(format!("check_record refused a fitting tree: {error:?}")),
+            (_, Ok(())) => {}
+        }
         let result = record::decrypt(Scope::Keyset(keyset.clone()), tree, &plan, None);
         match (case.class, result) {
             (Class::Shape, Err(error)) => {
