@@ -133,9 +133,10 @@ rows (bool/int, bytes/text, Number/bigint) when their runners exist.
 ## Scope and remaining work
 
 The profile covers the record path and equality/order terms under
-`NoTargets`. Match terms, EQL targets, JSON documents, context fields and
-fresh cross-language artifact exchange of these kinds remain the other
-profiles' coverage. Dates before year 1 and the ends of the timestamp range
+`NoTargets`. Match terms, EQL targets, JSON documents and context fields
+remain the other profiles' coverage. Every positive case here is also
+written fresh by each runner and opened by the other under the
+[exchange profile](exchange-contract.md). Dates before year 1 and the ends of the timestamp range
 are not in the corpus: Go's date parsing does not read them, and the
 engine's bound is the decoder's. Negative-zero decimals are not in the
 corpus because Go's `Decimal` drops the sign of a zero before sealing.

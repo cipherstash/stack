@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   cargo,
@@ -9,6 +7,7 @@ import {
   read,
   runSuite,
   selections,
+  writeReport,
 } from './stack-conformance-evidence.mjs'
 
 export function main(args = process.argv.slice(2)) {
@@ -55,17 +54,7 @@ export function main(args = process.argv.slice(2)) {
     runSuite(suite)
     report.evidence[id] = [...suite.tests].sort()
   }
-  console.log(JSON.stringify(report, null, 2))
-  if (process.env.STACK_CONFORMANCE_REPORT_DIR) {
-    mkdirSync(process.env.STACK_CONFORMANCE_REPORT_DIR, { recursive: true })
-    writeFileSync(
-      join(
-        process.env.STACK_CONFORMANCE_REPORT_DIR,
-        `lifecycle-${language}.json`,
-      ),
-      `${JSON.stringify(report, null, 2)}\n`,
-    )
-  }
+  writeReport(`lifecycle-${language}.json`, report)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

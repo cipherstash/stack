@@ -99,16 +99,17 @@ expectations, and review fixture regeneration explicitly. The enrollment
 index's `version` is its metadata format, not a production storage version.
 
 This slice consolidates the coverage inventory and execution selection, not
-the underlying test assertions. No test or frozen artifact is removed. Fresh
-cross-language artifact exchange remains the scalar profile's guarantee;
-these wider fixtures prove frozen Rust-to-Go opening, local round trips and
-term agreement, not fresh Go-to-Rust opening of every represented kind.
+the underlying test assertions. No test or frozen artifact is removed. These
+wider fixtures prove frozen Rust-to-Go opening, local round trips and term
+agreement; fresh opening of every kind in both directions is the
+[exchange profile](exchange-contract.md), over the value-boundary corpus.
 
 Python and TypeScript should consume these same fixture paths and implement
 the listed observations through their own host values and public APIs. Their
 integer/decimal/time mappings and actual backends must be specified by those
-implementations. EQL domains, JSON operations, all-type boundary matrices,
-shared query refusals and supported-release matrices remain separate work.
+implementations. EQL domains and JSON operations, all-type boundary matrices
+and shared query refusals have their own profiles; supported-release matrices
+wait on the compatibility policy.
 
 ## Context-field requirements
 
