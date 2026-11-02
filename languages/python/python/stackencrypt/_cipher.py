@@ -1,10 +1,10 @@
 """``Cipher``: encrypts and decrypts the instances of one declared class.
 
 It checks the class and the credentials, and builds the model's plan once.
-``encrypt`` is here. ``decrypt`` and ``query`` come in later tickets.
+``encrypt`` and ``decrypt`` are here. ``query`` comes in a later ticket.
 """
 
-from typing import Dict, List, Sequence
+from typing import Dict, Generic, List, Mapping, Sequence, Type, TypeVar
 
 from stackencrypt import _engine
 from stackencrypt._markers import Passthrough
@@ -12,7 +12,10 @@ from stackencrypt._declaration import Declaration, check_unchanged, declaration_
 from stackencrypt._errors import AuthenticationError, DeclarationError
 
 
-class Cipher:
+T = TypeVar("T")
+
+
+class Cipher(Generic[T]):
     """The cipher for one class declared with ``stackencrypt.model``::
 
         users = stackencrypt.Cipher(User)
@@ -23,10 +26,11 @@ class Cipher:
     that ``stash auth login`` writes. Building a cipher makes no request.
 
     Every cipher in the process shares one engine client. It is built on the
-    first ``encrypt`` of any cipher, which loads the default keyset once.
+    first ``encrypt`` or ``decrypt`` of any cipher, which loads the default
+    keyset once.
     """
 
-    def __init__(self, cls: type) -> None:
+    def __init__(self, cls: Type[T]) -> None:
         # The type check comes first: declaration_of reads the class's own
         # __dict__, and a string or an instance with __slots__ has none.
         declaration = declaration_of(cls) if isinstance(cls, type) else None
@@ -65,6 +69,25 @@ class Cipher:
         request is made. An empty list makes no request at all.
         """
         return _engine.encrypt(self._plan, list(models))
+
+    def decrypt(self, rows: Sequence[Mapping[str, object]]) -> List[T]:
+        """Decrypt ``rows`` into instances of the declared class.
+
+        Each row is a mapping from column name to value, such as a row that
+        psycopg's ``dict_row`` returns. A sealed column's value is the EQL
+        JSON as a ``str``, as UTF-8 ``bytes``, or as a parsed ``dict``.
+        Columns the class does not declare are ignored. Every declared
+        field's column must be in every row, passthrough columns included.
+        An ``Ignore`` field is not passed to the constructor.
+
+        Every row is checked first. A row that is not a mapping, a missing
+        column, a value that is not EQL JSON, or a value stored under
+        another table or column raises ``DecryptError`` naming the field,
+        and no request is made. A passthrough value of another type than the
+        field's raises ``InvalidValueError``; it is never converted. The
+        call is all or nothing: no instance is built when any row fails.
+        """
+        return _engine.decrypt(self._plan, self._cls, list(rows))
 
     @property
     def declaration(self) -> Declaration:
