@@ -251,7 +251,23 @@ fn scrub_stack() {
 /// Run `f` with this thread watched, and fail if any block it freed held
 /// the marker.
 fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
-    let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _gate = gate();
+    watched_in_gate(what, f)
+}
+
+/// Take [`GATE`], which serializes every watch: the thread-local flags
+/// keep other threads' allocations out of a watch, but [`FOUND`],
+/// [`UPSTREAM`], [`LIVE`] and [`TRACKING`] are shared, and a test running
+/// alongside on another thread (plain `cargo test`) would otherwise reset
+/// or switch them off mid-watch. A test that panicked holding it (a
+/// `should_panic` control) poisons it; the state it guards is reset on
+/// entry, so the poison is ignored.
+fn gate() -> std::sync::MutexGuard<'static, ()> {
+    GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// [`watched`], for a caller already holding [`GATE`].
+fn watched_in_gate<T>(what: &str, f: impl FnOnce() -> T) -> T {
     FOUND.lock().unwrap().clear();
     *UPSTREAM.lock().unwrap() = 0;
     scrub_stack();
@@ -277,6 +293,9 @@ fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
 /// than freed, which the free-time scan cannot see. `f` returns nothing,
 /// so nothing it built is meant to outlive it.
 fn watched_for_leaks(what: &str, f: impl FnOnce()) {
+    // Held from the reset of `LIVE` to the last read of it, so no other
+    // watch can clear this one's records or turn `TRACKING` off under it.
+    let _gate = gate();
     {
         let mut live = LIVE.lock().unwrap();
         live.len = 0;
@@ -291,20 +310,27 @@ fn watched_for_leaks(what: &str, f: impl FnOnce()) {
         }
     }
     let stop = Stop;
-    watched(what, f);
+    watched_in_gate(what, f);
     drop(stop);
-    let live = LIVE.lock().unwrap();
+    // Read under the lock and released before asserting, so a failing
+    // assertion (the negative control's, by design) does not poison
+    // `LIVE` for the watches that follow in the same process.
+    let (overflowed, leaked) = {
+        let live = LIVE.lock().unwrap();
+        let leaked: Vec<usize> = live.blocks[..live.len]
+            .iter()
+            // SAFETY: every recorded block is still allocated: a free
+            // removes its record while `TRACKING` is on, and it was on
+            // until `stop`.
+            .filter(|(ptr, size)| unsafe { holds_mark(*ptr as *const u8, *size) })
+            .map(|(_, size)| *size)
+            .collect();
+        (live.overflowed, leaked)
+    };
     assert!(
-        !live.overflowed,
+        !overflowed,
         "{what}: more than {LIVE_SLOTS} blocks were live at once; raise LIVE_SLOTS"
     );
-    let leaked: Vec<usize> = live.blocks[..live.len]
-        .iter()
-        // SAFETY: every recorded block is still allocated: a free removes
-        // its record while `TRACKING` is on, and it was on until `stop`.
-        .filter(|(ptr, size)| unsafe { holds_mark(*ptr as *const u8, *size) })
-        .map(|(_, size)| *size)
-        .collect();
     assert!(
         leaked.is_empty(),
         "{what}: {} heap blocks allocated during the watch are still live with plaintext in them (sizes {leaked:?})",
