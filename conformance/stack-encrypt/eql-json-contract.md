@@ -129,6 +129,7 @@ and its guest artifacts, not a claim of compatibility across released versions.
 
 Required checks reject all fixture-update environment variables. Extending a
 language binding means running the applicable shared cases and providing its
-own adapter evidence for each claimed requirement. Fresh cross-language JSON
-artifact exchange, a release compatibility matrix, and Python/TypeScript
-runners remain separate work.
+own adapter evidence for each claimed requirement. The scalar EQL v4 rows are
+exchanged fresh in both directions by the [exchange profile](exchange-contract.md);
+fresh JSON document exchange, a release compatibility matrix, and
+Python/TypeScript runners remain separate work.

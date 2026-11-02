@@ -6,13 +6,13 @@ Paths are relative to the repository root. New profile cases run from `v1/`.
 
 | Requirement | Existing evidence | Remaining work |
 |---|---|---|
-| Scalar value widths and lossless transport | Initial scalar cases, [value-kind requirements](fixture-contract.md#value-kind-requirements) and the [value boundary profile](values-contract.md) (`v1/record-values-v1.cases.json`: every kind's edges, float specials, bytes, decimal and timestamp precision, sealed/SQL nulls per kind, cross-kind write refusals, Go host conversions) | Fresh exchange of every kind; Python/TS mappings; dates before year 1 and the timestamp range ends |
-| Owned opaque ciphertext and storage envelope | `packages/stack-encrypt/tests/scalar.rs`, `frozen_bytes.rs`; initial cross-opening cases. Whole-value blobs: `packages/stack-encrypt/tests/opaque_blob.rs` (round trips, the bytes leaf shared with the structural writer, a pinned storage blob and a pinned sealed ciphertext, refusals by class after authentication, source wipe) and `languages/golang/encrypt/gensupport/gensupport_internal_test.go::TestOpaqueReadsARustWrittenBlob`; the storage profile itself is pinned upstream by Vitamin C's golden corpus | Encoded targets; supported version matrix; a fresh sealed exchange of a blob with Go (Go seals, Rust opens, and back) through the conformance task |
+| Scalar value widths and lossless transport | Initial scalar cases, [value-kind requirements](fixture-contract.md#value-kind-requirements) and the [value boundary profile](values-contract.md) (`v1/record-values-v1.cases.json`: every kind's edges, float specials, bytes, decimal and timestamp precision, sealed/SQL nulls per kind, cross-kind write refusals, Go host conversions); every positive case written fresh by each runner and opened by the other ([exchange profile](exchange-contract.md)) | Python/TS mappings; dates before year 1 and the timestamp range ends |
+| Owned opaque ciphertext and storage envelope | `packages/stack-encrypt/tests/scalar.rs`, `frozen_bytes.rs`; initial cross-opening cases. Whole-value blobs: `packages/stack-encrypt/tests/opaque_blob.rs` (round trips, the bytes leaf shared with the structural writer, a pinned storage blob and a pinned sealed ciphertext, refusals by class after authentication, source wipe) and `languages/golang/encrypt/gensupport/gensupport_internal_test.go::TestOpaqueReadsARustWrittenBlob`; the storage profile itself is pinned upstream by Vitamin C's golden corpus; fresh sealed blobs exchanged in both directions by the [exchange profile](exchange-contract.md) | Encoded targets; supported version matrix |
 | Record declaration and lowering | [Declaration grammar](declaration-grammar.md); `v1/record-declarations-v1.cases.json` shared by native Rust and Go; native normalization observations; existing record lowering suites | EQL-resolver profile; SDK-to-declaration mappings; runtime source/read shapes |
 | Context binding and composition | `packages/stack-encrypt/tests/target.rs`, `descriptor.rs`, `record_lowering.rs`; `languages/golang/encrypt/context_field_test.go`; initial wrong-context cases | Shared composition vectors; expected-context and required-input matrix |
 | Query terms and diagnostics | [Query-operator requirements](fixture-contract.md#query-operator-requirements), existing Rust/Go runners, initial equality/query-error cases and the [query-refusal profile](query-refusals-contract.md) (`v1/record-query-refusals-v1.cases.json`: every scalar operator against every field capability that does not answer it, the listed range shapes, other-kind values and nulls, by class, with the typed chain's refusal stage) | JSON operator and EQL target refusals; moving the typed chain's value refusals before the keyset |
 | Missing, SQL NULL and sealed null | `packages/stack-encrypt/src/dynamic/record.rs` null tests; `languages/golang/encrypt/null_test.go` | Explicit language mappings and common missing/null fixtures |
-| Fresh cross-language storage | `.github/workflows/tests-golang.yml` exports fresh Go EQL rows for Rust; initial scalar artifact exchange; fixed storage-blob vectors read by both Rust (`opaque_blob.rs`) and Go (`TestOpaqueReadsARustWrittenBlob`) | Every producer/consumer/backend pair and supported released versions; fresh sealed blob exchange |
+| Fresh cross-language storage | `.github/workflows/tests-golang.yml` exports fresh Go EQL rows for Rust; initial scalar artifact exchange; fixed storage-blob vectors read by both Rust (`opaque_blob.rs`) and Go (`TestOpaqueReadsARustWrittenBlob`); the [exchange profile](exchange-contract.md): values, records, blobs and EQL rows written fresh and opened in both Rust/Go directions, with producer, engine, backend and storage versions in the report | Python/TypeScript pairs and backends when their runners exist; supported released versions once the compatibility policy is defined; fresh JSON document exchange; a SQL lane storing one language's fresh rows through the other |
 | JSON queries, extraction and tampering | `packages/stack-encrypt/tests/json_tree_vectors.rs`; `packages/eql/tests/encryption/tests/json_tree.rs`; `languages/golang/encrypt/json_tree_test.go`, `json_postgres_test.go` | Formal operation profile; JSON vectors consumed by all runners |
 | Element and predicate matching | Go `json_elements_test.go`, `json_match_test.go` and corresponding PostgreSQL tests; Rust/SQL predicate suites | Map exact supported grammar and documented semantic differences to case IDs |
 | Generated SDK declarations | Go stashgen and generated-code fixture tests | Python and TypeScript public-API runners; compiler/type-checker cases |
@@ -122,7 +122,8 @@ properties. Required test inventory/no-skip checks and engine/guest/SQL identity
 reports make enrollment observable. This consolidates data and requirements;
 it does not replace adapter tests or claim whole-database authentication.
 Fresh JSON artifact exchange, released-version matrices and Python/TypeScript
-runners remain open.
+runners remain open; the scalar EQL rows are exchanged fresh in both
+directions by the exchange profile.
 
 ## Value, refusal and raw-frame checkpoint
 
@@ -175,3 +176,26 @@ backend-specific tests. The known Go post-decryption shadow-stack gap and native
 heap-observer exclusions stay visible in reports. Logical batching is distinct
 from downstream chunking and unobserved live HTTP behavior. Python and TypeScript
 lifecycle evidence is pending.
+
+## Exchange checkpoint
+
+The [exchange contract](exchange-contract.md) defines `artifact-exchange-v1`
+over `v1/exchange.json`: in one run and a fresh directory, Rust writes and Go
+opens, and Go writes and Rust opens, every positive value-boundary case, a
+structural record with a passthrough field and equality/order terms, three
+opaque blobs and the EQL v4 `profiles` rows. Consumers compare decrypted
+values and their own derived query terms; ciphertext bytes are never
+compared. The task fails on a missing runner or guest and on an empty fresh
+output, and its report records producer SDKs, engines, backends, guests,
+lockfiles and storage versions, with a placeholder for released-version
+combinations. No frozen artifact changes.
+
+| Direction | Kinds | Consumer evidence |
+|---|---|---|
+| Go to Rust | `values`, `record`, `blobs`, `eql-rows` | `fresh_artifact_exchange` (`STACK_EXCHANGE_INPUT`), `rows_the_go_sdk_sealed_open_in_rust` (`EQL_V4_ROWS`) |
+| Rust to Go | `values`, `record`, `blobs`, `eql-rows` | `TestArtifactExchange` (`STACK_EXCHANGE_INPUT`), `TestV4RowsTheRustSuiteSealedOpenInGo` (`EQL_V4_RUST_ROWS`) |
+| Python, TypeScript | none | No runner exists; reported as not enrolled |
+
+Open: fresh JSON document exchange, the remaining EQL types, a SQL lane
+that stores one language's fresh rows through the other, and the
+released-version rows once the compatibility policy is defined.
