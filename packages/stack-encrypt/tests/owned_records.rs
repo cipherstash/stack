@@ -289,6 +289,45 @@ async fn the_owned_record_wipes_sealed_fields_when_the_context_is_refused() {
     assert_eq!(generates.load(Ordering::SeqCst), 0);
 }
 
+#[derive(Zeroize)]
+struct Pair {
+    first: Secret,
+    second: Secret,
+}
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Pair, context = "pairs")]
+struct EncryptedPair {
+    first: SecretCiphertext,
+    second: SecretCiphertext,
+}
+
+#[tokio::test]
+async fn a_field_opened_before_a_later_field_is_refused_is_wiped() {
+    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let secret = |value: &str| Secret {
+        value: value.to_owned(),
+        wiped: Arc::default(),
+    };
+    let encrypted: EncryptedPair = Pair {
+        first: secret("opened first"),
+        second: secret("never opened"),
+    }
+    .encrypt_into(&keyset)
+    .await
+    .unwrap();
+    // `second` holds the ciphertext sealed under `first`'s pair, so it is
+    // refused only once its key has arrived, after `first` has opened.
+    // `Secret::drop` fails the test if `first` is then dropped unwiped.
+    let moved = EncryptedPair {
+        second: SecretCiphertext(encrypted.first.0.clone()),
+        first: encrypted.first,
+    };
+    let result = Pair::decrypt_from(moved, &keyset).await;
+    assert!(matches!(result, Err(Error::Aead)));
+    assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
+}
+
 // --- The public searchable-record program, as one batch --------------------
 
 /// An application-defined scalar target: the ciphertext plus an equality
