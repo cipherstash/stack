@@ -27,6 +27,14 @@
       "binary": "heap_hygiene",
       "success_output": "immediate"
     },
+    "collections": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "collections"
+    },
     "runtime": {
       "language": "rust",
       "lane": "fast",
@@ -134,6 +142,10 @@
           "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
           "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap"
         ],
+        "collections": [
+          "a_late_element_failure_wipes_the_plaintext_recovered_before_it",
+          "a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it"
+        ],
         "contexts": ["shared_context_boundaries"],
         "go": [
           "TestContextBoundaries",
@@ -152,6 +164,11 @@
           "a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap",
           "a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap",
           "the_spy_sees_an_unwiped_free"
+        ],
+        "collections": [
+          "owned_elements_are_wiped_before_the_pending_is_returned",
+          "owned_elements_are_wiped_when_the_context_is_refused",
+          "owned_elements_are_guarded_during_context_conversion"
         ],
         "guest-abi": [
           "buffers::tests::wipe_all_leaves_no_live_buffer",
