@@ -103,10 +103,23 @@ on:
       # builds `tests/encryption/examples/v4_codec.rs` over eql-bindings' v4
       # targets, stack-encrypt and stack-kms. No published package carries any of
       # it, so these paths are the only inputs that change what those suites run.
-      # `packages/eql/crates/**` (eql-codegen, eql-bindings' v4 module) is left
-      # out on purpose: wasm-build-inputs-paths-filter.test.mjs holds this
-      # filter to the crate files the native binding compiles, and test-eql.yml
-      # already runs on every change there.
+      # The crate entries are the eql-bindings modules the codec compiles and the
+      # native binding does not (`v4`, `encryption`, `encoding`), and the
+      # eql-codegen / eql-domains sources `tasks/build.sh` renders the v4 bundle
+      # from. test-eql.yml runs the Rust and SQL suites on those files but not
+      # this one, so without them a v4 change skips the migration suites.
+      # Derived in scripts/__tests__/lib/eql-v4-suite-inputs.mjs and held here by
+      # eql-v4-suite-triggers.test.mjs; wasm-build-inputs-paths-filter.test.mjs
+      # allows exactly these beyond the native binding's files, and only here.
+      - 'packages/eql/crates/eql-bindings/src/encoding.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption/**'
+      - 'packages/eql/crates/eql-bindings/src/v4/**'
+      - 'packages/eql/crates/eql-codegen/Cargo.toml'
+      - 'packages/eql/crates/eql-codegen/src/**'
+      - 'packages/eql/crates/eql-codegen/templates/**'
+      - 'packages/eql/crates/eql-domains/Cargo.toml'
+      - 'packages/eql/crates/eql-domains/src/**'
       - 'packages/eql/Cargo.lock'
       - 'packages/eql/src/**'
       - 'packages/eql/tasks/**'
@@ -162,6 +175,15 @@ on:
       - 'packages/eql/crates/eql-bindings/src/v3/**'
       - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/encoding.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption.rs'
+      - 'packages/eql/crates/eql-bindings/src/encryption/**'
+      - 'packages/eql/crates/eql-bindings/src/v4/**'
+      - 'packages/eql/crates/eql-codegen/Cargo.toml'
+      - 'packages/eql/crates/eql-codegen/src/**'
+      - 'packages/eql/crates/eql-codegen/templates/**'
+      - 'packages/eql/crates/eql-domains/Cargo.toml'
+      - 'packages/eql/crates/eql-domains/src/**'
       - 'packages/eql/Cargo.lock'
       - 'packages/eql/src/**'
       - 'packages/eql/tasks/**'

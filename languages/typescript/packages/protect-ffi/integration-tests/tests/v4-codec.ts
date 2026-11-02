@@ -60,6 +60,8 @@ type Response = {
   decrypt: Plaintext[]
 }
 
+const CODEC_TIMEOUT_MS = 60_000
+
 function run(request: Request): Response {
   if (!existsSync(codecPath)) {
     throw new Error(
@@ -71,8 +73,19 @@ function run(request: Request): Response {
     encoding: 'utf8',
     env: process.env,
     maxBuffer: 64 * 1024 * 1024,
+    // The codec authenticates against live ZeroKMS. `spawnSync` blocks the
+    // event loop, so vitest's own timeout cannot interrupt a stall; this does.
+    timeout: CODEC_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
   })
-  if (result.error) throw result.error
+  if (result.error) {
+    if ((result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+      throw new Error(
+        `EQL v4 codec did not finish within ${CODEC_TIMEOUT_MS / 1000}s and was killed.`,
+      )
+    }
+    throw result.error
+  }
   if (result.status !== 0) {
     throw new Error(
       `EQL v4 codec exited ${result.status}: ${result.stderr.trim()}`,
