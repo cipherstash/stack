@@ -316,6 +316,13 @@ impl<P: Profiled> Container<'_, P> {
     }
 }
 
+/// How many key positions a map reserves up front from its `Serialize`'s
+/// length hint. The hint is the caller's and unchecked: a map that says it
+/// has `usize::MAX` entries is refused at its end for a count that does not
+/// match, and must not panic or abort before that by asking for the
+/// room. Past this many keys the positions grow as they are written.
+const KEYS_RESERVED: usize = 1024;
+
 /// A map being written. Each key is written the moment it is given, so no
 /// copy of it is kept: only where it lies in the buffer, so that a repeat
 /// is found among the keys when the map ends.
@@ -471,7 +478,7 @@ impl<'o, P: Profiled> ser::Serializer for Writer<'o, P> {
         Ok(MapWriter {
             c: self.container(tag, len, None)?,
             pending: false,
-            keys: Vec::with_capacity(len.unwrap_or(0)),
+            keys: Vec::with_capacity(len.unwrap_or(0).min(KEYS_RESERVED)),
         })
     }
     fn serialize_struct(self, _name: &'static str, len: usize) -> Result<Container<'o, P>, Error> {
@@ -958,6 +965,33 @@ mod tests {
         assert!(!fields.insert("a"), "an inline name repeats");
         assert!(!fields.insert("r"), "a spilled name repeats");
         assert!(fields.insert("s"), "a new name is still new");
+    }
+
+    /// A map's length hint is not trusted with an allocation: a hint far
+    /// past the entries written is refused as a count that does not match,
+    /// in either profile, rather than reserving room for it.
+    #[test]
+    fn a_map_that_overstates_its_length_is_refused_not_allocated_for() {
+        use ::serde::ser::SerializeMap;
+
+        struct Overstated;
+        impl Serialize for Overstated {
+            fn serialize<S: ser::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                let mut map = s.serialize_map(Some(usize::MAX))?;
+                map.serialize_entry("k", &1u8)?;
+                map.end()
+            }
+        }
+        for (profile, error) in [
+            ("storage", written_as::<AsStorage, _>(&Overstated)),
+            ("transport", written_as::<AsTransport, _>(&Overstated)),
+        ] {
+            assert_eq!(
+                error.expect_err("an overstated map").message(),
+                "container length does not match its children",
+                "the {profile} writer refuses it at its end"
+            );
+        }
     }
 
     /// The profiles differ in an option's `Some` and in a map, and nowhere
