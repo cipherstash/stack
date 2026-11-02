@@ -230,7 +230,11 @@ fn every_normalized_vector_reads_as_its_canonical_value() {
             values::read(&transport).unwrap_or_else(|error| panic!("{name}: refused: {error:?}"));
 
         match expected {
-            None => assert_eq!(read, Scalar::Null, "{name}"),
+            None => {
+                assert_eq!(read, Scalar::Null, "{name}");
+                // The reencode bytes are the plain null they write back as.
+                assert_eq!(values::read(&reencode), Ok(Scalar::Null), "{name}");
+            }
             Some((kind, expected)) => {
                 assert_eq!(read, expected, "{name}: the read value");
                 // Written back, the canonical value is the canonical bytes.

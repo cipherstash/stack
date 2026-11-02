@@ -1,8 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { pathPackageNames } from './lib/cargo-lock.mjs'
 import { filterCovers, negationRemovesAll } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import {
+  compiledCrateFiles,
+  includes,
+  moduleDeclarations,
+} from './lib/rust-compiled-files.mjs'
 import { readWorkflow, triggers } from './lib/workflows.mjs'
 
 /**
@@ -17,8 +23,10 @@ import { readWorkflow, triggers } from './lib/workflows.mjs'
  * there, and this file fails until the filter follows.
  *
  * The fuzz crates are the campaign matrix's `dir` values, each with `/fuzz`.
- * `python-ci.test.mjs` holds `tests-python.yml` to the Python workspace the
- * same way.
+ * The files each crate compiles come from `compiledCrateFiles`, which
+ * follows `mod`, `#[path]` and `include_str!` with comments stripped, with
+ * every feature counted as on. `python-ci.test.mjs` holds `tests-python.yml`
+ * to the Python workspace the same way.
  */
 
 const WORKFLOW = '.github/workflows/fuzz.yml'
@@ -57,39 +65,52 @@ function crateDir(name) {
 
 /** The directories of the path packages a fuzz crate compiles. */
 function pathDependencyTrees(fuzzCrate) {
-  const trees = []
-  for (const block of read(`${fuzzCrate}/Cargo.lock`)
-    .split('[[package]]')
-    .slice(1)) {
-    if (/^source = /m.test(block)) continue
-    const name = /^name = "([^"]+)"/m.exec(block)?.[1]
-    if (!name) throw new Error(`${fuzzCrate}/Cargo.lock: a package with no name`)
-    if (name.endsWith('-fuzz')) continue
-    trees.push(crateDir(name))
-  }
-  return trees
+  return pathPackageNames(read(`${fuzzCrate}/Cargo.lock`))
+    .filter((name) => !name.endsWith('-fuzz'))
+    .map(crateDir)
 }
 
-/** The files a crate compiles through `#[path = "..."]`, from its `src/`. */
-function pathModuleFiles(crate) {
-  const files = []
-  const walk = (dir) => {
-    if (!existsSync(join(REPO_ROOT, dir))) return
-    for (const entry of readdirSync(join(REPO_ROOT, dir), {
-      withFileTypes: true,
-    })) {
-      const rel = `${dir}/${entry.name}`
-      if (entry.isDirectory()) walk(rel)
-      else if (entry.name.endsWith('.rs')) {
-        const attribute = /#\[\s*path\s*=\s*"([^"]+)"\s*\]/g
-        for (const match of read(rel).matchAll(attribute)) {
-          files.push(posix.normalize(`${dir}/${match[1]}`))
-        }
-      }
-    }
+/** Every feature counted as on: a module behind any feature is kept. */
+const EVERY_FEATURE = { has: () => true }
+
+/** The files a path package compiles, `#[path]` and include files among them. */
+function compiledFiles(crate) {
+  const { files, unresolved } = compiledCrateFiles(
+    REPO_ROOT,
+    crate,
+    EVERY_FEATURE,
+  )
+  if (unresolved.length > 0) {
+    throw new Error(
+      `${crate}: compiledCrateFiles could not follow:\n${unresolved.join('\n')}`,
+    )
   }
-  walk(`${crate}/src`)
   return files
+}
+
+/**
+ * The files a fuzz crate's targets name by `#[path]` or an include. A target
+ * is a crate root that `compiledCrateFiles` does not walk, since it walks a
+ * library. Its plain `mod` files sit in the fuzz crate's own folder.
+ */
+function fuzzTargetFiles(fuzzCrate) {
+  const dir = `${fuzzCrate}/fuzz_targets`
+  const rel = (abs) => relative(REPO_ROOT, abs).replaceAll('\\', '/')
+  return readdirSync(join(REPO_ROOT, dir))
+    .filter((name) => name.endsWith('.rs'))
+    .flatMap((name) => {
+      const file = join(REPO_ROOT, dir, name)
+      const text = readFileSync(file, 'utf8')
+      return [
+        rel(file),
+        ...moduleDeclarations(text)
+          .filter((decl) => decl.path !== undefined)
+          .map((decl) => rel(resolve(dirname(file), decl.path))),
+        ...includes(text)
+          .filter((include) => include.literal !== undefined)
+          .map((include) => rel(resolve(dirname(file), include.literal))),
+      ]
+    })
 }
 
 const coversTree = (pattern, file) =>
@@ -115,21 +136,25 @@ describe('fuzz.yml', () => {
   it('runs on pull requests touching every crate a fuzz target compiles', () => {
     const trees = [...new Set(fuzzCrates().flatMap(pathDependencyTrees))]
     expect(trees).toContain('packages/eql/crates/eql-bindings')
-    const missing = trees.filter((dir) => !selected(`${dir}/src/lib.rs`))
+    const missing = trees.filter((dir) => !selected(`${dir}/Cargo.toml`))
     expect(
       missing,
       `pull_request.paths does not select these crates, which a fuzz target compiles:\n${missing.join('\n')}`,
     ).toEqual([])
   })
 
-  it('runs on pull requests touching a file those crates compile by #[path]', () => {
+  it('runs on pull requests touching every file those crates and the targets compile', () => {
     const trees = [...new Set(fuzzCrates().flatMap(pathDependencyTrees))]
-    const files = trees.flatMap(pathModuleFiles)
+    const files = [
+      ...trees.flatMap(compiledFiles),
+      ...fuzzCrates().flatMap(fuzzTargetFiles),
+    ]
+    // The Go guest's resolver, which the Python core crate compiles by #[path].
     expect(files).toContain('languages/golang/encrypt/guest/src/targets.rs')
-    const missing = files.filter((file) => !selected(file))
+    const missing = [...new Set(files.filter((file) => !selected(file)))]
     expect(
       missing,
-      `pull_request.paths does not select these files, which a fuzzed crate compiles by #[path]:\n${missing.join('\n')}`,
+      `pull_request.paths does not select these files, which a fuzz target compiles:\n${missing.join('\n')}`,
     ).toEqual([])
   })
 })
