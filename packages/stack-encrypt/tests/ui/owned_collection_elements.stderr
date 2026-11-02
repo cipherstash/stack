@@ -1,47 +1,47 @@
 error[E0277]: the trait bound `u8: OpaqueEncode` is not satisfied
- --> tests/ui/owned_collection_elements.rs:8:26
-  |
-8 |     let _ = vec![1u8, 2].encrypt_into::<Vec<Ciphertext>, _>(keyset);
-  |                          ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `u8`
-  |
-  = help: the following other types implement trait `OpaqueEncode`:
-            f32
-            f64
-            i128
-            i16
-            i32
-            i64
-            i8
-            u128
-          and $N others
-  = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<u8>`
-  = note: 1 redundant requirement hidden
-  = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<u8>>`
+  --> tests/ui/owned_collection_elements.rs:10:26
+   |
+10 |     let _ = vec![1u8, 2].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+   |                          ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `u8`
+   |
+   = help: the following other types implement trait `OpaqueEncode`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             i8
+             u128
+           and $N others
+   = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<u8>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<u8>>`
 
 error[E0277]: the trait bound `Option<i32>: OpaqueEncode` is not satisfied
- --> tests/ui/owned_collection_elements.rs:9:36
-  |
-9 |     let _ = vec![Some(1i32), None].encrypt_into::<Vec<Ciphertext>, _>(keyset);
-  |                                    ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `Option<i32>`
-  |
-  = help: the following other types implement trait `OpaqueEncode`:
-            bool
-            f32
-            f64
-            i128
-            i16
-            i32
-            i64
-            i8
-          and $N others
-  = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Option<i32>>`
-  = note: 1 redundant requirement hidden
-  = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<Option<i32>>>`
+  --> tests/ui/owned_collection_elements.rs:11:36
+   |
+11 |     let _ = vec![Some(1i32), None].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+   |                                    ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `Option<i32>`
+   |
+   = help: the following other types implement trait `OpaqueEncode`:
+             bool
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             i8
+           and $N others
+   = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Option<i32>>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<Option<i32>>>`
 
 error[E0599]: the method `encrypt_into` exists for struct `Vec<&str>`, but its trait bounds were not satisfied
-  --> tests/ui/owned_collection_elements.rs:10:43
+  --> tests/ui/owned_collection_elements.rs:12:43
    |
-10 |     let _ = vec!["borrowed", "plaintext"].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+12 |     let _ = vec!["borrowed", "plaintext"].encrypt_into::<Vec<Ciphertext>, _>(keyset);
    |                                           ^^^^^^^^^^^^
    |
   ::: $RUST/alloc/src/vec/mod.rs
@@ -67,5 +67,81 @@ error[E0599]: the method `encrypt_into` exists for struct `Vec<&str>`, but its t
    = help: items from traits can only be used if the trait is in scope
 help: trait `LegacyEncryptInto` which provides `encrypt_into` is implemented but not in scope; perhaps you want to import it
    |
- 6 + use stack_encrypt::target::legacy::EncryptInto;
+ 8 + use stack_encrypt::target::legacy::EncryptInto;
    |
+
+error[E0277]: the trait bound `Vec<u8>: OpaqueEncode` is not satisfied
+  --> tests/ui/owned_collection_elements.rs:13:26
+   |
+13 |     let _ = vec![1u8, 2].encrypt_into::<Ciphertext, _>(keyset);
+   |                          ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `Vec<u8>`
+   |
+   = help: the following other types implement trait `OpaqueEncode`:
+             bool
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             i8
+           and $N others
+   = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Vec<u8>>`
+
+error[E0277]: the trait bound `Vec<i32>: OpaqueEncode` is not satisfied
+  --> tests/ui/owned_collection_elements.rs:14:27
+   |
+14 |     let _ = vec![1i32, 2].encrypt_into::<Ciphertext, _>(keyset);
+   |                           ^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `Vec<i32>`
+   |
+   = help: the following other types implement trait `OpaqueEncode`:
+             bool
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             i8
+           and $N others
+   = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Vec<i32>>`
+
+error[E0277]: the trait bound `u8: OpaqueDecode` is not satisfied
+  --> tests/ui/owned_collection_elements.rs:15:13
+   |
+15 |     let _ = Vec::<u8>::decrypt_from(column.clone(), keyset);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `OpaqueDecode` is not implemented for `u8`
+   |
+   = help: the following other types implement trait `OpaqueDecode`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             i8
+             u128
+           and $N others
+   = note: required for `stack_encrypt::Ciphertext` to implement `DecryptSource<u8>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `DecryptSource<Vec<u8>>`
+
+error[E0277]: the trait bound `Option<i32>: OpaqueDecode` is not satisfied
+  --> tests/ui/owned_collection_elements.rs:16:13
+   |
+16 |     let _ = Vec::<Option<i32>>::decrypt_from(column, keyset);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `OpaqueDecode` is not implemented for `Option<i32>`
+   |
+   = help: the following other types implement trait `OpaqueDecode`:
+             bool
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             i8
+           and $N others
+   = note: required for `stack_encrypt::Ciphertext` to implement `DecryptSource<Option<i32>>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `DecryptSource<Vec<Option<i32>>>`
