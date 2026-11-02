@@ -21,7 +21,6 @@ from stackencrypt import (
     StashError,
     TextEq,
 )
-from stackencrypt import _engine
 
 # The `i` of a value stored under users.email, and the rest of an EQL value
 # left out: the checks before any request read only `i`.
@@ -29,15 +28,6 @@ STORED = json.dumps({"i": {"t": "users", "c": "email"}, "v": 2})
 
 
 pytestmark = pytest.mark.usefixtures("credentials")
-
-
-@pytest.fixture
-def untouched():
-    """Fails the test if the shared client was built or a request was sent."""
-    builds, requests = _engine.client_builds(), _engine.request_count()
-    yield
-    assert _engine.client_builds() == builds
-    assert _engine.request_count() == requests
 
 
 @stackencrypt.model("users")

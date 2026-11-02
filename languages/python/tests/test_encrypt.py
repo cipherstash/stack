@@ -29,21 +29,11 @@ from stackencrypt import (
     TextEq,
     Timestamp,
 )
-from stackencrypt import _engine
 
 SECRET = "secret@example.com"
 
 
 pytestmark = pytest.mark.usefixtures("credentials")
-
-
-@pytest.fixture
-def untouched():
-    """Fails the test if the shared client was built or a request was sent."""
-    builds, requests = _engine.client_builds(), _engine.request_count()
-    yield
-    assert _engine.client_builds() == builds
-    assert _engine.request_count() == requests
 
 
 def cipher_for(**fields):
