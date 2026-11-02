@@ -34,6 +34,13 @@
 //! copy left in its dead frame would be picked up the same way by a future
 //! built later at that depth (see [`holds_key`]).
 //!
+//! A free is what the spy sees, so a block that is never freed (a
+//! `mem::forget`, a `Box::leak`) passes [`watched`]. [`watched_for_leaks`]
+//! closes that for the tests that use it: it also records every block
+//! allocated during the watch, and fails if one still live when the watch
+//! ends holds the marker. It is opt-in because a watch that returns
+//! plaintext to its caller keeps that plaintext live on purpose.
+//!
 //! Unix only: the spy scans a freed block with libc's `memmem`, not as a
 //! Rust slice (see [`holds_mark`]).
 #![cfg(all(feature = "dynamic", unix))]
@@ -43,6 +50,7 @@ mod common;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use common::frames::{frame, object};
@@ -71,6 +79,30 @@ static UPSTREAM: Mutex<usize> = Mutex::new(0);
 /// block must not hold either (see [`json_index`]). Set outside any
 /// allocation: a fixed array behind a lock.
 static KEY: Mutex<Option<[u8; 32]>> = Mutex::new(None);
+
+/// How many blocks [`watched_for_leaks`] can track at once. A watch that
+/// outgrows it fails rather than passing on a partial record.
+const LIVE_SLOTS: usize = 16 * 1024;
+
+/// The blocks allocated on the watched thread during a
+/// [`watched_for_leaks`] watch and not yet freed, as `(address, size)`. A
+/// fixed array behind a lock: recording one must not allocate.
+struct Live {
+    blocks: [(usize, usize); LIVE_SLOTS],
+    len: usize,
+    overflowed: bool,
+}
+
+static LIVE: Mutex<Live> = Mutex::new(Live {
+    blocks: [(0, 0); LIVE_SLOTS],
+    len: 0,
+    overflowed: false,
+});
+
+/// Whether [`LIVE`] is recording. Read on every allocation and free, on
+/// every thread, so a block the watched thread allocated is forgotten
+/// wherever it is freed.
+static TRACKING: AtomicBool = AtomicBool::new(false);
 
 /// The vitaminc frame whose free is excluded (see the module docs).
 const UPSTREAM_SEAL: &str = "vitaminc_encrypt::backend::aws_lc::CipherKey::seal";
@@ -143,7 +175,23 @@ unsafe impl GlobalAlloc for Spy {
         // owner left it, and a block that is only partly written (a boxed
         // future's state, a `Vec`'s spare capacity) would otherwise show
         // what an earlier, excluded free left there and be blamed for it.
-        System.alloc_zeroed(layout)
+        let ptr = System.alloc_zeroed(layout);
+        if !ptr.is_null()
+            && TRACKING.load(Ordering::SeqCst)
+            && WATCHING.with(Cell::get)
+            && !BUSY.with(Cell::get)
+        {
+            if let Ok(mut live) = LIVE.lock() {
+                if live.len < LIVE_SLOTS {
+                    let at = live.len;
+                    live.blocks[at] = (ptr as usize, layout.size());
+                    live.len += 1;
+                } else {
+                    live.overflowed = true;
+                }
+            }
+        }
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -166,6 +214,15 @@ unsafe impl GlobalAlloc for Spy {
                         .push(format!("{} bytes freed unwiped:\n{trace}", layout.size()));
                 }
                 BUSY.with(|busy| busy.set(false));
+            }
+        }
+        if TRACKING.load(Ordering::SeqCst) {
+            if let Ok(mut live) = LIVE.lock() {
+                let len = live.len;
+                if let Some(at) = live.blocks[..len].iter().position(|b| b.0 == ptr as usize) {
+                    live.blocks[at] = live.blocks[len - 1];
+                    live.len -= 1;
+                }
             }
         }
         System.dealloc(ptr, layout)
@@ -193,7 +250,23 @@ fn scrub_stack() {
 /// Run `f` with this thread watched, and fail if any block it freed held
 /// the marker.
 fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
-    let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _gate = gate();
+    watched_in_gate(what, f)
+}
+
+/// Take [`GATE`], which serializes every watch: the thread-local flags
+/// keep other threads' allocations out of a watch, but [`FOUND`],
+/// [`UPSTREAM`], [`LIVE`] and [`TRACKING`] are shared, and a test running
+/// alongside on another thread (plain `cargo test`) would otherwise reset
+/// or switch them off mid-watch. A test that panicked holding it (a
+/// `should_panic` control) poisons it; the state it guards is reset on
+/// entry, so the poison is ignored.
+fn gate() -> std::sync::MutexGuard<'static, ()> {
+    GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// [`watched`], for a caller already holding [`GATE`].
+fn watched_in_gate<T>(what: &str, f: impl FnOnce() -> T) -> T {
     FOUND.lock().unwrap().clear();
     *UPSTREAM.lock().unwrap() = 0;
     scrub_stack();
@@ -212,6 +285,56 @@ fn watched<T>(what: &str, f: impl FnOnce() -> T) -> T {
         found.join("\n---\n")
     );
     out
+}
+
+/// [`watched`], and also fail if a block allocated during the watch is
+/// still live when it ends and holds the marker: plaintext leaked rather
+/// than freed, which the free-time scan cannot see. `f` returns nothing,
+/// so nothing it built is meant to outlive it.
+fn watched_for_leaks(what: &str, f: impl FnOnce()) {
+    // Held from the reset of `LIVE` to the last read of it, so no other
+    // watch can clear this one's records or turn `TRACKING` off under it.
+    let _gate = gate();
+    {
+        let mut live = LIVE.lock().unwrap();
+        live.len = 0;
+        live.overflowed = false;
+    }
+    TRACKING.store(true, Ordering::SeqCst);
+    // Stop recording whether `watched` returns or panics.
+    struct Stop;
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            TRACKING.store(false, Ordering::SeqCst);
+        }
+    }
+    let stop = Stop;
+    watched_in_gate(what, f);
+    drop(stop);
+    // Read under the lock and released before asserting, so a failing
+    // assertion (the negative control's, by design) does not poison
+    // `LIVE` for the watches that follow in the same process.
+    let (overflowed, leaked) = {
+        let live = LIVE.lock().unwrap();
+        let leaked: Vec<usize> = live.blocks[..live.len]
+            .iter()
+            // SAFETY: every recorded block is still allocated: a free
+            // removes its record while `TRACKING` is on, and it was on
+            // until `stop`.
+            .filter(|(ptr, size)| unsafe { holds_mark(*ptr as *const u8, *size) })
+            .map(|(_, size)| *size)
+            .collect();
+        (live.overflowed, leaked)
+    };
+    assert!(
+        !overflowed,
+        "{what}: more than {LIVE_SLOTS} blocks were live at once; raise LIVE_SLOTS"
+    );
+    assert!(
+        leaked.is_empty(),
+        "{what}: {} heap blocks allocated during the watch are still live with plaintext in them (sizes {leaked:?})",
+        leaked.len()
+    );
 }
 
 fn marked(tail: &str) -> String {
@@ -593,6 +716,170 @@ fn joined(parts: &[&str]) -> String {
 fn the_spy_sees_an_unwiped_free() {
     let text = marked("control");
     watched("control", || drop(text));
+}
+
+/// The leak half's negative control: a marked block allocated during the
+/// watch and never freed is seen by [`watched_for_leaks`], though the
+/// free-time scan alone passes it.
+#[test]
+#[should_panic(expected = "still live with plaintext in them")]
+fn the_spy_sees_a_leaked_block() {
+    let text = marked("control");
+    watched("control (leak, free-time scan only)", || {
+        std::mem::forget(text.clone())
+    });
+    watched_for_leaks("control (leak)", || std::mem::forget(text.clone()));
+}
+
+/// `OpaqueBlob<T>`: the owned source, the storage blob it is encoded into
+/// (which grows past its first allocation while it already holds the
+/// marker), the planned leaf, and on decrypt the opened buffer the blob
+/// is read from, all freed wiped, and none of them leaked rather than
+/// freed. The opened value is the caller's and is wiped by hand before the
+/// watch ends; a refusal of another shape, found before any field is
+/// built, leaves nothing to wipe.
+mod opaque_blob {
+    use super::*;
+
+    use serde::{Deserialize, Serialize};
+    use stack_encrypt::{Error, OpaqueBlob};
+    use zeroize::Zeroize;
+
+    #[derive(Serialize, Deserialize, Zeroize)]
+    struct Doc {
+        title: String,
+        notes: Vec<String>,
+        /// Written after the marked fields, so the blob's buffer regrows
+        /// while it holds them.
+        body: String,
+        n: u32,
+    }
+
+    fn doc() -> OpaqueBlob<Doc> {
+        OpaqueBlob::new(Doc {
+            title: marked("title"),
+            notes: vec![marked("note-1"), marked("note-2")],
+            body: "x".repeat(8 * 1024),
+            n: 7,
+        })
+    }
+
+    #[test]
+    fn an_opaque_blob_encrypted_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = doc();
+        watched_for_leaks("OpaqueBlob encrypt", || {
+            rt.block_on(async {
+                keyset
+                    .encrypt_with_context(source, "docs/body")
+                    .await
+                    .unwrap()
+            });
+        });
+    }
+
+    #[test]
+    fn an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(doc(), "docs/body")
+                .await
+                .unwrap()
+        });
+        watched_for_leaks("OpaqueBlob decrypt", || {
+            let mut opened = rt.block_on(async {
+                keyset
+                    .decrypt_with_context::<OpaqueBlob<Doc>>(sealed, "docs/body")
+                    .await
+                    .unwrap()
+            });
+            // The opened value is an ordinary owned value, holding the
+            // plaintext until the caller wipes it.
+            assert!(opened
+                .get()
+                .title
+                .as_bytes()
+                .windows(MARK.len())
+                .any(|w| w == MARK));
+            opened.zeroize();
+            drop(opened);
+        });
+    }
+
+    /// Refused before `Deserialize` builds a field: the first field of the
+    /// target does not read the blob's text, so nothing of the marked value
+    /// is built, and the opened buffer is wiped with the refusal.
+    #[test]
+    fn an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(doc(), "docs/body")
+                .await
+                .unwrap()
+        });
+        #[derive(Deserialize, Zeroize)]
+        #[allow(dead_code)]
+        struct Other {
+            title: u32,
+        }
+        watched_for_leaks("OpaqueBlob decrypt (mismatch)", || {
+            let result = rt.block_on(async {
+                keyset
+                    .decrypt_with_context::<OpaqueBlob<Other>>(sealed, "docs/body")
+                    .await
+            });
+            assert!(matches!(
+                result,
+                Err(Error::Blob(stack_encrypt::BlobError::Mismatch(_)))
+            ));
+        });
+    }
+
+    /// The limit the blob docs state, held as a negative control: a derived
+    /// `Deserialize` that built a `String` field and then refuses a later
+    /// field drops that `String` as an ordinary value, unwiped, because no
+    /// `T` was ever constructed to wipe. The opened buffer itself is wiped;
+    /// what leaks is serde's partial value. A type whose fields wipe on drop
+    /// closes it; this test documents that the library does not.
+    #[test]
+    #[should_panic(expected = "freed with plaintext in them")]
+    fn a_partial_decode_drops_the_fields_it_built_unwiped() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(doc(), "docs/body")
+                .await
+                .unwrap()
+        });
+        #[derive(Deserialize, Zeroize)]
+        #[allow(dead_code)]
+        struct Later {
+            title: String,
+            notes: Vec<String>,
+            body: u32,
+        }
+        watched("OpaqueBlob decrypt (partial)", || {
+            let result = rt.block_on(async {
+                keyset
+                    .decrypt_with_context::<OpaqueBlob<Later>>(sealed, "docs/body")
+                    .await
+            });
+            assert!(matches!(
+                result,
+                Err(Error::Blob(stack_encrypt::BlobError::Mismatch(_)))
+            ));
+        });
+    }
 }
 
 /// The JSON index: sealing a document under either root option, opening it

@@ -139,18 +139,21 @@ web-time = "1.1"
 zeroize = { version = "1.8.1", features = ["derive"] }
 # This is needed because lock_api 0.4.6 was breaking things and the branch forces the use of 0.4.12
 temp-env = { git = "https://github.com/cipherstash/temp-env", branch = "main" }
-vitaminc = { version = "0.8.0", features = ["random", "protected", "encrypt"] }
-vitaminc-aead = "0.8.0"
+vitaminc = { version = "0.8.1", features = ["random", "protected", "encrypt"] }
+vitaminc-aead = "0.8.1"
 # The transport frame and ciphertext codec every language binding carries
-# across its FFI boundary. Optional in stack-encrypt (the `dynamic` feature).
-vitaminc-aead-frame = "0.8.0"
-vitaminc-encrypt = "0.8.0"
-vitaminc-hmac = "0.8.0"
+# across its FFI boundary, and the storage profile (`storage`, feature
+# `serde`) a whole value is encoded with before it is sealed as one leaf
+# (`stack_encrypt::OpaqueBlob`). 0.8.1 is the first release with the storage
+# profile; the Go SDK writes and reads the same profile through `vcffi`.
+vitaminc-aead-frame = "0.8.1"
+vitaminc-encrypt = "0.8.1"
+vitaminc-hmac = "0.8.1"
 # Normalized equality terms (Unicode 16 NFC text, one integer encoding for
 # every width), which `vitaminc-prf`'s `normalize` feature derives over.
-vitaminc-normalize = "0.8.0"
+vitaminc-normalize = "0.8.1"
 # The text order key: the system ADR-0002's fold, pinned to Unicode 16,
 # which text ORE and OPE terms are derived over (ADR-0009).
-vitaminc-ore = "0.8.0"
-vitaminc-prf = { version = "0.8.0", features = ["normalize"] }
-vitaminc-protected = "0.8.0"
+vitaminc-ore = "0.8.1"
+vitaminc-prf = { version = "0.8.1", features = ["normalize"] }
+vitaminc-protected = "0.8.1"

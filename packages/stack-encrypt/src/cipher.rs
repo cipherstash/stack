@@ -399,6 +399,16 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Plan(#[from] crate::plan::PlanError),
+    /// An [`OpaqueBlob`](crate::OpaqueBlob) could not be written as a
+    /// storage blob, or an authenticated ciphertext did not hold one its
+    /// type reads. Transparent: the message, code and help are the
+    /// [`BlobError`](crate::BlobError)'s, one per class of refusal. On
+    /// decrypt it is raised only after the leaf authenticated, so it never
+    /// stands in for [`Aead`](Self::Aead): the ciphertext is genuine and
+    /// holds a blob of another version, shape or type.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Blob(#[from] crate::BlobError),
 }
 
 /// How many separator-delimited parts a descriptor has: what an error about
@@ -414,6 +424,7 @@ impl crate::ErrorPayload for Error {
             Self::Kms(error) => error.payload(),
             Self::Term(error) => error.payload(),
             Self::Plan(error) => error.payload(),
+            Self::Blob(error) => error.payload(),
             Self::KeyCountMismatch { expected, received } => payload([
                 ("expected", (*expected).into()),
                 ("received", (*received).into()),

@@ -80,6 +80,14 @@
       "language": "go",
       "lane": "fast",
       "package": "./encrypt/gensupport"
+    },
+    "opaque": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "opaque_blob"
     }
   },
   "requirements": [
@@ -98,6 +106,11 @@
           "TestCloseStopsTheCleanup",
           "TestUnreachableClientIsReleased",
           "TestClosedClientIsState"
+        ],
+        "opaque": [
+          "the_owned_source_is_wiped_before_await_or_discard",
+          "an_encoding_refusal_wipes_the_source_and_requests_no_key",
+          "only_a_zeroizing_result_is_wiped_on_drop"
         ]
       }
     },
@@ -122,7 +135,10 @@
     {
       "id": "lifecycle-partial-output-v1",
       "evidence": {
-        "heap": ["a_late_read_type_failure_leaves_no_plaintext_on_the_heap"],
+        "heap": [
+          "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap"
+        ],
         "contexts": ["shared_context_boundaries"],
         "go": [
           "TestContextBoundaries",
@@ -139,7 +155,10 @@
           "a_record_encrypted_from_a_value_frame_leaves_no_plaintext_on_the_heap",
           "a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap",
           "a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap",
-          "the_spy_sees_an_unwiped_free"
+          "the_spy_sees_an_unwiped_free",
+          "the_spy_sees_a_leaked_block",
+          "opaque_blob::an_opaque_blob_encrypted_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap"
         ],
         "guest-abi": [
           "buffers::tests::wipe_all_leaves_no_live_buffer",
@@ -193,6 +212,13 @@
           "TestRuntimeConformance",
           "TestReadConformance",
           "TestMismatchedPlanIsRefusedBeforeTheGuest"
+        ],
+        "opaque": [
+          "an_encoding_refusal_wipes_the_source_and_requests_no_key",
+          "the_owned_source_is_wiped_when_context_validation_fails",
+          "the_context_is_refused_before_the_value_is_encoded",
+          "authentication_comes_before_decoding",
+          "malformed_and_mismatched_blobs_are_refused_by_class_after_authentication"
         ]
       }
     },
@@ -232,6 +258,11 @@
       "id": "native-heap-observer-exclusions",
       "status": "limited-observation",
       "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs"
+    },
+    {
+      "id": "native-partial-decode-fields",
+      "status": "known-gap",
+      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::a_partial_decode_drops_the_fields_it_built_unwiped"
     },
     {
       "id": "caller-owned-host-values",
