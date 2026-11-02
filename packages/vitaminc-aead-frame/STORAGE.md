@@ -14,10 +14,11 @@ The words MUST, MUST NOT and MAY are used as in RFC 2119.
 A blob is the plaintext of a ciphertext that is kept. That asks more of a
 format than a compact encoding, and the profile is built for it:
 
-- **The plaintext is handled as a secret.** `to_vec` returns the blob
-  `Protected`. It grows its buffer into a fresh allocation and wipes the
-  old one, writes a `Display` value straight into the blob, keeps no copy
-  of a key, and wipes what it wrote if writing fails. The reader borrows
+- **The plaintext is handled as a secret.** `to_vec` returns the blob in
+  a `Buffer`, which is read through `risky_ref` and wiped when it is
+  dropped. The writer grows its buffer into a fresh allocation and wipes
+  the old one, writes a `Display` value straight into the blob, keeps no
+  copy of a key, and wipes what it wrote if writing fails. The reader borrows
   text and bytes from the blob rather than copying them. See
   [Memory and timing](#memory-and-timing).
 - **A refusal never repeats the plaintext.** Error messages are fixed text.
@@ -371,7 +372,7 @@ that, and never changes because the type did.
 
 ## The blob inside an outer envelope
 
-A blob is plaintext, and `to_vec` returns it `Protected`. The caller seals
+A blob is plaintext, and `to_vec` returns it in a `Buffer`. The caller seals
 it whole, header included, under an envelope of its own (Stack Encrypt's
 ciphertext). The header is therefore encrypted with the value: nothing
 about the blob, its version included, can be seen before decryption, and
@@ -392,10 +393,13 @@ choice, and needs nothing from this profile.
 
 The writer grows its buffer into a fresh allocation and wipes the old one,
 formats a `Display` value straight into the blob, keeps no copy of a key,
-and wipes everything if writing fails. The blob it returns is `Protected`,
-and wiped when dropped. The reader borrows text and bytes from the blob
-rather than copying them, and finds a repeated map key by comparing keys
-where they lie in the blob. The writer frees no heap block that still
+and wipes everything if writing fails. The wipes run when a `Buffer` is
+dropped, so under `panic = "unwind"` a panic still wipes a partly written
+blob, and under `panic = "abort"` nothing is wiped when the process aborts.
+The blob it returns is a `Buffer`: its bytes are read through `risky_ref`,
+and it is wiped when dropped. The reader borrows text and bytes from the
+blob rather than copying them, and finds a repeated map key by comparing
+keys where they lie in the blob. The writer frees no heap block that still
 holds the value, and a zeroize audit checked in LLVM IR and assembly that
 every wipe survives optimization.
 

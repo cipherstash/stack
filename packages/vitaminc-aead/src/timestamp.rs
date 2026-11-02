@@ -147,7 +147,7 @@ mod tests {
     use vitaminc_protected::Controlled;
 
     fn frame<P: Encrypt>(value: P) -> Vec<u8> {
-        to_frame(value).expect("frames").risky_ref().clone()
+        to_frame(value).expect("frames").risky_ref().to_vec()
     }
 
     fn leap() -> DateTime<Utc> {

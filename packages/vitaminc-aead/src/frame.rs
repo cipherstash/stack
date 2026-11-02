@@ -16,11 +16,11 @@
 //! [`PassthroughFrame`] is the owned frame a ciphertext carries for a
 //! passthrough subtree.
 
-use std::collections::HashSet;
 use std::ops::Range;
 
-use vitaminc_protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
-use zeroize::Zeroize;
+use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, TimingSafeEq};
+
+use __private::SeenKeys;
 
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{
@@ -161,6 +161,79 @@ impl<'a> Cursor<'a> {
     }
 }
 
+/// What `vitaminc-aead-frame` shares with this crate by path. Not an API:
+/// anything here may change in any release.
+#[doc(hidden)]
+pub mod __private {
+    use std::collections::HashSet;
+
+    /// How many keys an object may have before `SeenKeys` hashes them.
+    const FEW_KEYS: usize = 16;
+
+    /// The keys an object has given so far, to refuse a repeat.
+    ///
+    /// The keys are compared one by one while there are few: an object
+    /// rarely has more fields than a hash set's allocation and hashing would
+    /// pay for. Past sixteen they are hashed, so an object a host sends
+    /// with thousands of keys is still checked in linear time. The keys are
+    /// borrowed from the frame, so nothing is copied.
+    ///
+    /// Not an API: it is reachable only so `vitaminc-aead-frame`'s storage
+    /// reader can share this one copy, and it may change in any release.
+    #[derive(Default)]
+    pub struct SeenKeys<'a> {
+        few: [&'a str; FEW_KEYS],
+        len: usize,
+        many: Option<HashSet<&'a str>>,
+    }
+
+    impl<'a> SeenKeys<'a> {
+        /// Record `key`; whether it was new.
+        pub fn insert(&mut self, key: &'a str) -> bool {
+            if let Some(many) = &mut self.many {
+                return many.insert(key);
+            }
+            if self.few[..self.len].contains(&key) {
+                return false;
+            }
+            if self.len < FEW_KEYS {
+                self.few[self.len] = key;
+                self.len += 1;
+            } else {
+                let mut many: HashSet<&'a str> = self.few.iter().copied().collect();
+                many.insert(key);
+                self.many = Some(many);
+            }
+            true
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn seen_keys_find_a_repeat_before_and_after_they_spill_to_a_set() {
+            let names: Vec<String> = (0..40).map(|i| format!("k{i}")).collect();
+            let mut seen = SeenKeys::default();
+            for (i, name) in names.iter().enumerate() {
+                assert!(seen.insert(name), "key {i} is new");
+            }
+            assert_eq!(seen.len, FEW_KEYS, "the first keys stay inline");
+            assert!(seen.many.is_some(), "the rest spilled to a set");
+            assert!(!seen.insert(&names[0]), "an inline key repeats");
+            assert!(!seen.insert(&names[39]), "a spilled key repeats");
+            assert!(seen.insert("new"), "a fresh key is still new");
+
+            let mut few = SeenKeys::default();
+            assert!(few.insert("a"));
+            assert!(few.insert("b"));
+            assert!(!few.insert("a"), "a repeat is found without a set");
+            assert!(few.many.is_none());
+        }
+    }
+}
+
 /// Step over one value node, validating it.
 fn skip(c: &mut Cursor<'_>, depth: usize) -> Result<(), FrameError> {
     if depth > MAX_DEPTH {
@@ -176,7 +249,7 @@ fn skip(c: &mut Cursor<'_>, depth: usize) -> Result<(), FrameError> {
         OBJECT => {
             c.byte()?;
             let count = c.count()?;
-            let mut seen = HashSet::new();
+            let mut seen = SeenKeys::default();
             for _ in 0..count {
                 let key = c.key()?;
                 if !seen.insert(key) {
@@ -322,26 +395,24 @@ impl Error for FrameWriteError {
     }
 }
 
-/// Write any source as a frame. The buffer is `Protected`, since a frame
-/// of plaintext is plaintext, and it grows without leaving copies behind.
+/// Write any source as a frame. The result is a [`Buffer`], since a frame
+/// of plaintext is plaintext: it grows without leaving copies behind, and
+/// is wiped when it is dropped.
 ///
 /// The result is checked with [`Frame::parse`] before it is returned, so a
 /// source that opens a container and never ends it is refused here, not by
 /// every later reader of the frame.
-pub fn to_frame<P: Encrypt>(p: P) -> Result<Protected<Vec<u8>>, FrameWriteError> {
+pub fn to_frame<P: Encrypt>(p: P) -> Result<Buffer, FrameWriteError> {
     to_frame_at(p, 0)
 }
 
 /// [`to_frame`] for a subtree whose root sits `depth` levels below the top
 /// of a document, so [`MAX_DEPTH`] counts from the top, as the transport
 /// decoder counts it.
-pub(crate) fn to_frame_at<P: Encrypt>(
-    p: P,
-    depth: usize,
-) -> Result<Protected<Vec<u8>>, FrameWriteError> {
-    let mut out = Protected::new(Vec::new());
+pub(crate) fn to_frame_at<P: Encrypt>(p: P, depth: usize) -> Result<Buffer, FrameWriteError> {
+    let mut out = Buffer::new();
     p.visit(FrameWriter {
-        out: out.risky_inner_mut(),
+        out: &mut out,
         depth,
     })?;
     Frame::parse(out.risky_ref()).map_err(|_| FrameWriteError::Unfinished)?;
@@ -356,21 +427,22 @@ pub(crate) fn to_frame_at<P: Encrypt>(
 /// nor wipes that suffix. Prefer [`to_frame`] for an owned protected result
 /// returned only after successful writing and validation.
 pub struct FrameWriter<'o> {
-    out: &'o mut Vec<u8>,
+    out: &'o mut Buffer,
     depth: usize,
 }
 
 impl<'o> FrameWriter<'o> {
     /// Append a root-level node to `out`, preserving any existing prefix.
-    /// The caller owns the buffer and its cleanup, including after errors.
-    pub fn new(out: &'o mut Vec<u8>) -> Self {
+    /// The caller owns the buffer, which wipes its bytes when dropped,
+    /// including after an error.
+    pub fn new(out: &'o mut Buffer) -> Self {
         Self { out, depth: 0 }
     }
 
     /// A writer for a node that sits `depth` levels below the top of a
     /// document, so [`MAX_DEPTH`] counts from the top: for a subtree
     /// written to a buffer of its own and copied into the document later.
-    pub fn at_depth(out: &'o mut Vec<u8>, depth: usize) -> Self {
+    pub fn at_depth(out: &'o mut Buffer, depth: usize) -> Self {
         Self { out, depth }
     }
 
@@ -380,18 +452,17 @@ impl<'o> FrameWriter<'o> {
         self.depth
     }
 
-    fn node(self, tag: u8) -> Result<&'o mut Vec<u8>, FrameWriteError> {
+    fn node(self, tag: u8) -> Result<&'o mut Buffer, FrameWriteError> {
         if self.depth > MAX_DEPTH {
             return Err(FrameWriteError::TooDeep);
         }
-        reserve(self.out, 1);
         self.out.push(tag);
         Ok(self.out)
     }
 
     fn container(self, tag: u8) -> Result<Count<'o>, FrameWriteError> {
         let depth = self.depth;
-        reserve(self.out, 5);
+        self.out.reserve(5);
         let out = self.node(tag)?;
         let at = out.len();
         out.extend_from_slice(&[0; 4]);
@@ -405,27 +476,7 @@ impl<'o> FrameWriter<'o> {
     }
 }
 
-/// Make room for `additional` more bytes. A `Vec` that regrows frees its
-/// old allocation without wiping it, and a frame is plaintext, so grow into
-/// a fresh allocation and wipe the old one instead.
-pub(crate) fn reserve(out: &mut Vec<u8>, additional: usize) {
-    if out.capacity() - out.len() >= additional {
-        return;
-    }
-    // Doubling the length, not the capacity, still amortises a full
-    // buffer's growth, and never balloons a buffer that had room.
-    let capacity = out
-        .len()
-        .saturating_add(additional)
-        .max(out.len().saturating_mul(2))
-        .max(64);
-    let mut grown = Vec::with_capacity(capacity);
-    grown.extend_from_slice(out);
-    out.zeroize();
-    *out = grown;
-}
-
-fn write_len(out: &mut Vec<u8>, len: usize) -> Result<(), FrameWriteError> {
+fn write_len(out: &mut Buffer, len: usize) -> Result<(), FrameWriteError> {
     let len = u32::try_from(len).map_err(|_| FrameWriteError::TooLong)?;
     out.extend_from_slice(&len.to_le_bytes());
     Ok(())
@@ -433,7 +484,7 @@ fn write_len(out: &mut Vec<u8>, len: usize) -> Result<(), FrameWriteError> {
 
 /// A container whose count is written once the children are known.
 struct Count<'o> {
-    out: &'o mut Vec<u8>,
+    out: &'o mut Buffer,
     depth: usize,
     at: usize,
     n: usize,
@@ -466,7 +517,7 @@ impl Count<'_> {
             return Err(FrameWriteError::CountMismatch);
         }
         let n = u32::try_from(self.n).map_err(|_| FrameWriteError::TooLong)?;
-        self.out[self.at..self.at + 4].copy_from_slice(&n.to_le_bytes());
+        self.out.overwrite(self.at, &n.to_le_bytes());
         Ok(())
     }
 }
@@ -481,7 +532,7 @@ impl<'o> Sink for FrameWriter<'o> {
         if self.depth > MAX_DEPTH {
             return Err(FrameWriteError::TooDeep);
         }
-        reserve(self.out, leaf::max_len(&v));
+        self.out.reserve(leaf::max_len(&v));
         leaf::write(ty, v, Form::Frame, self.out).map_err(|e| match e {
             ScalarError::Invalid => FrameWriteError::Invalid,
             ScalarError::TooLong | ScalarError::Malformed => FrameWriteError::TooLong,
@@ -572,7 +623,7 @@ impl MapSink for FrameMap<'_> {
 
     fn entry(&mut self, key: &str) -> Result<FrameWriter<'_>, FrameWriteError> {
         self.count.settle()?;
-        reserve(self.count.out, key.len().saturating_add(4));
+        self.count.out.reserve(key.len().saturating_add(4));
         write_len(self.count.out, key.len())?;
         let start = self.count.out.len();
         self.count.out.extend_from_slice(key.as_bytes());
@@ -583,7 +634,7 @@ impl MapSink for FrameMap<'_> {
     fn end(mut self) -> Result<(), FrameWriteError> {
         // The frame only grows while the map is written, so every range
         // still holds its key.
-        let out: &[u8] = self.count.out;
+        let out: &[u8] = self.count.out.risky_ref();
         self.keys
             .sort_unstable_by(|a, b| out[a.clone()].cmp(&out[b.clone()]));
         if self
@@ -605,7 +656,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn frame_of<P: Encrypt>(p: P) -> Vec<u8> {
-        to_frame(p).expect("frames").risky_ref().clone()
+        to_frame(p).expect("frames").risky_ref().to_vec()
     }
 
     #[test]
@@ -682,25 +733,6 @@ mod tests {
             crate::plan::<_, (), _>(Doc, "ctx"),
             Err(crate::EncryptError::Shape(_))
         ));
-    }
-
-    #[test]
-    fn reserve_moves_to_a_bigger_buffer_and_keeps_the_bytes() {
-        let mut out = vec![1u8, 2, 3];
-        out.shrink_to_fit();
-        reserve(&mut out, 10);
-        assert_eq!(out, [1, 2, 3]);
-        assert!(out.capacity() >= 13);
-        let before = out.as_ptr();
-        reserve(&mut out, 10);
-        assert_eq!(out.as_ptr(), before, "enough room already: no move");
-
-        // A full buffer grows, even by one byte.
-        let mut full = vec![7u8; 100];
-        full.shrink_to_fit();
-        reserve(&mut full, 1);
-        assert!(full.capacity() >= 101);
-        assert_eq!(full, [7u8; 100]);
     }
 
     #[test]
@@ -948,14 +980,14 @@ mod tests {
 
     #[test]
     fn a_writer_at_depth_counts_from_the_top() {
-        let mut out = Vec::new();
+        let mut out = Buffer::new();
         let writer = FrameWriter::at_depth(&mut out, 7);
         assert_eq!(writer.depth(), 7);
         let mut seq = writer.seq(Some(1)).expect("seq");
         assert_eq!(seq.element().expect("element").depth(), 8);
 
         // A scalar fits at the bound, and not below it.
-        let mut out = Vec::new();
+        let mut out = Buffer::new();
         assert!(FrameWriter::at_depth(&mut out, MAX_DEPTH)
             .scalar(None, Physical::Bool(true))
             .is_ok());

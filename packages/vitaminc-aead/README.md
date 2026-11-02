@@ -174,11 +174,13 @@ let ciphertext = encrypt(vec![Some(1u32), None], &cipher, "ctx")?;
 let back: Vec<Option<u32>> = decrypt(&cipher, ciphertext, "ctx")?;
 assert_eq!(back, [Some(1), None]);
 
-// The same ciphertext, written as a frame instead of a Rust type.
+// The same ciphertext, written as a frame instead of a Rust type. The
+// frame is plaintext, so it goes into a `Buffer`, which is wiped when it
+// is dropped and leaves no copy behind as it grows.
 let ciphertext = encrypt(vec![Some(1u32), None], &cipher, "ctx")?;
-let mut frame = Vec::new();
+let mut frame = vitaminc_protected::Buffer::new();
 decrypt_into(&cipher, ciphertext, "ctx", FrameWriter::new(&mut frame))?;
-assert!(Frame::parse(&frame).is_ok());
+assert!(Frame::parse(vitaminc_protected::Controlled::risky_ref(&frame)).is_ok());
 
 // A target refuses a shape it cannot build, before anything is trusted.
 let ciphertext = encrypt("text", &cipher, "ctx")?;

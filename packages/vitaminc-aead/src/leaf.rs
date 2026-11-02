@@ -41,6 +41,7 @@ use crate::plaintext::kinds::{
     FixedType, Float, Int, Logical, Physical, TimeUnit, Width, MAX_DECIMAL_SCALE,
 };
 use crate::tags;
+use vitaminc_protected::Buffer;
 
 /// Which wire form a scalar is in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,13 +85,82 @@ const DECIMAL_SCALE_MASK: u32 = 0xFF << DECIMAL_SCALE_SHIFT;
 /// pins it to the two masks.
 const DECIMAL_RESERVED: u32 = 0x7F00_FFFF;
 
+/// Where [`write()`] puts a scalar's bytes: a `Vec<u8>` for a sealed leaf's
+/// plaintext, sized up front with [`max_len`] so it never grows, or a
+/// [`Buffer`] for a frame, which grows without leaving copies behind.
+///
+/// It is sealed: a scalar is written only into these two, so the trait is
+/// not a way to add a third, and can change without breaking anyone.
+pub trait ByteSink: sealed::Sealed {
+    /// Append one byte.
+    fn push(&mut self, byte: u8);
+    /// Append `bytes`.
+    fn extend_from_slice(&mut self, bytes: &[u8]);
+}
+
+mod sealed {
+    use vitaminc_protected::Buffer;
+
+    /// Implemented only here, so [`ByteSink`](super::ByteSink) cannot be
+    /// implemented outside this crate.
+    pub trait Sealed {}
+
+    impl Sealed for Vec<u8> {}
+    impl Sealed for Buffer {}
+}
+
+/// A `Vec<u8>` is a sink for one sealed leaf's plaintext. Size it with
+/// [`max_len`] before writing, so it never grows, and hold it in a wrapper
+/// that wipes it, such as
+/// [`Protected`](vitaminc_protected::Protected). A `Vec` that grows frees
+/// its old allocation without wiping it, and a `Vec` on its own is not
+/// wiped when it is dropped. A debug build checks that every write fits in
+/// the room the `Vec` has left.
+impl ByteSink for Vec<u8> {
+    fn push(&mut self, byte: u8) {
+        debug_assert!(
+            self.capacity() > self.len(),
+            "a Vec sink must be sized with max_len before it is written"
+        );
+        Vec::push(self, byte);
+    }
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        debug_assert!(
+            self.capacity() - self.len() >= bytes.len(),
+            "a Vec sink must be sized with max_len before it is written"
+        );
+        Vec::extend_from_slice(self, bytes);
+    }
+}
+
+impl ByteSink for Buffer {
+    fn push(&mut self, byte: u8) {
+        Buffer::push(self, byte);
+    }
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        Buffer::extend_from_slice(self, bytes);
+    }
+}
+
 /// Write one scalar in `form` onto `out`. Fails if the value is not valid
 /// for its logical type, or (in a frame) too long.
-pub fn write(
+///
+/// Compiled once for each `O` and called, never inlined: the frame writers
+/// that call it for every scalar measured 10% to 15% slower with its body
+/// inlined into them than with a call.
+///
+/// # Panics
+///
+/// In a debug build, panics if `out` is a `Vec<u8>` without room for every
+/// byte the scalar takes. Size it with [`max_len`] first. A release build
+/// does not check, and lets the `Vec` grow, which frees its old allocation
+/// without wiping it. A [`Buffer`] needs no sizing: it wipes as it grows.
+#[inline(never)]
+pub fn write<O: ByteSink>(
     ty: Option<Logical>,
     v: Physical<'_>,
     form: Form,
-    out: &mut Vec<u8>,
+    out: &mut O,
 ) -> Result<(), ScalarError> {
     // Check everything that can fail before writing anything, so an error
     // never leaves a dangling tag in `out`.
@@ -157,17 +227,29 @@ pub fn write(
 /// A date, 11,017 days after 1970-01-01, under today's `DATE` tag. The
 /// payload is chrono's day count from the common era, little-endian.
 ///
+/// The plaintext goes into a `Vec` sized with [`max_len`], so it never
+/// grows and leaves a copy behind, held in a `Protected` so it is wiped
+/// when dropped.
+///
 /// ```
-/// use vitaminc_aead::leaf::{read_leaf, write_leaf, ScalarError};
+/// use vitaminc_aead::leaf::{max_len, read_leaf, write_leaf, ScalarError};
 /// use vitaminc_aead::plaintext::{Int, Logical, Physical};
+/// use vitaminc_protected::{Controlled, Protected};
 ///
 /// let date = (Some(Logical::Date), Physical::Int(Int::I32(11_017)));
-/// let mut out = Vec::new();
-/// write_leaf(date.0, date.1, &mut out)?;
-/// assert_eq!(out, [0x12, 0x44, 0x24, 0x0B, 0x00]);
-/// assert_eq!(read_leaf(&out)?, date);
+/// let mut out = Protected::new(Vec::with_capacity(max_len(&date.1)));
+/// write_leaf(date.0, date.1, out.risky_inner_mut())?;
+/// assert_eq!(out.risky_ref(), &[0x12, 0x44, 0x24, 0x0B, 0x00]);
+/// assert_eq!(read_leaf(out.risky_ref())?, date);
 /// # Ok::<(), ScalarError>(())
 /// ```
+///
+/// # Panics
+///
+/// In a debug build, panics if `out` has no room for every byte the
+/// plaintext takes. Size it with [`max_len`] first. A release build does
+/// not check, and lets the `Vec` grow, which frees its old allocation
+/// without wiping it.
 pub fn write_leaf(
     ty: Option<Logical>,
     v: Physical<'_>,
@@ -186,15 +268,18 @@ pub fn write_leaf(
 /// A null date is as long as a date.
 ///
 /// ```
-/// use vitaminc_aead::leaf::{read_leaf_item, write_typed_null, Item, ScalarError};
+/// use vitaminc_aead::leaf::{
+///     read_leaf_item, typed_null_len, write_typed_null, Item, ScalarError,
+/// };
 /// use vitaminc_aead::plaintext::{FixedType, Logical, Width};
 /// use vitaminc_aead::tags;
+/// use vitaminc_protected::{Controlled, Protected};
 ///
 /// let date = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
-/// let mut out = Vec::new();
-/// write_typed_null(date, &mut out);
-/// assert_eq!(out, [tags::TYPED_NULL, tags::DATE, 0, 0, 0]);
-/// assert_eq!(read_leaf_item(&out)?, Item::TypedNull(date));
+/// let mut out = Protected::new(Vec::with_capacity(typed_null_len(date)));
+/// write_typed_null(date, out.risky_inner_mut());
+/// assert_eq!(out.risky_ref(), &[tags::TYPED_NULL, tags::DATE, 0, 0, 0]);
+/// assert_eq!(read_leaf_item(out.risky_ref())?, Item::TypedNull(date));
 /// # Ok::<(), ScalarError>(())
 /// ```
 pub fn write_typed_null(ty: FixedType, out: &mut Vec<u8>) {
@@ -291,7 +376,11 @@ fn length_prefix(form: Form, len: usize) -> Result<Option<u32>, ScalarError> {
     }
 }
 
-fn write_physical(v: Physical<'_>, form: Form, out: &mut Vec<u8>) -> Result<(), ScalarError> {
+fn write_physical<O: ByteSink>(
+    v: Physical<'_>,
+    form: Form,
+    out: &mut O,
+) -> Result<(), ScalarError> {
     let mut variable = |tag, bytes: &[u8]| {
         out.push(tag);
         if let Some(len) = length_prefix(form, bytes.len())? {
@@ -319,7 +408,7 @@ fn write_physical(v: Physical<'_>, form: Form, out: &mut Vec<u8>) -> Result<(), 
     Ok(())
 }
 
-fn write_int(i: Int, out: &mut Vec<u8>) {
+fn write_int<O: ByteSink>(i: Int, out: &mut O) {
     macro_rules! le {
         ($tag:ident, $v:expr) => {{
             out.push(tags::$tag);
@@ -366,12 +455,13 @@ pub enum Item<'a> {
 /// use vitaminc_aead::leaf::{read, write, Form, ScalarError};
 /// use vitaminc_aead::plaintext::Physical;
 /// use vitaminc_aead::tags;
+/// use vitaminc_protected::{Buffer, Controlled};
 ///
-/// let mut frame = Vec::new();
+/// let mut frame = Buffer::new();
 /// write(None, Physical::Text("hi"), Form::Frame, &mut frame)?;
 /// let written = frame.len();
 /// frame.push(tags::NULL); // the next node
-/// let ((ty, value), used) = read(&frame, Form::Frame)?;
+/// let ((ty, value), used) = read(frame.risky_ref(), Form::Frame)?;
 /// assert_eq!((ty, value, used), (None, Physical::Text("hi"), written));
 /// # Ok::<(), ScalarError>(())
 /// ```
@@ -637,21 +727,42 @@ mod tests {
             Physical::Float(Float::F64(1.5)),
         ] {
             for form in [Form::Leaf, Form::Frame] {
-                let mut out = Vec::new();
+                // A debug build checks each write against the room, so
+                // this also checks that no write passes `max_len`.
+                let mut out = Vec::with_capacity(max_len(&v));
                 write(ty, v, form, &mut out).expect("writes");
                 assert!(out.len() <= max_len(&v), "{v:?}");
             }
         }
     }
 
+    // A `Vec` that grows frees its old allocation unwiped, so a debug
+    // build refuses to write past the room it was sized with. These pin
+    // both checks, so neither can be removed unnoticed.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a Vec sink must be sized with max_len")]
+    fn a_vec_sink_with_no_room_for_a_byte_panics_in_a_debug_build() {
+        let _ = write(None, Physical::Null, Form::Frame, &mut Vec::new());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a Vec sink must be sized with max_len")]
+    fn a_vec_sink_with_no_room_for_a_slice_panics_in_a_debug_build() {
+        // Room for the tag, which `push` writes, but not for the text.
+        let mut out = Vec::with_capacity(1);
+        let _ = write_leaf(None, Physical::Text("text"), &mut out);
+    }
+
     fn leaf(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(max_len(&v));
         write_leaf(ty, v, &mut out).expect("writes");
         out
     }
 
     fn frame(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(max_len(&v));
         write(ty, v, Form::Frame, &mut out).expect("writes");
         out
     }
@@ -915,7 +1026,7 @@ mod tests {
             // A leaf has no prefix, so no limit.
             assert_eq!(length_prefix(Form::Leaf, u32::MAX as usize + 1), Ok(None));
         }
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(max_len(&Physical::Text("")));
         assert!(write(None, Physical::Text(""), Form::Frame, &mut out).is_ok());
         assert_eq!(out, [0x0A, 0, 0, 0, 0]);
     }
@@ -965,7 +1076,7 @@ mod tests {
             }
             let ((ty, value), used) = read(&bytes, Form::Frame).expect(name);
             assert_eq!(used, bytes.len(), "{name}");
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(max_len(&value));
             write(ty, value, Form::Frame, &mut out).expect(name);
             assert_eq!(out, bytes, "{name}");
             checked += 1;
@@ -984,8 +1095,12 @@ mod tests {
             assert_eq!(used, bytes.len(), "{name}");
             let mut out = Vec::new();
             match item {
-                Item::Scalar(ty, value) => write(ty, value, Form::Frame, &mut out).expect(name),
+                Item::Scalar(ty, value) => {
+                    out.reserve(max_len(&value));
+                    write(ty, value, Form::Frame, &mut out).expect(name);
+                }
                 Item::TypedNull(ty) => {
+                    out.reserve(max_len(&Physical::Null));
                     write(None, Physical::Null, Form::Frame, &mut out).expect(name);
                     let mut typed = Vec::new();
                     write_typed_null(ty, &mut typed);
@@ -1088,7 +1203,7 @@ mod tests {
             .all(|form| match read(bytes, form) {
                 Err(_) => true,
                 Ok(((ty, v), used)) => {
-                    let mut out = Vec::new();
+                    let mut out = Vec::with_capacity(max_len(&v));
                     write(ty, v, form, &mut out).is_ok()
                         && (out == bytes[..used] || is_negative_zero_decimal(&bytes[..used]))
                 }
@@ -1132,7 +1247,7 @@ mod tests {
         ];
         cases.into_iter().all(|(ty, int)| {
             [Form::Frame, Form::Leaf].into_iter().all(|form| {
-                let mut bytes = Vec::new();
+                let mut bytes = Vec::with_capacity(max_len(&Physical::Int(int)));
                 write(Some(ty), Physical::Int(int), form, &mut bytes).expect("writes");
                 let read_back = read(&bytes, form).is_ok_and(|((t, v), used)| {
                     t == Some(ty)
@@ -1415,7 +1530,7 @@ mod tests {
                 let Some(fixed) = FixedType::new(ty, width) else {
                     continue;
                 };
-                let mut out = Vec::new();
+                let mut out = Vec::with_capacity(max_len(&width.zero()));
                 assert!(
                     write_leaf(fixed.logical(), width.zero(), &mut out).is_ok(),
                     "{fixed:?}"

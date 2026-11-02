@@ -164,7 +164,7 @@ fn open(fixture: &Fixture, vector: &Vector, aad: &[u8]) -> Opened {
         node(vector),
         Context::from_encoded(aad),
     )
-    .map(|frame| frame.risky_ref().clone())
+    .map(|frame| frame.risky_ref().to_vec())
 }
 
 fn opens_into_its_frame(fixture: &Fixture) {

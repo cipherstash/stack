@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use vitaminc_aead::plaintext::{Int, Logical, MapSink, Physical, Raw, Sink};
 use vitaminc_aead::{Encrypt, FrameWriter};
 use vitaminc_aead_frame::serde::{self as transport, from_slice, Error, PathSegment};
-use vitaminc_protected::Controlled;
+use vitaminc_protected::{Buffer, Controlled};
 
-/// Write `value`, and take the frame out of its `Protected`.
+/// Write `value`, and take the frame out of its `Buffer`.
 fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
     transport::to_vec(value).map(Controlled::risky_unwrap)
 }
@@ -122,7 +122,7 @@ fn enums_are_externally_tagged() {
     }
     // An object of one entry naming a unit variant, with a null payload,
     // reads as the unit variant too.
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(1)).expect("map");
         map.entry("eq")
@@ -131,7 +131,10 @@ fn enums_are_externally_tagged() {
             .expect("null");
         map.end().expect("end");
     }
-    assert_eq!(from_slice::<Index>(&bytes).expect("reads"), Index::Eq);
+    assert_eq!(
+        from_slice::<Index>(bytes.risky_ref()).expect("reads"),
+        Index::Eq
+    );
 }
 
 /// Every scalar kind serde has round trips at its own width.
@@ -404,7 +407,7 @@ fn a_logical_scalar_and_a_passthrough_are_refused() {
     let error = from_slice::<Seen>(date.risky_ref_for_test()).expect_err("refused");
     assert!(error.message().contains("logical type"), "{error}");
 
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(1)).expect("map");
         map.entry("p")
@@ -413,7 +416,7 @@ fn a_logical_scalar_and_a_passthrough_are_refused() {
             .expect("passthrough");
         map.end().expect("end");
     }
-    let error = from_slice::<BTreeMap<String, Seen>>(&bytes).expect_err("refused");
+    let error = from_slice::<BTreeMap<String, Seen>>(bytes.risky_ref()).expect_err("refused");
     assert!(error.message().contains("passthrough"), "{error}");
     // A map's key is data, so the entry is placed by position only.
     assert_eq!(error.path(), [PathSegment::Entry(0)]);
@@ -421,7 +424,7 @@ fn a_logical_scalar_and_a_passthrough_are_refused() {
     // Even a field nobody reads: an ignored key is skipped, not refused.
     #[derive(Deserialize)]
     struct Nothing {}
-    from_slice::<Nothing>(&bytes).expect("an ignored passthrough is skipped");
+    from_slice::<Nothing>(bytes.risky_ref()).expect("an ignored passthrough is skipped");
 }
 
 #[test]
@@ -439,7 +442,7 @@ fn reads_a_frame_a_sink_wrote() {
         name: String,
         age: u32,
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
         "alice"
@@ -449,7 +452,7 @@ fn reads_a_frame_a_sink_wrote() {
         map.end().expect("end");
     }
     assert_eq!(
-        from_slice::<User>(&bytes).expect("reads"),
+        from_slice::<User>(bytes.risky_ref()).expect("reads"),
         User {
             name: "alice".into(),
             age: 34
@@ -462,7 +465,7 @@ trait RiskyRefForTest {
     fn risky_ref_for_test(&self) -> &[u8];
 }
 
-impl RiskyRefForTest for vitaminc_protected::Protected<Vec<u8>> {
+impl RiskyRefForTest for Buffer {
     fn risky_ref_for_test(&self) -> &[u8] {
         use vitaminc_protected::Controlled;
         self.risky_ref()
@@ -697,7 +700,7 @@ fn a_unit_variant_reads_its_null_payload() {
         Eq,
         Ore,
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut out = FrameWriter::new(&mut bytes).seq(Some(2)).expect("seq");
         {
@@ -717,7 +720,7 @@ fn a_unit_variant_reads_its_null_payload() {
         vitaminc_aead::plaintext::SeqSink::end(out).expect("end");
     }
     assert_eq!(
-        from_slice::<Vec<Index>>(&bytes).expect("reads"),
+        from_slice::<Vec<Index>>(bytes.risky_ref()).expect("reads"),
         [Index::Eq, Index::Ore]
     );
 
@@ -1080,10 +1083,10 @@ fn a_types_own_message_is_never_printed() {
     );
 }
 
-/// A tuple or struct variant writes each part to a buffer of its own, and
-/// still counts its depth from the top of the document: a value nested too
-/// deep is refused where the limit is crossed, not after the whole value
-/// has been descended.
+/// A tuple or struct variant's parts are written in place, under the
+/// variant's level, and count their depth from the top of the document: a
+/// value nested too deep is refused where the limit is crossed, not after
+/// the whole value has been descended.
 #[test]
 fn a_variant_part_counts_its_depth_from_the_top() {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -1157,7 +1160,7 @@ fn a_key_only_a_host_chose_is_placed_by_position() {
 
     // A passthrough under a flattened key fails while serde buffers the
     // entry, through this format: the entry is placed by position.
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
         map.entry("known")
@@ -1170,7 +1173,7 @@ fn a_key_only_a_host_chose_is_placed_by_position() {
             .expect("passthrough");
         map.end().expect("end");
     }
-    let error = from_slice::<Flattened>(&bytes).expect_err("refused");
+    let error = from_slice::<Flattened>(bytes.risky_ref()).expect_err("refused");
     assert_eq!(error.path(), [PathSegment::Entry(1)]);
     assert!(!format!("{error} {error:?}").contains("secret_looking_key"));
 
@@ -1220,7 +1223,7 @@ fn undefined_reads_as_null() {
         context: Option<String>,
         unit: (),
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
         map.entry("context")
@@ -1234,7 +1237,7 @@ fn undefined_reads_as_null() {
         map.end().expect("end");
     }
     assert_eq!(
-        from_slice::<Options>(&bytes).expect("reads"),
+        from_slice::<Options>(bytes.risky_ref()).expect("reads"),
         Options {
             context: None,
             unit: ()
@@ -1400,6 +1403,44 @@ fn a_struct_or_map_reads_only_an_object() {
     assert_eq!((read.x, read.y), (1, 2));
 }
 
+/// A null, a boolean or a float where a string, bytes or an object belongs
+/// is refused, and the error names the kind that was there.
+#[test]
+fn a_scalar_of_the_wrong_kind_is_refused_by_its_kind() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Point {
+        x: u8,
+    }
+    let cases = [
+        (to_vec(&()).expect("writes"), "null"),
+        (to_vec(&false).expect("writes"), "a boolean"),
+        (to_vec(&true).expect("writes"), "a boolean"),
+        (to_vec(&1.5f32).expect("writes"), "a float"),
+        (to_vec(&1.5f64).expect("writes"), "a float"),
+    ];
+    for (frame, kind) in cases {
+        let error = from_slice::<String>(&frame).expect_err("refused");
+        assert_eq!(
+            error.message(),
+            format!("expected a string, found {kind}"),
+            "a string reads only text"
+        );
+        let error = from_slice::<serde_bytes::ByteBuf>(&frame).expect_err("refused");
+        assert_eq!(
+            error.message(),
+            format!("expected byte array, found {kind}"),
+            "bytes read only bytes"
+        );
+        let error = from_slice::<Point>(&frame).expect_err("refused");
+        assert_eq!(
+            error.message(),
+            format!("expected struct Point, found {kind}"),
+            "a struct reads only an object"
+        );
+    }
+}
+
 /// Text and bytes are kept apart: a string reads only text, and bytes read
 /// only bytes, though serde's own visitors would take either.
 #[test]
@@ -1437,7 +1478,7 @@ fn a_string_reads_only_text_and_bytes_only_bytes() {
     assert!(error.message().contains("logical type"), "{error}");
     let error = from_slice::<BTreeMap<String, u8>>(date.risky_ref_for_test()).expect_err("refused");
     assert!(error.message().contains("logical type"), "{error}");
-    let mut passthrough = Vec::new();
+    let mut passthrough = Buffer::new();
     {
         let mut map = FrameWriter::new(&mut passthrough)
             .map(Some(1))
@@ -1448,10 +1489,11 @@ fn a_string_reads_only_text_and_bytes_only_bytes() {
             .expect("passthrough");
         map.end().expect("end");
     }
-    let error = from_slice::<BTreeMap<String, String>>(&passthrough).expect_err("refused");
-    assert!(error.message().contains("passthrough"), "{error}");
     let error =
-        from_slice::<BTreeMap<String, serde_bytes::ByteBuf>>(&passthrough).expect_err("refused");
+        from_slice::<BTreeMap<String, String>>(passthrough.risky_ref()).expect_err("refused");
+    assert!(error.message().contains("passthrough"), "{error}");
+    let error = from_slice::<BTreeMap<String, serde_bytes::ByteBuf>>(passthrough.risky_ref())
+        .expect_err("refused");
     assert!(error.message().contains("passthrough"), "{error}");
 }
 
@@ -1561,4 +1603,52 @@ fn writing_a_repeated_key_or_field_is_refused_without_naming_it() {
             "a repeated {what} is not named: {text}"
         );
     }
+}
+
+/// The transport finds a repeated key by comparing the keys' bytes where
+/// they lie in the frame, so every way of writing a key must give the same
+/// bytes for the same text. A `&str`, a `char` and a `Display` key take
+/// different paths there.
+#[test]
+fn a_key_repeated_in_another_form_is_refused_and_distinct_keys_are_not() {
+    use serde::ser::SerializeMap;
+
+    /// A map of the given keys, each written as its own form, in order.
+    struct Keys(Vec<Key>);
+    enum Key {
+        Str(&'static str),
+        Char(char),
+        Display(&'static str),
+    }
+    impl Serialize for Keys {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(Some(self.0.len()))?;
+            for (value, key) in self.0.iter().enumerate() {
+                match key {
+                    Key::Str(text) => map.serialize_entry(text, &value)?,
+                    Key::Char(c) => map.serialize_entry(c, &value)?,
+                    Key::Display(text) => map.serialize_entry(&format_args!("{text}"), &value)?,
+                }
+            }
+            map.end()
+        }
+    }
+
+    for (what, keys) in [
+        ("a str and a Display", [Key::Str("a"), Key::Display("a")]),
+        ("a char and a str", [Key::Char('a'), Key::Str("a")]),
+        ("a Display and a char", [Key::Display("a"), Key::Char('a')]),
+    ] {
+        let error = to_vec(&Keys(keys.into())).expect_err(what);
+        assert_eq!(error.message(), "duplicate key", "{what} are one key");
+    }
+
+    to_vec(&Keys(vec![Key::Str("a"), Key::Str("ab")])).expect("a key and its prefix are two keys");
+    to_vec(&Keys(vec![Key::Char('a'), Key::Display("ab")]))
+        .expect("a key and its prefix are two keys, in any form");
+
+    // A key repeated only across two maps, one inside the other, is two
+    // keys: each map checks its own.
+    let nested = BTreeMap::from([("a", BTreeMap::from([("a", 1u8)]))]);
+    to_vec(&nested).expect("a key in a nested map is its own");
 }

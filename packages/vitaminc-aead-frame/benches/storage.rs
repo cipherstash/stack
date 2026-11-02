@@ -10,10 +10,9 @@
 //! of the bytes each format writes, so the rates compare work per byte and
 //! the times compare work per value.
 //!
-//! A storage write reads the blob back before it returns it, to find a
-//! repeated key as a reader would. A write and both `to_vec`s wipe their
-//! buffers as they grow and when they are dropped. Both costs are part of
-//! what is measured. MessagePack, Borsh and JSON wipe nothing.
+//! A write and both `to_vec`s wipe their buffers as they grow and when
+//! they are dropped. That cost is part of what is measured. MessagePack,
+//! Borsh and JSON wipe nothing.
 //!
 //! Run with `cargo bench -p vitaminc-aead-frame --features serde`.
 

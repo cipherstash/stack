@@ -27,7 +27,6 @@ all-features = true
 vitaminc-aead = { version = "0.8.1", path = "../aead" }
 vitaminc-protected = { version = "0.8.1", path = "../protected", optional = true }
 serde = { workspace = true, optional = true }
-zeroize = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -37,7 +36,7 @@ default = []
 # Also the storage profile (`vitaminc_aead_frame::storage`): the same
 # mapping as a versioned blob whose format is frozen, for bytes that are
 # kept (STORAGE.md).
-serde = ["dep:serde", "dep:vitaminc-protected", "dep:zeroize"]
+serde = ["dep:serde", "dep:vitaminc-protected"]
 
 [dev-dependencies]
 serde_bytes = { workspace = true }
