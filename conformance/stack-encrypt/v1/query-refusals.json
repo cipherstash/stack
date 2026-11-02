@@ -168,6 +168,54 @@
       }
     },
     {
+      "id": "lte-on-match-only",
+      "field": "name",
+      "operator": "lte",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "name"
+      }
+    },
+    {
+      "id": "gte-on-ciphertext-only",
+      "field": "note",
+      "operator": "gte",
+      "input": {
+        "type": "string",
+        "text": "a"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "note"
+      }
+    },
+    {
+      "id": "contains-on-integer",
+      "field": "age",
+      "operator": "contains",
+      "input": {
+        "type": "uint32",
+        "text": "1"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "operator_not_answered",
+        "field": "age"
+      }
+    },
+    {
       "id": "lt-on-bytes-order-index",
       "field": "data",
       "operator": "lt",
@@ -428,6 +476,22 @@
       }
     },
     {
+      "id": "gte-text-for-int128",
+      "field": "big",
+      "operator": "gte",
+      "input": {
+        "type": "string",
+        "text": "1"
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "field_type",
+        "field": "big"
+      }
+    },
+    {
       "id": "eq-null-required",
       "field": "email",
       "operator": "eq",
@@ -473,6 +537,22 @@
         "code": "stack_encrypt::dynamic_source",
         "reason": "null_query",
         "field": "age"
+      }
+    },
+    {
+      "id": "lte-null-ope",
+      "field": "big",
+      "operator": "lte",
+      "input": {
+        "type": "null",
+        "text": ""
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "source",
+        "code": "stack_encrypt::dynamic_source",
+        "reason": "null_query",
+        "field": "big"
       }
     },
     {
@@ -768,6 +848,47 @@
       "typed": {
         "refusal": "none"
       }
+    },
+    {
+      "id": "inverted-range-int128",
+      "field": "big",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "int128",
+            "text": "170141183460469231731687303715884105727"
+          },
+          {
+            "type": "int128",
+            "text": "-170141183460469231731687303715884105728"
+          }
+        ]
+      },
+      "accepted": true,
+      "typed": {
+        "refusal": "none"
+      }
+    },
+    {
+      "id": "inverted-range-float64",
+      "field": "score",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "float64",
+            "text": "1.5"
+          },
+          {
+            "type": "float64",
+            "text": "-1.5"
+          }
+        ]
+      },
+      "accepted": true
     },
     {
       "id": "ore-block-longest",

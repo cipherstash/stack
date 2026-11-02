@@ -7,9 +7,12 @@ Python and TypeScript runners remain pending.
 
 The earlier scalar, runtime and fixture profiles are representative. This
 profile is the boundary matrix they left open: the narrow and 128-bit
-integer edges, 32-bit floats, the float specials, bytes, decimal scale and
-mantissa limits, date and timestamp precision, sealed and SQL nulls for
-every fixed-width kind, and the write refusals between kinds.
+integer edges (the 32- and 64-bit edges are the scalar and runtime
+profiles'), 32-bit floats, the float specials, bytes, decimal scale and
+mantissa limits, date and timestamp precision, sealed nulls for every
+fixed-width kind the runtime profile does not already seal (it has
+`int32`, `int64`, `uint64` and `float64`), SQL nulls, and the write
+refusals between kinds.
 
 The runners are `packages/stack-encrypt/tests/value_conformance.rs` and
 `languages/golang/encrypt/value_conformance_test.go`.

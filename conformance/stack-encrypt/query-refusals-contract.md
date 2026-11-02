@@ -36,12 +36,14 @@ range. `accepted` is mandatory; a refused case carries `expected_error`.
 
 Source and plan refusals cover an operator the field's type does not
 answer (equality on a match-only or ciphertext-only field, order on an
-equality-only field, match on an integer, anything on a bool), the order
-index on bytes that no operator reads, a range that is not a list of two
+equality-only field, `lte` on a match-only field, `gte` on a
+ciphertext-only field, match on an integer, a JSON document operator on an
+integer, anything on a bool), the order index on bytes that no operator
+reads, a range that is not a list of two
 (a scalar, one bound, three bounds, text), a value of another kind (text or
 a fraction for an integer, a negative for an unsigned, an integer for text,
 a bool for an integer, a null bound), a null on a field that does not seal
-its nulls beside an equality term, a field the plan does not name and an
+its nulls beside an equality term (ORE and OPE order indexes included), a field the plan does not name and an
 operator name the engine does not know.
 
 Term refusals cover match text that cuts no token (too short, empty, only
@@ -49,8 +51,9 @@ separators), text no index can normalize (a code point Unicode 16 does not
 assign) under match, equality and order, and the block ORE limits (a fold
 over 1023 bytes, a trailing NUL) on either bound of a range.
 
-Accepted cases are the positive controls: an inverted range (neither path
-refuses it; as SQL's `BETWEEN`, it matches nothing), the longest block ORE
+Accepted cases are the positive controls: an inverted range at 32-bit,
+128-bit and float widths (neither path refuses it; as SQL's `BETWEEN`, it
+matches nothing), the longest block ORE
 text, an interior NUL, empty order text, a null equality query on a
 sealed-null field, folded match text and a losslessly widened integer.
 
@@ -72,8 +75,8 @@ checks that the case expects exactly that and continues.
 ## The typed chain
 
 `typed` records how the typed Rust query chain answers the same query, for
-the queries it can spell (text on the text fields, a `uint32` range on the
-integer field): `before_keyset`, `after_keyset` or `none`. The Rust runner
+the queries it can spell (text on the text fields, a `uint32` range under
+ORE and an `int128` range under OPE): `before_keyset`, `after_keyset` or `none`. The Rust runner
 builds a one-field typed plan with the index that answers the operator,
 runs the chain under a keyset named for the case, and counts the keyset
 load. A refusal before the load is `before_keyset`; one after it is
@@ -99,8 +102,10 @@ on purpose, and this table with them.
 
 ## Scope and remaining work
 
-The corpus covers scalar operators under `NoTargets`. JSON document
-operators, EQL target refusals, `target_limit` inputs and the match-case
+The corpus covers scalar operators under `NoTargets`. Match options the
+index cannot use (an n-gram length of zero) are a declaration refusal, in
+`v1/declarations.json` (`match-invalid-ngram-zero`). JSON document
+operators against JSON fields, EQL target refusals, `target_limit` inputs and the match-case
 mismatch only the typed chain can express remain with their existing
 tests. The Go runner does not exercise generated query methods; those keep
 their fixture tests. No existing test is removed.
