@@ -669,6 +669,36 @@ mod tests {
     }
 
     #[test]
+    fn an_eql_value_with_only_an_identifier_names_its_field_among_several() {
+        let cipher = cipher();
+        let stored = stored(&cipher, &users(), &["a@example.com"]);
+        let plan = ModelPlan::new(
+            "users",
+            vec![
+                sealed("email", "TextEq", Kind::String),
+                sealed("login", "TextEq", Kind::String),
+            ],
+        )
+        .unwrap();
+        let mut row = Row::new();
+        row.eql(&plan, &plan.fields()[0], eql(&stored[0]).as_bytes())
+            .unwrap();
+        row.eql(
+            &plan,
+            &plan.fields()[1],
+            br#"{"i": {"t": "users", "c": "login"}}"#,
+        )
+        .unwrap();
+        let mut rows = Rows::default();
+        rows.push(row);
+
+        let refused = run(decrypt_with(&cipher, &plan, rows)).unwrap_err();
+
+        assert_eq!(refused.code, "decrypt_malformed", "{refused:?}");
+        assert_eq!(refused.field.as_deref(), Some("login"), "{refused:?}");
+    }
+
+    #[test]
     fn a_value_stored_as_another_kind_is_a_kind_mismatch() {
         let cipher = cipher();
         let numbers =

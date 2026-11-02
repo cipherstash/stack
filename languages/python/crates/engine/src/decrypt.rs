@@ -9,8 +9,6 @@
 //! only after every value has been turned into a Python object, so a call
 //! that fails returns no instance.
 
-use std::borrow::Cow;
-
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString};
@@ -110,7 +108,9 @@ fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
         match &field.eql {
             Some(_) => {
                 let text = eql_text(field, &value)?.map_err(in_row)?;
-                stored.eql(&plan.plan, field, &text).map_err(in_row)?;
+                stored
+                    .eql(&plan.plan, field, text.as_bytes())
+                    .map_err(in_row)?;
             }
             None => passthrough(&mut stored, field, *kind, &value).map_err(in_row)?,
         }
@@ -119,16 +119,20 @@ fn stored_row(plan: &Plan, row: &Bound<'_, PyAny>, at: usize) -> PyResult<Row> {
 }
 
 /// An EQL column's JSON text, as UTF-8 bytes: from a `str`, from `bytes`
-/// that are UTF-8, or from a `dict` the driver already parsed. A `str` or
-/// `bytes` value is borrowed, not copied: the text is copied once, into the
-/// engine's frame.
+/// that are UTF-8, or from a `dict` the driver already parsed.
+///
+/// A `bytes` value is used as it is. A `str` is encoded once, by Python,
+/// and the encoded `bytes` are used as they are. `PyString::to_cow` is not
+/// used: under `abi3-py39` it encodes and then copies again, on every
+/// Python version, because borrowing a `str`'s UTF-8 is limited API only
+/// from 3.10. The text is then copied once more, into the engine's frame.
 ///
 /// The outer error is Python's own; the inner one is the refusal, for the
 /// caller to name the row in.
-fn eql_text<'a>(
+fn eql_text<'py>(
     field: &Field,
-    value: &'a Bound<'_, PyAny>,
-) -> PyResult<Result<Cow<'a, [u8]>, Refusal>> {
+    value: &Bound<'py, PyAny>,
+) -> PyResult<Result<Bound<'py, PyBytes>, Refusal>> {
     let py = value.py();
     let malformed = |what: String| {
         Ok(Err(Refusal {
@@ -139,23 +143,17 @@ fn eql_text<'a>(
         }))
     };
     if let Ok(text) = value.cast::<PyString>() {
-        return Ok(Ok(match text.to_cow()? {
-            Cow::Borrowed(text) => Cow::Borrowed(text.as_bytes()),
-            Cow::Owned(text) => Cow::Owned(text.into_bytes()),
-        }));
+        return Ok(Ok(text.encode_utf8()?));
     }
     if let Ok(bytes) = value.cast::<PyBytes>() {
-        let bytes = bytes.as_bytes();
-        return match std::str::from_utf8(bytes) {
-            Ok(_) => Ok(Ok(Cow::Borrowed(bytes))),
+        return match std::str::from_utf8(bytes.as_bytes()) {
+            Ok(_) => Ok(Ok(bytes.clone())),
             Err(_) => malformed("is bytes that are not UTF-8".to_owned()),
         };
     }
     if value.cast::<PyDict>().is_ok() {
         return match dumps(py)?.call1((value,)) {
-            Ok(text) => Ok(Ok(Cow::Owned(
-                text.cast::<PyString>()?.to_cow()?.into_owned().into_bytes(),
-            ))),
+            Ok(text) => Ok(Ok(text.cast::<PyString>()?.encode_utf8()?)),
             Err(_) => malformed("is a dict that is not JSON".to_owned()),
         };
     }
