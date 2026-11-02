@@ -37,7 +37,7 @@ SECRET = "secret@example.com"
 @pytest.fixture(autouse=True)
 def credentials(monkeypatch, tmp_path):
     """Credentials that parse, so ``Cipher`` builds. Nothing here sends them."""
-    for name in ("CS_CLIENT_ID", "CS_CLIENT_KEY", "CS_CTS_HOST"):
+    for name in ("CS_CLIENT_ID", "CS_CLIENT_KEY", "CS_CTS_HOST", "CS_ZEROKMS_HOST", "CS_VITUR_HOST"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CS_CLIENT_ACCESS_KEY", "CSAKtestKeyId.testKeySecret")
     monkeypatch.setenv("CS_WORKSPACE_CRN", "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY")
@@ -189,3 +189,21 @@ def test_a_property_that_raises_propagates_unchanged(untouched):
 
     with pytest.raises(LookupError, match="the user's own error"):
         Cipher(User).encrypt([User(email=SECRET)])
+
+
+def test_a_zero_decimal_with_a_huge_exponent_passes_the_value_check():
+    # The read is constant time: a loop per unit of exponent would hang here.
+    # The call then fails building the client, with no client key set.
+    cipher, User = cipher_for(price=Annotated[decimal.Decimal, Numeric])
+    with pytest.raises(StashError) as raised:
+        cipher.encrypt([User(email=SECRET, price=decimal.Decimal("0E+999999999999999999"))])
+    assert not isinstance(raised.value, InvalidValueError)
+
+
+def test_a_bad_zerokms_host_is_refused_naming_it(monkeypatch, untouched):
+    monkeypatch.setenv("CS_ZEROKMS_HOST", "not a url")
+    cipher, User = cipher_for()
+    with pytest.raises(StashError) as raised:
+        cipher.encrypt([User(email=SECRET)])
+    assert raised.value.code == "stack_kms_invalid_endpoint"
+    assert "CS_ZEROKMS_HOST" in str(raised.value)

@@ -10,7 +10,7 @@ use std::borrow::Cow;
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyString, PyType};
+use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyString, PyTuple, PyType};
 use stackencrypt_core::refusal::Refusal;
 use stackencrypt_core::values::{Kind, Scalar, Value};
 
@@ -253,6 +253,21 @@ fn decimal(
             None => return Ok(Err(not_representable())),
         };
     }
+    // A zero with a positive exponent is zero at scale 0, as a nonzero one
+    // is multiplied out below. The loop would otherwise run once per unit of
+    // a huge exponent with the GIL held: Decimal("0E+999999999999999999").
+    // A negative exponent keeps its scale, so Decimal("0.00") stays 0.00.
+    if mantissa == 0 && exponent > 0 {
+        return Ok(Ok(Value::Decimal {
+            mantissa: 0,
+            scale: 0,
+        }));
+    }
+    // Past 38 the mantissa overflows i128 whatever its digits, so refuse it
+    // before the loop rather than after a long one.
+    if exponent > 38 {
+        return Ok(Err(not_representable()));
+    }
     let scale = if exponent < 0 {
         match u32::try_from(-exponent) {
             Ok(scale) => scale,
@@ -325,10 +340,66 @@ pub fn to_python(py: Python<'_>, scalar: Scalar) -> PyResult<Py<PyAny>> {
                 .bytes()
                 .map(|b| b - b'0')
                 .collect();
+            // A tuple of ints: pyo3 converts a Vec<u8> to bytes, which
+            // Decimal refuses.
+            let digits = PyTuple::new(py, digits)?;
             PyKind::Decimal
                 .type_object(py)?
                 .call1(((sign, digits, -i64::from(scale)),))?
                 .unbind()
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_opened_decimal_is_a_decimal_with_its_scale() {
+        Python::initialize();
+        Python::attach(|py| {
+            let decimal = py.import("decimal").unwrap().getattr("Decimal").unwrap();
+            for (mantissa, scale, text) in [(1_995, 2, "19.95"), (-150, 2, "-1.50"), (0, 2, "0.00")]
+            {
+                let opened = to_python(py, Scalar::Decimal { mantissa, scale }).unwrap();
+                let opened = opened.bind(py);
+                assert!(opened.get_type().is(&decimal), "{text}");
+                assert_eq!(opened.str().unwrap().to_string(), text);
+            }
+        });
+    }
+
+    #[test]
+    fn a_zero_with_a_huge_exponent_reads_at_once() {
+        Python::initialize();
+        Python::attach(|py| {
+            let decimal = py.import("decimal").unwrap().getattr("Decimal").unwrap();
+            let zero = decimal.call1(("0E+999999999999999999",)).unwrap();
+            assert!(matches!(
+                decimal_of(&zero),
+                Ok(Value::Decimal {
+                    mantissa: 0,
+                    scale: 0
+                })
+            ));
+            let small_zero = decimal.call1(("0.00",)).unwrap();
+            assert!(matches!(
+                decimal_of(&small_zero),
+                Ok(Value::Decimal {
+                    mantissa: 0,
+                    scale: 2
+                })
+            ));
+            let big = decimal.call1(("1E+39",)).unwrap();
+            assert_eq!(
+                decimal_of(&big).unwrap_err().code,
+                "value_not_representable"
+            );
+        });
+    }
+
+    fn decimal_of(value: &Bound<'_, PyAny>) -> Result<Value<'static>, Refusal> {
+        decimal(value, "decimal").unwrap()
+    }
 }

@@ -20,8 +20,8 @@ use std::sync::{Mutex, OnceLock};
 use stack_auth::AutoStrategy;
 use stack_encrypt::kms::{
     ClientOpts, ConnectionInitError, EnvKeyProvider, FallbackKeyProvider, HttpConnection,
-    HttpConnectionOpts, KeyProvider, KeyProviderError, ProfileStore, StackKms, ZeroKMSConnection,
-    ZeroKMSConnectionInit,
+    HttpConnectionOpts, KeyProvider, KeyProviderError, ProfileStore, StackKms,
+    StackKmsBuilderError, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint,
 };
 use stack_encrypt::{KeysetCipher, StackCipher};
 use zerokms_protocol::{ViturRequest, ViturRequestError};
@@ -113,6 +113,9 @@ fn build() -> Result<Client, Refusal> {
 /// client key from the environment or the profile, one ZeroKMS client, and
 /// the default keyset loaded.
 async fn init() -> Result<StackCipher<Kms>, Refusal> {
+    // First: it reads one variable and sends nothing, so a bad value is
+    // refused before the credentials are read.
+    let endpoint = endpoint_from_env()?;
     let credentials = AutoStrategy::detect().map_err(|error| credentials::refusal(&error))?;
     let client_key = FallbackKeyProvider::new(
         EnvKeyProvider,
@@ -124,7 +127,7 @@ async fn init() -> Result<StackCipher<Kms>, Refusal> {
     // Requests go out one at a time, as the spec states the request count:
     // ceil(values / 500) key requests "in sequence". The Go guest sets the
     // same.
-    let options = ClientOpts::new(HttpConnectionOpts::new(None))
+    let options = ClientOpts::new(HttpConnectionOpts::new(endpoint))
         .with_max_concurrent_reqs(1)
         .map_err(|error| Refusal::of(&error))?;
     let kms =
@@ -134,6 +137,22 @@ async fn init() -> Result<StackCipher<Kms>, Refusal> {
         .init()
         .await
         .map_err(|error| Refusal::of(&error))
+}
+
+/// The ZeroKMS endpoint override, as `StackKmsBuilder` reads it: the first
+/// of `CS_ZEROKMS_HOST` and the legacy `CS_VITUR_HOST` that is set. `None`
+/// leaves the endpoint to the token's services claim, as every other SDK
+/// does. `init` builds the client itself to count its requests, so it reads
+/// the variable here; the builder's own reader is private.
+fn endpoint_from_env() -> Result<Option<ZeroKmsEndpoint>, Refusal> {
+    for env_var in stack_encrypt::kms::vars::CS_ZEROKMS_HOST {
+        if let Ok(value) = std::env::var(env_var) {
+            return value.parse().map(Some).map_err(|source| {
+                Refusal::of(&StackKmsBuilderError::InvalidEndpoint { env_var, source })
+            });
+        }
+    }
+    Ok(None)
 }
 
 /// The CLI's profile as a key provider, where it resolves. Where it does
@@ -176,7 +195,7 @@ impl ZeroKMSConnection for Counting {
 
     // Both forwarded: the trait's defaults would tell the client the base
     // URL is set when the connection underneath has none.
-    fn ensure_base_url(&self, url: stack_encrypt::kms::ZeroKmsEndpoint) {
+    fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
         self.0.ensure_base_url(url);
     }
 
