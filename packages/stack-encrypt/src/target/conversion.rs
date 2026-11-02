@@ -77,7 +77,15 @@ pub trait EncryptInto: Zeroize + Sized {
         T: EncryptTarget<Self>,
         T::ContextInput: AllowsNoContext,
     {
-        cipher.run(T::owned_encryption(), self, T::ContextInput::omitted())
+        // Guarded while the declaration is constructed and the omitted
+        // context initialised: either may panic (a record's declaration
+        // constructs its fields' declarations here), and the plaintext must
+        // not then drop unwiped. The declaration takes over the guard once
+        // both exist.
+        let source = Protected::new(self);
+        let description = T::owned_encryption();
+        let context = T::ContextInput::omitted();
+        cipher.run(description, source.risky_unwrap(), context)
     }
 
     /// Encrypt with a supplied context, without manually wrapping its presence.
@@ -90,12 +98,14 @@ pub trait EncryptInto: Zeroize + Sized {
         T: EncryptTarget<Self>,
         T::ContextInput: AcceptsContext,
     {
-        // Guarded while the caller's context converts: a conversion that
-        // panics must not drop the plaintext unwiped. The declaration takes
-        // over the guard from here.
+        // Guarded while the caller's context converts and the declaration
+        // is constructed: either may panic, and the plaintext must not then
+        // drop unwiped. The declaration takes over the guard once both
+        // exist.
         let source = Protected::new(self);
         let context = T::ContextInput::supplied(context.into());
-        cipher.run(T::owned_encryption(), source.risky_unwrap(), context)
+        let description = T::owned_encryption();
+        cipher.run(description, source.risky_unwrap(), context)
     }
 }
 impl<S: Zeroize> EncryptInto for S {}
