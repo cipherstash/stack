@@ -275,6 +275,9 @@
 //		map[string]any{"name": "Alice", "max": 40}, encrypt.JSONReadOptions{})
 //	// WHERE profile @@ $1::eql_v4.query_json_predicate
 //
+// Pass an empty map when the predicate has no variables. A nil vars binds
+// as SQL NULL, as it does over plaintext, and matches no row.
+//
 // A predicate the engine cannot answer is refused as a [Diagnostic]
 // wrapping [ErrEncoding], whose Reason, Construct and At name the refusal
 // and the byte offset in the predicate where it starts. The tree is

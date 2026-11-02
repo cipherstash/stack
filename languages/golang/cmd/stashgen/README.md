@@ -256,7 +256,9 @@ SELECT id FROM entity WHERE eql_v4.json_tree_match(custom_field_values, $1::eql_
 ```
 
 `vars` are any value `encoding/json` writes as a JSON object (a map, a struct, or a `json.RawMessage` of one), and an empty map when the predicate has none; a Go string is refused, as it is for a `Contains` needle.
-They answer as the same Go value bound as `jsonb_path_match`'s `vars` through pgx or `database/sql` answers over plaintext. A nil value (`nil`, or a nil map, slice or pointer) is SQL `NULL` there, and `jsonb_path_match` is `NULL` for every row: `Match` returns an empty operand, which binds as `NULL`, so the query matches no row. The predicate is still compiled, so text the grammar does not read is still refused. `vars` that write the JSON `null`, such as `json.RawMessage("null")` or a pointer to a nil map, are refused as `json_input`, as plaintext refuses vars that are not an object.
+A nil `vars` (`nil`, or a nil map, slice or pointer) does not mean "no variables".
+pgx and `database/sql` bind it as SQL `NULL`, and `jsonb_path_match` with `NULL` vars is `NULL` for every row, so `Match` does the same: it returns an empty operand, which binds as `NULL`, and the query matches no row.
+The predicate is still compiled, so text the grammar does not read is still refused. `vars` that write the JSON `null`, such as `json.RawMessage("null")` or a pointer to a nil map, are refused as `json_input`, as plaintext refuses vars that are not an object.
 The Go side reads nothing of the predicate: the engine parses it and compiles it into a tree of the operands the methods above derive, one leaf per comparison.
 The grammar is the subset of SQL/JSON path that the stored terms can answer, as PostgreSQL reads it:
 
