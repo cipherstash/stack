@@ -63,10 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain `P` is still an ordinary owned value that nothing wipes on drop;
   `Zeroize` is the bound, not a guard. `OpaqueEncode` is implemented for
   `Zeroizing<S>` too.
+- **`From<SealedValue> for Ciphertext`, and back.** The bytes are the same:
+  a `CipherText::Single` leaf from `encrypt_tree` opens through the owned
+  API, and an owned `Ciphertext` hands its leaf to the structural API.
 - **The owned source is wiped on an encoding refusal** as on success, before
-  the pending is returned and with no key requested; the owned blob buffer is
-  `Protected` while it is planned and on decrypt while it is read. The heap
-  observer covers blob encrypt, decrypt and a refused shape, and pins as a
+  the pending is returned and with no key requested; a context no request
+  can carry is refused before the value is encoded, as a scalar's is; the
+  owned blob buffer is `Protected` while it is planned and on decrypt while
+  it is read. The heap observer covers blob encrypt, decrypt and a refused
+  shape, checks those paths for marked blocks leaked rather than freed (an
+  opt-in `watched_for_leaks`, with its own negative control), and pins as a
   negative control the one stated limit: a derived `Deserialize` that built
   some fields and refuses a later one drops those fields unwiped, because no
   `T` existed to wipe.
