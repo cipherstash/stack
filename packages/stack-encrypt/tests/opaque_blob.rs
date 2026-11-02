@@ -542,6 +542,50 @@ async fn the_context_is_refused_before_the_value_is_encoded() {
     assert_eq!(generates.load(Ordering::SeqCst), 0);
 }
 
+/// Counts its own wipes, so a test can see whether a decrypted value was
+/// wiped when it was dropped. Used by one test only.
+static WITNESS_WIPES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[derive(Serialize, Deserialize)]
+struct Witness {
+    value: String,
+}
+impl Zeroize for Witness {
+    fn zeroize(&mut self) {
+        self.value.zeroize();
+        WITNESS_WIPES.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// The drop witness for both halves of the result contract: a decrypted
+/// `OpaqueBlob<T>` is an ordinary value that nothing wipes on drop, and a
+/// decrypted `Zeroizing<OpaqueBlob<T>>` is wiped exactly once when it is
+/// dropped, through `T::zeroize`.
+#[tokio::test]
+async fn only_a_zeroizing_result_is_wiped_on_drop() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let ct = keyset
+        .encrypt(OpaqueBlob::new(Witness {
+            value: "secret".into(),
+        }))
+        .await
+        .unwrap();
+    // Encrypting wiped the source; count from here.
+    let before = WITNESS_WIPES.load(Ordering::SeqCst);
+
+    let plain: OpaqueBlob<Witness> = keyset.decrypt(ct.clone()).await.unwrap();
+    assert_eq!(plain.get().value, "secret");
+    drop(plain);
+    assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before);
+
+    let guarded: Zeroizing<OpaqueBlob<Witness>> = keyset.decrypt(ct).await.unwrap();
+    assert_eq!(guarded.get().value, "secret");
+    assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before);
+    drop(guarded);
+    assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before + 1);
+}
+
 /// `Zeroizing` is the opt-in drop guard on both sides: a `Zeroizing<S>`
 /// encrypts as its `S`, and asking for `Zeroizing<P>` returns the opened
 /// value wrapped so it is wiped on drop. Blobs and scalars alike.
