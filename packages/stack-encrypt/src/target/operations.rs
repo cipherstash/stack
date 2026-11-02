@@ -855,6 +855,23 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             }
         }
     }
+    /// [`zip`](Self::zip) for recovered plaintext: when the right side
+    /// fails after its key arrived, or panics in its conversion, the
+    /// plaintext the left side recovered is wiped rather than dropped as it
+    /// is. A record deriving `DecryptSource` opens its fields through here,
+    /// so a field opened before a later field is refused does not outlive
+    /// the refusal unwiped.
+    pub fn zip_wiping<U: 'static>(self, other: Decryption<U, K>) -> Decryption<(T, U), K>
+    where
+        T: zeroize::Zeroize,
+    {
+        match (self.inner, other.inner) {
+            (Opening::Failed(error), _) | (_, Opening::Failed(error)) => Decryption::failed(error),
+            (Opening::Open(left), Opening::Open(right)) => {
+                Decryption::open(Box::new(move |cipher| left(cipher).zip_wiping(right(cipher))))
+            }
+        }
+    }
     /// Open every description, retrieving all their keys in one batch, and
     /// collect the results in order.
     ///

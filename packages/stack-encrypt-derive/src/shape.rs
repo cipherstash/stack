@@ -660,7 +660,8 @@ pub(crate) fn outputs(fields: &[&Field]) -> (TokenStream, TokenStream) {
 /// The chain zipping `operations` into one description, and the nested
 /// tuple pattern that binds each operation's output to its local in the
 /// closure that maps the chain's output.
-fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream) {
+fn zip_chain(operations: Vec<(TokenStream, Ident)>, method: &str) -> (TokenStream, TokenStream) {
+    let method = Ident::new(method, proc_macro2::Span::call_site());
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
     for (index, (operation, local)) in operations.into_iter().enumerate() {
@@ -668,7 +669,7 @@ fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream
             chain = operation;
             pattern = quote!(#local);
         } else {
-            chain = quote!(#chain.zip(#operation));
+            chain = quote!(#chain.#method(#operation));
             pattern = quote!((#pattern, #local));
         }
     }
@@ -677,7 +678,18 @@ fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream
 
 /// The zipped `operations`, mapped to `result`.
 pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
-    let (chain, pattern) = zip_chain(operations);
+    let (chain, pattern) = zip_chain(operations, "zip");
+    quote!(#chain.map(move |#pattern| #result))
+}
+
+/// [`zip`] over recovered plaintext: each field opened before a later one
+/// fails is wiped rather than dropped as it is (`Decryption::zip_wiping`).
+/// What an owned record's fields open through.
+pub(crate) fn zip_wiping(
+    operations: Vec<(TokenStream, Ident)>,
+    result: TokenStream,
+) -> TokenStream {
+    let (chain, pattern) = zip_chain(operations, "zip_wiping");
     quote!(#chain.map(move |#pattern| #result))
 }
 

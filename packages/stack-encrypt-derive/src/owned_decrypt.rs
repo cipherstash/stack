@@ -10,7 +10,7 @@
 //! passed the caller's expectation.
 use crate::decrypt::check;
 use crate::owned_encrypt::{encrypt_input, spanned_predicate, threaded_input};
-use crate::shape::{trait_impl, zip, Field, Flavor, Record};
+use crate::shape::{trait_impl, zip_wiping, Field, Flavor, Record};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
@@ -133,8 +133,9 @@ fn decrypt_input(record: &Record) -> Type {
 }
 
 /// A `struct = ..` record: each field opened under its pair extended by the
-/// caller's extension, zipped, and the plaintext rebuilt with the
-/// passthrough fields moved back.
+/// caller's extension, zipped so that a field recovered before a later one
+/// fails is wiped, and the plaintext rebuilt with the passthrough fields
+/// moved back.
 fn struct_body(
     record: &Record,
     plaintext: &Type,
@@ -177,7 +178,9 @@ fn struct_body(
             quote!(#from: self.#member)
         });
     let output = quote!(#literal { #(#opened,)* #(#carried),* });
-    let zipped = zip(operations, output);
+    // Wiping: a field opened before a later field is refused is wiped, not
+    // dropped as it is.
+    let zipped = zip_wiping(operations, output);
     Ok(quote! {
         let __context: #krate::target::DeclaredContext = ::core::convert::Into::into(__context);
         #zipped

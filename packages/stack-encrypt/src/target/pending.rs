@@ -298,6 +298,29 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// is *not* authorised for the keyset is refused at ZeroKMS
     /// ([`Error::Kms`]), exactly as it would be on its own.
     pub fn zip<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K> {
+        self.zip_releasing(other, drop)
+    }
+
+    /// [`zip`](Self::zip) for recovered plaintext: when the right side
+    /// fails at fulfilment (an authentication or type failure after its key
+    /// arrived, or a panic in its conversion), the left side's recovered
+    /// value is wiped before the error is returned or the panic unwinds,
+    /// not dropped as it is. What a record's fields open through.
+    pub(crate) fn zip_wiping<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K>
+    where
+        T: zeroize::Zeroize,
+    {
+        self.zip_releasing(other, |mut first: T| zeroize::Zeroize::zeroize(&mut first))
+    }
+
+    /// The one pair builder. `release` is handed the left side's output
+    /// when the right side fails or panics after it; it is not called when
+    /// both succeed.
+    fn zip_releasing<U: 'a>(
+        self,
+        other: Pending<'a, U, K>,
+        release: impl FnOnce(T) + MaybeSend + 'a,
+    ) -> Pending<'a, (T, U), K> {
         let keyset = match merge_scopes(self.keyset, other.keyset) {
             Ok(keyset) => keyset,
             Err(error) => return Pending::failed(self.cipher, error),
@@ -317,7 +340,16 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             keyset,
             requests,
             failed: None,
-            fulfil: Box::new(move |responses| Ok((first(responses)?, second(responses)?))),
+            fulfil: Box::new(move |responses| {
+                // Held in a guard so that a right side that fails or panics
+                // releases the left side's output, as a collection does.
+                let held = Held {
+                    item: Some(first(responses)?),
+                    release: Some(release),
+                };
+                let second = second(responses)?;
+                Ok((held.keep(), second))
+            }),
         }
     }
 
@@ -434,6 +466,32 @@ impl<T, R: FnOnce(Vec<T>)> Drop for Recovered<T, R> {
     fn drop(&mut self) {
         if let Some(release) = self.release.take() {
             release(std::mem::take(&mut self.items));
+        }
+    }
+}
+
+/// The left side of a pair, recovered before the right side fulfils.
+/// Dropped before [`keep`](Self::keep), by an early return or an unwind, it
+/// hands the value to `release`.
+struct Held<T, R: FnOnce(T)> {
+    item: Option<T>,
+    release: Option<R>,
+}
+
+impl<T, R: FnOnce(T)> Held<T, R> {
+    /// The right side succeeded: the value is the output, not released.
+    fn keep(mut self) -> T {
+        self.release = None;
+        self.item
+            .take()
+            .unwrap_or_else(|| unreachable!("a held value is kept once"))
+    }
+}
+
+impl<T, R: FnOnce(T)> Drop for Held<T, R> {
+    fn drop(&mut self) {
+        if let (Some(release), Some(item)) = (self.release.take(), self.item.take()) {
+            release(item);
         }
     }
 }
