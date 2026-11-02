@@ -148,6 +148,13 @@ impl ByteSink for Buffer {
 /// Compiled once for each `O` and called, never inlined: the frame writers
 /// that call it for every scalar measured 10% to 15% slower with its body
 /// inlined into them than with a call.
+///
+/// # Panics
+///
+/// In a debug build, panics if `out` is a `Vec<u8>` without room for every
+/// byte the scalar takes. Size it with [`max_len`] first. A release build
+/// does not check, and lets the `Vec` grow, which frees its old allocation
+/// without wiping it. A [`Buffer`] needs no sizing: it wipes as it grows.
 #[inline(never)]
 pub fn write<O: ByteSink>(
     ty: Option<Logical>,
@@ -236,6 +243,13 @@ pub fn write<O: ByteSink>(
 /// assert_eq!(read_leaf(out.risky_ref())?, date);
 /// # Ok::<(), ScalarError>(())
 /// ```
+///
+/// # Panics
+///
+/// In a debug build, panics if `out` has no room for every byte the
+/// plaintext takes. Size it with [`max_len`] first. A release build does
+/// not check, and lets the `Vec` grow, which frees its old allocation
+/// without wiping it.
 pub fn write_leaf(
     ty: Option<Logical>,
     v: Physical<'_>,
@@ -720,6 +734,25 @@ mod tests {
                 assert!(out.len() <= max_len(&v), "{v:?}");
             }
         }
+    }
+
+    // A `Vec` that grows frees its old allocation unwiped, so a debug
+    // build refuses to write past the room it was sized with. These pin
+    // both checks, so neither can be removed unnoticed.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a Vec sink must be sized with max_len")]
+    fn a_vec_sink_with_no_room_for_a_byte_panics_in_a_debug_build() {
+        let _ = write(None, Physical::Null, Form::Frame, &mut Vec::new());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a Vec sink must be sized with max_len")]
+    fn a_vec_sink_with_no_room_for_a_slice_panics_in_a_debug_build() {
+        // Room for the tag, which `push` writes, but not for the text.
+        let mut out = Vec::with_capacity(1);
+        let _ = write_leaf(None, Physical::Text("text"), &mut out);
     }
 
     fn leaf(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
