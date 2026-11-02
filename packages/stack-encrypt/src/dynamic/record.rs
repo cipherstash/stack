@@ -7578,6 +7578,23 @@ mod tests {
             }
         }
 
+        /// A plan or context refusal names its field in the message as well
+        /// as the payload. Which reason each shape is refused as is the
+        /// shared declaration corpus (`missing-context`, `context-null`);
+        /// the corpus compares codes and payloads, not messages.
+        #[test]
+        fn a_plan_refusal_names_its_field_in_the_message() {
+            let no_context = obj(vec![("age", obj(vec![("outputs", strings(&["c"]))]))]);
+            let error = plan(no_context).expect_err("no context");
+            expect(&error, "Plan", Some("age"), Reason::MissingContext);
+            let null_context = obj(vec![(
+                "age",
+                obj(vec![("context", Tree::Null), ("outputs", strings(&["c"]))]),
+            )]);
+            let error = plan(null_context).expect_err("a null context");
+            expect(&error, "Context", Some("age"), Reason::ContextKind);
+        }
+
         /// A passthrough the frame cannot carry is refused when the source is
         /// read, naming its field, before any key is generated.
         #[tokio::test]
@@ -7811,12 +7828,14 @@ mod tests {
         }
 
         /// A stored field given twice is refused as repeated by the engine's
-        /// own guard. The other misfit shapes (a missing field, a field that
-        /// is not an output map, no ciphertext node, a passthrough under
-        /// `c`, no passthrough node, a row that is not a map) are shared
-        /// read cases; a repeated key cannot reach the engine through the
-        /// transport, where both decoders refuse it first, so this one is
-        /// native-only (see the raw-frame contract).
+        /// own guard, and a record that is one leaf rather than a map or a
+        /// batch is not an object. The other misfit shapes (a missing field,
+        /// a field that is not an output map, no ciphertext node, a
+        /// passthrough under `c`, no passthrough node, a batch row that is
+        /// not a map) are shared read cases. A repeated key cannot reach the
+        /// engine through the transport, where both decoders refuse it
+        /// first, and the shared read profile stores every record as a
+        /// batch, so these two are native-only (see the raw-frame contract).
         #[tokio::test]
         async fn a_stored_record_that_does_not_fit() {
             let cipher = cipher().await;
@@ -7829,6 +7848,12 @@ mod tests {
             let error = check_record(CipherText::Map(fields), &plan, None)
                 .expect_err("a field given twice");
             expect(&error, "Record", Some("email"), Reason::FieldRepeated);
+
+            let mut fields = map(seal(&keyset, row(34), &plan).await);
+            let mut age = map(node(&mut fields, "age"));
+            let error = check_record(node(&mut age, "c"), &plan, None)
+                .expect_err("a record that is a leaf");
+            expect(&error, "Record", None, Reason::NotAnObject);
         }
 
         /// A binding switches on `as_str`, so no two reasons share a name.
