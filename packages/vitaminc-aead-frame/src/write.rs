@@ -994,6 +994,46 @@ mod tests {
         }
     }
 
+    /// A variant's payload is checked against the length its `Serialize`
+    /// gave in the storage profile, and not in the transport, which never
+    /// checked it. Each keeps what it did, so this pins both.
+    #[test]
+    fn only_storage_refuses_a_variant_payload_of_the_wrong_length() {
+        use ::serde::ser::{SerializeStructVariant, SerializeTupleVariant};
+
+        struct Tuple;
+        impl Serialize for Tuple {
+            fn serialize<S: ser::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                let mut v = s.serialize_tuple_variant("E", 0, "T", 2)?;
+                v.serialize_field(&1u8)?;
+                v.end()
+            }
+        }
+        struct Struct;
+        impl Serialize for Struct {
+            fn serialize<S: ser::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                let mut v = s.serialize_struct_variant("E", 0, "S", 2)?;
+                v.serialize_field("a", &1u8)?;
+                v.end()
+            }
+        }
+        fn check<T: Serialize>(what: &str, value: &T) {
+            assert!(
+                written_as::<AsTransport, _>(value).is_ok(),
+                "the transport writes a {what} variant of the wrong length"
+            );
+            assert_eq!(
+                written_as::<AsStorage, _>(value)
+                    .expect_err("storage refuses it")
+                    .message(),
+                "container length does not match its children",
+                "storage refuses a {what} variant of the wrong length"
+            );
+        }
+        check("tuple", &Tuple);
+        check("struct", &Struct);
+    }
+
     /// The profiles differ in an option's `Some` and in a map, and nowhere
     /// else: a struct, a sequence and a scalar are the same bytes in both.
     #[test]
