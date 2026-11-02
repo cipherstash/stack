@@ -50,6 +50,13 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(script).toMatch(/cargo nextest run[^\n]*--test context_conformance/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test plan_grammar/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test fixture_safety/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test value_conformance/)
+    expect(script).toMatch(
+      /cargo nextest run[^\n]*--test query_refusal_conformance/,
+    )
+    expect(script).toMatch(
+      /cargo nextest run[^\n]*--test raw_frame_conformance/,
+    )
     const selected = goSelection(script)
     for (const test of coreGoTests) {
       expect(selected.test(test), test).toBe(true)

@@ -10,6 +10,9 @@ export const coreGoTests = [
   'TestReadConformance',
   'TestContextConformance',
   'TestContextBoundaries',
+  'TestValueConformance',
+  'TestQueryRefusalConformance',
+  'TestRawFrameConformance',
   'TestFixtureConformanceRequiresGuest',
 ]
 

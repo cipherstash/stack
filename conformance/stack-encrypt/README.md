@@ -21,7 +21,8 @@ native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
 The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
-runtime, read and context cases, and enrolls the existing value-kind, context-field and query-operator
+runtime, read, context, value-boundary, query-refusal and raw-frame cases, and
+enrolls the existing value-kind, context-field and query-operator
 fixtures described below. Set no fixture-update variables when checking conformance.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
@@ -71,6 +72,27 @@ when conformance is required. The ordinary CI suites already execute them.
 This is representative fixture coverage, not an exhaustive type/operator
 matrix. Wider fresh artifact exchange and shared scalar query refusals remain
 separate work. The EQL/JSON profiles are described below.
+
+## Value boundaries, query refusals and raw frames
+
+Three profiles close the gaps the representative profiles left. The
+[value contract](values-contract.md) defines `record-values-v1` in
+`v1/values.json`: every kind at its edges, sealed and SQL nulls for the
+fixed-width kinds, write refusals between kinds, frozen typed frames, and
+the Go-only host conversions the host refuses before the engine. The
+[query-refusal contract](query-refusals-contract.md) defines
+`record-query-refusals-v1` in `v1/query-refusals.json`: one plan, every
+scalar operator against every capability and operand shape, each refusal's
+class and diagnostic, no key I/O, and the stage at which the typed Rust
+chain refuses the same query. The [raw-frame contract](raw-frames-contract.md)
+defines `record-raw-frames-v1` in `v1/raw-frames.json`: stored batches as
+transport bytes, so repeated keys and malformed leaves reach both decoders,
+and the table of error classes (transport, leaf, shape, authenticated,
+invalid declaration, unsupported host conversion). The runners are
+`value_conformance`, `query_refusal_conformance` and `raw_frame_conformance`
+in the Rust crate and `TestValueConformance`, `TestQueryRefusalConformance`
+and `TestRawFrameConformance` in the Go module; `test:conformance` runs all
+six.
 
 ## `record-reads-v1` contract
 
