@@ -304,10 +304,25 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 // with stack-kms's DeterministicSource over the same seed, and inserts and
 // queries them in PostgreSQL.
 type rowsFixture struct {
-	Comment string       `json:"_comment"`
-	Seed    string       `json:"seed"`
-	Table   string       `json:"table"`
-	Rows    []fixtureRow `json:"rows"`
+	Comment string `json:"_comment"`
+	// Producer is set only on the rows the exchange hands to the other
+	// runner; the committed fixtures carry none.
+	Producer *rowsProducer `json:"producer,omitempty"`
+	Seed     string        `json:"seed"`
+	Table    string        `json:"table"`
+	Rows     []fixtureRow  `json:"rows"`
+}
+
+// rowsProducer says who sealed an exchanged rows file: the SDK and its
+// version, the backend and engine it ran, and the EQL schema the rows are
+// stored as. A consumer refuses rows its own language wrote.
+type rowsProducer struct {
+	Language   string         `json:"language"`
+	SDK        string         `json:"sdk"`
+	SDKVersion string         `json:"sdk_version"`
+	Backend    string         `json:"backend"`
+	Engine     exchangeEngine `json:"engine"`
+	Schema     string         `json:"schema"`
 }
 
 type fixtureRow struct {
@@ -372,7 +387,21 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 	}
 	rendered = append(rendered, '\n')
 	if out := os.Getenv("EQL_V4_ROWS_OUT"); out != "" {
-		if err := os.WriteFile(out, rendered, 0o644); err != nil {
+		// The rows handed to the Rust suite say who sealed them; the
+		// committed file does not.
+		exchanged := fixture
+		sdk, version := exchangeSDK()
+		exchanged.Comment = "Profile rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below, for the Rust suite to open. Written by this run; never committed."
+		exchanged.Producer = &rowsProducer{
+			Language: "go", SDK: sdk, SDKVersion: version, Backend: "wasi",
+			Engine: exchangeGuestEngine(t, "stack_encrypt_guest_eql_deterministic.wasm"),
+			Schema: "eql_v4",
+		}
+		data, err := json.MarshalIndent(exchanged, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(out, append(data, '\n'), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -464,6 +493,11 @@ func TestV4RowsTheRustSuiteSealedOpenInGo(t *testing.T) {
 	readConformanceJSON(t, path, &fresh)
 	if fresh.Seed != string(testSeed[:]) || fresh.Table != "profiles" || len(fresh.Rows) == 0 {
 		t.Fatalf("the Rust-sealed rows are not this fixture's shape: seed %q, table %q, %d rows", fresh.Seed, fresh.Table, len(fresh.Rows))
+	}
+	// A misrouted file, the Go SDK's own rows included, is refused.
+	if p := fresh.Producer; p == nil || p.Language != "rust" || p.Backend != "native" || p.SDK != "eql-bindings" || p.SDKVersion == "" ||
+		p.Engine.Name != "stack-encrypt" || p.Engine.Version == nil || p.Schema != "eql_v4" {
+		t.Fatalf("the rows are not the Rust suite's: producer %+v", fresh.Producer)
 	}
 	ctx := context.Background()
 	c := deterministicEQLClient(t)

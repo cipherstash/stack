@@ -143,14 +143,32 @@ export function checkArtifacts(path, language, corpus) {
   return { producer: artifacts.producer, counts }
 }
 
-/** A fresh EQL rows file: present, nonempty, the fixture's table, rows. */
-export function checkRows(path, corpus) {
+/**
+ * A fresh EQL rows file: present, nonempty, the fixture's table and
+ * schema, rows, and a producer manifest naming `language`, its SDK and
+ * the engine it ran.
+ */
+export function checkRows(path, language, corpus) {
   if (!existsSync(path) || statSync(path).size === 0)
     throw new Error(`Empty fresh output: ${path}`)
   const rows = JSON.parse(readFileSync(path, 'utf8'))
   if (rows.table !== corpus.eql.table || !rows.rows?.length)
     throw new Error(`${path}: not ${corpus.eql.table} rows`)
-  return { rows: rows.rows.length, comment: rows._comment ?? null }
+  const producer = rows.producer
+  if (producer?.language !== language)
+    throw new Error(
+      `${path}: produced by ${producer?.language}, expected ${language}`,
+    )
+  for (const field of ['sdk', 'sdk_version', 'backend'])
+    if (!producer[field]) throw new Error(`${path}: no ${field}`)
+  if (
+    producer.engine?.name !== 'stack-encrypt' ||
+    !(producer.engine.version || producer.engine.guest_sha256)
+  )
+    throw new Error(`${path}: the engine is not identified`)
+  if (producer.schema !== corpus.eql.schema)
+    throw new Error(`${path}: not ${corpus.eql.schema} rows`)
+  return { rows: rows.rows.length, producer }
 }
 
 /** `[[package]]` versions from a Cargo lockfile, for the named crates. */
@@ -209,17 +227,14 @@ const EXCHANGE_VARIABLES = [
 const ENGINE_CRATES = ['stack-encrypt', 'vitaminc-aead', 'vitaminc-aead-frame']
 
 /**
- * What each lane's consumer compares. Never ciphertext bytes. The Rust
- * consumer of Go's EQL rows opens each column through the typed targets;
- * the Go consumer of Rust's rows also derives the generated equality
- * queries and compares them with the stored terms.
+ * What each lane's consumer compares. Never ciphertext bytes. Both EQL
+ * consumers open every column through the typed targets and derive each
+ * equality column's query term to compare with the stored `hm`.
  */
-export function compared({ kind, consumer }) {
+export function compared({ kind }) {
   if (kind === 'blobs') return 'decoded blob values'
   if (kind === 'eql-rows')
-    return consumer === 'go'
-      ? "decrypted columns; stored equality terms against the consumer's derived query terms"
-      : 'decrypted columns'
+    return "decrypted columns; stored equality terms against the consumer's derived query terms"
   return "decrypted values; stored index terms against the consumer's derived query terms"
 }
 
@@ -283,8 +298,8 @@ export function main(args = process.argv.slice(2)) {
     produced = {
       rust: checkArtifacts(paths.rust, 'rust', corpus),
       go: checkArtifacts(paths.go, 'go', corpus),
-      eqlRust: checkRows(paths.eqlRust, corpus),
-      eqlGo: checkRows(paths.eqlGo, corpus),
+      eqlRust: checkRows(paths.eqlRust, 'rust', corpus),
+      eqlGo: checkRows(paths.eqlGo, 'go', corpus),
     }
 
     console.log(
@@ -343,8 +358,8 @@ export function main(args = process.argv.slice(2)) {
     producers: {
       rust: produced.rust.producer,
       go: produced.go.producer,
-      'eql-rows-rust': produced.eqlRust.comment,
-      'eql-rows-go': produced.eqlGo.comment,
+      'eql-rows-rust': produced.eqlRust.producer,
+      'eql-rows-go': produced.eqlGo.producer,
     },
     exchanged: lanes().map((lane) => ({
       ...lane,

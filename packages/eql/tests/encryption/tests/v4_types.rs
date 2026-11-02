@@ -1525,14 +1525,41 @@ mod go_rows {
     use std::collections::BTreeMap;
 
     #[derive(serde::Deserialize, serde::Serialize)]
+    #[serde(deny_unknown_fields)]
     pub struct Fixture {
-        /// Who wrote the file; the Go SDK's reader ignores it.
+        /// Who wrote the file, in prose.
         #[serde(rename = "_comment", default, skip_serializing_if = "String::is_empty")]
         pub comment: String,
+        /// Who sealed the rows, on the rows the exchange hands to the other
+        /// runner only; the committed fixtures carry none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub producer: Option<Producer>,
         pub seed: String,
         pub table: String,
         pub rows: Vec<Row>,
     }
+    /// Who sealed an exchanged rows file: the SDK and its version, the
+    /// backend and engine it ran, and the EQL schema the rows are stored
+    /// as. The Go SDK writes and reads the same fields.
+    #[derive(serde::Deserialize, serde::Serialize, Debug)]
+    #[serde(deny_unknown_fields)]
+    pub struct Producer {
+        pub language: String,
+        pub sdk: String,
+        pub sdk_version: String,
+        pub backend: String,
+        pub engine: Engine,
+        pub schema: String,
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize, Debug)]
+    #[serde(deny_unknown_fields)]
+    pub struct Engine {
+        pub name: String,
+        pub version: Option<String>,
+        pub guest_sha256: Option<String>,
+    }
+
     #[derive(serde::Deserialize, serde::Serialize)]
     pub struct Row {
         pub id: i32,
@@ -1614,6 +1641,37 @@ mod go_rows {
             plaintext: p.clone(),
             stored,
         }
+    }
+
+    /// Query semantics, not ciphertext bytes: the `hm` stored for each
+    /// equality column of `row` is the one this crate's typed equality
+    /// query derives for the row's plaintext, under the column's context.
+    pub async fn check_eq_terms(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        let keyset = cipher.default_keyset();
+        let p = &row.plaintext;
+        macro_rules! eq {
+            ($name:literal, $query:ty, $value:expr) => {{
+                let query: $query = keyset
+                    .encrypt_as(&$value, column($name))
+                    .await
+                    .unwrap_or_else(|e| panic!("row {} {}: {e}", row.id, $name));
+                assert_eq!(
+                    serde_json::to_value(&query).unwrap()["hm"],
+                    row.stored[$name]["hm"],
+                    "row {} {}: the stored hm is the query's",
+                    row.id,
+                    $name
+                );
+            }};
+        }
+        eq!("age", integer::IntegerEqQuery, p.age);
+        eq!("rank", bigint::BigintEqQuery, p.rank);
+        eq!("weight", real::RealEqQuery, p.weight);
+        eq!("price", double::DoubleEqQuery, p.price);
+        eq!("email", text::TextEqQuery, p.email.clone());
     }
 
     /// `fixtures/stored_v4_rows_v1.json`: rows the Go SDK stored with the
@@ -1744,15 +1802,36 @@ mod go_rows {
 }
 
 /// What the Go SDK sealed parses as each v4 type and opens in Rust, field by
-/// field, under the column it was stored under.
+/// field, under the column it was stored under, and each equality column's
+/// stored `hm` is the term the typed query derives here.
 #[tokio::test]
 async fn rows_the_go_sdk_sealed_open_in_rust() {
     let fixture = go_rows::fixture();
     assert_eq!(fixture.table, "profiles");
     assert!(!fixture.rows.is_empty());
+    // Rows handed over by the exchange say who sealed them, and a misrouted
+    // file, this suite's own rows included, is refused. The committed
+    // fixture carries no producer.
+    if std::env::var_os("EQL_V4_ROWS").is_some() {
+        let producer = fixture
+            .producer
+            .as_ref()
+            .expect("the rows name their producer");
+        assert!(
+            producer.language == "go"
+                && producer.backend == "wasi"
+                && !producer.sdk.is_empty()
+                && !producer.sdk_version.is_empty()
+                && producer.engine.name == "stack-encrypt"
+                && producer.engine.guest_sha256.is_some()
+                && producer.schema == "eql_v4",
+            "the rows are not the Go SDK's: {producer:?}"
+        );
+    }
     let cipher = go_rows::cipher(&fixture.seed).await;
     for row in &fixture.rows {
         go_rows::open_row(&cipher, row).await;
+        go_rows::check_eq_terms(&cipher, row).await;
     }
 }
 
@@ -1775,6 +1854,18 @@ async fn rows_rust_seals_open_in_the_go_sdk() {
             locked_version("eql-bindings"),
             locked_version("stack-encrypt"),
         ),
+        producer: Some(go_rows::Producer {
+            language: "rust".into(),
+            sdk: "eql-bindings".into(),
+            sdk_version: locked_version("eql-bindings"),
+            backend: "native".into(),
+            engine: go_rows::Engine {
+                name: "stack-encrypt".into(),
+                version: Some(locked_version("stack-encrypt")),
+                guest_sha256: None,
+            },
+            schema: "eql_v4".into(),
+        }),
         seed: committed.seed.clone(),
         table: committed.table.clone(),
         rows: Vec::new(),

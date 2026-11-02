@@ -111,22 +111,26 @@ type exchangeArtifacts struct {
 // the engine it ran, the backend it ran it through, the (fake) key source,
 // and the profiles and capabilities the artifacts claim.
 type exchangeProducer struct {
-	Language   string `json:"language"`
-	SDK        string `json:"sdk"`
-	SDKVersion string `json:"sdk_version"`
-	Backend    string `json:"backend"`
-	Engine     struct {
-		Name        string  `json:"name"`
-		Version     *string `json:"version"`
-		GuestSHA256 *string `json:"guest_sha256"`
-	} `json:"engine"`
-	KeySource struct {
+	Language   string         `json:"language"`
+	SDK        string         `json:"sdk"`
+	SDKVersion string         `json:"sdk_version"`
+	Backend    string         `json:"backend"`
+	Engine     exchangeEngine `json:"engine"`
+	KeySource  struct {
 		Kind string `json:"kind"`
 		Seed string `json:"seed"`
 	} `json:"key_source"`
 	Profiles     []string `json:"profiles"`
 	Capabilities []string `json:"capabilities"`
 	Toolchain    *string  `json:"toolchain"`
+}
+
+// exchangeEngine names the engine that sealed an artifact: the crate
+// version natively, or the SHA-256 of the guest the Go runner loaded.
+type exchangeEngine struct {
+	Name        string  `json:"name"`
+	Version     *string `json:"version"`
+	GuestSHA256 *string `json:"guest_sha256"`
 }
 
 // exchangeStored is one stored field: the sealed leaf, or none for a SQL
@@ -267,15 +271,10 @@ func exchangePositiveCases(cases []valueCase) []valueCase {
 	return positive
 }
 
-func exchangeProducerOf(t *testing.T, corpus *exchangeCorpus) exchangeProducer {
-	t.Helper()
-	guest, err := os.ReadFile(filepath.Join("testdata", "stack_encrypt_guest_deterministic.wasm"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(guest)
-	guestHash := hex.EncodeToString(sum[:])
-	sdk, version := "github.com/cipherstash/stack/languages/golang", "(devel)"
+// exchangeSDK is the Go module path and build version this runner
+// records as its SDK.
+func exchangeSDK() (sdk, version string) {
+	sdk, version = "github.com/cipherstash/stack/languages/golang", "(devel)"
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if info.Main.Path != "" {
 			sdk = info.Main.Path
@@ -289,10 +288,28 @@ func exchangeProducerOf(t *testing.T, corpus *exchangeCorpus) exchangeProducer {
 			}
 		}
 	}
+	return sdk, version
+}
+
+// exchangeGuestEngine identifies the engine as the SHA-256 of the named
+// guest under testdata, the one this runner loaded.
+func exchangeGuestEngine(t *testing.T, guest string) exchangeEngine {
+	t.Helper()
+	module, err := os.ReadFile(filepath.Join("testdata", guest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(module)
+	hash := hex.EncodeToString(sum[:])
+	return exchangeEngine{Name: "stack-encrypt", GuestSHA256: &hash}
+}
+
+func exchangeProducerOf(t *testing.T, corpus *exchangeCorpus) exchangeProducer {
+	t.Helper()
+	sdk, version := exchangeSDK()
 	toolchain := runtime.Version()
 	p := exchangeProducer{Language: "go", SDK: sdk, SDKVersion: version, Backend: "wasi", Toolchain: &toolchain}
-	p.Engine.Name = "stack-encrypt"
-	p.Engine.GuestSHA256 = &guestHash
+	p.Engine = exchangeGuestEngine(t, "stack_encrypt_guest_deterministic.wasm")
 	p.KeySource.Kind = "deterministic"
 	p.KeySource.Seed = corpus.Seed
 	p.Profiles = []string{exchangeProfile, corpus.Values.Profile}
