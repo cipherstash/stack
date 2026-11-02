@@ -33,7 +33,7 @@ mise run test:conformance:exchange
 | `values` | One record per positive case of `v1/values.json` (the value-boundary corpus), under the plan that case declares, with context `conformance/exchange/value`: the sealed leaf and every declared index term; nothing for a SQL null | The record opens to the case's typed input. Every stored term equals the term the consumer's own query of the same value derives (`eq` for equality, `lt` for an order index), and the `equal_query` spelling derives the same equality term. An index the corpus lists as unanswered is present and not queried |
 | `record` | The rows of the corpus's one record: a passthrough `int64` id (held on the host by Go, lowered as a `passthrough` output by Rust), text, `uint32`, decimal, date and timestamp fields with equality and order terms, a SQL-null text field and a sealed-null `float32` field, under context `conformance/exchange/people` | The passthrough carried equals the corpus input; every sealed field opens to its input, a sealed null opens as null and a SQL null is absent from storage and opens as null; every stored term equals the consumer's derived query term |
 | `blobs` | A whole struct (`name`, `age`, `tags`, optional `nickname`) as one opaque ciphertext under `conformance/exchange/blob/value`: Rust through `OpaqueBlob<T>`, Go through the storage blob the generated opaque path writes (`vcffi.MarshalStorage` sealed as the one `bytes` field) | The ciphertext opens and decodes to the corpus value through the other SDK's opaque reader (`OpaqueBlob<T>` or `gensupport.Opaque`). A nil Go slice and an empty Rust `Vec` are one value; Rust's `Some` marker and Go's bare pointer are one value |
-| `eql-rows` | The EQL v4 `profiles` rows: every column of the committed fixture's plaintexts sealed afresh, Rust through eql-bindings' typed targets, Go through its generated code | Each column opens to the plaintext through the other side's typed target. The Go consumer also derives the generated equality query for each `*Eq` column and compares its `hm` with the stored term; the Rust consumer opens the columns |
+| `eql-rows` | The EQL v4 `profiles` rows: every column of the committed fixture's plaintexts sealed afresh, Rust through eql-bindings' typed targets, Go through its generated code | Each column opens to the plaintext through the other side's typed target, and each equality column's stored `hm` equals the term the consumer's own equality query derives for that plaintext (the generated `*Eq` query in Go, the typed `*EqQuery` target in Rust) |
 
 Each kind runs Go to Rust and Rust to Go. Ciphertext bytes are never
 compared: encryption is randomized, and agreement is shown by opening and
@@ -67,8 +67,13 @@ artifact set to hold exactly the corpus's cases. Unknown fields are refused
 in both languages.
 
 EQL rows travel in the shape of the committed `v4_rows.json` fixture (seed,
-table, rows of plaintext and stored envelopes); the Rust producer adds a
-`_comment` naming the eql-bindings and stack-encrypt versions it sealed with.
+table, rows of plaintext and stored envelopes) with a `producer` object the
+committed fixtures do not carry: `language`, `sdk` and `sdk_version`
+(`eql-bindings` and its version; the Go module path and its build version),
+`backend`, `engine` (the stack-encrypt version natively; the SHA-256 of the
+deterministic EQL guest under WASI) and `schema` (`eql_v4`). Each EQL
+consumer refuses rows without it or written by its own language, and the
+task requires it before any consumer runs.
 
 ## Required execution
 
@@ -82,7 +87,8 @@ checks every output is nonempty and of the right shape and producer, and
 runs each consumer with its input variable set (`STACK_EXCHANGE_INPUT`,
 `EQL_V4_RUST_ROWS`, `EQL_V4_ROWS`). Producer caches are bypassed: nextest
 reruns its binaries, Go runs with `-count=1`, and the fresh directory is
-new every run. A missing runner, a missing or empty guest, an empty fresh
+new every run: a passing run removes it, and a failing one keeps it and
+prints its path. A missing runner, a missing or empty guest, an empty fresh
 output, a skipped or failed test, or a consumer refusal fails the task.
 `STACK_CONFORMANCE_REQUIRED=1` is set throughout, so a Go test that would
 skip on a missing guest fails instead.
