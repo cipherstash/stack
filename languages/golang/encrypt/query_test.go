@@ -316,9 +316,6 @@ func TestAnUnboundedLimitCutsThePageToTheLargestSQLLimit(t *testing.T) {
 	}
 }
 
-// A query the field does not answer is refused as a mistyped value is: an
-// encoding error that names the field and the rule. The typed path's own
-// refusals are term errors.
 // Verify and TargetLimit answer match queries alone: an exact operator is
 // refused by its reason, and half a position is not a query term. The
 // QueryTerm refusals (an operator the field does not answer, an unknown
