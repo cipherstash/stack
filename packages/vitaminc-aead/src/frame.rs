@@ -16,10 +16,11 @@
 //! [`PassthroughFrame`] is the owned frame a ciphertext carries for a
 //! passthrough subtree.
 
-use std::collections::HashSet;
 use std::ops::Range;
 
 use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, TimingSafeEq};
+
+use __private::SeenKeys;
 
 use crate::leaf::{self, Form, Item, ScalarError};
 use crate::plaintext::{
@@ -160,45 +161,76 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// How many keys an object may have before [`SeenKeys`] hashes them.
-const FEW_KEYS: usize = 16;
-
-/// The keys an object has given so far, to refuse a repeat.
-///
-/// The keys are compared one by one while there are few: an object
-/// rarely has more fields than a hash set's allocation and hashing would
-/// pay for. Past sixteen they are hashed, so an object a host sends
-/// with thousands of keys is still checked in linear time. The keys are
-/// borrowed from the frame, so nothing is copied.
-///
-/// Not an API: it is public only so `vitaminc-aead-frame`'s storage reader
-/// can share this one copy, and it may change in any release.
+/// What `vitaminc-aead-frame` shares with this crate by path. Not an API:
+/// anything here may change in any release.
 #[doc(hidden)]
-#[derive(Default)]
-pub struct SeenKeys<'a> {
-    few: [&'a str; FEW_KEYS],
-    len: usize,
-    many: Option<HashSet<&'a str>>,
-}
+pub mod __private {
+    use std::collections::HashSet;
 
-impl<'a> SeenKeys<'a> {
-    /// Record `key`; whether it was new.
-    pub fn insert(&mut self, key: &'a str) -> bool {
-        if let Some(many) = &mut self.many {
-            return many.insert(key);
+    /// How many keys an object may have before `SeenKeys` hashes them.
+    const FEW_KEYS: usize = 16;
+
+    /// The keys an object has given so far, to refuse a repeat.
+    ///
+    /// The keys are compared one by one while there are few: an object
+    /// rarely has more fields than a hash set's allocation and hashing would
+    /// pay for. Past sixteen they are hashed, so an object a host sends
+    /// with thousands of keys is still checked in linear time. The keys are
+    /// borrowed from the frame, so nothing is copied.
+    ///
+    /// Not an API: it is reachable only so `vitaminc-aead-frame`'s storage
+    /// reader can share this one copy, and it may change in any release.
+    #[derive(Default)]
+    pub struct SeenKeys<'a> {
+        few: [&'a str; FEW_KEYS],
+        len: usize,
+        many: Option<HashSet<&'a str>>,
+    }
+
+    impl<'a> SeenKeys<'a> {
+        /// Record `key`; whether it was new.
+        pub fn insert(&mut self, key: &'a str) -> bool {
+            if let Some(many) = &mut self.many {
+                return many.insert(key);
+            }
+            if self.few[..self.len].contains(&key) {
+                return false;
+            }
+            if self.len < FEW_KEYS {
+                self.few[self.len] = key;
+                self.len += 1;
+            } else {
+                let mut many: HashSet<&'a str> = self.few.iter().copied().collect();
+                many.insert(key);
+                self.many = Some(many);
+            }
+            true
         }
-        if self.few[..self.len].contains(&key) {
-            return false;
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn seen_keys_find_a_repeat_before_and_after_they_spill_to_a_set() {
+            let names: Vec<String> = (0..40).map(|i| format!("k{i}")).collect();
+            let mut seen = SeenKeys::default();
+            for (i, name) in names.iter().enumerate() {
+                assert!(seen.insert(name), "key {i} is new");
+            }
+            assert_eq!(seen.len, FEW_KEYS, "the first keys stay inline");
+            assert!(seen.many.is_some(), "the rest spilled to a set");
+            assert!(!seen.insert(&names[0]), "an inline key repeats");
+            assert!(!seen.insert(&names[39]), "a spilled key repeats");
+            assert!(seen.insert("new"), "a fresh key is still new");
+
+            let mut few = SeenKeys::default();
+            assert!(few.insert("a"));
+            assert!(few.insert("b"));
+            assert!(!few.insert("a"), "a repeat is found without a set");
+            assert!(few.many.is_none());
         }
-        if self.len < FEW_KEYS {
-            self.few[self.len] = key;
-            self.len += 1;
-        } else {
-            let mut many: HashSet<&'a str> = self.few.iter().copied().collect();
-            many.insert(key);
-            self.many = Some(many);
-        }
-        true
     }
 }
 
@@ -625,26 +657,6 @@ mod tests {
 
     fn frame_of<P: Encrypt>(p: P) -> Vec<u8> {
         to_frame(p).expect("frames").risky_ref().to_vec()
-    }
-
-    #[test]
-    fn seen_keys_find_a_repeat_before_and_after_they_spill_to_a_set() {
-        let names: Vec<String> = (0..40).map(|i| format!("k{i}")).collect();
-        let mut seen = SeenKeys::default();
-        for (i, name) in names.iter().enumerate() {
-            assert!(seen.insert(name), "key {i} is new");
-        }
-        assert_eq!(seen.len, FEW_KEYS, "the first keys stay inline");
-        assert!(seen.many.is_some(), "the rest spilled to a set");
-        assert!(!seen.insert(&names[0]), "an inline key repeats");
-        assert!(!seen.insert(&names[39]), "a spilled key repeats");
-        assert!(seen.insert("new"), "a fresh key is still new");
-
-        let mut few = SeenKeys::default();
-        assert!(few.insert("a"));
-        assert!(few.insert("b"));
-        assert!(!few.insert("a"), "a repeat is found without a set");
-        assert!(few.many.is_none());
     }
 
     #[test]

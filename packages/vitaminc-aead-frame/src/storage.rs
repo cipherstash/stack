@@ -40,7 +40,8 @@ use std::ops::Range;
 
 use ::serde::ser::{self, Serialize};
 use ::serde::Deserialize;
-use vitaminc_aead::frame::{FrameWriteError, SeenKeys, ARRAY, MAX_DEPTH, OBJECT};
+use vitaminc_aead::frame::__private::SeenKeys;
+use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT};
 use vitaminc_aead::leaf::{self, Form, ScalarError};
 use vitaminc_aead::plaintext::{Float, Int, Physical};
 use vitaminc_aead::tags;
