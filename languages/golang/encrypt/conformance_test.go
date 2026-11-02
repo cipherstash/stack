@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,10 +99,15 @@ func conformanceValue(t *testing.T, input conformanceInput) any {
 		}
 		return n
 	}
+	// A float's text must be the shortest spelling of the value it names:
+	// more digits than that are rounded by the parse, a corpus error.
 	float := func(bits int) float64 {
 		n, err := strconv.ParseFloat(input.Text, bits)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if input.Text != "inf" && input.Text != "-inf" && significantDigits(input.Text) != significantDigits(strconv.FormatFloat(n, 'e', -1, bits)) {
+			t.Fatalf("%s: not the shortest spelling of a representable value", input.Text)
 		}
 		return n
 	}
@@ -306,4 +312,17 @@ func assertConformanceDiagnostic(t *testing.T, err error, code, reason, field st
 	if diagnostic.Code != code || diagnostic.Reason() != reason || diagnostic.Field() != field {
 		t.Fatalf("unexpected diagnostic: %s reason=%s field=%s", diagnostic.Code, diagnostic.Reason(), diagnostic.Field())
 	}
+}
+
+// significantDigits is a decimal spelling's significant digits: no sign,
+// point, exponent, or leading and trailing zeros.
+func significantDigits(text string) string {
+	mantissa, _, _ := strings.Cut(strings.ToLower(text), "e")
+	var digits strings.Builder
+	for _, r := range mantissa {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	return strings.TrimRight(strings.TrimLeft(digits.String(), "0"), "0")
 }
