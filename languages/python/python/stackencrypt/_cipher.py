@@ -8,7 +8,12 @@ from typing import Dict, Generic, List, Mapping, Sequence, Type, TypeVar
 
 from stackencrypt import _engine
 from stackencrypt._markers import Passthrough
-from stackencrypt._declaration import Declaration, check_unchanged, declaration_of
+from stackencrypt._declaration import (
+    Declaration,
+    DeclaredField,
+    check_unchanged,
+    declaration_of,
+)
 from stackencrypt._errors import AuthenticationError, DeclarationError, QueryError
 
 
@@ -104,9 +109,9 @@ class Cipher(Generic[T]):
         loaded: after the shared client is built, ``query`` makes no request.
 
         A name that is not a declared field raises ``QueryError``
-        (``query_unknown_field``). A field whose marker answers no query,
-        such as ``Text`` or ``Passthrough``, raises ``QueryError``
-        (``query_unsupported``). The value is checked as ``encrypt`` checks
+        (``query_unknown_field``). A field whose marker has no ``eq`` index
+        raises ``QueryError`` (``query_unsupported``). Examples are ``Text``,
+        ``Passthrough``, ``IntegerOrd`` and ``TextMatch``. The value is checked as ``encrypt`` checks
         it, and a value that does not fit raises ``InvalidValueError``. All
         three are raised before any request.
         """
@@ -120,27 +125,23 @@ class Cipher(Generic[T]):
                 f"{self._cls.__qualname__!r}. {self._queryable()}",
                 field=field if isinstance(field, str) else None,
             )
-        if declared.marker is Passthrough or declared.marker.query is None:
+        if not _has_equality(declared):
             # Passthrough names no EQL type, so it has no `name` attribute.
             marker = declared.marker.__name__
             raise QueryError(
                 "query_unsupported",
-                f"field {field!r} is declared {marker}, which answers no "
-                f"query. {self._queryable()}",
+                f"field {field!r} is declared {marker}, which has no eq "
+                f"index, so it answers no equality query. {self._queryable()}",
                 field=field,
                 reason=marker,
             )
         return _engine.query(self._plan, field, value)
 
     def _queryable(self) -> str:
-        names = [
-            repr(f.name)
-            for f in self._declaration.fields
-            if f.marker is not Passthrough and f.marker.query is not None
-        ]
+        names = [repr(f.name) for f in self._declaration.fields if _has_equality(f)]
         if not names:
-            return "The class has no field with a query."
-        return "Fields with a query: " + ", ".join(names) + "."
+            return "The class has no field with an equality query."
+        return "Fields with an equality query: " + ", ".join(names) + "."
 
     @property
     def declaration(self) -> Declaration:
@@ -149,6 +150,14 @@ class Cipher(Generic[T]):
 
     def __repr__(self) -> str:
         return f"Cipher({self._cls.__qualname__})"
+
+
+def _has_equality(field: DeclaredField) -> bool:
+    """Whether ``query`` answers ``field``: the engine answers an equality
+    query through the ``eq`` index alone (``OpSpec::answered_by`` in
+    ``stack-encrypt``). A marker with only an order or match index has a
+    query type, but not for equality."""
+    return field.marker is not Passthrough and "eq" in field.marker.indexes
 
 
 def _not_decorated(cls: object) -> DeclarationError:

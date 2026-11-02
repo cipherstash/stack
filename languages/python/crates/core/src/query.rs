@@ -21,19 +21,21 @@ use crate::values::{self, Kind, Value};
 /// The equality query term for `value` on the sealed field `field` of
 /// `plan`, as JSON text.
 ///
-/// Builds the shared client on the first call in the process. The caller
-/// has released the GIL, and has checked that `field` is a sealed field
-/// whose type answers equality and that `value` fits its kind.
+/// Checks first, with no I/O, that the field answers equality. Then builds
+/// the shared client on the first call in the process. The caller has
+/// released the GIL, and has checked that `value` fits the field's kind.
 ///
 /// # Errors
 ///
-/// The client's refusal, or the engine's for the query.
+/// `query_unsupported` for a field that answers no equality query, before
+/// any request. Then the client's refusal, or the engine's for the query.
 pub fn query(
     plan: &ModelPlan,
     field: &str,
     kind: Kind,
     value: Value<'_>,
 ) -> Result<String, Refusal> {
+    answers_equality(plan, field)?;
     let client = client::shared()?;
     client.block_on(query_with(&client.keyset(), plan, field, kind, value))
 }
@@ -67,7 +69,34 @@ where
     let Operand::One(json) = term.operand() else {
         return Err(engine_fault("the equality term is not one operand"));
     };
+    // A copy of the term's bytes, about a hundred: `QueryTerm` has no
+    // accessor that gives up its operand.
     String::from_utf8(json.clone()).map_err(|_| engine_fault("the equality term is not UTF-8"))
+}
+
+/// Whether `field` answers an equality query, from the plan alone: the
+/// engine answers one through the field's `eq` index only, and a type with
+/// only an order or match index answers none. `Cipher.query` checks the
+/// marker's indexes the same way. This check is for a caller that did not.
+///
+/// # Errors
+///
+/// `query_unsupported`, or the engine's refusal of the field.
+pub fn answers_equality(plan: &ModelPlan, field: &str) -> Result<(), Refusal> {
+    let operators = dynamic::field_operators(plan.plan(), field, &targets::resolver())
+        .map_err(|error| plan::refusal(&error))?;
+    if operators
+        .iter()
+        .any(|(operator, _)| *operator == OpSpec::Eq)
+    {
+        return Ok(());
+    }
+    Err(Refusal {
+        code: "query_unsupported".to_owned(),
+        message: format!("field {field:?} has no eq index, so it answers no equality query."),
+        field: Some(field.to_owned()),
+        reason: None,
+    })
 }
 
 /// A value written as the field's kind, as `encrypt` writes it.
@@ -86,7 +115,7 @@ mod tests {
 
     use super::*;
     use crate::decrypt::tests::{cipher, run, stored, users};
-    use crate::encrypt::Column;
+    use crate::encrypt::{Column, Field};
 
     fn term(cipher: &StackCipher<FakeDataKeySource>, email: &str) -> serde_json::Value {
         let json = run(query_with(
@@ -127,6 +156,43 @@ mod tests {
         assert_ne!(
             term(&cipher, "a@example.com"),
             term(&cipher, "b@example.com")
+        );
+    }
+
+    #[test]
+    fn a_field_with_only_an_order_or_match_index_answers_no_equality() {
+        for eql in ["IntegerOrd", "IntegerOrdOre", "TextMatch"] {
+            let kind = if eql == "TextMatch" {
+                Kind::String
+            } else {
+                Kind::Int32
+            };
+            let plan = ModelPlan::new(
+                "users",
+                vec![Field {
+                    name: "rank".to_owned(),
+                    eql: Some((eql.to_owned(), kind)),
+                }],
+            )
+            .unwrap();
+
+            let refused = answers_equality(&plan, "rank").unwrap_err();
+
+            assert_eq!(refused.code, "query_unsupported", "{eql}");
+            assert_eq!(refused.field.as_deref(), Some("rank"));
+        }
+    }
+
+    #[test]
+    fn a_field_with_an_eq_index_answers_equality() {
+        answers_equality(&users(), "email").unwrap();
+    }
+
+    #[test]
+    fn a_passthrough_field_answers_no_equality() {
+        assert_eq!(
+            answers_equality(&users(), "age").unwrap_err().code,
+            "query_unsupported"
         );
     }
 
