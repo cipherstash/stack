@@ -3,8 +3,9 @@ name: Fuzz (crates)
 # libFuzzer fuzzing for the stack crates' untrusted-input parsers (the
 # detached `packages/*/fuzz/` crates and the `fuzz:*` mise tasks), and the
 # Python SDK's value conversion (`languages/python/crates/core/fuzz/`). Ported from
-# cipherstash-suite's `fuzz.yml`, for the six targets in the imported set; the
-# suite keeps its three cts-common targets. Two jobs with different roles:
+# cipherstash-suite's `fuzz.yml`, which keeps its three cts-common targets.
+# The two matrices below list every target here. Two jobs with different
+# roles:
 #
 #   * fuzz-regression (pull_request and manual, blocking on PRs): builds every harness, which
 #     catches harness and API drift, and replays the committed seed corpus with
