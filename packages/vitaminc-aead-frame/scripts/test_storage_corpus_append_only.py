@@ -78,8 +78,8 @@ class ProblemsTest(unittest.TestCase):
         )
 
 
-class CorpusAtTest(unittest.TestCase):
-    """`corpus_at` against a scratch repository."""
+class GitTest(unittest.TestCase):
+    """`corpora_at`, `corpus_at` and `check` against a scratch repository."""
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -108,14 +108,15 @@ class CorpusAtTest(unittest.TestCase):
         ).stdout
 
     def test_a_revision_without_the_corpus_has_none(self):
-        self.assertIsNone(corpus_at(self.without, root=self.root))
+        self.assertEqual(corpora_at(self.without, root=self.root), [])
 
     def test_a_revision_with_the_corpus_has_it(self):
-        self.assertEqual(corpus_at(self.with_corpus, root=self.root), BASE)
+        self.assertEqual(corpora_at(self.with_corpus, root=self.root), [CORPUS])
+        self.assertEqual(corpus_at(self.with_corpus, CORPUS, root=self.root), BASE)
 
     def test_a_revision_git_cannot_read_fails_rather_than_passing(self):
         with self.assertRaises(subprocess.CalledProcessError):
-            corpus_at("0" * 40, root=self.root)
+            corpora_at("0" * 40, root=self.root)
 
     def test_every_version_s_corpus_is_found_and_nothing_else(self):
         (self.root / TESTDATA / "storage-v2.json").write_text(json.dumps(BASE))

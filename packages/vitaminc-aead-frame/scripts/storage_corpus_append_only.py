@@ -59,32 +59,39 @@ def git(*args: str, root: Path = REPO_ROOT) -> str:
     return out.stdout
 
 
-def corpus_at(rev: str, root: Path = REPO_ROOT, path: str = CORPUS) -> dict | None:
-    """The corpus at `path` as it was at `rev`, or None if it did not exist.
+def corpus_at(rev: str, path: str, root: Path = REPO_ROOT) -> dict:
+    """The corpus at `path` as it was at `rev`, a path `corpora_at` listed.
 
-    Only a path git lists as absent counts as new. Any other failure (an
-    unknown revision, a blob a partial clone cannot fetch) raises, so the
-    check fails rather than passing with nothing to compare.
+    A failure (a blob a partial clone cannot fetch) raises, so the check
+    fails rather than passing with nothing to compare.
     """
-    if not git("ls-tree", "--name-only", rev, "--", path, root=root).strip():
-        return None
     return json.loads(git("show", f"{rev}:{path}", root=root))
 
 
 def corpora_at(rev: str, root: Path = REPO_ROOT) -> list[str]:
-    """Every version's corpus that existed at `rev`, by path."""
+    """Every version's corpus that existed at `rev`, by path.
+
+    An unknown revision raises, so the check fails rather than passing with
+    no corpus to hold the branch to.
+    """
     listed = git("ls-tree", "--name-only", rev, "--", f"{TESTDATA}/", root=root)
     return sorted(
         path for path in listed.splitlines() if CORPUS_NAME.fullmatch(Path(path).name)
     )
 
 
-def check(merge_base: str, root: Path = REPO_ROOT) -> list[tuple[str, str]]:
+def check(
+    merge_base: str, root: Path = REPO_ROOT, paths: list[str] | None = None
+) -> list[tuple[str, str]]:
     """Each way the working tree drops or changes a corpus the merge base
-    had, as the corpus's path and the problem."""
+    had, as the corpus's path and the problem. `paths` are the merge base's
+    corpora, as `corpora_at` lists them; they are listed here if not
+    given."""
+    if paths is None:
+        paths = corpora_at(merge_base, root)
     found = []
-    for path in corpora_at(merge_base, root):
-        base = corpus_at(merge_base, root, path)
+    for path in paths:
+        base = corpus_at(merge_base, path, root)
         if not (root / path).exists():
             found.append((path, "the corpus was removed"))
             continue
@@ -100,10 +107,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     merge_base = git("merge-base", args.base, "HEAD").strip()
-    if not corpora_at(merge_base):
+    paths = corpora_at(merge_base)
+    if not paths:
         print("no storage corpus at the merge base; nothing to hold this branch to")
         return 0
-    found = check(merge_base)
+    found = check(merge_base, paths=paths)
     for path, problem in found:
         print(f"::error file={path}::{problem}; the stored format is frozen, add a row instead")
     return 1 if found else 0
