@@ -328,6 +328,94 @@ async fn a_field_opened_before_a_later_field_is_refused_is_wiped() {
     assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
 }
 
+// --- A panic while declaring wipes what has not been handed over -----------
+
+// A sealed field type with no drop check of its own, so a value dropped
+// unwiped during an unwind is seen through the flag rather than as an abort.
+struct Flagged {
+    value: String,
+    wiped: Arc<AtomicBool>,
+}
+impl Zeroize for Flagged {
+    fn zeroize(&mut self) {
+        self.value.zeroize();
+        self.wiped.store(true, Ordering::SeqCst);
+    }
+}
+fn flagged(value: &str) -> (Flagged, Arc<AtomicBool>) {
+    let wiped = Arc::new(AtomicBool::new(false));
+    let source = Flagged {
+        value: value.to_owned(),
+        wiped: wiped.clone(),
+    };
+    (source, wiped)
+}
+
+/// Seals a `Flagged`, and panics while declaring the one whose plaintext is
+/// `"panics"`: inside the default owned guard, as the field's description
+/// runs.
+// The ciphertext is never read: these tests only encrypt.
+struct FlaggedCiphertext(#[allow(dead_code)] Ciphertext);
+impl EncryptTarget<Flagged> for FlaggedCiphertext {
+    type ContextInput = OptionalContext<ScalarContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Flagged, Self, K, Self::ContextInput> {
+        stack_encrypt::target::scalar_ciphertext::<String, K>()
+            .project(|source: &Flagged| {
+                assert!(source.value != "panics", "field declaration failed");
+                &source.value
+            })
+            .map(Self)
+    }
+}
+impl Decryptable for FlaggedCiphertext {
+    const DECRYPTABLE: bool = false;
+}
+
+/// Seals a `Flagged` through a declaration whose construction panics: what
+/// `encrypt_into` is holding then is the plaintext alone.
+struct UnconstructedCiphertext(#[allow(dead_code)] Ciphertext);
+impl EncryptTarget<Flagged> for UnconstructedCiphertext {
+    type ContextInput = OptionalContext<ScalarContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Flagged, Self, K, Self::ContextInput> {
+        FlaggedCiphertext::encryption().map(|FlaggedCiphertext(c)| Self(c))
+    }
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, Flagged, Self, K, Self::ContextInput, stack_encrypt::target::Owned> {
+        panic!("declaration construction failed")
+    }
+}
+
+#[tokio::test]
+async fn a_declaration_that_panics_while_constructed_wipes_the_plaintext() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let (source, wiped) = flagged("secret");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        drop(source.encrypt_into::<UnconstructedCiphertext, _>(&keyset));
+    }));
+    assert!(
+        result.is_err(),
+        "the declaration panicked while constructed"
+    );
+    assert!(
+        wiped.load(Ordering::SeqCst),
+        "the plaintext is wiped during the unwind, with the context omitted"
+    );
+
+    let (source, wiped) = flagged("secret");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        drop(source.encrypt_into_with_context::<UnconstructedCiphertext, _>(&keyset, "rows"));
+    }));
+    assert!(
+        result.is_err(),
+        "the declaration panicked while constructed"
+    );
+    assert!(
+        wiped.load(Ordering::SeqCst),
+        "the plaintext is wiped during the unwind, with a context supplied"
+    );
+}
+
 // --- The public searchable-record program, as one batch --------------------
 
 /// An application-defined scalar target: the ciphertext plus an equality
