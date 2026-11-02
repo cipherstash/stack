@@ -11,7 +11,7 @@ mod tests {
     use crate::diagnostic::is_code_of;
     use crate::sem::{MatchOptions, TermBytesError, TermError};
     use crate::target::IndexSpec;
-    use crate::{Descriptor, Error, LabelError, LeafBytesError, PlanError};
+    use crate::{BlobError, Descriptor, Error, LabelError, LeafBytesError, PlanError};
 
     /// One row per variant of an enum, written `pattern => value`. The
     /// patterns are the arms of a match with no wildcard, so a variant with
@@ -37,6 +37,12 @@ mod tests {
 
     fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Row> {
         rows.into_iter().map(crate::diagnostic::named)
+    }
+
+    /// A storage profile error, from reading `bytes` as a `u32`: the
+    /// profile's errors have no public constructor, so one is provoked.
+    fn storage_error(bytes: &[u8]) -> vitaminc_aead_frame::storage::Error {
+        vitaminc_aead_frame::storage::from_slice::<u32>(bytes).unwrap_err()
     }
 
     /// One of every variant of every error type here.
@@ -79,6 +85,14 @@ mod tests {
             Error::NoKeyset => Error::NoKeyset,
             Error::NotOpened => Error::NotOpened,
             Error::Plan(_) => Error::Plan(PlanError::NoContext),
+            Error::Blob(_) => Error::Blob(BlobError::NotABlob),
+        ]));
+        errors.extend(boxed(variants![
+            BlobError::Unwritable(_) => BlobError::Unwritable(storage_error(b"VCS\x01\x0a\x01\x00\x00\x00")),
+            BlobError::NotABlob => BlobError::NotABlob,
+            BlobError::UnsupportedVersion { .. } => BlobError::UnsupportedVersion { version: 2 },
+            BlobError::Malformed(_) => BlobError::Malformed(storage_error(b"VCS\x01\xff")),
+            BlobError::Mismatch(_) => BlobError::Mismatch(storage_error(b"VCS\x01\x0a\x01\x00\x00\x00x")),
         ]));
         errors.extend(boxed(variants![
             LeafBytesError::UnknownVersion(_) => LeafBytesError::UnknownVersion(9),
