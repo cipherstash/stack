@@ -73,7 +73,9 @@ pub struct Seq<L: HList>(pub L);
 /// or composite types above.
 #[derive(Debug)]
 pub struct Entry<V> {
+    /// Public map key used to derive the entry's context.
     pub key: &'static str,
+    /// Sealed leaf, nested container, or explicit passthrough value at this key.
     pub value: V,
 }
 

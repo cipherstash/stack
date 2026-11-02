@@ -151,8 +151,14 @@ impl SourceError {
 /// A sink is used once: each method takes `self`. Containers hand back a
 /// [`SeqSink`] or [`MapSink`] that produces one child sink per element or
 /// entry.
+///
+/// Sources must finish each child before requesting another, propagate errors,
+/// and call a container's `end` only after all children succeed. Dropping a
+/// sink does not mean successful completion. Implementations that write into
+/// borrowed buffers or external state must document partial-write behavior;
+/// this trait provides no rollback on source or sink failure.
 pub trait Sink: Sized {
-    /// What the sink produces when the walk ends.
+    /// What the sink produces when the walk ends successfully.
     type Ok;
     /// The sink's error, which can also carry a [`SourceError`].
     type Error: Error;
@@ -225,7 +231,9 @@ pub trait Sink: Sized {
 
 /// The sink for a sequence's elements.
 pub trait SeqSink: Sized {
+    /// Result produced when this container or value is completed successfully.
     type Ok;
+    /// Sink failure type, including errors forwarded from the source.
     type Error: Error;
     /// A sink for one element. It borrows the sequence sink and writes
     /// into it; its own `Ok` is incidental.
@@ -242,7 +250,9 @@ pub trait SeqSink: Sized {
 
 /// The sink for a map's entries. Keys are strings and travel in the clear.
 pub trait MapSink: Sized {
+    /// Result produced when this container or value is completed successfully.
     type Ok;
+    /// Sink failure type, including errors forwarded from the source.
     type Error: Error;
     /// A sink for one entry's value.
     type Entry<'s>: Sink<Error = Self::Error>

@@ -19,3 +19,10 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+# Compile and run the public attribute examples against their consumer APIs.
+# Path-only dependencies do not impose a publication order on the macro crate.
+vitaminc-aead = { path = "../aead" }
+vitaminc = { path = "../vitaminc", default-features = false, features = ["aead"] }
+zeroize = { workspace = true }

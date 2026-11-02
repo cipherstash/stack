@@ -6,7 +6,7 @@ ciphertext codec for the trees `encrypt` produces.
 
 A host binding does not convert its values into a Rust value tree. It
 implements [`Encrypt`] for values coming in and [`Sink`] for values going
-out (ADR 0001). The frame is the one binding-neutral shape of a value:
+out. A frame represents a value independently of the host language:
 
 - [`Frame`] is a validated, borrowed frame. `Frame::parse` checks the
   whole buffer up front, and the frame then implements `Encrypt` by
@@ -39,6 +39,12 @@ encode_ciphertext(&back, &mut again).expect("encodes");
 assert_eq!(again, bytes);
 ```
 
+## Installation
+
+```sh
+cargo add vitaminc-aead-frame
+```
+
 ## Transport, and one storage profile
 
 The frame, the ciphertext codec and the serde format in `serde` are
@@ -46,8 +52,7 @@ transport: nothing about them is a compatibility commitment, since hosts
 and guests ship together. The one exception is the storage profile,
 `storage::to_vec` and `storage::from_slice` (feature `serde`), which
 write and read a value as a versioned blob for bytes that are kept. Its
-format is specified in `STORAGE.md`, frozen at version 1, and pinned by the
-golden corpus in `testdata/storage-v1.json`. Use it, and only it, for bytes
+format is specified in [STORAGE.md](https://github.com/cipherstash/vitaminc/blob/main/packages/aead-frame/STORAGE.md) and frozen at version 1. Use this storage profile for bytes
 that outlive the process that wrote them. The other frozen format in the
 stack is the sealed leaf payload (`[tag] ++ payload`, the tag table in
 [`tags`]), which lives inside the AEAD envelope and never touches this
@@ -61,9 +66,8 @@ A ciphertext node is one byte of kind (`CT_SINGLE`, `CT_SEQ`, `CT_MAP`,
 `CT_PASSTHROUGH`, `CT_EMPTY_SEQ`, `CT_EMPTY_MAP`), then a sealed leaf as
 length and bytes, a container as count and children, or a passthrough as
 the frame of its subtree. All lengths and counts are `u32` little-endian;
-map keys are UTF-8. The kind `0x02` was the `CT_NONE` absence marker,
-which ADR 0001 retires: a `None` is a null leaf now, so the marker is
-never written and refused when read.
+map keys are UTF-8. The retired absence marker `0x02` (`CT_NONE`) is
+never written and is rejected when read. `None` is encoded as a null leaf.
 
 ## serde (feature `serde`)
 
@@ -126,11 +130,7 @@ carry no detail about the bytes.
 
 ## Performance
 
-`benches/storage.rs` writes and reads five values with the storage profile, with the transport serde format, and, for comparison, with `serde_json`, MessagePack (`rmp_serde`) and Borsh, using Criterion:
-
-```sh
-cargo bench -p vitaminc-aead-frame --features serde --bench storage
-```
+The storage profile and the transport serde format were measured against `serde_json`, MessagePack (`rmp_serde`) and Borsh, writing and reading five values with Criterion.
 
 MessagePack is written with field names (`rmp_serde::to_vec_named`), since the storage profile, the transport format and JSON all carry them. Borsh carries no field names and no kinds, only the values in order, so it shows what a format costs that carries nothing else. The storage profile and the transport format wipe their buffers as they grow and when they are dropped. The other three wipe nothing: they write into a plain `Vec<u8>`, so each time the buffer grows the old one is freed with its bytes still in it, and the result is freed unwiped when it is dropped. Wrapping their output in `Zeroizing` would cover only the drop, not the copies left as the buffer grows.
 
@@ -174,84 +174,37 @@ What the numbers show:
 
 - Writing a large value is limited by the wipe, not by the format. MessagePack and Borsh write 64 KiB in about 2 µs; the storage profile takes 33.7 µs, and wiping the 64 KiB buffer is 31.5 µs of that, because `zeroize` wipes one byte at a time with volatile stores, so the compiler cannot remove the wipe. The transport format has the same cost. JSON writes no wipe, but writes bytes as a list of numbers, 3.6 times as large and 8 times as slow.
 - Reading text or bytes costs little more than copying them out: 64 KiB of bytes reads at about 32 GiB/s, as fast as MessagePack.
-- On values with many small parts, the storage profile is the slowest of the five. It writes 1,000 records 6.7 times as slowly as MessagePack and 31 times as slowly as Borsh, and reads them 3.2 and 6.4 times as slowly. MessagePack carries the same field names, so the names are not the cost; each element or field costs the storage writer about 40 to 90 ns more. This is the clearest place to look for a speedup.
+- On values with many small parts, the storage profile is the slowest of the five. It writes 1,000 records 6.7 times as slowly as MessagePack and 31 times as slowly as Borsh, and reads them 3.2 and 6.4 times as slowly. MessagePack carries the same field names, so the names are not the cost; each element or field costs the storage writer about 40 to 90 ns more.
 - The storage profile is also the largest: 1,000 records take 57% more bytes than in MessagePack, and the map 89% more. Every length and count is a fixed four bytes and every value has a kind byte, where MessagePack packs small lengths and integers into one byte. Borsh is the smallest for records, but writes an integer at its full width, so the map of `u64` values is nearly as large as in the storage profile.
 - A storage write costs more than a transport write on values with many parts, 26% more for 1,000 records and 43% more for the map, because it reads the blob back to find a repeated key before it returns it. Storage and transport reads are within about 12% of each other.
 
-## Tests
+## Cargo features
 
-`tests/conformance.rs` runs the shared binding corpus,
-`testdata/value-conformance.json`, which Rust, Node and Go all read:
-every vector parses as one frame and writes back byte for byte, from its
-own walk and from a scalar built independently with std, chrono and
-rust_decimal, and every malformed vector is refused.
-`tests/storage.rs` reads and writes every row of the storage corpus,
-`testdata/storage-v1.json`, which describes each value in a model any
-language can build, refuses every malformed row with the error of its
-class, and reads every typed row as its type says. A second reader,
-written from STORAGE.md alone in `tests/support/reference.rs`, must agree
-with the crate on every row and on random and corrupted blobs. CI checks
-that no row the corpus had is changed or removed, with
-`scripts/storage_corpus_append_only.py` (`mise run storage:corpus:check`).
-`tests/storage_coverage.rs` checks that the corpus covers the
-specification. Every tag is a value in a vector, and every map key kind is
-a key in one, and a refused row starts a key with every byte a key may not
-start with. Every part of every numbered reading rule has a row: a refused
-row that breaks it, where the reference reader says which rule and part
-that is, or for what a rule allows or keeps apart, a vector. Every clause
-of *Reading by type* and of *Map keys* on reading has a `reads` row of the
-right shape, that reads as the clause says. A refused row only counts if
-it reads once the clause's cause is removed.
-The test holds STORAGE.md's rules, clauses and key grammar word for word,
-so a change to any of them fails it until the change is covered.
+No optional features are enabled by default.
 
-`src/storage/proofs.rs` holds Kani proofs about the storage reader, for
-every input within their bounds:
+| Feature | Effect |
+| --- | --- |
+| `serde` | Exposes `serde` transport conversion and the versioned `storage` profile; adds Serde and protected-buffer dependencies. |
 
-- the header is refused exactly as rules 1 and 2 say (up to 6 bytes);
-- a count is the four bytes at the cursor, and never more than the bytes
-  left (up to 8 bytes, from any position);
-- reading a scalar, an object's key or a map's key never panics, reads
-  the bytes at the cursor, and accepts a plainly valid one (up to 6 bytes,
-  from any position); an object's key is read exactly when its length and
-  UTF-8 are good, and a four-byte key exactly when it is UTF-8, checked
-  against RFC 3629's table; a map's key starts only with a tag STORAGE.md
-  allows; a wide scalar is read whole when the input holds it, and refused
-  otherwise, and a float is never a key (up to 17 bytes);
-- the depth bound is 128: a node past it is refused before any of it is
-  read, a node at it is still read, and a `some`, an array and a map pass
-  their children down a level (an object's hash set asks the OS for random
-  bytes, which Kani cannot model, so the corpus pins its depth);
-- two integer map keys are one key exactly when their values are equal,
-  across every pair of widths and every value;
-- two text keys, or two bytes keys, are one key exactly when their bytes
-  are equal, and keys of different kinds never are (up to 2 bytes).
+## Compatibility
 
-A proof over whole bodies did not solve in a usable time, even for three
-bytes, so whole bodies are left to the property tests and fuzzing. Run
-the proofs with `cargo kani -p vitaminc-aead-frame --features serde`; CI
-runs them in `.github/workflows/kani-storage.yml`.
+Requires Rust <!-- msrv:vitaminc-aead-frame -->**1.88.0**<!-- /msrv --> and the Rust standard library (`std`).
+MSRV increases require a minor release; patch releases retain the existing
+floor. See the [workspace compatibility policy](https://github.com/cipherstash/vitaminc#compatibility).
 
-`tests/storage_wipe.rs` and `tests/transport_wipe.rs` install an
-allocator that inspects every block as it is freed, and fail if one still
-holds a key or a value the storage writer, the transport writer or
-`to_frame` wrote: through growth, `Display` values, a map's keys, a
-failed write, or the dropped result.
+License: MIT.
 
-`tests/legacy_fixture.rs` opens a ciphertext sealed before ADR 0001 on
-the new path and gets the frame it was sealed from, so the leaf format,
-the AAD derivations and the container rules stay what shipped.
-
-[`Encrypt`]: vitaminc_aead::Encrypt
-[`Sink`]: vitaminc_aead::Sink
-[`CipherText`]: vitaminc_aead::CipherText
-[`Frame`]: crate::Frame
-[`FrameWriter`]: crate::FrameWriter
-[`to_frame`]: crate::to_frame
-[`PassthroughFrame`]: crate::PassthroughFrame
-[`encode_ciphertext`]: crate::encode_ciphertext
-[`decode_ciphertext`]: crate::decode_ciphertext
-[`tags`]: crate::tags
-[`MAX_DEPTH`]: crate::MAX_DEPTH
-[`CodecError`]: crate::CodecError
-[`FrameError`]: crate::FrameError
+<!-- GitHub API links target the latest release; src/lib.rs resolves these for rustdoc. -->
+[`CipherText`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/enum.CipherText.html
+[`CodecError`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/struct.CodecError.html
+[`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
+[`FrameError`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.FrameError.html
+[`FrameWriter`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.FrameWriter.html
+[`Frame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.Frame.html
+[`MAX_DEPTH`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/constant.MAX_DEPTH.html
+[`PassthroughFrame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/struct.PassthroughFrame.html
+[`Sink`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html
+[`decode_ciphertext`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/fn.decode_ciphertext.html
+[`encode_ciphertext`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/transport/fn.encode_ciphertext.html
+[`tags`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/tags/index.html
+[`to_frame`]: https://docs.rs/vitaminc-aead-frame/latest/vitaminc_aead_frame/fn.to_frame.html

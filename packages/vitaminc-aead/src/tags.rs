@@ -75,11 +75,9 @@ pub const UINT128: u8 = 0x11;
 /// 1970-01-01.
 pub const DATE: u8 = 0x12;
 /// UTC timestamp: `i64` Unix seconds, then `u32` nanoseconds, little-endian.
-/// The nanoseconds are below 2,000,000,000; values of 1,000,000,000 and
-/// above were chrono's leap-second representation, which the `Value` codec
-/// wrote and read before ADR 0001; this codec reads this tag as
-/// [`Logical::Timestamp`](crate::Logical) in nanoseconds and refuses a leap
-/// second, which has no count in any unit (see [`crate::leaf`]).
+/// Nanoseconds must be below 1,000,000,000; chrono's leap-second
+/// representations are rejected. This codec reads the tag as
+/// [`Logical::Timestamp`](crate::Logical) in nanoseconds (see [`crate::leaf`]).
 pub const TIMESTAMP: u8 = 0x13;
 /// Decimal: rust_decimal's 16-byte `serialize()` layout, preserving scale.
 /// Little-endian flags (sign bit 31, scale in bits 16–23, at most 28), then
