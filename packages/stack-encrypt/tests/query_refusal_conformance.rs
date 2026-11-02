@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use stack_encrypt::dynamic::{self, record, Error, NoTargets, OpSpec, ValueFrame};
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{op, Equality, Match, Ore, OreBlock, Plan, StackCipher};
+use stack_encrypt::{op, Equality, Match, Ope, Ore, OreBlock, Plan, StackCipher};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::{AtomicUsize, Ordering},
@@ -176,12 +176,26 @@ async fn typed(
             hi.text.parse::<u32>().unwrap(),
         )
     };
-    // The index that answers the operator, as the plan declares it.
+    let i128s = |query: &QueryInput| {
+        let (lo, hi) = pair(query);
+        assert!(lo.kind == "int128" && hi.kind == "int128");
+        (
+            lo.text.parse::<i128>().unwrap(),
+            hi.text.parse::<i128>().unwrap(),
+        )
+    };
+    // The index that answers the operator, as the plan declares it: the
+    // equality, match or order index, whichever the operator reads.
+    let answers: &[&str] = match operator {
+        OpSpec::Eq => &["eq"],
+        OpSpec::Matches => &["match"],
+        _ => &["ore", "ore_block", "ope"],
+    };
     let index = outputs
         .iter()
-        .find(|output| *output != "c")
         .map(String::as_str)
-        .expect("an index");
+        .find(|output| answers.contains(output))
+        .expect("an index that answers the operator");
     macro_rules! run {
         ($plan:expr, $op:expr, $value:expr) => {
             run!($plan, $op, $value, Ore)
@@ -252,12 +266,16 @@ async fn typed(
                 .unwrap();
             run!(plan, op::Between, &texts(query), OreBlock)
         }
-        ("uint32", "eq", OpSpec::Between) => {
-            // Order answers a range; the equality index is first in the
-            // declaration, so pick the order index explicitly.
-            assert!(outputs.iter().any(|output| output == "ore"));
+        ("uint32", "ore", OpSpec::Between) => {
             let plan = Plan::context(context).with::<u32, _>(Ore).build().unwrap();
             run!(plan, op::Between, &u32s(query))
+        }
+        ("int128", "ope", OpSpec::Between) => {
+            let plan = Plan::context(context)
+                .with::<i128, _>(Ope)
+                .build()
+                .unwrap();
+            run!(plan, op::Between, &i128s(query), Ope)
         }
         other => panic!("{field}: the typed chain is not spelled for {other:?}"),
     }
