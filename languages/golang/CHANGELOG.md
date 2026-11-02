@@ -20,14 +20,26 @@ v4 bundle: `Match` binds an `eql_v4.query_json_predicate`, and
 `eql_v4.json_tree_match` and `eql_v4.json_tree_element_match` read. A
 database with the rc.2 bundle has none of them, and PostgreSQL refuses the
 query because the type does not exist. Install the `eql-v4-install.sql`
-attached to this release (`psql -f eql-v4-install.sql`). Re-running it keeps
-your columns and data, since the column types live in `public`, but it
-begins with `DROP SCHEMA eql_v4 CASCADE`, which drops every index built on an
-`eql_v4` function (`eql_v4.ord_term(col)` and the like). Re-create those
-indexes and run `ANALYZE` afterwards.
+attached to this release (`psql -f eql-v4-install.sql`).
+
+Re-running it keeps your columns and data, since the column types live in
+`public`. But it drops the `eql_v4` and `eql_v4_internal` schemas with
+`CASCADE` and creates them again, and it issues no `GRANT`. That removes
+every index built on an `eql_v4` function (`eql_v4.ord_term(col)` and the
+like) and every grant on those schemas and their functions. After it runs,
+and before the application sends queries:
+
+1. If the application connects as a role other than the one that installed
+   EQL, grant it access again: `USAGE` on the schema `eql_v4` and `EXECUTE`
+   on all its functions, and the same for `eql_v4_internal`, which equality,
+   ordering and JSON queries reach. Any `ALTER DEFAULT PRIVILEGES` in those schemas went
+   with them too. Without this the application's queries fail with
+   `permission denied for schema eql_v4`. EQL's
+   [permissions reference](../../packages/eql/docs/reference/permissions.md)
+   lists the statements; its examples name `eql_v3`, so write `eql_v4`.
+2. Re-create the indexes, then run `ANALYZE`.
 
 ### Added
-
 
 - **Bind a whole jsonpath filter on a `JsonSearch` field as one parameter
   (#1443).** Every `JsonSearch` field gets
