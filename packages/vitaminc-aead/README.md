@@ -105,7 +105,7 @@ A cipher that has to be awaited implements [`AsyncCipher`] instead, and drives [
 
 ### Encrypting data
 
-[`encrypt`] takes any [`Encrypt`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them.
+[`encrypt`] takes any [`Encrypt`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), a `ProtectedRef` borrow from `as_protected_ref()` (walked as the `&Protected<T>` it came from), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them.
 
 ```rust
 # use vitaminc_aead::{Cipher, Context, Unspecified};

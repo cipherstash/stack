@@ -213,6 +213,22 @@ fn a_locked_value_is_a_source_through_its_protected_ref() {
     );
 }
 
+/// `Equatable` and `Exportable` around a `Protected` lend a borrow too, and
+/// it seals as the same value held in a bare `Protected`. (A `Usage` lends
+/// none: see vitaminc-protected's `usage_does_not_lend_a_protected_ref`.)
+#[test]
+fn every_lending_owner_seals_as_the_protected_value() {
+    use vitaminc_protected::{Equatable, Exportable};
+
+    let protected = Protected::new(Some(1815u32));
+    let equatable: Equatable<Protected<Option<u32>>> = Equatable::new(Some(1815));
+    let exportable: Exportable<Protected<Option<u32>>> = Exportable::new(Some(1815));
+    let both: Exportable<Equatable<Protected<Option<u32>>>> = Exportable::new(Some(1815));
+    assert_eq!(sealed(equatable.as_protected_ref()), sealed(&protected));
+    assert_eq!(sealed(exportable.as_protected_ref()), sealed(&protected));
+    assert_eq!(sealed(both.as_protected_ref()), sealed(&protected));
+}
+
 /// A borrowed string seals as text only when the caller asks for text.
 #[test]
 fn a_borrowed_str_seals_as_what_the_caller_asks_for() {

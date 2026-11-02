@@ -278,6 +278,12 @@ where
 /// owner wipes it when it drops, but a `ProtectedRef` lent by a bare
 /// `[u8; N]`, `str` or `Cow<str>` has nothing behind it that ever wipes.
 ///
+/// Which owners lend one is up to `vitaminc-protected`. A `Usage` does not,
+/// so a scoped value is never encrypted without a `risky_ref` call. A
+/// `Locked` does: sealing then copies its plaintext into the leaf's
+/// `Protected<Vec<u8>>`, which is wiped but is not locked memory, as any
+/// consumer of the borrow does with the value it reads.
+///
 /// `T` may be unsized. `ProtectedRef<'_, str>` is a text leaf and
 /// `ProtectedRef<'_, [u8]>` a byte leaf. A `str` lends either, so
 /// annotate which one you mean: a string sealed as bytes reads back only
