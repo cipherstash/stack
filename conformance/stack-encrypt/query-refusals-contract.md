@@ -7,9 +7,10 @@ native Rust and Go WASI under `NoTargets`. Python and TypeScript runners
 remain pending.
 
 The scalar and runtime profiles cover a handful of equality refusals. This
-profile is the shared rejection corpus across operators, field
-capabilities and operand shapes, with the class of each refusal, its
-structured diagnostic, and the observation that no key is requested.
+profile is the shared rejection corpus: every scalar operator against
+every field capability of the plan, and the operand shapes and values
+listed below, with the class of each refusal, its structured diagnostic,
+and the observation that no key is requested.
 
 The runners are `packages/stack-encrypt/tests/query_refusal_conformance.rs`
 and `languages/golang/encrypt/query_refusal_conformance_test.go`.
@@ -34,12 +35,17 @@ range. `accepted` is mandatory; a refused case carries `expected_error`.
 | `plan` | `Error::Plan` | `ErrEncoding` | `stack_encrypt::dynamic_plan` with `reason` and `field` |
 | `term` | the index's own refusal of the value | `ErrTerm` | the term error's code (`stack_encrypt::empty_term_text`, `term_normalize`, `ore_block_too_long`, `ore_block_trailing_nul`); no reason or field |
 
-Source and plan refusals cover an operator the field's type does not
-answer (equality on a match-only or ciphertext-only field, order on an
-equality-only field, `lte` on a match-only field, `gte` on a
-ciphertext-only field, match on an integer, a JSON document operator on an
-integer, anything on a bool), the order index on bytes that no operator
-reads, a range that is not a list of two
+Source and plan refusals cover every scalar operator (`eq`, `lt`, `lte`,
+`gt`, `gte`, `between`, `matches`) on every field of the plan whose
+indexes do not answer it, one case per pair: the equality-only text and
+integer, the match-only text, the ORE and block ORE text, the order-only
+float, the ciphertext-only bool and text, and the bytes field (equality
+and an order index no operator reads). The 128-bit integer (equality and
+OPE) and the 32-bit integer (equality and ORE) answer every operator but
+`matches`. The SQL-null integer shares the equality-only
+integer's indexes and is not repeated. A JSON document operator on an
+integer is refused as well. The remaining source refusals are operand
+shapes and values: a range that is not a list of two
 (a scalar, one bound, three bounds, text), a value of another kind (text or
 a fraction for an integer, a negative for an unsigned, an integer for text,
 a bool for an integer, a null bound), a null on a field that does not seal

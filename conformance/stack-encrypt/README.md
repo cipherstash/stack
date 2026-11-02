@@ -129,7 +129,8 @@ fixed-width kinds, write refusals between kinds, frozen typed frames, and
 the Go-only host conversions the host refuses before the engine. The
 [query-refusal contract](query-refusals-contract.md) defines
 `record-query-refusals-v1` in `v1/query-refusals.json`: one plan, every
-scalar operator against every capability and operand shape, each refusal's
+scalar operator against every field capability that does not answer it,
+the range shapes, other-kind values and nulls the contract lists, each refusal's
 class and diagnostic, no key I/O, and the stage at which the typed Rust
 chain refuses the same query. The [raw-frame contract](raw-frames-contract.md)
 defines `record-raw-frames-v1` in `v1/raw-frames.json`: stored batches as
