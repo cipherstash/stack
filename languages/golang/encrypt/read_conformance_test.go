@@ -120,8 +120,11 @@ func mutateRead(t *testing.T, batch []any, c readCase) {
 func readRefusal(t *testing.T, err error, want *declarationError) {
 	t.Helper()
 	sentinel := encrypt.ErrEncoding
-	if want.Code == "stack_encrypt::context_mismatch" {
+	switch want.Code {
+	case "stack_encrypt::context_mismatch":
 		sentinel = encrypt.ErrContextMismatch
+	case "stack_encrypt::aead":
+		sentinel = encrypt.ErrAuthentication
 	}
 	var diagnostic *encrypt.Diagnostic
 	if !errors.Is(err, sentinel) || !errors.As(err, &diagnostic) {

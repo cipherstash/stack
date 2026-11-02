@@ -255,3 +255,29 @@ caller-owned values, unobserved live-provider behavior and unenrolled languages.
 This does not complete secure-buffer/key-copy refactoring. Next conformance
 slices remain value/refusal/raw-frame gaps, broader fresh artifact exchange,
 Python/TypeScript enrollment and explicit release gates/version combinations.
+
+## Value, refusal and raw-frame checkpoint
+
+Implemented three shared corpora under `conformance/stack-encrypt/v1`, each
+with a Rust and a Go runner required by `test:conformance`:
+`record-values-v1` ([value contract](../../conformance/stack-encrypt/values-contract.md)),
+every kind at its boundaries with frozen typed frames, sealed and SQL nulls
+for every fixed-width kind, cross-kind write refusals and the Go host
+conversions the host refuses before the engine;
+`record-query-refusals-v1` ([query-refusal contract](../../conformance/stack-encrypt/query-refusals-contract.md)),
+every scalar operator against every capability and operand shape, by refusal
+class and diagnostic, with no key I/O, and the stage at which the typed Rust
+chain refuses the same query; and `record-raw-frames-v1`
+([raw-frame contract](../../conformance/stack-encrypt/raw-frames-contract.md)),
+stored batches as transport bytes so repeated keys and malformed leaves reach
+both decoders, with the table of error classes.
+
+The corpora pin three differences rather than fixing them: the order index
+on `bytes` stores a term no operator reads; the typed chain refuses
+equality, order and block ORE value refusals after its keyset loads where the
+binding refuses before any (the query-preparation consolidation is tracked
+separately and changes those entries on purpose); and a repeated key in a
+stored record is a transport refusal in both codecs, so the engine's own
+repeated-key guards are reached natively alone. No frozen fixture, artifact
+or existing test changed. Fresh exchange of the wider kinds, Python and
+TypeScript runners and release gates remain open.
