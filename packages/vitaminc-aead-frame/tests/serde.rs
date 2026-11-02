@@ -1604,3 +1604,51 @@ fn writing_a_repeated_key_or_field_is_refused_without_naming_it() {
         );
     }
 }
+
+/// The transport finds a repeated key by comparing the keys' bytes where
+/// they lie in the frame, so every way of writing a key must give the same
+/// bytes for the same text. A `&str`, a `char` and a `Display` key take
+/// different paths there.
+#[test]
+fn a_key_repeated_in_another_form_is_refused_and_distinct_keys_are_not() {
+    use serde::ser::SerializeMap;
+
+    /// A map of the given keys, each written as its own form, in order.
+    struct Keys(Vec<Key>);
+    enum Key {
+        Str(&'static str),
+        Char(char),
+        Display(&'static str),
+    }
+    impl Serialize for Keys {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(Some(self.0.len()))?;
+            for (value, key) in self.0.iter().enumerate() {
+                match key {
+                    Key::Str(text) => map.serialize_entry(text, &value)?,
+                    Key::Char(c) => map.serialize_entry(c, &value)?,
+                    Key::Display(text) => map.serialize_entry(&format_args!("{text}"), &value)?,
+                }
+            }
+            map.end()
+        }
+    }
+
+    for (what, keys) in [
+        ("a str and a Display", [Key::Str("a"), Key::Display("a")]),
+        ("a char and a str", [Key::Char('a'), Key::Str("a")]),
+        ("a Display and a char", [Key::Display("a"), Key::Char('a')]),
+    ] {
+        let error = to_vec(&Keys(keys.into())).expect_err(what);
+        assert_eq!(error.message(), "duplicate key", "{what} are one key");
+    }
+
+    to_vec(&Keys(vec![Key::Str("a"), Key::Str("ab")])).expect("a key and its prefix are two keys");
+    to_vec(&Keys(vec![Key::Char('a'), Key::Display("ab")]))
+        .expect("a key and its prefix are two keys, in any form");
+
+    // A key repeated only across two maps, one inside the other, is two
+    // keys: each map checks its own.
+    let nested = BTreeMap::from([("a", BTreeMap::from([("a", 1u8)]))]);
+    to_vec(&nested).expect("a key in a nested map is its own");
+}
