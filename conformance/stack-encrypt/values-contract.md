@@ -64,6 +64,11 @@ For a case with no `expected_error`:
    truncated to the microsecond).
 4. The record opens to the input with its type, with one batched retrieval.
 
+The key-call counts (one generation, no call per query, one retrieval) and
+the refusals' "no key call" are native observations: the Rust runner counts
+them on its key source. The Go runner checks everything else; its
+deterministic guest has no call counter to read.
+
 A sealed null (`"null": "sealed"`, input `null`) stores ciphertext and the
 equality term, opens as null, and its `companion` value row's ciphertext
 has the same length. A SQL null stores nothing and opens as null.

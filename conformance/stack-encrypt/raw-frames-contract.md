@@ -72,7 +72,10 @@ binding cannot reach the engine with such a tree.
 ciphertext under seed zero and context `["conformance", "value"]`, with its
 frozen equality term as the passthrough. `read` names the declaration the
 batch is read under. `retrievals` is `1` for `authenticated` and `success`
-and `0` otherwise; a read never generates a key.
+and `0` otherwise; a read never generates a key. The counts are a native
+observation: Go checks that `retrievals` agrees with the class, and its
+checker's stop at the state boundary stands in for "nothing retrieved
+before preflight".
 
 | Case | Class | What the bytes do |
 |---|---|---|
