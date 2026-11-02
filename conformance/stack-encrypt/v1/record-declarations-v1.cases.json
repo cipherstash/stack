@@ -2343,6 +2343,19 @@
       }
     },
     {
+      "id": "output-not-string",
+      "input": {
+        "json": {
+          "value": { "context": ["users", "value"], "outputs": [1] }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "unknown_output", "field": "value" }
+      }
+    },
+    {
       "id": "output-options-on-equality",
       "input": {
         "json": {
@@ -2396,6 +2409,22 @@
           "value": {
             "context": ["users", "value"],
             "outputs": ["passthrough", "c"]
+          }
+        }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "passthrough_with_outputs", "field": "value" }
+      }
+    },
+    {
+      "id": "passthrough-with-index",
+      "input": {
+        "json": {
+          "value": {
+            "context": ["users", "value"],
+            "outputs": ["eq", "passthrough"]
           }
         }
       },
@@ -2753,6 +2782,17 @@
       "id": "target-empty",
       "input": {
         "json": { "value": { "context": ["users", "value"], "target": "" } }
+      },
+      "accepted": false,
+      "expected_error": {
+        "code": "stack_encrypt::dynamic_plan",
+        "fields": { "reason": "invalid_target", "field": "value" }
+      }
+    },
+    {
+      "id": "target-number",
+      "input": {
+        "json": { "value": { "context": ["users", "value"], "target": 1 } }
       },
       "accepted": false,
       "expected_error": {

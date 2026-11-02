@@ -1458,6 +1458,58 @@
       }
     },
     {
+      "id": "ore-block-between-long-low",
+      "field": "title",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "string",
+            "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "type": "string",
+            "text": "b"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "term",
+        "code": "stack_encrypt::ore_block_too_long"
+      },
+      "typed": {
+        "refusal": "after_keyset"
+      }
+    },
+    {
+      "id": "ore-block-between-nul-high",
+      "field": "title",
+      "operator": "between",
+      "input": {
+        "type": "list",
+        "items": [
+          {
+            "type": "string",
+            "text": "a"
+          },
+          {
+            "type": "string",
+            "text": "b\u0000"
+          }
+        ]
+      },
+      "accepted": false,
+      "expected_error": {
+        "class": "term",
+        "code": "stack_encrypt::ore_block_trailing_nul"
+      },
+      "typed": {
+        "refusal": "after_keyset"
+      }
+    },
+    {
       "id": "inverted-range",
       "field": "age",
       "operator": "between",

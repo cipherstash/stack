@@ -71,7 +71,9 @@ value kinds remain open.
 Shared semantic expectations should be maintained once and executed by each
 language runner. Conformance can replace duplicate case tables and fixture
 maintenance. It does not eliminate the need to execute the Rust and Go paths.
-No existing test has been deleted by conformance enrollment.
+Enrollment alone deleted no test; the [consolidations](#consolidations) below
+record each duplicate table that was later removed, with the shared cases
+and the fault evidence that replaced it.
 
 | Existing evidence | Relationship to conformance | Consolidation action |
 |---|---|---|
@@ -201,3 +203,68 @@ Open: fresh JSON document exchange, the remaining EQL types, a SQL lane
 that stores one language's fresh rows through the other, and the
 a lane that runs the required Go rc.3 combination, and the other
 released-version rows once the compatibility policy is defined.
+
+## Consolidations
+
+Each row is one old assertion table whose literal expectations are now held
+by a shared corpus and executed by both language runners. A row was removed
+only after a fault was introduced by hand into the engine and the named
+replacement runner failed on it under `STACK_CONFORMANCE_REQUIRED=1`; the
+fault was then reverted. "Fails on" names the fault and the case the runner
+reported. Where an old table mixed shared rows with shapes the corpus cannot
+spell, only the shared rows were removed and the test's doc comment says what
+stays. Every shared case in these rows runs natively through the Rust binary
+named and through the Go guest (`TestDeclarationConformance` on both guests,
+`TestRuntimeConformance`, `TestReadConformance`, `TestQueryRefusalConformance`).
+
+Five cases were enrolled so the old rows had a one-to-one home rather than a
+neighbour: `output-not-string`, `passthrough-with-index` and `target-number`
+in `v1/declarations.json`; `ore-block-between-long-low` and
+`ore-block-between-nul-high` in `v1/query-refusals.json`.
+
+| Old test (file) | Shared case IDs | Replacement runner | Fails on |
+|---|---|---|---|
+| `every_refusal_names_its_field_and_reason::a_malformed_plan` (`src/dynamic/record.rs`), 27 rows, removed | `root-null`, `root-list`, `empty-plan`, `field-not-object`, `unknown-key`, `frame-duplicate-key` (a key, a field and a match option given twice: the frame refuses a repeated key at any depth before the plan is read), `missing-context`, `missing-outputs`, `outputs-with-target`, `outputs-string`, `output-unknown`, `outputs-empty`, `output-duplicate`, `passthrough-with-ciphertext`, `target-number`, `type-unknown`, `type-uint32-match`, `type-bool-ore`, `context-bare-label`, `context-bool`, `mixed-prefix`, `shared-identity`, `context-empty` | `declarations::shared_declaration_grammar` | `missing_context` reported as `unknown_key`: `missing-context`; a label refusal reported as another reason: `context-bare-label`, `context-one-segment`, `context-segment-*`, `context-nested-extension`, `context-field-static-label` |
+| `every_refusal_names_its_field_and_reason::a_null_is_refused_as_its_key` (`record.rs`), 6 rows, removed | `context-null`, `outputs-null`, `target-null`, `type-null`, `context-field-null`, `field-null` | `declarations::shared_declaration_grammar` | `present` reading a null as an absent key: `outputs-null`, `target-null`, `target-options-null`, `type-null`, `null-mode-null` |
+| `every_refusal_names_its_field_and_reason::a_missing_or_null_index_payload_is_the_default` (`record.rs`), removed | `match-default-bare`, `match-default-null`, `match-default-empty`, `unit-output-null-eq` | `declarations::shared_declaration_grammar` (normalization) | a non-default option substituted for a missing match payload: `match-default-bare`, `match-default-null` |
+| `given_a_plan_value::refuses_a_malformed_plan_before_any_field_is_built` (`record.rs`), 17 rows, removed | `root-null`, `empty-plan`, `field-not-object`, `unknown-key`, `missing-context`, `missing-outputs`, `outputs-empty`, `output-not-string`, `output-unknown`, `output-duplicate`, `passthrough-with-ciphertext`, `passthrough-with-index`, `frame-duplicate-key`, `context-bool`, `context-empty` | `declarations::shared_declaration_grammar` | as the first row; the old rows asserted the error variant alone, the corpus asserts code, reason and field |
+| `given_a_plan_value::refuses_a_field_context_that_is_not_a_label` (`record.rs`), 6 of 9 rows removed; the integer, bytes and extended one-segment shapes stay | `context-bare-label`, `context-one-segment`, `context-segment-slash`, `context-segment-digit`, `context-nested-extension` | `declarations::shared_declaration_grammar` | a label refusal reported as another reason: every `context_not_label` case |
+| `every_refusal_names_its_field_and_reason::a_source_that_does_not_fit` (`record.rs`), 3 of 9 rows removed; the passthrough, repeated-key and non-object shapes stay | `required-missing`, `late-missing`, `unknown-field`, `sql-missing-with-unknown-field`, `required-wrong-width`, `late-wrong-type` | `runtime_conformance::shared_record_runtime_profile` | a missing field tolerated by every null mode: `required-missing`; the declared type not checked on a required field: `required-null`; `unknown_field` reported as `field_missing`: `unknown-field` |
+| `given_a_source_that_does_not_fit_the_plan::encrypt_and_check_source_refuse_it_alike_with_no_key_request` (`record.rs`), 3 of 11 rows and the two matching `encrypt` checks removed | as the row above; the runner also asserts no data key is generated on a refusal | `runtime_conformance::shared_record_runtime_profile` | as the row above |
+| `every_refusal_names_its_field_and_reason::a_stored_record_that_does_not_fit` (`record.rs`), 6 of 7 rows removed; the repeated-field row stays (the engine guard is reached natively alone, see the raw-frame contract) | `missing-field`, `field-not-map`, `missing-ciphertext`, `plaintext-under-c`, `context-tenant-no-payload`, `row-not-map` | `read_conformance::shared_record_read_profile` (`check_record` and `decrypt`, with the retrieval counter) | `outputs_not_map` and `no_ciphertext_node` reported as other reasons: `field-not-map`, `missing-ciphertext`; a missing field tolerated by every null mode: `missing-field`, `late-missing-field`, `context-drop-tenant`; `passthrough` and `no_passthrough_node` reported as other reasons: `plaintext-under-c`, `context-tenant-no-payload`; a non-map row reported as another reason: `row-not-map` |
+| `given_a_field_that_stores_a_null::a_null_in_a_field_with_no_null_mode_is_refused` (`record.rs`), removed | `required-null` | `runtime_conformance::shared_record_runtime_profile` | the declared type not checked on a required field: `required-null` |
+| `given_a_field_that_stores_a_null::a_stored_null_is_refused_through_a_plan_that_has_no_null` (`record.rs`), removed | `authenticated-null-as-required` (the refusal), `sealed-null` and `sealed-boundaries` (a value opens through the sealing plan) | `read_conformance::shared_record_read_profile`, `runtime_conformance::shared_record_runtime_profile` | a sealed null accepted by a plan with no null mode: `authenticated-null-as-required` |
+| `given_a_field_that_stores_a_null::a_row_with_every_field_left_out_is_an_empty_record` (`record.rs`), removed | `sql-all-absent`, `sql-null` | `runtime_conformance::shared_record_runtime_profile` | an explicit SQL null not left out of the record: `sql-null` |
+| `given_a_field_that_stores_a_null::a_stored_record_may_leave_out_only_a_sql_field` (`record.rs`), removed | `sql-absent-as-required`, `sql-absent-as-sealed` | `read_conformance::shared_record_read_profile` | a missing field tolerated by every null mode: `sql-absent-as-required`, `sql-absent-as-sealed` |
+| `a_query_the_field_does_not_answer_is_refused_naming_the_field` (`src/dynamic/query.rs`), 10 rows, removed | `eq-on-match-only`, `matches-on-equality-only`, `eq-on-order-only`, `lt-text-for-integer`, `lt-fraction-for-integer`, `between-scalar`, `between-one-bound`, `between-mixed-bounds`, `no-such-field` | `query_refusal_conformance::shared_query_refusal_profile` (`check_query` and `query_term` alike) | `operator_not_answered` reported as `unknown_operator`: `eq-on-match-only`; `not_a_range` reported as `field_type`: `between-scalar`; `no_such_field` reported as `unknown_field`: `no-such-field` |
+| `the_typed_paths_query_refusals_are_made_before_any_term` (`query.rs`), 6-row table removed; renamed `folded_equivalents_derive_one_term` for the one-term assertions that stay | `lt-unassigned`, `between-unassigned-high`, `between-unassigned-low`, `matches-too-short`, `matches-unassigned`, `eq-unassigned` | `query_refusal_conformance::shared_query_refusal_profile` | the upper bound of a range not folded before a term: `between-unassigned-high` |
+| `block_ore_refuses_text_it_has_no_term_for_before_any_term` (`query.rs`), removed | `ore-block-too-long`, `ore-block-trailing-nul`, `ore-block-between-long-high`, `ore-block-between-long-low`, `ore-block-between-nul-low`, `ore-block-between-nul-high`; accepted: `ore-block-longest`, `ore-block-interior-nul`, `ore-block-empty` | `query_refusal_conformance::shared_query_refusal_profile` | the length refusal reported as the NUL refusal: `ore-block-too-long` |
+| `TestAQueryTheFieldDoesNotAnswerIsRefused` (`languages/golang/encrypt/query_test.go`), 5-row table, the inverted range and the short match text removed; renamed `TestVerifyAndTargetLimitRefuseWhatIsNotAMatchQuery` for the `Verify`/`TargetLimit` refusals that stay | `matches-on-integer`, `lte-on-match-only`, `unknown-operator`, `between-scalar`, `lt-text-for-integer`, `inverted-range`, `matches-too-short` | `TestQueryRefusalConformance` | the host dropping the diagnostic's `reason`: every refusal case; the engine faults above, through the same engine the guest embeds |
+| `TestAPlanRefusalNamesItsReason` (`languages/golang/encrypt/guest_test.go`), removed | `output-duplicate` (a host plan in `v1/go-declarations.json` and a frame, on both guests) | `TestDeclarationConformance` | the host dropping the diagnostic's `reason`: `output-duplicate` and every other refusal case |
+
+Considered and kept, with the reason:
+
+- `given_a_stored_record_that_does_not_fit_the_plan::decrypt_and_check_record_refuse_it_before_any_key_is_retrieved`:
+  eight of its thirteen shapes are read cases, but the five that are not (a
+  passthrough inside the ciphertext subtree, a passthrough field carrying a
+  ciphertext, a field, an output and a key given twice) are the engine guards
+  the transport reaches natively alone, and the test is the module's
+  load-bearing forged-plaintext check with its retrieval counter.
+- `refuses_fields_under_different_contexts_or_extensions` and
+  `refuses_two_fields_keyed_under_one_identity`: each holds one shared row
+  beside shapes the corpus has not got (one field extended and one not; two
+  passthrough fields sharing a label).
+- `tests/op.rs` typed refusals (`a_match_query_with_no_tokens_is_refused_before_any_term_or_keyset`,
+  `a_match_query_is_cut_in_nfc_and_refuses_text_with_no_normal_form`,
+  `an_inverted_range_is_a_query_like_any_other`): the corpus's `typed` entries
+  record the typed chain's refusal stage, not its `via`, batch, case-sensitive
+  and bound-order assertions.
+- Go `TestPlanCheckAnswersWithoutACipher`, `TestQueryTermRefusesWhatTheFieldDoesNotAnswerBeforeState`,
+  `TestGuestRefusesMalformedInputsBeforeState`, `TestCheckerRefusesAnIndexedUntypedField`:
+  their rows are shared declaration and refusal cases, but each is about the
+  uninitialised instance answering `ErrEncoding` before `ErrState`, or the
+  host rule refusing before the engine, which the corpus runners do not observe.
+- Everything in the retained list above: compile-fail, ownership and
+  zeroization, batching, property, frozen-bytes, generated-code, host
+  conversion, error wrapping, cancellation, guest lifecycle, PostgreSQL and
+  live-provider tests.

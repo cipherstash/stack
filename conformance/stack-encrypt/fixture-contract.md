@@ -69,7 +69,7 @@ which the record-interface test covers. Its existing SQL parameter conversion,
 empty-page, zero-query, inverted-range and floating-point ordering assertions
 remain in those selected tests. Wider operator refusal and secret-diagnostic
 tests remain in the full suites; this slice does not turn them into shared
-negative cases. In Go, `TestAQueryTheFieldDoesNotAnswerIsRefused` and
+negative cases. In Go, `TestVerifyAndTargetLimitRefuseWhatIsNotAMatchQuery` and
 `TestAMatchesQueryNeverPrintsItsText` share the fixture client, so they also
 fail on a missing guest in required mode. They remain outside the aggregate
 selection and the shared requirements; the missing-guest regression covers them.
