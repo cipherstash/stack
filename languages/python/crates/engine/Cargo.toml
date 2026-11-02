@@ -28,6 +28,9 @@ stackencrypt-core = { path = "../core" }
 # binary has to link it or fails with undefined `_Py*` symbols. maturin turns
 # the feature on through `[tool.maturin].features` in pyproject.toml.
 pyo3 = { version = "0.29", features = ["abi3-py39"] }
+# To wipe the owned copy of a `str` the extension reads (src/values.rs,
+# `Read`). The version the workspace already resolves.
+zeroize = "1"
 # Only for the `gate-probe` feature below.
 tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
 
@@ -36,3 +39,15 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true
 # Python test can send SIGINT during the call. Off in every normal build;
 # see docs/gate-facts/keyboard-interrupt.md for how to run it.
 gate-probe = ["dep:tokio"]
+# A test build whose client takes its keys from a seed, not from ZeroKMS, once
+# `_use_deterministic_keys` is called. `mise run test:deterministic` builds it
+# and runs the frozen-row tests in `tests_deterministic/`. Never in a wheel a
+# user installs.
+deterministic-kms = ["stackencrypt-core/deterministic-kms"]
+
+[dev-dependencies]
+# For the heap-hygiene test (src/heap_hygiene.rs): a cipher over the
+# in-memory key source, and a runtime to run the engine on.
+stack-encrypt = { workspace = true }
+stack-kms = { workspace = true, features = ["test-support"] }
+tokio = { version = "1", features = ["rt"] }

@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyType};
 use stackencrypt_core::encrypt::plaintext::{Encrypt, MapSink, SeqSink, Sink, SourceError};
-use stackencrypt_core::encrypt::{self as core, Column, Field, ModelPlan};
+use stackencrypt_core::encrypt::{self as core, Column, Field, ModelPlan, ValueFrame};
 use stackencrypt_core::refusal::Refusal;
 use stackencrypt_core::values::{self, Kind};
 
@@ -107,28 +107,7 @@ pub fn encrypt<'py>(
         return Ok(PyList::empty(py));
     }
     let rows = models.len();
-    let failed = RefCell::new(None);
-    let source = Models {
-        plan,
-        models: &models,
-        failed: &failed,
-    };
-    let frame = match core::frame_of(source) {
-        Ok(frame) => frame,
-        Err(error) => {
-            return Err(failed.into_inner().unwrap_or_else(|| {
-                raise(
-                    py,
-                    Refusal {
-                        code: "stack_encrypt_unknown".to_owned(),
-                        message: format!("the models could not be written as a frame: {error}"),
-                        field: None,
-                        reason: None,
-                    },
-                )
-            }))
-        }
-    };
+    let frame = input_frame(py, plan, &models)?;
     let encrypted = py
         .detach(|| core::encrypt(&plan.plan, frame, rows))
         .map_err(|refused| raise(py, refused))?;
@@ -145,6 +124,33 @@ pub fn encrypt<'py>(
         out.append(row)?;
     }
     Ok(out)
+}
+
+/// The models as the engine's input frame, every value read and checked.
+pub(crate) fn input_frame(
+    py: Python<'_>,
+    plan: &Plan,
+    models: &[Bound<'_, PyAny>],
+) -> PyResult<ValueFrame> {
+    let failed = RefCell::new(None);
+    let source = Models {
+        plan,
+        models,
+        failed: &failed,
+    };
+    core::frame_of(source).map_err(|error| {
+        failed.into_inner().unwrap_or_else(|| {
+            raise(
+                py,
+                Refusal {
+                    code: "stack_encrypt_unknown".to_owned(),
+                    message: format!("the models could not be written as a frame: {error}"),
+                    field: None,
+                    reason: None,
+                },
+            )
+        })
+    })
 }
 
 /// How many times the shared engine client has been built in this process.

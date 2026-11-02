@@ -155,8 +155,11 @@ With this form, a new `Book` has `author` set to `None` until you set it. A bare
 From `languages/python`:
 
 ```sh
-mise run test        # no credentials needed
-mise run test:live   # needs the four CS_* variables and EQL_TEST_DATABASE_URL
+mise run test                 # no credentials needed
+mise run test:deterministic   # no credentials needed
+mise run test:live            # needs the four CS_* variables and EQL_TEST_DATABASE_URL
 ```
+
+`mise run test:deterministic` builds a test version of the extension. Its keys come from a fixed seed, not from CipherStash. The tests in `tests_deterministic/` then open the EQL rows the Go SDK stored under that seed. They also check that Python seals the same values to the same terms. Run `mise run build` afterwards to get a normal build back.
 
 `mise run test:live` installs the EQL v4 bundle into the database that `EQL_TEST_DATABASE_URL` names. Use a database you can throw away.

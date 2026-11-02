@@ -177,6 +177,10 @@ fn refusal(code: &str, field: &Field, message: String) -> Refusal {
 /// `decrypt_kind_mismatch` for a value stored as another kind than the
 /// field's.
 pub fn decrypt(plan: &ModelPlan, rows: Rows) -> Result<Vec<Vec<Scalar>>, Refusal> {
+    #[cfg(feature = "deterministic-kms")]
+    if let Some((cipher, runtime)) = client::deterministic() {
+        return runtime.block_on(decrypt_with(cipher, plan, rows));
+    }
     let client = client::shared()?;
     client.block_on(decrypt_with(client.cipher(), plan, rows))
 }
