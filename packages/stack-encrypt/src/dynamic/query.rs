@@ -1862,105 +1862,15 @@ mod tests {
         assert_eq!(term.fidelity(), Fidelity::Probabilistic);
     }
 
+    /// The typed path's term refusals (text with no normal form, text that
+    /// cuts no token, block ORE's length and NUL rules) are shared
+    /// query-refusal cases, run through the check and the derivation alike.
+    /// What stays here is what a refusal table cannot say: two spellings
+    /// that fold to one key derive one term.
     #[tokio::test]
-    async fn a_query_the_field_does_not_answer_is_refused_naming_the_field() {
+    async fn folded_equivalents_derive_one_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let cases = [
-            ("name", OpSpec::Eq, text("x"), Reason::OperatorNotAnswered),
-            (
-                "email",
-                OpSpec::Matches,
-                text("bob"),
-                Reason::OperatorNotAnswered,
-            ),
-            (
-                "nickname",
-                OpSpec::Eq,
-                text("bob"),
-                Reason::OperatorNotAnswered,
-            ),
-            (
-                "age",
-                OpSpec::Eq,
-                Tree::UInt32(1),
-                Reason::OperatorNotAnswered,
-            ),
-            ("age", OpSpec::Lt, text("40"), Reason::FieldType),
-            ("age", OpSpec::Lt, Tree::Float64(40.5), Reason::FieldType),
-            ("age", OpSpec::Between, Tree::UInt32(40), Reason::NotARange),
-            (
-                "age",
-                OpSpec::Between,
-                Tree::Array(vec![Tree::UInt32(1)]),
-                Reason::NotARange,
-            ),
-            (
-                "age",
-                OpSpec::Between,
-                Tree::Array(vec![Tree::UInt32(1), text("2")]),
-                Reason::FieldType,
-            ),
-        ];
-        for (name, op, input, reason) in cases {
-            let what = format!("{op} on {name}");
-            let error = query(&keyset, name, op, input.clone()).await.unwrap_err();
-            assert!(matches!(error, Error::Source { .. }), "{what}: {error:?}");
-            assert_eq!(reason_of(&error), (Some(name), Some(reason)), "{what}");
-            let checked = check_query(&users(), name, op, input, &NoTargets).unwrap_err();
-            assert_eq!(
-                reason_of(&checked),
-                (Some(name), Some(reason)),
-                "{what}: checked alike"
-            );
-        }
-        let error = query(&keyset, "phone", OpSpec::Eq, text("1"))
-            .await
-            .unwrap_err();
-        assert!(matches!(error, Error::Plan { .. }));
-        assert_eq!(
-            reason_of(&error),
-            (Some("phone"), Some(Reason::NoSuchField))
-        );
-    }
-
-    #[tokio::test]
-    async fn the_typed_paths_query_refusals_are_made_before_any_term() {
-        let cipher = cipher().await;
-        let keyset = cipher.default_keyset();
-        let one = |text: &str| ValueFrame::of(text).expect("a value");
-        let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
-        let cases = [
-            ("nickname", OpSpec::Lt, one("a\u{0378}"), "normalize"),
-            (
-                "nickname",
-                OpSpec::Between,
-                two("a", "b\u{0378}"),
-                "normalize",
-            ),
-            (
-                "nickname",
-                OpSpec::Between,
-                two("a\u{0378}", "b"),
-                "normalize",
-            ),
-            ("name", OpSpec::Matches, one("al"), "empty"),
-            ("name", OpSpec::Matches, one("\u{0378}abc"), "normalize"),
-            ("email", OpSpec::Eq, one("a\u{0378}bc"), "normalize"),
-        ];
-        for (name, op, input, what) in cases {
-            for error in [
-                query(&keyset, name, op, &input).await.unwrap_err(),
-                check_query(&users(), name, op, &input, &NoTargets).unwrap_err(),
-            ] {
-                let term = term_error(&error);
-                let expected = match what {
-                    "empty" => matches!(term, Some(TermError::EmptyTermText)),
-                    _ => matches!(term, Some(TermError::Normalize(_))),
-                };
-                assert!(expected, "{name} {what}: {error:?}");
-            }
-        }
         // The terms of folded equivalents are one term.
         let cafe = query(&keyset, "nickname", OpSpec::Lt, "cafe")
             .await
@@ -1977,11 +1887,13 @@ mod tests {
         assert_eq!(negative_zero.operand, zero.operand);
     }
 
-    /// Block ORE takes order text whose fold is at most 1023 bytes and does
-    /// not end in NUL. A query is refused for any other, either bound of a
-    /// range included, before any term exists, by the key-free check too.
+    /// Block ORE's refusals and the text it accepts are shared query-refusal
+    /// cases; a refusal table records only that a case is accepted. What
+    /// stays here is which index answers: the longest text, text with an
+    /// interior NUL and empty text derive a block ORE term, either bound of
+    /// a range included.
     #[tokio::test]
-    async fn block_ore_refuses_text_it_has_no_term_for_before_any_term() {
+    async fn accepted_block_ore_text_derives_a_block_ore_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = record::plan(&frame_of(&Tree::Object(vec![field(
@@ -1993,40 +1905,19 @@ mod tests {
         let one = |text: &str| ValueFrame::of(text).expect("a value");
         let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
         let longest = "a".repeat(1023);
-        let too_long = "a".repeat(1024);
-        let refused = [
-            (OpSpec::Lt, one(&too_long), "long"),
-            (OpSpec::Gt, one("a\0"), "nul"),
-            (OpSpec::Between, two("a", &too_long), "long"),
-            (OpSpec::Between, two(&too_long, "b"), "long"),
-            (OpSpec::Between, two("a\0", "b"), "nul"),
-            (OpSpec::Between, two("a", "b\0"), "nul"),
+        let accepted = [
+            (OpSpec::Lt, one(&longest)),
+            (OpSpec::Lt, one("a\0b")),
+            (OpSpec::Lt, one("")),
+            (OpSpec::Between, two("", &longest)),
+            (OpSpec::Between, two("a\0b", "b")),
         ];
-        for (op, input, what) in refused {
-            let derived = match query_term(&keyset, &plan, "title", op, &input, &NoTargets) {
-                Ok(pending) => pending.await.map_err(Error::Cipher).map(|_| ()),
-                Err(error) => Err(error),
-            };
-            for error in [
-                derived.unwrap_err(),
-                check_query(&plan, "title", op, &input, &NoTargets).unwrap_err(),
-            ] {
-                let term = term_error(&error);
-                let expected = match what {
-                    "long" => matches!(term, Some(TermError::OreBlockTooLong)),
-                    _ => matches!(term, Some(TermError::OreBlockTrailingNul)),
-                };
-                assert!(expected, "{op:?} {what}: {error:?}");
-            }
-        }
-        for input in [one(&longest), one("a\0b"), one("")] {
-            check_query(&plan, "title", OpSpec::Lt, &input, &NoTargets)
-                .expect("block ORE takes it");
-            let term = query_term(&keyset, &plan, "title", OpSpec::Lt, &input, &NoTargets)
+        for (op, input) in accepted {
+            let term = query_term(&keyset, &plan, "title", op, &input, &NoTargets)
                 .expect("a query")
                 .await
                 .expect("a term");
-            assert_eq!(term.index, IndexSpec::OreBlock);
+            assert_eq!(term.index, IndexSpec::OreBlock, "{op:?}");
         }
     }
 

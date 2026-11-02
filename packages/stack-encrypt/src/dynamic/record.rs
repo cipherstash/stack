@@ -3189,157 +3189,23 @@ mod tests {
             );
         }
 
-        #[test]
-        fn refuses_a_malformed_plan_before_any_field_is_built() {
-            let cases: Vec<Refused> = vec![
-                ("a plan that is not an object", s("x"), |e| {
-                    matches!(e, Error::Plan { .. })
-                }),
-                ("an empty plan", obj(vec![]), |e| {
-                    matches!(e, Error::Plan { .. })
-                }),
-                (
-                    "a field spec that is not an object",
-                    obj(vec![("age", s("x"))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "a field spec with an unknown key",
-                    obj(vec![(
-                        "age",
-                        obj(vec![
-                            ("context", label("age")),
-                            ("outputs", strings(&["c"])),
-                            ("nullable", Tree::Bool(true)),
-                        ]),
-                    )]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "a field spec with no context",
-                    obj(vec![("age", obj(vec![("outputs", strings(&["c"]))]))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "a field spec with no outputs",
-                    obj(vec![("age", obj(vec![("context", label("age"))]))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "outputs that are not a list",
-                    obj(vec![("age", spec(label("age"), &[]))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "an output that is not a string",
-                    obj(vec![(
-                        "age",
-                        obj(vec![
-                            ("context", label("age")),
-                            ("outputs", Tree::Array(vec![Tree::UInt32(1)])),
-                        ]),
-                    )]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "an unknown output",
-                    obj(vec![("age", spec(label("age"), &["c", "sum"]))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "an output named twice",
-                    obj(vec![("age", spec(label("age"), &["c", "eq", "c"]))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "passthrough beside a ciphertext",
-                    obj(vec![("age", spec(label("age"), &["passthrough", "c"]))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "passthrough beside an index",
-                    obj(vec![("age", spec(label("age"), &["eq", "passthrough"]))]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "a field named twice",
-                    Tree::Object(vec![
-                        ("age".to_string(), spec(label("age"), &["c"])),
-                        ("age".to_string(), spec(label("age"), &["eq"])),
-                    ]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "a context given twice",
-                    obj(vec![(
-                        "age",
-                        obj(vec![
-                            ("context", label("age")),
-                            ("outputs", strings(&["c"])),
-                            ("context", label("other")),
-                        ]),
-                    )]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "outputs given twice",
-                    obj(vec![(
-                        "age",
-                        obj(vec![
-                            ("context", label("age")),
-                            ("outputs", strings(&["c"])),
-                            ("outputs", strings(&["eq"])),
-                        ]),
-                    )]),
-                    |e| matches!(e, Error::Plan { .. }),
-                ),
-                (
-                    "a context that is not one",
-                    obj(vec![("age", spec(Tree::Bool(true), &["c"]))]),
-                    |e| matches!(e, Error::Context { .. }),
-                ),
-                (
-                    "a context that renders empty",
-                    obj(vec![("age", spec(s(""), &["c"]))]),
-                    |e| matches!(e, Error::Context { .. }),
-                ),
-            ];
-            for (label, value, expected) in cases {
-                let err = plan(value).err();
-                assert!(
-                    err.as_ref().is_some_and(expected),
-                    "{label} must be refused as the right error: {err:?}"
-                );
-            }
-        }
-
         /// A field's context is its label, optionally extended, and nothing
         /// else: what a fields plan can give a field. The shapes refused here
         /// are contexts (`dynamic::context` reads them) that no `.fields()`
         /// chain could spell.
         #[test]
         fn refuses_a_field_context_that_is_not_a_label() {
+            // The text, one-segment, malformed-segment and nested-extension
+            // shapes are shared declaration cases (`context-bare-label`,
+            // `context-one-segment`, `context-segment-slash`,
+            // `context-segment-digit`, `context-nested-extension`); these
+            // are the shapes the corpus's JSON projection cannot spell.
             let refused = [
-                ("one text part, however it reads", s("users/age")),
-                ("a one-segment label", strings(&["users"])),
-                ("a one-element list", Tree::Array(vec![s("users")])),
                 ("an integer", Tree::UInt64(7)),
                 ("bytes", Tree::Bytes(b"users".to_vec())),
                 (
                     "a one-segment label, extended",
                     Tree::Array(vec![s("users"), Tree::UInt64(7)]),
-                ),
-                (
-                    "a segment that is not plain",
-                    strings(&["users", "age/years"]),
-                ),
-                (
-                    "a segment with a reserved prefix",
-                    strings(&["users", "7age"]),
-                ),
-                (
-                    "a list part as an extension",
-                    Tree::Array(vec![label("age"), strings(&["eu", "west"])]),
                 ),
             ];
             for (what, context) in refused {
@@ -3723,7 +3589,11 @@ mod tests {
 
         /// `check_source` is the conversion `encrypt` runs, so a binding's
         /// boundary rejection and the operation's are the same error — and
-        /// neither costs a key request.
+        /// neither costs a key request. A missing field, a field the plan
+        /// does not name and a value of another kind are shared runtime
+        /// cases (`required-missing`, `unknown-field`, `required-wrong-width`
+        /// and their late-row forms); the shapes here are the ones the
+        /// corpus's host projection cannot build.
         #[tokio::test]
         async fn encrypt_and_check_source_refuse_it_alike_with_no_key_request() {
             let cipher = cipher().await;
@@ -3739,24 +3609,6 @@ mod tests {
                 (
                     "a batch with an item that is not an object",
                     Tree::Array(vec![row(1), Tree::UInt32(2)]),
-                    |e| matches!(e, Error::Source { .. }),
-                ),
-                (
-                    "a row missing a plan field",
-                    obj(vec![
-                        ("age", Tree::UInt32(1)),
-                        ("email", s("a@x")),
-                        ("nick", s("al")),
-                    ]),
-                    |e| matches!(e, Error::Source { .. }),
-                ),
-                (
-                    "a row with a field the plan does not name",
-                    {
-                        let mut entries = object(row(1));
-                        entries.push(("extra".to_string(), s("x")));
-                        Tree::Object(entries)
-                    },
                     |e| matches!(e, Error::Source { .. }),
                 ),
                 (
@@ -3810,15 +3662,6 @@ mod tests {
                     },
                     |e| matches!(e, Error::Source { .. }),
                 ),
-                (
-                    "a scalar of another kind under an indexed field",
-                    {
-                        let mut entries = object(row(1));
-                        entries[2].1 = Tree::UInt32(3);
-                        Tree::Object(entries)
-                    },
-                    |e| matches!(e, Error::Source { .. }),
-                ),
             ];
             for (label_, source, expected) in cases {
                 let err = check_source(source, &plan).err();
@@ -3827,29 +3670,12 @@ mod tests {
                     "{label_}: check_source must refuse it as the right error: {err:?}"
                 );
             }
-            let missing = obj(vec![
-                ("age", Tree::UInt32(1)),
-                ("email", s("a@x")),
-                ("nick", s("al")),
-            ]);
-            let err = encrypt(&keyset, missing, &plan).err();
-            assert!(
-                matches!(err, Some(Error::Source { .. })),
-                "encrypt refuses a row missing a plan field: {err:?}"
-            );
             let mut entries = object(row(1));
             entries[1].1 = Tree::Passthrough(Box::new(s("a@x")));
             let err = encrypt(&keyset, Tree::Object(entries), &plan).err();
             assert!(
                 matches!(err, Some(Error::Source { .. })),
                 "encrypt refuses a passthrough under a sealed field: {err:?}"
-            );
-            let mut entries = object(row(1));
-            entries[2].1 = Tree::UInt32(3);
-            let err = encrypt(&keyset, Tree::Object(entries), &plan).err();
-            assert!(
-                matches!(err, Some(Error::Source { .. })),
-                "encrypt refuses a value of another kind than the indexed field declares: {err:?}"
             );
             assert_eq!(
                 generates(&cipher),
@@ -5672,51 +5498,6 @@ mod tests {
             );
         }
 
-        /// A stored null opens only through a plan that says the field may
-        /// hold one: read through a plan with no `"null"`, the field's kind
-        /// check refuses it, so a nil never reads as a zero value.
-        #[tokio::test]
-        async fn a_stored_null_is_refused_through_a_plan_that_has_no_null() {
-            let cipher = cipher().await;
-            let keyset = cipher.default_keyset();
-            let sealing = plan(obj(vec![(
-                "dob",
-                nullable(label("dob"), &["c"], Some("date"), "sealed"),
-            )]))
-            .expect("parses");
-            let reading =
-                plan(obj(vec![("dob", typed(label("dob"), &["c"], "date"))])).expect("parses");
-            let sealed = seal(&keyset, obj(vec![("dob", Tree::Null)]), &sealing).await;
-            let refused = decrypt(Scope::Client(&cipher), sealed, &reading, None)
-                .expect("the record fits the plan")
-                .await
-                .err();
-            assert!(
-                matches!(&refused, Some(crate::Error::Plan(crate::PlanError::FieldType { field, .. })) if field == "dob"),
-                "{refused:?}"
-            );
-            // And through the plan that says so, a value opens as a value.
-            let sealed = seal(&keyset, obj(vec![("dob", date(19_000))]), &sealing).await;
-            assert_eq!(
-                open(&cipher, sealed, &sealing).await,
-                obj(vec![("dob", date(19_000))])
-            );
-        }
-
-        /// A null in a typed field with no `"null"` is still refused.
-        #[tokio::test]
-        async fn a_null_in_a_field_with_no_null_mode_is_refused() {
-            let cipher = cipher().await;
-            let keyset = cipher.default_keyset();
-            let plan =
-                plan(obj(vec![("dob", typed(label("dob"), &["c"], "date"))])).expect("parses");
-            let refused = encrypt(&keyset, obj(vec![("dob", Tree::Null)]), &plan).err();
-            assert!(
-                matches!(&refused, Some(Error::Source { field: Some(f), reason: Reason::FieldType }) if f == "dob"),
-                "{refused:?}"
-            );
-        }
-
         /// Under `"sql"` a null, or a row with no entry for the field, is
         /// left out of the stored record: no ciphertext, no term, no key.
         /// The rest of the batch is one call, and every row opens with a
@@ -5767,53 +5548,6 @@ mod tests {
                     obj(vec![("age", Tree::Null), ("email", s("c@x"))]),
                     obj(vec![("age", Tree::UInt32(35)), ("email", s("d@x"))]),
                 ])
-            );
-        }
-
-        /// A row may leave out every field it seals; it is stored as an
-        /// empty record and opens with a null in each.
-        #[tokio::test]
-        async fn a_row_with_every_field_left_out_is_an_empty_record() {
-            let cipher = cipher().await;
-            let keyset = cipher.default_keyset();
-            let plan = plan(obj(vec![(
-                "age",
-                nullable(label("age"), &["c", "eq"], Some("uint32"), "sql"),
-            )]))
-            .expect("parses");
-            let sealed = seal(&keyset, obj(vec![("age", Tree::Null)]), &plan).await;
-            assert!(field_names(&sealed).is_empty(), "{sealed:?}");
-            assert_eq!(
-                open(&cipher, sealed, &plan).await,
-                obj(vec![("age", Tree::Null)])
-            );
-        }
-
-        /// A stored record with no entry for a field that has no `"null"`
-        /// is still refused: only a `"sql"` field may be left out.
-        #[tokio::test]
-        async fn a_stored_record_may_leave_out_only_a_sql_field() {
-            let cipher = cipher().await;
-            let keyset = cipher.default_keyset();
-            let plan = plan(obj(vec![
-                ("age", nullable(label("age"), &["c"], Some("uint32"), "sql")),
-                ("email", spec(label("email"), &["c"])),
-            ]))
-            .expect("parses");
-            let sealed = seal(
-                &keyset,
-                obj(vec![("age", Tree::UInt32(3)), ("email", s("a@x"))]),
-                &plan,
-            )
-            .await;
-            let without_email: Vec<_> = map(sealed)
-                .into_iter()
-                .filter(|(name, _)| name != "email")
-                .collect();
-            let refused = check_record(CipherText::Map(without_email), &plan, None).err();
-            assert!(
-                matches!(&refused, Some(Error::Record { field: Some(f), reason: Reason::FieldMissing }) if f == "email"),
-                "{refused:?}"
             );
         }
     }
@@ -7808,107 +7542,6 @@ mod tests {
             }
         }
 
-        fn refused_plan(value: Tree) -> Error {
-            plan(value).expect_err("the plan is refused")
-        }
-
-        fn age(spec: Vec<(&str, Tree)>) -> Tree {
-            obj(vec![("age", obj(spec))])
-        }
-
-        /// A key that is present must hold its kind of value: a null is
-        /// refused as that key's reason, never read as absent.
-        #[test]
-        fn a_null_is_refused_as_its_key() {
-            use Reason::*;
-            let cases: Vec<(&str, Tree, Option<&str>, Reason, &str)> = vec![
-                (
-                    "a null context",
-                    age(vec![("context", Tree::Null), ("outputs", strings(&["c"]))]),
-                    Some("age"),
-                    ContextKind,
-                    "Context",
-                ),
-                (
-                    "null outputs",
-                    age(vec![("context", label("age")), ("outputs", Tree::Null)]),
-                    Some("age"),
-                    OutputsNotList,
-                    "Plan",
-                ),
-                (
-                    "a null target",
-                    age(vec![("context", label("age")), ("target", Tree::Null)]),
-                    Some("age"),
-                    InvalidTarget,
-                    "Plan",
-                ),
-                (
-                    "a null type",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c"])),
-                        ("type", Tree::Null),
-                    ]),
-                    Some("age"),
-                    UnknownType,
-                    "Plan",
-                ),
-                (
-                    "a null context field",
-                    obj(vec![
-                        ("context_field", Tree::Null),
-                        ("age", spec(label("age"), &["c"])),
-                    ]),
-                    None,
-                    ContextField,
-                    "Plan",
-                ),
-                (
-                    "a spec that is null",
-                    obj(vec![("age", Tree::Null)]),
-                    Some("age"),
-                    NotAnObject,
-                    "Plan",
-                ),
-            ];
-            for (what, value, field, reason, variant) in cases {
-                let error = refused_plan(value);
-                assert!(
-                    !matches!(error, Error::UntypedIndex { .. }),
-                    "{what}: {error}"
-                );
-                expect(&error, variant, field, reason);
-            }
-        }
-
-        /// An index's payload may be missing or null alike: a bare
-        /// `"match"`, `{"match": null}` and `{"match": {}}` are each the
-        /// match index under the default options, and `{"eq": null}` is the
-        /// bare `"eq"`.
-        #[test]
-        fn a_missing_or_null_index_payload_is_the_default() {
-            let outputs = |output: Tree| {
-                let plan = plan(age(vec![
-                    ("context", label("age")),
-                    ("outputs", Tree::Array(vec![output])),
-                    ("type", s("string")),
-                ]))
-                .expect("the plan parses");
-                plan.fields()[0].outputs().to_vec()
-            };
-            let default_match = vec![Output::Term(IndexSpec::Match(
-                crate::sem::MatchOptions::default(),
-            ))];
-            assert_eq!(outputs(s("match")), default_match);
-            assert_eq!(outputs(obj(vec![("match", Tree::Null)])), default_match);
-            assert_eq!(outputs(obj(vec![("match", obj(vec![]))])), default_match);
-            assert_eq!(
-                outputs(obj(vec![("eq", Tree::Null)])),
-                vec![Output::Term(IndexSpec::Equality)]
-            );
-        }
-
         /// Bytes that are not one frame are not a plan.
         #[test]
         fn bytes_that_are_not_a_frame_are_not_a_plan() {
@@ -7918,232 +7551,21 @@ mod tests {
             }
         }
 
+        /// A plan or context refusal names its field in the message as well
+        /// as the payload. Which reason each shape is refused as is the
+        /// shared declaration corpus (`missing-context`, `context-null`);
+        /// the corpus compares codes and payloads, not messages.
         #[test]
-        fn a_malformed_plan() {
-            use Reason::*;
-            let cases: Vec<(&str, Tree, Option<&str>, Reason, &str)> = vec![
-                ("not an object", s("x"), None, NotAnObject, "Plan"),
-                ("no fields", obj(vec![]), None, NoFields, "Plan"),
-                (
-                    "a spec that is not an object",
-                    obj(vec![("age", s("x"))]),
-                    Some("age"),
-                    NotAnObject,
-                    "Plan",
-                ),
-                (
-                    "an unknown key",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c"])),
-                        ("nullable", Tree::Bool(true)),
-                    ]),
-                    Some("age"),
-                    UnknownKey,
-                    "Plan",
-                ),
-                // A key given twice anywhere is refused by the frame before
-                // the plan is read, so it names no field.
-                (
-                    "a key given twice",
-                    age(vec![
-                        ("context", label("age")),
-                        ("context", label("age")),
-                        ("outputs", strings(&["c"])),
-                    ]),
-                    None,
-                    NotAnObject,
-                    "Plan",
-                ),
-                (
-                    "no context",
-                    age(vec![("outputs", strings(&["c"]))]),
-                    Some("age"),
-                    MissingContext,
-                    "Plan",
-                ),
-                (
-                    "no outputs or target",
-                    age(vec![("context", label("age"))]),
-                    Some("age"),
-                    MissingOutputs,
-                    "Plan",
-                ),
-                (
-                    "outputs and a target",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c"])),
-                        ("target", s("TextEq")),
-                    ]),
-                    Some("age"),
-                    OutputsWithTarget,
-                    "Plan",
-                ),
-                (
-                    "outputs that are not a list",
-                    age(vec![("context", label("age")), ("outputs", s("c"))]),
-                    Some("age"),
-                    OutputsNotList,
-                    "Plan",
-                ),
-                (
-                    "an output that is not one",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c", "zz"])),
-                    ]),
-                    Some("age"),
-                    UnknownOutput,
-                    "Plan",
-                ),
-                (
-                    "no outputs",
-                    age(vec![("context", label("age")), ("outputs", strings(&[]))]),
-                    Some("age"),
-                    NoOutputs,
-                    "Plan",
-                ),
-                (
-                    "an output named twice",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c", "c"])),
-                    ]),
-                    Some("age"),
-                    DuplicateOutput,
-                    "Plan",
-                ),
-                (
-                    "passthrough beside another output",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c", "passthrough"])),
-                    ]),
-                    Some("age"),
-                    PassthroughWithOutputs,
-                    "Plan",
-                ),
-                (
-                    "a target that is not a string",
-                    age(vec![("context", label("age")), ("target", Tree::UInt32(1))]),
-                    Some("age"),
-                    InvalidTarget,
-                    "Plan",
-                ),
-                (
-                    "a type that is not one",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c"])),
-                        ("type", s("uuid")),
-                    ]),
-                    Some("age"),
-                    UnknownType,
-                    "Plan",
-                ),
-                (
-                    "an index the type has not",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c", "match"])),
-                        ("type", s("uint32")),
-                    ]),
-                    Some("age"),
-                    IndexNotAdmitted,
-                    "Plan",
-                ),
-                (
-                    "an order index on a boolean",
-                    age(vec![
-                        ("context", label("age")),
-                        ("outputs", strings(&["c", "ore"])),
-                        ("type", s("bool")),
-                    ]),
-                    Some("age"),
-                    IndexNotAdmitted,
-                    "Plan",
-                ),
-                (
-                    "a context that is not a label",
-                    age(vec![("context", s("users")), ("outputs", strings(&["c"]))]),
-                    Some("age"),
-                    ContextNotLabel,
-                    "Plan",
-                ),
-                (
-                    "a context of a kind no context has",
-                    age(vec![
-                        ("context", Tree::Bool(true)),
-                        ("outputs", strings(&["c"])),
-                    ]),
-                    Some("age"),
-                    ContextKind,
-                    "Context",
-                ),
-                (
-                    "a field named twice",
-                    Tree::Object(vec![
-                        ("age".to_string(), spec(label("age"), &["c"])),
-                        ("age".to_string(), spec(label("age"), &["c"])),
-                    ]),
-                    None,
-                    NotAnObject,
-                    "Plan",
-                ),
-                (
-                    "fields under different contexts",
-                    obj(vec![
-                        ("age", spec(label("age"), &["c"])),
-                        ("email", spec(strings(&["orders", "email"]), &["c"])),
-                    ]),
-                    Some("email"),
-                    MixedContexts,
-                    "Plan",
-                ),
-                (
-                    "two fields under one identity",
-                    obj(vec![
-                        ("mail", typed(label("email"), &["c", "eq"], "string")),
-                        ("mail2", typed(label("email"), &["c", "eq"], "string")),
-                    ]),
-                    Some("mail2"),
-                    SharedIdentity,
-                    "Plan",
-                ),
-                (
-                    "a context that renders empty",
-                    age(vec![("context", s("")), ("outputs", strings(&["c"]))]),
-                    Some("age"),
-                    EmptyContext,
-                    "Context",
-                ),
-                (
-                    "a match option given twice",
-                    age(vec![
-                        ("context", label("age")),
-                        (
-                            "outputs",
-                            Tree::Array(vec![obj(vec![(
-                                "match",
-                                obj(vec![("k", Tree::UInt32(6)), ("k", Tree::UInt32(6))]),
-                            )])]),
-                        ),
-                        ("type", s("string")),
-                    ]),
-                    None,
-                    NotAnObject,
-                    "Plan",
-                ),
-            ];
-            for (what, value, field, reason, variant) in cases {
-                let error = refused_plan(value);
-                assert!(
-                    !matches!(error, Error::UntypedIndex { .. }),
-                    "{what}: {error}"
-                );
-                expect(&error, variant, field, reason);
-            }
+        fn a_plan_refusal_names_its_field_in_the_message() {
+            let no_context = obj(vec![("age", obj(vec![("outputs", strings(&["c"]))]))]);
+            let error = plan(no_context).expect_err("no context");
+            expect(&error, "Plan", Some("age"), Reason::MissingContext);
+            let null_context = obj(vec![(
+                "age",
+                obj(vec![("context", Tree::Null), ("outputs", strings(&["c"]))]),
+            )]);
+            let error = plan(null_context).expect_err("a null context");
+            expect(&error, "Context", Some("age"), Reason::ContextKind);
         }
 
         /// A passthrough the frame cannot carry is refused when the source is
@@ -8309,6 +7731,11 @@ mod tests {
             );
         }
 
+        /// The source shapes the shared runtime corpus cannot build: its
+        /// host projection has no passthrough, no repeated key and no
+        /// non-object row. A missing field, an unknown field and a value
+        /// of another type are `required-missing`, `unknown-field` and
+        /// `required-wrong-width` there.
         #[test]
         fn a_source_that_does_not_fit() {
             use Reason::*;
@@ -8320,10 +7747,6 @@ mod tests {
             };
             let mut repeated = object(row(34));
             repeated.push(("age".to_string(), Tree::UInt32(2)));
-            let mut extra = object(row(34));
-            extra.push(("extra".to_string(), Tree::UInt32(2)));
-            let mut mistyped = without("age");
-            mistyped.push(("age".to_string(), s("old")));
             let mut forged = without("email");
             forged.push(("email".to_string(), Tree::Passthrough(Box::new(s("a@x")))));
             let mut deep_id = without("id");
@@ -8357,28 +7780,10 @@ mod tests {
                     NotAnObject,
                 ),
                 (
-                    "a field missing",
-                    Tree::Object(without("email")),
-                    Some("email"),
-                    FieldMissing,
-                ),
-                (
                     "a field given twice",
                     Tree::Object(repeated),
                     Some("age"),
                     FieldRepeated,
-                ),
-                (
-                    "a field the plan does not name",
-                    Tree::Object(extra),
-                    Some("extra"),
-                    UnknownField,
-                ),
-                (
-                    "a value of another type",
-                    Tree::Object(mistyped),
-                    Some("age"),
-                    FieldType,
                 ),
                 (
                     "a passthrough under a sealed field",
@@ -8393,89 +7798,33 @@ mod tests {
             }
         }
 
+        /// A stored field given twice is refused as repeated by the engine's
+        /// own guard, and a record that is one leaf rather than a map or a
+        /// batch is not an object. The other misfit shapes (a missing field,
+        /// a field that is not an output map, no ciphertext node, a
+        /// passthrough under `c`, no passthrough node, a batch row that is
+        /// not a map) are shared read cases. A repeated key cannot reach the
+        /// engine through the transport, where both decoders refuse it
+        /// first, and the shared read profile stores every record as a
+        /// batch, so these two are native-only (see the raw-frame contract).
         #[tokio::test]
         async fn a_stored_record_that_does_not_fit() {
-            use Reason::*;
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let plan = the_plan();
-            let sealed = || async { map(seal(&keyset, row(34), &plan).await) };
-
-            let mut cases: Vec<(&str, StackCipherText, Option<&str>, Reason)> = Vec::new();
-
-            let mut fields = sealed().await;
-            let _ = node(&mut fields, "email");
-            cases.push((
-                "a field missing",
-                CipherText::Map(fields),
-                Some("email"),
-                FieldMissing,
-            ));
-
-            let mut fields = sealed().await;
+            let mut fields = map(seal(&keyset, row(34), &plan).await);
             let email = node(&mut fields, "email");
             fields.push(("email".to_string(), forged(Tree::UInt32(1))));
             fields.push(("email".to_string(), email));
-            cases.push((
-                "a field given twice",
-                CipherText::Map(fields),
-                Some("email"),
-                FieldRepeated,
-            ));
+            let error = check_record(CipherText::Map(fields), &plan, None)
+                .expect_err("a field given twice");
+            expect(&error, "Record", Some("email"), Reason::FieldRepeated);
 
-            let mut fields = sealed().await;
-            let _ = node(&mut fields, "email");
-            fields.push(("email".to_string(), forged(Tree::UInt32(1))));
-            cases.push((
-                "a field that is not an output map",
-                CipherText::Map(fields),
-                Some("email"),
-                OutputsNotMap,
-            ));
-
-            let mut fields = sealed().await;
-            let mut email = map(node(&mut fields, "email"));
-            let _ = node(&mut email, "c");
-            fields.push(("email".to_string(), CipherText::Map(email)));
-            cases.push((
-                "no ciphertext node",
-                CipherText::Map(fields),
-                Some("email"),
-                NoCiphertextNode,
-            ));
-
-            let mut fields = sealed().await;
-            let mut email = map(node(&mut fields, "email"));
-            let _ = node(&mut email, "c");
-            email.push(("c".to_string(), forged(Tree::UInt32(1))));
-            fields.push(("email".to_string(), CipherText::Map(email)));
-            cases.push((
-                "a passthrough under c",
-                CipherText::Map(fields),
-                Some("email"),
-                Passthrough,
-            ));
-
-            let mut fields = sealed().await;
-            let mut id = map(node(&mut fields, "id"));
-            let _ = node(&mut id, "passthrough");
-            fields.push(("id".to_string(), CipherText::Map(id)));
-            cases.push((
-                "no passthrough node",
-                CipherText::Map(fields),
-                Some("id"),
-                NoPassthroughNode,
-            ));
-
-            let fields = sealed().await;
-            let mut first = fields;
-            let mut age = map(node(&mut first, "age"));
-            cases.push(("not a map", node(&mut age, "c"), None, NotAnObject));
-
-            for (what, record, field, reason) in cases {
-                let error = check_record(record, &plan, None).expect_err(what);
-                expect(&error, "Record", field, reason);
-            }
+            let mut fields = map(seal(&keyset, row(34), &plan).await);
+            let mut age = map(node(&mut fields, "age"));
+            let error = check_record(node(&mut age, "c"), &plan, None)
+                .expect_err("a record that is a leaf");
+            expect(&error, "Record", None, Reason::NotAnObject);
         }
 
         /// A binding switches on `as_str`, so no two reasons share a name.

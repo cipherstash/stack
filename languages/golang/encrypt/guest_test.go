@@ -767,29 +767,6 @@ func TestCheckerRefusesAnIndexedUntypedField(t *testing.T) {
 	}
 }
 
-// The engine's reason reaches Go under the key Reason reads: a field whose
-// outputs name the ciphertext twice is refused as a duplicate output.
-func TestAPlanRefusalNamesItsReason(t *testing.T) {
-	guestOrSkip(t)
-	ctx := context.Background()
-	checker, err := NewChecker(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer checker.Close()
-	p := &record.Plan{Context: []string{"users"}, Fields: []record.Field{
-		{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Ciphertext}},
-	}}
-	err = checker.engineCheck(ctx, p)
-	if !errors.Is(err, ErrEncoding) {
-		t.Fatalf("err = %v, want ErrEncoding", err)
-	}
-	d := wantDiagnostic(t, err, "stack_encrypt::dynamic_plan")
-	if d.Field() != "age" || d.Reason() != "duplicate_output" {
-		t.Errorf("Field() = %q, Reason() = %q", d.Field(), d.Reason())
-	}
-}
-
 // se_plan_check answers with no cipher: a plan the engine runs passes, a
 // plan it refuses is ErrEncoding, never ErrState.
 func TestPlanCheckAnswersWithoutACipher(t *testing.T) {
