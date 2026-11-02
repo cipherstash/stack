@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **`OpaqueDecode` no longer has vitaminc's `Decrypt` as a supertrait.** The
+  trait is sealed, so this changes nothing for a caller naming a type that
+  implements it; generic code bounded on `P: OpaqueDecode` that also used
+  `P::sink()` or another `Decrypt` method adds a `P: Decrypt` bound. The
+  capability moved into the sealed trait so that `OpaqueBlob<T>`, which
+  opens through a bytes leaf and decodes after, can implement it.
 - Repeated plan-chain `.extend(..)` calls now append parts in order, matching
   Go's `Cipher.Extend`, instead of replacing earlier extensions.
   `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
@@ -101,6 +107,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Equatable<Protected<Vec<u8>>>`. Until vitaminc-protected implements
   `ConstantTimeEq` for `Vec<u8>` (cipherstash/vitaminc#602), the bytes are
   compared through `TimingSafeEq`.
+
+### Added
+
+- **`OpaqueBlob<T>`: encrypt a whole value as one opaque `Ciphertext`**
+  (#1484). `keyset.encrypt(OpaqueBlob::new(value))` encodes any
+  `Serialize + Zeroize` value with Vitamin C's versioned storage profile
+  (`vitaminc_aead_frame::storage`, version 1: a `VCS` header and version
+  byte inside the plaintext, explicit `Some` markers, typed map keys, a
+  frozen specification and golden corpus) and seals the encoding as one
+  bytes leaf of the unchanged `SealedValue` v1 envelope, through the same
+  path as a scalar: one data key, one ciphertext, no new KMS request shape.
+  `keyset.decrypt::<OpaqueBlob<T>>(ct)` authenticates the leaf, then reads
+  it back into any `DeserializeOwned + Zeroize` type; `into_inner()` takes
+  the value. It is the Go SDK's opaque-struct format (`vcffi.MarshalStorage`),
+  so a Go-written opaque column opens in Rust and a Rust-written one in Go
+  (fixed vectors in both test suites). There is still no `Serialize`
+  fallback: a struct handed to `encrypt` without the wrapper does not
+  compile (`tests/ui/opaque_blob_requires_the_wrapper.rs`), and neither
+  does an `OpaqueBlob` of a type that is not `Zeroize`. `OpaqueBlob::encode`
+  and `decode` expose the codec itself, `blob::HEADER` and `blob::VERSION`
+  the discriminator. The `blob` module docs give the supported types, the
+  schema-evolution rules (serde's), what the ciphertext's length reveals (the
+  encoded length plus a constant: no padding, no constant-time claim) and
+  what is wiped; ADR-0011 records the decision.
+- **`Error::Blob(BlobError)`**, transparent, one variant and code per class
+  of refusal: `blob_unwritable` (the value cannot be encoded; raised before
+  any key is requested), and after the leaf authenticated, `blob_not_a_blob`,
+  `blob_unsupported_version` (a later storage version: upgrade the reader),
+  `blob_malformed` and `blob_mismatch` (a well-formed blob of another shape or
+  type). Every decrypt-side `Blob` error means the ciphertext was authentic;
+  tampering and a wrong context are still `Aead`, and a blob opened as a
+  scalar or a scalar as a blob is `OpenedType`. No message or payload names a
+  value; a mismatch's payload names the declared field.
+- **`OpaqueBlob<Zeroizing<T>>` as the opt-in drop-guarded result**:
+  `keyset.decrypt::<OpaqueBlob<Zeroizing<T>>>(ct)` returns the opened value
+  wiped on drop. A `Zeroizing<T>` serializes as its `T` (zeroize's `serde`
+  feature, now enabled), so it stores the same blob as `OpaqueBlob<T>`. A
+  plain `P` is still an ordinary owned value that nothing wipes on drop;
+  `Zeroize` is the bound, not a guard.
+- **The owned source is wiped on an encoding refusal** as on success, before
+  the pending is returned and with no key requested; the owned blob buffer is
+  `Protected` while it is planned and on decrypt while it is read. The heap
+  observer covers blob encrypt, decrypt and a refused shape, and pins as a
+  negative control the one stated limit: a derived `Deserialize` that built
+  some fields and refuses a later one drops those fields unwiped, because no
+  `T` existed to wipe.
+
+### Changed
+
+- The vitaminc crates move from 0.8.0 to 0.8.1, the first release with the
+  storage profile. Nothing 0.8.0 wrote or read changes: the leaf format, the
+  transport frame and every existing ciphertext are unaffected.
+  `vitaminc-aead-frame` is now built unconditionally (with `serde`), where it
+  was behind the `dynamic` feature; that feature adds no dependency now.
 
 ## [0.3.0] - 2026-10-27
 

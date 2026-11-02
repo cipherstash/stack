@@ -646,6 +646,156 @@ fn the_spy_sees_an_unwiped_free() {
     watched("control", || drop(text));
 }
 
+/// `OpaqueBlob<T>`: the owned source, the storage blob it is encoded into
+/// (which grows past its first allocation while it already holds the
+/// marker), the planned leaf, and on decrypt the opened buffer the blob
+/// is read from, all freed wiped. The opened value is the caller's and is
+/// wiped by hand before the watch ends; a refusal of another shape, found
+/// before any field is built, leaves nothing to wipe.
+mod opaque_blob {
+    use super::*;
+
+    use serde::{Deserialize, Serialize};
+    use stack_encrypt::{Error, OpaqueBlob};
+    use zeroize::Zeroize;
+
+    #[derive(Serialize, Deserialize, Zeroize)]
+    struct Doc {
+        title: String,
+        notes: Vec<String>,
+        /// Written after the marked fields, so the blob's buffer regrows
+        /// while it holds them.
+        body: String,
+        n: u32,
+    }
+
+    fn doc() -> OpaqueBlob<Doc> {
+        OpaqueBlob::new(Doc {
+            title: marked("title"),
+            notes: vec![marked("note-1"), marked("note-2")],
+            body: "x".repeat(8 * 1024),
+            n: 7,
+        })
+    }
+
+    #[test]
+    fn an_opaque_blob_encrypted_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let source = doc();
+        watched("OpaqueBlob encrypt", || {
+            rt.block_on(async {
+                keyset
+                    .encrypt_with_context(source, "docs/body")
+                    .await
+                    .unwrap()
+            });
+        });
+    }
+
+    #[test]
+    fn an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(doc(), "docs/body")
+                .await
+                .unwrap()
+        });
+        watched("OpaqueBlob decrypt", || {
+            let mut opened = rt.block_on(async {
+                keyset
+                    .decrypt_with_context::<OpaqueBlob<Doc>>(sealed, "docs/body")
+                    .await
+                    .unwrap()
+            });
+            // The opened value is an ordinary owned value, holding the
+            // plaintext until the caller wipes it.
+            assert!(opened
+                .get()
+                .title
+                .as_bytes()
+                .windows(MARK.len())
+                .any(|w| w == MARK));
+            opened.zeroize();
+            drop(opened);
+        });
+    }
+
+    /// Refused before `Deserialize` builds a field: the first field of the
+    /// target does not read the blob's text, so nothing of the marked value
+    /// is built, and the opened buffer is wiped with the refusal.
+    #[test]
+    fn an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(doc(), "docs/body")
+                .await
+                .unwrap()
+        });
+        #[derive(Deserialize, Zeroize)]
+        #[allow(dead_code)]
+        struct Other {
+            title: u32,
+        }
+        watched("OpaqueBlob decrypt (mismatch)", || {
+            let result = rt.block_on(async {
+                keyset
+                    .decrypt_with_context::<OpaqueBlob<Other>>(sealed, "docs/body")
+                    .await
+            });
+            assert!(matches!(
+                result,
+                Err(Error::Blob(stack_encrypt::BlobError::Mismatch(_)))
+            ));
+        });
+    }
+
+    /// The limit the blob docs state, held as a negative control: a derived
+    /// `Deserialize` that built a `String` field and then refuses a later
+    /// field drops that `String` as an ordinary value, unwiped, because no
+    /// `T` was ever constructed to wipe. The opened buffer itself is wiped;
+    /// what leaks is serde's partial value. A type whose fields wipe on drop
+    /// closes it; this test documents that the library does not.
+    #[test]
+    #[should_panic(expected = "freed with plaintext in them")]
+    fn a_partial_decode_drops_the_fields_it_built_unwiped() {
+        let rt = runtime();
+        let cipher = rt.block_on(common::stack_cipher());
+        let keyset = cipher.default_keyset();
+        let sealed = rt.block_on(async {
+            keyset
+                .encrypt_with_context(doc(), "docs/body")
+                .await
+                .unwrap()
+        });
+        #[derive(Deserialize, Zeroize)]
+        #[allow(dead_code)]
+        struct Later {
+            title: String,
+            notes: Vec<String>,
+            body: u32,
+        }
+        watched("OpaqueBlob decrypt (partial)", || {
+            let result = rt.block_on(async {
+                keyset
+                    .decrypt_with_context::<OpaqueBlob<Later>>(sealed, "docs/body")
+                    .await
+            });
+            assert!(matches!(
+                result,
+                Err(Error::Blob(stack_encrypt::BlobError::Mismatch(_)))
+            ));
+        });
+    }
+}
+
 /// The JSON index: sealing a document under either root option, opening it
 /// whole (from the sealed root, and by walking its chain with the root
 /// open), opening a subtree read's rows and an extracted entry, and

@@ -1,0 +1,35 @@
+error[E0277]: the trait bound `OpaqueBlob<Unwiped>: OpaqueEncode` is not satisfied
+  --> tests/ui/opaque_blob_requires_zeroize.rs:14:35
+   |
+14 |     let _refused = keyset.encrypt(OpaqueBlob::new(value)).await.unwrap();
+   |                           ------- ^^^^^^^^^^^^^^^^^^^^^^ the trait `OpaqueEncode` is not implemented for `OpaqueBlob<Unwiped>`
+   |                           |
+   |                           required by a bound introduced by this call
+   |
+help: the trait `OpaqueEncode` is implemented for `OpaqueBlob<T>`
+  --> src/blob.rs
+   |
+   | impl<T: Serialize + Zeroize + Send + 'static> OpaqueEncode for OpaqueBlob<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::encrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn encrypt<S: OpaqueEncode>(&self, value: S) -> Pending<'_, Ciphertext, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::encrypt`
+
+error[E0277]: the trait bound `OpaqueBlob<Unwiped>: OpaqueDecode` is not satisfied
+  --> tests/ui/opaque_blob_requires_zeroize.rs:18:48
+   |
+18 |     let _refused: OpaqueBlob<Unwiped> = keyset.decrypt(ct).await.unwrap();
+   |                                                ^^^^^^^ the trait `OpaqueDecode` is not implemented for `OpaqueBlob<Unwiped>`
+   |
+help: the trait `OpaqueDecode` is implemented for `OpaqueBlob<T>`
+  --> src/blob.rs
+   |
+   | impl<T: DeserializeOwned + Zeroize + Send + 'static> OpaqueDecode for OpaqueBlob<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`
+  --> src/scalar.rs
+   |
+   |     pub fn decrypt<P: OpaqueDecode>(&self, ciphertext: Ciphertext) -> Pending<'_, P, K> {
+   |                       ^^^^^^^^^^^^ required by this bound in `stack_encrypt::scalar::<impl KeysetCipher<'_, K>>::decrypt`

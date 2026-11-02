@@ -7,7 +7,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-encrypt",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "lib": true
     },
     "lifecycle": {
@@ -15,7 +17,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-encrypt",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "binary": "lifecycle_conformance"
     },
     "heap": {
@@ -23,7 +27,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-encrypt",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "binary": "heap_hygiene",
       "success_output": "immediate"
     },
@@ -40,7 +46,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-encrypt",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "binary": "runtime_conformance"
     },
     "reads": {
@@ -48,7 +56,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-encrypt",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "binary": "read_conformance"
     },
     "contexts": {
@@ -56,7 +66,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-encrypt",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "binary": "context_conformance"
     },
     "guest-abi": {
@@ -64,7 +76,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-guest-abi",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "lib": true
     },
     "kms": {
@@ -72,7 +86,9 @@
       "lane": "fast",
       "workspace": ".",
       "package": "stack-kms",
-      "features": ["--all-features"],
+      "features": [
+        "--all-features"
+      ],
       "lib": true
     },
     "go": {
@@ -89,6 +105,16 @@
       "language": "go",
       "lane": "fast",
       "package": "./encrypt/gensupport"
+    },
+    "opaque": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": [
+        "--all-features"
+      ],
+      "binary": "opaque_blob"
     }
   },
   "requirements": [
@@ -110,6 +136,10 @@
           "TestCloseStopsTheCleanup",
           "TestUnreachableClientIsReleased",
           "TestClosedClientIsState"
+        ],
+        "opaque": [
+          "the_owned_source_is_wiped_before_await_or_discard",
+          "an_encoding_refusal_wipes_the_source_and_requests_no_key"
         ]
       }
     },
@@ -140,7 +170,8 @@
       "evidence": {
         "heap": [
           "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
-          "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap"
+          "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap"
         ],
         "collections": [
           "a_late_element_failure_wipes_the_plaintext_recovered_before_it",
@@ -152,7 +183,9 @@
           "TestInterruptedResponseBodyIsTransport",
           "TestACallThatSucceedsAfterItsContextEndsFailsWithIt"
         ],
-        "go-sdk": ["TestDecryptErrorsHoldNoPlaintext"]
+        "go-sdk": [
+          "TestDecryptErrorsHoldNoPlaintext"
+        ]
       }
     },
     {
@@ -163,7 +196,10 @@
           "an_owned_column_encrypted_leaves_no_plaintext_on_the_heap",
           "a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap",
           "a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap",
-          "the_spy_sees_an_unwiped_free"
+          "the_spy_sees_an_unwiped_free",
+          "opaque_blob::an_opaque_blob_encrypted_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::a_partial_decode_drops_the_fields_it_built_unwiped"
         ],
         "collections": [
           "owned_elements_are_wiped_before_the_pending_is_returned",
@@ -212,8 +248,12 @@
     {
       "id": "lifecycle-validation-before-io-v1",
       "evidence": {
-        "runtime": ["shared_record_runtime_profile"],
-        "reads": ["shared_record_read_profile"],
+        "runtime": [
+          "shared_record_runtime_profile"
+        ],
+        "reads": [
+          "shared_record_read_profile"
+        ],
         "pending": [
           "target::pending::tests::an_over_long_descriptor_is_refused_before_any_call",
           "target::pending::tests::a_lazy_column_stops_building_after_a_local_failure"
@@ -222,6 +262,12 @@
           "TestRuntimeConformance",
           "TestReadConformance",
           "TestMismatchedPlanIsRefusedBeforeTheGuest"
+        ],
+        "opaque": [
+          "an_encoding_refusal_wipes_the_source_and_requests_no_key",
+          "the_owned_source_is_wiped_when_context_validation_fails",
+          "authentication_comes_before_decoding",
+          "malformed_and_mismatched_blobs_are_refused_by_class_after_authentication"
         ]
       }
     },
@@ -265,6 +311,11 @@
       "id": "native-heap-observer-exclusions",
       "status": "limited-observation",
       "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs"
+    },
+    {
+      "id": "native-partial-decode-fields",
+      "status": "known-gap",
+      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::a_partial_decode_drops_the_fields_it_built_unwiped"
     },
     {
       "id": "caller-owned-host-values",

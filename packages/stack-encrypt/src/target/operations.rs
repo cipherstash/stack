@@ -475,12 +475,15 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S
         ),
     }
 }
-/// Encrypt a supported scalar as one opaque ciphertext, permitting empty context.
+/// Encrypt a supported scalar, or an [`OpaqueBlob`](crate::OpaqueBlob), as
+/// one opaque ciphertext, permitting empty context.
 ///
 /// This operation borrows its source. The owned [`EncryptInto`](super::EncryptInto)
 /// conversions supply a [`Protected`](vitaminc_protected::Protected) owner and
 /// wipe it after planning. Calling [`KeysetCipher::run`] directly leaves source
 /// cleanup with the caller; this operation alone does not wipe that borrow.
+/// A blob is encoded here too, synchronously, so an encoding refusal is the
+/// pending's result and no plaintext outlives this call in the pending.
 /// Mapping the encrypted output preserves the scalar's optional-context policy;
 /// it does not turn this into an EQL ciphertext or term operation. A wrapper may
 /// require caller context with [`RequiredContext`](super::RequiredContext), or
@@ -490,12 +493,7 @@ pub fn scalar_ciphertext<'s, S: crate::OpaqueEncode, K: 'static>(
     Encryption {
         build: Box::new(
             move |source, cipher, context: super::OptionalContext<super::ScalarContext>| {
-                super::core::encrypt_opaque(
-                    crate::scalar::ScalarRef(source),
-                    cipher,
-                    context.piece(),
-                )
-                .try_map(crate::Ciphertext::from_tree)
+                crate::scalar::sealed::Encode::seal(source, cipher, context.piece())
             },
         ),
     }

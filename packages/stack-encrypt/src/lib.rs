@@ -220,7 +220,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! The scalar API accepts owned [`OpaqueEncode`] values. It wipes the owned source
 //! before returning the pending request, including on planning failure. A
 //! successful decrypt returns an ordinary owned value: the caller is then
-//! responsible for its cleanup. Copy types may still have copies held by the
+//! responsible for its cleanup. A whole value decrypted as
+//! `OpaqueBlob<Zeroizing<T>>` is wiped on drop. Copy types may still have copies held by the
 //! caller, and this is not a guarantee about every compiler-generated copy.
 //!
 //! For target-directed conversion, import [`EncryptInto`] and [`DecryptFrom`]:
@@ -314,11 +315,42 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! [`OpaqueEncode`] type. So a `Vec<u8>` encrypts into one `Ciphertext`, and
 //! a `Vec<Vec<u8>>` is a collection of byte strings.
 //!
+//! # Whole values as one ciphertext
+//!
+//! A struct, a map, or a `Vec` other than the byte string `Vec<u8>` is not a
+//! scalar, and `encrypt` refuses it: there is no generic `Serialize` fallback.
+//! To encrypt a whole value as **one** ciphertext, name it: wrap it in
+//! [`OpaqueBlob`], which encodes it with Vitamin C's versioned storage
+//! profile (the format the Go SDK's opaque structs use too) and seals the
+//! encoding as one leaf through the same path as a scalar. The [`blob`]
+//! module documents the format, its errors, what the ciphertext's length
+//! reveals and what is wiped.
+//!
+//! ```
+//! # use serde::{Deserialize, Serialize};
+//! # use zeroize::Zeroize;
+//! # #[derive(Serialize, Deserialize, Zeroize)]
+//! # struct Card { number: String, expiry: (u8, u16) }
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::{OpaqueBlob, StackCipher};
+//! let cipher = StackCipher::builder()
+//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! let keyset = cipher.default_keyset();
+//! let card = Card { number: "4111 1111 1111 1111".into(), expiry: (12, 2031) };
+//! let ct = keyset.encrypt_with_context(OpaqueBlob::new(card), "users/42/card").await?;
+//! let card: OpaqueBlob<Card> = keyset.decrypt_with_context(ct, "users/42/card").await?;
+//! assert_eq!(card.get().expiry, (12, 2031));
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
 //! Existing structural plans and derives still use [`StackCipherText`], a tree
 //! of sealed leaves. Their low-level direct entry points are
 //! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their
 //! borrowed conversion helpers live in [`target::legacy`]. They are separate
-//! from the owned scalar API. There is no generic `Serialize` fallback.
+//! from the owned scalar API: a struct sealed through them is one ciphertext
+//! per field, and a struct in an [`OpaqueBlob`] is one ciphertext.
 //!
 //! # What is authenticated
 //!
@@ -366,8 +398,10 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 /// makes its requests.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod blob;
 pub mod cipher;
 mod scalar;
+pub use blob::{BlobError, OpaqueBlob};
 pub use scalar::{Ciphertext, OpaqueDecode, OpaqueEncode};
 #[cfg(test)]
 mod codes;
