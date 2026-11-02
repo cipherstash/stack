@@ -348,3 +348,24 @@ fn the_shared_text_forms_frame_as_the_value_kinds_fixture() {
         "11ffffffffffffffffffffffffffffffff"
     );
 }
+
+/// A float spelling with more digits than its value's shortest is rounded
+/// by the parse: the helper refuses it instead of sealing another value.
+#[test]
+#[should_panic(expected = "not the shortest spelling")]
+fn a_rounded_float_spelling_is_a_corpus_error() {
+    value(&Input {
+        kind: "float64".into(),
+        text: "0.1000000000000000001".into(),
+    });
+}
+
+/// A day the month does not have is a corpus error, as it is in Go.
+#[test]
+#[should_panic(expected = "not a calendar date")]
+fn a_day_the_month_lacks_is_a_corpus_error() {
+    value(&Input {
+        kind: "date".into(),
+        text: "2023-02-29".into(),
+    });
+}

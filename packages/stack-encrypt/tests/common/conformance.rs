@@ -59,24 +59,36 @@ pub fn value(input: &Input) -> ValueFrame {
 }
 
 /// A float from the spellings every runner reads alike: decimal text,
-/// `inf`, `-inf` and `nan`, in any case. The text must be exactly the
-/// value: a decimal the type rounds is a corpus error.
+/// `inf` and `-inf`. The text must be the shortest spelling of the value it
+/// names: a decimal with more digits than that, which the type rounds, is a
+/// corpus error.
 fn parse_float<F>(text: &str) -> F
 where
-    F: std::str::FromStr + std::fmt::Display + Copy,
+    F: std::str::FromStr + std::fmt::LowerExp + Copy,
     F::Err: std::fmt::Debug,
 {
     let parsed: F = text.parse().expect("float");
-    let lower = text.to_ascii_lowercase();
-    if !["inf", "-inf", "+inf", "nan"].contains(&lower.as_str()) {
-        let back: F = parsed.to_string().parse().expect("round trip");
+    if text != "inf" && text != "-inf" {
+        // Both spellings name `parsed`; with the same significant digits
+        // they are the same decimal, so the text is not rounded.
         assert_eq!(
-            back.to_string(),
-            parsed.to_string(),
+            significant_digits(text),
+            significant_digits(&format!("{parsed:e}")),
             "{text}: not the shortest spelling of a representable value"
         );
     }
     parsed
+}
+
+/// A decimal spelling's significant digits: no sign, point, exponent, or
+/// leading and trailing zeros.
+fn significant_digits(text: &str) -> String {
+    let mantissa = text.split(['e', 'E']).next().unwrap_or_default();
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    digits
+        .trim_start_matches('0')
+        .trim_end_matches('0')
+        .to_owned()
 }
 
 /// Days since 1970-01-01 of a proleptic Gregorian `YYYY-MM-DD`.
@@ -86,7 +98,17 @@ fn parse_date(text: &str) -> i32 {
     let mut parts = rest[1..].split('-');
     let month: u32 = parts.next().expect("month").parse().expect("month");
     let day: u32 = parts.next().expect("day").parse().expect("day");
-    assert!(parts.next().is_none() && (1..=12).contains(&month) && (1..=31).contains(&day));
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    assert!(
+        parts.next().is_none() && (1..=12).contains(&month) && (1..=days_in_month).contains(&day),
+        "{text}: not a calendar date"
+    );
     i32::try_from(days_from_civil(year, month, day)).expect("date in range")
 }
 
