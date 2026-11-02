@@ -9,8 +9,10 @@ installs the bundle and runs them, and fails if any skips.
 """
 
 import dataclasses
+import datetime
 import decimal
 import json
+import math
 import os
 from typing import Annotated, List, NamedTuple
 
@@ -22,7 +24,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 import stackencrypt
 from stackencrypt import Cipher, DecryptError, Ignore, Passthrough, TextEq
-from stackencrypt import _engine
+from stackencrypt import _engine, _eql
 
 CREDENTIALS = ("CS_CLIENT_ACCESS_KEY", "CS_WORKSPACE_CRN", "CS_CLIENT_ID", "CS_CLIENT_KEY")
 DATABASE_URL = os.environ.get("EQL_TEST_DATABASE_URL", "")
@@ -309,3 +311,94 @@ def test_100_queries_make_no_request():
 
     assert _engine.request_count() == before
     assert len(terms) == 100
+
+
+# One field per producible type. JsonSearch is out of scope: the json kind
+# has no Python type in this version, and the decorator refuses it.
+PRODUCIBLE = [m for m in _eql.TYPES if m.producible and m.name != "JsonSearch"]
+
+# A value and its Python type for each plaintext kind, near the edge of
+# what the kind holds.
+KIND_VALUES = {
+    "string": (str, "héllo\x00wörld"),
+    "int16": (int, -(2**15)),
+    "int32": (int, 2**31 - 1),
+    "int64": (int, -(2**63)),
+    "float32": (float, 1.5),
+    "float64": (float, 0.1),
+    "bool": (bool, True),
+    "date": (datetime.date, datetime.date(2024, 2, 29)),
+    "timestamp": (
+        datetime.datetime,
+        datetime.datetime(
+            2024, 2, 29, 23, 59, 59, 999999,
+            tzinfo=datetime.timezone(datetime.timedelta(hours=10)),
+        ),
+    ),
+    "decimal": (decimal.Decimal, decimal.Decimal("-1234.5600")),
+}
+
+
+def every_type_model():
+    cls = dataclasses.make_dataclass(
+        "EveryType",
+        [(m.name.lower(), Annotated[KIND_VALUES[m.plaintext][0], m]) for m in PRODUCIBLE],
+    )
+    return stackencrypt.model("every_type")(cls)
+
+
+def test_every_producible_type_except_json_search_is_covered():
+    assert {m.plaintext for m in PRODUCIBLE} == set(KIND_VALUES)
+    assert len(PRODUCIBLE) == 49
+
+
+@needs_database
+def test_every_producible_type_round_trips_through_postgres():
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg.rows import dict_row
+
+    cls = every_type_model()
+    cipher = Cipher(cls)
+    model = cls(**{m.name.lower(): KIND_VALUES[m.plaintext][1] for m in PRODUCIBLE})
+    [row] = cipher.encrypt([model])
+    columns = [m.name.lower() for m in PRODUCIBLE]
+    with psycopg.connect(DATABASE_URL) as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "CREATE TEMPORARY TABLE every_type ("
+            + ", ".join(f"{m.name.lower()} {m.sql_domain}" for m in PRODUCIBLE)
+            + ")"
+        )
+        cur.execute(
+            f"INSERT INTO every_type ({', '.join(columns)}) "
+            f"VALUES ({', '.join(['%s'] * len(columns))})",
+            [row[column] for column in columns],
+        )
+        cur.execute("SELECT * FROM every_type")
+        [decrypted] = cipher.decrypt(cur.fetchall())
+
+    assert decrypted == model
+    # The same instant, whatever zone it comes back in.
+    timestamp = KIND_VALUES["timestamp"][1]
+    assert decrypted.timestamp == timestamp
+    assert decrypted.timestamp.utcoffset() is not None
+
+
+@stackencrypt.model("floats")
+@dataclasses.dataclass
+class Floats:
+    real: Annotated[float, stackencrypt.RealOrdOre]
+    double: Annotated[float, stackencrypt.DoubleEq]
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, -0.0], ids=repr)
+def test_nan_infinity_and_negative_zero_round_trip(value):
+    cipher = Cipher(Floats)
+
+    [floats] = cipher.decrypt(cipher.encrypt([Floats(real=value, double=value)]))
+
+    for opened in (floats.real, floats.double):
+        if math.isnan(value):
+            assert math.isnan(opened)
+        else:
+            assert opened == value
+            assert math.copysign(1.0, opened) == math.copysign(1.0, value)

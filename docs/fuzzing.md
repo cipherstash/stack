@@ -29,6 +29,7 @@ Current targets:
 | `fuzz:check-record`  | `stack-encrypt` | `check_record`      | `dynamic::record::check_record` over an `Arbitrary`-derived plan and tree, against a model of the record rules (structure-aware) |
 | `fuzz:plan-build`    | `stack-encrypt` | `plan_build`        | `plan::FieldsBuilder::build` over `Arbitrary`-derived untrusted names (context, fields, identities); a built field's label must render and parse back, and passthrough names are never refused (structure-aware) |
 | `fuzz:json-text`     | `stack-encrypt` | `json_text`         | `json::parse_text`, the boundary parser for a language SDK's JSON document, against serde_json: it reads what serde_json reads to the same value, refuses beyond it only repeated members and out-of-range integers, and what it reads writes back to itself |
+| `fuzz:python-values` | `stackencrypt-core` | `value_frame` | the Python SDK's value conversion, `values::write` and `values::read`, both ways: a value the write check accepts must frame, read back as itself, and match the bytes `ValueFrame::of` gives the plain Rust type; arbitrary bytes read as a passthrough must never panic (structure-aware) |
 | `fuzz:json-wire`     | `stack-encrypt` | `json_wire_decode`  | the JSON index's wire decoders (`JsonDocument`, `JsonNode`, `JsonSelectorSet`, `JsonLeafQuery` from JSON text; `JsonHeader::from_bytes`), over base64 tags and base85 ciphertexts; an accepted document or node must round-trip through its wire form |
 
 Each target is a few lines — `libfuzzer-sys` hands a `&str` (or `&[u8]`
@@ -69,6 +70,7 @@ packages/stack-auth/fuzz/
 packages/stack-kms/fuzz/
 packages/stack-encrypt/fuzz/
   …
+languages/python/crates/core/fuzz/   # the Python SDK's core crate
 ```
 
 The committed `corpus/<target>/` seeds are valid examples of each format.
@@ -128,10 +130,14 @@ Two jobs with deliberately different roles:
   `restore-keys`) so coverage compounds, minimized with `cargo fuzz cmin`
   to stay small, and any crash reproducer is uploaded as an artifact.
 
-The `pull_request` trigger is path-filtered to `packages/stack-auth/**`,
-`packages/stack-kms/**`, `packages/stack-encrypt/**`, the root `Cargo.toml`,
-`Cargo.lock` and `mise.toml`, and the workflow file, with `!**.md` / `!**.example` excludes last so docs-only changes are
-skipped.
+The `pull_request` trigger is path-filtered to these paths:
+
+- `packages/stack-auth/**`, `packages/stack-kms/**`, and `packages/stack-encrypt/**`
+- `languages/python/crates/core/**` and `languages/python/Cargo.toml`
+- the root `Cargo.toml`, `Cargo.lock`, and `mise.toml`
+- the workflow file
+
+The `!**.md` and `!**.example` excludes come last, so a change to documents only is skipped.
 
 ## Adding a new target
 
