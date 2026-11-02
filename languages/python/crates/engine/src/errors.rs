@@ -3,7 +3,7 @@
 //! The exception classes live in `stackencrypt._errors`, in Python, so that
 //! the pure-Python checks and the extension raise the same ones. The class
 //! is chosen by the code's prefix, as the spec's "Errors" section assigns
-//! them: `value_*` is `InvalidValueError`, `decrypt_*` is `DecryptError`,
+//! them: `value_*` is `InvalidValueError`, `decrypt_*` is `DecryptError`, `query_*` is `QueryError`,
 //! `stack_auth_*` and the engine's context and keyset refusals are
 //! `AuthenticationError`, and anything else is the base `StashError`.
 
@@ -37,6 +37,8 @@ fn exception(py: Python<'_>, refused: &Refusal) -> PyResult<PyErr> {
         "InvalidValueError"
     } else if refused.code.starts_with("decrypt_") {
         "DecryptError"
+    } else if refused.code.starts_with("query_") {
+        "QueryError"
     } else if refused.code.starts_with("stack_auth_")
         || AUTHENTICATION.contains(&refused.code.as_str())
     {
@@ -104,6 +106,7 @@ mod tests {
     fn each_prefix_has_its_class() {
         assert_eq!(class_of("value_none"), "InvalidValueError");
         assert_eq!(class_of("decrypt_malformed"), "DecryptError");
+        assert_eq!(class_of("query_unsupported"), "QueryError");
         assert_eq!(class_of("stack_encrypt_aead"), "StashError");
     }
 }

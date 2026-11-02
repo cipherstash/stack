@@ -2,7 +2,8 @@
 //! the engine's equality term back as a `str`.
 //!
 //! `Cipher.query` has already refused a name that is not a declared field,
-//! and a field whose type answers no query (the spec in #1341, "Errors").
+//! and a field with no `eq` index (the spec in #1341, "Errors"). Core
+//! checks the second again from the plan, before the client is built.
 
 use pyo3::prelude::*;
 use stackencrypt_core::query as core;

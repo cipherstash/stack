@@ -103,7 +103,7 @@ The query type is the marker's `query_sql_domain`. For `TextEq` it is `eql_v4.qu
 
 `query` sends no request to CipherStash after the first operation of the process. The term is made from a key that the first operation loads.
 
-A field whose marker answers no query, such as `Text` or `Passthrough`, raises `stackencrypt.QueryError` with the code `query_unsupported`. A name that is not a declared field raises `QueryError` with the code `query_unknown_field`. The value is checked as `encrypt` checks it.
+`query` makes equality terms only. A field whose marker has no `eq` index raises `stackencrypt.QueryError` with the code `query_unsupported`. Examples are `Text`, `Passthrough`, `IntegerOrd`, and `TextMatch`. A name that is not a declared field raises `QueryError` with the code `query_unknown_field`. The value is checked as `encrypt` checks it.
 
 ## Declare a SQLAlchemy relationship
 

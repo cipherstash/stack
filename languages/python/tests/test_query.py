@@ -15,12 +15,14 @@ import stackencrypt
 from stackencrypt import (
     Cipher,
     IntegerEq,
+    IntegerOrd,
     InvalidValueError,
     Passthrough,
     QueryError,
     StashError,
     Text,
     TextEq,
+    TextMatch,
 )
 
 pytestmark = pytest.mark.usefixtures("credentials")
@@ -33,6 +35,8 @@ class User:
     bio: Annotated[str, Text]
     age: Annotated[int, Passthrough]
     rank: Annotated[int, IntegerEq]
+    level: Annotated[int, IntegerOrd]
+    notes: Annotated[str, TextMatch]
 
 
 def refused(field, value, error=QueryError):
@@ -50,7 +54,7 @@ def test_an_unknown_name_lists_the_fields_with_a_query(untouched):
     assert error.code == "query_unknown_field"
     assert error.field == "emial"
     assert "'emial'" in error.message
-    assert "Fields with a query: 'email', 'rank'." in error.message
+    assert "Fields with an equality query: 'email', 'rank'." in error.message
 
 
 def test_a_field_that_is_not_a_str_is_an_unknown_name(untouched):
@@ -73,6 +77,21 @@ def test_a_passthrough_field_answers_no_query(untouched):
     assert error.reason == "Passthrough"
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "marker"),
+    [("level", 3, "IntegerOrd"), ("notes", "hello", "TextMatch")],
+)
+def test_a_field_with_a_query_type_but_no_eq_index_answers_no_query(
+    untouched, field, value, marker
+):
+    # The marker has a query type, for order or match. `query` answers
+    # equality only, which the engine answers through the eq index alone.
+    error = refused(field, value)
+    assert error.code == "query_unsupported"
+    assert error.field == field
+    assert error.reason == marker
+
+
 def test_a_class_with_no_queryable_field_says_so(untouched):
     @stackencrypt.model("notes")
     @dataclasses.dataclass
@@ -81,7 +100,7 @@ def test_a_class_with_no_queryable_field_says_so(untouched):
 
     with pytest.raises(QueryError) as raised:
         Cipher(Note).query("body", "x")
-    assert "The class has no field with a query." in raised.value.message
+    assert "The class has no field with an equality query." in raised.value.message
 
 
 def test_a_value_of_another_type_is_the_wrong_type(untouched):

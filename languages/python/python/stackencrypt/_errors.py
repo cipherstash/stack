@@ -74,6 +74,7 @@ class QueryError(StashError):
     request.
 
     ``query_unknown_field``: the name is not a declared field.
-    ``query_unsupported``: the field's marker answers no query, such as
-    ``Text`` or ``Passthrough``. ``reason`` is the marker's name.
+    ``query_unsupported``: the field's marker has no ``eq`` index, such as
+    ``Text``, ``Passthrough`` or ``IntegerOrd``. ``reason`` is the marker's
+    name.
     """
