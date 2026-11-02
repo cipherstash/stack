@@ -52,7 +52,7 @@ held to the frames the value-kinds fixture froze for the same spellings.
 
 ## Required behavior
 
-For a case with no `expected_error`:
+For a case with no `expected_error` whose input is not null:
 
 1. The typed frame equals the frozen `frame`.
 2. One record of the input seals, storing ciphertext and exactly the
@@ -69,9 +69,15 @@ the refusals' "no key call" are native observations: the Rust runner counts
 them on its key source. The Go runner checks everything else; its
 deterministic guest has no call counter to read.
 
-A sealed null (`"null": "sealed"`, input `null`) stores ciphertext and the
-equality term, opens as null, and its `companion` value row's ciphertext
-has the same length. A SQL null stores nothing and opens as null.
+A null input carries no `frame`, so requirement 1 does not apply to it.
+A sealed null (`"null": "sealed"`, input `null`) meets requirements 2 and
+3: it stores ciphertext and the declared indexes with one batched
+generation, and a null equality query derives the stored equality term
+where one is declared. It opens as null with one batched retrieval, and its `companion` value row's ciphertext has the same
+length. A SQL null (`"null": "sql"`, input `null`) meets none of
+requirements 1 to 4: it stores no record, so no data key is generated, no
+term exists to compare and no ciphertext is opened; its row reads back as
+null.
 
 `unanswered` lists stored indexes no query operator answers for the kind. A
 query of such an index is refused as `operator_not_answered` in both
