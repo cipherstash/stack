@@ -58,37 +58,44 @@ pub fn value(input: &Input) -> ValueFrame {
     }
 }
 
-/// A float from the spellings every runner reads alike: decimal text,
-/// `inf` and `-inf`. The text must be the shortest spelling of the value it
-/// names: a decimal with more digits than that, which the type rounds, is a
-/// corpus error.
+/// A float from its canonical spelling ([`canonical_float`]). Any other
+/// text that parses, such as `1.00`, `1e+3`, `1E3`, `+1` or a rounded
+/// decimal, is a corpus error, so every runner reads one spelling alike.
 fn parse_float<F>(text: &str) -> F
 where
-    F: std::str::FromStr + std::fmt::LowerExp + Copy,
+    F: std::str::FromStr + std::fmt::Display + std::fmt::LowerExp + PartialEq + Copy,
     F::Err: std::fmt::Debug,
 {
     let parsed: F = text.parse().expect("float");
-    if text != "inf" && text != "-inf" {
-        // Both spellings name `parsed`; with the same significant digits
-        // they are the same decimal, so the text is not rounded.
-        assert_eq!(
-            significant_digits(text),
-            significant_digits(&format!("{parsed:e}")),
-            "{text}: not the shortest spelling of a representable value"
-        );
-    }
+    assert_eq!(
+        canonical_float(parsed).as_deref(),
+        Some(text),
+        "{text}: not the shortest spelling of a representable value"
+    );
     parsed
 }
 
-/// A decimal spelling's significant digits: no sign, point, exponent, or
-/// leading and trailing zeros.
-fn significant_digits(text: &str) -> String {
-    let mantissa = text.split(['e', 'E']).next().unwrap_or_default();
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    digits
-        .trim_start_matches('0')
-        .trim_end_matches('0')
-        .to_owned()
+/// A float's canonical spelling: of its positional spelling (Rust's `{}`,
+/// e.g. `34`, `-0`, `0.001`) and its scientific spelling (Rust's `{:e}`,
+/// e.g. `1e3`, `3.4028235e38`, `5e-324`), both of the shortest digits that
+/// round-trip, the shorter, and the positional one on a tie (`100`, not
+/// `1e2`). The infinities are `inf` and `-inf`; `NaN` has none. Go's
+/// `canonicalFloat` derives the same text from `strconv.FormatFloat`.
+pub fn canonical_float<F>(value: F) -> Option<String>
+where
+    F: std::fmt::Display + std::fmt::LowerExp + PartialEq + Copy,
+{
+    #[allow(clippy::eq_op)]
+    if value != value {
+        return None;
+    }
+    let positional = format!("{value}");
+    let scientific = format!("{value:e}");
+    Some(if scientific.len() < positional.len() {
+        scientific
+    } else {
+        positional
+    })
 }
 
 /// Days since 1970-01-01 of a proleptic Gregorian `YYYY-MM-DD`.

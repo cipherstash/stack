@@ -5,7 +5,7 @@
 mod common;
 
 use common::{
-    conformance::{refusal, value, Input},
+    conformance::{canonical_float, refusal, value, Input},
     frames::{frame, object},
     hex,
 };
@@ -358,6 +358,82 @@ fn a_rounded_float_spelling_is_a_corpus_error() {
         kind: "float64".into(),
         text: "0.1000000000000000001".into(),
     });
+}
+
+/// A float spelling with more zeros than its shortest is refused too, though
+/// it names the value exactly.
+#[test]
+#[should_panic(expected = "not the shortest spelling")]
+fn a_float_with_trailing_zeros_is_a_corpus_error() {
+    value(&Input {
+        kind: "float64".into(),
+        text: "1.00".into(),
+    });
+}
+
+/// Spellings the float reader accepts, as `(bits, text)`; Go's
+/// `TestConformanceFloatSpelling` holds its reader to the same lists.
+const CANONICAL_FLOATS: &[(u32, &str)] = &[
+    (64, "100"),
+    (64, "12000"),
+    (64, "1e3"),
+    (64, "34"),
+    (64, "-0"),
+    (64, "1.5"),
+    (64, "0.5"),
+    (64, "1e-3"),
+    (64, "9007199254740992"),
+    (64, "1.7976931348623157e308"),
+    (64, "5e-324"),
+    (64, "inf"),
+    (64, "-inf"),
+    (32, "1e-45"),
+    (32, "3.4028235e38"),
+];
+
+/// Spellings that parse to a float but are not its canonical spelling.
+const NON_CANONICAL_FLOATS: &[(u32, &str)] = &[
+    (64, "1.00"),
+    (64, "1.0"),
+    (64, "1e0"),
+    (64, "1.5e0"),
+    (64, "1000"),
+    (64, "1e2"),
+    (64, "1e+3"),
+    (64, "1E3"),
+    (64, "10e2"),
+    (64, "01"),
+    (64, "+1"),
+    (64, ".5"),
+    (64, "5."),
+    (64, "-0.0"),
+    (64, "0.001"),
+    (64, "0.1000000000000000001"),
+    (64, "Inf"),
+    (64, "infinity"),
+    (64, "NaN"),
+    (32, "1.4e-45"),
+    (32, "3.4028234664e38"),
+];
+
+/// The float reader accepts exactly the canonical spelling: the shorter of
+/// the positional and scientific forms of the shortest round-trip digits.
+#[test]
+fn the_float_reader_accepts_only_the_canonical_spelling() {
+    fn canonical(bits: u32, text: &str) -> Option<String> {
+        match bits {
+            32 => text.parse::<f32>().ok().and_then(canonical_float),
+            64 => text.parse::<f64>().ok().and_then(canonical_float),
+            _ => unreachable!(),
+        }
+    }
+    for &(bits, text) in CANONICAL_FLOATS {
+        assert_eq!(canonical(bits, text).as_deref(), Some(text), "float{bits}");
+    }
+    for &(bits, text) in NON_CANONICAL_FLOATS {
+        assert!(text.parse::<f64>().is_ok(), "{text} parses");
+        assert_ne!(canonical(bits, text).as_deref(), Some(text), "float{bits}");
+    }
 }
 
 /// A day the month does not have is a corpus error, as it is in Go.

@@ -28,13 +28,27 @@ extended to every kind:
 |---|---|
 | `bool` | `true` or `false` |
 | `int8` … `int128`, `uint8` … `uint128` | canonical base-10 integer at exactly that width |
-| `float32`, `float64` | the shortest decimal spelling of a representable value, or `inf`, `-inf`; `-0` is negative zero |
+| `float32`, `float64` | the canonical spelling of a representable value (below), or `inf`, `-inf`; `-0` is negative zero |
 | `string` | the literal text, control characters included |
 | `bytes` | the bytes in lowercase hex, possibly empty |
 | `date` | `YYYY-MM-DD`, proleptic Gregorian |
 | `timestamp` | RFC 3339 in UTC, `YYYY-MM-DDTHH:MM:SS[.fraction]Z`, at most nine fraction digits |
 | `decimal` | fixed-point text keeping every trailing zero; the scale is the number of fraction digits |
 | `null` | empty |
+
+A float's canonical spelling is built from the shortest decimal digits
+that parse back to the value at its width. Spelled positionally (Rust's
+`{}`, Go's `strconv.FormatFloat(f, 'f', -1, bits)`: `34`, `-0`, `0.5`,
+`9007199254740992`) and scientifically (Rust's `{:e}`, Go's
+`strconv.FormatFloat(f, 'e', -1, bits)` with the exponent's `+` and leading
+zeros removed: `1e3`, `3.4028235e38`, `5e-324`), the shorter of the two is
+canonical, and the positional one on a tie (`100`, not `1e2`). Both
+runners refuse any other text that parses to the value as a corpus error:
+`1.00`, `1.0`, `1e0`, `1000`, `1e+3`, `1E3`, `+1`, `.5`, `-0.0`, `0.001`,
+`Inf`, a rounded decimal. Rust's
+`the_float_reader_accepts_only_the_canonical_spelling` and Go's
+`TestConformanceFloatSpelling` hold both readers to the same accepted and
+refused lists.
 
 Runners construct real typed host values: Rust reads each integer at its
 width and each logical type over its physical scalar; Go uses its own
