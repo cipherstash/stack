@@ -7,7 +7,7 @@
 //! never changes a value: nothing here converts, only reads.
 
 use std::borrow::Cow;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -241,7 +241,8 @@ fn decimal(
 ) -> PyResult<Result<Value<'static>, Refusal>> {
     let parts = value.call_method0("as_tuple")?;
     let sign: u8 = parts.getattr("sign")?.extract()?;
-    let digits: Vec<u8> = parts.getattr("digits")?.extract()?;
+    // The digits are plaintext: wiped when dropped.
+    let digits = Zeroizing::new(parts.getattr("digits")?.extract::<Vec<u8>>()?);
     let Ok(exponent) = parts.getattr("exponent")?.extract::<i64>() else {
         return Ok(Err(refusal(
             "value_not_representable",
@@ -257,7 +258,7 @@ fn decimal(
         )
     };
     let mut mantissa: i128 = 0;
-    for digit in digits {
+    for &digit in digits.iter() {
         mantissa = match mantissa
             .checked_mul(10)
             .and_then(|m| m.checked_add(i128::from(digit)))
@@ -318,22 +319,33 @@ fn type_name(value: &Bound<'_, PyAny>) -> String {
 }
 
 /// An opened scalar as a Python object, of the type the field declares.
+///
+/// The scalar's text and bytes are copied into the Python object, and the
+/// scalar wipes its own copy when it is dropped.
+///
+/// # Errors
+///
+/// A `ValueError` for a date or timestamp outside `datetime`'s range, and
+/// for a timestamp with nanoseconds: `datetime` keeps microseconds, and
+/// rounding would change the value. The Go SDK can store one.
 pub fn to_python(py: Python<'_>, scalar: Scalar) -> PyResult<Py<PyAny>> {
-    Ok(match scalar {
+    Ok(match &scalar {
         Scalar::Null => py.None(),
-        Scalar::Text(text) => PyString::new(py, &text).into_any().unbind(),
+        Scalar::Text(text) => PyString::new(py, text).into_any().unbind(),
         Scalar::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
-        Scalar::Float(f) => PyFloat::new(py, f).into_any().unbind(),
-        Scalar::Bool(b) => PyBool::new(py, b).to_owned().into_any().unbind(),
-        Scalar::Bytes(bytes) => PyBytes::new(py, &bytes).into_any().unbind(),
+        Scalar::Float(f) => PyFloat::new(py, *f).into_any().unbind(),
+        Scalar::Bool(b) => PyBool::new(py, *b).to_owned().into_any().unbind(),
+        Scalar::Bytes(bytes) => PyBytes::new(py, bytes).into_any().unbind(),
         Scalar::Date(days) => PyKind::Date
             .type_object(py)?
-            .call_method1("fromordinal", (i64::from(days) + 719_163,))?
+            .call_method1("fromordinal", (i64::from(*days) + 719_163,))?
             .unbind(),
-        Scalar::Timestamp(nanos) => {
-            // Python's datetime keeps microseconds; the engine's timestamp
-            // is in nanoseconds, so the last three digits are dropped. An
-            // encrypted datetime had none: Python wrote it.
+        &Scalar::Timestamp(nanos) => {
+            if nanos.rem_euclid(1_000) != 0 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "the timestamp has nanoseconds, and datetime keeps microseconds",
+                ));
+            }
             let micros = nanos.div_euclid(1_000);
             let seconds = micros.div_euclid(1_000_000);
             let micros = micros.rem_euclid(1_000_000);
@@ -343,19 +355,16 @@ pub fn to_python(py: Python<'_>, scalar: Scalar) -> PyResult<Py<PyAny>> {
                 .call1((0, seconds, micros))?;
             epoch(py)?.add(delta)?.unbind()
         }
-        Scalar::Decimal { mantissa, scale } => {
+        &Scalar::Decimal { mantissa, scale } => {
             // Decimal((sign, digits, exponent)), so that the scale is kept:
-            // Decimal("1.50") is not Decimal("1.5") to Python.
+            // Decimal("1.50") is not Decimal("1.5") to Python. The digits
+            // are plaintext, and both copies are wiped when dropped.
             let sign = u8::from(mantissa < 0);
-            let digits: Vec<u8> = mantissa
-                .unsigned_abs()
-                .to_string()
-                .bytes()
-                .map(|b| b - b'0')
-                .collect();
+            let text = Zeroizing::new(mantissa.unsigned_abs().to_string());
+            let digits = Zeroizing::new(text.bytes().map(|b| b - b'0').collect::<Vec<u8>>());
             // A tuple of ints: pyo3 converts a Vec<u8> to bytes, which
             // Decimal refuses.
-            let digits = PyTuple::new(py, digits)?;
+            let digits = PyTuple::new(py, digits.iter())?;
             PyKind::Decimal
                 .type_object(py)?
                 .call1(((sign, digits, -i64::from(scale)),))?

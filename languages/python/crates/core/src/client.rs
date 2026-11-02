@@ -55,6 +55,21 @@ static REQUESTS: AtomicU64 = AtomicU64::new(0);
 /// client key or the ZeroKMS client (`stack_kms_*`), or the keyset load
 /// (`stack_encrypt_*`). Nothing is cached on failure.
 pub fn shared() -> Result<&'static Client, Refusal> {
+    // In the test build, an operation that reaches here after the switch has
+    // not checked for the deterministic client, and would send requests to
+    // ZeroKMS from a test process. Refuse it, so a new operation that skips
+    // the check fails its test instead.
+    #[cfg(feature = "deterministic-kms")]
+    if DETERMINISTIC.get().is_some() {
+        return Err(Refusal {
+            code: "stack_test_build".to_owned(),
+            message: "this operation asked for the live client after the switch to the \
+                      deterministic one; call client::deterministic() first"
+                .to_owned(),
+            field: None,
+            reason: None,
+        });
+    }
     if let Some(client) = CLIENT.get() {
         return Ok(client);
     }
@@ -96,6 +111,11 @@ pub fn use_deterministic(seed: [u8; 32]) -> Result<(), Refusal> {
         field: None,
         reason: None,
     };
+    // The lock `shared` builds under: a live build in flight on another
+    // thread finishes before this checks, so the two never both exist.
+    let _building = BUILDING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if CLIENT.get().is_some() || DETERMINISTIC.get().is_some() {
         return Err(refused(
             "the process already has a client; call this before any operation".to_owned(),

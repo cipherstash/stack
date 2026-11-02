@@ -213,8 +213,8 @@ fn python_value(py: Python<'_>, field: &Field, value: Scalar) -> PyResult<Py<PyA
             Refusal {
                 code: "decrypt_not_representable".to_owned(),
                 message: format!(
-                    "field {:?}: the opened value is outside the range Python's datetime \
-                     holds.",
+                    "field {:?}: the opened value is outside what Python's datetime \
+                     holds: a year outside 1 to 9999, or a timestamp with nanoseconds.",
                     field.name
                 ),
                 field: Some(field.name.clone()),

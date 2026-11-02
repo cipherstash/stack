@@ -17,6 +17,7 @@ use stack_encrypt::dynamic::plaintext::{
     kinds, Error as SinkError, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink, Sink,
     SourceError, TimeUnit,
 };
+use zeroize::Zeroize;
 
 use std::convert::Infallible;
 use std::marker::PhantomData;
@@ -246,6 +247,19 @@ pub enum Scalar {
         mantissa: i128,
         scale: u8,
     },
+}
+
+/// An opened text or bytes value is plaintext, and the SDK's own copy of it:
+/// it is wiped when dropped. The extension copies it into a Python object
+/// first (`src/heap_hygiene.rs` in the engine crate checks the drop).
+impl Drop for Scalar {
+    fn drop(&mut self) {
+        match self {
+            Self::Text(text) => text.zeroize(),
+            Self::Bytes(bytes) => bytes.zeroize(),
+            _ => {}
+        }
+    }
 }
 
 impl Scalar {

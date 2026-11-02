@@ -163,8 +163,10 @@ jobs:
 
       # pyo3's build script asks the `python3` on PATH for its configuration.
       # That is why this runs after mise is installed, once per interpreter.
+      # With every feature, so the code behind the test features
+      # (deterministic-kms, gate-probe) is linted too.
       - name: clippy
-        run: cargo clippy --locked --no-deps --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --no-deps --workspace --all-targets --all-features -- -D warnings
 
       # `cargo test --locked` for both crates. The task puts the interpreter's
       # library directory on the loader path, because the engine crate links
