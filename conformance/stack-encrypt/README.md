@@ -23,12 +23,26 @@ The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
 runtime, read, context, value-boundary, query-refusal and raw-frame cases, and
 enrolls the existing value-kind, context-field and query-operator
-fixtures described below. Set no fixture-update variables when checking conformance.
+fixtures described below. It ends with the fresh artifact exchange in both
+directions (`test:conformance:exchange`, which also needs the deterministic
+EQL guest). Set no fixture-update variables when checking conformance.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## Fresh artifact exchange
+
+The [exchange contract](exchange-contract.md) defines `artifact-exchange-v1`:
+in one run, Rust writes and Go opens, and Go writes and Rust opens, every
+value kind at its edges, a structural record with passthrough and index
+terms, whole-value opaque blobs and EQL v4 rows. Decrypted values and the
+consumer's own derived query terms are compared, never ciphertext bytes.
+`mise run test:conformance:exchange` fails on a missing runner or guest and
+on an empty fresh output, and its report records the producer SDKs, engines,
+backends, guests and storage versions. Released-version combinations wait on
+the compatibility policy; Python and TypeScript are listed as not enrolled.
 
 ## Lifecycle, cleanup and key I/O
 
@@ -70,8 +84,9 @@ checks. The task runs the existing tests directly, and a missing guest fails
 when conformance is required. The ordinary CI suites already execute them.
 
 This is representative fixture coverage, not an exhaustive type/operator
-matrix. Wider fresh artifact exchange and shared scalar query refusals remain
-separate work. The EQL/JSON profiles are described below.
+matrix. The value-boundary and query-refusal profiles below widen it, and the
+exchange profile above writes the wider kinds fresh in both directions. The
+EQL/JSON profiles are described below.
 
 ## Value boundaries, query refusals and raw frames
 
@@ -205,5 +220,6 @@ existing codecs.
 
 Both runners currently share the Rust engine. This checks host value conversion,
 native/WASI interoperability and regressions against frozen evidence; it cannot
-detect every bug shared by both paths. Independent SQL oracles, broader negative
-cases, release-version matrices and richer version reports remain in the plan.
+detect every bug shared by both paths. Independent SQL oracles exist for the
+EQL/JSON profiles; release-version matrices wait on the compatibility policy
+and have their placeholder in the exchange report.
