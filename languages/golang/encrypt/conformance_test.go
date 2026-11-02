@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -99,15 +101,10 @@ func conformanceValue(t *testing.T, input conformanceInput) any {
 		}
 		return n
 	}
-	// A float's text must be the shortest spelling of the value it names:
-	// more digits than that are rounded by the parse, a corpus error.
 	float := func(bits int) float64 {
-		n, err := strconv.ParseFloat(input.Text, bits)
+		n, err := conformanceFloat(input.Text, bits)
 		if err != nil {
 			t.Fatal(err)
-		}
-		if input.Text != "inf" && input.Text != "-inf" && significantDigits(input.Text) != significantDigits(strconv.FormatFloat(n, 'e', -1, bits)) {
-			t.Fatalf("%s: not the shortest spelling of a representable value", input.Text)
 		}
 		return n
 	}
@@ -314,15 +311,84 @@ func assertConformanceDiagnostic(t *testing.T, err error, code, reason, field st
 	}
 }
 
-// significantDigits is a decimal spelling's significant digits: no sign,
-// point, exponent, or leading and trailing zeros.
-func significantDigits(text string) string {
-	mantissa, _, _ := strings.Cut(strings.ToLower(text), "e")
-	var digits strings.Builder
-	for _, r := range mantissa {
-		if r >= '0' && r <= '9' {
-			digits.WriteRune(r)
+// conformanceFloat reads a float from its canonical spelling
+// (canonicalFloat). Any other text that parses, such as 1.00, 1e+3, 1E3,
+// +1 or a rounded decimal, is a corpus error, so every runner reads one
+// spelling alike.
+func conformanceFloat(text string, bits int) (float64, error) {
+	n, err := strconv.ParseFloat(text, bits)
+	if err != nil {
+		return 0, err
+	}
+	if canonical, ok := canonicalFloat(n, bits); !ok || canonical != text {
+		return 0, fmt.Errorf("%s: not the shortest spelling of a representable value", text)
+	}
+	return n, nil
+}
+
+// canonicalFloat is a float's canonical spelling: of its positional
+// spelling (34, -0, 0.5) and its scientific spelling (1e3, 3.4028235e38,
+// 5e-324; no plus sign or leading zero in the exponent), both of the
+// shortest digits that round-trip, the shorter, and the positional one on a
+// tie (100, not 1e2). The infinities are inf and -inf; NaN has none. It is
+// the text Rust's canonical_float derives from its {} and {:e} formats.
+func canonicalFloat(n float64, bits int) (string, bool) {
+	switch {
+	case math.IsNaN(n):
+		return "", false
+	case math.IsInf(n, 1):
+		return "inf", true
+	case math.IsInf(n, -1):
+		return "-inf", true
+	}
+	positional := strconv.FormatFloat(n, 'f', -1, bits)
+	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(n, 'e', -1, bits), "e")
+	sign, digits := "", strings.TrimPrefix(exponent, "+")
+	if strings.HasPrefix(digits, "-") {
+		sign, digits = "-", digits[1:]
+	}
+	if digits = strings.TrimLeft(digits, "0"); digits == "" {
+		digits = "0"
+	}
+	if scientific := mantissa + "e" + sign + digits; len(scientific) < len(positional) {
+		return scientific, true
+	}
+	return positional, true
+}
+
+// TestConformanceFloatSpelling holds the float reader to the lists Rust's
+// the_float_reader_accepts_only_the_canonical_spelling uses.
+func TestConformanceFloatSpelling(t *testing.T) {
+	canonical := []struct {
+		bits int
+		text string
+	}{
+		{64, "100"}, {64, "12000"}, {64, "1e3"}, {64, "34"}, {64, "-0"},
+		{64, "1.5"}, {64, "0.5"}, {64, "1e-3"}, {64, "9007199254740992"},
+		{64, "1.7976931348623157e308"}, {64, "5e-324"}, {64, "inf"}, {64, "-inf"},
+		{32, "1e-45"}, {32, "3.4028235e38"},
+	}
+	for _, c := range canonical {
+		if _, err := conformanceFloat(c.text, c.bits); err != nil {
+			t.Errorf("float%d %q: %v", c.bits, c.text, err)
 		}
 	}
-	return strings.TrimRight(strings.TrimLeft(digits.String(), "0"), "0")
+	nonCanonical := []struct {
+		bits int
+		text string
+	}{
+		{64, "1.00"}, {64, "1.0"}, {64, "1e0"}, {64, "1.5e0"}, {64, "1000"},
+		{64, "1e2"}, {64, "1e+3"}, {64, "1E3"}, {64, "10e2"}, {64, "01"},
+		{64, "+1"}, {64, ".5"}, {64, "5."}, {64, "-0.0"}, {64, "0.001"},
+		{64, "0.1000000000000000001"}, {64, "Inf"}, {64, "infinity"}, {64, "NaN"},
+		{32, "1.4e-45"}, {32, "3.4028234664e38"},
+	}
+	for _, c := range nonCanonical {
+		if _, err := strconv.ParseFloat(c.text, c.bits); err != nil {
+			t.Fatalf("float%d %q does not parse: %v", c.bits, c.text, err)
+		}
+		if n, err := conformanceFloat(c.text, c.bits); err == nil {
+			t.Errorf("float%d %q: read as %v, want a corpus error", c.bits, c.text, n)
+		}
+	}
 }
