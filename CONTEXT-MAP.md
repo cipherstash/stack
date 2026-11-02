@@ -7,6 +7,8 @@
 - [Stack Encrypt](./packages/stack-encrypt/CONTEXT.md) — encrypts values under
   per-value ZeroKMS data keys and derives searchable terms from them, for Rust
   and, through a WASI guest, Go.
+- [CI](./.github/CONTEXT.md) — runs the checks that verify a change, and pays
+  for the machines that run them, within a shared monthly budget.
 
 ## Relationships
 
