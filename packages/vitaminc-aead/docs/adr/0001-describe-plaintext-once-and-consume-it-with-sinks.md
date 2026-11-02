@@ -5,8 +5,8 @@ status: accepted
 # Describe plaintext once and consume it with sinks
 
 > **Implemented** in #416–#448. This document describes what landed. The
-> source trait is called `Plaintext` here and in the code at the time of
-> writing; it ships as `Encrypt` (#449), and `Plaintext` is its interim
+> source trait is called `Plaintext` here, as it was in the code at the time
+> of writing; it shipped as `Encrypt` (#456), and `Plaintext` is its interim
 > name. See [Names](#9-names).
 
 When this was decided, Stack Encrypt was unreleased, so vitaminc's
@@ -1123,8 +1123,8 @@ Around them:
 - The Go guest replaces `decode_value` and `encode_value` with `Frame` and
   `decrypt_to_frame`.
 - `vitaminc-aead-derive` generates `Plaintext` and `Decrypt` instead of
-  `Encrypt` and `Decrypt`, including for fieldless enums. Under #449 it
-  becomes `#[derive(Encrypt)]`.
+  `Encrypt` and `Decrypt`, including for fieldless enums. #456 renamed it
+  `#[derive(Encrypt)]`.
 
 ### 9. Names
 
@@ -1137,12 +1137,67 @@ async one is an `AsyncCipher`, a typed decryption target is still
 removed from `vitaminc-aead`. (`vitaminc-prf` has its own, unrelated
 `SeqAccess`, `MapAccess` and `PrfVisitor`.)
 
-As implemented in #416–#448, the source trait is `Plaintext`, named so
-because the trait no longer encrypts anything. Before release it is renamed
-`Encrypt` (#449), so the trait pair a user implements, almost always by
-derive, is `Encrypt` and `Decrypt`. `Plaintext` in this document is the
-interim name. #449 also moves refusals for derived types to compile time;
-this section will be updated with its reasoning when it merges.
+As implemented in #416–#448, the source trait was `Plaintext`, named so
+because the trait no longer encrypts anything. #456 renamed it `Encrypt`
+before release, with `#[derive(Plaintext)]` becoming `#[derive(Encrypt)]`,
+so the trait pair a user implements, almost always by derive, is `Encrypt`
+and `Decrypt`. `Plaintext` elsewhere in this document is the interim name.
+
+**Why `Encrypt` and `Decrypt`.** The two traits must match. `Plaintext`
+named one for what the value is, while `Decrypt` named the other for the
+operation, and the reason given for `Plaintext` (the trait does no
+encryption) would have renamed `Decrypt` too. Both traits describe how a
+type is encrypted and decrypted, and neither does the cryptography, which is
+the cipher's job. That was true of the old traits as well: Stack Encrypt's
+implementation encrypted nothing until the whole document had been awaited
+and sent through KMS. The traits also feed sinks that are not ciphers, such
+as `Terms` and the frame writer. That is accepted, and is no reason for
+another name. The name is the old `Encrypt` trait's, for a different trait,
+which the 0.6.0 changelog says.
+
+**No `try_` variant.** There is no separate fallible encrypt function.
+Encryption can always fail, because the cipher can, so a `try_encrypt`
+would not mark anything meaningful. The strictness lives in the derive.
+
+**What the derive refuses at compile time.** A derived type should never
+reach a refusal that `EncryptSink` makes at runtime, so `#[derive(Encrypt)]`
+refuses at compile time:
+
+- a duplicate key once renames are applied;
+- a struct that seals nothing (every field passthrough);
+- nesting deeper than `MAX_DEPTH`.
+
+The first two are errors from the macro itself. Depth is a `const _`
+assertion over the type's `DEPTH` in a named `const` item, because trybuild
+does not check a panic in an inline `const {}` block. A type whose depth is
+not fixed, such as a recursive type, a frame or a hand-written source,
+keeps the runtime check. Each refusal has a trybuild compile-fail test in
+`packages/aead/tests/ui/derive`.
+
+**`Timestamp` for values chrono can hold but not encrypt.** A
+`DateTime<Utc>` can hold a leap second, which has no encoding and is refused
+when it is encrypted. `vitaminc_aead::Timestamp` (feature `chrono`) refuses
+a leap second when it is built, so a field of that type is never refused
+when its struct is encrypted. It seals to the same leaf as `DateTime<Utc>`,
+so a field can change type without changing its ciphertext. `DateTime<Utc>`
+stays an `Encrypt` source, and keeps the runtime refusal.
+
+**Errors, not panics, for contract violations.** Two failures look like
+contract violations: a value too long for the frame's `u32` length prefixes
+(`Unencryptable::Unwritable`, `Unencryptable::UnframablePassthrough`), and a
+cipher that returns the wrong number of leaves (`EncryptError::Count`).
+Both stay errors, unlike `Vec`, which panics on capacity overflow. The value
+often comes from a host (a JavaScript object, a Go frame) and the cipher
+may be a remote key provider, so neither is under the caller's control. A
+panic would let hostile input or a bad response abort the process, and in
+the Node binding a panic aborts Node.
+
+**Binding a leaf's type stays opt-in.** If every leaf's type were bound into
+the AAD by default, a reader would need the type to open the data. A
+JavaScript or Go reader with no schema, which decodes whatever the leaf's
+tag says, could no longer open rows a Rust writer sealed. Self-describing
+data that any binding can read is the default. A caller that holds a schema
+on both sides adds `LeafTypeAad` on top (section 3).
 
 ## Consequences
 
