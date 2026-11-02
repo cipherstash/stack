@@ -48,7 +48,7 @@
     "lint": "biome check ."
   },
   "dependencies": {
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "peerDependencies": {
     "@cipherstash/stack": ">=1.0.0-rc.0",
