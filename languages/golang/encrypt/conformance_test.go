@@ -85,7 +85,7 @@ type conformanceInput struct {
 // its own width, the SDK's Int128, Uint128, Date and Decimal, a time.Time
 // for a timestamp, and bytes from hex. A text the type cannot carry fails
 // the test; nothing is rounded.
-func conformanceValue(t *testing.T, input conformanceInput) any {
+func conformanceValue(t testing.TB, input conformanceInput) any {
 	t.Helper()
 	signed := func(bits int) int64 {
 		n, err := strconv.ParseInt(input.Text, 10, bits)

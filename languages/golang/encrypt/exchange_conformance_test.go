@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
@@ -190,7 +192,7 @@ func exchangeStoredOf(outputs record.Outputs) exchangeStored {
 	return stored
 }
 
-func exchangeOutputsOf(t *testing.T, stored exchangeStored, what string) record.Outputs {
+func exchangeOutputsOf(t testing.TB, stored exchangeStored, what string) record.Outputs {
 	t.Helper()
 	if stored.C == nil {
 		t.Fatalf("%s: no ciphertext", what)
@@ -202,7 +204,7 @@ func exchangeOutputsOf(t *testing.T, stored exchangeStored, what string) record.
 	return outputs
 }
 
-func unhexT(t *testing.T, text string) []byte {
+func unhexT(t testing.TB, text string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(text)
 	if err != nil {
@@ -211,7 +213,7 @@ func unhexT(t *testing.T, text string) []byte {
 	return b
 }
 
-func exchangeOperator(t *testing.T, index string) string {
+func exchangeOperator(t testing.TB, index string) string {
 	t.Helper()
 	switch index {
 	case "eq":
@@ -228,7 +230,7 @@ func exchangeOperator(t *testing.T, index string) string {
 // artifact, independent of who wrote it. An index the corpus lists as
 // unanswered has no operator to compare with, so only its presence is
 // checked.
-func checkExchangeTerms(t *testing.T, ctx context.Context, cipher *encrypt.Cipher, plan *record.Plan, field string, stored exchangeStored, declared, unanswered []string, input any, equal *conformanceInput, what string) {
+func checkExchangeTerms(t testing.TB, ctx context.Context, cipher *encrypt.Cipher, plan *record.Plan, field string, stored exchangeStored, declared, unanswered []string, input any, equal *conformanceInput, what string) {
 	t.Helper()
 	if len(stored.Terms) != len(declared)-1 {
 		t.Fatalf("%s: stored %d terms for %v", what, len(stored.Terms), declared[1:])
@@ -402,7 +404,7 @@ func exchangeIDs[T any](m map[string]T) map[string]bool {
 	return ids
 }
 
-func consumeExchange(t *testing.T, ctx context.Context, cipher *encrypt.Cipher, corpus *exchangeCorpus, values []valueCase, artifacts exchangeArtifacts, origin string) {
+func consumeExchange(t testing.TB, ctx context.Context, cipher *encrypt.Cipher, corpus *exchangeCorpus, values []valueCase, artifacts exchangeArtifacts, origin string) {
 	t.Helper()
 	if artifacts.Version != 1 || artifacts.Profile != exchangeProfile {
 		t.Fatalf("%s: artifact version %d profile %q", origin, artifacts.Version, artifacts.Profile)
@@ -496,6 +498,18 @@ func consumeExchange(t *testing.T, ctx context.Context, cipher *encrypt.Cipher, 
 	for _, row := range corpus.Record.Rows {
 		what := origin + ": record: " + row.ID
 		stored := artifacts.Record[row.ID]
+		// Every stored sealed field is a declared one: an undeclared field
+		// would otherwise be dropped before Open and never checked. A SQL
+		// null stores nothing, so the declared set bounds the stored one.
+		for name := range stored.Fields {
+			declared := false
+			for _, f := range corpus.Record.Fields {
+				declared = declared || (f.Name == name && !f.Passthrough)
+			}
+			if !declared {
+				t.Fatalf("%s: %q is not a declared sealed field", what, name)
+			}
+		}
 		sealed := record.Sealed{}
 		passthroughs := 0
 		for _, f := range corpus.Record.Fields {
@@ -561,6 +575,93 @@ func consumeExchange(t *testing.T, ctx context.Context, cipher *encrypt.Cipher, 
 // runner's artifacts for the other runner. Nothing frozen is read or
 // written; a missing guest fails in required mode.
 func TestArtifactExchange(t *testing.T) {
+	ctx := context.Background()
+	corpus, values, cipher := exchangeSetup(t, ctx)
+
+	fresh := produceExchange(t, ctx, cipher, &corpus, values)
+	consumeExchange(t, ctx, cipher, &corpus, values, fresh, "self")
+
+	if path := os.Getenv("STACK_EXCHANGE_OUTPUT"); path != "" {
+		data, err := json.MarshalIndent(fresh, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if path := os.Getenv("STACK_EXCHANGE_INPUT"); path != "" {
+		var foreign exchangeArtifacts
+		readConformanceJSON(t, path, &foreign)
+		origin := foreign.Producer.Language + " artifacts"
+		t.Logf("exchange: opening %s from %s %s over %s (%s)", origin, foreign.Producer.SDK, foreign.Producer.SDKVersion, foreign.Producer.Backend, path)
+		consumeExchange(t, ctx, cipher, &corpus, values, foreign, origin)
+	}
+}
+
+// exchangeFatal stands in for the test while a consumer runs on an artifact
+// it must refuse: the first Fatal is recorded and ends the consumer's
+// goroutine instead of the test.
+type exchangeFatal struct {
+	testing.TB
+	message string
+}
+
+func (f *exchangeFatal) Helper() {}
+
+func (f *exchangeFatal) Fatal(args ...any) {
+	f.message = fmt.Sprint(args...)
+	runtime.Goexit()
+}
+
+func (f *exchangeFatal) Fatalf(format string, args ...any) {
+	f.message = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+// TestArtifactExchangeRefusesAnUndeclaredRecordField hands the consumer a
+// record artifact carrying a sealed field the corpus does not declare,
+// though every declared field still opens: the consumer refuses it.
+func TestArtifactExchangeRefusesAnUndeclaredRecordField(t *testing.T) {
+	ctx := context.Background()
+	corpus, values, cipher := exchangeSetup(t, ctx)
+	fresh := produceExchange(t, ctx, cipher, &corpus, values)
+
+	data, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tampered exchangeArtifacts
+	if err := json.Unmarshal(data, &tampered); err != nil {
+		t.Fatal(err)
+	}
+	row := tampered.Record[corpus.Record.Rows[0].ID]
+	var copied *exchangeStored
+	for _, stored := range row.Fields {
+		copied = &stored
+		break
+	}
+	if copied == nil {
+		t.Fatal("the first record row stores a sealed field")
+	}
+	row.Fields["undeclared"] = *copied
+
+	fatal := &exchangeFatal{TB: t}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		consumeExchange(fatal, ctx, cipher, &corpus, values, tampered, "self")
+	}()
+	<-done
+	if !strings.Contains(fatal.message, `"undeclared" is not a declared sealed field`) {
+		t.Fatalf("the consumer accepted an undeclared record field (failure: %q)", fatal.message)
+	}
+}
+
+// exchangeSetup reads and checks the exchange corpus and the value corpus
+// it draws on, and opens the deterministic client both runners seal under.
+func exchangeSetup(t *testing.T, ctx context.Context) (exchangeCorpus, []valueCase, *encrypt.Cipher) {
+	t.Helper()
 	root := filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1")
 	var corpus exchangeCorpus
 	readConformanceJSON(t, filepath.Join(root, "exchange.json"), &corpus)
@@ -610,32 +711,11 @@ func TestArtifactExchange(t *testing.T) {
 	if err != nil || len(seed) != 32 {
 		t.Fatal("expected a 32-byte deterministic test seed")
 	}
-	ctx := context.Background()
 	client, err := encrypt.NewDeterministicClient(ctx, [32]byte(seed))
 	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	cipher := client.DefaultKeyset()
-
-	fresh := produceExchange(t, ctx, cipher, &corpus, values.Cases)
-	consumeExchange(t, ctx, cipher, &corpus, values.Cases, fresh, "self")
-
-	if path := os.Getenv("STACK_EXCHANGE_OUTPUT"); path != "" {
-		data, err := json.MarshalIndent(fresh, "", "  ")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if path := os.Getenv("STACK_EXCHANGE_INPUT"); path != "" {
-		var foreign exchangeArtifacts
-		readConformanceJSON(t, path, &foreign)
-		origin := foreign.Producer.Language + " artifacts"
-		t.Logf("exchange: opening %s from %s %s over %s (%s)", origin, foreign.Producer.SDK, foreign.Producer.SDKVersion, foreign.Producer.Backend, path)
-		consumeExchange(t, ctx, cipher, &corpus, values.Cases, foreign, origin)
-	}
+	return corpus, values.Cases, client.DefaultKeyset()
 }
