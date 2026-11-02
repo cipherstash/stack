@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
+use vitaminc_protected::{Controlled, OpaqueDebug, Protected, ProtectedRef};
 use zeroize::Zeroize;
 
 use super::kinds::{FixedType, Float, Logical, Physical, Width};
@@ -265,6 +265,51 @@ where
     const DEPTH: Option<usize> = <&'a T as Encrypt>::DEPTH;
     const FIXED: Option<FixedType> = <&'a T as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.risky_ref().visit(sink)
+    }
+}
+
+/// A protected borrow ([`AsProtectedRef`](vitaminc_protected::AsProtectedRef))
+/// walks as the borrow it wraps, exactly as `&Protected<T>` does: the
+/// same depth, fixed type and visit, so a fixed-width `None` behind it is
+/// still a typed null. Nothing is cloned or copied out, and the walk wipes
+/// nothing, whether it finishes or not. Wiping is up to whatever owns the
+/// borrowed value: a `Protected`, `Equatable`, `Exportable` or `Locked`
+/// owner wipes it when it drops, but a `ProtectedRef` lent by a bare
+/// `[u8; N]`, `str` or `Cow<str>` has nothing behind it that ever wipes.
+///
+/// Which owners lend one is up to `vitaminc-protected`. A `Usage` does not,
+/// so a scoped value is never encrypted without a `risky_ref` call. A
+/// `Locked` does: sealing then copies its plaintext into the leaf's
+/// `Protected<Vec<u8>>`, which is wiped but is not locked memory, as any
+/// consumer of the borrow does with the value it reads.
+///
+/// `T` may be unsized. `ProtectedRef<'_, str>` is a text leaf and
+/// `ProtectedRef<'_, [u8]>` a byte leaf. A `str` lends either, so
+/// annotate which one you mean: a string sealed as bytes reads back only
+/// as bytes, never as a `String`.
+impl<'a, T: ?Sized> Encrypt for ProtectedRef<'a, T>
+where
+    &'a T: Encrypt,
+{
+    const DEPTH: Option<usize> = <&'a T as Encrypt>::DEPTH;
+    const FIXED: Option<FixedType> = <&'a T as Encrypt>::FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.risky_ref().visit(sink)
+    }
+}
+
+/// A borrowed protected borrow is the same borrow. A derived struct with a
+/// `ProtectedRef` field, or an `&Option<ProtectedRef<_>>`, walks it this way.
+impl<'a, T: ?Sized> Encrypt for &ProtectedRef<'a, T>
+where
+    &'a T: Encrypt,
+{
+    const DEPTH: Option<usize> = <ProtectedRef<'a, T> as Encrypt>::DEPTH;
+    const FIXED: Option<FixedType> = <ProtectedRef<'a, T> as Encrypt>::FIXED;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        // `ProtectedRef` is not `Copy`, so walk the borrow it wraps, which
+        // is what the owned impl does.
         self.risky_ref().visit(sink)
     }
 }
@@ -744,6 +789,121 @@ mod tests {
             [scalar(Owned::Bytes(vec![7; 4]))]
         );
         assert_eq!(secret.risky_ref(), "pw");
+    }
+
+    /// A protected borrow walks exactly as `&Protected<T>` does, for
+    /// scalars, text, bytes, containers and fixed-width nulls.
+    #[test]
+    fn a_protected_ref_walks_as_the_borrowed_protected_value() {
+        use vitaminc_protected::AsProtectedRef;
+
+        // A macro, not a generic fn: a `for<'a> &'a T: Encrypt` bound on a
+        // helper sends the solver round the `&&T` impl until it overflows.
+        macro_rules! same {
+            ($value:expr) => {{
+                let owner = Protected::new($value);
+                let by_ref = record(&owner).expect("records");
+                assert_eq!(record(owner.as_protected_ref()).expect("records"), by_ref);
+                assert_eq!(record(&owner.as_protected_ref()).expect("records"), by_ref);
+                assert_eq!(
+                    record(Some(owner.as_protected_ref())).expect("records"),
+                    by_ref
+                );
+            }};
+        }
+
+        same!(42i32);
+        same!(1.5f64);
+        same!(true);
+        same!(String::from("pw"));
+        same!(vec![1u8, 2]);
+        same!([7u8; 4]);
+        same!(vec![1u32, 2]);
+        same!(vec![String::from("a"), String::from("b")]);
+        same!(Some(3u64));
+        same!(None::<u64>);
+        same!(None::<String>);
+        same!(vec![vec![1i64], vec![]]);
+        same!(vec![Some(1u16), None]);
+
+        // Unsized borrows: a `str` lends itself as text or as bytes, and the
+        // caller has to say which.
+        let text: ProtectedRef<'_, str> = "pw".as_protected_ref();
+        assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
+        let cow = std::borrow::Cow::Borrowed("pw");
+        let text: ProtectedRef<'_, str> = cow.as_protected_ref();
+        assert_eq!(record(text).expect("records"), record("pw").expect("ok"));
+        let bytes: ProtectedRef<'_, [u8]> = "pw".as_protected_ref();
+        assert_eq!(
+            record(bytes).expect("records"),
+            [scalar(Owned::Bytes(b"pw".to_vec()))]
+        );
+
+        // A `None` behind the borrow is typed, as it is behind `&Protected`.
+        let none = Protected::new(None::<u32>);
+        assert_eq!(
+            record(none.as_protected_ref()).expect("records"),
+            [Event::TypedNull(
+                FixedType::plain(Width::U32).expect("fixed")
+            )]
+        );
+        assert_eq!(
+            record(None::<ProtectedRef<'_, u32>>).expect("records"),
+            [Event::TypedNull(
+                FixedType::plain(Width::U32).expect("fixed")
+            )]
+        );
+    }
+
+    /// The borrow carries the borrowed type's depth and fixed type.
+    #[test]
+    fn a_protected_ref_keeps_the_borrowed_metadata() {
+        fn meta<P: Encrypt>() -> (Option<usize>, Option<FixedType>) {
+            (P::DEPTH, P::FIXED)
+        }
+        type R<'a, T> = ProtectedRef<'a, T>;
+        assert_eq!(meta::<R<'_, u32>>(), meta::<&Protected<u32>>());
+        assert_eq!(meta::<&R<'_, u32>>(), meta::<&Protected<u32>>());
+        assert_eq!(
+            meta::<R<'_, Option<i16>>>(),
+            meta::<&Protected<Option<i16>>>()
+        );
+        assert_eq!(
+            meta::<R<'_, Vec<Vec<u8>>>>(),
+            meta::<&Protected<Vec<Vec<u8>>>>()
+        );
+        assert_eq!(meta::<R<'_, String>>(), meta::<&Protected<String>>());
+        assert_eq!(meta::<R<'_, [u8]>>(), meta::<&[u8]>());
+        assert_eq!(
+            meta::<R<'_, u32>>().1,
+            FixedType::plain(Width::U32),
+            "fixed width survives the borrow"
+        );
+        assert_eq!(meta::<R<'_, Vec<Vec<u8>>>>().0, Some(1));
+    }
+
+    /// Walking a protected borrow wipes nothing; the owner wipes everything
+    /// when it drops, whether the walk finished or failed part way.
+    #[test]
+    fn a_protected_ref_leaves_the_wiping_to_its_owner() {
+        use vitaminc_protected::AsProtectedRef;
+
+        let wipes = Tracked::default();
+        let owner = Protected::new(vec![wipes.clone(), wipes.clone()]);
+        record(owner.as_protected_ref()).expect("records");
+        assert_eq!(wipes.0.get(), 0, "the walk does not wipe the owner");
+        drop(owner);
+        assert_eq!(wipes.0.get(), 2);
+
+        let wipes = Tracked::default();
+        let owner = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
+        owner
+            .as_protected_ref()
+            .visit(StopAfter::new(1))
+            .expect_err("should stop");
+        assert_eq!(wipes.0.get(), 0, "a failed walk does not wipe the owner");
+        drop(owner);
+        assert_eq!(wipes.0.get(), 3);
     }
 
     /// A leaf that counts its wipes but does not wrap itself when visited,
