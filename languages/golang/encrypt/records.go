@@ -414,6 +414,14 @@ func (c *Client) openTree(ctx context.Context, sel KeysetSelector, expected stri
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
+	return c.openEncoded(ctx, sel, expected, p, encodedTree, len(trees))
+}
+
+// openEncoded opens a batch already in the transport codec: rows is how
+// many records the batch holds, so the answer can be held to it. The tree
+// encoder refuses a repeated key, so a test that needs one feeds this
+// directly, and the guest's decoder is what refuses it.
+func (c *Client) openEncoded(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, encodedTree []byte, rows int) ([]record.Source, error) {
 	encodedPlan, err := vcffi.Marshal(p.Wire())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
@@ -435,8 +443,8 @@ func (c *Client) openTree(ctx context.Context, sel KeysetSelector, expected stri
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
 	items, ok := decoded.([]any)
-	if !ok || len(items) != len(trees) {
-		return nil, fmt.Errorf("%w: %d records came back as %T", ErrInternal, len(trees), decoded)
+	if !ok || len(items) != rows {
+		return nil, fmt.Errorf("%w: %d records came back as %T", ErrInternal, rows, decoded)
 	}
 	order := make([]string, 0, len(p.Fields)+1)
 	if p.ContextField != "" {
