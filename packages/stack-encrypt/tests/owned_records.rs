@@ -527,6 +527,45 @@ async fn a_searchable_column_is_one_batch_and_its_terms_match_a_query_term() {
     assert_eq!(retrieves.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn each_owned_term_target_names_its_index() {
+    use stack_encrypt::sem::{DefaultMatch, MatchConfig, OpeTerm, OreBlockTerm};
+    use stack_encrypt::IndexSpec;
+    assert_eq!(
+        <EqualityTerm as EncryptTarget<String>>::indexes(),
+        [IndexSpec::Equality]
+    );
+    assert_eq!(
+        <MatchTerms<DefaultMatch> as EncryptTarget<String>>::indexes(),
+        [IndexSpec::Match(DefaultMatch::options())]
+    );
+    assert_eq!(
+        <OreTerm<String> as EncryptTarget<String>>::indexes(),
+        [IndexSpec::Ore]
+    );
+    assert_eq!(
+        <OpeTerm<String> as EncryptTarget<String>>::indexes(),
+        [IndexSpec::Ope]
+    );
+    assert_eq!(
+        <OreBlockTerm<u32> as EncryptTarget<u32>>::indexes(),
+        [IndexSpec::OreBlock]
+    );
+}
+
+#[test]
+fn a_context_extension_is_inspected_as_supplied_or_omitted() {
+    use stack_encrypt::target::AllowsNoContext;
+    assert_eq!(
+        <ContextExtension<u64> as AcceptsContext>::supplied(7).into_inner(),
+        Some(7)
+    );
+    assert_eq!(
+        <ContextExtension<u64> as AllowsNoContext>::omitted().into_inner(),
+        None
+    );
+}
+
 #[tokio::test]
 async fn a_searchable_email_standalone_requires_its_context() {
     let cipher = common::stack_cipher().await;
