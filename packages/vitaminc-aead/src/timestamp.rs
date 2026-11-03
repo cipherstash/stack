@@ -38,7 +38,7 @@ use crate::typed::FromScalar;
 /// scalars are. It holds the instant as a count of seconds and of
 /// nanoseconds, which it wipes when dropped; a `DateTime<Utc>` cannot be
 /// wiped, because its fields are private. Equality is constant time (see
-/// [`TimingSafeEq`](vitaminc_protected::TimingSafeEq)). It is not `Copy`
+/// [`TimingSafeEq`]). It is not `Copy`
 /// or `Clone`, so it is not copied without a trace, and it has no
 /// ordering or hash, which would compare plaintext in variable time.
 /// `Debug` is redacted. `Default` is the Unix epoch, as for

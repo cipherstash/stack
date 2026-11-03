@@ -4,7 +4,7 @@
 //! and text leaves, as they were for 0.5's `Encrypt` trait. For the same reason
 //! as then, `u8` on its own is not a source: if it were, the generic `Vec<T>`
 //! sequence impl would overlap the `Vec<u8>` byte leaf. An 8-bit value from
-//! a host still arrives as [`Int::U8`]; a Rust caller that needs one uses
+//! a host still arrives as [`Int::U8`](super::Int::U8); a Rust caller that needs one uses
 //! [`Raw`].
 
 use std::collections::{BTreeMap, HashMap};

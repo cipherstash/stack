@@ -9,7 +9,7 @@
 //! - an empty sequence or map is an authenticated empty marker under
 //!   [`Context::for_empty_sequence`] or [`Context::for_empty_map`];
 //! - a passthrough subtree is framed, in the clear;
-//! - the value keeps the [`shape`](crate::shape) rules: no duplicate keys,
+//! - the value keeps the [`shape`] rules: no duplicate keys,
 //!   at least one leaf sealed in every container with children, no child
 //!   sink dropped without a value (as
 //!   [`FrameWriter`](crate::frame::FrameWriter) refuses it, so a tee of the
