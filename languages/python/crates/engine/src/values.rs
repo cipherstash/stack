@@ -320,16 +320,17 @@ fn type_name(value: &Bound<'_, PyAny>) -> String {
 
 /// An opened scalar as a Python object, of the type the field declares.
 ///
-/// The scalar's text and bytes are copied into the Python object, and the
-/// scalar wipes its own copy when it is dropped.
+/// The scalar is borrowed and copied into the Python object. It wipes its
+/// own copy when dropped, so the caller drops it where it lies: a scalar
+/// moved out of a row's buffer leaves its bytes behind in the buffer.
 ///
 /// # Errors
 ///
 /// A `ValueError` for a date or timestamp outside `datetime`'s range, and
 /// for a timestamp with nanoseconds: `datetime` keeps microseconds, and
 /// rounding would change the value. The Go SDK can store one.
-pub fn to_python(py: Python<'_>, scalar: Scalar) -> PyResult<Py<PyAny>> {
-    Ok(match &scalar {
+pub fn to_python(py: Python<'_>, scalar: &Scalar) -> PyResult<Py<PyAny>> {
+    Ok(match scalar {
         Scalar::Null => py.None(),
         Scalar::Text(text) => PyString::new(py, text).into_any().unbind(),
         Scalar::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
@@ -384,7 +385,7 @@ mod tests {
             let decimal = py.import("decimal").unwrap().getattr("Decimal").unwrap();
             for (mantissa, scale, text) in [(1_995, 2, "19.95"), (-150, 2, "-1.50"), (0, 2, "0.00")]
             {
-                let opened = to_python(py, Scalar::Decimal { mantissa, scale }).unwrap();
+                let opened = to_python(py, &Scalar::Decimal { mantissa, scale }).unwrap();
                 let opened = opened.bind(py);
                 assert!(opened.get_type().is(&decimal), "{text}");
                 assert_eq!(opened.str().unwrap().to_string(), text);

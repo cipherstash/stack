@@ -117,7 +117,7 @@ pub fn encrypt<'py>(
         for (field, column) in plan.plan.fields().iter().zip(columns) {
             let value = match column {
                 Column::Eql(json) => json.into_pyobject(py)?.into_any().unbind(),
-                Column::Passthrough(scalar) => to_python(py, scalar)?,
+                Column::Passthrough(scalar) => to_python(py, &scalar)?,
             };
             row.set_item(&field.name, value)?;
         }

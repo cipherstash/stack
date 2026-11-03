@@ -249,15 +249,24 @@ pub enum Scalar {
     },
 }
 
-/// An opened text or bytes value is plaintext, and the SDK's own copy of it:
-/// it is wiped when dropped. The extension copies it into a Python object
+/// An opened value is plaintext, and the SDK's own copy of it: it is wiped
+/// when dropped, the inline numbers in a row's buffer as well as the text
+/// and bytes on the heap. The extension copies it into a Python object
 /// first (`src/heap_hygiene.rs` in the engine crate checks the drop).
 impl Drop for Scalar {
     fn drop(&mut self) {
         match self {
+            Self::Null => {}
             Self::Text(text) => text.zeroize(),
             Self::Bytes(bytes) => bytes.zeroize(),
-            _ => {}
+            Self::Int(int) | Self::Timestamp(int) => int.zeroize(),
+            Self::Float(float) => float.zeroize(),
+            Self::Bool(bool) => bool.zeroize(),
+            Self::Date(days) => days.zeroize(),
+            Self::Decimal { mantissa, scale } => {
+                mantissa.zeroize();
+                scale.zeroize();
+            }
         }
     }
 }

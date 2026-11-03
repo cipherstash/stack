@@ -43,9 +43,10 @@ pub fn decrypt<'py>(
         .detach(|| core::decrypt(&plan.plan, stored))
         .map_err(|refused| raise(py, refused))?;
     // Every value first, then every instance: a value Python cannot hold
-    // fails the call before any constructor runs.
+    // fails the call before any constructor runs. Borrowed, not moved: each
+    // value is wiped in its row's buffer when `opened` drops.
     let mut arguments = Vec::with_capacity(opened.len());
-    for values in opened {
+    for values in &opened {
         let kwargs = PyDict::new(py);
         for (field, value) in plan.plan.fields().iter().zip(values) {
             kwargs.set_item(&field.name, python_value(py, field, value)?)?;
@@ -202,10 +203,20 @@ fn passthrough(
 }
 
 /// An opened value as the Python object of its field.
-fn python_value(py: Python<'_>, field: &Field, value: Scalar) -> PyResult<Py<PyAny>> {
-    let ranged = matches!(value, Scalar::Date(_) | Scalar::Timestamp(_));
+fn python_value(py: Python<'_>, field: &Field, value: &Scalar) -> PyResult<Py<PyAny>> {
+    // What a datetime refuses, decided here: `to_python` raises Python's own
+    // error, which names neither cause in a form the user can act on.
+    let cause = match value {
+        Scalar::Timestamp(nanos) if nanos.rem_euclid(1_000) != 0 => {
+            "it has nanoseconds, and Python's datetime keeps only microseconds"
+        }
+        Scalar::Date(_) | Scalar::Timestamp(_) => {
+            "its year is outside 1 to 9999, the years Python's datetime holds"
+        }
+        _ => "",
+    };
     to_python(py, value).map_err(|error| {
-        if !ranged {
+        if cause.is_empty() {
             return error;
         }
         raise(
@@ -213,8 +224,7 @@ fn python_value(py: Python<'_>, field: &Field, value: Scalar) -> PyResult<Py<PyA
             Refusal {
                 code: "decrypt_not_representable".to_owned(),
                 message: format!(
-                    "field {:?}: the opened value is outside what Python's datetime \
-                     holds: a year outside 1 to 9999, or a timestamp with nanoseconds.",
+                    "field {:?}: the opened value does not fit its Python type: {cause}.",
                     field.name
                 ),
                 field: Some(field.name.clone()),

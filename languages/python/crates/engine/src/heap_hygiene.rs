@@ -6,7 +6,7 @@
 //! seal it, derive a query term, open a row, and turn an opened value into a
 //! Python object. Text and decimals are watched: the text by a marker it
 //! contains, a decimal by its digits, as text and as the digit values a
-//! `Decimal`'s tuple holds. Python's own objects are not watched.
+//! `Decimal`'s tuple holds, and by its mantissa as the engine's `i128`. Python's own objects are not watched.
 //! CPython allocates them with its own allocator, and the caller owns them, so
 //! the SDK makes no promise about them. This includes the `bytes` object that
 //! pyo3 makes on its way to a `str`'s UTF-8 under `abi3-py39`.
@@ -55,8 +55,17 @@ const DIGIT_VALUES: &[u8] = &[
     8, 6, 7, 5, 3, 0, 9, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9,
 ];
 
+/// The decimal's mantissa as the engine holds it: an `i128`, little-endian,
+/// to its last byte that is not zero.
+const MANTISSA: [u8; 9] = {
+    let bytes = 867_530_914_159_265_358_979_i128.to_le_bytes();
+    [
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
+    ]
+};
+
 /// Every needle a freed block must not contain.
-const NEEDLES: [&[u8]; 3] = [MARK, DIGITS, DIGIT_VALUES];
+const NEEDLES: [&[u8]; 4] = [MARK, DIGITS, DIGIT_VALUES, &MANTISSA];
 
 thread_local! {
     static WATCHING: Cell<bool> = const { Cell::new(false) };
@@ -357,11 +366,13 @@ fn decrypt_frees_no_copy_of_the_plaintext_unwiped() {
                 .unwrap();
             // Each value as the Python object `decrypt` builds the instance
             // from. The objects are the caller's once returned.
-            opened
-                .into_iter()
+            let objects = opened
+                .iter()
                 .flatten()
                 .map(|scalar| to_python(py, scalar).unwrap())
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            drop(opened);
+            objects
         });
 
         assert_eq!(opened.len(), 6);
