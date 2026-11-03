@@ -2213,7 +2213,12 @@ mod compiled_match {
                 assert_eq!(payload["at"], case["at"], "{}", case["id"]);
                 assert_eq!(payload["construct"], case["construct"], "{}", case["id"]);
                 assert_eq!(error.field(), Some("profile"));
-                assert!(!format!("{error} {payload:?}").contains("secret"));
+                let rendered = format!("{error} {payload:?}");
+                assert!(
+                    !rendered.contains("secret") && !rendered.contains(predicate),
+                    "{}: the error holds the caller's text: {rendered}",
+                    case["id"]
+                );
             }
         }
 

@@ -227,7 +227,7 @@ and the wider fresh artifact exchange remain separate planned work.
 
 ## EQL/JSON operation checkpoint
 
-Implemented the six requirements in
+Implemented the nine requirements in
 `conformance/stack-encrypt/eql-json-contract.md`, enrolling the existing engine,
 EQL binding, Go SDK and independent PostgreSQL suites. A shared corpus replaces
 duplicate write/refusal tables; existing typed, generated, property and
