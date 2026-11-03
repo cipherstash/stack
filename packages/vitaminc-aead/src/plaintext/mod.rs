@@ -109,6 +109,65 @@ pub trait Encrypt {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;
 }
 
+/// A source whose walk is exactly one leaf.
+///
+/// The encrypt-side counterpart of [`FromScalar`](crate::FromScalar). An
+/// implementing type's [`visit`](Encrypt::visit) makes one call, to
+/// [`Sink::scalar`] or [`Sink::typed_null`], and nothing else, so its
+/// [`DEPTH`](Encrypt::DEPTH) is [`depth::SCALAR`]. Every built-in leaf
+/// source implements it: `bool`, the integers (except `u8`, which is not a
+/// source at all), the floats, `String` and `&str`, `Vec<u8>`, `[u8; N]`
+/// and `&[u8]`, [`Bytes`] and [`Raw`], the borrowed, `Protected` and
+/// `ProtectedRef` forms of each, and the chrono, `rust_decimal` and uuid
+/// types behind their features. A container does not, and neither does an
+/// `Option<T>`, even of a scalar: its `None` is a leaf too, but a caller
+/// that bounds on `Scalar` usually means a value that is present.
+///
+/// `DEPTH` says the same thing, but stable Rust cannot bound a generic on
+/// a constant, so a caller that must produce one sealed leaf from any source
+/// bounds on this trait instead. The trait is open: a hand-written leaf,
+/// such as a newtype that encodes itself to one byte string, implements it
+/// with an empty impl, and should assert that its depth agrees, so the
+/// marker can never land on a container:
+///
+/// ```
+/// use vitaminc_aead::plaintext::depth;
+/// use vitaminc_aead::{Encrypt, Physical, Scalar, Sink};
+///
+/// /// An opaque value, sealed as the bytes of its encoding.
+/// struct Blob(Vec<u8>);
+///
+/// impl Encrypt for Blob {
+///     const DEPTH: Option<usize> = depth::SCALAR;
+///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+///         self.0.visit(sink)
+///     }
+/// }
+///
+/// impl Scalar for Blob {}
+/// const _: () = assert!(depth::is_scalar(<Blob as Encrypt>::DEPTH));
+///
+/// /// Seals exactly one leaf, whatever it is handed.
+/// fn seals_one_leaf<S: Scalar>(value: S) -> S { value }
+///
+/// seals_one_leaf(42i32);
+/// seals_one_leaf(vec![1u8, 2, 3]);
+/// seals_one_leaf(Blob(vec![7]));
+/// ```
+///
+/// `Vec<u8>` is the one exception to the rule that a `Vec` is a sequence:
+/// it is a byte string, sealed as a single bytes leaf. The same goes for
+/// `[u8; N]` and `&[u8]`. So `vec![1u8, 2, 3]` is a `Scalar`, while a
+/// `Vec` of any other scalar walks as a sequence of leaves, one per
+/// element, and is not:
+///
+/// ```compile_fail,E0277
+/// use vitaminc_aead::Scalar;
+/// fn seals_one_leaf<S: Scalar>(value: S) -> S { value }
+/// seals_one_leaf(vec![1i32, 2, 3]);
+/// ```
+pub trait Scalar: Encrypt {}
+
 /// Every sink's error type.
 ///
 /// A source reports its own failure through [`source`](Error::source),

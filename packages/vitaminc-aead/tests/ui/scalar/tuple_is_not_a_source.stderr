@@ -1,0 +1,23 @@
+error[E0277]: the trait bound `(i32, i32): vitaminc_aead::Scalar` is not satisfied
+ --> tests/ui/scalar/tuple_is_not_a_source.rs:9:20
+  |
+9 |     seals_one_leaf((1i32, 2i32));
+  |     -------------- ^^^^^^^^^^^^ the trait `vitaminc_aead::Scalar` is not implemented for `(i32, i32)`
+  |     |
+  |     required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `vitaminc_aead::Scalar`:
+            &&'b T
+            &'a vitaminc_protected::protected::Protected<T>
+            &Raw<'_>
+            &String
+            &Vec<u8>
+            &[u8; N]
+            &[u8]
+            &bool
+          and $N others
+note: required by a bound in `seals_one_leaf`
+ --> tests/ui/scalar/tuple_is_not_a_source.rs:6:22
+  |
+6 | fn seals_one_leaf<S: Scalar>(_: S) {}
+  |                      ^^^^^^ required by this bound in `seals_one_leaf`

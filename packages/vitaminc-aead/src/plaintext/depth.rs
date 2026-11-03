@@ -141,6 +141,13 @@ pub const fn within_limit(depth: Option<usize>) -> bool {
     }
 }
 
+/// Whether a type this deep is a scalar: exactly [`SCALAR`]. A depth that
+/// is not fixed is not, because the type alone does not say the walk is
+/// one leaf. This is the check a [`Scalar`](super::Scalar) impl asserts.
+pub const fn is_scalar(depth: Option<usize>) -> bool {
+    matches!(depth, Some(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +173,12 @@ mod tests {
         assert!(within_limit(Some(MAX_DEPTH)));
         assert!(!within_limit(Some(MAX_DEPTH + 1)));
         assert!(within_limit(None));
+    }
+
+    #[test]
+    fn only_a_fixed_depth_of_zero_is_a_scalar() {
+        assert!(is_scalar(SCALAR));
+        assert!(!is_scalar(container(SCALAR)));
+        assert!(!is_scalar(None));
     }
 }
