@@ -35,6 +35,8 @@ features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/_sync_contract.py is shared with tests_deterministic/.
+pythonpath = ["tests"]
 # `live` marks the tests that need credentials and a database. They skip
 # without them; `mise run test:live` runs only them and fails on a skip.
 markers = ["live: needs CipherStash credentials, and some a PostgreSQL with EQL v4"]

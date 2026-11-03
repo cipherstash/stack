@@ -162,7 +162,7 @@ Make one `Cipher` for each model, and share it between threads with no lock. Do 
 
 If you press Ctrl-C during a call, the call finishes first. Python then raises `KeyboardInterrupt`, and the `Cipher` still works. A call cannot be cancelled.
 
-Each request to CipherStash times out after 10 seconds. A call that makes several requests can take longer than 10 seconds in total. You cannot change the timeout yet.
+Each request to ZeroKMS, CipherStash's key service, times out after 10 seconds. A request for an access token times out after 30 seconds. The SDK makes one on the first call when no fresh token is stored, and again shortly before the token expires. A call that makes several requests can take longer in total. You cannot change these timeouts yet.
 
 ## Run the tests
 

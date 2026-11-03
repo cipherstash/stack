@@ -59,14 +59,14 @@ def test_threads_encrypt_at_once_and_every_row_opens():
 def test_an_interrupt_during_encrypt_waits_for_it_and_the_cipher_still_works():
     result = run_child("_interrupt.py")
 
-    # The signal is sent at a quarter of the reference time. Below this,
-    # there is too little time to send it inside the call.
+    # The script grows the call until it takes 0.4 seconds, up to 80,000
+    # values. Below 0.2, there is too little time to send a signal into it.
     assert result["reference"] >= 0.2, result
     assert result["interrupts"] == 1, result
-    # A call cut short raises at the quarter. A call that waits raises
-    # after it returns, near the reference time.
+    # A call cut short raises at a quarter of the reference. A call that
+    # waits raises after it returns, near the reference time.
     assert result["arrived"] >= result["reference"] / 2, result
     # All the rows, or the interrupt came before the assignment and left
     # nothing: never part of a result.
-    assert result["rows"] in (None, 5000), result
+    assert result["rows"] in (None, result["values"]), result
     assert result["after"] == 1, result
