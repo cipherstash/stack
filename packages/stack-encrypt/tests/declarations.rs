@@ -88,7 +88,7 @@ fn normalized(plan: &record::Plan) -> Value {
 #[test]
 fn shared_declaration_grammar() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../conformance/stack-encrypt/v1/declarations.json");
+        .join("../../conformance/stack-encrypt/v1/record-declarations-v1.cases.json");
     let corpus: Corpus = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(corpus.version, 1);
     assert_eq!(corpus.profile, "record-declarations-v1");

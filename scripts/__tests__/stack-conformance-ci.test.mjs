@@ -58,7 +58,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
 
   it('selects exactly the core runners and indexed fixture tests', () => {
     const index = JSON.parse(
-      readRepo('conformance/stack-encrypt/v1/fixture-profiles.json'),
+      readRepo('conformance/stack-encrypt/v1/fixture-enrollment.json'),
     )
     const expected = [
       ...new Set([
@@ -87,7 +87,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
 
   it('enrolls existing fixture evidence without copying or dropping tests', () => {
     const index = JSON.parse(
-      readRepo('conformance/stack-encrypt/v1/fixture-profiles.json'),
+      readRepo('conformance/stack-encrypt/v1/fixture-enrollment.json'),
     )
     expect(Object.keys(index).sort()).toEqual(['profiles', 'version'])
     expect(index.version).toBe(1)

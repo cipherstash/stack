@@ -154,7 +154,7 @@ Python and TypeScript consumers remain pending.
 
 Building on the read-compatibility profile, the
 [fixture contract](../../conformance/stack-encrypt/fixture-contract.md) and
-[enrollment index](../../conformance/stack-encrypt/v1/fixture-profiles.json)
+[enrollment index](../../conformance/stack-encrypt/v1/fixture-enrollment.json)
 assign stable requirement IDs to the existing `value_kinds.json` and
 `query_operators.json` evidence. The conformance task directly runs their
 existing Rust and Go tests. Typed Rust comparisons, generated Go methods,

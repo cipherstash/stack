@@ -49,12 +49,12 @@ func TestContextConformance(t *testing.T) {
 		RequiredCapabilities []string      `json:"required_capabilities"`
 		Cases                []contextCase `json:"cases"`
 	}
-	readConformanceJSON(t, filepath.Join(root, "contexts.json"), &corpus)
+	readConformanceJSON(t, filepath.Join(root, "record-contexts-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "record-contexts-v1" || len(corpus.Cases) == 0 || !reflect.DeepEqual(corpus.RequiredCapabilities, []string{"composition", "typed-extensions", "context-fields", "frozen-open"}) {
 		t.Fatal("unsupported context profile")
 	}
 	var vectors map[string]contextVector
-	readConformanceJSON(t, filepath.Join(root, "contexts-native.json"), &vectors)
+	readConformanceJSON(t, filepath.Join(root, "record-contexts-v1.expected.rust-native.json"), &vectors)
 	if len(vectors) != len(corpus.Cases) {
 		t.Fatal("vector case set differs")
 	}
@@ -255,8 +255,8 @@ func TestContextBoundaries(t *testing.T) {
 		Cases   []contextBoundary      `json:"cases"`
 		Queries []contextQueryBoundary `json:"queries"`
 	}
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "context-boundaries.json"), &corpus)
-	if corpus.Version != 1 || corpus.Profile != "context-boundaries-v1" || len(corpus.Cases) == 0 {
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-context-boundaries-v1.cases.json"), &corpus)
+	if corpus.Version != 1 || corpus.Profile != "record-context-boundaries-v1" || len(corpus.Cases) == 0 {
 		t.Fatal("unsupported boundary profile")
 	}
 	p := &record.Plan{ContextField: "tenant", Fields: []record.Field{{Name: "text", Kind: record.String, Outputs: []record.Output{record.Ciphertext, record.Equality}}}}

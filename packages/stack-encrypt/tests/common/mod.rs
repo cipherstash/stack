@@ -37,7 +37,7 @@ pub fn fixture_updates_requested_or_panic() -> bool {
 /// trusting source declarations that may be disabled by `cfg`.
 pub fn assert_fixture_tests_registered(binary: &str) {
     let index: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../conformance/stack-encrypt/v1/fixture-profiles.json"
+        "../../../../conformance/stack-encrypt/v1/fixture-enrollment.json"
     ))
     .expect("fixture enrollment index");
     let profile = index["profiles"]

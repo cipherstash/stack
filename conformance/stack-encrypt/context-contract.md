@@ -1,7 +1,7 @@
 # Context composition
 
-`record-contexts-v1` (`v1/contexts.json`) specifies composition for the current
-record API. `context-boundaries-v1` (`v1/context-boundaries.json`) specifies
+`record-contexts-v1` (`v1/record-contexts-v1.cases.json`) specifies composition for the current
+record API. `record-context-boundaries-v1` (`v1/record-context-boundaries-v1.cases.json`) specifies
 stored-context expectations and refusal boundaries. Both are required in Rust
 and Go. Python and TypeScript must implement these profiles when their runners
 are added; their absence is not conformance evidence.
@@ -59,7 +59,7 @@ int64, uint64, or bytes (hex). Integers are decimal strings, never JSON numbers.
 Every case encrypts and queries the string `hello` in the `text` field, using
 the public all-zero deterministic-provider test seed.
 
-`v1/contexts-native.json` is keyed by exactly those case IDs. It pins the
+`v1/record-contexts-v1.expected.rust-native.json` is keyed by exactly those case IDs. It pins the
 resolved context frame, the field context frame sent in a plan, descriptor,
 AAD, PRF bytes, one Rust ciphertext and equality term. Rust checks actual descriptors sent to the key provider, fresh typed and
 dynamic writes, queries, opens, and frozen ciphertexts. The typed chain calls

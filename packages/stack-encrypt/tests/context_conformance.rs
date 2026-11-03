@@ -160,7 +160,7 @@ struct Note {
 async fn shared_context_composition() {
     let update = common::fixture_updates_requested_or_panic();
     let corpus: Corpus = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/contexts.json"
+        "../../../conformance/stack-encrypt/v1/record-contexts-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(corpus.version, 1);
@@ -176,7 +176,7 @@ async fn shared_context_composition() {
     );
     assert!(!corpus.cases.is_empty());
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../conformance/stack-encrypt/v1/contexts-native.json");
+        .join("../../conformance/stack-encrypt/v1/record-contexts-v1.expected.rust-native.json");
     let baseline: BTreeMap<String, Vector> = if update {
         BTreeMap::new()
     } else {
@@ -400,11 +400,11 @@ struct QueryBoundary {
 async fn shared_context_boundaries() {
     use std::sync::atomic::Ordering;
     let corpus: Boundaries = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/context-boundaries.json"
+        "../../../conformance/stack-encrypt/v1/record-context-boundaries-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(corpus.version, 1);
-    assert_eq!(corpus.profile, "context-boundaries-v1");
+    assert_eq!(corpus.profile, "record-context-boundaries-v1");
     assert!(!corpus.cases.is_empty());
     let mut ids = BTreeSet::new();
     let case = Case {

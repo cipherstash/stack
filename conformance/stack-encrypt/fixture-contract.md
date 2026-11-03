@@ -16,7 +16,7 @@ Their [existing schema documentation](../../packages/stack-encrypt/tests/fixture
 continues to own the formats. No expected frames, ciphertexts, terms, verified
 pages or fetch limits are copied into this directory.
 
-[`v1/fixture-profiles.json`](v1/fixture-profiles.json) maps stable requirement IDs
+[`v1/fixture-enrollment.json`](v1/fixture-enrollment.json) maps stable requirement IDs
 to the existing Rust test functions and Go tests that provide their evidence.
 It is an enrollment index, not another input corpus or a runtime capability
 negotiation format. The CI wiring test checks fixture paths, source declarations,

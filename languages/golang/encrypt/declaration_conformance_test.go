@@ -77,12 +77,12 @@ func TestDeclarationConformance(t *testing.T) {
 		Resolver string            `json:"resolver"`
 		Cases    []declarationCase `json:"cases"`
 	}
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "declarations.json"), &corpus)
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-declarations-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "record-declarations-v1" || corpus.Resolver != "none" || len(corpus.Cases) == 0 {
 		t.Fatal("unsupported or empty declaration corpus")
 	}
 	var hostPlans map[string]record.Plan
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "go-declarations.json"), &hostPlans)
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-declarations-v1.inputs.go.json"), &hostPlans)
 	for name, load := range map[string]func() ([]byte, error){"release": encrypt.PlainGuest, "deterministic": encrypt.DeterministicGuest} {
 		t.Run(name, func(t *testing.T) {
 			wasm, err := load()

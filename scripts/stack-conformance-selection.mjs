@@ -32,7 +32,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const index = JSON.parse(
     readFileSync(
       new URL(
-        '../conformance/stack-encrypt/v1/fixture-profiles.json',
+        '../conformance/stack-encrypt/v1/fixture-enrollment.json',
         import.meta.url,
       ),
       'utf8',

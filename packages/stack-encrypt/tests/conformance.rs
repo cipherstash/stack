@@ -149,8 +149,10 @@ async fn open_scalar(
 
 #[tokio::test]
 async fn shared_record_scalar_profile() {
-    let corpus: Corpus =
-        serde_json::from_slice(&std::fs::read(root().join("cases.json")).unwrap()).unwrap();
+    let corpus: Corpus = serde_json::from_slice(
+        &std::fs::read(root().join("record-scalars-v1.cases.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(corpus.version, 1);
     assert_eq!(corpus.profile, PROFILE);
     assert_eq!(
@@ -180,7 +182,7 @@ async fn shared_record_scalar_profile() {
     } else {
         let file = imported
             .map(PathBuf::from)
-            .unwrap_or_else(|| root().join("native.json"));
+            .unwrap_or_else(|| root().join("record-scalars-v1.expected.rust-native.json"));
         let artifacts: Artifacts = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
         assert_eq!(artifacts.version, 1);
         assert_eq!(artifacts.profile, PROFILE);
@@ -328,7 +330,7 @@ async fn shared_record_scalar_profile() {
     }
     if update {
         std::fs::write(
-            root().join("native.json"),
+            root().join("record-scalars-v1.expected.rust-native.json"),
             serde_json::to_string_pretty(&output).unwrap() + "\n",
         )
         .unwrap();

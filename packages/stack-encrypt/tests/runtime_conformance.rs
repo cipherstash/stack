@@ -73,7 +73,7 @@ fn rows(input: &[Row]) -> ValueFrame {
 #[tokio::test]
 async fn shared_record_runtime_profile() {
     let corpus: Corpus = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/runtime.json"
+        "../../../conformance/stack-encrypt/v1/record-runtime-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(corpus.version, 1);

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "profile": "context-boundaries-v1",
+  "profile": "record-context-boundaries-v1",
   "cases": [
     {
       "id": "unrestricted",

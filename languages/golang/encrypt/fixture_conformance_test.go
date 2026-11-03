@@ -47,7 +47,7 @@ func TestFixtureConformanceRequiresGuest(t *testing.T) {
 			} `json:"requirements"`
 		} `json:"profiles"`
 	}
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "fixture-profiles.json"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "fixture-enrollment.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
