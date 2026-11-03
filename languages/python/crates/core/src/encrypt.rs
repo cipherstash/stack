@@ -106,12 +106,7 @@ pub fn encrypt(
     source: ValueFrame,
     rows: usize,
 ) -> Result<Vec<Vec<Column>>, Refusal> {
-    #[cfg(feature = "deterministic-kms")]
-    if let Some((cipher, runtime)) = client::deterministic() {
-        return runtime.block_on(encrypt_with(&cipher.default_keyset(), plan, source, rows));
-    }
-    let client = client::shared()?;
-    client.block_on(encrypt_with(&client.keyset(), plan, source, rows))
+    client::run!(|cipher| encrypt_with(&cipher.default_keyset(), plan, source, rows))
 }
 
 /// [`encrypt`] under `keyset`.

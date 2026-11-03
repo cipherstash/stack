@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyType};
+use pyo3::types::{PyDict, PyList, PyString, PyType};
 use stackencrypt_core::encrypt::plaintext::{Encrypt, MapSink, SeqSink, Sink, SourceError};
 use stackencrypt_core::encrypt::{self as core, Column, Field, ModelPlan, ValueFrame};
 use stackencrypt_core::refusal::Refusal;
@@ -112,12 +112,14 @@ pub fn encrypt<'py>(
         .detach(|| core::encrypt(&plan.plan, frame, rows))
         .map_err(|refused| raise(py, refused))?;
     let out = PyList::empty(py);
-    for columns in encrypted {
+    // Borrowed, not moved: a passthrough value is wiped in its row's buffer
+    // when `encrypted` drops.
+    for columns in &encrypted {
         let row = PyDict::new(py);
         for (field, column) in plan.plan.fields().iter().zip(columns) {
             let value = match column {
-                Column::Eql(json) => json.into_pyobject(py)?.into_any().unbind(),
-                Column::Passthrough(scalar) => to_python(py, &scalar)?,
+                Column::Eql(json) => PyString::new(py, json).into_any().unbind(),
+                Column::Passthrough(scalar) => to_python(py, scalar)?,
             };
             row.set_item(&field.name, value)?;
         }

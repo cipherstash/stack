@@ -177,12 +177,7 @@ fn refusal(code: &str, field: &Field, message: String) -> Refusal {
 /// `decrypt_kind_mismatch` for a value stored as another kind than the
 /// field's.
 pub fn decrypt(plan: &ModelPlan, rows: Rows) -> Result<Vec<Vec<Scalar>>, Refusal> {
-    #[cfg(feature = "deterministic-kms")]
-    if let Some((cipher, runtime)) = client::deterministic() {
-        return runtime.block_on(decrypt_with(cipher, plan, rows));
-    }
-    let client = client::shared()?;
-    client.block_on(decrypt_with(client.cipher(), plan, rows))
+    client::run!(|cipher| decrypt_with(cipher, plan, rows))
 }
 
 /// [`decrypt`] on `cipher`. Each value opens under the keyset that sealed
@@ -348,7 +343,8 @@ impl<'a> Sink for OpenedRow<'a> {
 
     fn map(self, _: Option<usize>) -> Result<OpenedFields<'a>, ReadError> {
         Ok(OpenedFields {
-            values: vec![None; self.fields.len()],
+            values: vec![Scalar::Null; self.fields.len()],
+            seen: vec![false; self.fields.len()],
             fields: self.fields,
             rows: self.rows,
         })
@@ -359,9 +355,13 @@ impl<'a> Sink for OpenedRow<'a> {
     }
 }
 
+/// One row as it opens. Each value is written into its slot, and `end`
+/// moves the whole buffer into the rows: no value is moved out of a buffer
+/// that is then freed with its bytes still in it.
 struct OpenedFields<'a> {
     fields: &'a [Field],
-    values: Vec<Option<Scalar>>,
+    values: Vec<Scalar>,
+    seen: Vec<bool>,
     rows: &'a mut Vec<Vec<Scalar>>,
 }
 
@@ -381,30 +381,31 @@ impl MapSink for OpenedFields<'_> {
             .ok_or(ReadError("a field the plan does not have"))?;
         Ok(OpenedValue {
             slot: &mut self.values[at],
+            seen: &mut self.seen[at],
         })
     }
 
     fn end(self) -> Result<(), ReadError> {
-        let row = self
-            .values
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .ok_or(ReadError("a row without one of the plan's fields"))?;
-        self.rows.push(row);
+        if !self.seen.iter().all(|&seen| seen) {
+            return Err(ReadError("a row without one of the plan's fields"));
+        }
+        self.rows.push(self.values);
         Ok(())
     }
 }
 
 /// One opened field: one scalar.
 struct OpenedValue<'a> {
-    slot: &'a mut Option<Scalar>,
+    slot: &'a mut Scalar,
+    seen: &'a mut bool,
 }
 
 impl OpenedValue<'_> {
     fn put(self, scalar: Scalar) -> Result<(), ReadError> {
-        if self.slot.replace(scalar).is_some() {
+        if std::mem::replace(self.seen, true) {
             return not_expected("a field twice in one row");
         }
+        *self.slot = scalar;
         Ok(())
     }
 }
