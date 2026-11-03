@@ -159,10 +159,28 @@ use crate::write::{write, AsTransport};
 /// is where it happened.
 ///
 /// [`path`]: Error::path
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Error {
     message: String,
     path: Vec<PathSegment>,
+    reason: Reason,
+}
+
+/// Why the reader refused, for the storage profile to classify the refusal
+/// by. Its wording is the reader's and may change; the reason is what the
+/// storage profile's stable [`ErrorKind`] is chosen from. It is not part
+/// of equality: two refusals that say the same thing at the same place are
+/// the same refusal.
+///
+/// [`ErrorKind`]: crate::storage::ErrorKind
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Reason {
+    /// The reader found bytes the validator should not have passed.
+    Malformed,
+    /// The value left part of its node unread.
+    UnreadRest,
+    /// The value's type refused what it was given, or could not be written.
+    Mismatch,
 }
 
 /// One step from the root of a frame towards a node.
@@ -182,10 +200,20 @@ pub enum PathSegment {
 
 impl Error {
     pub(crate) fn new(message: impl fmt::Display) -> Self {
+        Self::because(Reason::Mismatch, message)
+    }
+
+    fn because(reason: Reason, message: impl fmt::Display) -> Self {
         Self {
             message: message.to_string(),
             path: Vec::new(),
+            reason,
         }
+    }
+
+    /// Why the reader refused.
+    pub(crate) fn reason(&self) -> Reason {
+        self.reason
     }
 
     /// The message, without the path.
@@ -257,6 +285,14 @@ impl fmt::Debug for Error {
         write!(f, "Error({self})")
     }
 }
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message && self.path == other.path
+    }
+}
+
+impl Eq for Error {}
 
 impl std::error::Error for Error {}
 
@@ -357,7 +393,7 @@ impl ser::Error for Error {
 ///
 /// A malformed frame, or a value `T` does not accept.
 pub fn from_slice<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, Error> {
-    let frame = Frame::parse(bytes).map_err(|_| Error::new(MALFORMED))?;
+    let frame = Frame::parse(bytes).map_err(|_| malformed_frame())?;
     from_frame(frame)
 }
 
@@ -405,18 +441,13 @@ pub(crate) fn from_validated<'de, T: Deserialize<'de>>(
     // `Deserialize` that stopped early (a unit variant that left its payload
     // unread, say) would otherwise pass with data ignored.
     if de.pos != de.buf.len() {
-        return Err(Error::new(UNREAD_REST));
+        return Err(Error::because(
+            Reason::UnreadRest,
+            "the value did not read the whole frame",
+        ));
     }
     Ok(value)
 }
-
-/// The message of a read that found bytes no validator should have passed.
-/// The storage profile gives it its own words.
-pub(crate) const MALFORMED: &str = "malformed frame";
-
-/// The message of a value that left part of its node unread. The storage
-/// profile gives it its own words.
-pub(crate) const UNREAD_REST: &str = "the value did not read the whole frame";
 
 /// Reads one validated node. Every read below runs on bytes a validator
 /// accepted ([`Frame::parse`], or the storage profile's), so a read failing
@@ -427,8 +458,9 @@ struct Deserializer<'de> {
     profile: Profile,
 }
 
-fn malformed() -> Error {
-    Error::new(MALFORMED)
+/// A read that found bytes no validator should have passed.
+pub(crate) fn malformed_frame() -> Error {
+    Error::because(Reason::Malformed, "malformed frame")
 }
 
 /// Every read that takes anything from a node takes all of it, so a child
@@ -441,29 +473,29 @@ fn unread() -> Error {
 
 impl<'de> Deserializer<'de> {
     fn peek(&self) -> Result<u8, Error> {
-        self.buf.get(self.pos).copied().ok_or_else(malformed)
+        self.buf.get(self.pos).copied().ok_or_else(malformed_frame)
     }
 
     fn take(&mut self, n: usize) -> Result<&'de [u8], Error> {
-        let end = self.pos.checked_add(n).ok_or_else(malformed)?;
-        let bytes = self.buf.get(self.pos..end).ok_or_else(malformed)?;
+        let end = self.pos.checked_add(n).ok_or_else(malformed_frame)?;
+        let bytes = self.buf.get(self.pos..end).ok_or_else(malformed_frame)?;
         self.pos = end;
         Ok(bytes)
     }
 
     fn count(&mut self) -> Result<usize, Error> {
-        let bytes: [u8; 4] = self.take(4)?.try_into().map_err(|_| malformed())?;
+        let bytes: [u8; 4] = self.take(4)?.try_into().map_err(|_| malformed_frame())?;
         Ok(u32::from_le_bytes(bytes) as usize)
     }
 
     fn key(&mut self) -> Result<&'de str, Error> {
         let len = self.count()?;
-        core::str::from_utf8(self.take(len)?).map_err(|_| malformed())
+        core::str::from_utf8(self.take(len)?).map_err(|_| malformed_frame())
     }
 
     fn scalar(&mut self) -> Result<(Option<Logical>, Physical<'de>), Error> {
-        let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
-        let (scalar, used) = leaf::read(rest, Form::Frame).map_err(|_| malformed())?;
+        let rest = self.buf.get(self.pos..).ok_or_else(malformed_frame)?;
+        let (scalar, used) = leaf::read(rest, Form::Frame).map_err(|_| malformed_frame())?;
         self.pos += used;
         Ok(scalar)
     }
@@ -514,8 +546,8 @@ impl<'de> Deserializer<'de> {
     /// nothing, with the key left where it is. A map's key is always a
     /// scalar: the storage validator admits nothing else.
     fn text_node(&mut self) -> Result<Option<&'de str>, Error> {
-        let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
-        match leaf::read(rest, Form::Frame).map_err(|_| malformed())? {
+        let rest = self.buf.get(self.pos..).ok_or_else(malformed_frame)?;
+        match leaf::read(rest, Form::Frame).map_err(|_| malformed_frame())? {
             ((None, Physical::Text(text)), used) => {
                 self.pos += used;
                 Ok(Some(text))
@@ -553,7 +585,7 @@ impl<'de> Deserializer<'de> {
             tags::UNDEFINED | tags::DATE | tags::TIMESTAMP | tags::DECIMAL | tags::LOGICAL => {
                 Unexpected::Other("a value with a logical type")
             }
-            _ => return Err(malformed()),
+            _ => return Err(malformed_frame()),
         })
     }
 
@@ -1125,6 +1157,29 @@ pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Buffer, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two refusals are the same when they say the same thing at the same
+    /// place. Why the reader refused is not part of that, so a refusal is
+    /// not told apart from its rewording by storage's classification.
+    #[test]
+    fn refusals_are_equal_by_message_and_path_only() {
+        let at = |error: Error, key| error.at(At::Key(key));
+        assert_eq!(
+            at(Error::because(Reason::Malformed, "same"), "a"),
+            at(Error::because(Reason::Mismatch, "same"), "a"),
+            "a refusal's reason is not part of its equality",
+        );
+        assert_ne!(
+            at(Error::new("one"), "a"),
+            at(Error::new("other"), "a"),
+            "refusals with different messages differ",
+        );
+        assert_ne!(
+            at(Error::new("same"), "a"),
+            at(Error::new("same"), "b"),
+            "refusals at different places differ",
+        );
+    }
 
     /// Every kind of unexpected value is named by its kind, and none prints
     /// the value it carries.

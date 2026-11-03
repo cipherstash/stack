@@ -46,7 +46,7 @@ use vitaminc_aead::plaintext::Physical;
 use vitaminc_aead::tags;
 use vitaminc_protected::{Buffer, Controlled};
 
-use crate::serde::{self as transport, from_validated, PathSegment, Profile};
+use crate::serde::{self as transport, from_validated, PathSegment, Profile, Reason};
 use crate::write::{write, AsStorage};
 
 /// The first three bytes of every blob: `"VCS"`.
@@ -200,14 +200,14 @@ fn malformed() -> Error {
 
 /// A refusal from the reader the transport shares, in this profile's words.
 fn mismatch(error: transport::Error) -> Error {
-    match error.message() {
+    match error.reason() {
         // The validator passed every byte the reader reads, so the reader
         // finding one it cannot is a bug in one or the other.
-        transport::MALFORMED => malformed(),
-        transport::UNREAD_REST => {
+        Reason::Malformed => malformed(),
+        Reason::UnreadRest => {
             Error::of(ErrorKind::Mismatch, "the value did not read the whole blob")
         }
-        _ => Error {
+        Reason::Mismatch => Error {
             kind: ErrorKind::Mismatch,
             inner: error,
         },
@@ -497,8 +497,17 @@ mod tests {
     /// validator disagree.
     #[test]
     fn a_bug_is_reported_as_one() {
-        let error = mismatch(transport::Error::new(transport::MALFORMED));
+        let error = mismatch(transport::malformed_frame());
         assert_eq!(error, malformed());
+    }
+
+    /// A refusal is classified by why the reader refused, never by its
+    /// wording: a value its type declined stays a mismatch, whatever the
+    /// message says.
+    #[test]
+    fn wording_does_not_classify_a_refusal() {
+        let error = mismatch(transport::Error::new("malformed frame"));
+        assert_eq!(error.kind(), ErrorKind::Mismatch);
     }
 
     /// Map keys are compared by value across integer widths, and by node
