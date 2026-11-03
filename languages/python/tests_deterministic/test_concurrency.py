@@ -1,6 +1,7 @@
 """The concurrency test of `tests/test_concurrency_live.py`, with no
 credentials: threads that encrypt at once on the one client all succeed,
-and every row opens. It runs on every pull request, a fork's included.
+and every row opens. It runs on every pull request that starts
+`tests-python.yml`, a fork's included.
 
 The model and the threads are `tests/_sync_contract.py`, shared with the
 live test. pyproject.toml puts `tests/` on the path.
