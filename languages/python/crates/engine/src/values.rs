@@ -318,6 +318,44 @@ fn type_name(value: &Bound<'_, PyAny>) -> String {
         .map_or_else(|_| "an unknown type".to_owned(), |name| name.to_string())
 }
 
+/// Why an opened date or timestamp has no Python object. The Go SDK can
+/// store both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unfit {
+    /// `datetime` keeps microseconds, and rounding would change the value.
+    Nanoseconds,
+    /// `datetime` holds the years 1 to 9999.
+    Year,
+}
+
+impl Unfit {
+    /// The cause, for a message.
+    pub fn cause(self) -> &'static str {
+        match self {
+            Self::Nanoseconds => {
+                "it has nanoseconds, and Python's datetime keeps only microseconds"
+            }
+            Self::Year => "its year is outside 1 to 9999, the years Python's datetime holds",
+        }
+    }
+}
+
+/// `datetime`'s refusal of a value out of its range as [`Unfit::Year`].
+/// `fromordinal` raises `ValueError` for it, and `timedelta` and the
+/// addition raise `OverflowError`. Any other error is Python's own.
+fn in_range<T>(py: Python<'_>, result: PyResult<T>) -> PyResult<Result<T, Unfit>> {
+    match result {
+        Ok(value) => Ok(Ok(value)),
+        Err(error)
+            if error.is_instance_of::<pyo3::exceptions::PyValueError>(py)
+                || error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) =>
+        {
+            Ok(Err(Unfit::Year))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// An opened scalar as a Python object, of the type the field declares.
 ///
 /// The scalar is borrowed and copied into the Python object. It wipes its
@@ -326,35 +364,40 @@ fn type_name(value: &Bound<'_, PyAny>) -> String {
 ///
 /// # Errors
 ///
-/// A `ValueError` for a date or timestamp outside `datetime`'s range, and
-/// for a timestamp with nanoseconds: `datetime` keeps microseconds, and
-/// rounding would change the value. The Go SDK can store one.
-pub fn to_python(py: Python<'_>, scalar: &Scalar) -> PyResult<Py<PyAny>> {
-    Ok(match scalar {
+/// The outer error is Python's own. The inner one is a date or timestamp
+/// that `datetime` cannot hold, with the reason.
+pub fn to_python(py: Python<'_>, scalar: &Scalar) -> PyResult<Result<Py<PyAny>, Unfit>> {
+    Ok(Ok(match scalar {
         Scalar::Null => py.None(),
         Scalar::Text(text) => PyString::new(py, text).into_any().unbind(),
         Scalar::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
         Scalar::Float(f) => PyFloat::new(py, *f).into_any().unbind(),
         Scalar::Bool(b) => PyBool::new(py, *b).to_owned().into_any().unbind(),
         Scalar::Bytes(bytes) => PyBytes::new(py, bytes).into_any().unbind(),
-        Scalar::Date(days) => PyKind::Date
-            .type_object(py)?
-            .call_method1("fromordinal", (i64::from(*days) + 719_163,))?
-            .unbind(),
+        Scalar::Date(days) => {
+            let date = PyKind::Date.type_object(py)?;
+            let opened = date.call_method1("fromordinal", (i64::from(*days) + 719_163,));
+            match in_range(py, opened)? {
+                Ok(date) => date.unbind(),
+                Err(unfit) => return Ok(Err(unfit)),
+            }
+        }
         &Scalar::Timestamp(nanos) => {
             if nanos.rem_euclid(1_000) != 0 {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "the timestamp has nanoseconds, and datetime keeps microseconds",
-                ));
+                return Ok(Err(Unfit::Nanoseconds));
             }
             let micros = nanos.div_euclid(1_000);
             let seconds = micros.div_euclid(1_000_000);
             let micros = micros.rem_euclid(1_000_000);
-            let delta = py
-                .import("datetime")?
-                .getattr("timedelta")?
-                .call1((0, seconds, micros))?;
-            epoch(py)?.add(delta)?.unbind()
+            let timedelta = py.import("datetime")?.getattr("timedelta")?;
+            let epoch = epoch(py)?;
+            let opened = timedelta
+                .call1((0, seconds, micros))
+                .and_then(|delta| epoch.add(delta));
+            match in_range(py, opened)? {
+                Ok(timestamp) => timestamp.unbind(),
+                Err(unfit) => return Ok(Err(unfit)),
+            }
         }
         &Scalar::Decimal { mantissa, scale } => {
             // Decimal((sign, digits, exponent)), so that the scale is kept:
@@ -371,7 +414,7 @@ pub fn to_python(py: Python<'_>, scalar: &Scalar) -> PyResult<Py<PyAny>> {
                 .call1(((sign, digits, -i64::from(scale)),))?
                 .unbind()
         }
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -385,7 +428,9 @@ mod tests {
             let decimal = py.import("decimal").unwrap().getattr("Decimal").unwrap();
             for (mantissa, scale, text) in [(1_995, 2, "19.95"), (-150, 2, "-1.50"), (0, 2, "0.00")]
             {
-                let opened = to_python(py, &Scalar::Decimal { mantissa, scale }).unwrap();
+                let opened = to_python(py, &Scalar::Decimal { mantissa, scale })
+                    .unwrap()
+                    .unwrap();
                 let opened = opened.bind(py);
                 assert!(opened.get_type().is(&decimal), "{text}");
                 assert_eq!(opened.str().unwrap().to_string(), text);
