@@ -16,6 +16,7 @@
 
 import { decodeBase64Url, encodeBase64Url } from "./base64url.mjs";
 import { cookieStore } from "./cookies.mjs";
+import { warmedStrategy } from "./warmed.mjs";
 import { OidcFederationStrategy } from "./wasm-inline.mjs";
 
 /** Request header carrying the warmed token from middleware to the render. */
@@ -159,10 +160,7 @@ export function csSanitizeHeaders(source, options) {
  */
 
 /**
- * @typedef {object} WarmedAuthStrategy
- * @property {false} requiresFederation
- * @property {() => Promise<import("./wasm-inline.d.ts").GetTokenResult>} getToken
- * @property {() => void} free
+ * @typedef {import("./warmed.d.ts").WarmedAuthStrategy} WarmedAuthStrategy
  */
 
 /**
@@ -215,15 +213,9 @@ export function csAuthHeader(headers, options) {
   // malformed/spoofed payload must be rejected here rather than surfacing as
   // undefined `subject`/`workspaceId`/`issuer`/`services` fields downstream.
   if (!isTokenResult(warmed)) return null;
-  // Mirror a real strategy's Result-returning `getToken()` so this warmed
-  // strategy stays a drop-in wherever an `OidcFederationStrategy` /
-  // `AccessKeyStrategy` is consumed (e.g. protect-ffi). The warmed token is
-  // already validated, so it's always a `{ data }` success.
-  return {
-    requiresFederation: false,
-    getToken: async () => ({ data: warmed }),
-    free() {},
-  };
+  // The warmed token is validated, so hand it to the shared no-federation
+  // strategy shape (`warmed.mjs`) — the same one the `/start` adapter builds.
+  return warmedStrategy(warmed);
 }
 
 /**
