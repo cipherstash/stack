@@ -4,7 +4,7 @@
 //!
 //! The two write alike but in three places:
 //!
-//! - A storage blob starts with its header. [`write`] writes the node
+//! - A storage blob starts with its header. [`write()`] writes the node
 //!   alone, and [`storage::to_vec`] puts the header in front of it.
 //! - A storage blob marks an `Option`'s `Some` with [`STORAGE_SOME`], a
 //!   level of its own, so `Some(())` and `Some(None)` are not `None`. The
@@ -46,14 +46,14 @@ pub(crate) trait Profiled {
     const PROFILE: Profile;
 }
 
-/// The storage profile, for [`write`].
+/// The storage profile, for [`write()`].
 pub(crate) struct AsStorage;
 
 impl Profiled for AsStorage {
     const PROFILE: Profile = Profile::Storage;
 }
 
-/// The transport format, for [`write`].
+/// The transport format, for [`write()`].
 pub(crate) struct AsTransport;
 
 impl Profiled for AsTransport {
