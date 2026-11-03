@@ -26,7 +26,7 @@
 //! The logical type's parameter is not bound either: a decimal's scale
 //! varies from value to value within one column, and binding it would
 //! refuse `1.50` next to `1.5`. The parameter is still validated after
-//! opening, by [`Logical::admits`].
+//! opening, by [`Logical::admits`](crate::plaintext::Logical::admits).
 //!
 //! A known logical type is stored as exactly one kind, so
 //! [`LeafTypeAad::logical`] derives the kind from it rather than taking

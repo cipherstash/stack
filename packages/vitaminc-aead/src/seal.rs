@@ -4,7 +4,7 @@
 //! A cipher does two things, seal one leaf and open one leaf. Everything
 //! about containers (element and entry AAD, the empty markers, duplicate
 //! keys, what counts as sealed) lives in
-//! [`EncryptSink`](crate::EncryptSink) and [`walk`](crate::walk), so a
+//! [`EncryptSink`](crate::EncryptSink) and [`walk`](crate::walk()), so a
 //! second cipher cannot diverge on it.
 //!
 //! [`Cipher`] is synchronous. [`AsyncCipher`] is for anything that has to
