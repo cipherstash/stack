@@ -98,6 +98,7 @@ def test_two_ciphers_share_one_engine_client():
     Cipher(User).encrypt([User(email="a@example.com", age=1)])
     Cipher(Contact).encrypt([Contact(email="b@example.com")])
     assert _engine.client_builds() == 1
+    assert _engine.keyset_loads() == 1
 
 
 @stackencrypt.model("prices")

@@ -150,6 +150,20 @@ With this form, a new `Book` has `author` set to `None` until you set it. A bare
 
 `Author` must be defined before `Book`, because the decorator evaluates `"Author"` in the hint when `Book`'s class statement runs.
 
+## Use it from several threads
+
+`encrypt`, `decrypt`, and `query` are synchronous. There is no async form yet.
+
+Each call releases the GIL while the encryption runs. The GIL is CPython's global interpreter lock. So other Python threads keep running during a call, and calls from several threads run at the same time. Within one call, the requests to CipherStash go out one at a time.
+
+A process has one connection to CipherStash. The first call of any `Cipher` makes it, reads the credentials, and loads the default keyset. Every `Cipher` in the process then uses that connection. If you change the `CS_*` variables or log in again, restart the process.
+
+Make one `Cipher` for each model, and share it between threads with no lock. Do not make a new `Cipher` for each web request. Making one checks the model and the credentials. When no access key is set in the environment, it also reads your CipherStash profile from disk.
+
+If you press Ctrl-C during a call, the call finishes first. Python then raises `KeyboardInterrupt`, and the `Cipher` still works. A call cannot be cancelled.
+
+Each request to CipherStash times out after 10 seconds. A call that makes several requests can take longer than 10 seconds in total. You cannot change the timeout yet.
+
 ## Run the tests
 
 From `languages/python`:
