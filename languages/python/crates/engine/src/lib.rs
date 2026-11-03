@@ -114,6 +114,7 @@ fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(query::query, module)?)?;
     module.add_function(wrap_pyfunction!(encrypt::client_builds, module)?)?;
     module.add_function(wrap_pyfunction!(encrypt::request_count, module)?)?;
+    module.add_function(wrap_pyfunction!(encrypt::keyset_loads, module)?)?;
     #[cfg(feature = "gate-probe")]
     module.add_function(wrap_pyfunction!(_probe_detached_sleep, module)?)?;
     #[cfg(feature = "deterministic-kms")]

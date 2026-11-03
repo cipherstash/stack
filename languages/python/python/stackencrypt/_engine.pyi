@@ -45,3 +45,7 @@ def client_builds() -> int:
 
 def request_count() -> int:
     """How many requests the shared client has sent to ZeroKMS. For tests."""
+
+def keyset_loads() -> int:
+    """How many times the default keyset loaded; a failed load is not
+    counted. For tests."""

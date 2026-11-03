@@ -173,6 +173,13 @@ pub fn request_count() -> u64 {
     stackencrypt_core::client::request_count()
 }
 
+/// How many times the default keyset loaded, a failed load not counted.
+/// For the tests: threads that make their first call at once load it once.
+#[pyfunction]
+pub fn keyset_loads() -> u64 {
+    stackencrypt_core::client::keyset_load_count()
+}
+
 /// `value` read as `field`'s Python type and checked against the range of
 /// its kind, as `encrypt` and `query` both take it. A refusal names the
 /// field, with the kind as its reason.

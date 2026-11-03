@@ -9,7 +9,7 @@
 //! Python threads run inside the engine at the same time.
 //!
 //! The client is built over a ZeroKMS connection that counts every request
-//! it sends. The count is for the tests: the spec's request rules (one key
+//! it sends, and the keyset loads among them that succeeded. The count is for the tests: the spec's request rules (one key
 //! request per 500 values, one keyset load per process) are observed
 //! through it, not assumed.
 
@@ -24,7 +24,7 @@ use stack_encrypt::kms::{
     StackKmsBuilderError, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint,
 };
 use stack_encrypt::StackCipher;
-use zerokms_protocol::{ViturRequest, ViturRequestError};
+use zerokms_protocol::{LoadKeysetRequest, ViturRequest, ViturRequestError};
 
 use crate::credentials;
 use crate::refusal::Refusal;
@@ -46,6 +46,7 @@ static CLIENT: OnceLock<Client> = OnceLock::new();
 static BUILDING: Mutex<()> = Mutex::new(());
 static BUILDS: AtomicU64 = AtomicU64::new(0);
 static REQUESTS: AtomicU64 = AtomicU64::new(0);
+static KEYSET_LOADS: AtomicU64 = AtomicU64::new(0);
 
 /// The shared client, built on the first call.
 ///
@@ -187,6 +188,13 @@ pub fn request_count() -> u64 {
     REQUESTS.load(Ordering::Relaxed)
 }
 
+/// How many keyset loads succeeded: 1 after the first operation, however
+/// many threads made it at once. A failed load is not counted. For the
+/// tests.
+pub fn keyset_load_count() -> u64 {
+    KEYSET_LOADS.load(Ordering::Relaxed)
+}
+
 impl Client {
     /// The cipher itself.
     pub fn cipher(&self) -> &StackCipher<Kms> {
@@ -296,7 +304,13 @@ impl ZeroKMSConnection for Counting {
         access_token: &str,
     ) -> Result<Request::Response, ViturRequestError> {
         REQUESTS.fetch_add(1, Ordering::Relaxed);
-        self.0.send(request, access_token).await
+        let response = self.0.send(request, access_token).await;
+        // A load that fails caches nothing, and the next call loads again:
+        // only a load that succeeded is the one the contract counts.
+        if Request::ENDPOINT == LoadKeysetRequest::ENDPOINT && response.is_ok() {
+            KEYSET_LOADS.fetch_add(1, Ordering::Relaxed);
+        }
+        response
     }
 
     // Both forwarded: the trait's defaults would tell the client the base
