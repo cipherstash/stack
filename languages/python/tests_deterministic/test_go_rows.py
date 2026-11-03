@@ -270,6 +270,7 @@ def test_a_date_outside_pythons_years_is_refused(row_id):
 
     assert raised.value.code == "decrypt_not_representable"
     assert raised.value.field == "opened"
+    assert "year" in raised.value.message
 
 
 @pytest.mark.parametrize("row_id", [1, 2])
@@ -285,6 +286,7 @@ def test_a_timestamp_with_nanoseconds_is_refused_not_rounded(row_id):
 
     assert raised.value.code == "decrypt_not_representable"
     assert raised.value.field == "created"
+    assert "nanoseconds" in raised.value.message
 
 
 def test_a_timestamp_in_whole_microseconds_opens():

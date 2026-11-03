@@ -59,9 +59,12 @@ shell = "bash -c"
 # The deterministic client replaces the live one for the whole process, so
 # these tests run in their own pytest process, from their own folder. The
 # build is a test build: run `mise run build` afterwards for a normal one.
+# `--features` replaces pyproject.toml's list, so it names
+# pyo3/extension-module again. Maturin 1.10 and later also set
+# PYO3_BUILD_EXTENSION_MODULE, but pyproject.toml allows 1.9.
 run = """
 set -euo pipefail
-MATURIN_PEP517_ARGS="--profile dev --features deterministic-kms" mise run build
+MATURIN_PEP517_ARGS="--profile dev --features pyo3/extension-module,deterministic-kms" mise run build
 .venv/bin/python -m pytest tests_deterministic
 """
 

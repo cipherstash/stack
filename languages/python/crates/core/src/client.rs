@@ -55,27 +55,18 @@ static REQUESTS: AtomicU64 = AtomicU64::new(0);
 /// client key or the ZeroKMS client (`stack_kms_*`), or the keyset load
 /// (`stack_encrypt_*`). Nothing is cached on failure.
 pub fn shared() -> Result<&'static Client, Refusal> {
-    // In the test build, an operation that reaches here after the switch has
-    // not checked for the deterministic client, and would send requests to
-    // ZeroKMS from a test process. Refuse it, so a new operation that skips
-    // the check fails its test instead.
     #[cfg(feature = "deterministic-kms")]
-    if DETERMINISTIC.get().is_some() {
-        return Err(Refusal {
-            code: "stack_test_build".to_owned(),
-            message: "this operation asked for the live client after the switch to the \
-                      deterministic one; call client::deterministic() first"
-                .to_owned(),
-            field: None,
-            reason: None,
-        });
-    }
+    refuse_after_switch()?;
     if let Some(client) = CLIENT.get() {
         return Ok(client);
     }
     let _building = BUILDING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Again under the lock: a switch can finish while this thread waits for
+    // it, and the live client must then not be built.
+    #[cfg(feature = "deterministic-kms")]
+    refuse_after_switch()?;
     if let Some(client) = CLIENT.get() {
         return Ok(client);
     }
@@ -93,6 +84,25 @@ pub type Deterministic = (
 
 #[cfg(feature = "deterministic-kms")]
 static DETERMINISTIC: OnceLock<Deterministic> = OnceLock::new();
+
+/// In the test build, an operation that asks for the live client after the
+/// switch has not checked for the deterministic client, and would send
+/// requests to ZeroKMS from a test process. Refuse it, so a new operation
+/// that skips the check fails its test instead.
+#[cfg(feature = "deterministic-kms")]
+fn refuse_after_switch() -> Result<(), Refusal> {
+    if DETERMINISTIC.get().is_none() {
+        return Ok(());
+    }
+    Err(Refusal {
+        code: "stack_test_build".to_owned(),
+        message: "this operation asked for the live client after the switch to the \
+                  deterministic one; call client::deterministic() first"
+            .to_owned(),
+        field: None,
+        reason: None,
+    })
+}
 
 /// Make every later operation in the process use a client whose keys come
 /// from `seed` through `DeterministicSource`, not from ZeroKMS. For the
