@@ -23,6 +23,8 @@ from each profile's own version. `<role>` is one of:
 
 Every file has a `version` and `profile` header. An `expected` file also names
 its `producer`, and an `inputs` file names its `runner`.
+`scripts/__tests__/stack-conformance-ci.test.mjs` fails on a file that breaks
+these rules.
 
 | File | Role | Rust reader | Go reader |
 |---|---|---|---|

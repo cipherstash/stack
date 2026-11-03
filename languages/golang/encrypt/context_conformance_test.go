@@ -53,8 +53,17 @@ func TestContextConformance(t *testing.T) {
 	if corpus.Version != 1 || corpus.Profile != "record-contexts-v1" || len(corpus.Cases) == 0 || !reflect.DeepEqual(corpus.RequiredCapabilities, []string{"composition", "typed-extensions", "context-fields", "frozen-open"}) {
 		t.Fatal("unsupported context profile")
 	}
-	var vectors map[string]contextVector
-	readConformanceJSON(t, filepath.Join(root, "record-contexts-v1.expected.rust-native.json"), &vectors)
+	var expected struct {
+		Version  int                      `json:"version"`
+		Profile  string                   `json:"profile"`
+		Producer string                   `json:"producer"`
+		Cases    map[string]contextVector `json:"cases"`
+	}
+	readConformanceJSON(t, filepath.Join(root, "record-contexts-v1.expected.rust-native.json"), &expected)
+	if expected.Version != 1 || expected.Profile != corpus.Profile || expected.Producer == "" {
+		t.Fatal("unsupported context vectors")
+	}
+	vectors := expected.Cases
 	if len(vectors) != len(corpus.Cases) {
 		t.Fatal("vector case set differs")
 	}

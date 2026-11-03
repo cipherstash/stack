@@ -44,6 +44,15 @@ struct Vector {
     ciphertext: String,
     equality: String,
 }
+/// The `record-contexts-v1` outputs of one producer, keyed by case ID.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Expected {
+    version: u32,
+    profile: String,
+    producer: String,
+    cases: BTreeMap<String, Vector>,
+}
 
 fn part(input: &Input) -> ValueFrame {
     if input.kind == "bytes" {
@@ -180,7 +189,11 @@ async fn shared_context_composition() {
     let baseline: BTreeMap<String, Vector> = if update {
         BTreeMap::new()
     } else {
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap()
+        let expected: Expected = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(expected.version, 1);
+        assert_eq!(expected.profile, "record-contexts-v1");
+        assert!(!expected.producer.is_empty());
+        expected.cases
     };
     let mut vectors = BTreeMap::new();
     let mut ids = BTreeSet::new();
@@ -337,7 +350,17 @@ async fn shared_context_composition() {
         vectors.insert(case.id, vector);
     }
     if update {
-        std::fs::write(path, serde_json::to_string_pretty(&vectors).unwrap() + "\n").unwrap();
+        let expected = Expected {
+            version: 1,
+            profile: "record-contexts-v1".into(),
+            producer: format!("rust-native/stack-encrypt-{}", env!("CARGO_PKG_VERSION")),
+            cases: vectors,
+        };
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&expected).unwrap() + "\n",
+        )
+        .unwrap();
     } else {
         assert_eq!(
             baseline.keys().collect::<Vec<_>>(),

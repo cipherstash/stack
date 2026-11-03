@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -226,5 +226,37 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(goTests).toContain('go test "$@" ./...')
     expect(steps[exchange].if).toBeUndefined()
     expect(steps[exchange]['continue-on-error']).toBeUndefined()
+  })
+})
+
+/**
+ * conformance/stack-encrypt/README.md § Files: every file in v1/ is
+ * <profile>.<role>.json, with the profile in its header, so a file's name
+ * says which profile it belongs to and whether it holds cases, one
+ * producer's frozen outputs or one runner's extra inputs.
+ */
+describe('conformance files are named after their profile and role', () => {
+  const dir = 'conformance/stack-encrypt/v1'
+  const NAME =
+    /^(?<profile>[a-z0-9-]+-v\d+)\.(?<role>cases|expected\.(?<producer>[a-z0-9-]+)|inputs\.(?<runner>[a-z0-9-]+))\.json$/
+  const files = readdirSync(join(REPO_ROOT, dir)).filter(
+    (file) => file !== 'fixture-enrollment.json',
+  )
+
+  it.each(files)('%s follows the convention', (file) => {
+    const match = file.match(NAME)
+    expect(match, `${file} is not <profile>.<role>.json`).not.toBeNull()
+    const { profile, role, producer, runner } = match.groups
+    const header = JSON.parse(readRepo(`${dir}/${file}`))
+    expect(header.version).toBe(1)
+    expect(header.profile).toBe(profile)
+    if (role !== 'cases') {
+      expect(files, `${file} has no cases file`).toContain(
+        `${profile}.cases.json`,
+      )
+      expect(Object.keys(header.cases ?? {}).length).toBeGreaterThan(0)
+    }
+    if (producer) expect(header.producer).toMatch(new RegExp(`^${producer}`))
+    if (runner) expect(header.runner).toBe(runner)
   })
 })
