@@ -23,7 +23,7 @@ use stack_encrypt::kms::{
     HttpConnectionOpts, KeyProvider, KeyProviderError, ProfileStore, StackKms,
     StackKmsBuilderError, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint,
 };
-use stack_encrypt::{KeysetCipher, StackCipher};
+use stack_encrypt::StackCipher;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 use crate::credentials;
@@ -74,6 +74,28 @@ pub fn shared() -> Result<&'static Client, Refusal> {
     BUILDS.fetch_add(1, Ordering::Relaxed);
     Ok(CLIENT.get_or_init(|| client))
 }
+
+/// Run an operation's future on the process's client, and return its result.
+///
+/// `run!(|cipher| future)` names the `StackCipher` the body builds its future
+/// from. The body is written once and compiled for each client: the live
+/// one, and in the test build the deterministic one, which takes its place
+/// after the switch. The two have different key source types, so a function
+/// that returned "the current client" would still leave each operation to
+/// write a branch per client.
+macro_rules! run {
+    (|$cipher:ident| $future:expr) => {{
+        #[cfg(feature = "deterministic-kms")]
+        if let Some((cipher, runtime)) = $crate::client::deterministic() {
+            let $cipher = cipher;
+            return runtime.block_on($future);
+        }
+        let client = $crate::client::shared()?;
+        let $cipher = client.cipher();
+        client.block_on($future)
+    }};
+}
+pub(crate) use run;
 
 /// The client of the `deterministic-kms` test build, with its own runtime.
 #[cfg(feature = "deterministic-kms")]
@@ -166,11 +188,6 @@ pub fn request_count() -> u64 {
 }
 
 impl Client {
-    /// The cipher bound to the client's default keyset.
-    pub fn keyset(&self) -> KeysetCipher<'_, Kms> {
-        self.cipher.default_keyset()
-    }
-
     /// The cipher itself.
     pub fn cipher(&self) -> &StackCipher<Kms> {
         &self.cipher
