@@ -9,9 +9,10 @@
 //! Python threads run inside the engine at the same time.
 //!
 //! The client is built over a ZeroKMS connection that counts every request
-//! it sends, and the keyset loads among them that succeeded. The count is for the tests: the spec's request rules (one key
-//! request per 500 values, one keyset load per process) are observed
-//! through it, not assumed.
+//! it sends, and the keyset loads among them that succeeded. The counts
+//! are for the tests: the spec's request rules (one key request per 500
+//! values, one keyset load per process) are observed through them, not
+//! assumed.
 
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};

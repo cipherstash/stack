@@ -1,56 +1,24 @@
-"""The concurrency contract from the spec in #1341, with no credentials:
-threads that encrypt at once on the one client all succeed, and every row
-opens.
+"""The concurrency test of `tests/test_concurrency_live.py`, with no
+credentials: threads that encrypt at once on the one client all succeed,
+and every row opens. It runs on every pull request, a fork's included.
 
-`tests/test_concurrency_live.py` runs the same test against ZeroKMS. This
-copy runs on every pull request, a fork's included.
+The model and the threads are `tests/_sync_contract.py`, shared with the
+live test.
 """
 
-import dataclasses
-import threading
-from typing import Annotated
+import sys
+from pathlib import Path
 
-import stackencrypt
-from stackencrypt import Cipher, Passthrough, TextEq
+from stackencrypt import Cipher
 
-THREADS = 8
-PER_THREAD = 100
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
-
-@stackencrypt.model("users")
-@dataclasses.dataclass
-class User:
-    id: Annotated[int, Passthrough]
-    email: Annotated[str, TextEq]
+from _sync_contract import PER_THREAD, THREADS, User, encrypt_from_threads, user  # noqa: E402
 
 
 def test_threads_encrypt_at_once_and_every_row_opens():
     cipher = Cipher(User)
-    sealed = [[] for _ in range(THREADS)]
-    failures = []
-    start = threading.Barrier(THREADS)
 
-    def encrypt_many(t):
-        start.wait()
-        try:
-            sealed[t].extend(
-                cipher.encrypt([User(id=t * PER_THREAD + n, email=f"t{t}-n{n}@example.com")])[0]
-                for n in range(PER_THREAD)
-            )
-        except Exception as error:
-            failures.append(repr(error))
+    rows = encrypt_from_threads(cipher, PER_THREAD)
 
-    threads = [threading.Thread(target=encrypt_many, args=(t,)) for t in range(THREADS)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    assert failures == []
-
-    rows = [row for rows in sealed for row in rows]
-    opened = cipher.decrypt(rows)
-
-    assert opened == [
-        User(id=i, email=f"t{i // PER_THREAD}-n{i % PER_THREAD}@example.com")
-        for i in range(THREADS * PER_THREAD)
-    ]
+    assert cipher.decrypt(rows) == [user(n) for n in range(THREADS * PER_THREAD)]
