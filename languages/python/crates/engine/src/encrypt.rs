@@ -10,6 +10,7 @@
 
 use std::cell::RefCell;
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyType};
 use stackencrypt_core::encrypt::plaintext::{Encrypt, MapSink, SeqSink, Sink, SourceError};
@@ -119,7 +120,10 @@ pub fn encrypt<'py>(
         for (field, column) in plan.plan.fields().iter().zip(columns) {
             let value = match column {
                 Column::Eql(json) => PyString::new(py, json).into_any().unbind(),
-                Column::Passthrough(scalar) => to_python(py, scalar)?,
+                // A passthrough value came from Python, so it fits.
+                Column::Passthrough(scalar) => {
+                    to_python(py, scalar)?.map_err(|unfit| PyValueError::new_err(unfit.cause()))?
+                }
             };
             row.set_item(&field.name, value)?;
         }

@@ -204,28 +204,15 @@ fn passthrough(
 
 /// An opened value as the Python object of its field.
 fn python_value(py: Python<'_>, field: &Field, value: &Scalar) -> PyResult<Py<PyAny>> {
-    // What a datetime refuses, decided here: `to_python` raises Python's own
-    // error, which names neither cause in a form the user can act on.
-    let cause = match value {
-        Scalar::Timestamp(nanos) if nanos.rem_euclid(1_000) != 0 => {
-            "it has nanoseconds, and Python's datetime keeps only microseconds"
-        }
-        Scalar::Date(_) | Scalar::Timestamp(_) => {
-            "its year is outside 1 to 9999, the years Python's datetime holds"
-        }
-        _ => "",
-    };
-    to_python(py, value).map_err(|error| {
-        if cause.is_empty() {
-            return error;
-        }
+    to_python(py, value)?.map_err(|unfit| {
         raise(
             py,
             Refusal {
                 code: "decrypt_not_representable".to_owned(),
                 message: format!(
-                    "field {:?}: the opened value does not fit its Python type: {cause}.",
-                    field.name
+                    "field {:?}: the opened value does not fit its Python type: {}.",
+                    field.name,
+                    unfit.cause()
                 ),
                 field: Some(field.name.clone()),
                 reason: None,

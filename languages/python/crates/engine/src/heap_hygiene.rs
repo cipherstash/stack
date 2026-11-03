@@ -369,7 +369,7 @@ fn decrypt_frees_no_copy_of_the_plaintext_unwiped() {
             let objects = opened
                 .iter()
                 .flatten()
-                .map(|scalar| to_python(py, scalar).unwrap())
+                .map(|scalar| to_python(py, scalar).unwrap().unwrap())
                 .collect::<Vec<_>>();
             drop(opened);
             objects
