@@ -173,11 +173,12 @@ pub fn request_count() -> u64 {
     stackencrypt_core::client::request_count()
 }
 
-/// How many times the default keyset loaded, a failed load not counted.
-/// For the tests: threads that make their first call at once load it once.
+/// The requests the shared client has sent to ZeroKMS, by endpoint, such
+/// as `load-keyset`. For the tests: threads that make their first call at
+/// once load the keyset once.
 #[pyfunction]
-pub fn keyset_loads() -> u64 {
-    stackencrypt_core::client::keyset_load_count()
+pub fn requests() -> std::collections::BTreeMap<&'static str, u64> {
+    stackencrypt_core::client::requests()
 }
 
 /// `value` read as `field`'s Python type and checked against the range of

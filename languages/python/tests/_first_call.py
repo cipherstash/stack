@@ -9,4 +9,11 @@ from stackencrypt import Cipher, _engine
 
 assert _engine.client_builds() == 0
 encrypt_from_threads(Cipher(User), per_thread=1)
-print(json.dumps({"builds": _engine.client_builds(), "keyset_loads": _engine.keyset_loads()}))
+print(
+    json.dumps(
+        {
+            "builds": _engine.client_builds(),
+            "keyset_loads": _engine.requests().get("load-keyset", 0),
+        }
+    )
+)
