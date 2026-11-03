@@ -146,8 +146,9 @@ def model(table: str, *, redact: bool = True) -> Callable[[T], T]:
             age: Annotated[int, Passthrough]
 
     ``repr`` and ``str`` of an instance then show ``<sealed>`` for each sealed
-    field. ``redact=False`` keeps the class's own ``__repr__`` and
-    ``__str__``, which may show plaintext.
+    field, and so does ``rich``, through ``__rich_repr__``. ``redact=False``
+    keeps the class's own ``__repr__``, ``__str__`` and ``__rich_repr__``,
+    which may show plaintext.
     """
     if not isinstance(table, str) or not table:
         raise TypeError('model takes the table name: @stackencrypt.model("users")')
