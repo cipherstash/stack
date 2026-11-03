@@ -338,6 +338,37 @@ fn a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap() {
     });
 }
 
+/// A valid first row is followed by an authenticated value of the wrong type.
+/// The failed batch returns no output and releases its decoded prefix cleanly.
+#[test]
+fn a_late_read_type_failure_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let writer = record::plan(object(vec![spec("value", &["c"], None)]).risky_ref()).unwrap();
+    let reader =
+        record::plan(object(vec![spec("value", &["c"], Some("string"))]).risky_ref()).unwrap();
+    let source = frame(vec![
+        object(vec![("value", frame(marked("first-row")))]),
+        object(vec![("value", frame(true))]),
+    ]);
+    let sealed = rt.block_on(async { record::encrypt(&keyset, source, &writer).unwrap().await });
+    let sealed = sealed.unwrap();
+    watched("late authenticated read type failure", || {
+        let result = rt.block_on(async {
+            record::decrypt(Scope::Client(&cipher), sealed, &reader, None)
+                .unwrap()
+                .await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::Plan(
+                stack_encrypt::plan::PlanError::FieldType { .. }
+            ))
+        ));
+    });
+}
+
 #[test]
 fn a_query_term_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();

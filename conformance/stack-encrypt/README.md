@@ -41,6 +41,7 @@ these rules.
 | `record-context-boundaries-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
 | `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
 | `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
+| `lifecycle-v1.enrollment.json` | enrollment | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names |
 | `fixture-enrollment.json` | index | `tests/common/mod.rs` | `fixture_conformance_test.go` |
 
 Rust readers are under `packages/stack-encrypt/`; Go readers are under
@@ -74,6 +75,14 @@ The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## Lifecycle, cleanup and key I/O
+
+The [lifecycle contract](lifecycle-contract.md) maps native/Go ownership,
+cancellation, partial-output cleanup, diagnostics, validation-before-I/O and
+batching evidence. Run `mise run test:conformance:lifecycle` on a supported Unix
+host with the normal and deterministic guests built. Reports retain known
+cleanup gaps and unobserved behavior alongside the passing requirements.
 
 ## EQL and JSON operations
 
