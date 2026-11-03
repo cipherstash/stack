@@ -2,8 +2,8 @@
 
 These experimental profiles enroll the existing EQL v4 JSON tree operations.
 They do not describe EQL v3 SteVec, or certify an entire SDK. The
-[enrollment index](v1/eql-json-profiles.json) names mandatory compiled tests;
-[shared cases](v1/eql-json.json) supply document text and predicate refusals to
+[enrollment index](v1/eql-json-v1.enrollment.json) names mandatory compiled tests;
+[shared cases](v1/eql-json-v1.cases.json) supply document text and predicate refusals to
 native Rust and Go. Python and TypeScript have no enrolled runner yet.
 
 ## Requirements and evidence

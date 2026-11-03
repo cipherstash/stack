@@ -113,7 +113,7 @@ The [EQL/JSON contract](eql-json-contract.md) and its enrollment index cover
 resolver/catalog capabilities, JSON writes and queries, request-bound reads,
 element-match and predicate-match. Existing Rust, Go and PostgreSQL suites stay
 in place. The common document and predicate-refusal tables now live in
-`v1/eql-json.json`: Rust and Go execute them, retaining native key-call checks,
+`v1/eql-json-v1.cases.json`: Rust and Go execute them, retaining native key-call checks,
 Go diagnostic mapping and all extra cases from the original suites.
 
 The database lane preserves independent plaintext oracles and generated

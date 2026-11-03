@@ -20,6 +20,8 @@ from each profile's own version. `<role>` is one of:
   producer regenerates this file, deliberately; runners compare against it.
 - `inputs.<runner>`: extra inputs keyed by case ID that only `<runner>` needs,
   such as Go host values that have no language-neutral form.
+- `enrollment`: the profile's requirement IDs mapped onto existing compiled
+  tests that are its evidence, rather than cases of its own.
 
 Every file has a `version` and `profile` header. An `expected` file also names
 its `producer`, and an `inputs` file names its `runner`.
@@ -37,11 +39,14 @@ these rules.
 | `record-contexts-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
 | `record-contexts-v1.expected.rust-native.json` | expected | `tests/context_conformance.rs` (writes it) | `context_conformance_test.go` |
 | `record-context-boundaries-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
+| `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
+| `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
 | `fixture-enrollment.json` | index | `tests/common/mod.rs` | `fixture_conformance_test.go` |
 
 Rust readers are under `packages/stack-encrypt/`; Go readers are under
-`languages/golang/encrypt/`. `fixture-enrollment.json` is not a profile: it maps
-requirement IDs onto existing fixtures and tests (see
+`languages/golang/encrypt/`; EQL's are under `packages/eql/`.
+`fixture-enrollment.json` is the one file not named after a profile: it maps
+requirement IDs of several profiles onto existing fixtures and tests (see
 [the fixture contract](fixture-contract.md)), and
 `scripts/stack-conformance-selection.mjs` reads it to choose the Go tests that
 `mise run test:conformance` runs.

@@ -407,7 +407,7 @@ describe('the relevance filter still selects the imported tree', () => {
     const external = externalPathDependencies.dirs.map((dir) => `${dir}/**`)
     // The EQL data-plan suite compiles the shared corpus from outside its
     // subtree. Keep this exception tied to that actual dependency.
-    const sharedCorpus = 'conformance/stack-encrypt/v1/eql-json.json'
+    const sharedCorpus = 'conformance/stack-encrypt/v1/eql-json-v1.cases.json'
     const usesSharedCorpus = includes(
       readFileSync(
         join(

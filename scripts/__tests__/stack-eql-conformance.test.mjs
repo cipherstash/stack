@@ -12,7 +12,7 @@ import { readWorkflow } from './lib/workflows.mjs'
 
 const read = (path) => readFileSync(join(REPO_ROOT, path), 'utf8')
 const index = JSON.parse(
-  read('conformance/stack-encrypt/v1/eql-json-profiles.json'),
+  read('conformance/stack-encrypt/v1/eql-json-v1.enrollment.json'),
 )
 
 describe('required EQL/JSON conformance', () => {
@@ -112,7 +112,7 @@ describe('required EQL/JSON conformance', () => {
 
   it('shares the original write and predicate tables without dropping boundary cases', () => {
     const corpus = JSON.parse(
-      read('conformance/stack-encrypt/v1/eql-json.json'),
+      read('conformance/stack-encrypt/v1/eql-json-v1.cases.json'),
     )
     expect(corpus.version).toBe(1)
     expect(new Set(corpus.documents).size).toBe(corpus.documents.length)
@@ -148,7 +148,7 @@ describe('required EQL/JSON conformance', () => {
       'packages/eql/tests/encryption/tests/json_tree_data_plan.rs',
       'languages/golang/encrypt/json_conformance_test.go',
     ])
-      expect(read(path)).toContain('eql-json.json')
+      expect(read(path)).toContain('eql-json-v1.cases.json')
   })
 
   it('runs both required lanes in CI and retains reports with SQL and engine identity', () => {

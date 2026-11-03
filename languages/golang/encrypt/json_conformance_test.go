@@ -9,6 +9,7 @@ import (
 
 type jsonConformanceCorpus struct {
 	Version          int      `json:"version"`
+	Profile          string   `json:"profile"`
 	Documents        []string `json:"documents"`
 	InvalidDocuments []struct {
 		Text   string `json:"text"`
@@ -27,7 +28,7 @@ type jsonConformanceCorpus struct {
 
 func jsonConformanceCases(t *testing.T) jsonConformanceCorpus {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "eql-json.json"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "eql-json-v1.cases.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func jsonConformanceCases(t *testing.T) jsonConformanceCorpus {
 	if err := json.Unmarshal(data, &cases); err != nil {
 		t.Fatal(err)
 	}
-	if cases.Version != 1 || len(cases.Documents) == 0 || len(cases.InvalidDocuments) == 0 || len(cases.PredicateRefusals) == 0 {
+	if cases.Version != 1 || cases.Profile != "eql-json-v1" || len(cases.Documents) == 0 || len(cases.InvalidDocuments) == 0 || len(cases.PredicateRefusals) == 0 {
 		t.Fatal("empty or unsupported JSON conformance corpus")
 	}
 	return cases

@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "profile": "eql-json-v1",
   "suites": {
     "engine-queries": {
       "language": "rust",

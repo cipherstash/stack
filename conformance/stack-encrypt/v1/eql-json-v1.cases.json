@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "profile": "eql-json-v1",
   "documents": [
     "{\"name\":\"Alice\",\"age\":34,\"visits\":[{\"at\":3},{\"at\":1}]}",
     "{\"name\":\"Alice\",\"age\":34,\"visits\":[{\"at\":3,\"where\":\"x\"},{\"at\":1}],\"tags\":[\"a\",\"b\"]}",

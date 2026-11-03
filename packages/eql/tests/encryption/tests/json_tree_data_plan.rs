@@ -1148,9 +1148,10 @@ async fn the_engine_and_the_table_agree_on_which_targets_take_json_options() {
 
 fn conformance_cases() -> Value {
     let cases: Value = serde_json::from_str(include_str!(
-        "../../../../../conformance/stack-encrypt/v1/eql-json.json"
+        "../../../../../conformance/stack-encrypt/v1/eql-json-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(cases["version"], 1);
+    assert_eq!(cases["profile"], "eql-json-v1");
     cases
 }

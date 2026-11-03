@@ -17,10 +17,13 @@ const hash = (path) =>
 export function selections(index, lane, language) {
   if (
     index.version !== 1 ||
+    index.profile !== 'eql-json-v1' ||
     !['fast', 'postgres'].includes(lane) ||
     !['rust', 'go', 'all'].includes(language)
   ) {
-    throw new Error('Unsupported EQL conformance version, lane or language')
+    throw new Error(
+      'Unsupported EQL conformance version, profile, lane or language',
+    )
   }
   const selected = new Map()
   const ids = new Set()
@@ -156,7 +159,7 @@ export function main(args = process.argv.slice(2)) {
     )
   checkEnvironment(process.env)
   const index = JSON.parse(
-    read('conformance/stack-encrypt/v1/eql-json-profiles.json'),
+    read('conformance/stack-encrypt/v1/eql-json-v1.enrollment.json'),
   )
   const selected = selections(index, lane, language)
   process.env.STACK_CONFORMANCE_REQUIRED = '1'
@@ -171,9 +174,9 @@ export function main(args = process.argv.slice(2)) {
     eql_bindings: metadata('packages/eql').packages.find(
       (p) => p.name === 'eql-bindings',
     ).version,
-    corpus_sha256: hash('conformance/stack-encrypt/v1/eql-json.json'),
+    corpus_sha256: hash('conformance/stack-encrypt/v1/eql-json-v1.cases.json'),
     enrollment_sha256: hash(
-      'conformance/stack-encrypt/v1/eql-json-profiles.json',
+      'conformance/stack-encrypt/v1/eql-json-v1.enrollment.json',
     ),
     root_lock_sha256: hash('Cargo.lock'),
     eql_lock_sha256: hash('packages/eql/Cargo.lock'),

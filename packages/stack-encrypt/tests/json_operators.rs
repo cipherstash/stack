@@ -2187,10 +2187,11 @@ mod compiled_match {
         #[test]
         fn shared_predicate_refusals() {
             let cases: Value = serde_json::from_str(include_str!(
-                "../../../conformance/stack-encrypt/v1/eql-json.json"
+                "../../../conformance/stack-encrypt/v1/eql-json-v1.cases.json"
             ))
             .unwrap();
             assert_eq!(cases["version"], 1);
+            assert_eq!(cases["profile"], "eql-json-v1");
             for case in cases["predicate_refusals"].as_array().unwrap() {
                 let predicate = case["predicate"].as_str().unwrap();
                 assert_eq!(
