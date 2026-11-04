@@ -120,7 +120,7 @@ class User(Base):
     id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
     email: Mapped[Annotated[str, TextEq]]
     age: Mapped[Annotated[int, Passthrough]]
-    posts: Mapped[Annotated[List["Post"], Ignore]] = relationship()
+    posts: Mapped[Annotated[List["Post"], Ignore]] = relationship("Post")
 
 
 def test_a_sqlalchemy_class_declares_through_mapped():
@@ -315,7 +315,7 @@ def test_a_relationship_to_a_class_defined_later_is_refused_with_its_field():
             __tablename__ = "books"
             id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
             title: Mapped[Annotated[str, TextEq]]
-            authors: Mapped[Annotated[List["Author"], Ignore]] = relationship()  # noqa: F821
+            authors: Mapped[Annotated[List["Author"], Ignore]] = relationship("Author")  # noqa: F821
 
     error = refusal(build)
     assert error.code == "declaration_hints_unresolved"

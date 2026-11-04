@@ -30,6 +30,11 @@ def encrypt(plan: Plan, models: Sequence[Any]) -> List[Dict[str, object]]:
     """One dict per model: EQL JSON as ``str`` for a sealed field, the value
     for a passthrough. Raises ``InvalidValueError`` before any request."""
 
+def decrypt(plan: Plan, cls: type, rows: Sequence[Any]) -> List[Any]:
+    """One instance of ``cls`` per row, built with the plan's fields as
+    keyword arguments. Raises ``DecryptError`` or ``InvalidValueError``
+    before any request for what the rows themselves can answer."""
+
 def client_builds() -> int:
     """How many times the shared engine client has been built. For tests."""
 

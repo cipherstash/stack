@@ -4,12 +4,14 @@
 //! It holds the engine commit the build recorded (`build.rs`), the engine's
 //! check of a model's plan ([`plan`]), the credential lookup
 //! ([`credentials`]), the one engine client a process shares ([`client`]),
-//! the value rules ([`values`]) and `encrypt` itself ([`encrypt`]). Each
+//! the value rules ([`values`]), `encrypt` itself ([`encrypt`]) and
+//! `decrypt` ([`decrypt`]). Each
 //! reports an engine error as a [`refusal::Refusal`]. The Python SDK spec
 //! (#1341, "Layout") says what else belongs here.
 
 pub mod client;
 pub mod credentials;
+pub mod decrypt;
 pub mod encrypt;
 pub mod plan;
 pub mod refusal;

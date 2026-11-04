@@ -18,6 +18,9 @@ use stack_encrypt::dynamic::plaintext::{
     SourceError, TimeUnit,
 };
 
+use std::convert::Infallible;
+use std::marker::PhantomData;
+
 use stack_encrypt::Encrypt;
 
 use crate::refusal::Refusal;
@@ -245,6 +248,38 @@ pub fn read(bytes: &[u8]) -> Result<Scalar, Refusal> {
         .map_err(|ReadError(what)| malformed(what))
 }
 
+/// An opened scalar as a host value.
+///
+/// # Errors
+///
+/// What the value is, when the SDK has no host value for it: an integer
+/// wider than 128 bits, a date or timestamp outside the range, or a logical
+/// type the SDK does not read.
+pub fn scalar_of(ty: Option<Logical>, value: Physical<'_>) -> Result<Scalar, &'static str> {
+    Ok(match (ty, value) {
+        (None, Physical::Null) => Scalar::Null,
+        (None, Physical::Bool(b)) => Scalar::Bool(b),
+        (None, Physical::Int(i)) => Scalar::Int(i.to_i128().ok_or("an integer too wide")?),
+        (None, Physical::Float(Float::F32(f))) => Scalar::Float(f64::from(f)),
+        (None, Physical::Float(Float::F64(f))) => Scalar::Float(f),
+        (None, Physical::Text(s)) => Scalar::Text(s.to_owned()),
+        (None, Physical::Bytes(b)) => Scalar::Bytes(b.to_vec()),
+        (Some(Logical::Date), Physical::Int(days)) => Scalar::Date(
+            days.to_i128()
+                .and_then(|d| i32::try_from(d).ok())
+                .ok_or("a date outside the range")?,
+        ),
+        (Some(Logical::Timestamp(unit)), Physical::Int(count)) => Scalar::Timestamp(
+            kinds::timestamp_nanos(unit, count).ok_or("a timestamp outside the range")?,
+        ),
+        (Some(Logical::Decimal { scale }), Physical::Int(mantissa)) => Scalar::Decimal {
+            mantissa: mantissa.to_i128().ok_or("a decimal too wide")?,
+            scale,
+        },
+        _ => return Err("a logical type the SDK does not read"),
+    })
+}
+
 fn malformed(what: &str) -> Refusal {
     Refusal {
         code: "stack_encrypt_unknown".to_owned(),
@@ -254,8 +289,9 @@ fn malformed(what: &str) -> Refusal {
     }
 }
 
+/// Why a frame the engine returned could not be read: what was found.
 #[derive(Debug)]
-struct ReadError(&'static str);
+pub(crate) struct ReadError(pub(crate) &'static str);
 
 impl SinkError for ReadError {
     fn source(_: SourceError) -> Self {
@@ -268,46 +304,22 @@ struct Reader;
 impl Sink for Reader {
     type Ok = Scalar;
     type Error = ReadError;
-    type Seq = Never;
-    type Map = Never;
+    type Seq = Never<Scalar, Reader>;
+    type Map = Never<Scalar, Reader>;
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Scalar, ReadError> {
-        Ok(match (ty, value) {
-            (None, Physical::Null) => Scalar::Null,
-            (None, Physical::Bool(b)) => Scalar::Bool(b),
-            (None, Physical::Int(i)) => {
-                Scalar::Int(i.to_i128().ok_or(ReadError("an integer too wide"))?)
-            }
-            (None, Physical::Float(Float::F32(f))) => Scalar::Float(f64::from(f)),
-            (None, Physical::Float(Float::F64(f))) => Scalar::Float(f),
-            (None, Physical::Text(s)) => Scalar::Text(s.to_owned()),
-            (None, Physical::Bytes(b)) => Scalar::Bytes(b.to_vec()),
-            (Some(Logical::Date), Physical::Int(days)) => Scalar::Date(
-                days.to_i128()
-                    .and_then(|d| i32::try_from(d).ok())
-                    .ok_or(ReadError("a date outside the range"))?,
-            ),
-            (Some(Logical::Timestamp(unit)), Physical::Int(count)) => Scalar::Timestamp(
-                kinds::timestamp_nanos(unit, count)
-                    .ok_or(ReadError("a timestamp outside the range"))?,
-            ),
-            (Some(Logical::Decimal { scale }), Physical::Int(mantissa)) => Scalar::Decimal {
-                mantissa: mantissa.to_i128().ok_or(ReadError("a decimal too wide"))?,
-                scale,
-            },
-            _ => return Err(ReadError("a logical type the SDK does not read")),
-        })
+        scalar_of(ty, value).map_err(ReadError)
     }
 
     fn typed_null(self, _: FixedType) -> Result<Scalar, ReadError> {
         Ok(Scalar::Null)
     }
 
-    fn seq(self, _: Option<usize>) -> Result<Never, ReadError> {
+    fn seq(self, _: Option<usize>) -> Result<Never<Scalar, Reader>, ReadError> {
         Err(ReadError("a sequence"))
     }
 
-    fn map(self, _: Option<usize>) -> Result<Never, ReadError> {
+    fn map(self, _: Option<usize>) -> Result<Never<Scalar, Reader>, ReadError> {
         Err(ReadError("a map"))
     }
 
@@ -316,34 +328,52 @@ impl Sink for Reader {
     }
 }
 
-/// A container sink that is never built: a passthrough is one scalar.
-enum Never {}
+/// A container sink that is never built, for a sink that refuses
+/// containers: `O` is its `Ok`, `E` the sink of its elements and entries.
+pub(crate) enum Never<O, E> {
+    #[allow(dead_code)]
+    Void(Infallible, PhantomData<fn() -> (O, E)>),
+}
 
-impl SeqSink for Never {
-    type Ok = Scalar;
+impl<O, E: Sink<Error = ReadError>> SeqSink for Never<O, E> {
+    type Ok = O;
     type Error = ReadError;
-    type Element<'s> = Reader;
+    type Element<'s>
+        = E
+    where
+        Self: 's;
 
-    fn element(&mut self) -> Result<Reader, ReadError> {
-        match *self {}
+    fn element(&mut self) -> Result<E, ReadError> {
+        match self {
+            Self::Void(never, _) => match *never {},
+        }
     }
 
-    fn end(self) -> Result<Scalar, ReadError> {
-        match self {}
+    fn end(self) -> Result<O, ReadError> {
+        match self {
+            Self::Void(never, _) => match never {},
+        }
     }
 }
 
-impl MapSink for Never {
-    type Ok = Scalar;
+impl<O, E: Sink<Error = ReadError>> MapSink for Never<O, E> {
+    type Ok = O;
     type Error = ReadError;
-    type Entry<'s> = Reader;
+    type Entry<'s>
+        = E
+    where
+        Self: 's;
 
-    fn entry(&mut self, _: &str) -> Result<Reader, ReadError> {
-        match *self {}
+    fn entry(&mut self, _: &str) -> Result<E, ReadError> {
+        match self {
+            Self::Void(never, _) => match *never {},
+        }
     }
 
-    fn end(self) -> Result<Scalar, ReadError> {
-        match self {}
+    fn end(self) -> Result<O, ReadError> {
+        match self {
+            Self::Void(never, _) => match never {},
+        }
     }
 }
 

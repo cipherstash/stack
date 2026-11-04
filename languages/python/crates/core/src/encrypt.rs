@@ -12,7 +12,8 @@
 
 use stack_encrypt::dynamic::record::{self, Plan, EQL_KEY};
 use stack_encrypt::dynamic::{self, Output, ValueFrame};
-use stack_encrypt::{CipherText, Encrypt, StackCipherText};
+use stack_encrypt::kms::{DataKeySource, IndexKeySource};
+use stack_encrypt::{CipherText, Encrypt, KeysetCipher, StackCipherText};
 
 use crate::client;
 use crate::plan;
@@ -31,6 +32,7 @@ pub struct Field {
 
 /// A model's plan, built once per `Cipher` and read on every call.
 pub struct ModelPlan {
+    table: String,
     plan: Plan,
     fields: Vec<Field>,
 }
@@ -55,13 +57,27 @@ impl ModelPlan {
             })
             .collect();
         let plan = plan::build(table, &columns)?;
-        Ok(Self { plan, fields })
+        Ok(Self {
+            table: table.to_owned(),
+            plan,
+            fields,
+        })
     }
 
     /// The fields, in plan order. The extension writes each model's values
     /// in this order and reads each row's columns back in it.
     pub fn fields(&self) -> &[Field] {
         &self.fields
+    }
+
+    /// The table the model is stored in.
+    pub fn table(&self) -> &str {
+        &self.table
+    }
+
+    /// The engine's plan.
+    pub(crate) fn plan(&self) -> &Plan {
+        &self.plan
     }
 }
 
@@ -89,12 +105,27 @@ pub fn encrypt(
     rows: usize,
 ) -> Result<Vec<Vec<Column>>, Refusal> {
     let client = client::shared()?;
-    let tree = client.block_on(async {
-        let keyset = client.keyset();
-        let pending = record::encrypt_with(&keyset, source, &plan.plan, &targets::resolver())
-            .map_err(|error| plan::refusal(&error))?;
-        pending.await.map_err(|error| Refusal::of(&error))
-    })?;
+    client.block_on(encrypt_with(&client.keyset(), plan, source, rows))
+}
+
+/// [`encrypt`] under `keyset`.
+///
+/// # Errors
+///
+/// The engine's refusal for the encryption.
+pub async fn encrypt_with<K>(
+    keyset: &KeysetCipher<'_, K>,
+    plan: &ModelPlan,
+    source: ValueFrame,
+    rows: usize,
+) -> Result<Vec<Vec<Column>>, Refusal>
+where
+    K: DataKeySource + IndexKeySource + Sync + 'static,
+{
+    let tree = record::encrypt_with(keyset, source, &plan.plan, &targets::resolver())
+        .map_err(|error| plan::refusal(&error))?
+        .await
+        .map_err(|error| Refusal::of(&error))?;
     read_rows(plan, tree, rows)
 }
 
@@ -154,11 +185,13 @@ fn read_row(plan: &ModelPlan, row: StackCipherText) -> Result<Vec<Column>, Refus
     Ok(columns)
 }
 
-fn engine_fault(what: &str) -> Refusal {
+/// A refusal for an engine result of another shape than the SDK reads:
+/// a bug, never the caller's input.
+pub(crate) fn engine_fault(what: &str) -> Refusal {
     Refusal {
         code: "stack_encrypt_unknown".to_owned(),
         message: format!(
-            "the engine's output does not have the shape the SDK reads: {what}. \
+            "the engine's result does not have the shape the SDK reads: {what}. \
              Report this message as a stackencrypt bug."
         ),
         field: None,

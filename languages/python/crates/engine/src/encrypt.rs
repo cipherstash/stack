@@ -27,9 +27,9 @@ type FieldSpec<'py> = (String, Option<String>, Option<String>, Bound<'py, PyType
 /// A model's plan, built once by `Cipher` and passed to every call.
 #[pyclass(frozen, module = "stackencrypt._engine")]
 pub struct Plan {
-    plan: ModelPlan,
+    pub(crate) plan: ModelPlan,
     /// The Python type each field's value must have, in plan order.
-    kinds: Vec<PyKind>,
+    pub(crate) kinds: Vec<PyKind>,
 }
 
 /// Build the plan for a model stored in `table`.

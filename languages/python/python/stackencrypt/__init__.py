@@ -15,6 +15,7 @@ from stackencrypt._eql import *  # noqa: F403
 from stackencrypt._errors import (
     AuthenticationError,
     DeclarationError,
+    DecryptError,
     InvalidValueError,
     StashError,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "AuthenticationError",
     "Cipher",
     "DeclarationError",
+    "DecryptError",
     "Ignore",
     "InvalidValueError",
     "Passthrough",

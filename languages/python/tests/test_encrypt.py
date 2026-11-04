@@ -29,28 +29,11 @@ from stackencrypt import (
     TextEq,
     Timestamp,
 )
-from stackencrypt import _engine
 
 SECRET = "secret@example.com"
 
 
-@pytest.fixture(autouse=True)
-def credentials(monkeypatch, tmp_path):
-    """Credentials that parse, so ``Cipher`` builds. Nothing here sends them."""
-    for name in ("CS_CLIENT_ID", "CS_CLIENT_KEY", "CS_CTS_HOST", "CS_ZEROKMS_HOST", "CS_VITUR_HOST"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("CS_CLIENT_ACCESS_KEY", "CSAKtestKeyId.testKeySecret")
-    monkeypatch.setenv("CS_WORKSPACE_CRN", "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY")
-    monkeypatch.setenv("CS_CONFIG_PATH", str(tmp_path / "no-profile"))
-
-
-@pytest.fixture
-def untouched():
-    """Fails the test if the shared client was built or a request was sent."""
-    builds, requests = _engine.client_builds(), _engine.request_count()
-    yield
-    assert _engine.client_builds() == builds
-    assert _engine.request_count() == requests
+pytestmark = pytest.mark.usefixtures("credentials")
 
 
 def cipher_for(**fields):
