@@ -1,4 +1,12 @@
 
+## [0.9.0] - 2026-11-04
+
+### Documentation
+
+- make examples executable and copyable
+- clarify features and Rust requirements
+- clarify crate guides and navigation
+
 ## [0.8.1] - 2026-10-26
 
 ## [0.8.0] - 2026-10-21

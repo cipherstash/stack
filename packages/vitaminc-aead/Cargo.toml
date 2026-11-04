@@ -17,10 +17,10 @@ features = ["chrono", "rust_decimal", "uuid", "hlist"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-vitaminc-aead-derive = { version = "0.8.1", path = "../aead-derive" }
-vitaminc-context = { version = "0.8.1", path = "../context" }
-vitaminc-protected = { version = "0.8.1", path = "../protected" }
-vitaminc-random = { version = "0.8.1", path = "../random" }
+vitaminc-aead-derive = { version = "0.9.0", path = "../aead-derive" }
+vitaminc-context = { version = "0.9.0", path = "../context" }
+vitaminc-protected = { version = "0.9.0", path = "../protected" }
+vitaminc-random = { version = "0.9.0", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }

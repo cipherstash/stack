@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-04
+
+### Breaking
+
+- **Breaking:** return frames and blobs in a Buffer, so the plaintext they hold is wiped sixteen bytes a store
+- **Breaking:** make Buffer a Controlled type, so its bytes are read through risky_ref and not a plain slice
+
+### Documentation
+
+- clarify public API contracts
+- clarify features and Rust requirements
+- clarify crate guides and navigation
+- list ProtectedRef as a source and pin which owners lend one
+- rewrap the Buffer return docs and name Buffer in the test helper, so the text reads as the rest of the file
+- fix the remaining doc links a private-items build refuses, so internal docs build with warnings denied
+- show a generic caller checking a Scalar's depth, and give Option one reason
+
+### Features
+
+- encrypt a ProtectedRef as the &Protected it borrows from
+- add Scalar, an encrypt-side marker for sources that are one leaf
+
+### Fixes
+
+- find a repeated map key where it lies in the frame, so no key is copied out and freed unwiped
+- make borrowed strings say text or bytes, and stop promising a ProtectedRef is wiped
+- check in debug builds that a Vec leaf sink was sized with max_len, and show presized wiping sinks in the examples, since a growing Vec frees plaintext unwiped
+- inline the Int and TimeUnit helpers, so a caller in another crate is not handed plaintext through an unwiped return slot
+
+### Performance
+
+- wipe sixteen bytes a store, so a growing frame or blob is not wiped a byte at a time
+- compare an object's keys one by one while there are few, so validating a record allocates no hash set
+
 ## [0.8.1] - 2026-10-26
 
 ### Features

@@ -1,4 +1,47 @@
 
+## [0.9.0] - 2026-11-04
+
+### Breaking
+
+- **Breaking:** format transport Display values into a wiped buffer, and return transport frames Protected
+- **Breaking:** return frames and blobs in a Buffer, so the plaintext they hold is wiped sixteen bytes a store
+- **Breaking:** make Buffer a Controlled type, so its bytes are read through risky_ref and not a plain slice
+
+### Documentation
+
+- name the Go implementation of the storage profile
+- name storage blobs in ErrMalformed, and record that Go writes a present pointer unmarked
+- clarify features and Rust requirements
+- clarify crate guides and navigation
+- record the stack copies the zeroize audit found and why they are not wiped
+- say what the compared formats leave unwiped, so the bench gap reads correctly
+- name all five formats in the storage bench's first sentence, and call Borsh's bytes borsh_bytes so they read apart from the crate
+- say the storage blob comes back in a Buffer, since to_vec no longer returns it Protected
+- rewrap the Buffer return docs and name Buffer in the test helper, so the text reads as the rest of the file
+- state that the performance tables predate the Buffer and reader changes, rather than promise a re-measure
+- say that the writer's wipes run on drop, so a panic under panic=abort leaves a partly written blob unwiped
+- measure the performance tables again on the final writer and reader, since the old tables were from before the writer, the wipe and the reader changed
+- lead the performance section with what the storage profile buys, since the tables show it is neither the fastest nor the smallest, and say why one record costs more than its JSON
+- say why the storage profile is used over MessagePack and Borsh, naming what each leaves out, since the performance tables show it is neither the fastest nor the smallest
+- cut the storage profile's case to a four-item checklist, each linking to its own section, so the reasons read at a glance
+- say what validating the blob before building buys, since the checklist named the property without its reasons
+- call the storage reader's stance defensive by design, since the section is about what refusing hostile input whole protects, not about validation
+- link the write function unambiguously, so a private-items docs build no longer fails
+
+### Fixes
+
+- reserve at most 1024 map key positions from a length hint, so a Serialize that overstates its map is refused rather than aborting the process
+
+### Performance
+
+- add Criterion benches for the storage profile, so its cost is measured
+- compare the storage profile with MessagePack and Borsh, so its cost is set against compact binary formats
+- refuse a repeated key as the storage writer writes, so no blob is read back before it is returned
+- wipe sixteen bytes a store, so a growing frame or blob is not wiped a byte at a time
+- build an entry's error path only when an error is placed at it, so reading or writing a field allocates nothing
+- tell a node's kind from its tag, so a text or bytes value is decoded once on read and not twice
+- compare an object's keys one by one while there are few, so validating a record allocates no hash set
+
 ## [0.8.1] - 2026-10-26
 
 Nothing 0.8.0 wrote or read changes: the transport frame, the transport serde format and the ciphertext codec write the same bytes, and existing ciphertexts are unaffected.

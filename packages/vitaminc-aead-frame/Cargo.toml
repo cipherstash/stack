@@ -24,8 +24,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 all-features = true
 
 [dependencies]
-vitaminc-aead = { version = "0.8.1", path = "../aead" }
-vitaminc-protected = { version = "0.8.1", path = "../protected", optional = true }
+vitaminc-aead = { version = "0.9.0", path = "../aead" }
+vitaminc-protected = { version = "0.9.0", path = "../protected", optional = true }
 serde = { workspace = true, optional = true }
 
 [features]
