@@ -121,14 +121,17 @@ pub trait Encrypt {
 /// `ProtectedRef` forms of each, and the chrono, `rust_decimal` and uuid
 /// types behind their features. A container does not, and neither does an
 /// `Option<T>`, even of a scalar: its `None` is a leaf too, but a caller
-/// that bounds on `Scalar` usually means a value that is present.
+/// that bounds on `Scalar` asks for a value that is present, and decides
+/// for itself how to seal an absent one.
 ///
 /// `DEPTH` says the same thing, but stable Rust cannot bound a generic on
 /// a constant, so a caller that must produce one sealed leaf from any source
 /// bounds on this trait instead. The trait is open: a hand-written leaf,
 /// such as a newtype that encodes itself to one byte string, implements it
 /// with an empty impl, and should assert that its depth agrees, so the
-/// marker can never land on a container:
+/// marker can never land on a container. A generic caller cannot see that
+/// assertion, so it repeats the check at its own use, in an inline `const`
+/// that is evaluated once `S` is known:
 ///
 /// ```
 /// use vitaminc_aead::plaintext::depth;
@@ -148,7 +151,10 @@ pub trait Encrypt {
 /// const _: () = assert!(depth::is_scalar(<Blob as Encrypt>::DEPTH));
 ///
 /// /// Seals exactly one leaf, whatever it is handed.
-/// fn seals_one_leaf<S: Scalar>(value: S) -> S { value }
+/// fn seals_one_leaf<S: Scalar>(value: S) -> S {
+///     const { assert!(depth::is_scalar(S::DEPTH), "a `Scalar` is one leaf") };
+///     value
+/// }
 ///
 /// seals_one_leaf(42i32);
 /// seals_one_leaf(vec![1u8, 2, 3]);

@@ -246,15 +246,15 @@ impl<'b, T: ?Sized> Scalar for &&'b T where &'b T: Scalar {}
 /// [`FIXED`](Encrypt::FIXED) type (an int, a float, a date, a timestamp,
 /// a decimal, a uuid), that leaf is a typed null, which the encrypting
 /// sink pads to the length of a `Some`, to prevent differentiating between
-/// an absent and present values.
+/// an absent value and a present value.
 ///
 /// Otherwise (text, bytes, a bool, a container) it is the plain
 /// null, the same leaf as a host null. An `Option<Option<T>>` has `T`'s
 /// type too, so its two `None`s seal alike, as they always have.
 ///
 /// An `Option<T>` is not a [`Scalar`], even when `T` is: its walk is one
-/// leaf, but this approach allows the caller to choose how encoding of an
-/// absent value is handled.
+/// leaf, but a caller that bounds on `Scalar` asks for a value that is
+/// present. That caller decides for itself how to seal an absent value.
 ///
 /// # Examples
 ///
