@@ -1,4 +1,11 @@
 
+## [0.9.0] - 2026-11-04
+
+### Breaking
+
+- **Breaking:** the crate now needs Rust 1.89 or later.
+  Version 0.8.1 needed Rust 1.88.
+
 ## [0.8.1] - 2026-10-26
 
 ## [0.8.0] - 2026-10-21

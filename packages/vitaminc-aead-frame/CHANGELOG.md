@@ -1,4 +1,56 @@
 
+## [0.9.0] - 2026-11-04
+
+### Wire format
+
+- Storage blobs and transport frames are the same, byte for byte, as in 0.8.1.
+  Version 0.8.1 and version 0.9.0 can each read what the other writes.
+  Error kinds, messages, and paths are also unchanged.
+  Storage version 1 will not change, as architecture decision record (ADR) 0003 records.
+
+### Breaking
+
+- **Breaking:** `storage::to_vec` and `serde::to_vec` now return a `vitaminc_protected::Buffer`.
+  In 0.8.1, `storage::to_vec` returned `Protected<Vec<u8>>`, and `serde::to_vec` returned `Vec<u8>`.
+  To read the bytes in a `Buffer`, call `Controlled::risky_ref`.
+  To take the `Vec<u8>` out of it, call `Controlled::risky_unwrap`.
+  A `Buffer` wipes its bytes when it is dropped.
+- **Breaking:** the crate now needs Rust 1.89 or later.
+  Version 0.8.1 needed Rust 1.88.
+
+### Fixes
+
+- The writer now refuses a `Serialize` implementation that reports more map entries than it writes.
+  In 0.8.1, a large enough reported length made the writer abort the process.
+  The writer now reserves space for at most 1,024 keys from the reported length.
+- The transport writer now formats `Display` values into a buffer that it wipes.
+  Map keys and the output of `collect_str` are formatted this way.
+  In 0.8.1, the writer formatted these values into a `String`, and freed the `String` without wiping it.
+
+### Performance
+
+- Writing is faster than in 0.8.1.
+  Reading records is also faster.
+  The changes are:
+
+  - The storage writer refuses a repeated key while it writes.
+    The writer no longer reads each blob back before returning it.
+  - The storage and transport formats now share one writer.
+    Transport writes are 27% to 57% faster as a result.
+  - The writers wipe outgrown buffers 16 bytes at a time, not 1 byte at a time.
+  - The reader and the writers no longer allocate memory for each field.
+  - The reader decodes a text or bytes value once, not twice.
+
+  The README contains new performance measurements.
+
+### Documentation
+
+- The README compares the storage profile with JSON, MessagePack, and Borsh, on speed and size.
+  The README also says what each of those formats leaves unwiped.
+  The storage profile is neither the fastest format nor the smallest.
+  The README says why vitaminc uses the storage profile anyway.
+- The storage profile documentation names its Go implementation, in the `vcffi` package.
+
 ## [0.8.1] - 2026-10-26
 
 Nothing 0.8.0 wrote or read changes: the transport frame, the transport serde format and the ciphertext codec write the same bytes, and existing ciphertexts are unaffected.
