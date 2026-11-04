@@ -3,7 +3,12 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
-import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
+import {
+  readWorkflow,
+  triggers,
+  WORKFLOW_DIR,
+  workflowFiles,
+} from './lib/workflows.mjs'
 
 /**
  * Guards that the stack-* crates, their node bindings and the Go module are
@@ -379,8 +384,6 @@ describe('the imported workflow directory is gone', () => {
 // ---------------------------------------------------------------------------
 // The silent failures specific to this set
 // ---------------------------------------------------------------------------
-
-const triggers = (wf) => wf?.on ?? wf?.[true] ?? {}
 
 /** Every step of every root workflow, with its job and effective env. */
 const STEPS = ROOT_WORKFLOWS.flatMap(({ relPath, wf }) =>
