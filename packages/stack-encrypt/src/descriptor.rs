@@ -84,16 +84,18 @@ impl Descriptor {
     /// The separator between the parts of a list.
     pub const SEPARATOR: char = '/';
 
-    /// The longest descriptor ZeroKMS accepts, in bytes of the rendered
-    /// string: the protocol's [`MAX_DESCRIPTOR_LEN`](crate::kms::MAX_DESCRIPTOR_LEN).
-    /// ZeroKMS derives key material over a fixed block of that size holding
-    /// the descriptor, so a longer one cannot be bound. Every data-key
+    /// The longest descriptor a key backend accepts, in bytes of the
+    /// rendered string. The limit is the same for every key backend, so
+    /// that a context which fits one fits all. It is ZeroKMS's
+    /// [`MAX_DESCRIPTOR_LEN`](crate::kms::MAX_DESCRIPTOR_LEN): ZeroKMS
+    /// derives key material over a fixed block of that size holding the
+    /// descriptor, so a longer one cannot be bound. Every data-key
     /// request checks its descriptors against this before anything is sent
     /// ([`Error::DescriptorTooLong`](crate::Error::DescriptorTooLong)); a
     /// context is free to be long, but what it renders to must fit — and
     /// the base64 escape grows a part by a third, so an escaped part fits
     /// less than a plain one.
-    pub const MAX_LEN: usize = stack_kms::MAX_DESCRIPTOR_LEN;
+    pub const MAX_LEN: usize = 512;
 
     /// Render `context` — any [`IntoContext`] type — from its parts.
     ///
@@ -922,6 +924,16 @@ mod tests {
         let escaped = Descriptor::of(format!("/{}", "a".repeat(399)));
         assert_eq!(escaped.len(), 4 + 536);
         assert!(!escaped.fits());
+    }
+
+    /// The limit is stated here, not taken from ZeroKMS, so that a key
+    /// vendor backend does not reach a ZeroKMS constant. It must stay equal
+    /// to ZeroKMS's, or a context that fits one key backend would not fit
+    /// another.
+    #[test]
+    fn the_limit_is_zerokms_limit_for_every_key_backend() {
+        assert_eq!(Descriptor::MAX_LEN, 512);
+        assert_eq!(Descriptor::MAX_LEN, crate::kms::MAX_DESCRIPTOR_LEN);
     }
 
     #[test]

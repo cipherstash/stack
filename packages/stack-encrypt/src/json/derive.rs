@@ -350,6 +350,7 @@ impl Selectors {
                 id: Uuid::from_u128(1),
                 name: None,
                 prf: HmacSha256Prf::new(Protected::new([7; 32])),
+                retention: crate::keyset::Retention::UntilEvicted,
             }),
             Context::from_encoded(b"users/profile").into_owned(),
         )
@@ -3051,6 +3052,7 @@ mod tests {
                     id: Uuid::from_u128(2),
                     name: None,
                     prf: prf(),
+                    retention: crate::keyset::Retention::UntilEvicted,
                 }),
                 selectors.context.clone(),
             );

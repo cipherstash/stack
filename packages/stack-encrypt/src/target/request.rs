@@ -604,6 +604,7 @@ mod tests {
                 id: Uuid::from_u128(id),
                 name: None,
                 prf: vitaminc_hmac::HmacSha256Prf::new(vitaminc_protected::Protected::new([1; 32])),
+                retention: crate::keyset::Retention::UntilEvicted,
             })),
         }
     }
