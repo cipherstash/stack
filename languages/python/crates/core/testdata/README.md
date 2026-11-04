@@ -12,6 +12,8 @@ This file is a copy of vitaminc's shared value corpus. Each vector gives a host 
 
 The file is a copy because the published vitaminc crates do not include it. Never edit the copy by hand.
 
+The root `biome.json` leaves this file out, so Biome does not reformat it. A reformat would change the blob hash above. Then the copy would no longer match its source.
+
 vitaminc only adds rows to this corpus. It never changes or removes a row. So an older copy is still correct. It can miss newer rows.
 
 To update the copy, download the file at a newer commit and replace this one:
