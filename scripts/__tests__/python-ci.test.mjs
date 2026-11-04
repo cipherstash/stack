@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
@@ -40,7 +40,8 @@ const read = (rel) => readFileSync(join(REPO_ROOT, rel), 'utf8')
 /**
  * The directories outside `languages/python` whose crates the workspace
  * compiles. Every `[[package]]` in its Cargo.lock without a `source` line is
- * a path dependency. The stack-* ones live at `packages/<name>`.
+ * a path dependency. The stack-* ones live at `packages/<name>`. The EQL
+ * crates live at `packages/eql/crates/<name>`.
  */
 function pathDependencyTrees() {
   const lock = read(`${PYTHON_ROOT}/Cargo.lock`)
@@ -50,10 +51,12 @@ function pathDependencyTrees() {
     const name = /^name = "([^"]+)"/m.exec(block)?.[1]
     if (!name) throw new Error(`Cargo.lock package with no name:\n${block}`)
     if (name.startsWith('stackencrypt-')) continue
-    const dir = `packages/${name}`
-    if (!existsSync(join(REPO_ROOT, dir, 'Cargo.toml'))) {
+    const dir = [`packages/${name}`, `packages/eql/crates/${name}`].find((d) =>
+      existsSync(join(REPO_ROOT, d, 'Cargo.toml')),
+    )
+    if (!dir) {
       throw new Error(
-        `${PYTHON_ROOT}/Cargo.lock lists ${name} as a path dependency, and ${dir}/Cargo.toml does not exist; teach this test where it lives`,
+        `${PYTHON_ROOT}/Cargo.lock lists ${name} as a path dependency, and neither packages/${name} nor packages/eql/crates/${name} holds its Cargo.toml; teach this test where it lives`,
       )
     }
     trees.add(dir)
@@ -68,6 +71,32 @@ function pathDependencyTrees() {
  */
 const coversTree = (pattern, file) =>
   pattern.endsWith('/**') && file.startsWith(pattern.slice(0, -2))
+
+/**
+ * The files the workspace's crates compile through a `#[path = "..."]`
+ * module. Cargo.lock does not record them, so they are read from every `.rs`
+ * file under `crates/`. A path is resolved from the directory of the file
+ * that names it, which is Rust's rule outside an inline `mod { }` block.
+ */
+function pathModuleFiles() {
+  const files = []
+  const walk = (dir) => {
+    for (const entry of readdirSync(join(REPO_ROOT, dir), {
+      withFileTypes: true,
+    })) {
+      const rel = `${dir}/${entry.name}`
+      if (entry.isDirectory()) walk(rel)
+      else if (entry.name.endsWith('.rs')) {
+        const attribute = /#\[\s*path\s*=\s*"([^"]+)"\s*\]/g
+        for (const match of read(rel).matchAll(attribute)) {
+          files.push(posix.normalize(`${dir}/${match[1]}`))
+        }
+      }
+    }
+  }
+  walk(`${PYTHON_ROOT}/crates`)
+  return files.sort()
+}
 
 describe('tests-python.yml', () => {
   it('runs on pull requests touching every tree the Python workspace compiles', () => {
@@ -88,6 +117,21 @@ describe('tests-python.yml', () => {
     expect(
       missing,
       `pull_request.paths does not select these trees, which the Python workspace compiles or generates from:\n${missing.join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('runs on pull requests touching a file the core crate compiles by #[path]', () => {
+    const paths = triggers(readWorkflow(WORKFLOW)).pull_request?.paths ?? []
+    const files = pathModuleFiles()
+    expect(files).toContain('languages/golang/encrypt/guest/src/targets.rs')
+    const exact = (pattern, file) => pattern === file
+    const missing = files.filter(
+      (file) =>
+        !filterCovers(paths, file, (p, f) => exact(p, f) || coversTree(p, f)),
+    )
+    expect(
+      missing,
+      `pull_request.paths does not select these files, which crates/core compiles by #[path]:\n${missing.join('\n')}`,
     ).toEqual([])
   })
 

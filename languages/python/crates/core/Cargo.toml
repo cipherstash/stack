@@ -10,5 +10,25 @@ edition.workspace = true
 publish = false
 repository.workspace = true
 
+[features]
+default = ["eql"]
+# Not a switch. `src/lib.rs` compiles the EQL resolver from the Go guest's
+# own file (`languages/golang/encrypt/guest/src/targets.rs`), and that file
+# reads a feature of exactly this name. Every build of the SDK holds the EQL
+# types, so the crate refuses to compile without it.
+eql = []
+
 [dependencies]
+# By path, like every other eql-bindings dependency in the repository: the
+# SQL that stores a payload and the Rust that emits it must agree
+# (scripts/lint-no-eql-registry-pins.mjs).
+eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["targets"] }
+# For the engine error's diagnostic code.
+miette = "7.5.0"
+# For the plan's frame: the fields in declaration order.
+serde = "1"
 stack-encrypt = { workspace = true }
+
+[dev-dependencies]
+# The shared resolver file's own tests use it.
+serde_json = "1"
