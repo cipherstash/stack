@@ -30,6 +30,10 @@
  * fails the file rather than skipping it: this proves a claim made to
  * customers. Runs from `vitest.protect-crossover.config.ts` as the
  * `test:protect-crossover` task.
+ *
+ * `docs/migration/protect-dynamodb-to-stack.md` cites these tests by name, and
+ * `protect-upgrade-guide.e2e.test.ts` fails when a cited name stops existing:
+ * renaming or removing a test means updating the guide's claim with it.
  */
 import { csColumn, csTable } from '@cipherstash/protect'
 import { protectDynamoDB } from '@cipherstash/protect-dynamodb'

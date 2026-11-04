@@ -30,6 +30,10 @@
  * mode hides the credentials from `test:e2e`) and it runs from its own config
  * as the `test:protect-compat` task, a step of its own (with
  * `--env-mode=loose`) in the `e2e-tests` job in `tests.yml`.
+ *
+ * `docs/migration/protect-dynamodb-to-stack.md` cites these tests by name, and
+ * `protect-upgrade-guide.e2e.test.ts` fails when a cited name stops existing:
+ * renaming or removing a test means updating the guide's claim with it.
  */
 import { csColumn, csTable, type protect } from '@cipherstash/protect'
 import { protectDynamoDB } from '@cipherstash/protect-dynamodb'
