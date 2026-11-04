@@ -45,14 +45,19 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 ## Schema and Stored Versions
 
 Schema authoring and every write are EQL v3-only. Existing v2 DynamoDB items
-remain readable by passing the same v3 table descriptor plus
-`{ storedEqlVersion: 2 }` to `decryptModel` or `bulkDecryptModels`. Both entries
-serve legacy reads — the default `@cipherstash/stack` one and
+remain readable with the same v3 table descriptor. A top-level scalar attribute
+carries no version, so it reads with or without `{ storedEqlVersion: 2 }`, and
+one read call covers items written before and after the upgrade. Pass
+`{ storedEqlVersion: 2 }` to `decryptModel` or `bulkDecryptModels` when a grouped
+v2 field is declared by its bare leaf name (see "Grouped v2 fields" below): only
+that read matches the leaf inside its group. Both
+entries serve legacy reads — the default `@cipherstash/stack` one and
 `@cipherstash/stack/wasm-inline`.
 
-There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and no data migration is required. Items written by `@cipherstash/protect-dynamodb` (6.x) keep working as stored: Stack decrypts their `__source` attributes as they are, and `encryptQuery` mints the same `__hmac` they carry, so existing equality lookups still match. Keep each property key and DB column name the same, and map each v2 equality column to an `Eq` domain (`TextEq`, `IntegerEq`, `BigintEq`, …) — an `Ord` domain mints no equality term. Re-encrypting items with the v3 schema is optional. Three differences to plan for:
+There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and no data migration is required. Items written by `@cipherstash/protect-dynamodb` (6.x) keep working as stored: Stack decrypts their `__source` attributes as they are, and `encryptQuery` mints the same `__hmac` they carry, so existing equality lookups still match. Keep each property key and DB column name the same, and map each v2 equality column to an `Eq` domain (`TextEq`, `IntegerEq`, `BigintEq`, …) — an `Ord` domain mints no equality term. Re-encrypting items with the v3 schema is optional. Plan for these differences:
 
-- A v3 `Boolean` mints no equality term, so a boolean `__hmac` that protect-dynamodb stored can no longer be queried. Re-encrypting does not bring it back; filter on a plaintext attribute instead. When Stack updates a boolean in place, `REMOVE` the stale `<attr>__hmac` in the same `UpdateItem`.
+- A v3 `Boolean` mints no equality term, so a boolean `__hmac` that protect-dynamodb stored can no longer be queried. Re-encrypting does not bring it back; filter on a plaintext attribute instead.
+- When Stack updates an attribute in place and its v3 domain writes no `__hmac` (`Boolean`, an `Ord` domain, or a storage-only domain such as `Text`), `REMOVE` the stale `<attr>__hmac` in the same `UpdateItem`. Otherwise an equality lookup on the old value still matches the item.
 - A v2 `downcase` filter has no v3 equivalent: lowercase the value before `encryptQuery` and the stored `__hmac` matches.
 - A v2 `dataType('json')` attribute was stored as a scalar ciphertext, not a `types.Json` document, and does not decrypt through the adapter as `types.Json`.
 
@@ -467,8 +472,11 @@ reconstruct a legacy v2 envelope when explicitly requested.
 
 Let `T` be inferred from the argument; do not pass explicit type arguments on the v3 path.
 
-For a stored v2 item, pass `{ storedEqlVersion: 2 }` as `readOptions`. The table
-is still the current v3 descriptor, which supplies table and column identity.
+For a stored v2 item, pass `{ storedEqlVersion: 2 }` as `readOptions`. It is
+needed for a grouped v2 field declared by its bare leaf name; a top-level scalar
+item reads either way. The
+table is still the current v3 descriptor, which supplies table and column
+identity.
 
 That descriptor must be one of the tables you passed to `Encryption({ schemas })`.
 The adapter forwards it to the client to drive envelope and `Date` reconstruction,

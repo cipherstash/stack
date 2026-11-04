@@ -105,7 +105,10 @@ function toAttributes(
 const itemToRow = (item: Item) =>
   Object.fromEntries(COLUMNS.map((col) => [col, toEnvelope(item, col)]))
 
-const rowToItem = (pk: string, row: Record<Column, Envelope>): Item =>
+const rowToItem = (
+  pk: string,
+  row: Record<Column, { c?: unknown; hm?: unknown }>,
+): Item =>
   Object.assign({ pk }, ...COLUMNS.map((col) => toAttributes(row[col], col)))
 
 /** The ciphertexts of an item or row, keyed by column, for byte comparison. */
@@ -162,10 +165,12 @@ describe('cross-store: DynamoDB <-> Postgres with no re-encryption', () => {
     )
     const domain = column === 'email' ? 'query_text_eq' : 'query_integer_eq'
     const rows = await sql.unsafe(
-      `SELECT pk FROM ${tableName} WHERE eql_v3.eq("${column}", $1::jsonb::eql_v3.${domain}) ORDER BY pk`,
+      `SELECT pk FROM ${tableName} WHERE eql_v3.eq("${column}", $1::jsonb::eql_v3.${domain})`,
       [term as never],
     )
-    return rows.map((r) => (r as unknown as { pk: string }).pk)
+    // Sorted here, not by ORDER BY: the database collation decides where '#'
+    // and digits fall, and the expectations are in JavaScript's order.
+    return rows.map((r) => (r as unknown as { pk: string }).pk).sort()
   }
 
   beforeAll(async () => {
@@ -302,7 +307,7 @@ describe('cross-store: DynamoDB <-> Postgres with no re-encryption', () => {
           await legacy.decryptModel(item, legacyUsers),
           'protect-dynamodb decryptModel',
         ),
-      ).toMatchObject(model)
+      ).toEqual(model)
     })
 
     it('the item carries the same __hmac a native DynamoDB write would, so existing key conditions match it', async () => {
@@ -322,7 +327,9 @@ describe('cross-store: DynamoDB <-> Postgres with no re-encryption', () => {
     })
 
     it('one SQL query finds the Stack row beside the protect-dynamodb rows', async () => {
-      expect(await findBy('age', 36)).toEqual(['user#1', 'user#10', 'user#3'])
+      expect(await findBy('age', 36)).toEqual(
+        ['user#1', 'user#10', 'user#3'].sort(),
+      )
     })
   })
 
@@ -357,10 +364,7 @@ describe('cross-store: DynamoDB <-> Postgres with no re-encryption', () => {
     })
 
     it('becomes a DynamoDB item Stack 1.x decrypts, identical to what protect-dynamodb wrote', async () => {
-      const item = Object.assign(
-        { pk: model.pk },
-        ...COLUMNS.map((col) => toAttributes(payloads[col], col)),
-      ) as Item
+      const item = rowToItem(model.pk, payloads)
       expect(
         ok(await stack.decryptModel(item, users), 'stack decryptModel'),
       ).toEqual(model)
@@ -380,18 +384,9 @@ describe('cross-store: DynamoDB <-> Postgres with no re-encryption', () => {
     })
 
     it('becomes a Postgres EQL v3 row that SQL finds and Stack 1.x decrypts', async () => {
-      const row = Object.fromEntries(
-        COLUMNS.map((col) => [
-          col,
-          {
-            v: 3,
-            i: { t: users.tableName, c: col },
-            c: payloads[col].c,
-            ...(payloads[col].hm ? { hm: payloads[col].hm } : {}),
-          },
-        ]),
-      )
-      await insert(model.pk, row)
+      // The same two copies as every other test: payload → attributes →
+      // EQL v3 envelope.
+      await insert(model.pk, itemToRow(rowToItem(model.pk, payloads)))
       const stored = await selectRow(model.pk)
       expect(ciphertextsOfRow(stored)).toEqual(ciphertextsOfRow(payloads))
 

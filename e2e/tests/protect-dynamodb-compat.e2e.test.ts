@@ -638,7 +638,9 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
   // protect-dynamodb 6.0.1 is frozen, the app moves to Stack 1.x, and every
   // read and equality query keeps working against the stored bytes. The
   // backfill in the acceptance test above is optional; this block runs the
-  // same app WITHOUT it and proves nothing needed rewriting.
+  // same app WITHOUT it. The proof that no rewrite is needed is that the reads
+  // and queries pass against bytes nothing has rewritten; the last test only
+  // confirms that Stack's reads left those bytes as they were.
   // -------------------------------------------------------------------------
 
   describe('no re-encryption: a code-only upgrade over untouched legacy items', () => {
@@ -715,8 +717,10 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
         ),
       ] as Record<string, unknown>[]
       for (const row of written) table.set(row.pk as string, Object.freeze(row))
-      // Frozen, so an in-place write by Stack would throw (ESM is strict),
-      // and snapshotted, so the last test can compare every stored byte.
+      // Frozen: every attribute is a top-level string, so a shallow freeze
+      // covers the whole item. An in-place write by Stack throws if the
+      // writing code is strict and is silently dropped if not, so the
+      // snapshot is what catches either case in the last test.
       snapshot = JSON.stringify([...table.entries()])
     }, 60_000)
 
@@ -810,20 +814,24 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
       for (const row of stored()) {
         expect(row.active__hmac, row.pk as string).toMatch(/^[0-9a-f]{64}$/)
       }
+      // Control: the same client mints a term for a queryable column, so the
+      // refusal below is about the Boolean domain, not the service.
+      expect(await hmOf(model.email, users, users.email)).toBe(item.email__hmac)
+      // A Boolean is storage-only: it carries no index, so the query is
+      // refused before anything reaches ZeroKMS.
       const result = await client.encryptQuery(
         true as never,
         { table: users, column: users.active } as never,
       )
-      // Either refused or returned with no `hm`: both mean no term to match.
-      const hm =
-        'failure' in result && result.failure !== undefined
-          ? undefined
-          : (result.data as { hm?: string } | null)?.hm
-      expect(hm).toBeUndefined()
+      expect(
+        (result as { failure?: { message?: string } }).failure?.message,
+      ).toMatch(/no indexes configured/)
     })
 
-    // Runs last: the whole block above must have left every byte in place.
-    it('no legacy item was rewritten', () => {
+    // Runs last. Nothing in this block writes to `table`, so this cannot show
+    // a write path leaves legacy items alone. It shows the reads and queries
+    // above did not change the items they ran against.
+    it("Stack's reads and queries left every stored item byte-identical", () => {
       expect(JSON.stringify([...table.entries()])).toBe(snapshot)
       expect(table.size).toBe(corpus.length)
     })
