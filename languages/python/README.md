@@ -84,6 +84,51 @@ A passthrough `datetime` field needs a `timestamptz` column. psycopg reads a `ti
 
 `decrypt` checks every row before it sends anything. A value stored under another table or column raises `DecryptError` with the code `decrypt_foreign_row`. A passthrough value of another type than the field declares raises `InvalidValueError`. When any row fails, `decrypt` returns no instances.
 
+## Declare a SQLAlchemy relationship
+
+A SQLAlchemy relationship is not a column. Every annotated field needs a marker, so write a relationship in one of two ways:
+
+- **A collection,** such as an author's books: leave the relationship without an annotation. The decorator never reads it.
+- **One object,** such as a book's author: mark it `Ignore`. The SDK then leaves it out.
+
+```python
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from stackencrypt import Ignore
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+@stackencrypt.model("authors")
+class Author(Base):
+    __tablename__ = "authors"
+    id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+    name: Mapped[Annotated[str, TextEq]]
+    books = relationship("Book", back_populates="author")   # a list of Book
+
+
+@stackencrypt.model("books")
+class Book(Base):
+    __tablename__ = "books"
+    id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
+    author_id: Mapped[Annotated[int, Passthrough]] = mapped_column(ForeignKey("authors.id"))
+    author: Mapped[Annotated["Author", Ignore]] = relationship(back_populates="books")
+```
+
+Do not mark a collection `Ignore`. SQLAlchemy reads the type directly inside `Mapped[...]`, and it does not look inside `Annotated`. So `Mapped[Annotated[list["Book"], Ignore]]` does not give a list. The cost of the unannotated form is that a type checker does not know the type of `books`.
+
+If a book can have no author, write `Optional["Author"]`. Then the relationship must name its target, as `relationship("Author")` does:
+
+```text
+author: Mapped[Annotated[Optional["Author"], Ignore]] = relationship("Author", back_populates="books")
+```
+
+With this form, a new `Book` has `author` set to `None` until you set it. A bare `relationship()` fails here, because SQLAlchemy takes `Optional["Author"]` as the target.
+
+`Author` must be defined before `Book`, because the decorator evaluates `"Author"` in the hint when `Book`'s class statement runs.
+
 ## Run the tests
 
 From `languages/python`:

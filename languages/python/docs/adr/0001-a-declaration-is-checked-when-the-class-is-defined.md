@@ -240,6 +240,35 @@ Option 2.
    checked by its own decorator, or not at all, and `Cipher(Post)` refuses
    an undecorated `Post` as decision 4 says.
 
+   *Amended 2026-11-04:* the `Ignore` form works for a relationship to
+   one object. It does not work for a collection. SQLAlchemy reads the
+   type directly inside `Mapped[...]` to choose between the two.
+   SQLAlchemy does not look inside `Annotated`, so it maps a single
+   object in both cases.
+
+   - One object: `author: Mapped[Annotated["User", stash.Ignore]] =
+     relationship()` maps, and `author` is the related row. With
+     `Optional["User"]`, the relationship must name its target, as in
+     `relationship("User")`.
+   - A collection: with a bare `relationship()`, the first instance fails
+     to configure the mapper, because SQLAlchemy takes `List["Post"]` as
+     the target. With `relationship("Post")` the mapper configures, but
+     `posts` is one object, not a list. `uselist=True` does not change
+     that: SQLAlchemy sets `uselist` from the annotation.
+
+   So a collection relationship takes no annotation:
+   `posts = relationship("Post")`. The reader never sees it, and `posts`
+   is a list. The cost is that a type checker does not know its type.
+
+   A typed collection needs the SQLAlchemy layer, because that layer can
+   read the mapper. See spec #1341, the note on the `Ignore` relationship
+   form.
+
+   These results are from SQLAlchemy 2.1.6 on Python 3.14.10. The
+   bare collection also failed on SQLAlchemy 2.0.57. The probe of
+   2026-10-16 under "What was run" found the markers. It never made an
+   instance, so the mapper never configured.
+
    The first two are checked at decoration.
    The constructor check reads `inspect.signature(cls)` and accepts a
    `**kwargs` parameter. It also checks that every `Ignore` field is
