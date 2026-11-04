@@ -485,13 +485,17 @@ jobs:
       # `integration-db` gives this job its own compose project and ephemeral
       # port; the suite installs EQL v3 itself through the real
       # `stash eql install`. Loose env mode for the same reason as above.
+      # `!cancelled()` on both steps: the suite is independent of the
+      # protect-dynamodb step above, so a failure there must not hide it.
       - name: Start postgres
         id: db
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/integration-db
         with:
           db: postgres
 
       - name: Run the DynamoDB <-> Postgres cross-store suite
+        if: ${{ !cancelled() && steps.db.outcome == 'success' }}
         run: pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose
         env:
           DATABASE_URL: ${{ steps.db.outputs.database-url }}
