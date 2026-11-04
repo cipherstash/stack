@@ -163,7 +163,11 @@ class SqlAlchemyUser(Base):
     id: Mapped[Annotated[int, Passthrough]] = mapped_column(primary_key=True)
     email: Mapped[Annotated[str, TextEq]]
     age: Mapped[Annotated[int, Passthrough]]
-    posts: Mapped[Annotated[List["Post"], Ignore]] = relationship()
+    # SQLAlchemy does not look inside Annotated for the target, so the
+    # relationship names it. Without "Post", the first instance fails to
+    # configure the mapper. posts is still not a list: see spec #1341, the
+    # note on the Ignore relationship form.
+    posts: Mapped[Annotated[List["Post"], Ignore]] = relationship("Post")
 
 
 def build(cls, at):
