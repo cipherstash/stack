@@ -43,9 +43,10 @@ pub fn decrypt<'py>(
         .detach(|| core::decrypt(&plan.plan, stored))
         .map_err(|refused| raise(py, refused))?;
     // Every value first, then every instance: a value Python cannot hold
-    // fails the call before any constructor runs.
+    // fails the call before any constructor runs. Borrowed, not moved: each
+    // value is wiped in its row's buffer when `opened` drops.
     let mut arguments = Vec::with_capacity(opened.len());
-    for values in opened {
+    for values in &opened {
         let kwargs = PyDict::new(py);
         for (field, value) in plan.plan.fields().iter().zip(values) {
             kwargs.set_item(&field.name, python_value(py, field, value)?)?;
@@ -202,20 +203,16 @@ fn passthrough(
 }
 
 /// An opened value as the Python object of its field.
-fn python_value(py: Python<'_>, field: &Field, value: Scalar) -> PyResult<Py<PyAny>> {
-    let ranged = matches!(value, Scalar::Date(_) | Scalar::Timestamp(_));
-    to_python(py, value).map_err(|error| {
-        if !ranged {
-            return error;
-        }
+fn python_value(py: Python<'_>, field: &Field, value: &Scalar) -> PyResult<Py<PyAny>> {
+    to_python(py, value)?.map_err(|unfit| {
         raise(
             py,
             Refusal {
                 code: "decrypt_not_representable".to_owned(),
                 message: format!(
-                    "field {:?}: the opened value is outside the range Python's datetime \
-                     holds.",
-                    field.name
+                    "field {:?}: the opened value does not fit its Python type: {}.",
+                    field.name,
+                    unfit.cause()
                 ),
                 field: Some(field.name.clone()),
                 reason: None,

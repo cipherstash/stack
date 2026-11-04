@@ -35,8 +35,7 @@ pub fn query(
     value: Value<'_>,
 ) -> Result<String, Refusal> {
     answers_equality(plan, field)?;
-    let client = client::shared()?;
-    client.block_on(query_with(&client.keyset(), plan, field, kind, value))
+    client::run!(|cipher| query_with(&cipher.default_keyset(), plan, field, kind, value))
 }
 
 /// [`query`] under `keyset`.

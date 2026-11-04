@@ -48,6 +48,10 @@ on:
       # in place, so a change to either reruns this suite.
       - packages/eql/crates/eql-bindings/**
       - languages/golang/encrypt/guest/src/targets.rs
+      # The EQL rows the Go SDK stored under a deterministic key source.
+      # `mise run test:deterministic` opens them and seals the same values,
+      # so a change to them must rerun that check.
+      - packages/eql/tests/encryption/fixtures/**
       # The Rust version the workspace builds under. The workspace's own
       # mise.toml is under languages/python/** above.
       - mise.toml
@@ -159,8 +163,10 @@ jobs:
 
       # pyo3's build script asks the `python3` on PATH for its configuration.
       # That is why this runs after mise is installed, once per interpreter.
+      # With every feature, so the code behind the test features
+      # (deterministic-kms, gate-probe) is linted too.
       - name: clippy
-        run: cargo clippy --locked --no-deps --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --no-deps --workspace --all-targets --all-features -- -D warnings
 
       # `cargo test --locked` for both crates. The task puts the interpreter's
       # library directory on the loader path, because the engine crate links
@@ -172,6 +178,14 @@ jobs:
       # the leg's interpreter, then runs pytest in it.
       - name: pytest
         run: mise run test
+
+      # Rebuilds the extension with the deterministic-kms test feature, then
+      # runs tests_deterministic/: Python opens the EQL rows the Go SDK stored
+      # under a deterministic key source, the frozen ones among them, and
+      # seals the same values to the same terms. No credentials. It runs after
+      # `pytest` because it replaces the build in .venv with a test build.
+      - name: Python against the Go SDK's rows
+        run: mise run test:deterministic
 
       # The committed stackencrypt/_eql.py is generated from the EQL catalog
       # by eql-codegen (#1385). `mise run types:check` in test-eql.yml diffs

@@ -10,10 +10,11 @@
 
 use std::cell::RefCell;
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyType};
+use pyo3::types::{PyDict, PyList, PyString, PyType};
 use stackencrypt_core::encrypt::plaintext::{Encrypt, MapSink, SeqSink, Sink, SourceError};
-use stackencrypt_core::encrypt::{self as core, Column, Field, ModelPlan};
+use stackencrypt_core::encrypt::{self as core, Column, Field, ModelPlan, ValueFrame};
 use stackencrypt_core::refusal::Refusal;
 use stackencrypt_core::values::{self, Kind};
 
@@ -107,44 +108,55 @@ pub fn encrypt<'py>(
         return Ok(PyList::empty(py));
     }
     let rows = models.len();
-    let failed = RefCell::new(None);
-    let source = Models {
-        plan,
-        models: &models,
-        failed: &failed,
-    };
-    let frame = match core::frame_of(source) {
-        Ok(frame) => frame,
-        Err(error) => {
-            return Err(failed.into_inner().unwrap_or_else(|| {
-                raise(
-                    py,
-                    Refusal {
-                        code: "stack_encrypt_unknown".to_owned(),
-                        message: format!("the models could not be written as a frame: {error}"),
-                        field: None,
-                        reason: None,
-                    },
-                )
-            }))
-        }
-    };
+    let frame = input_frame(py, plan, &models)?;
     let encrypted = py
         .detach(|| core::encrypt(&plan.plan, frame, rows))
         .map_err(|refused| raise(py, refused))?;
     let out = PyList::empty(py);
-    for columns in encrypted {
+    // Borrowed, not moved: a passthrough value is wiped in its row's buffer
+    // when `encrypted` drops.
+    for columns in &encrypted {
         let row = PyDict::new(py);
         for (field, column) in plan.plan.fields().iter().zip(columns) {
             let value = match column {
-                Column::Eql(json) => json.into_pyobject(py)?.into_any().unbind(),
-                Column::Passthrough(scalar) => to_python(py, scalar)?,
+                Column::Eql(json) => PyString::new(py, json).into_any().unbind(),
+                // A passthrough value came from Python, so it fits.
+                Column::Passthrough(scalar) => {
+                    to_python(py, scalar)?.map_err(|unfit| PyValueError::new_err(unfit.cause()))?
+                }
             };
             row.set_item(&field.name, value)?;
         }
         out.append(row)?;
     }
     Ok(out)
+}
+
+/// The models as the engine's input frame, every value read and checked.
+pub(crate) fn input_frame(
+    py: Python<'_>,
+    plan: &Plan,
+    models: &[Bound<'_, PyAny>],
+) -> PyResult<ValueFrame> {
+    let failed = RefCell::new(None);
+    let source = Models {
+        plan,
+        models,
+        failed: &failed,
+    };
+    core::frame_of(source).map_err(|error| {
+        failed.into_inner().unwrap_or_else(|| {
+            raise(
+                py,
+                Refusal {
+                    code: "stack_encrypt_unknown".to_owned(),
+                    message: format!("the models could not be written as a frame: {error}"),
+                    field: None,
+                    reason: None,
+                },
+            )
+        })
+    })
 }
 
 /// How many times the shared engine client has been built in this process.

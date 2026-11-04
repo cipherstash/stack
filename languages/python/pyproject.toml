@@ -28,8 +28,9 @@ module-name = "stackencrypt._engine"
 python-source = "python"
 # The engine crate, not the workspace root: maturin builds one cdylib.
 manifest-path = "crates/engine/Cargo.toml"
-# The one place `extension-module` is set. See crates/engine/Cargo.toml for
-# why it is not in the crate manifest.
+# Never set in the crate manifest: see crates/engine/Cargo.toml for why. A
+# build that passes `--features` replaces this list, and names it again:
+# the `test:deterministic` task in mise.toml.
 features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]

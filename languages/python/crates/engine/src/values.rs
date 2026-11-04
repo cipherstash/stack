@@ -7,6 +7,7 @@
 //! never changes a value: nothing here converts, only reads.
 
 use std::borrow::Cow;
+use zeroize::{Zeroize, Zeroizing};
 
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -118,10 +119,22 @@ impl PyKind {
 /// A field's value as read from its attribute. Text and bytes borrow from
 /// the attribute object where they can, so the plaintext is not copied
 /// before the engine writes it into the protected frame.
+///
+/// Under `abi3-py39`, pyo3 cannot borrow a `str`'s UTF-8, so `Text` is an
+/// owned copy on every Python version. That copy is the extension's own, and
+/// is wiped when the `Read` is dropped (`src/heap_hygiene.rs` checks it).
 pub enum Read<'a> {
     Text(Cow<'a, str>),
     Bytes(&'a [u8]),
     Other(Value<'static>),
+}
+
+impl Drop for Read<'_> {
+    fn drop(&mut self) {
+        if let Self::Text(Cow::Owned(text)) = self {
+            text.zeroize();
+        }
+    }
 }
 
 impl Read<'_> {
@@ -228,7 +241,8 @@ fn decimal(
 ) -> PyResult<Result<Value<'static>, Refusal>> {
     let parts = value.call_method0("as_tuple")?;
     let sign: u8 = parts.getattr("sign")?.extract()?;
-    let digits: Vec<u8> = parts.getattr("digits")?.extract()?;
+    // The digits are plaintext: wiped when dropped.
+    let digits = Zeroizing::new(parts.getattr("digits")?.extract::<Vec<u8>>()?);
     let Ok(exponent) = parts.getattr("exponent")?.extract::<i64>() else {
         return Ok(Err(refusal(
             "value_not_representable",
@@ -244,7 +258,7 @@ fn decimal(
         )
     };
     let mut mantissa: i128 = 0;
-    for digit in digits {
+    for &digit in digits.iter() {
         mantissa = match mantissa
             .checked_mul(10)
             .and_then(|m| m.checked_add(i128::from(digit)))
@@ -304,51 +318,103 @@ fn type_name(value: &Bound<'_, PyAny>) -> String {
         .map_or_else(|_| "an unknown type".to_owned(), |name| name.to_string())
 }
 
+/// Why an opened date or timestamp has no Python object. The Go SDK can
+/// store both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unfit {
+    /// `datetime` keeps microseconds, and rounding would change the value.
+    Nanoseconds,
+    /// `datetime` holds the years 1 to 9999.
+    Year,
+}
+
+impl Unfit {
+    /// The cause, for a message.
+    pub fn cause(self) -> &'static str {
+        match self {
+            Self::Nanoseconds => {
+                "it has nanoseconds, and Python's datetime keeps only microseconds"
+            }
+            Self::Year => "its year is outside 1 to 9999, the years Python's datetime holds",
+        }
+    }
+}
+
+/// `datetime`'s refusal of a value out of its range as [`Unfit::Year`].
+/// `fromordinal` raises `ValueError` for it, and `timedelta` and the
+/// addition raise `OverflowError`. Any other error is Python's own.
+fn in_range<T>(py: Python<'_>, result: PyResult<T>) -> PyResult<Result<T, Unfit>> {
+    match result {
+        Ok(value) => Ok(Ok(value)),
+        Err(error)
+            if error.is_instance_of::<pyo3::exceptions::PyValueError>(py)
+                || error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) =>
+        {
+            Ok(Err(Unfit::Year))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// An opened scalar as a Python object, of the type the field declares.
-pub fn to_python(py: Python<'_>, scalar: Scalar) -> PyResult<Py<PyAny>> {
-    Ok(match scalar {
+///
+/// The scalar is borrowed and copied into the Python object. It wipes its
+/// own copy when dropped, so the caller drops it where it lies: a scalar
+/// moved out of a row's buffer leaves its bytes behind in the buffer.
+///
+/// # Errors
+///
+/// The outer error is Python's own. The inner one is a date or timestamp
+/// that `datetime` cannot hold, with the reason.
+pub fn to_python(py: Python<'_>, scalar: &Scalar) -> PyResult<Result<Py<PyAny>, Unfit>> {
+    Ok(Ok(match scalar {
         Scalar::Null => py.None(),
-        Scalar::Text(text) => PyString::new(py, &text).into_any().unbind(),
+        Scalar::Text(text) => PyString::new(py, text).into_any().unbind(),
         Scalar::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
-        Scalar::Float(f) => PyFloat::new(py, f).into_any().unbind(),
-        Scalar::Bool(b) => PyBool::new(py, b).to_owned().into_any().unbind(),
-        Scalar::Bytes(bytes) => PyBytes::new(py, &bytes).into_any().unbind(),
-        Scalar::Date(days) => PyKind::Date
-            .type_object(py)?
-            .call_method1("fromordinal", (i64::from(days) + 719_163,))?
-            .unbind(),
-        Scalar::Timestamp(nanos) => {
-            // Python's datetime keeps microseconds; the engine's timestamp
-            // is in nanoseconds, so the last three digits are dropped. An
-            // encrypted datetime had none: Python wrote it.
+        Scalar::Float(f) => PyFloat::new(py, *f).into_any().unbind(),
+        Scalar::Bool(b) => PyBool::new(py, *b).to_owned().into_any().unbind(),
+        Scalar::Bytes(bytes) => PyBytes::new(py, bytes).into_any().unbind(),
+        Scalar::Date(days) => {
+            let date = PyKind::Date.type_object(py)?;
+            let opened = date.call_method1("fromordinal", (i64::from(*days) + 719_163,));
+            match in_range(py, opened)? {
+                Ok(date) => date.unbind(),
+                Err(unfit) => return Ok(Err(unfit)),
+            }
+        }
+        &Scalar::Timestamp(nanos) => {
+            if nanos.rem_euclid(1_000) != 0 {
+                return Ok(Err(Unfit::Nanoseconds));
+            }
             let micros = nanos.div_euclid(1_000);
             let seconds = micros.div_euclid(1_000_000);
             let micros = micros.rem_euclid(1_000_000);
-            let delta = py
-                .import("datetime")?
-                .getattr("timedelta")?
-                .call1((0, seconds, micros))?;
-            epoch(py)?.add(delta)?.unbind()
+            let timedelta = py.import("datetime")?.getattr("timedelta")?;
+            let epoch = epoch(py)?;
+            let opened = timedelta
+                .call1((0, seconds, micros))
+                .and_then(|delta| epoch.add(delta));
+            match in_range(py, opened)? {
+                Ok(timestamp) => timestamp.unbind(),
+                Err(unfit) => return Ok(Err(unfit)),
+            }
         }
-        Scalar::Decimal { mantissa, scale } => {
+        &Scalar::Decimal { mantissa, scale } => {
             // Decimal((sign, digits, exponent)), so that the scale is kept:
-            // Decimal("1.50") is not Decimal("1.5") to Python.
+            // Decimal("1.50") is not Decimal("1.5") to Python. The digits
+            // are plaintext, and both copies are wiped when dropped.
             let sign = u8::from(mantissa < 0);
-            let digits: Vec<u8> = mantissa
-                .unsigned_abs()
-                .to_string()
-                .bytes()
-                .map(|b| b - b'0')
-                .collect();
+            let text = Zeroizing::new(mantissa.unsigned_abs().to_string());
+            let digits = Zeroizing::new(text.bytes().map(|b| b - b'0').collect::<Vec<u8>>());
             // A tuple of ints: pyo3 converts a Vec<u8> to bytes, which
             // Decimal refuses.
-            let digits = PyTuple::new(py, digits)?;
+            let digits = PyTuple::new(py, digits.iter())?;
             PyKind::Decimal
                 .type_object(py)?
                 .call1(((sign, digits, -i64::from(scale)),))?
                 .unbind()
         }
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -362,7 +428,9 @@ mod tests {
             let decimal = py.import("decimal").unwrap().getattr("Decimal").unwrap();
             for (mantissa, scale, text) in [(1_995, 2, "19.95"), (-150, 2, "-1.50"), (0, 2, "0.00")]
             {
-                let opened = to_python(py, Scalar::Decimal { mantissa, scale }).unwrap();
+                let opened = to_python(py, &Scalar::Decimal { mantissa, scale })
+                    .unwrap()
+                    .unwrap();
                 let opened = opened.bind(py);
                 assert!(opened.get_type().is(&decimal), "{text}");
                 assert_eq!(opened.str().unwrap().to_string(), text);

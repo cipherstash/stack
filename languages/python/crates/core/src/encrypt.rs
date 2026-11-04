@@ -11,7 +11,9 @@
 //! out as a [`Column`], which the extension turns into the dict's value.
 
 use stack_encrypt::dynamic::record::{self, Plan, EQL_KEY};
-use stack_encrypt::dynamic::{self, Output, ValueFrame};
+/// The engine's input frame, which the extension writes the models into.
+pub use stack_encrypt::dynamic::ValueFrame;
+use stack_encrypt::dynamic::{self, Output};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, StackCipherText};
 
@@ -104,8 +106,7 @@ pub fn encrypt(
     source: ValueFrame,
     rows: usize,
 ) -> Result<Vec<Vec<Column>>, Refusal> {
-    let client = client::shared()?;
-    client.block_on(encrypt_with(&client.keyset(), plan, source, rows))
+    client::run!(|cipher| encrypt_with(&cipher.default_keyset(), plan, source, rows))
 }
 
 /// [`encrypt`] under `keyset`.
@@ -174,12 +175,16 @@ fn read_row(plan: &ModelPlan, row: StackCipherText) -> Result<Vec<Column>, Refus
             field: Some(field.name.clone()),
             ..refused
         })?;
-        columns.push(match (&field.eql, scalar) {
+        let mut scalar = scalar;
+        columns.push(match (&field.eql, &mut scalar) {
+            // The EQL JSON is ciphertext, not plaintext: taken out of the
+            // scalar, which wipes what is left when dropped.
             (Some(_), Scalar::Bytes(json)) => Column::Eql(
-                String::from_utf8(json).map_err(|_| engine_fault("an EQL value is not UTF-8"))?,
+                String::from_utf8(std::mem::take(json))
+                    .map_err(|_| engine_fault("an EQL value is not UTF-8"))?,
             ),
             (Some(_), _) => return Err(engine_fault("an EQL value is not bytes")),
-            (None, scalar) => Column::Passthrough(scalar),
+            (None, _) => Column::Passthrough(scalar),
         });
     }
     Ok(columns)

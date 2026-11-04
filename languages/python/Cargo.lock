@@ -3107,6 +3107,7 @@ dependencies = [
  "stack-encrypt",
  "stack-kms",
  "tokio",
+ "zeroize",
  "zerokms-protocol",
 ]
 
@@ -3115,8 +3116,11 @@ name = "stackencrypt-engine"
 version = "0.1.0"
 dependencies = [
  "pyo3",
+ "stack-encrypt",
+ "stack-kms",
  "stackencrypt-core",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
