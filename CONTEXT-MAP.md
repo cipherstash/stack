@@ -21,3 +21,6 @@
 - **Stack Encrypt → EQL**: Stack Encrypt seals values and renders the ZeroKMS
   descriptor; EQL's `eql-bindings` transcodes those into EQL payloads, and its
   `Identifier` (a table and a column) is a two-segment Stack Encrypt `Label`.
+- **Migrate → Stack CLI**: the Stack CLI drives each column migration through
+  `stash encrypt *` and `stash decrypt *`; Migrate records it and owns its
+  rules, including the forced-pass obligation, so embedded workers get them too.

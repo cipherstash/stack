@@ -21,11 +21,11 @@ The column a column migration reads from and eventually drops.
 The column a column migration fills and keeps.
 
 **Twin**:
-The other column of the pair, in either direction. In forward it is the encrypted column; in reverse it is the plaintext column.
+The other column of the pair, relative to the column the column migration's events are recorded against (its source column). It is always the target column: in the forward direction it is the encrypted column; in the reverse direction it is the plaintext column.
 _Avoid_: plaintext twin, shadow column
 
 **Phase**:
-The recorded stage a column migration is in, such as dual-writing, backfilling, cut over, or dropped.
+The recorded stage a column migration is in, such as `dual-writing`, `backfilling`, `backfilled`, or `dropped`. The reverse direction has its own phase names: `decrypt-dual-writing`, `decrypting`, `decrypted`, and `encrypted-dropped`.
 _Avoid_: state, status
 
 **Dual-writing**:
