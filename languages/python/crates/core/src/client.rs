@@ -9,13 +9,14 @@
 //! Python threads run inside the engine at the same time.
 //!
 //! The client is built over a ZeroKMS connection that counts every request
-//! it sends. The count is for the tests: the spec's request rules (one key
-//! request per 500 values, one keyset load per process) are observed
-//! through it, not assumed.
+//! it sends, by endpoint. The counts are for the tests: the spec's request
+//! rules (one key request per 500 values, one keyset load per process) are
+//! observed through them, not assumed.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use stack_auth::AutoStrategy;
 use stack_encrypt::kms::{
@@ -45,7 +46,17 @@ static CLIENT: OnceLock<Client> = OnceLock::new();
 // fixes the credentials and calls again.
 static BUILDING: Mutex<()> = Mutex::new(());
 static BUILDS: AtomicU64 = AtomicU64::new(0);
-static REQUESTS: AtomicU64 = AtomicU64::new(0);
+// Every request sent, by its ZeroKMS endpoint, such as `load-keyset`.
+static REQUESTS: Mutex<BTreeMap<&'static str, u64>> = Mutex::new(BTreeMap::new());
+
+/// `mutex`, locked. A thread that panicked while it held a lock here left
+/// nothing half-written: a build is either cached or not, and a count is
+/// one addition. So a poisoned lock is used as it is.
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// The shared client, built on the first call.
 ///
@@ -60,9 +71,7 @@ pub fn shared() -> Result<&'static Client, Refusal> {
     if let Some(client) = CLIENT.get() {
         return Ok(client);
     }
-    let _building = BUILDING
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _building = locked(&BUILDING);
     // Again under the lock: a switch can finish while this thread waits for
     // it, and the live client must then not be built.
     #[cfg(feature = "deterministic-kms")]
@@ -145,9 +154,7 @@ pub fn use_deterministic(seed: [u8; 32]) -> Result<(), Refusal> {
     };
     // The lock `shared` builds under: a live build in flight on another
     // thread finishes before this checks, so the two never both exist.
-    let _building = BUILDING
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _building = locked(&BUILDING);
     if CLIENT.get().is_some() || DETERMINISTIC.get().is_some() {
         return Err(refused(
             "the process already has a client; call this before any operation".to_owned(),
@@ -184,7 +191,15 @@ pub fn build_count() -> u64 {
 /// How many requests the shared client has sent to ZeroKMS in this process,
 /// the keyset load included. For the tests.
 pub fn request_count() -> u64 {
-    REQUESTS.load(Ordering::Relaxed)
+    requests().values().sum()
+}
+
+/// The requests the shared client has sent to ZeroKMS in this process, by
+/// endpoint. A request counts when it is sent, whether or not it succeeds.
+/// For the tests: `load-keyset` is 1 after the first operation, however
+/// many threads made it at once.
+pub fn requests() -> BTreeMap<&'static str, u64> {
+    locked(&REQUESTS).clone()
 }
 
 impl Client {
@@ -295,7 +310,9 @@ impl ZeroKMSConnection for Counting {
         request: Request,
         access_token: &str,
     ) -> Result<Request::Response, ViturRequestError> {
-        REQUESTS.fetch_add(1, Ordering::Relaxed);
+        // Before the send: a request that fails is still a request, which
+        // the tests of a refused call rely on.
+        *locked(&REQUESTS).entry(Request::ENDPOINT).or_default() += 1;
         self.0.send(request, access_token).await
     }
 

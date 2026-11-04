@@ -173,6 +173,14 @@ pub fn request_count() -> u64 {
     stackencrypt_core::client::request_count()
 }
 
+/// The requests the shared client has sent to ZeroKMS, by endpoint, such
+/// as `load-keyset`. For the tests: threads that make their first call at
+/// once load the keyset once.
+#[pyfunction]
+pub fn requests() -> std::collections::BTreeMap<&'static str, u64> {
+    stackencrypt_core::client::requests()
+}
+
 /// `value` read as `field`'s Python type and checked against the range of
 /// its kind, as `encrypt` and `query` both take it. A refusal names the
 /// field, with the kind as its reason.
