@@ -119,3 +119,24 @@ the alternatives and the reason.
 - **Note:** `stack-encrypt::ui derive_diagnostics` (trybuild) fails on this
   machine on the base commit too: the snapshots print relative paths and
   the local run prints `<HOME>/…` paths. It is not caused by this change.
+
+## Orchestrator review of CIP-5304
+
+- **Decision:** accept that, in CIP-5304, a `Settle` key lifetime lasts as
+  long as one keyset selection (one `KeysetCipher` handle), not one settle.
+  **CIP-5306 must close this gap** before it ships wrapped data keys: for a
+  keyset whose index key has the `Settle` lifetime, the term PRF runs inside
+  the settle (the deferred-backend path that `sem/mod.rs` already describes),
+  and the handle does not hold the index key. **Alternative:** send CIP-5304
+  back. **Reason:** the gap matters only once a backend returns `Settle`, and
+  no backend does until CIP-5306. ADR-0009's "no key outlives the settle that
+  needed it" is the target, and it is unchanged.
+- **Decision:** accept that the trait signatures and payload fields keep their
+  ZeroKMS types, and that a vendor backend refuses them through
+  `refuse_zerokms_extensions`. **Alternative:** remove the types now, which
+  breaks 22 implementations. **Reason:** the refusal is what ADR-0009 needs,
+  and the change is additive. Revisit when TypeScript (CIP-5314) moves onto
+  stack-encrypt.
+- **Note:** `stack-encrypt::ui derive_diagnostics` (trybuild) fails on `main`
+  on a developer machine whose paths print as `<HOME>`. It is not caused by
+  this stack. CI is the judge.
