@@ -29,6 +29,13 @@ miette = "7.5.0"
 serde = "1"
 stack-auth = { workspace = true }
 stack-encrypt = { workspace = true }
+stack-kms = { workspace = true }
+# One multi-thread runtime per process, beside the shared client: an
+# operation blocks its own thread on it with the GIL released.
+tokio = { version = "1", features = ["rt-multi-thread"] }
+# For the request-counting connection: the trait a ZeroKMS request
+# implements. The version stack-kms resolves.
+zerokms-protocol = "0.12.31"
 
 [dev-dependencies]
 # The shared resolver file's own tests use it.

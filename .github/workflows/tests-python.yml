@@ -18,8 +18,10 @@ name: Tests (Python)
 # is released. The two jobs are independent, so a pytest failure does not
 # hide whether the wheels build.
 #
-# No job here holds a CipherStash credential. The live test job (credentials,
-# Postgres) arrives with the first `encrypt` ticket, #1389, as its own job.
+# A third job, `live`, runs the tests that need CipherStash credentials and a
+# PostgreSQL with the EQL v4 bundle (#1389). It is the only job with a
+# credential. It runs on pushes and on pull requests from this repository,
+# and skips on a fork's pull request, which GitHub gives no secrets.
 
 on:
   pull_request:
@@ -49,6 +51,12 @@ on:
       # The Rust version the workspace builds under. The workspace's own
       # mise.toml is under languages/python/** above.
       - mise.toml
+      # The `live` job installs the EQL v4 bundle built from this SQL, as the
+      # Go workflow's eql-postgres job does, and runs the secrets pre-flight.
+      - packages/eql/src/**
+      - packages/eql/mise.toml
+      - packages/eql/tasks/**
+      - .github/actions/require-cs-secrets/**
       - .github/workflows/tests-python.yml
   # Unfiltered, like tests-rust.yml. Every push to main runs the suite, so
   # main runs a superset of what the filtered `pull_request` trigger above
@@ -176,6 +184,92 @@ jobs:
       # same way. The target directory is not cached: the build is seconds.
       - name: stackencrypt._eql matches the EQL catalog
         run: cargo test --locked --manifest-path ../../packages/eql/Cargo.toml -p eql-codegen --test py_eql_parity
+
+  # `encrypt` against real ZeroKMS, and the row it returns inserted into a
+  # PostgreSQL with the EQL v4 bundle built from the tree. The live tests skip
+  # without credentials or a database, so the pre-flight below turns a missing
+  # secret into a failure, and `mise run test:live` fails on any skip.
+  live:
+    name: "Python live: encrypt into PostgreSQL with EQL v4"
+    # A fork's pull request has no secrets: skip it rather than fail it, as
+    # the integration workflows do.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    env:
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        # Container port only: Docker picks the host port, and the test step
+        # reads it from `job.services`.
+        ports:
+          - 5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: languages/python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared.
+      # Ordering is asserted by scripts/__tests__/ffi-binding-step-order.test.mjs.
+      - uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # This workspace's tools (python, uv, rust), as the `python` job.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          install_args: python uv rust
+          working_directory: languages/python
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
+
+      # EQL's tools, for the build of its bundle. EQL's mise.toml names its
+      # own Rust.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: packages/eql
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
+
+      # One cache per workspace: this one, and EQL's, whose eql-codegen
+      # writes the bundle.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: languages/python
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+
+      # Builds the wheel and the bundle, installs the bundle, and runs the
+      # live tests; a skip fails the task.
+      - name: Live tests
+        env:
+          EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
+        run: mise run test:live
 
   # One abi3-py39 wheel per platform the FFI ships for, by the same Rust
   # triples. python-ci.test.mjs holds the list to the protect-ffi platform

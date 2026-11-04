@@ -1,10 +1,13 @@
 """``Cipher``: encrypts and decrypts the instances of one declared class.
 
-Today it checks the class and the credentials, and stores the declaration.
-``encrypt``, ``decrypt`` and ``query`` come in later tickets.
+It checks the class and the credentials, and builds the model's plan once.
+``encrypt`` is here. ``decrypt`` and ``query`` come in later tickets.
 """
 
+from typing import Dict, List, Sequence
+
 from stackencrypt import _engine
+from stackencrypt._markers import Passthrough
 from stackencrypt._declaration import Declaration, check_unchanged, declaration_of
 from stackencrypt._errors import AuthenticationError, DeclarationError
 
@@ -18,6 +21,9 @@ class Cipher:
     The class must also be as it was when declared. The credentials come from
     ``CS_CLIENT_ACCESS_KEY`` and ``CS_WORKSPACE_CRN``, or from the profile
     that ``stash auth login`` writes. Building a cipher makes no request.
+
+    Every cipher in the process shares one engine client. It is built on the
+    first ``encrypt`` of any cipher, which loads the default keyset once.
     """
 
     def __init__(self, cls: type) -> None:
@@ -33,6 +39,32 @@ class Cipher:
             raise AuthenticationError(code, message, field=field, reason=reason)
         self._cls = cls
         self._declaration = declaration
+        self._plan = _engine.build_plan(
+            declaration.table,
+            [
+                (
+                    field.name,
+                    None if field.marker is Passthrough else field.marker.name,
+                    None if field.marker is Passthrough else field.marker.plaintext,
+                    field.value_type,
+                )
+                for field in declaration.fields
+            ],
+        )
+
+    def encrypt(self, models: Sequence[object]) -> List[Dict[str, object]]:
+        """Encrypt ``models``, instances of the declared class.
+
+        Returns one dict per model, from column name to column value: the
+        EQL JSON as a ``str`` for a sealed field, which psycopg inserts with
+        a plain ``%s``, and the value itself for a passthrough field. An
+        ``Ignore`` field is left out.
+
+        Every value is checked first, by exact type and range. A value that
+        does not fit raises ``InvalidValueError`` naming the field, and no
+        request is made. An empty list makes no request at all.
+        """
+        return _engine.encrypt(self._plan, list(models))
 
     @property
     def declaration(self) -> Declaration:

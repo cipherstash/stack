@@ -128,6 +128,8 @@ const EXPECTED_FORK_GUARDED_JOBS = [
   '.github/workflows/prisma-next-e2e.yml / e2e',
   '.github/workflows/test-eql.yml / build-archive',
   '.github/workflows/test-eql.yml / e2e',
+  // The CS_* secrets, which forks are not given (#1389).
+  '.github/workflows/tests-python.yml / live',
 ]
 
 /** The context path every fork guard turns on. */

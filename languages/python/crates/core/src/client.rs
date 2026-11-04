@@ -1,0 +1,205 @@
+//! The one engine client a process shares, and the runtime it runs on.
+//!
+//! Every `Cipher` in the process uses the same `StackCipher`. It is built on
+//! the first operation that needs it, by whichever thread gets there first,
+//! and never rebuilt: credentials are read once, and the default keyset is
+//! loaded once (the spec in #1341, "Operations"). Beside it is one
+//! multi-thread tokio runtime. An operation hands its future to that runtime
+//! and blocks its own thread, with the GIL released, so calls from several
+//! Python threads run inside the engine at the same time.
+//!
+//! The client is built over a ZeroKMS connection that counts every request
+//! it sends. The count is for the tests: the spec's request rules (one key
+//! request per 500 values, one keyset load per process) are observed
+//! through it, not assumed.
+
+use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+use stack_auth::AutoStrategy;
+use stack_encrypt::kms::{
+    ClientOpts, ConnectionInitError, EnvKeyProvider, FallbackKeyProvider, HttpConnection,
+    HttpConnectionOpts, KeyProvider, KeyProviderError, ProfileStore, StackKms,
+    StackKmsBuilderError, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint,
+};
+use stack_encrypt::{KeysetCipher, StackCipher};
+use zerokms_protocol::{ViturRequest, ViturRequestError};
+
+use crate::credentials;
+use crate::refusal::Refusal;
+
+/// The ZeroKMS client the shared cipher is built over.
+pub type Kms = StackKms<AutoStrategy, Counting>;
+
+/// The shared engine client with its runtime.
+pub struct Client {
+    cipher: StackCipher<Kms>,
+    runtime: tokio::runtime::Runtime,
+}
+
+static CLIENT: OnceLock<Client> = OnceLock::new();
+// Serialises the build, so two threads making their first call at once build
+// one client and load the keyset once. `OnceLock::get_or_init` would do the
+// same, but it cannot fail, and a failed build must not be cached: the user
+// fixes the credentials and calls again.
+static BUILDING: Mutex<()> = Mutex::new(());
+static BUILDS: AtomicU64 = AtomicU64::new(0);
+static REQUESTS: AtomicU64 = AtomicU64::new(0);
+
+/// The shared client, built on the first call.
+///
+/// # Errors
+///
+/// The refusal of whatever failed: the credentials (`stack_auth_*`), the
+/// client key or the ZeroKMS client (`stack_kms_*`), or the keyset load
+/// (`stack_encrypt_*`). Nothing is cached on failure.
+pub fn shared() -> Result<&'static Client, Refusal> {
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let _building = BUILDING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let client = build()?;
+    BUILDS.fetch_add(1, Ordering::Relaxed);
+    Ok(CLIENT.get_or_init(|| client))
+}
+
+/// How many times the shared client has been built in this process: 0
+/// before the first operation, 1 after it. For the tests.
+pub fn build_count() -> u64 {
+    BUILDS.load(Ordering::Relaxed)
+}
+
+/// How many requests the shared client has sent to ZeroKMS in this process,
+/// the keyset load included. For the tests.
+pub fn request_count() -> u64 {
+    REQUESTS.load(Ordering::Relaxed)
+}
+
+impl Client {
+    /// The cipher bound to the client's default keyset.
+    pub fn keyset(&self) -> KeysetCipher<'_, Kms> {
+        self.cipher.default_keyset()
+    }
+
+    /// Run `future` to completion on the shared runtime, blocking this
+    /// thread. The caller releases the GIL around this.
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+}
+
+fn build() -> Result<Client, Refusal> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| Refusal {
+            code: "stack_runtime".to_owned(),
+            message: format!("the engine's runtime could not start: {error}"),
+            field: None,
+            reason: None,
+        })?;
+    let cipher = runtime.block_on(init())?;
+    Ok(Client { cipher, runtime })
+}
+
+/// What `StackCipher::builder().init()` does, with the counting connection
+/// in place of the plain one: the credentials from `AutoStrategy`, the
+/// client key from the environment or the profile, one ZeroKMS client, and
+/// the default keyset loaded.
+async fn init() -> Result<StackCipher<Kms>, Refusal> {
+    // First: it reads one variable and sends nothing, so a bad value is
+    // refused before the credentials are read.
+    let endpoint = endpoint_from_env()?;
+    let credentials = AutoStrategy::detect().map_err(|error| credentials::refusal(&error))?;
+    let client_key = FallbackKeyProvider::new(
+        EnvKeyProvider,
+        ProfileClientKey(ProfileStore::resolve(None).ok()),
+    )
+    .client_key()
+    .await
+    .map_err(|error| Refusal::of(&error))?;
+    // Requests go out one at a time, as the spec states the request count:
+    // ceil(values / 500) key requests "in sequence". The Go guest sets the
+    // same.
+    let options = ClientOpts::new(HttpConnectionOpts::new(endpoint))
+        .with_max_concurrent_reqs(1)
+        .map_err(|error| Refusal::of(&error))?;
+    let kms =
+        Kms::connect(options, credentials, client_key).map_err(|error| Refusal::of(&error))?;
+    StackCipher::builder()
+        .kms(kms)
+        .init()
+        .await
+        .map_err(|error| Refusal::of(&error))
+}
+
+/// The ZeroKMS endpoint override, as `StackKmsBuilder` reads it: the first
+/// of `CS_ZEROKMS_HOST` and the legacy `CS_VITUR_HOST` that is set. `None`
+/// leaves the endpoint to the token's services claim, as every other SDK
+/// does. `init` builds the client itself to count its requests, so it reads
+/// the variable here; the builder's own reader is private.
+fn endpoint_from_env() -> Result<Option<ZeroKmsEndpoint>, Refusal> {
+    for env_var in stack_encrypt::kms::vars::CS_ZEROKMS_HOST {
+        if let Ok(value) = std::env::var(env_var) {
+            return value.parse().map(Some).map_err(|source| {
+                Refusal::of(&StackKmsBuilderError::InvalidEndpoint { env_var, source })
+            });
+        }
+    }
+    Ok(None)
+}
+
+/// The CLI's profile as a key provider, where it resolves. Where it does
+/// not, the error says what to do, as stack-encrypt's own provider does.
+struct ProfileClientKey(Option<ProfileStore>);
+
+impl KeyProvider for ProfileClientKey {
+    async fn client_key(&self) -> Result<stack_encrypt::kms::ClientKey, KeyProviderError> {
+        match &self.0 {
+            Some(store) => store.client_key().await,
+            None => Err(KeyProviderError::NotConfigured(
+                "no client key: set CS_CLIENT_ID and CS_CLIENT_KEY, or log in with `stash auth login`"
+                    .into(),
+            )),
+        }
+    }
+}
+
+/// The HTTP connection, counting every request it sends.
+pub struct Counting(HttpConnection);
+
+impl ZeroKMSConnectionInit for Counting {
+    type ConnectionOpts = HttpConnectionOpts;
+    type Error = ConnectionInitError;
+
+    fn init(opts: Self::ConnectionOpts) -> Result<Self, Self::Error> {
+        HttpConnection::init(opts).map(Self)
+    }
+}
+
+impl ZeroKMSConnection for Counting {
+    async fn send<Request: ViturRequest>(
+        &self,
+        request: Request,
+        access_token: &str,
+    ) -> Result<Request::Response, ViturRequestError> {
+        REQUESTS.fetch_add(1, Ordering::Relaxed);
+        self.0.send(request, access_token).await
+    }
+
+    // Both forwarded: the trait's defaults would tell the client the base
+    // URL is set when the connection underneath has none.
+    fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
+        self.0.ensure_base_url(url);
+    }
+
+    fn has_base_url(&self) -> bool {
+        self.0.has_base_url()
+    }
+}
