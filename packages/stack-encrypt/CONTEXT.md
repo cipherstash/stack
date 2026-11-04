@@ -250,6 +250,13 @@ lifetime is measured in: under wrapped data keys, no key outlives one
 settle.
 _Avoid_: operation (that is what produces a target), request, flush
 
+**Key lifetime**:
+How long the cipher may keep an index key after its key backend returned
+it: one settle only, for a TTL, or until the bounded cache evicts it (the
+ZeroKMS behaviour). The key backend states it (`KeyLifetime`); the cipher
+enforces it.
+_Avoid_: key TTL (a TTL is one of the lifetimes), cache policy
+
 **Keyset**:
 The key domain a data key is minted under and an index key belongs to —
 one per tenant is the common shape. A keyset lives in exactly one key

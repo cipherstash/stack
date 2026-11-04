@@ -19,6 +19,12 @@
 //! [`init`](crate::StackCipherBuilder::init), so a misconfigured client
 //! fails at startup, and never evicts.
 //!
+//! A key backend says how long the cipher may keep a keyset's index key
+//! ([`KeyLifetime`]): until evicted (ZeroKMS), for a TTL, or for one settle
+//! only. The cache obeys it, so each backend does not have to. The default
+//! keyset must be one the cipher may keep until evicted, because the cipher
+//! holds it for its whole life.
+//!
 //! # Ids are identity; names are looked up
 //!
 //! A keyset's id is its identity: a sealed leaf carries it, and an id
@@ -50,7 +56,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use stack_kms::IdentifiedBy;
+use stack_kms::{IdentifiedBy, KeyLifetime};
 use uuid::Uuid;
 use vitaminc_hmac::HmacSha256Prf;
 
@@ -63,11 +69,58 @@ use crate::StackCipher;
 pub const DEFAULT_NAME_TTL: Duration = Duration::from_secs(5 * 60);
 
 /// What the cipher holds per loaded keyset: its resolved id, the name it was
-/// loaded under if any, and the PRF keyed by its index key.
+/// loaded under if any, the PRF keyed by its index key, and how long the
+/// cache may keep that PRF.
 pub(crate) struct KeysetState {
     pub(crate) id: Uuid,
     pub(crate) name: Option<String>,
     pub(crate) prf: HmacSha256Prf,
+    pub(crate) retention: Retention,
+}
+
+/// How long the [`KeysetCache`] may keep a keyset's state: the
+/// [`KeyLifetime`] its key backend gave the index key, fixed to a point in
+/// time when it was loaded.
+///
+/// The cipher enforces this, not each backend. A state the cache may not
+/// keep at all is handed to the caller and never stored, so the only
+/// references to it are the [`KeysetCipher`] handles and the pendings
+/// built from them. When those drop, the PRF drops with them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Retention {
+    /// Never cached: the index key is for the settle that needed it.
+    Never,
+    /// Cached until this instant, then loaded again.
+    Until(Instant),
+    /// Cached until the bound evicts it (the ZeroKMS behaviour).
+    UntilEvicted,
+}
+
+impl Retention {
+    /// The retention of an index key with `lifetime`, loaded at `now`.
+    ///
+    /// A zero TTL is never cached, the same as a settle. A TTL too long for
+    /// the clock to represent is kept until evicted. A lifetime this crate
+    /// does not know yet is never cached: the short answer is the safe one.
+    pub(crate) fn of(lifetime: KeyLifetime, now: Instant) -> Self {
+        match lifetime {
+            KeyLifetime::UntilEvicted => Self::UntilEvicted,
+            KeyLifetime::Ttl(ttl) if !ttl.is_zero() => {
+                now.checked_add(ttl).map_or(Self::UntilEvicted, Self::Until)
+            }
+            _ => Self::Never,
+        }
+    }
+
+    /// Whether the cache may still hand this state out at `now`. The end of
+    /// a TTL is exclusive: at the instant it ends, the key is expired.
+    pub(crate) fn is_live_at(self, now: Instant) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Until(end) => now < end,
+            Self::UntilEvicted => true,
+        }
+    }
 }
 
 /// A loaded keyset in the cache, with the name it is currently bound under
@@ -287,13 +340,28 @@ impl KeysetCache {
 
     /// Look a keyset up by id or name, marking it most recently used.
     pub(crate) fn get(&mut self, by: &IdentifiedBy) -> Lookup {
+        self.get_at(by, Instant::now())
+    }
+
+    /// [`get`](Self::get), at `now`. A keyset whose index key has passed the
+    /// end of its lifetime is evicted here, as if the bound had evicted it,
+    /// and the lookup is a miss: the caller loads it again.
+    fn get_at(&mut self, by: &IdentifiedBy, now: Instant) -> Lookup {
         let (id, fresh) = match by {
             IdentifiedBy::Uuid(id) => (*id, true),
             IdentifiedBy::Name(name) => match self.by_name.get::<str>(name) {
-                Some(alias) => (alias.id, alias.is_fresh_at(Instant::now(), self.name_ttl)),
+                Some(alias) => (alias.id, alias.is_fresh_at(now, self.name_ttl)),
                 None => return Lookup::Miss(self.resolution()),
             },
         };
+        if self
+            .by_id
+            .get(&id)
+            .is_some_and(|entry| !entry.state.retention.is_live_at(now))
+        {
+            self.evict(id);
+            return Lookup::Miss(self.resolution());
+        }
         let Some(state) = self.touch(id) else {
             return Lookup::Miss(self.resolution());
         };
@@ -340,6 +408,19 @@ impl KeysetCache {
         state: Arc<KeysetState>,
         resolution: Resolution,
     ) -> Arc<KeysetState> {
+        self.insert_at(state, resolution, Instant::now())
+    }
+
+    /// [`insert`](Self::insert), at `now`. Every entry whose index key has
+    /// passed the end of its lifetime is evicted first, so expired key
+    /// material does not wait in memory for a lookup that may never come.
+    fn insert_at(
+        &mut self,
+        state: Arc<KeysetState>,
+        resolution: Resolution,
+        now: Instant,
+    ) -> Arc<KeysetState> {
+        self.evict_expired(now);
         // A name lookup is answered with whatever the name means now: when
         // a later lookup has already bound it — to this keyset or another —
         // the caller gets that keyset (held, since no binding outlives its
@@ -491,7 +572,26 @@ impl KeysetCache {
         else {
             return;
         };
-        if let Some(entry) = self.by_id.remove(&oldest) {
+        self.evict(oldest);
+    }
+
+    /// Evict every entry whose index key is past the end of its lifetime at
+    /// `now`.
+    fn evict_expired(&mut self, now: Instant) {
+        let expired: Vec<Uuid> = self
+            .by_id
+            .iter()
+            .filter(|(_, entry)| !entry.state.retention.is_live_at(now))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in expired {
+            self.evict(id);
+        }
+    }
+
+    /// Evict the bounded entry for `oldest`, with the names bound to it.
+    fn evict(&mut self, id: Uuid) {
+        if let Some(entry) = self.by_id.remove(&id) {
             // The entry's place in the order outlives it as a watermark:
             // once it is gone there is nothing left to order an older answer
             // for this keyset against. It is taken whether or not the entry
@@ -503,11 +603,7 @@ impl KeysetCache {
             if let Some(name) = entry.name {
                 // A name that has since moved to another id keeps its
                 // binding: only this id's binding goes with it.
-                if self
-                    .by_name
-                    .get(&name)
-                    .is_some_and(|alias| alias.id == oldest)
-                {
+                if self.by_name.get(&name).is_some_and(|alias| alias.id == id) {
                     let _ = self.by_name.remove(&name);
                 }
             }
@@ -633,6 +729,7 @@ mod tests {
             id: Uuid::from_u128(id),
             name: name.map(str::to_owned),
             prf: HmacSha256Prf::new(Protected::new([id as u8; 32])),
+            retention: Retention::UntilEvicted,
         })
     }
 
@@ -1435,5 +1532,284 @@ mod tests {
             matches!(cache.get(&name("one")), Lookup::Hit(_)),
             "a wide window is fresh"
         );
+    }
+
+    // =========================================================================
+    // Key lifetime
+    // =========================================================================
+
+    fn expiring(id: u128, retention: Retention) -> Arc<KeysetState> {
+        Arc::new(KeysetState {
+            id: Uuid::from_u128(id),
+            name: None,
+            prf: HmacSha256Prf::new(Protected::new([id as u8; 32])),
+            retention,
+        })
+    }
+
+    #[test]
+    fn a_key_lifetime_is_fixed_to_a_retention_when_it_is_loaded() {
+        let now = Instant::now();
+        let hour = Duration::from_secs(3600);
+        assert_eq!(
+            Retention::of(KeyLifetime::UntilEvicted, now),
+            Retention::UntilEvicted
+        );
+        assert_eq!(Retention::of(KeyLifetime::Settle, now), Retention::Never);
+        assert_eq!(
+            Retention::of(KeyLifetime::Ttl(Duration::ZERO), now),
+            Retention::Never,
+            "a zero TTL is a settle"
+        );
+        assert_eq!(
+            Retention::of(KeyLifetime::Ttl(hour), now),
+            Retention::Until(now + hour)
+        );
+        assert_eq!(
+            Retention::of(KeyLifetime::Ttl(Duration::MAX), now),
+            Retention::UntilEvicted,
+            "a TTL past the clock's range is kept until evicted"
+        );
+    }
+
+    #[test]
+    fn a_ttl_ends_exclusively() {
+        let now = Instant::now();
+        let end = now + Duration::from_secs(1);
+        assert!(Retention::Until(end).is_live_at(now));
+        assert!(!Retention::Until(end).is_live_at(end), "expired at its end");
+        assert!(!Retention::Never.is_live_at(now));
+        assert!(Retention::UntilEvicted.is_live_at(end));
+    }
+
+    /// A keyset whose TTL has ended is a miss, and is gone from the cache:
+    /// its PRF does not wait there for the next load.
+    #[test]
+    fn a_keyset_past_its_ttl_is_evicted_on_lookup() {
+        let mut cache = cache(4);
+        let now = Instant::now();
+        let end = now + Duration::from_secs(60);
+        let loaded = expiring(1, Retention::Until(end));
+        let watch = Arc::downgrade(&loaded);
+        let resolution = cache.resolution();
+        let _ = cache.insert_at(loaded, resolution, now);
+
+        assert!(
+            matches!(
+                cache.get_at(&id(1), end - Duration::from_nanos(1)),
+                Lookup::Hit(_)
+            ),
+            "within its TTL the keyset is cached"
+        );
+        assert!(
+            matches!(cache.get_at(&id(1), end), Lookup::Miss(_)),
+            "at the end of its TTL the keyset is loaded again"
+        );
+        assert_eq!(cache.len(), 0, "the expired entry is evicted");
+        assert!(watch.upgrade().is_none(), "and its PRF is dropped");
+    }
+
+    /// An insert sweeps out every expired entry, not only the one it is
+    /// about: an entry nobody asks for again is not kept past its TTL.
+    #[test]
+    fn an_insert_evicts_every_expired_keyset() {
+        let mut cache = cache(4);
+        let now = Instant::now();
+        let end = now + Duration::from_secs(60);
+        for (n, retention) in [(1, Retention::Until(end)), (2, Retention::UntilEvicted)] {
+            let resolution = cache.resolution();
+            let _ = cache.insert_at(expiring(n, retention), resolution, now);
+        }
+        assert_eq!(cache.len(), 2);
+
+        let resolution = cache.resolution();
+        let _ = cache.insert_at(expiring(3, Retention::UntilEvicted), resolution, end);
+
+        assert_eq!(cache.len(), 2, "keyset 1 expired, 2 and 3 remain");
+        assert!(matches!(cache.get_at(&id(1), end), Lookup::Miss(_)));
+        assert!(matches!(cache.get_at(&id(2), end), Lookup::Hit(_)));
+        assert!(matches!(cache.get_at(&id(3), end), Lookup::Hit(_)));
+    }
+
+    /// An expired keyset's name goes with it, as on eviction.
+    #[test]
+    fn an_expired_keyset_takes_its_name_with_it() {
+        let mut cache = cache(4);
+        cache.name_ttl = Duration::MAX;
+        let now = Instant::now();
+        let end = now + Duration::from_secs(60);
+        let named = Arc::new(KeysetState {
+            id: Uuid::from_u128(1),
+            name: Some("acme".into()),
+            prf: HmacSha256Prf::new(Protected::new([1u8; 32])),
+            retention: Retention::Until(end),
+        });
+        let resolution = cache.resolution();
+        let _ = cache.insert_at(named, resolution, now);
+        assert!(matches!(cache.get_at(&name("acme"), now), Lookup::Hit(_)));
+
+        assert!(matches!(cache.get_at(&name("acme"), end), Lookup::Miss(_)));
+        assert_eq!(cache.names(), 0);
+        assert!(matches!(cache.get_at(&name("acme"), end), Lookup::Miss(_)));
+    }
+
+    mod through_the_cipher {
+        use super::*;
+        use std::borrow::Cow;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use stack_kms::{
+            DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload,
+            IndexKey, IndexKeySource, LoadedIndexKey, RetrieveKeyPayload, UnverifiedContext,
+        };
+
+        use crate::{nonempty, Error};
+
+        /// A key backend that gives each keyset it loads a fixed lifetime,
+        /// and the default keyset its own. Keys are the fake's.
+        struct Lifetimed {
+            inner: FakeDataKeySource,
+            default: KeyLifetime,
+            selected: KeyLifetime,
+            loads: AtomicUsize,
+        }
+
+        impl Lifetimed {
+            fn new(default: KeyLifetime, selected: KeyLifetime) -> Self {
+                Self {
+                    inner: FakeDataKeySource::new(),
+                    default,
+                    selected,
+                    loads: AtomicUsize::new(0),
+                }
+            }
+
+            fn loads(&self) -> usize {
+                self.loads.load(Ordering::SeqCst)
+            }
+        }
+
+        impl DataKeySource for Lifetimed {
+            async fn generate_keys(
+                &self,
+                payloads: Vec<GenerateKeyPayload<'_>>,
+                keyset_id: Option<Uuid>,
+                unverified_context: Option<Cow<'_, UnverifiedContext>>,
+            ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+                self.inner
+                    .generate_keys(payloads, keyset_id, unverified_context)
+                    .await
+            }
+
+            async fn retrieve_keys(
+                &self,
+                payloads: Vec<RetrieveKeyPayload<'_>>,
+                keyset_id: Option<Uuid>,
+                unverified_context: Option<&UnverifiedContext>,
+            ) -> Result<Vec<DataKey>, stack_kms::Error> {
+                self.inner
+                    .retrieve_keys(payloads, keyset_id, unverified_context)
+                    .await
+            }
+        }
+
+        impl IndexKeySource for Lifetimed {
+            async fn load_index_key(
+                &self,
+                keyset_id: Option<IdentifiedBy>,
+            ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+                self.inner.load_index_key(keyset_id).await
+            }
+
+            async fn load_index_key_with_lifetime(
+                &self,
+                keyset_id: Option<IdentifiedBy>,
+            ) -> Result<LoadedIndexKey, stack_kms::Error> {
+                let _ = self.loads.fetch_add(1, Ordering::SeqCst);
+                let lifetime = match keyset_id {
+                    None => self.default,
+                    Some(_) => self.selected,
+                };
+                let (id, key) = self.inner.load_index_key(keyset_id).await?;
+                Ok(LoadedIndexKey::new(id, key, lifetime))
+            }
+        }
+
+        /// The one test that proves key lifetime for every key backend: the
+        /// cipher, not the backend, obeys the lifetime. Two selections of
+        /// one keyset cost one load when the key may be cached, and two when
+        /// it may not; a key that may not be cached is gone once the handle
+        /// that used it drops. Under every lifetime the keyset still seals
+        /// and opens.
+        #[tokio::test]
+        async fn the_cipher_obeys_every_key_lifetime() {
+            let hour = Duration::from_secs(3600);
+            for (lifetime, cached) in [
+                (KeyLifetime::UntilEvicted, true),
+                (KeyLifetime::Ttl(hour), true),
+                (KeyLifetime::Ttl(Duration::ZERO), false),
+                (KeyLifetime::Settle, false),
+            ] {
+                let cipher = StackCipher::builder()
+                    .kms(Lifetimed::new(KeyLifetime::UntilEvicted, lifetime))
+                    .init()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    cipher.kms().loads(),
+                    1,
+                    "{lifetime:?}: init loads the default"
+                );
+                let tenant = Uuid::from_u128(42);
+
+                let first = cipher.keyset(tenant).await.unwrap();
+                let watch = Arc::downgrade(&first.state);
+                let sealed = first
+                    .encrypt("hello".to_string(), nonempty!("greeting"))
+                    .await
+                    .unwrap();
+                drop(first);
+
+                assert_eq!(
+                    watch.upgrade().is_some(),
+                    cached,
+                    "{lifetime:?}: whether the cipher kept the index key"
+                );
+
+                let second = cipher.keyset(tenant).await.unwrap();
+                let expected = if cached { 2 } else { 3 };
+                assert_eq!(
+                    cipher.kms().loads(),
+                    expected,
+                    "{lifetime:?}: a second selection reloads only an uncached key"
+                );
+                let opened: String = second.decrypt(sealed, nonempty!("greeting")).await.unwrap();
+                assert_eq!(opened, "hello", "{lifetime:?}");
+            }
+        }
+
+        /// The cipher holds its default keyset for its whole life, so a
+        /// backend that will not let it keep that index key is refused at
+        /// init, not obeyed in part.
+        #[tokio::test]
+        async fn a_default_keyset_the_cipher_may_not_keep_is_refused_at_init() {
+            for lifetime in [
+                KeyLifetime::Settle,
+                KeyLifetime::Ttl(Duration::from_secs(60)),
+            ] {
+                let refused = StackCipher::builder()
+                    .kms(Lifetimed::new(lifetime, KeyLifetime::UntilEvicted))
+                    .init()
+                    .await
+                    .err();
+                assert!(
+                    matches!(
+                        refused,
+                        Some(Error::DefaultKeysetLifetime { keyset }) if keyset == Uuid::nil()
+                    ),
+                    "{lifetime:?}: {refused:?}"
+                );
+            }
+        }
     }
 }
