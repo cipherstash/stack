@@ -1,0 +1,28 @@
+error[E0277]: the trait bound `Account: vitaminc_aead::Scalar` is not satisfied
+  --> tests/ui/scalar/derived_struct_is_a_map.rs:14:20
+   |
+14 |     seals_one_leaf(Account { id: 1 });
+   |     -------------- ^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the trait `vitaminc_aead::Scalar` is not implemented for `Account`
+  --> tests/ui/scalar/derived_struct_is_a_map.rs:7:1
+   |
+ 7 | struct Account {
+   | ^^^^^^^^^^^^^^
+   = help: the following other types implement trait `vitaminc_aead::Scalar`:
+             &&'b T
+             &'a vitaminc_protected::protected::Protected<T>
+             &Raw<'_>
+             &String
+             &Vec<u8>
+             &[u8; N]
+             &[u8]
+             &bool
+           and $N others
+note: required by a bound in `seals_one_leaf`
+  --> tests/ui/scalar/derived_struct_is_a_map.rs:11:22
+   |
+11 | fn seals_one_leaf<S: Scalar>(_: S) {}
+   |                      ^^^^^^ required by this bound in `seals_one_leaf`

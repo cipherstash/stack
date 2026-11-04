@@ -13,7 +13,7 @@ use vitaminc_protected::{Controlled, OpaqueDebug, Protected, ProtectedRef};
 use zeroize::Zeroize;
 
 use super::kinds::{FixedType, Float, Logical, Physical, Width};
-use super::{depth, visit_seq, Encrypt, MapSink, SeqSink, Sink};
+use super::{depth, visit_seq, Encrypt, MapSink, Scalar, SeqSink, Sink};
 
 macro_rules! int {
     ($($ty:ty => $width:ident),* $(,)?) => {
@@ -186,6 +186,38 @@ impl Encrypt for &Raw<'_> {
     }
 }
 
+/// Mark each type as a [`Scalar`], and check that its `DEPTH` agrees, so
+/// the marker can never sit on a container. The check is a named `const`,
+/// so `cargo check` reports a disagreement where the impl is.
+macro_rules! scalar {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl Scalar for $ty {}
+            const _: () = assert!(
+                depth::is_scalar(<$ty as Encrypt>::DEPTH),
+                "a `Scalar` type's walk must be exactly one leaf",
+            );
+        )*
+    };
+}
+
+// Every leaf source above, owned and borrowed. `u8` is not a source, so
+// it is not here either; see the module docs.
+scalar! {
+    bool, &bool, f32, &f32, f64, &f64,
+    i8, &i8, i16, &i16, i32, &i32, i64, &i64, i128, &i128,
+    u16, &u16, u32, &u32, u64, &u64, u128, &u128,
+    &str, String, &String,
+    &[u8], Vec<u8>, &Vec<u8>,
+    Bytes<'_>, &Bytes<'_>, Raw<'_>, &Raw<'_>,
+}
+
+/// A byte array of any length is one byte leaf. Its `DEPTH` is
+/// [`depth::SCALAR`] for every `N`; the agreement check for a generic impl
+/// is in the tests, at a concrete length.
+impl<const N: usize> Scalar for [u8; N] {}
+impl<const N: usize> Scalar for &[u8; N] {}
+
 /// A borrow of a borrowed source is the same source. This is what a
 /// derived struct with a borrowed field (`&'a str`, `&'a [u8]`,
 /// `Option<&'a str>`) needs when it is walked by reference, as it is from
@@ -201,13 +233,88 @@ where
     }
 }
 
+impl<'b, T: ?Sized> Scalar for &&'b T where &'b T: Scalar {}
+
 /// `None` is a null. There is no separate "absent" in the data model: a
 /// Rust `None` and a host null mean the same thing.
 ///
-/// When `T` has a [`FIXED`](Encrypt::FIXED) type, `None` is a typed null
-/// of it, which the encrypting sink pads to the length of a `Some`.
-/// Otherwise it is the plain null, the same leaf as a host null. An `Option<Option<T>>` has `T`'s type
-/// too, so its two `None`s seal alike, as they always have.
+/// A `Some` walks exactly as its value would: `Some(42i32)` is the same as
+/// `42i32`, `Some(vec![1u8, 2])` is one bytes leaf, and
+/// `Some(vec![1i32, 2])` is a sequence of two int leaves.
+///
+/// A `None` is always one leaf, whatever `T` is. When `T` has a
+/// [`FIXED`](Encrypt::FIXED) type (an int, a float, a date, a timestamp,
+/// a decimal, a uuid), that leaf is a typed null, which the encrypting
+/// sink pads to the length of a `Some`, to prevent differentiating between
+/// an absent value and a present value.
+///
+/// Otherwise (text, bytes, a bool, a container) it is the plain
+/// null, the same leaf as a host null. An `Option<Option<T>>` has `T`'s
+/// type too, so its two `None`s seal alike, as they always have.
+///
+/// An `Option<T>` is not a [`Scalar`], even when `T` is: its walk is one
+/// leaf, but a caller that bounds on `Scalar` asks for a value that is
+/// present. That caller decides for itself how to seal an absent value.
+///
+/// # Examples
+///
+/// Each leaf below is reported as its tag and its length in bytes, through
+/// an [`Equatable`](vitaminc_protected::Equatable) that can be compared but
+/// not read, so no example ever looks at a plaintext.
+///
+/// ```
+/// use std::convert::Infallible;
+/// use vitaminc_aead::{plan, tags, CipherText, Encrypt, EncryptError};
+/// use vitaminc_protected::{Controlled, Equatable, Protected};
+///
+/// /// A leaf's tag and its length in bytes.
+/// type Shape = Equatable<Protected<[u8; 2]>>;
+///
+/// fn shape(tag: u8, len: u8) -> Shape {
+///     Equatable::new([tag, len])
+/// }
+///
+/// /// The shape of the one leaf `value` plans.
+/// fn leaf<P: Encrypt>(value: P) -> Result<Shape, EncryptError<Infallible>> {
+///     match plan::<_, Infallible, _>(value, "aad")? {
+///         CipherText::Single(leaf) => Ok(leaf
+///             .plaintext
+///             .map(|bytes| [bytes[0], u8::try_from(bytes.len()).expect("short")])
+///             .into()),
+///         _ => panic!("not one leaf"),
+///     }
+/// }
+///
+/// // `Option<i32>`: an `i32` is an int leaf, the tag and four bytes. A
+/// // `Some` is the same leaf, and a `None` is a typed null padded to the
+/// // same five bytes.
+/// assert!(leaf(42i32)? == shape(tags::INT32, 5));
+/// assert!(leaf(Some(42i32))? == shape(tags::INT32, 5));
+/// assert!(leaf(None::<i32>)? == shape(tags::TYPED_NULL, 5));
+///
+/// // `Option<String>` and `Option<Vec<u8>>`: a `String` or a `Vec<u8>` is
+/// // a text or bytes leaf, the tag and the bytes, and so is a `Some`. A
+/// // `None` is the one-byte plain null; there is no width to hide.
+/// assert!(leaf(String::from("hi"))? == shape(tags::STRING, 3));
+/// assert!(leaf(Some(String::from("hi")))? == shape(tags::STRING, 3));
+/// assert!(leaf(vec![1u8, 2])? == shape(tags::BYTES, 3));
+/// assert!(leaf(Some(vec![1u8, 2]))? == shape(tags::BYTES, 3));
+/// assert!(leaf(None::<String>)? == shape(tags::NULL, 1));
+/// assert!(leaf(None::<Vec<u8>>)? == shape(tags::NULL, 1));
+///
+/// // `Option<Vec<i32>>`: a `Some` is a sequence with one int leaf per
+/// // element, two here, and a `None` is still the one plain null leaf.
+/// let some = plan::<_, Infallible, _>(Some(vec![1i32, 2]), "aad")?;
+/// let CipherText::Sequence(elements) = some else { panic!("not a sequence") };
+/// assert_eq!(elements.len(), 2);
+/// assert!(elements.iter().all(|element| matches!(element, CipherText::Single(_))));
+/// assert!(leaf(None::<Vec<i32>>)? == shape(tags::NULL, 1));
+///
+/// // `Option<Option<i32>>`: both `None`s are the `i32` typed null.
+/// assert!(leaf(None::<Option<i32>>)? == shape(tags::TYPED_NULL, 5));
+/// assert!(leaf(Some(None::<i32>))? == shape(tags::TYPED_NULL, 5));
+/// # Ok::<(), EncryptError<Infallible>>(())
+/// ```
 impl<T: Encrypt> Encrypt for Option<T> {
     const DEPTH: Option<usize> = T::DEPTH;
     const FIXED: Option<FixedType> = T::FIXED;
@@ -256,6 +363,9 @@ where
     }
 }
 
+/// A protected scalar is the scalar it wraps, walked as a borrow.
+impl<T: Zeroize> Scalar for Protected<T> where for<'a> &'a T: Scalar {}
+
 /// A borrowed protected value is the same borrow; the caller's wrapper
 /// does the wiping.
 impl<'a, T: Zeroize> Encrypt for &'a Protected<T>
@@ -268,6 +378,8 @@ where
         self.risky_ref().visit(sink)
     }
 }
+
+impl<'a, T: Zeroize> Scalar for &'a Protected<T> where &'a T: Scalar {}
 
 /// A protected borrow ([`AsProtectedRef`](vitaminc_protected::AsProtectedRef))
 /// walks as the borrow it wraps, exactly as `&Protected<T>` does: the
@@ -299,6 +411,9 @@ where
     }
 }
 
+/// A protected borrow of a scalar is that scalar.
+impl<'a, T: ?Sized> Scalar for ProtectedRef<'a, T> where &'a T: Scalar {}
+
 /// A borrowed protected borrow is the same borrow. A derived struct with a
 /// `ProtectedRef` field, or an `&Option<ProtectedRef<_>>`, walks it this way.
 impl<'a, T: ?Sized> Encrypt for &ProtectedRef<'a, T>
@@ -313,6 +428,8 @@ where
         self.risky_ref().visit(sink)
     }
 }
+
+impl<'a, T: ?Sized> Scalar for &ProtectedRef<'a, T> where &'a T: Scalar {}
 
 /// An owned sequence takes its elements out one at a time, so a walk that
 /// stops part way never drops an unvisited element bare: the elements the
@@ -561,6 +678,8 @@ mod chrono_sources {
             (*self).visit(sink)
         }
     }
+
+    scalar!(NaiveDate, &NaiveDate, DateTime<Utc>, &DateTime<Utc>);
 }
 
 #[cfg(feature = "rust_decimal")]
@@ -589,6 +708,15 @@ impl Encrypt for &rust_decimal::Decimal {
     }
 }
 
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
+impl Scalar for rust_decimal::Decimal {}
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
+impl Scalar for &rust_decimal::Decimal {}
+#[cfg(feature = "rust_decimal")]
+const _: () = assert!(depth::is_scalar(<rust_decimal::Decimal as Encrypt>::DEPTH));
+
 #[cfg(feature = "uuid")]
 #[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
 impl Encrypt for uuid::Uuid {
@@ -610,6 +738,15 @@ impl Encrypt for &uuid::Uuid {
         (*self).visit(sink)
     }
 }
+
+#[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
+impl Scalar for uuid::Uuid {}
+#[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
+impl Scalar for &uuid::Uuid {}
+#[cfg(feature = "uuid")]
+const _: () = assert!(depth::is_scalar(<uuid::Uuid as Encrypt>::DEPTH));
 
 #[cfg(test)]
 mod tests {

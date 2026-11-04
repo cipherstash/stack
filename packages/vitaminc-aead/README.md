@@ -105,7 +105,7 @@ A cipher that has to be awaited implements [`AsyncCipher`] instead, and drives [
 
 ### Encrypting data
 
-[`encrypt`] takes any [`Encrypt`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), a `ProtectedRef` borrow from `as_protected_ref()` (walked as the `&Protected<T>` it came from), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them.
+[`encrypt`] takes any [`Encrypt`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), a `ProtectedRef` borrow from `as_protected_ref()` (walked as the `&Protected<T>` it came from), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them. Each source that is one leaf on its own also implements [`Scalar`], the bound for a caller that must seal exactly one leaf.
 
 ```rust
 # use vitaminc_aead::{Cipher, Context, Unspecified};
@@ -464,6 +464,7 @@ License: MIT
 [`IntoAad`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.IntoAad.html
 [`LeafTypeAad`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.LeafTypeAad.html
 [`PassthroughFrame`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.PassthroughFrame.html
+[`Scalar`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Scalar.html
 [`Sink::passthrough`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html#tymethod.passthrough
 [`Sink`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Sink.html
 [`Tee`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/struct.Tee.html

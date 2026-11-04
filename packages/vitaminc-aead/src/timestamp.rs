@@ -4,7 +4,9 @@ use ::chrono::{DateTime, Utc};
 use vitaminc_protected::{OpaqueDebug, TimingSafeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::plaintext::{depth, Encrypt, FixedType, Int, Logical, Physical, Sink, TimeUnit, Width};
+use crate::plaintext::{
+    depth, Encrypt, FixedType, Int, Logical, Physical, Scalar, Sink, TimeUnit, Width,
+};
 use crate::typed::FromScalar;
 
 /// A UTC instant that is never a leap second, so it can always be encrypted.
@@ -129,6 +131,10 @@ impl Encrypt for &Timestamp {
         )
     }
 }
+
+impl Scalar for Timestamp {}
+impl Scalar for &Timestamp {}
+const _: () = assert!(depth::is_scalar(<Timestamp as Encrypt>::DEPTH));
 
 /// Any unit, as for `DateTime<Utc>`. A decoded count is never a leap second.
 impl FromScalar for Timestamp {

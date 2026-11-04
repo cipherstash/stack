@@ -11,6 +11,7 @@
 //! [`IntoAad`]: crate::IntoAad
 //! [`LeafTypeAad`]: crate::LeafTypeAad
 //! [`PassthroughFrame`]: crate::PassthroughFrame
+//! [`Scalar`]: trait@crate::Scalar
 //! [`Sink::passthrough`]: crate::Sink::passthrough
 //! [`Sink`]: crate::Sink
 //! [`Tee`]: crate::Tee
@@ -52,7 +53,7 @@ mod walk;
 #[doc(inline)]
 pub use plaintext::{
     Bytes, Encrypt, FixedType, Float, Int, Kind, KnownLogical, Logical, MapSink, Physical, Raw,
-    SeqSink, Sink, SourceError, Tee, TimeUnit, UnknownLogical, UnknownLogicalId, Width,
+    Scalar, SeqSink, Sink, SourceError, Tee, TimeUnit, UnknownLogical, UnknownLogicalId, Width,
 };
 /// Derive [`Encrypt`] for a struct or a fieldless enum. A struct walks as
 /// a map keyed by field name; a fieldless enum as an int leaf holding the
