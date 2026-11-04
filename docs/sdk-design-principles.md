@@ -226,7 +226,14 @@ The Python SDK is the package `stackencrypt` under `languages/python`.
 Its binding is the extension module `stackencrypt._engine`, named under Terms above.
 Do not call the extension the SDK, and do not call the SDK the binding.
 [ADR-0001](../languages/python/docs/adr/0001-a-declaration-is-checked-when-the-class-is-defined.md) under `languages/python/docs/adr/` records the first decision below.
-No code demonstrates these yet: the walking skeleton exposes only build metadata, and the tickets under spec #1341 build the rest.
+
+The code under spec #1341 follows these, with one difference in principle 5.
+An error names a field and a reason only where one applies.
+So an error about a whole class or a connection, such as an `AuthenticationError`, has `field` set to `None`.
+Many error codes also have `reason` set to `None`.
+
+[The scorecard](../languages/python/docs/scorecard.md) marks the eight principles for every language SDK against the code, with the evidence.
+It marks one of them as strained.
 
 ### 1. Find mistakes at the earliest stage
 
@@ -255,8 +262,8 @@ Calls are synchronous and release the GIL while the engine works.
 
 ### 5. Never put plaintext in an error or a print
 
-Every error names the field and the reason, and never the value.
-A declared model's `__repr__` and `__str__` show `[sealed]` for encrypted fields by default.
+An error names the field and the reason where one applies, and never the value.
+A declared model's `__repr__` and `__str__` show `<sealed>` for encrypted fields by default.
 
 ### Not yet decided for Python
 

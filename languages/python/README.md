@@ -33,15 +33,18 @@ CREATE INDEX users_email_eq ON users USING hash (eql_v4.eq_term(email));
 
 ## Encrypt a row
 
-Declare the model with `stackencrypt.model`, then encrypt it with a `Cipher`:
+Declare the model with `stackencrypt.model`, then encrypt it with a `Cipher`. Set `DATABASE_URL` to your database's connection string first.
 
 ```python
 import dataclasses
+import os
 from typing import Annotated
 
 import psycopg
 import stackencrypt
 from stackencrypt import Passthrough, TextEq
+
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 @stackencrypt.model("users")
@@ -150,6 +153,45 @@ With this form, a new `Book` has `author` set to `None` until you set it. A bare
 
 `Author` must be defined before `Book`, because the decorator evaluates `"Author"` in the hint when `Book`'s class statement runs.
 
+## What a printed model shows
+
+`repr` and `str` of a declared model show `<sealed>` in place of each encrypted field. A passthrough field shows its value:
+
+```text
+User(email=<sealed>, age=3)
+```
+
+A log line that formats the model, such as `log.info("%s", user)`, uses `str`, so it shows `<sealed>` too.
+
+Nothing else is hidden. These all contain the plaintext:
+
+- a log line that formats a field, such as `log.info(user.email)`
+- `dataclasses.asdict`, Pydantic's `model_dump`, `vars`, and `__dict__`
+- `pickle.dumps(user)`, and anything a debugger reads from the attributes
+
+If the class defines its own `__repr__`, `__str__`, or `__rich_repr__`, the decorator refuses it. `__rich_repr__` is the method the `rich` library prints through. To keep your own methods, pass `redact=False` to `stackencrypt.model`. Your methods must then hide the plaintext themselves.
+
+## Do not change a class after you declare it
+
+`Cipher(User)` checks that the class is as the decorator left it: the same type hints, the same constructor, and the same printing methods. A changed class raises `stackencrypt.DeclarationError` with the code `declaration_class_changed`. With `redact=False`, the printing methods are yours, so `Cipher` does not check them.
+
+After a `Cipher` is made, nothing checks the class again. So the SDK cannot detect a change made after that point.
+
+## Store a UUID key
+
+A model field cannot be a `uuid.UUID`. The decorator refuses it with the code `declaration_type_mismatch`. Use one of these two ways instead:
+
+- Leave the key column out of the model. `encrypt` never writes a column the model does not declare, and `decrypt` ignores one. Insert and select the key yourself, beside the encrypted values.
+- Declare the field as `Annotated[str, Passthrough]`. Convert with `str(key)` before `encrypt`. Select the column as `id::text`, because psycopg reads a `uuid` column as a `uuid.UUID`, and `decrypt` refuses that for a `str` field.
+
+## What is not supported yet
+
+- Match, order, and range queries. `query` makes equality terms only.
+- Encrypted JSON documents.
+- Lock contexts and identity-bound encryption.
+- More than one keyset, and a choice of keyset.
+- An async API.
+
 ## Use it from several threads
 
 `encrypt`, `decrypt`, and `query` are synchronous. There is no async form yet.
@@ -176,4 +218,4 @@ mise run test:live            # needs the four CS_* variables and EQL_TEST_DATAB
 
 `mise run test:deterministic` builds a test version of the extension. Its keys come from a fixed seed, not from CipherStash. The tests in `tests_deterministic/` then open the EQL rows the Go SDK stored under that seed. They also check that Python seals the same values to the same terms. Run `mise run build` afterwards to get a normal build back.
 
-`mise run test:live` installs the EQL v4 bundle into the database that `EQL_TEST_DATABASE_URL` names. Use a database you can throw away.
+`mise run test:live` installs the EQL v4 bundle into the database that `EQL_TEST_DATABASE_URL` names. Use a database you can throw away. It also runs this README: the SQL block and the Python blocks, in order, in a schema of their own.

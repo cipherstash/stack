@@ -13,13 +13,13 @@ import datetime
 import decimal
 import json
 import math
-import os
 import struct
 from typing import Annotated, List, NamedTuple
 
 import attrs
 import pydantic
 import pytest
+from _live import DATABASE_URL, LIVE, needs_database
 from sqlalchemy import ForeignKey
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -27,18 +27,7 @@ import stackencrypt
 from stackencrypt import Cipher, DecryptError, Ignore, Passthrough, TextEq
 from stackencrypt import _engine, _eql
 
-CREDENTIALS = ("CS_CLIENT_ACCESS_KEY", "CS_WORKSPACE_CRN", "CS_CLIENT_ID", "CS_CLIENT_KEY")
-DATABASE_URL = os.environ.get("EQL_TEST_DATABASE_URL", "")
-
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(
-        not all(os.environ.get(name) for name in CREDENTIALS),
-        reason="needs CS_CLIENT_ACCESS_KEY, CS_WORKSPACE_CRN, CS_CLIENT_ID and CS_CLIENT_KEY",
-    ),
-]
-
-needs_database = pytest.mark.skipif(not DATABASE_URL, reason="needs EQL_TEST_DATABASE_URL")
+pytestmark = LIVE
 
 
 @stackencrypt.model("users")

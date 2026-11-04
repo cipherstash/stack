@@ -8,43 +8,22 @@ a new Python process: the client of this one is already built, and the
 interrupt is for the whole process.
 """
 
-import json
-import os
 import pathlib
-import subprocess
 import sys
 
 import pytest
+from _live import LIVE, run_python
 from _sync_contract import PER_THREAD, THREADS, User, encrypt_from_threads, user
 
 from stackencrypt import Cipher
 
-CREDENTIALS = ("CS_CLIENT_ACCESS_KEY", "CS_WORKSPACE_CRN", "CS_CLIENT_ID", "CS_CLIENT_KEY")
+pytestmark = LIVE
 
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(
-        not all(os.environ.get(name) for name in CREDENTIALS),
-        reason="needs CS_CLIENT_ACCESS_KEY, CS_WORKSPACE_CRN, CS_CLIENT_ID and CS_CLIENT_KEY",
-    ),
-]
-
-
-def run_child(script):
-    """Run ``script``, beside this file, in a new Python process with this
-    one's environment. Returns the JSON it printed last."""
-    done = subprocess.run(
-        [sys.executable, str(pathlib.Path(__file__).with_name(script))],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert done.returncode == 0, done.stderr
-    return json.loads(done.stdout.strip().splitlines()[-1])
+HERE = pathlib.Path(__file__).parent
 
 
 def test_threads_making_their_first_call_at_once_build_one_client():
-    assert run_child("_first_call.py") == {"builds": 1, "keyset_loads": 1}
+    assert run_python([str(HERE / "_first_call.py")]) == {"builds": 1, "keyset_loads": 1}
 
 
 def test_threads_encrypt_at_once_and_every_row_opens():
@@ -57,7 +36,7 @@ def test_threads_encrypt_at_once_and_every_row_opens():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGINT is sent with os.kill")
 def test_an_interrupt_during_encrypt_waits_for_it_and_the_cipher_still_works():
-    result = run_child("_interrupt.py")
+    result = run_python([str(HERE / "_interrupt.py")])
 
     # The script grows the call until it takes 0.4 seconds, up to 80,000
     # values. Below 0.2, there is too little time to send a signal into it.

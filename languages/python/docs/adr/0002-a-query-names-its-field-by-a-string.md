@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-02
 ticket: "#1391, the first ticket that adds `query`, as the spec (#1341) says"
 extends: ADR-0001
