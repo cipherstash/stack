@@ -7,8 +7,8 @@
 //! The generic impls (`[u8; N]`, `&&T`, `Protected<T>`, `ProtectedRef<T>`)
 //! cannot assert their depth where they are written, so the named `const`s
 //! here do it at concrete types. The compile-fail half, that a container,
-//! an `Option` and a derived struct do not carry the marker, lives in
-//! `tests/ui/scalar/`.
+//! an `Option`, a derived struct and a protected or borrowed container do
+//! not carry the marker, lives in `tests/ui/scalar/`.
 
 // The borrows are the point: each one picks the reference impl.
 #![allow(clippy::needless_borrows_for_generic_args)]
@@ -86,6 +86,26 @@ fn text_and_byte_leaves_are_scalars() {
     one_leaf(&Bytes(&[1, 2]));
     one_leaf(Raw(None, Physical::Int(Int::U16(7))));
     one_leaf(&Raw(None, Physical::Null));
+}
+
+/// An empty sequence seals as the `EmptySequence` marker, not a leaf. An
+/// empty text or byte value is not a sequence: it is one leaf, with nothing
+/// in it, exactly as a `Scalar` promises.
+#[test]
+fn an_empty_text_or_byte_value_is_still_one_leaf() {
+    one_leaf("");
+    one_leaf(String::new());
+    one_leaf(&String::new());
+    one_leaf(&[][..] as &[u8]);
+    one_leaf(Vec::<u8>::new());
+    one_leaf(&Vec::<u8>::new());
+    one_leaf([0u8; 0]);
+    one_leaf(&[0u8; 0]);
+    one_leaf(Bytes(&[]));
+    one_leaf(&Bytes(&[]));
+    one_leaf(Protected::new(String::new()));
+    one_leaf(Protected::new(Vec::<u8>::new()));
+    one_leaf(Protected::new([0u8; 0]).as_protected_ref());
 }
 
 #[test]
