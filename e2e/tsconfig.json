@@ -3,6 +3,7 @@
   "include": [
     "tests/**/*.ts",
     "vitest.config.ts",
-    "vitest.protect-compat.config.ts"
+    "vitest.protect-compat.config.ts",
+    "vitest.protect-crossover.config.ts"
   ]
 }

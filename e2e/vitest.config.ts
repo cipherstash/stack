@@ -7,11 +7,14 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['tests/**/*.e2e.test.ts'],
-    // Fails without CS_* credentials, which turbo's strict env mode hides from
-    // `test:e2e`; it runs from `vitest.protect-compat.config.ts` instead.
+    // Fail without CS_* credentials (and, for the cross-store suite,
+    // DATABASE_URL), which turbo's strict env mode hides from `test:e2e`; they
+    // run from `vitest.protect-compat.config.ts` and
+    // `vitest.protect-crossover.config.ts` instead.
     exclude: [
       '**/node_modules/**',
       'tests/protect-dynamodb-compat.e2e.test.ts',
+      'tests/protect-crossover.e2e.test.ts',
     ],
     pool: 'forks',
     testTimeout: 30_000,
