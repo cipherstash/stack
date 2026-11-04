@@ -30,9 +30,12 @@
  * mode hides the credentials from `test:e2e`) and it runs from its own config
  * as the `test:protect-compat` task, a step of its own (with
  * `--env-mode=loose`) in the `e2e-tests` job in `tests.yml`.
+ *
+ * `docs/migration/protect-dynamodb-to-stack.md` cites these tests by name, and
+ * `protect-upgrade-guide.e2e.test.ts` fails when a cited name stops existing:
+ * renaming or removing a test means updating the guide's claim with it.
  */
-import { fileURLToPath } from 'node:url'
-import { csColumn, csTable, protect } from '@cipherstash/protect'
+import { csColumn, csTable, type protect } from '@cipherstash/protect'
 import { protectDynamoDB } from '@cipherstash/protect-dynamodb'
 import { encryptedDynamoDB } from '@cipherstash/stack/dynamodb'
 import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
@@ -42,81 +45,8 @@ import {
   encryptedColumn as encryptedColumn019,
   encryptedTable as encryptedTable019,
 } from '@cipherstash/stack-0.19/schema'
-import { config } from 'dotenv'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-
-// A local `.env` in `e2e/` or at the repo root, as AGENTS.md describes. CI
-// injects the variables directly; an existing value always wins.
-config({
-  path: ['../.env', '../../.env'].map((p) =>
-    fileURLToPath(new URL(p, import.meta.url)),
-  ),
-  quiet: true,
-})
-
-const authConfigured = Boolean(
-  process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-
-/**
- * Build Protect's native client (cipherstash-client 0.28) for the same
- * workspace Stack uses.
- *
- * Unlike today's clients, 0.28 does not derive its service hosts from the
- * workspace CRN: with no override it defaults to the legacy
- * `ap-southeast-2.aws.auth.viturhosted.net`, so a workspace in another region
- * gets a 401 from CTS. So point `CS_CTS_HOST` / `CS_ZEROKMS_HOST` at the CRN's
- * region while the client is built, using the URLs current clients derive by
- * service discovery (cts-common's `CtsServiceDiscovery` and
- * `ZeroKmsServiceDiscovery`), then restore them: the hosts are read at
- * construction, and Stack's client must keep deriving its own. Credentials
- * are passed explicitly, as a Protect app configured from these variables
- * would.
- */
-async function legacyProtect(
-  schemas: Parameters<typeof protect>[0]['schemas'],
-) {
-  const crn = process.env.CS_WORKSPACE_CRN as string
-  const region = crn.split(':')[1]
-  const saved = {
-    CS_CTS_HOST: process.env.CS_CTS_HOST,
-    CS_ZEROKMS_HOST: process.env.CS_ZEROKMS_HOST,
-  }
-  process.env.CS_CTS_HOST = `https://${region}.cts.cipherstashmanaged.net`
-  process.env.CS_ZEROKMS_HOST = `https://${region}.viturhosted.net`
-  try {
-    return await protect({
-      schemas,
-      workspaceCrn: crn,
-      clientId: process.env.CS_CLIENT_ID,
-      clientKey: process.env.CS_CLIENT_KEY,
-      accessKey: process.env.CS_CLIENT_ACCESS_KEY,
-    })
-  } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
-  }
-}
-
-/** Unwrap a `{ data } | { failure }` result, failing the test on `failure`. */
-function ok<T>(
-  result: { data: T; failure?: undefined } | { failure: unknown },
-  label: string,
-): T {
-  if ('failure' in result && result.failure !== undefined) {
-    const failure = result.failure as { message?: unknown }
-    // An Error's message is not enumerable, so JSON.stringify alone drops it.
-    throw new Error(
-      `${label} failed: ${String(failure?.message ?? '')} ${JSON.stringify(failure)}`,
-    )
-  }
-  return (result as { data: T }).data
-}
+import { authConfigured, legacyProtect, ok } from './helpers/legacy-protect'
 
 // ---------------------------------------------------------------------------
 // The schemas: the customer's v2 table, and its v3 mapping.
@@ -412,17 +342,42 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
       expect(await hmOf(model.email, users, users.email)).toBe(legacyTerm)
     })
 
-    it('every numeric *Eq domain gives the same HMAC (all cast to f64)', async () => {
+    it('IntegerEq and DoubleEq queries match the legacy whole-number HMAC', async () => {
+      expect(await hmOf(model.age, users, users.age)).toBe(item.age__hmac)
       expect(await hmOf(model.age, alternates, alternates.age)).toBe(
         item.age__hmac,
       )
+    })
+
+    it('DoubleEq preserves fractional number reads, writes and equality terms', async () => {
+      for (const age of [36.5, -0.125]) {
+        const old: Record<string, unknown> = ok(
+          await legacy.encryptModel({ pk: 'fraction', age }, legacyUsers),
+          'legacy fractional write',
+        )
+        expect(
+          ok(await stack.decryptModel(old, alternates), 'fractional read').age,
+        ).toBe(age)
+        expect(await hmOf(age, alternates, alternates.age)).toBe(old.age__hmac)
+        const fresh = ok(
+          await stack.encryptModel({ pk: 'fraction', age }, alternates),
+          'Stack fractional write',
+        )
+        expect(fresh.age__hmac).toBe(old.age__hmac)
+        expect(
+          ok(
+            await legacy.decryptModel(fresh, legacyUsers),
+            'fractional rollback',
+          ).age,
+        ).toBe(age)
+      }
     })
 
     it('a numeric *Ord domain emits no HMAC at all', async () => {
       expect(await hmOf(model.age, ordered, ordered.age)).toBe(undefined)
     })
 
-    it('protect 10.2.1 could not encrypt a date column at all, so no legacy date HMAC exists', async () => {
+    it('protect 10.2.1 rejects the tested date inputs', async () => {
       for (const value of [
         '1990-04-05',
         '1990-04-05T00:00:00Z',
@@ -708,6 +663,210 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
   })
 
   // -------------------------------------------------------------------------
+  // No re-encryption: the upgrade is a code change only. A corpus written by
+  // protect-dynamodb 6.0.1 is frozen, the app moves to Stack 1.x, and every
+  // read and equality query keeps working against the stored bytes. The
+  // backfill in the acceptance test above is optional; this block runs the
+  // same app WITHOUT it. The proof that no rewrite is needed is that the reads
+  // and queries pass against bytes nothing has rewritten; the last test only
+  // confirms that Stack's reads left those bytes as they were.
+  // -------------------------------------------------------------------------
+
+  describe('no re-encryption: a code-only upgrade over untouched legacy items', () => {
+    type Row = {
+      pk: string
+      email: string
+      emailLower: string
+      age: number
+      balance: number
+      active: boolean
+      notes: string
+    }
+    // Shared values (age 36, a lowercase-equal emailLower) so a query has to
+    // return exactly the right SET of rows, not just a single hit. The
+    // balances cover zero, a negative and Number.MAX_SAFE_INTEGER, the largest
+    // value protect 10.2.1 could store exactly (see `model.balance`).
+    const corpus: Row[] = [
+      {
+        pk: 'user#10',
+        email: 'grace@example.com',
+        emailLower: 'Grace@Example.com',
+        age: 36,
+        balance: 0,
+        active: true,
+        notes: 'compilers',
+      },
+      {
+        pk: 'user#11',
+        email: 'alan@example.com',
+        emailLower: 'ALAN@example.com',
+        age: 41,
+        balance: Number.MAX_SAFE_INTEGER,
+        active: false,
+        notes: 'computability',
+      },
+      {
+        pk: 'user#12',
+        email: 'edsger@example.com',
+        emailLower: 'grace@example.com',
+        age: 36,
+        balance: -42,
+        active: true,
+        notes: 'structured programming',
+      },
+    ]
+    /** What Stack 1.x returns for a row: identical, bigint as a JS bigint. */
+    const expected = (row: Row) => ({ ...row, balance: BigInt(row.balance) })
+
+    /** The table as protect-dynamodb left it. Items are frozen. */
+    const table = new Map<string, Readonly<Record<string, unknown>>>()
+    let snapshot: string
+    const stored = () => [...table.values()]
+    const queryBy = (
+      rows: Readonly<Record<string, unknown>>[],
+      attr: string,
+      hm: string | undefined,
+    ) =>
+      rows
+        .filter((row) => hm !== undefined && row[`${attr}__hmac`] === hm)
+        .map((row) => row.pk as string)
+        .sort()
+
+    beforeAll(async () => {
+      // Written before the upgrade, through both protect-dynamodb write paths.
+      const [first, ...rest] = corpus
+      const written = [
+        ok(
+          await legacy.encryptModel(first, legacyUsers),
+          'protect-dynamodb encryptModel',
+        ),
+        ...ok(
+          await legacy.bulkEncryptModels(rest, legacyUsers),
+          'protect-dynamodb bulkEncryptModels',
+        ),
+      ] as Record<string, unknown>[]
+      for (const row of written) table.set(row.pk as string, Object.freeze(row))
+      // Frozen: every attribute is a top-level string, so a shallow freeze
+      // covers the whole item. An in-place write by Stack throws if the
+      // writing code is strict and is silently dropped if not, so the
+      // snapshot is what catches either case in the last test.
+      snapshot = JSON.stringify([...table.entries()])
+    }, 60_000)
+
+    // Nothing below touches `legacy` or `legacyClient`: from here on the app
+    // runs on Stack 1.x alone, with the default read options.
+
+    it('every legacy item decrypts, one at a time, with no read option', async () => {
+      for (const row of corpus) {
+        const decrypted = ok(
+          await stack.decryptModel(
+            table.get(row.pk) as Record<string, unknown>,
+            users,
+          ),
+          `stack decryptModel ${row.pk}`,
+        )
+        expect(decrypted, row.pk).toEqual(expected(row))
+      }
+    })
+
+    it('every legacy item decrypts in one bulk call', async () => {
+      const decrypted = ok(
+        await stack.bulkDecryptModels(
+          stored() as Record<string, unknown>[],
+          users,
+        ),
+        'stack bulkDecryptModels',
+      )
+      expect(decrypted).toEqual(corpus.map(expected))
+    })
+
+    it('every equality query finds exactly the legacy rows it should', async () => {
+      const queries = [
+        ['email', users.email, (r: Row) => r.email],
+        // v3 has no downcase filter: the app lowercases the query value.
+        [
+          'emailLower',
+          users.emailLower,
+          (r: Row) => r.emailLower.toLowerCase(),
+        ],
+        ['age', users.age, (r: Row) => r.age],
+        ['balance', users.balance, (r: Row) => BigInt(r.balance)],
+      ] as const
+      for (const [attr, column, project] of queries) {
+        for (const row of corpus) {
+          const value = project(row)
+          const want = corpus
+            .filter((r) => project(r) === value)
+            .map((r) => r.pk)
+            .sort()
+          expect(
+            queryBy(stored(), attr, await hmOf(value, users, column)),
+            `${attr} = ${row.pk}'s value`,
+          ).toEqual(want)
+        }
+      }
+    })
+
+    it('new Stack writes sit beside legacy items: one query and one bulk read cover both', async () => {
+      const fresh = {
+        pk: 'user#13',
+        email: 'barbara@example.com',
+        emailLower: 'barbara@example.com',
+        age: 36,
+        balance: 7n,
+        active: false,
+        notes: 'abstract data types',
+      }
+      const written = ok(
+        await stack.encryptModel(fresh, users),
+        'stack encryptModel (new item)',
+      ) as Record<string, unknown>
+      const mixed = [...stored(), written]
+
+      expect(queryBy(mixed, 'age', await hmOf(36, users, users.age))).toEqual([
+        'user#10',
+        'user#12',
+        'user#13',
+      ])
+
+      const decrypted = ok(
+        await stack.bulkDecryptModels(mixed, users),
+        'stack bulkDecryptModels (mixed generations)',
+      )
+      expect(decrypted).toEqual([...corpus.map(expected), fresh])
+    })
+
+    // Not a re-encryption requirement: re-encrypting would not bring it back,
+    // because a v3 Boolean writes no __hmac either (see Q2). An app that
+    // filters on a boolean needs a plaintext attribute or a GSI for it.
+    it('the one query a Stack 1.x app cannot mint is a boolean equality, with or without a rewrite', async () => {
+      for (const row of stored()) {
+        expect(row.active__hmac, row.pk as string).toMatch(/^[0-9a-f]{64}$/)
+      }
+      // Control: the same client mints a term for a queryable column, so the
+      // refusal below is about the Boolean domain, not the service.
+      expect(await hmOf(model.email, users, users.email)).toBe(item.email__hmac)
+      // A Boolean is storage-only: it carries no index, so the query is
+      // refused before anything reaches ZeroKMS.
+      const result = await client.encryptQuery(
+        true as never,
+        { table: users, column: users.active } as never,
+      )
+      expect(
+        (result as { failure?: { message?: string } }).failure?.message,
+      ).toMatch(/no indexes configured/)
+    })
+
+    // Runs last. Nothing in this block writes to `table`, so this cannot show
+    // a write path leaves legacy items alone. It shows the reads and queries
+    // above did not change the items they ran against.
+    it("Stack's reads and queries left every stored item byte-identical", () => {
+      expect(JSON.stringify([...table.entries()])).toBe(snapshot)
+      expect(table.size).toBe(corpus.length)
+    })
+  })
+
+  // -------------------------------------------------------------------------
   // The legacy JSON gap.
   // -------------------------------------------------------------------------
 
@@ -743,10 +902,10 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
       // Control: the same ciphertext decrypts through client.decrypt(), so
       // the failure below comes from the reader and not from the service.
       ok(await client.decrypt(legacyEnvelope), 'control client.decrypt')
-      const result = await stack.decryptModel(docItem, docs, {
-        storedEqlVersion: 2,
-      })
-      expect(result.failure).toBeDefined()
+      for (const options of [undefined, { storedEqlVersion: 2 as const }]) {
+        const result = await stack.decryptModel(docItem, docs, options)
+        expect(result.failure).toBeDefined()
+      }
     })
 
     it('reads through client.decrypt() on a rebuilt v2 scalar envelope', async () => {
@@ -755,6 +914,19 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
         'client.decrypt (legacy json)',
       )
       expect(decrypted).toEqual(doc)
+    })
+
+    it('the original Protect JSON schema cannot read a Stack Json rewrite', async () => {
+      const rewritten = ok(
+        await stack.encryptModel({ pk: 'doc#1', profile: doc }, docs),
+        'Stack JSON write',
+      )
+      expect(
+        ok(await stack.decryptModel(rewritten, docs), 'control JSON read')
+          .profile,
+      ).toEqual(doc)
+      const result = await legacy.decryptModel(rewritten, legacyDocs)
+      expect(result.failure).toBeDefined()
     })
 
     it('backfills to a types.Json item that Stack 1.x reads', async () => {

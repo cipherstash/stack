@@ -480,6 +480,32 @@ jobs:
       - name: Run the protect-dynamodb compatibility suite
         run: pnpm exec turbo run test:protect-compat --filter @cipherstash/e2e --env-mode=loose
 
+      # The DynamoDB <-> Postgres cross-store suite moves protect-dynamodb
+      # 6.0.1 items into EQL v3 columns and back, so it needs a database.
+      # `integration-db` gives this job its own compose project and ephemeral
+      # port; the suite installs EQL v3 itself through the real
+      # `stash eql install`. Loose env mode for the same reason as above.
+      # `!cancelled()` on both steps: the suite is independent of the
+      # protect-dynamodb step above, so a failure there must not hide it.
+      - name: Start postgres
+        id: db
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/integration-db
+        with:
+          db: postgres
+
+      - name: Run the DynamoDB <-> Postgres cross-store suite
+        if: ${{ !cancelled() && steps.db.outcome == 'success' }}
+        run: pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose
+        env:
+          DATABASE_URL: ${{ steps.db.outputs.database-url }}
+
+      # Guarded on the project being set: if the stack never came up there is
+      # nothing to tear down, and an unguarded `-p ""` would mask the real error.
+      - name: Stop postgres
+        if: always() && env.CS_COMPOSE_PROJECT != ''
+        run: docker compose -p "$CS_COMPOSE_PROJECT" -f "$CS_COMPOSE_FILE" down -v
+
   # Verifies @cipherstash/stack/wasm-inline works under Deno — i.e. the
   # WASM build of protect-ffi 0.26+ and auth 0.40+ can round-trip an
   # encryption against ZeroKMS / CTS in a runtime with no native

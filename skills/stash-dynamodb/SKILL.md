@@ -45,12 +45,21 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 ## Schema and Stored Versions
 
 Schema authoring and every write are EQL v3-only. Existing v2 DynamoDB items
-remain readable by passing the same v3 table descriptor plus
-`{ storedEqlVersion: 2 }` to `decryptModel` or `bulkDecryptModels`. Both entries
-serve legacy reads — the default `@cipherstash/stack` one and
+remain readable with the same v3 table descriptor. A top-level scalar attribute
+carries no version, so it reads with or without `{ storedEqlVersion: 2 }`, and
+one read call covers items written before and after the upgrade. Pass
+`{ storedEqlVersion: 2 }` to `decryptModel` or `bulkDecryptModels` when a grouped
+v2 field is declared by its bare leaf name (see "Grouped v2 fields" below): only
+that read matches the leaf inside its group. Both
+entries serve legacy reads — the default `@cipherstash/stack` one and
 `@cipherstash/stack/wasm-inline`.
 
-There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and there is no automatic *data* migration either. To fully move a table to v3, re-encrypt every item with the v3 schema.
+There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and no data migration is required. Items written by `@cipherstash/protect-dynamodb` (6.x) keep working as stored: Stack decrypts their `__source` attributes as they are, and `encryptQuery` mints the same `__hmac` they carry, so existing equality lookups still match. Keep each property key and DB column name the same, and map each v2 equality column to an `Eq` domain (`TextEq`, `IntegerEq`, `BigintEq`, …) — an `Ord` domain mints no equality term. Re-encrypting items with the v3 schema is optional. Plan for these differences:
+
+- A v3 `Boolean` mints no equality term, so a boolean `__hmac` that protect-dynamodb stored can no longer be queried. Re-encrypting does not bring it back; filter on a plaintext attribute instead.
+- When Stack updates an attribute in place and its v3 domain writes no `__hmac` (`Boolean`, an `Ord` domain, or a storage-only domain such as `Text`), `REMOVE` the stale `<attr>__hmac` in the same `UpdateItem`. Otherwise an equality lookup on the old value still matches the item.
+- A v2 `downcase` filter has no v3 equivalent, so the app now normalizes on both sides. Lowercase the value before `encryptQuery` and the stored `__hmac` matches. Lowercase it before every write too: Stack hashes a mixed-case value such as `Ada@Example.com` case-sensitively, so a lowercase query silently misses it. Lowercasing on write means the stored ciphertext no longer keeps the original casing (protect-dynamodb's did). If the app needs it, write the original to a separate attribute (for example `emailDisplay: types.Text('emailDisplay')`) and keep the lowercased one for lookups.
+- A v2 `dataType('json')` attribute was stored as a scalar ciphertext, not a `types.Json` document, and does not decrypt through the adapter as `types.Json`.
 
 The client must be built for the table. Build the client with the same v3 table you hand to `encryptedDynamoDB` — `Encryption({ schemas: [users] })` returns the typed v3 client for a concrete v3 schema set. Passing a v3 table to a client that never registered it (a client built for a different schema set) throws a clear error naming the table on the first operation, instead of failing later with an opaque FFI deserialization error.
 
@@ -317,7 +326,16 @@ if (queryResult.failure) {
   throw new Error(`Query encryption failed: ${queryResult.failure.message}`)
 }
 
-const emailHmac = queryResult.data.hm
+const emailHmac = hmacOf(queryResult.data)
+
+// encryptQuery's result type also covers ciphertexts, strings and null, so
+// narrow to the equality term before reading `hm` (`.data.hm` does not compile).
+function hmacOf(term: unknown): string {
+  if (typeof term === "object" && term !== null && "hm" in term && typeof term.hm === "string") {
+    return term.hm
+  }
+  throw new Error("encryptQuery returned no equality term: is the column an *Eq domain?")
+}
 
 // 2. Use the HMAC in a DynamoDB query
 const result = await docClient.send(new QueryCommand({
@@ -463,8 +481,11 @@ reconstruct a legacy v2 envelope when explicitly requested.
 
 Let `T` be inferred from the argument; do not pass explicit type arguments on the v3 path.
 
-For a stored v2 item, pass `{ storedEqlVersion: 2 }` as `readOptions`. The table
-is still the current v3 descriptor, which supplies table and column identity.
+For a stored v2 item, pass `{ storedEqlVersion: 2 }` as `readOptions`. It is
+needed for a grouped v2 field declared by its bare leaf name; a top-level scalar
+item reads either way. The
+table is still the current v3 descriptor, which supplies table and column
+identity.
 
 That descriptor must be one of the tables you passed to `Encryption({ schemas })`.
 The adapter forwards it to the client to drive envelope and `Date` reconstruction,
@@ -510,7 +531,7 @@ const result = await encryptionClient.encryptQuery(
 // `data?.hm` would mask a failure (and a null-plaintext result) as `undefined`,
 // producing a malformed key condition rather than a clear error.
 if (result.failure) throw new Error(result.failure.message)
-const hmac = result.data.hm  // Use this in DynamoDB key conditions
+const hmac = hmacOf(result.data)  // Use this in DynamoDB key conditions (`hmacOf`: see "Encrypted Partition Key")
 
 // EQL v2 — pass queryType explicitly (`usersV2` is the legacy table declared
 // in the v2 read section above; `users` is the v3 one and infers its queryType):
@@ -519,7 +540,7 @@ const v2Result = await encryptionClient.encryptQuery(
   { table: usersV2, column: usersV2.email, queryType: "equality" }
 )
 if (v2Result.failure) throw new Error(v2Result.failure.message)
-const v2Hmac = v2Result.data.hm
+const v2Hmac = hmacOf(v2Result.data)
 ```
 
 > On a `types.TextSearch` column `encryptQuery` returns `hm` alongside ordering
@@ -570,7 +591,14 @@ const queryEnc = await encryptionClient.encryptQuery("alice@example.com", {
   column: users.email,
 })
 if (queryEnc.failure) throw new Error(queryEnc.failure.message)
-const hmac = queryEnc.data.hm
+const hmac = hmacOf(queryEnc.data)
+
+function hmacOf(term: unknown): string {
+  if (typeof term === "object" && term !== null && "hm" in term && typeof term.hm === "string") {
+    return term.hm
+  }
+  throw new Error("encryptQuery returned no equality term: is the column an *Eq domain?")
+}
 
 const queryResult = await docClient.send(new QueryCommand({
   TableName: "Users",
