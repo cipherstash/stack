@@ -20,7 +20,8 @@ the caller passes. `@cipherstash/migrate` enforces this rule itself, not the
 `stash` CLI, because customers embed `runBackfill` and `runDecryptBackfill` in
 their own workers and would otherwise bypass it.
 
-#1193 and #1217 implement this decision in `ColumnMigration`. `runBackfill` and
+#1193 and #1276 (the first part of #1217) implement this decision in
+`ColumnMigration`. `runBackfill` and
 `runDecryptBackfill` plan every run through it, so in both directions it forces
 a run while an obligation is open, forces a reverse run that starts on a twin
 that already holds values with no waiver recorded, and refuses to start a column
@@ -45,14 +46,17 @@ forced pass has started. The `stash` CLI adds the flags (`--force`,
 
 - At most one column migration is open per column pair. A reverse column
   migration cannot start until the forward one is dropped or aborted. Aborting a
-  forward column migration is a separate operation.
-- Every event in `cs_migrations` records the pass mode as `details.force`, in
-  both directions. The obligation has no events of its own: `ColumnMigration`
+  forward column migration is a separate operation, and `@cipherstash/migrate`
+  does not provide it yet.
+- Every backfill event in `cs_migrations` (started, checkpoint, completed and
+  error) records the pass mode as `details.force`, in both directions. The
+  dual-write confirmation and drop events do not. The obligation has no events
+  of its own: `ColumnMigration`
   derives it from the event trail. A dual-write confirmation with
   `details.existingTwinValues` and no `details.waiver` opens the up-front
   obligation, and a later confirmation with `details.waiver` closes it. A forced
   pass's running events open the forced-pass obligation, and its completion
-  closes it. Events written before #1217 record the waiver choice as
+  closes it. Events written before #1276 record the waiver choice as
   `details.acknowledgedWith` and `force` on `backfill_started` only, and
   `ColumnMigration` still reads them. The shape of `details` is effectively
   public, so changes to it go in a changeset.

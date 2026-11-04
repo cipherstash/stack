@@ -46,7 +46,8 @@ target columns.
 **Abort**:
 Abandoning a column migration that has not been dropped, leaving the source
 column as the column of record. Distinct from a reverse column migration, which
-starts only after a forward one is dropped.
+starts only after a forward one is dropped or aborted. `@cipherstash/migrate`
+does not provide an abort operation yet.
 _Avoid_: rollback, revert
 
 **Rollout**:
@@ -70,10 +71,12 @@ A backfill pass that overwrites values already in the target column instead of
 skipping them.
 
 **Obligation**:
-A condition recorded on a column migration that must be met before a later phase
-can be entered. An open obligation to complete a forced pass arises when a
-forced pass starts, or when a reverse column migration begins on a twin that
-already holds values; while it is open, every run is a forced pass.
+A condition, derived from a column migration's events, that must be met before
+a later phase can be entered. An open obligation to complete a forced pass
+arises when a forced pass starts, or when a reverse column migration begins on
+a twin that already holds values; while it is open, every run is a forced pass.
+Events written before #1276 record the up-front choice as
+`details.acknowledgedWith` (`force` or `confirm-plaintext-current`).
 _Avoid_: acknowledgement, hazard flag
 
 **Waiver**:
