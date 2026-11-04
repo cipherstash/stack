@@ -22,6 +22,12 @@ Then, in this order:
   ``Ignore`` field. A decorator applied below ``@dataclass`` finds no such
   constructor, because the class has none yet.
 - The engine reads the plan, with the EQL types, as it does for every SDK.
+- No hand-written ``__repr__``, ``__str__`` or ``__rich_repr__`` on the class
+  itself, unless ``redact=False``. Then the decorator replaces all three, so
+  that they show no plaintext.
+
+``Cipher`` checks the class again (``check_unchanged``): the hints, the
+constructor and the replaced methods must be as they were at decoration.
 """
 
 import dataclasses
@@ -46,7 +52,7 @@ from typing import (
     get_type_hints,
 )
 
-from stackencrypt import _engine, _eql
+from stackencrypt import _engine, _eql, _redact
 from stackencrypt._errors import DeclarationError
 from stackencrypt._markers import Ignore, Marker, Passthrough
 
@@ -105,13 +111,28 @@ class _ReadField:
 @dataclass(frozen=True)
 class Declaration:
     """What the decorator read from a class: the table, and every field that
-    is a column, in field order. ``Ignore`` fields are not in it."""
+    is a column, in field order. ``Ignore`` fields are not in it.
+
+    ``hints``, ``constructor`` and ``methods`` are the class as it was at
+    decoration, for ``check_unchanged``. ``methods`` is the replaced
+    ``__repr__``, ``__str__`` and ``__rich_repr__``, or empty with
+    ``redact=False``.
+    """
 
     table: str
     fields: Tuple[DeclaredField, ...]
+    hints: Dict[str, Any] = dataclasses.field(repr=False, compare=False)
+    constructor: Optional["_Constructor"] = dataclasses.field(repr=False, compare=False)
+    methods: Tuple[Callable[..., Any], ...] = dataclasses.field(repr=False, compare=False)
 
 
-def model(table: str) -> Callable[[T], T]:
+# A constructor's parameters: each one's name, kind and default object. The
+# defaults are compared by identity (`is`), never with `==`: a default such
+# as `math.nan` is not equal to itself, and an array's `==` is not a bool.
+_Constructor = Tuple[Tuple[str, Any, Any], ...]
+
+
+def model(table: str, *, redact: bool = True) -> Callable[[T], T]:
     """Declare a class as a model stored in ``table``.
 
     Apply it outermost, above ``@dataclass`` or ``@attrs.define``::
@@ -121,6 +142,10 @@ def model(table: str) -> Callable[[T], T]:
         class User:
             email: Annotated[str, TextEq]
             age: Annotated[int, Passthrough]
+
+    ``repr`` and ``str`` of an instance then show ``<sealed>`` for each sealed
+    field. ``redact=False`` keeps the class's own ``__repr__`` and
+    ``__str__``, which may show plaintext.
     """
     if not isinstance(table, str) or not table:
         raise TypeError('model takes the table name: @stackencrypt.model("users")')
@@ -133,14 +158,27 @@ def model(table: str) -> Callable[[T], T]:
                 f"class {cls.__name__!r} is already declared, with table "
                 f"{existing.table!r}. Apply stackencrypt.model once.",
             )
-        read = _read_fields(cls)
+        hints = _hints(cls)
+        read = _read_fields(cls, hints)
         planned = [field for field in read if field.marker is not Ignore]
         for field in planned:
             _check_value_type(field)
         _check_constructor(cls, read)
         _check_plan(table, planned)
-        fields = tuple(DeclaredField(name=f.name, marker=f.marker) for f in planned)
-        setattr(cls, DECLARATION_ATTRIBUTE, Declaration(table=table, fields=fields))
+        methods: Tuple[Callable[..., Any], ...] = ()
+        if redact:
+            _check_no_hand_written_methods(cls)
+            methods = _redact.install(
+                cls, [(f.name, f.marker is Passthrough) for f in planned]
+            )
+        declaration = Declaration(
+            table=table,
+            fields=tuple(DeclaredField(name=f.name, marker=f.marker) for f in planned),
+            hints=hints,
+            constructor=_constructor(cls),
+            methods=methods,
+        )
+        setattr(cls, DECLARATION_ATTRIBUTE, declaration)
         return cls
 
     return decorate
@@ -156,11 +194,96 @@ def declaration_of(cls: type) -> Optional[Declaration]:
     return found if isinstance(found, Declaration) else None
 
 
-def _read_fields(cls: type) -> List[_ReadField]:
+def check_unchanged(cls: type, declaration: Declaration) -> None:
+    """Refuse a class that changed after decoration, with
+    ``declaration_class_changed``.
+
+    The replaced methods, the type hints and the constructor must be as they
+    were. A class is not checked again after ``Cipher`` is built.
+    """
+    if declaration.methods:
+        replaced = [
+            name
+            for name, installed in zip(_redact.METHODS, declaration.methods)
+            if cls.__dict__.get(name) is not installed
+        ]
+        if replaced:
+            raise _class_changed(cls, "methods", None, f"{', '.join(replaced)} replaced")
     try:
-        hints = get_type_hints(cls, include_extras=True)
+        hints = _hints(cls)
+    except DeclarationError as error:
+        where = f"of {error.field!r} " if error.field else ""
+        raise _class_changed(
+            cls, "fields", error.field, f"a type hint {where}no longer resolves ({error.__cause__})"
+        ) from error.__cause__
+    changed = min(
+        (
+            name
+            for name in set(hints) | set(declaration.hints)
+            if hints.get(name) != declaration.hints.get(name)
+        ),
+        default=None,
+    )
+    if changed is not None:
+        raise _class_changed(cls, "fields", changed, f"the type hint of {changed!r} changed")
+    if not _same_constructor(_constructor(cls), declaration.constructor):
+        raise _class_changed(cls, "constructor", None, "its constructor changed")
+
+
+def _class_changed(
+    cls: type, reason: str, field: Optional[str], what: str
+) -> DeclarationError:
+    return DeclarationError(
+        "declaration_class_changed",
+        f"class {cls.__name__!r} changed after stackencrypt.model declared it: "
+        f"{what}. Apply every other decorator below stackencrypt.model, and "
+        "change no declared class after it is defined.",
+        field=field,
+        reason=reason,
+    )
+
+
+def _hints(cls: type) -> Dict[str, Any]:
+    try:
+        return get_type_hints(cls, include_extras=True)
     except (NameError, TypeError) as error:
         raise _hints_unresolved(cls, error) from error
+
+
+def _signature(cls: type) -> Optional[inspect.Signature]:
+    try:
+        return inspect.signature(cls)
+    except (TypeError, ValueError):
+        return None
+
+
+def _constructor(cls: type) -> Optional[_Constructor]:
+    signature = _signature(cls)
+    if signature is None:
+        return None
+    return tuple((p.name, p.kind, p.default) for p in signature.parameters.values())
+
+
+def _same_constructor(now: Optional[_Constructor], then: Optional[_Constructor]) -> bool:
+    if now is None or then is None:
+        return now is then
+    return len(now) == len(then) and all(
+        a[0] == b[0] and a[1] == b[1] and a[2] is b[2] for a, b in zip(now, then)
+    )
+
+
+def _check_no_hand_written_methods(cls: type) -> None:
+    for name in _redact.METHODS:
+        if _redact.hand_written(cls, name):
+            raise DeclarationError(
+                "declaration_repr_present",
+                f"class {cls.__name__!r} has a hand-written {name}, which may "
+                "show plaintext. Remove it, so that stackencrypt.model can "
+                "replace it, or pass redact=False to keep it.",
+            )
+
+
+def _read_fields(cls: type, hints: Dict[str, Any]) -> List[_ReadField]:
     names = _library_field_names(cls)
     from_hints = names is None
     if names is None:
@@ -400,10 +523,8 @@ def _check_constructor(cls: type, read: List[_ReadField]) -> None:
     ``decrypt`` builds an instance with one keyword argument per plan field,
     and passes no ``Ignore`` field.
     """
-    try:
-        parameters = inspect.signature(cls).parameters
-    except (TypeError, ValueError):
-        parameters = inspect.Signature().parameters
+    signature = _signature(cls)
+    parameters = (signature or inspect.Signature()).parameters
     any_keyword = any(p.kind is p.VAR_KEYWORD for p in parameters.values())
     # A plain class with no constructor: a decorator below this one, such as
     # @dataclass, has not made the class yet.

@@ -10,3 +10,7 @@ def check_plan(
 ) -> Optional[Tuple[str, str, Optional[str], Optional[str]]]:
     """The engine's check of a model's plan: ``None``, or its refusal as
     ``(code, message, field, reason)``."""
+
+def detect_credentials() -> Optional[Tuple[str, str, Optional[str], Optional[str]]]:
+    """Find the credentials, with no request: ``None``, or the refusal as
+    ``(code, message, field, reason)``."""

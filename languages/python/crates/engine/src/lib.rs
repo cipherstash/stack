@@ -4,7 +4,17 @@
 //! the boundary. Logic belongs in `stackencrypt-core` and `stack-encrypt`.
 
 use pyo3::prelude::*;
+use stackencrypt_core::credentials;
 use stackencrypt_core::plan::{self, Column};
+use stackencrypt_core::refusal::Refusal;
+
+/// A refusal as the tuple the Python side raises: `(code, message, field,
+/// reason)`.
+type RefusalTuple = (String, String, Option<String>, Option<String>);
+
+fn to_tuple(refused: Refusal) -> RefusalTuple {
+    (refused.code, refused.message, refused.field, refused.reason)
+}
 
 /// The two build facts the package exposes: `(version, engine_commit)`.
 ///
@@ -27,10 +37,7 @@ fn build_info() -> (&'static str, &'static str) {
 /// accepts the plan, or its refusal as `(code, message, field, reason)`. The
 /// Python side raises it as a `DeclarationError`.
 #[pyfunction]
-fn check_plan(
-    table: &str,
-    fields: Vec<(String, Option<String>)>,
-) -> Option<(String, String, Option<String>, Option<String>)> {
+fn check_plan(table: &str, fields: Vec<(String, Option<String>)>) -> Option<RefusalTuple> {
     let fields: Vec<(&str, Column<'_>)> = fields
         .iter()
         .map(|(name, eql_type)| {
@@ -38,9 +45,21 @@ fn check_plan(
             (name.as_str(), column)
         })
         .collect();
-    plan::check(table, &fields)
-        .err()
-        .map(|refused| (refused.code, refused.message, refused.field, refused.reason))
+    plan::check(table, &fields).err().map(to_tuple)
+}
+
+/// Find the credentials as every SDK does: `CS_CLIENT_ACCESS_KEY` and
+/// `CS_WORKSPACE_CRN`, then the profile store. Makes no request, and builds
+/// no HTTP client. It reads the environment, and reads and parses the
+/// profile's token file where there is one, which is short enough to run
+/// with the GIL held. Returns `None` when the credentials are found, or the
+/// refusal as `(code, message, field, reason)`.
+///
+/// Nothing keeps the strategy yet: `Cipher` only needs to know that the
+/// credentials are there. The ticket that makes the first request keeps it.
+#[pyfunction]
+fn detect_credentials() -> Option<RefusalTuple> {
+    credentials::detect().err().map(to_tuple)
 }
 
 /// Gate fact 2 (#1384): block for `millis` on a multi-thread tokio runtime
@@ -67,6 +86,7 @@ fn _probe_detached_sleep(py: Python<'_>, millis: u64) -> u64 {
 fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_info, module)?)?;
     module.add_function(wrap_pyfunction!(check_plan, module)?)?;
+    module.add_function(wrap_pyfunction!(detect_credentials, module)?)?;
     #[cfg(feature = "gate-probe")]
     module.add_function(wrap_pyfunction!(_probe_detached_sleep, module)?)?;
     Ok(())
