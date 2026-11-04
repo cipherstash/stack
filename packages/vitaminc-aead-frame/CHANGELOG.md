@@ -1,46 +1,34 @@
 
 ## [0.9.0] - 2026-11-04
 
+### Compatibility
+
+- The wire format is unchanged. Storage blobs and transport frames are byte-for-byte the same as 0.8.1, so each version reads what the other writes. Error kinds, messages and paths are unchanged too. Storage version 1 is frozen (ADR 0003).
+
 ### Breaking
 
-- **Breaking:** format transport Display values into a wiped buffer, and return transport frames Protected
-- **Breaking:** return frames and blobs in a Buffer, so the plaintext they hold is wiped sixteen bytes a store
-- **Breaking:** make Buffer a Controlled type, so its bytes are read through risky_ref and not a plain slice
-
-### Documentation
-
-- name the Go implementation of the storage profile
-- name storage blobs in ErrMalformed, and record that Go writes a present pointer unmarked
-- clarify features and Rust requirements
-- clarify crate guides and navigation
-- record the stack copies the zeroize audit found and why they are not wiped
-- say what the compared formats leave unwiped, so the bench gap reads correctly
-- name all five formats in the storage bench's first sentence, and call Borsh's bytes borsh_bytes so they read apart from the crate
-- say the storage blob comes back in a Buffer, since to_vec no longer returns it Protected
-- rewrap the Buffer return docs and name Buffer in the test helper, so the text reads as the rest of the file
-- state that the performance tables predate the Buffer and reader changes, rather than promise a re-measure
-- say that the writer's wipes run on drop, so a panic under panic=abort leaves a partly written blob unwiped
-- measure the performance tables again on the final writer and reader, since the old tables were from before the writer, the wipe and the reader changed
-- lead the performance section with what the storage profile buys, since the tables show it is neither the fastest nor the smallest, and say why one record costs more than its JSON
-- say why the storage profile is used over MessagePack and Borsh, naming what each leaves out, since the performance tables show it is neither the fastest nor the smallest
-- cut the storage profile's case to a four-item checklist, each linking to its own section, so the reasons read at a glance
-- say what validating the blob before building buys, since the checklist named the property without its reasons
-- call the storage reader's stance defensive by design, since the section is about what refusing hostile input whole protects, not about validation
-- link the write function unambiguously, so a private-items docs build no longer fails
+- **Breaking:** `storage::to_vec` and `serde::to_vec` return a `vitaminc_protected::Buffer`. In 0.8.1, `storage::to_vec` returned `Protected<Vec<u8>>` and `serde::to_vec` returned a plain `Vec<u8>`. Read the bytes with `Controlled::risky_ref`, or take the `Vec<u8>` with `Controlled::risky_unwrap`. The buffer wipes itself on drop.
+- **Breaking:** the minimum supported Rust version is now 1.89. 0.8.1 declared 1.88.
 
 ### Fixes
 
-- reserve at most 1024 map key positions from a length hint, so a Serialize that overstates its map is refused rather than aborting the process
+- A `Serialize` impl that reports more map entries than it writes is now refused with an error. Before, the writer reserved space from the length hint, so a large enough hint aborted the process. The writer now reserves at most 1,024 key positions from a hint.
+- The transport writer formats `Display` values, such as map keys and `collect_str` output, into a wiped buffer. Before, it formatted them into a `String` that was freed without being wiped.
 
 ### Performance
 
-- add Criterion benches for the storage profile, so its cost is measured
-- compare the storage profile with MessagePack and Borsh, so its cost is set against compact binary formats
-- refuse a repeated key as the storage writer writes, so no blob is read back before it is returned
-- wipe sixteen bytes a store, so a growing frame or blob is not wiped a byte at a time
-- build an entry's error path only when an error is placed at it, so reading or writing a field allocates nothing
-- tell a node's kind from its tag, so a text or bytes value is decoded once on read and not twice
-- compare an object's keys one by one while there are few, so validating a record allocates no hash set
+- Writes are much faster, and record reads are faster:
+  - The storage writer refuses a repeated key as it writes, and no longer reads each blob back before it returns it.
+  - Both formats now share one writer, which makes transport writes 27% to 57% faster.
+  - Outgrown buffers are wiped 16 bytes at a time.
+  - Reading or writing a field no longer allocates.
+  - A text or bytes value is decoded once on read, not twice.
+  - The README's performance tables were measured again.
+
+### Documentation
+
+- The README compares the storage profile with JSON, MessagePack and Borsh on speed and size, and says what each of those formats leaves unwiped. It also says why the storage profile is used even though it is neither the fastest nor the smallest format.
+- The storage profile docs name its Go implementation, in `vcffi`.
 
 ## [0.8.1] - 2026-10-26
 

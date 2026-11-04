@@ -1,11 +1,9 @@
 
 ## [0.9.0] - 2026-11-04
 
-### Documentation
+### Breaking
 
-- make examples executable and copyable
-- clarify features and Rust requirements
-- clarify crate guides and navigation
+- **Breaking:** the minimum supported Rust version is now 1.89. 0.8.1 declared 1.88.
 
 ## [0.8.1] - 2026-10-26
 
