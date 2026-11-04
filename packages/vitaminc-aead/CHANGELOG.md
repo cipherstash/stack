@@ -8,47 +8,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.9.0] - 2026-11-04
 
-### Compatibility
+### Wire format
 
-- Sealed leaves and frames are unchanged from 0.8.1. Data that either version encrypts decrypts with the other.
+- Sealed leaves and frames are the same as in 0.8.1.
+  Version 0.9.0 decrypts data that version 0.8.1 encrypted, and the other way round.
 
 ### Breaking
 
-- **Breaking:** `to_frame` and `decrypt_to_frame` return a `vitaminc_protected::Buffer` instead of `Protected<Vec<u8>>`. `FrameWriter::new` now takes `&mut Buffer`. Read the bytes with `Controlled::risky_ref`, or take the `Vec<u8>` with `Controlled::risky_unwrap`. The buffer wipes itself on drop.
-- **Breaking:** a `&str` or `Cow<str>` lent through `as_protected_ref()` must now say whether it seals as text or bytes, because an unannotated `s.as_protected_ref()` no longer compiles. See the `vitaminc-protected` 0.9.0 changelog. Before, a string could be sealed as bytes by accident, and then failed to decrypt as a `String`.
-- **Breaking:** the minimum supported Rust version is now 1.89. 0.8.1 declared 1.88.
+- **Breaking:** `to_frame` and `decrypt_to_frame` now return a `vitaminc_protected::Buffer`, not `Protected<Vec<u8>>`.
+  `FrameWriter::new` now takes `&mut Buffer`, not `&mut Vec<u8>`.
+  To read the bytes in a `Buffer`, call `Controlled::risky_ref`.
+  To take the `Vec<u8>` out of it, call `Controlled::risky_unwrap`.
+- **Breaking:** when you lend a `&str` or `Cow<str>` through `as_protected_ref()`, you now need to name the target type.
+  Name `str` to seal the string as text, or `[u8]` to seal the string as bytes.
+  In 0.8.1, a string could be sealed as bytes by mistake, and then fail to decrypt as a `String`.
+  The 0.9.0 changelog for `vitaminc-protected` has the details.
+- **Breaking:** the crate now needs Rust 1.89 or later.
+  Version 0.8.1 needed Rust 1.88.
 
 ### Features
 
-- `Scalar` is a marker trait for `Encrypt` sources that seal as exactly one leaf. Generic code can use it to require a single value at compile time, which a bound on `DEPTH` cannot do.
-  These types implement it:
+- The new `Scalar` trait marks an `Encrypt` source that seals as exactly one leaf.
+  Generic code can require `Scalar` to accept only single values, and the compiler checks the requirement.
+  A bound on `DEPTH` cannot do this, because stable Rust cannot bound a generic type on a constant.
+  These types implement `Scalar`:
 
-  - the built-in leaf types except `u8`
-  - the borrowed, `Protected` and `ProtectedRef` forms of those types
+  - every built-in leaf type except `u8`
+  - the borrowed, `Protected`, and `ProtectedRef` forms of those types
   - `Timestamp`
-  - the feature-gated chrono, `rust_decimal` and uuid types
+  - the chrono, `rust_decimal`, and uuid types, behind their features
 
-  `Option<T>` does not implement `Scalar`, because a caller that asks for a scalar is asking for a value that is present.
-  The trait is open, so a downstream wrapper around one leaf can implement it. `depth::is_scalar` checks a `DEPTH` in a `const`.
-- A `ProtectedRef`, or a `&ProtectedRef`, can be encrypted directly. It seals exactly as the `&Protected` it borrows from does. A derived struct can have `ProtectedRef` fields.
+  `Option<T>` does not implement `Scalar`, because a caller that asks for a scalar expects a value to be present.
+  You can implement `Scalar` for your own type that wraps one leaf.
+  The function `depth::is_scalar` checks a `DEPTH` value at compile time.
+- You can now encrypt a `ProtectedRef` or a `&ProtectedRef` directly.
+  The value seals exactly as the `&Protected` it borrows from.
+  A derived struct can now contain `ProtectedRef` fields.
 
 ### Fixes
 
-- In debug builds, writing a leaf into a `Vec<u8>` that has no room left now panics. A `Vec` that grows frees its old allocation, plaintext included, without wiping it. Size the `Vec` with `leaf::max_len` before writing. Release builds do not check this. The examples now show presized, wiping sinks.
-- Less plaintext is left in unwiped memory:
-  - A repeated map key is found where it lies in the frame, instead of being copied out and freed.
-  - The `Int` and `TimeUnit` helpers are inlined. Callers in other crates, such as `vitaminc-normalize`, no longer receive plaintext through an unwiped stack slot.
+- In debug builds, writing a leaf into a `Vec<u8>` without enough spare capacity now panics.
+  A `Vec` that grows frees its old memory without wiping it.
+  The old memory contains plaintext.
+  To avoid the panic, size the `Vec` with `leaf::max_len` before you write to it.
+  Release builds do not run this check.
+- Two code paths no longer leave plaintext in memory that is not wiped:
+
+  - The check for a repeated map key now reads the key where it lies in the frame.
+    In 0.8.1, the check copied the key out, and freed the copy without wiping it.
+  - The `Int` and `TimeUnit` helpers are now inlined into their callers.
+    Callers in other crates, such as `vitaminc-normalize`, no longer receive plaintext through a stack slot that is not wiped.
 
 ### Performance
 
-- Validating a frame no longer allocates a hash set for an object with 16 keys or fewer, which makes record reads about 20% faster.
-- Frame writers wipe outgrown buffers 16 bytes at a time instead of one.
+- The frame validator no longer allocates a hash set for an object with 16 keys or fewer.
+  Measurements for this change showed record reads 18% faster in the storage format.
+  Record reads in the transport format were 23% faster.
+- Frame writers now wipe outgrown buffers 16 bytes at a time, not 1 byte at a time.
 
-### Not guaranteed
+### What is not authenticated
 
-- A map's membership is not authenticated, just as a sequence's order and length are not. This is a documented design decision, not a change in behavior.
-  A map with an entry removed still decrypts leaf by leaf. If the decrypt target needs the missing entry, it reports a shape mismatch, not an authentication failure.
-  Each leaf is still bound to its context, key, role, type and wire version. An empty map or sequence is sealed as an authenticated marker, so a container that has entries cannot be made empty. See ADR 0002.
+- Encryption does not authenticate which entries a map contains.
+  Encryption also does not authenticate the order or length of a sequence.
+  Architecture decision record (ADR) 0002 records this design decision.
+  The behavior is the same as in 0.8.1.
+  If an entry is removed from a map, the remaining leaves still decrypt.
+  If the decrypt target needs the missing entry, the target reports a shape mismatch, not an authentication failure.
+  Each leaf is still bound to its context, key, role, type, and wire version.
+  An empty map or sequence is sealed as an authenticated marker.
+  A container with entries can lose some of them.
+  If every entry is removed, decryption fails.
 
 ## [0.8.1] - 2026-10-26
 
