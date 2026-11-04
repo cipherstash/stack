@@ -1,17 +1,25 @@
 # Upgrade from Protect.js to Stack on DynamoDB
 
-This guide moves an app from `@cipherstash/protect@10.2.1` and `@cipherstash/protect-dynamodb@6.0.1` to `@cipherstash/stack` 1.x. These versions also pull in `@cipherstash/protect-ffi@0.18.1` and `@cipherstash/schema@2.0.2`, and both go away with them.
+This guide moves an app from `@cipherstash/protect@10.2.1` and `@cipherstash/protect-dynamodb@6.0.1` to `@cipherstash/stack` 1.x. These versions also pull in `@cipherstash/protect-ffi@0.18.1` and `@cipherstash/schema@2.0.2`; the legacy versions are removed with Protect. Stack still depends on its own newer `@cipherstash/protect-ffi`.
 
-The upgrade is a code change. The items already in DynamoDB stay **untouched**: Stack decrypts them as stored, and its equality terms match the `__hmac` values they carry. No re-encryption, backfill or data migration is needed. Go straight to Stack 1.x; an intermediate hop through `@cipherstash/stack` 0.19 adds nothing.
+For the tested top-level text, numeric and boolean attributes, existing ciphertext can stay **untouched**. Stack decrypts it as stored; text and numeric equality terms remain compatible when the schema and normalization rules below are followed. Boolean lookups need an application change, and legacy `dataType('json')` attributes need a separate conversion before the standard Stack adapter can read them. The no-backfill path does not cover those JSON attributes. Go straight to Stack 1.x; an intermediate hop through `@cipherstash/stack` 0.19 adds nothing (`compat › Stack 0.19 re-writes the same attributes and the same __hmac values Protect wrote`).
 
-Every claim below names the test that proves it, prefixed with the suite it lives in (compat › *test name*):
+Compatibility claims below cite their supporting tests, prefixed with the suite it lives in (compat › *test name*):
 
 - `compat` is `e2e/tests/protect-dynamodb-compat.e2e.test.ts`.
 - `crossover` is `e2e/tests/protect-crossover.e2e.test.ts`.
 
-Both suites write items with the real Protect.js versions above, installed from npm, and read them back with Stack. They run on every pull request in the `e2e-tests` job of `.github/workflows/tests.yml`. Run them yourself with `pnpm --filter @cipherstash/e2e test:protect-compat` and `pnpm --filter @cipherstash/e2e test:protect-crossover` (the second also needs `DATABASE_URL`). Both need the four `CS_*` credential variables.
+Both suites produce item objects with the real Protect.js versions above, installed from npm, and read them back with the in-tree Stack package (currently 1.2.1). They test live encryption, but do not contact DynamoDB: item persistence and HMAC matching are simulated in memory. The crossover suite also runs real Postgres inserts and SQL queries. This verifies adapter compatibility, not AWS expressions, GSI configuration or a deployed customer application. They run on every pull request in the `e2e-tests` job of `.github/workflows/tests.yml`. Both need `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY`, supplied in the environment, `e2e/.env` or the repository-root `.env`. The crossover suite also needs `DATABASE_URL` for a disposable Postgres database where it can install EQL and create tables. From an installed repository checkout, build the native binding and run through Turbo so workspace dependencies are built:
 
-## Why nothing needs re-encrypting
+```bash
+pnpm --filter @cipherstash/protect-ffi run build:native
+pnpm exec turbo run test:protect-compat --filter @cipherstash/e2e --env-mode=loose
+pnpm exec turbo run test:protect-crossover --filter @cipherstash/e2e --env-mode=loose
+```
+
+The native build needs the repository's Rust toolchain and trusted mise configuration. These commands are for maintainers verifying the guide; a customer installing Stack from npm receives prebuilt binaries.
+
+## Why the supported scalar attributes need no re-encryption
 
 protect-dynamodb stores each encrypted attribute as at most two strings, with no EQL version on disk (`compat › stores only __source and __hmac — no EQL version on disk`):
 
@@ -21,7 +29,7 @@ protect-dynamodb stores each encrypted attribute as at most two strings, with no
 Stack reads and writes the same two attributes:
 
 - It decrypts a legacy `__source` with no read option (`compat › every legacy item decrypts, one at a time, with no read option`, `compat › every legacy item decrypts in one bulk call`), and gets the same plaintext protect-dynamodb does (`compat › agrees with what protect-dynamodb itself decrypts`).
-- Its `encryptQuery` mints the same `__hmac` that protect-dynamodb's `createSearchTerms` did (`compat › matches protect-dynamodb createSearchTerms for the same value`), so every equality query finds exactly the rows it found before (`compat › every equality query finds exactly the legacy rows it should`).
+- Its `encryptQuery` mints the same `__hmac` that protect-dynamodb's `createSearchTerms` did (`compat › matches protect-dynamodb createSearchTerms for the same value`), so the tested text and numeric equality queries match the expected legacy items (`compat › every equality query finds exactly the legacy rows it should`).
 - A new Stack write sits beside legacy items, and one query and one bulk read cover both (`compat › new Stack writes sit beside legacy items: one query and one bulk read cover both`).
 - Reading and querying leave the stored items byte-identical (`compat › Stack's reads and queries left every stored item byte-identical`).
 - A tampered ciphertext fails to decrypt; it never returns wrong plaintext (`compat › fails, never returns wrong plaintext, when the ciphertext is tampered with`).
@@ -38,12 +46,14 @@ Done when every column has a row in the mapping table in step 3, and every colum
 
 ```bash
 pnpm remove @cipherstash/protect @cipherstash/protect-dynamodb @cipherstash/schema
-pnpm add @cipherstash/stack
+pnpm add '@cipherstash/stack@^1.2.1'
 ```
 
-Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so no credential changes are needed. It finds its service endpoints from `CS_WORKSPACE_CRN`: delete any `CS_CTS_HOST` or `CS_ZEROKMS_HOST` override your Protect deployment set.
+Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so retain the same workspace and key access used to write the data. If the app passed credentials explicitly to Protect, populate these environment variables or configure the equivalent Stack credentials. If the app passed a `keyset` to `protect()`, pass the same keyset to `Encryption` as `config.keyset`. A client bound to a different keyset either fails to decrypt or, if it was granted the old keyset, decrypts but mints terms that match no existing `__hmac`. Keysets are untested by these suites.
 
-Done when `pnpm list --depth Infinity | grep cipherstash` shows `@cipherstash/stack` and its own dependencies, and no `@cipherstash/protect`, `@cipherstash/protect-dynamodb` or `@cipherstash/schema`.
+Stack finds its service endpoints from `CS_WORKSPACE_CRN`. Protect 10.2.1 did not: outside `ap-southeast-2` it needed `CS_CTS_HOST` and `CS_ZEROKMS_HOST` set explicitly. Stack still honours both variables when they are set, so remove them from ordinary managed deployments. Keep them only for a deliberately configured private or custom endpoint, and check that endpoint before relying on it.
+
+Done when `pnpm list --depth Infinity | grep cipherstash` shows `@cipherstash/stack` and its own dependencies (including its own newer `@cipherstash/protect-ffi`), and no `@cipherstash/protect@`, `@cipherstash/protect-dynamodb` or `@cipherstash/schema` line.
 
 ### 3. Translate the schema
 
@@ -52,15 +62,15 @@ Keep every **property key** exactly as it was. Stack finds `<key>__source` by pr
 | Protect 10.2.1 column | Stack 1.x domain | Notes | Proved by |
 |---|---|---|---|
 | `csColumn(k).equality()` (text) | `types.TextEq(k)` | | `compat › %s: Stack %s encryptQuery reproduces the stored __hmac` |
-| `csColumn(k).dataType('number').equality()` | `types.IntegerEq(k)` for whole numbers, `types.DoubleEq(k)` for fractions | Every numeric `Eq` domain mints the same term | `compat › every numeric *Eq domain gives the same HMAC (all cast to f64)` |
+| `csColumn(k).dataType('number').equality()` | `types.IntegerEq(k)` for whole numbers, `types.DoubleEq(k)` for fractions | Choose a domain that represents the data; whole-number and fractional compatibility are tested | `compat › IntegerEq and DoubleEq queries match the legacy whole-number HMAC`, `compat › DoubleEq preserves fractional number reads, writes and equality terms` |
 | `csColumn(k).dataType('bigint').equality()` | `types.BigintEq(k)` | Reads return a JS `bigint`, not a `number`; the value is unchanged | `compat › changes the JS type of a bigint column, but not its value` |
 | `csColumn(k).equality([{ kind: 'downcase' }])` | `types.TextEq(k)` | The app now lowercases: see step 5 | `compat › a v2 downcase filter is reproduced only by lowercasing first` |
 | `csColumn(k).dataType('boolean').equality()` | `types.Boolean(k)` | Decrypts, but is no longer queryable: see step 5 | `compat › the one query a Stack 1.x app cannot mint is a boolean equality, with or without a rewrite` |
-| `csColumn(k)` (no index) | `types.Text(k)` | | `compat › every legacy item decrypts, one at a time, with no read option` |
-| `csColumn(k).dataType('json')` | `types.Json(k)`, after a one-off backfill | The only column that needs a rewrite: see step 5 | `compat › backfills to a types.Json item that Stack 1.x reads` |
-| `csColumn(k).dataType('date')` | Nothing to migrate | Protect 10.2.1 could not encrypt a date, so no such items exist | `compat › protect 10.2.1 could not encrypt a date column at all, so no legacy date HMAC exists` |
+| `csColumn(k)` (text, no index) | `types.Text(k)` | Text only; unindexed number, bigint and boolean columns are untested | `compat › every legacy item decrypts, one at a time, with no read option` |
+| `csColumn(k).dataType('json')` | `types.Json(k)`, after a one-off backfill | Requires conversion for the standard adapter: see step 5 | `compat › backfills to a types.Json item that Stack 1.x reads` |
+| `csColumn(k).dataType('date')` | No verified mapping | The tested date inputs fail to encrypt in Protect 10.2.1; investigate any existing date attributes separately | `compat › protect 10.2.1 rejects the tested date inputs` |
 
-Give every equality column an `Eq` domain. An `Ord` domain such as `types.IntegerOrd` mints no equality term, so lookups on that column would find nothing (`compat › a numeric *Ord domain emits no HMAC at all`).
+Give each supported text or numeric equality column an `Eq` domain; boolean lookups need the separate treatment in step 5. An `Ord` domain such as `types.IntegerOrd` mints no equality term, so lookups on that column would find nothing (`compat › a numeric *Ord domain emits no HMAC at all`).
 
 ```typescript
 // Before
@@ -128,16 +138,27 @@ const term = await client.encryptQuery('ada@example.com', {
   column: users.email,
 })
 if (term.failure) throw new Error(term.failure.message)
-const emailHmac = term.data.hm
+const emailHmac = hmacOf(term.data)
+
+// encryptQuery's result type also covers ciphertexts, strings and null, so
+// narrow to the equality term before reading `hm`.
+function hmacOf(term: unknown): string {
+  if (typeof term === 'object' && term !== null && 'hm' in term && typeof term.hm === 'string') {
+    return term.hm
+  }
+  throw new Error('encryptQuery returned no equality term: is the column an *Eq domain?')
+}
 ```
 
 Done when no file imports `@cipherstash/protect` or `@cipherstash/protect-dynamodb`, and the app type-checks.
 
-### 5. Handle the four differences
+### 5. Handle the known differences
 
-These are the only behaviours that change. Work through each one that step 1 found.
+These are the differences established by the tested schemas. Work through each one that step 1 found.
 
-**Boolean lookups.** A `types.Boolean` column decrypts, but `encryptQuery` refuses it with `no indexes configured`, and a Stack write stores no `active__hmac` (`compat › a v3 Boolean writes no __hmac, though protect-dynamodb wrote one`). Re-encrypting does not bring the lookup back. If the app filters on a boolean, store it as a plaintext attribute or a GSI key instead.
+**Boolean lookups.** A `types.Boolean` column decrypts, but `encryptQuery` refuses it with `no indexes configured`, and a Stack write stores no `active__hmac` (`compat › a v3 Boolean writes no __hmac, though protect-dynamodb wrote one`). Re-encrypting does not bring the lookup back. If the app filters on a boolean, redesign that lookup before deploying. A plaintext attribute exposes the value, so use it only if that is acceptable for the field. A GSI requires a supported key representation, such as a string; a DynamoDB boolean cannot itself be a GSI key ([AWS key requirements](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html)). Populating a replacement attribute on existing items is a separate backfill, outside this suite.
+
+**Bigint values.** Protect's tested bigint input is a safe JS `number`; Stack reads it as a JS `bigint`. Pass `bigint` values to `types.BigintEq` writes and queries (for example, `BigInt(balance)` after checking `Number.isSafeInteger(balance)`). Update JSON serialization and API boundaries accordingly. The suite does not establish lossless rollback for new values outside the safe-number range.
 
 **In-place updates of a column with no term.** When an `UpdateItem` sets a `Boolean` (or any other domain that writes no `__hmac`) on a legacy item, `REMOVE` the old `<attr>__hmac` in the same update. With `SET` alone, the stale term still matches a lookup on the old value (`compat › a Stack Boolean update writes no __hmac, so a partial update must REMOVE the legacy one`).
 
@@ -152,41 +173,55 @@ UpdateExpression: 'SET active__source = :active REMOVE active__hmac'
 
 Lowercasing on write means new items store the lowercased value, where protect-dynamodb kept the original casing in the ciphertext. If the app needs the original, store it in a second attribute, for example `emailDisplay: types.Text('emailDisplay')`, and keep the lowercased one for lookups.
 
-**`dataType('json')` columns.** Protect stored a JSON value as a scalar ciphertext, which does not read as `types.Json` through the adapter (`compat › fails to read through encryptedDynamoDB with types.Json (known gap)`). Backfill each such item once: rebuild the legacy envelope, decrypt it with `client.decrypt`, and write it back with a `types.Json` column (`compat › reads through client.decrypt() on a rebuilt v2 scalar envelope`, `compat › backfills to a types.Json item that Stack 1.x reads`).
+**`dataType('json')` columns.** Protect stored a JSON value as a scalar ciphertext, which does not read as `types.Json` through the adapter (`compat › fails to read through encryptedDynamoDB with types.Json (known gap)`). The tested conversion uses a JSON object; `types.Json` accepts documents (objects, arrays or null), so scalar JSON values need a separate schema decision. Backfill each supported document once: rebuild the legacy envelope, decrypt it with `client.decrypt`, and write it back with a `types.Json` column (`compat › reads through client.decrypt() on a rebuilt v2 scalar envelope`, `compat › backfills to a types.Json item that Stack 1.x reads`).
 
 ```typescript
 const docs = encryptedTable('docs', { profile: types.Json('profile') })
+const jsonClient = await Encryption({ schemas: [docs] })
+const jsonDynamo = encryptedDynamoDB({ encryptionClient: jsonClient })
 
-const value = await client.decrypt({
+if (typeof item.profile__source !== 'string') {
+  throw new Error('Expected a legacy scalar JSON ciphertext')
+}
+const value = await jsonClient.decrypt({
   v: 2,
   k: 'ct',
   i: { t: 'docs', c: 'profile' }, // the Protect table and column names
   c: item.profile__source,
 })
 if (value.failure) throw new Error(value.failure.message)
-const rewritten = await dynamo.encryptModel({ pk: item.pk, profile: value.data }, docs)
+// This example uses the profile shape exercised by the compatibility suite.
+// Validate against your application's JSON schema before using its type.
+const profile = value.data as { roles: string[]; tz: string }
+const rewritten = await jsonDynamo.encryptModel({ profile }, docs)
+if (rewritten.failure) throw new Error(rewritten.failure.message)
+// Persist only the returned profile attributes with UpdateItem, preserving
+// the item's keys and all other attributes. Guard against concurrent changes.
+// This call encrypts in memory; it does not write anything to DynamoDB.
 ```
 
-Done when each boolean lookup has a plaintext replacement, each partial update of a term-less column removes its `__hmac`, each `downcase` column is lowercased on every write and query, and each JSON item is backfilled.
+Before replacing JSON attributes, plan rollback separately: the original Protect JSON schema cannot read the new representation (`compat › the original Protect JSON schema cannot read a Stack Json rewrite`). The snippet is a conversion example, not a resumable backfill runner.
+
+Done when each boolean lookup has an approved replacement, bigint callers use the correct JS type, each partial update of a term-less column removes its `__hmac`, each `downcase` column is lowercased on every write and query, and each JSON item is backfilled.
 
 ### 6. Verify against your own data
 
 Before deploying, run the new code against a copy of real items:
 
 - Decrypt a sample of legacy items with Stack and compare each to what the Protect build decrypts. Every field matches, with `bigint` columns now a JS `bigint`.
-- For each equality column, mint a term with `encryptQuery` for a known value and confirm it equals the stored `<attr>__hmac` of an item holding that value.
+- For each supported text or numeric equality column, normalize downcase inputs and use bigint inputs where required, then mint a term with `encryptQuery` for a known value and confirm it equals the stored `<attr>__hmac` of an item holding that value.
 
 Done when both checks pass for every table.
 
 ### 7. Deploy, with rollback available
 
-Deploy the new build. Rollback is a redeploy of the Protect build, with no data step: protect-dynamodb 6.0.1 reads items Stack wrote (`compat › an item written by Stack 1.x reads back through protect-dynamodb 6.0.1`), and Stack writes the same `__hmac` protect-dynamodb wrote (`compat › Stack 1.x writes the same __hmac protect-dynamodb wrote`). The full cycle (legacy write, mixed update, optional backfill, query, rollback) runs end to end in `compat › runs the migration and keeps every generation readable and queryable`.
+Deploy after the application-specific checks pass. For the tested scalar values, rollback can redeploy the Protect build without rewriting ciphertext: protect-dynamodb 6.0.1 reads items Stack wrote (`compat › an item written by Stack 1.x reads back through protect-dynamodb 6.0.1`), and Stack writes the same `__hmac` protect-dynamodb wrote (`compat › Stack 1.x writes the same __hmac protect-dynamodb wrote`). The scalar cycle (legacy write, mixed update, optional scalar rewrite, HMAC matching, rollback) runs with in-memory persistence in `compat › runs the migration and keeps every generation readable and queryable`.
 
-Two exceptions on rollback: boolean items Stack wrote have no `__hmac`, so the Protect build cannot find them by boolean lookup; and lowercased `downcase` values stay lowercased.
+Rollback limitations: JSON converted to `types.Json` needs a separate reverse conversion or a reader that handles both formats; values outside the tested numeric range need independent verification; boolean items Stack wrote have no `__hmac`, so the Protect build cannot find them by boolean lookup; and lowercased `downcase` values stay lowercased.
 
 ## Optional: moving values between DynamoDB and Postgres
 
-A value moves between DynamoDB and a Postgres EQL v3 column as a **copy** of two strings, in either direction, with no key and no re-encryption:
+For the tested text equality, integer equality and storage-only text columns, a value moves between DynamoDB and a Postgres EQL v3 column as a **copy** of two strings, in either direction, with no key and no re-encryption:
 
 | DynamoDB attribute | Postgres EQL v3 envelope field |
 |---|---|
@@ -218,8 +253,11 @@ What the crossover suite proves:
 
 ## Outside what the tests cover
 
-The suites cover top-level attributes with the column types in the step 3 table. Verify anything else against your own data with step 6 before relying on it, in particular:
+The suites cover the examples in the step 3 table, including expected failures for JSON reads and date encryption. Verify anything else against your own data with step 6 before relying on it, in particular:
 
 - columns with `orderAndRange()`, `freeTextSearch()` or other index kinds;
+- unindexed `number`, `bigint` or `boolean` columns (only unindexed text is tested);
 - nested or grouped attributes;
-- items written with a lock context.
+- items written with a lock context;
+- Unicode normalization beyond the ASCII `downcase` examples, numeric precision boundaries, and JSON rollback after conversion;
+- real DynamoDB requests, pagination, GSI behavior, concurrent updates, or production backfill orchestration.

@@ -342,17 +342,42 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
       expect(await hmOf(model.email, users, users.email)).toBe(legacyTerm)
     })
 
-    it('every numeric *Eq domain gives the same HMAC (all cast to f64)', async () => {
+    it('IntegerEq and DoubleEq queries match the legacy whole-number HMAC', async () => {
+      expect(await hmOf(model.age, users, users.age)).toBe(item.age__hmac)
       expect(await hmOf(model.age, alternates, alternates.age)).toBe(
         item.age__hmac,
       )
+    })
+
+    it('DoubleEq preserves fractional number reads, writes and equality terms', async () => {
+      for (const age of [36.5, -0.125]) {
+        const old: Record<string, unknown> = ok(
+          await legacy.encryptModel({ pk: 'fraction', age }, legacyUsers),
+          'legacy fractional write',
+        )
+        expect(
+          ok(await stack.decryptModel(old, alternates), 'fractional read').age,
+        ).toBe(age)
+        expect(await hmOf(age, alternates, alternates.age)).toBe(old.age__hmac)
+        const fresh = ok(
+          await stack.encryptModel({ pk: 'fraction', age }, alternates),
+          'Stack fractional write',
+        )
+        expect(fresh.age__hmac).toBe(old.age__hmac)
+        expect(
+          ok(
+            await legacy.decryptModel(fresh, legacyUsers),
+            'fractional rollback',
+          ).age,
+        ).toBe(age)
+      }
     })
 
     it('a numeric *Ord domain emits no HMAC at all', async () => {
       expect(await hmOf(model.age, ordered, ordered.age)).toBe(undefined)
     })
 
-    it('protect 10.2.1 could not encrypt a date column at all, so no legacy date HMAC exists', async () => {
+    it('protect 10.2.1 rejects the tested date inputs', async () => {
       for (const value of [
         '1990-04-05',
         '1990-04-05T00:00:00Z',
@@ -877,10 +902,10 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
       // Control: the same ciphertext decrypts through client.decrypt(), so
       // the failure below comes from the reader and not from the service.
       ok(await client.decrypt(legacyEnvelope), 'control client.decrypt')
-      const result = await stack.decryptModel(docItem, docs, {
-        storedEqlVersion: 2,
-      })
-      expect(result.failure).toBeDefined()
+      for (const options of [undefined, { storedEqlVersion: 2 as const }]) {
+        const result = await stack.decryptModel(docItem, docs, options)
+        expect(result.failure).toBeDefined()
+      }
     })
 
     it('reads through client.decrypt() on a rebuilt v2 scalar envelope', async () => {
@@ -889,6 +914,19 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
         'client.decrypt (legacy json)',
       )
       expect(decrypted).toEqual(doc)
+    })
+
+    it('the original Protect JSON schema cannot read a Stack Json rewrite', async () => {
+      const rewritten = ok(
+        await stack.encryptModel({ pk: 'doc#1', profile: doc }, docs),
+        'Stack JSON write',
+      )
+      expect(
+        ok(await stack.decryptModel(rewritten, docs), 'control JSON read')
+          .profile,
+      ).toEqual(doc)
+      const result = await legacy.decryptModel(rewritten, legacyDocs)
+      expect(result.failure).toBeDefined()
     })
 
     it('backfills to a types.Json item that Stack 1.x reads', async () => {

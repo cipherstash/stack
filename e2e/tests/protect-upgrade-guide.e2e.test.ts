@@ -11,6 +11,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 
 const read = (path: string) =>
   readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -55,6 +56,20 @@ describe('protect-dynamodb upgrade guide', () => {
       '@cipherstash/protect-dynamodb',
     ]) {
       expect(guide, pkg).toContain(`\`${pkg}@${devDependencies[pkg]}\``)
+    }
+  })
+
+  it('locks the customer transitive versions used by Protect', () => {
+    const lock = parse(read('../../pnpm-lock.yaml')) as {
+      snapshots: Record<string, { dependencies?: Record<string, string> }>
+    }
+    const legacy = lock.snapshots['@cipherstash/protect@10.2.1'].dependencies
+    for (const [pkg, version] of Object.entries({
+      '@cipherstash/protect-ffi': '0.18.1',
+      '@cipherstash/schema': '2.0.2',
+    })) {
+      expect(legacy?.[pkg], pkg).toBe(version)
+      expect(guide).toContain(`\`${pkg}@${version}\``)
     }
   })
 })
