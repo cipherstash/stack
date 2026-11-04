@@ -7,7 +7,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * Every crate in every Cargo workspace must opt out of crates.io unless it is
  * deliberately allowlisted below: the root workspace (the stack-* crates),
  * EQL, protect-ffi, the Python SDK, and the single-package workspaces the root excludes (the
- * three cargo-fuzz crates and the two Go WASI guests).
+ * four cargo-fuzz crates and the two Go WASI guests).
  *
  * A crate with no `publish` key is publishable BY DEFAULT, and release-plz
  * publishes every workspace member that has not opted out. So every member
@@ -82,6 +82,7 @@ const WORKSPACES = [
     'packages/stack-auth/fuzz',
     'packages/stack-kms/fuzz',
     'packages/stack-encrypt/fuzz',
+    'languages/python/crates/core/fuzz',
     'languages/golang/encrypt/guest',
     'languages/golang/auth/guest',
   ].map((root) => ({ root, publishable: new Set(), expects: '.' })),

@@ -107,6 +107,10 @@ packages/*/fuzz/artifacts/
 packages/*/fuzz/coverage/
 packages/*/fuzz/corpus/*/*
 !packages/*/fuzz/corpus/*/valid-*
+languages/python/crates/core/fuzz/artifacts/
+languages/python/crates/core/fuzz/coverage/
+languages/python/crates/core/fuzz/corpus/*/*
+!languages/python/crates/core/fuzz/corpus/*/valid-*
 # cargo-mutants output (`mise run mutants:<crate>` writes it to the cwd).
 mutants.out/
 

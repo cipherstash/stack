@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { pathPackageNames } from './lib/cargo-lock.mjs'
 import { filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import {
@@ -44,12 +45,8 @@ const read = (rel) => readFileSync(join(REPO_ROOT, rel), 'utf8')
  * crates live at `packages/eql/crates/<name>`.
  */
 function pathDependencyTrees() {
-  const lock = read(`${PYTHON_ROOT}/Cargo.lock`)
   const trees = new Set()
-  for (const block of lock.split('[[package]]').slice(1)) {
-    if (/^source = /m.test(block)) continue
-    const name = /^name = "([^"]+)"/m.exec(block)?.[1]
-    if (!name) throw new Error(`Cargo.lock package with no name:\n${block}`)
+  for (const name of pathPackageNames(read(`${PYTHON_ROOT}/Cargo.lock`))) {
     if (name.startsWith('stackencrypt-')) continue
     const dir = [`packages/${name}`, `packages/eql/crates/${name}`].find((d) =>
       existsSync(join(REPO_ROOT, d, 'Cargo.toml')),

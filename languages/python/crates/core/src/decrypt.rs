@@ -24,7 +24,7 @@ use crate::encrypt::{engine_fault, Field, ModelPlan};
 use crate::plan;
 use crate::refusal::Refusal;
 use crate::targets;
-use crate::values::{self, Misfit, Never, ReadError, Scalar, Value};
+use crate::values::{self, Misfit, Never, ReadError, Scalar, Typed, Value};
 
 /// The stored rows of one `decrypt` call, as the engine's record tree.
 #[derive(Default)]
@@ -112,7 +112,7 @@ impl Row {
     pub fn passthrough(&mut self, field: &Field, value: Value<'_>) -> Result<(), Misfit> {
         values::scalar(None, value)?;
         // A value that fits always writes.
-        let frame = ValueFrame::of(Carried(value)).map_err(|_| Misfit::OutOfRange)?;
+        let frame = ValueFrame::of(Typed(None, value)).map_err(|_| Misfit::OutOfRange)?;
         self.add(field, Output::Passthrough.key(), frame.risky_ref().to_vec());
         Ok(())
     }
@@ -259,16 +259,6 @@ fn read_rows(
         ));
     }
     Ok(rows)
-}
-
-/// A value the engine reads as it is: what [`Row`] stores.
-#[derive(Clone, Copy)]
-struct Carried<'a>(Value<'a>);
-
-impl Encrypt for Carried<'_> {
-    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        values::write(sink, None, self.0)
-    }
 }
 
 fn not_expected<T>(what: &'static str) -> Result<T, ReadError> {
@@ -555,7 +545,7 @@ pub(crate) mod tests {
     #[test]
     fn an_eql_frame_is_the_frame_of_one_bytes_scalar() {
         let json = br#"{"i":{"t":"users","c":"email"}}"#;
-        let scalar = ValueFrame::of(Carried(Value::Bytes(json))).unwrap();
+        let scalar = ValueFrame::of(Typed(None, Value::Bytes(json))).unwrap();
         assert_eq!(eql_frame(json), scalar.risky_ref());
     }
 

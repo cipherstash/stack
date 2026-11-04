@@ -6,17 +6,16 @@
 //! values' `eq_term`. A term is derived from the index key in the loaded
 //! keyset, so no ZeroKMS request is made once the shared client is built.
 
-use stack_encrypt::dynamic::plaintext::Sink;
 use stack_encrypt::dynamic::{self, OpSpec, Operand};
 use stack_encrypt::kms::{DataKeySource, IndexKeySource};
-use stack_encrypt::{Encrypt, KeysetCipher};
+use stack_encrypt::KeysetCipher;
 
 use crate::client;
 use crate::encrypt::{engine_fault, ModelPlan};
 use crate::plan;
 use crate::refusal::Refusal;
 use crate::targets;
-use crate::values::{self, Kind, Value};
+use crate::values::{Kind, Typed, Value};
 
 /// The equality query term for `value` on the sealed field `field` of
 /// `plan`, as JSON text.
@@ -60,7 +59,7 @@ where
         plan.plan(),
         field,
         OpSpec::Eq,
-        Typed(kind, value),
+        Typed(Some(kind), value),
         &targets::resolver(),
     )
     .map_err(|error| plan::refusal(&error))?
@@ -97,15 +96,6 @@ pub fn answers_equality(plan: &ModelPlan, field: &str) -> Result<(), Refusal> {
         field: Some(field.to_owned()),
         reason: None,
     })
-}
-
-/// A value written as the field's kind, as `encrypt` writes it.
-struct Typed<'a>(Kind, Value<'a>);
-
-impl Encrypt for Typed<'_> {
-    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        values::write(sink, Some(self.0), self.1)
-    }
 }
 
 #[cfg(test)]
