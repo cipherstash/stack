@@ -50,7 +50,11 @@ remain readable by passing the same v3 table descriptor plus
 serve legacy reads — the default `@cipherstash/stack` one and
 `@cipherstash/stack/wasm-inline`.
 
-There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and there is no automatic *data* migration either. To fully move a table to v3, re-encrypt every item with the v3 schema.
+There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and no data migration is required. Items written by `@cipherstash/protect-dynamodb` (6.x) keep working as stored: Stack decrypts their `__source` attributes as they are, and `encryptQuery` mints the same `__hmac` they carry, so existing equality lookups still match. Keep each property key and DB column name the same, and map each v2 equality column to an `Eq` domain (`TextEq`, `IntegerEq`, `BigintEq`, …) — an `Ord` domain mints no equality term. Re-encrypting items with the v3 schema is optional. Three differences to plan for:
+
+- A v3 `Boolean` mints no equality term, so a boolean `__hmac` that protect-dynamodb stored can no longer be queried. Re-encrypting does not bring it back; filter on a plaintext attribute instead. When Stack updates a boolean in place, `REMOVE` the stale `<attr>__hmac` in the same `UpdateItem`.
+- A v2 `downcase` filter has no v3 equivalent: lowercase the value before `encryptQuery` and the stored `__hmac` matches.
+- A v2 `dataType('json')` attribute was stored as a scalar ciphertext, not a `types.Json` document, and does not decrypt through the adapter as `types.Json`.
 
 The client must be built for the table. Build the client with the same v3 table you hand to `encryptedDynamoDB` — `Encryption({ schemas: [users] })` returns the typed v3 client for a concrete v3 schema set. Passing a v3 table to a client that never registered it (a client built for a different schema set) throws a clear error naming the table on the first operation, instead of failing later with an opaque FFI deserialization error.
 
