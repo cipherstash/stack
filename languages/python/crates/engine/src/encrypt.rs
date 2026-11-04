@@ -18,7 +18,7 @@ use stackencrypt_core::refusal::Refusal;
 use stackencrypt_core::values::{self, Kind};
 
 use crate::errors::raise;
-use crate::values::{read, to_python, PyKind};
+use crate::values::{read, to_python, PyKind, Read};
 
 /// One plan field as the decorator hands it over: `(name, eql_type, kind,
 /// value_type)`.
@@ -161,6 +161,45 @@ pub fn request_count() -> u64 {
     stackencrypt_core::client::request_count()
 }
 
+/// `value` read as `field`'s Python type and checked against the range of
+/// its kind, as `encrypt` and `query` both take it. A refusal names the
+/// field, with the kind as its reason.
+///
+/// The outer error is Python's own, such as one a `__index__` raises.
+pub(crate) fn field_value<'a>(
+    value: &'a Bound<'_, PyAny>,
+    field: &Field,
+    kind: PyKind,
+) -> PyResult<Result<Read<'a>, Refusal>> {
+    let engine_kind = field.eql.as_ref().map(|(_, kind)| *kind);
+    let reason = engine_kind.map_or("passthrough", Kind::name);
+    let named = |refused: Refusal| Refusal {
+        message: format!("field {:?}: {}", field.name, refused.message),
+        field: Some(field.name.clone()),
+        reason: Some(reason.to_owned()),
+        ..refused
+    };
+    let read = match read(value, kind, reason)? {
+        Ok(read) => read,
+        Err(refused) => return Ok(Err(named(refused))),
+    };
+    // The range rules first, so a misfit is refused with its own code
+    // and the field's name, not as the sink's error.
+    if let Err(misfit) = values::scalar(engine_kind, read.value()) {
+        let what = match engine_kind {
+            Some(kind) => format!("the value does not fit {}.", kind.name()),
+            None => "the value is outside what the engine stores.".to_owned(),
+        };
+        return Ok(Err(named(Refusal {
+            code: misfit.code().to_owned(),
+            message: what,
+            field: None,
+            reason: None,
+        })));
+    }
+    Ok(Ok(read))
+}
+
 /// The models as the engine's source: a sequence of maps, one entry per
 /// plan field, read from each model's attribute of that name.
 ///
@@ -188,49 +227,21 @@ impl Models<'_, '_> {
         field: &Field,
         kind: PyKind,
     ) -> Result<S::Ok, S::Error> {
-        let py = model.py();
         // The attribute, as the user's class gives it: a property that
         // raises propagates unchanged.
         let attribute = model
             .getattr(&field.name)
             .map_err(|error| self.stop(error))?;
-        let engine_kind = field.eql.as_ref().map(|(_, kind)| *kind);
-        let reason = engine_kind.map_or("passthrough", Kind::name);
-        let refuse = |refused: Refusal| {
-            self.stop::<S::Error>(raise(
-                py,
-                Refusal {
-                    message: format!("field {:?}: {}", field.name, refused.message),
-                    field: Some(field.name.clone()),
-                    reason: Some(reason.to_owned()),
-                    ..refused
-                },
-            ))
-        };
-        let read = match read(&attribute, kind, reason) {
+        let read = match field_value(&attribute, field, kind) {
             Ok(Ok(read)) => read,
-            Ok(Err(refused)) => return Err(refuse(refused)),
+            Ok(Err(refused)) => return Err(self.stop(raise(model.py(), refused))),
             Err(error) => return Err(self.stop(error)),
         };
-        let value = read.value();
-        // The range rules first, so a misfit is refused with its own code
-        // and the field's name, not as the sink's error.
-        if let Err(misfit) = values::scalar(engine_kind, value) {
-            let what = match engine_kind {
-                Some(kind) => format!("the value does not fit {}.", kind.name()),
-                None => "the value is outside what the engine stores.".to_owned(),
-            };
-            return Err(refuse(Refusal {
-                code: misfit.code().to_owned(),
-                message: what,
-                field: None,
-                reason: None,
-            }));
-        }
+        let engine_kind = field.eql.as_ref().map(|(_, kind)| *kind);
         // A passthrough is written as a plain scalar: the plan's
         // `"passthrough"` output carries the field's frame as it is, so a
         // passthrough node here would come back nested in one.
-        values::write(sink, engine_kind, value)
+        values::write(sink, engine_kind, read.value())
     }
 }
 

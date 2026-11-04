@@ -67,3 +67,14 @@ class DecryptError(StashError):
     stored as another type) and ``decrypt_not_representable`` (an opened value
     Python cannot hold). ``field`` names the column where it is known.
     """
+
+
+class QueryError(StashError):
+    """A ``query`` call the declared class cannot answer, raised before any
+    request.
+
+    ``query_unknown_field``: the name is not a declared field.
+    ``query_unsupported``: the field's marker has no ``eq`` index, such as
+    ``Text``, ``Passthrough`` or ``IntegerOrd``. ``reason`` is the marker's
+    name.
+    """
