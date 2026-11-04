@@ -240,6 +240,27 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
             STATUS_KMS_TRANSPORT
         }
         stack_kms::Error::Unexpected(_) => STATUS_KMS_OTHER,
+        stack_kms::Error::Backend { kind, .. } => status_for_backend(*kind),
+        // A request for a lock context, a decryption policy or an
+        // unverified context against a key vendor backend: the caller's
+        // input, refused before any key call.
+        stack_kms::Error::ZeroKmsOnly { .. } => STATUS_ENCODING,
+    }
+}
+
+/// A key vendor backend's failure as a status. `BackendErrorKind` is
+/// `#[non_exhaustive]`, so a kind added upstream falls to
+/// [`STATUS_KMS_OTHER`] until it is classified here.
+fn status_for_backend(kind: stack_kms::BackendErrorKind) -> u32 {
+    use stack_kms::BackendErrorKind as Kind;
+    match kind {
+        Kind::NotFound => STATUS_KMS_NOT_FOUND,
+        Kind::AccessDenied => STATUS_KMS_FORBIDDEN,
+        Kind::Throttled | Kind::Unavailable => STATUS_KMS_TRANSPORT,
+        // The vendor could not unwrap the key: damaged, or wrapped by
+        // another key. Like an AEAD failure, the stored bytes do not open.
+        Kind::InvalidCiphertext => STATUS_AUTH,
+        _ => STATUS_KMS_OTHER,
     }
 }
 
@@ -313,6 +334,30 @@ mod tests {
             ))),
         };
         assert_eq!(status_for_error(&load), STATUS_KMS_UNAUTHORIZED);
+    }
+
+    #[test]
+    fn a_key_vendor_backend_failure_maps_by_its_kind() {
+        use stack_kms::BackendErrorKind as Kind;
+        let status = |kind| {
+            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Backend {
+                vendor: "test-vendor",
+                kind,
+                source: Box::new(std::io::Error::other("detail")),
+            }))
+        };
+        assert_eq!(status(Kind::NotFound), STATUS_KMS_NOT_FOUND);
+        assert_eq!(status(Kind::AccessDenied), STATUS_KMS_FORBIDDEN);
+        assert_eq!(status(Kind::Throttled), STATUS_KMS_TRANSPORT);
+        assert_eq!(status(Kind::Unavailable), STATUS_KMS_TRANSPORT);
+        assert_eq!(status(Kind::InvalidCiphertext), STATUS_AUTH);
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::ZeroKmsOnly {
+                vendor: "test-vendor",
+                feature: stack_kms::ZeroKmsFeature::DecryptionPolicy,
+            })),
+            STATUS_ENCODING
+        );
     }
 
     #[test]
