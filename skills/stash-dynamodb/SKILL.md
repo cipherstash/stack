@@ -326,7 +326,16 @@ if (queryResult.failure) {
   throw new Error(`Query encryption failed: ${queryResult.failure.message}`)
 }
 
-const emailHmac = queryResult.data.hm
+const emailHmac = hmacOf(queryResult.data)
+
+// encryptQuery's result type also covers ciphertexts, strings and null, so
+// narrow to the equality term before reading `hm` (`.data.hm` does not compile).
+function hmacOf(term: unknown): string {
+  if (typeof term === "object" && term !== null && "hm" in term && typeof term.hm === "string") {
+    return term.hm
+  }
+  throw new Error("encryptQuery returned no equality term: is the column an *Eq domain?")
+}
 
 // 2. Use the HMAC in a DynamoDB query
 const result = await docClient.send(new QueryCommand({
@@ -522,7 +531,7 @@ const result = await encryptionClient.encryptQuery(
 // `data?.hm` would mask a failure (and a null-plaintext result) as `undefined`,
 // producing a malformed key condition rather than a clear error.
 if (result.failure) throw new Error(result.failure.message)
-const hmac = result.data.hm  // Use this in DynamoDB key conditions
+const hmac = hmacOf(result.data)  // Use this in DynamoDB key conditions (`hmacOf`: see "Encrypted Partition Key")
 
 // EQL v2 — pass queryType explicitly (`usersV2` is the legacy table declared
 // in the v2 read section above; `users` is the v3 one and infers its queryType):
@@ -531,7 +540,7 @@ const v2Result = await encryptionClient.encryptQuery(
   { table: usersV2, column: usersV2.email, queryType: "equality" }
 )
 if (v2Result.failure) throw new Error(v2Result.failure.message)
-const v2Hmac = v2Result.data.hm
+const v2Hmac = hmacOf(v2Result.data)
 ```
 
 > On a `types.TextSearch` column `encryptQuery` returns `hm` alongside ordering
@@ -582,7 +591,14 @@ const queryEnc = await encryptionClient.encryptQuery("alice@example.com", {
   column: users.email,
 })
 if (queryEnc.failure) throw new Error(queryEnc.failure.message)
-const hmac = queryEnc.data.hm
+const hmac = hmacOf(queryEnc.data)
+
+function hmacOf(term: unknown): string {
+  if (typeof term === "object" && term !== null && "hm" in term && typeof term.hm === "string") {
+    return term.hm
+  }
+  throw new Error("encryptQuery returned no equality term: is the column an *Eq domain?")
+}
 
 const queryResult = await docClient.send(new QueryCommand({
   TableName: "Users",
