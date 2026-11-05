@@ -25,7 +25,7 @@
 //!     &kms,
 //!     "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab",
 //!     KeyMode::Wrapped,
-//!     Some("users"),
+//!     Some("users".to_owned()),
 //! )
 //! .await?;
 //! let source = VendorKeySource::new(kms, [record])?;
