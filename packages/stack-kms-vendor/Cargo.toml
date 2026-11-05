@@ -9,9 +9,11 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
-# Not published yet. The first vendor crate (CIP-5307) decides the release
-# group; release-plz.toml lists it with `release = false` until then.
-publish = false
+# Publishable, in the `stack-kms-vendor` version group with every vendor crate
+# (stack-kms-aws, ...). release-plz.toml keeps `release = false` until the
+# first version is on crates.io: crates.io Trusted Publishing needs an
+# existing crate, so the first version is published by hand (see
+# docs/plans/2026-11-05-key-vendor-backends-decisions.md, CIP-5307).
 
 [features]
 # `stack_kms_vendor::contract` (the shared contract suite every key vendor

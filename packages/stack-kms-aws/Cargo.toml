@@ -9,8 +9,9 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
-# Published to crates.io by release-plz.yml; release-plz.toml puts it in the
-# `stack-kms-vendor` version group, with the vendor seam it implements.
+# Publishable, in the `stack-kms-vendor` version group with the vendor seam it
+# implements. release-plz.toml keeps `release = false` until the first version
+# is on crates.io (published by hand; see stack-kms-vendor's Cargo.toml).
 
 [features]
 default = ["http"]
