@@ -140,3 +140,97 @@ the alternatives and the reason.
 - **Note:** `stack-encrypt::ui derive_diagnostics` (trybuild) fails on `main`
   on a developer machine whose paths print as `<HOME>`. It is not caused by
   this stack. CI is the judge.
+
+## CIP-5305: v2 sealed leaf with key backend and key mode
+
+- **Decision:** the backend and mode are two `stack-kms` enums, `KeyVendor`
+  and `KeyMode`, with stable bytes. `KeyVendor`: `Aws = 1`, `Gcp = 2`,
+  `Azure = 3`, `Vault = 4`, `Static = 5`. `KeyMode`: `Wrapped = 1`,
+  `Derived = 2`. The value `0` is invalid for both, so a zeroed header
+  never decodes. A value is never reused. `KeyBackend` is `ZeroKms` or
+  `Vendor(KeyVendor)`, so ZeroKMS has no backend byte and a v2 leaf cannot
+  name it. **Alternative:** one enum with a ZeroKMS byte; the enums in
+  `stack-encrypt`. **Reason:** the trait method (below) lives in
+  `stack-kms` and must return the type. Leaving ZeroKMS out of the byte
+  enum makes "ZeroKMS is never v2" a type fact.
+- **Decision:** `KeyVendor` is `#[non_exhaustive]`; `KeyMode` and
+  `KeyBackend` are exhaustive. **Reason:** a new vendor is likely; ADR-0009
+  rejects a third mode, and `KeyBackend` has exactly two shapes.
+- **Decision:** `KeyVendor::name()` gives stable names (`aws-kms`,
+  `gcp-kms`, `azure-key-vault`, `vault-transit`, `static`), and a key
+  vendor backend should use it as the `vendor` of `Error::Backend` and
+  `Error::ZeroKmsOnly`. `KeyBackend::ZeroKms` is `zerokms`.
+- **Decision:** the seam is a provided method,
+  `DataKeySource::key_backend(&self) -> KeyBackend`, default `ZeroKms`.
+  **Alternative:** a method on `IndexKeySource`, or a per-keyset answer.
+  **Reason:** additive; every existing source keeps ZeroKMS with no edit,
+  and ADR-0010 routes a leaf by the backend the cipher holds, not by the
+  keyset. A wrapper must forward it (the doc says so); no wrapper in the
+  tree needs to today.
+- **Decision:** `SealedValue` keeps one type and gains a private
+  `vendor: Option<VendorHeader>` field. `None` is v1. New API:
+  `VENDOR_FORMAT_VERSION = 2`, `format_version()`, `key_backend()`,
+  `key_mode()`, `from_vendor_parts(vendor, mode, keyset_id, iv, tag, ct)`.
+  `FORMAT_VERSION` stays `1` and still names v1. `into_parts` is
+  unchanged and drops the v2 header (documented: persist v2 with
+  `to_bytes`). **Alternative:** a separate v2 type, or an enum leaf.
+  **Reason:** every tree, visitor and binding carries `SealedValue`; one
+  type keeps v2 opaque to all of them.
+- **Decision:** the serde form of a v1 leaf does not change. A v2 leaf
+  adds a last field `vendor: [backend, mode]`, skipped when `None` and
+  defaulted on read. **Reason:** keeps stored v1 serde data readable; no
+  caller in the tree uses serde for leaves.
+- **Decision:** the leaf AAD's second PAE piece is the envelope header:
+  `[0x01]` for v1 (byte for byte the old AAD; the existing pin is
+  unchanged) and `[0x02, backend, mode]` for v2. **Alternative:** two
+  extra PAE pieces for v2. **Reason:** PAE frames each piece with its
+  length, so a 3-byte header can never collide with a 1-byte one, and the
+  v1 derivation stays identical. A new pin covers the v2 AAD.
+- **Decision:** the routing refusal is
+  `stack_encrypt::Error::ForeignBackend { expected, found }`
+  (`stack_encrypt::foreign_backend`), raised in `dispatch` before any
+  generate or retrieve call, for any retrieve whose leaf names another
+  backend than `cipher.kms().key_backend()`. It is symmetric: a vendor
+  cipher refuses a v1 leaf too. Each retrieve `Request` now carries the
+  leaf's backend; the new public `Request::retrieve_leaf_key(&leaf,
+  context)` sets it, and the old `retrieve_data_key` names ZeroKMS.
+  **Alternative:** check in `check_scope` at pending construction.
+  **Reason:** `check_scope` has no cipher; `dispatch` is the one gate
+  every request passes before I/O, and the refusal is still before any
+  key call. A whole tree is refused if one leaf is foreign.
+- **Decision:** a generate request under a key vendor backend is refused
+  with `stack_encrypt::Error::SealUnsupported { backend }`
+  (`stack_encrypt::seal_unsupported`), before any key call. **Alternative:**
+  write v1 (it would name ZeroKMS, wrongly) or wire v2 sealing now.
+  **Reason:** the v2 seal needs the keyset's key mode, which is CIP-5306's
+  keyset record. The private `seal_leaf_as(Some(header), ..)` already
+  writes v2; the tests use it.
+- **Decision:** `LeafBytesError` gains `UnknownBackend(u8)`
+  (`stack_encrypt::leaf_backend`) and `UnknownMode(u8)`
+  (`stack_encrypt::leaf_mode`). A v1-only reader (an older build) refuses
+  v2 with `UnknownVersion(2)`, as ADR-0010 says.
+- **Decision:** the Go guest maps `ForeignBackend` to `STATUS_ENCODING`
+  (the caller's input; no keyset option opens it, so not
+  `STATUS_FOREIGN_KEYSET`). `SealUnsupported` falls to `STATUS_INTERNAL`
+  (the guest holds ZeroKMS, so it cannot occur). CIP-5311 can revisit.
+- **Decision:** a v1 known-answer test (`a_pinned_v1_leaf_still_opens` in
+  `tests/frozen_bytes.rs`) pins the bytes of a real v1 leaf sealed under
+  `DeterministicSource([7; 32])` and opens it. The existing layout pin
+  (`sealed_value_layout_is_pinned`) is unchanged.
+- **Decision:** `eql-bindings` needs no code change. Its `c` is still
+  `stack-encrypt:1:` + base64 of `SealedValue::to_bytes`; the `1` there is
+  the EQL producer marker, not the leaf version. A new test
+  (`a_v2_leaf_passes_through_the_ciphertext_as_opaque_bytes`) proves a v2
+  leaf round-trips through `c`.
+- **Decision:** fuzzing reuses the `sealed_value_decode` target (it already
+  checks "no panic" and "lossless" for every input) and adds two v2 seeds
+  (`valid-leaf-v2-aws-wrapped`, `valid-leaf-v2-static-derived-empty-tag`).
+  The seed replay and a 30 s run passed.
+- **Deferred to CIP-5306:** the v2 seal path (choose the leaf header from
+  the keyset's backend and key mode), and passing the leaf's key mode to
+  the key source on retrieve (`RetrieveKeyPayload` does not carry it yet;
+  the cipher has it in `SealedValue::key_mode`). Remove or keep
+  `Error::SealUnsupported` then.
+- **Deferred to CIP-5306:** a cipher that holds ZeroKMS and one key vendor
+  backend routes each leaf to the right one. Today a cipher holds one `K`,
+  so `ForeignBackend` compares with that one backend.
