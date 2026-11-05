@@ -130,25 +130,32 @@ export function cargo(args, capture = false, workspace = '.') {
   })
 }
 
+// The nextest arguments shared by `list` and `run`. A whole-binary suite (EQL)
+// runs every test in its binary; otherwise only the enrolled tests run.
+export function nextestArgs(suite, { wholeBinary = false } = {}) {
+  const args = [
+    '--locked',
+    '--manifest-path',
+    'Cargo.toml',
+    '-p',
+    suite.package,
+    ...(suite.lib ? ['--lib'] : ['--test', suite.binary]),
+    ...suite.features,
+    '--run-ignored',
+    suite.lane === 'postgres' ? 'only' : 'default',
+  ]
+  if (!wholeBinary)
+    args.push(
+      '-E',
+      [...suite.tests].map((name) => `test(=${name})`).join(' | '),
+    )
+  return args
+}
+
 export function runSuite(suite, { wholeBinary = false } = {}) {
   const lane = suite.lane
   if (suite.language === 'rust') {
-    const common = [
-      '--locked',
-      '--manifest-path',
-      'Cargo.toml',
-      '-p',
-      suite.package,
-      ...(suite.lib ? ['--lib'] : ['--test', suite.binary]),
-      ...suite.features,
-      '--run-ignored',
-      lane === 'postgres' ? 'only' : 'default',
-    ]
-    if (!wholeBinary)
-      common.push(
-        '-E',
-        [...suite.tests].map((name) => `test(=${name})`).join(' | '),
-      )
+    const common = nextestArgs(suite, { wholeBinary })
     const inventory = JSON.parse(
       cargo(
         ['nextest', 'list', ...common, '--message-format', 'json'],

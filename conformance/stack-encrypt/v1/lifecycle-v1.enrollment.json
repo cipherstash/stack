@@ -89,6 +89,7 @@
       "evidence": {
         "lifecycle": [
           "dropping_unpolled_work_releases_captures_without_key_io",
+          "dropping_unpolled_decrypt_releases_captures_without_key_io",
           "success_and_provider_failure_release_captures_once"
         ],
         "pending": [
@@ -105,7 +106,10 @@
     {
       "id": "lifecycle-cancellation-v1",
       "evidence": {
-        "lifecycle": ["cancelling_in_flight_work_drops_provider_and_captures"],
+        "lifecycle": [
+          "cancelling_in_flight_work_drops_provider_and_captures",
+          "cancelling_in_flight_decrypt_drops_provider_and_captures"
+        ],
         "guest-abi": [
           "step::tests::an_aborted_operation_is_dropped_and_its_handle_spent",
           "step::tests::the_wrong_number_of_responses_is_refused_and_drops_the_operation"

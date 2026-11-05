@@ -3,8 +3,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   checkRustInventory,
+  nextestArgs,
   selections,
 } from '../stack-conformance-evidence.mjs'
+import { buildReport } from '../stack-lifecycle-conformance.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -118,5 +120,70 @@ describe('required lifecycle evidence', () => {
       ])
         expect(workflow.on[event].paths).toContain(path)
     }
+  })
+
+  it('selects only enrolled tests unless a suite runs its whole binary', () => {
+    const suite = {
+      package: 'stack-encrypt',
+      binary: 'lifecycle_conformance',
+      features: ['--all-features'],
+      lane: 'fast',
+      tests: new Set(['a', 'b']),
+    }
+    const selected = nextestArgs(suite)
+    expect(selected).toEqual([
+      '--locked',
+      '--manifest-path',
+      'Cargo.toml',
+      '-p',
+      'stack-encrypt',
+      '--test',
+      'lifecycle_conformance',
+      '--all-features',
+      '--run-ignored',
+      'default',
+      '-E',
+      'test(=a) | test(=b)',
+    ])
+    expect(nextestArgs(suite, { wholeBinary: true })).toEqual(
+      selected.slice(0, -2),
+    )
+    const lib = nextestArgs({ ...suite, lib: true, lane: 'postgres' })
+    expect(lib).toContain('--lib')
+    expect(lib).not.toContain('--test')
+    expect(lib.slice(lib.indexOf('--run-ignored'), -2)).toEqual([
+      '--run-ignored',
+      'only',
+    ])
+  })
+
+  it('carries every limitation in the report and hashes guests only for Go', () => {
+    const meta = {
+      platform: 'linux',
+      architecture: 'x64',
+      engine: '0.0.0',
+      hash: (path) => `sha256:${path}`,
+    }
+    const go = buildReport(index, selections(index, 'fast', 'go'), 'go', meta)
+    expect(go.profile).toBe('lifecycle-v1')
+    expect(go.limitations.map((l) => l.id)).toEqual(
+      index.limitations.map((l) => l.id),
+    )
+    expect(go.enrollment_sha256).toBe(
+      'sha256:conformance/stack-encrypt/v1/lifecycle-v1.enrollment.json',
+    )
+    expect(go.lock_sha256).toBe('sha256:Cargo.lock')
+    expect(Object.keys(go.guests).sort()).toEqual([
+      'encrypt/testdata/stack_encrypt_guest_deterministic.wasm',
+      'encrypt/wasm/stack_encrypt_guest.wasm',
+    ])
+    const rust = selections(index, 'fast', 'rust')
+    expect(buildReport(index, rust, 'rust', meta).guests).toBeUndefined()
+    expect(
+      buildReport(index, selections(index, 'fast', 'all'), 'all', meta).guests,
+    ).toBeDefined()
+    expect(() =>
+      buildReport({ ...index, profile: 'eql-json-v1' }, rust, 'rust', meta),
+    ).toThrow('Unsupported lifecycle conformance profile: eql-json-v1')
   })
 })
