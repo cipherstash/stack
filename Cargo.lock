@@ -3558,6 +3558,7 @@ dependencies = [
  "stack-auth",
  "stack-encrypt",
  "stack-kms",
+ "subtle",
  "thiserror 1.0.69",
  "tokio",
  "uuid",

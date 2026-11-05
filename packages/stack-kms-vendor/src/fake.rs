@@ -1,5 +1,6 @@
 //! An in-memory key vendor backend for tests.
 
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -37,6 +38,7 @@ pub struct FakeVendor {
     throttled: AtomicUsize,
     throttle_next: AtomicUsize,
     sleeps: Mutex<Vec<Duration>>,
+    batch_limit: Option<NonZeroUsize>,
 }
 
 impl std::fmt::Debug for FakeVendor {
@@ -63,7 +65,17 @@ impl FakeVendor {
             throttled: AtomicUsize::new(0),
             throttle_next: AtomicUsize::new(0),
             sleeps: Mutex::new(Vec::new()),
+            batch_limit: None,
         }
+    }
+
+    /// Offer batch calls of at most `limit` keys
+    /// ([`KeyVendorBackend::batch_limit`]). Each batch call wraps or unwraps
+    /// its keys one at a time (the trait's default), so the counts stay per
+    /// key.
+    pub fn with_batch_limit(mut self, limit: NonZeroUsize) -> Self {
+        self.batch_limit = Some(limit);
+        self
     }
 
     /// Add another vendor key, for rewrap tests.
@@ -144,6 +156,10 @@ impl KeyVendorBackend for FakeVendor {
             .unwrap(key_ref, wrapped, aad)
             .await
             .map_err(|error| self.rename(error))
+    }
+
+    fn batch_limit(&self) -> Option<NonZeroUsize> {
+        self.batch_limit
     }
 
     async fn sleep(&self, duration: Duration) {
