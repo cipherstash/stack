@@ -260,7 +260,7 @@ impl<B: KeyVendorBackend> VendorKeySource<B> {
                 return Ok(Protected::new(*cached.key.risky_ref()));
             }
         }
-        let key = record.unwrap_key(&self.backend).await?;
+        let key = self.unwrap_record(record).await?;
         if !self.root_ttl.is_zero() {
             if let Some(until) = Instant::now().checked_add(self.root_ttl) {
                 let mut roots = self.roots.lock().unwrap_or_else(PoisonError::into_inner);
@@ -276,12 +276,26 @@ impl<B: KeyVendorBackend> VendorKeySource<B> {
         Ok(key)
     }
 
+    /// Unwrap the key in `record` (one vendor call), with the batch's
+    /// backoff on a throttle.
+    async fn unwrap_record(&self, record: &KeysetRecord) -> Result<KeyBytes, Error> {
+        let mut keys = run_batch(
+            &self.batch,
+            1,
+            |_| record.unwrap_key(&self.backend),
+            |delay| self.backend.sleep(delay),
+        )
+        .await?;
+        keys.pop()
+            .ok_or_else(|| invalid(self.vendor(), "the vendor returned no key"))
+    }
+
     /// The index key of `record`: derived from the root key, or unwrapped
     /// from the record.
     async fn index_key(&self, record: &KeysetRecord) -> Result<IndexKey, Error> {
         let key = match record.mode() {
             KeyMode::Derived => derived_index_key(&self.root_key(record).await?, record.id()),
-            KeyMode::Wrapped => record.unwrap_key(&self.backend).await?,
+            KeyMode::Wrapped => self.unwrap_record(record).await?,
         };
         Ok(IndexKey::from_key_bytes(key))
     }

@@ -206,3 +206,149 @@ async fn a_hand_built_request_for_a_v2_leaf_is_refused() {
     );
     assert_eq!(retrieves.load(Ordering::SeqCst), 0, "no key call");
 }
+
+/// A source whose keysets are selected per settle: the cipher holds no
+/// index key, and asks for it inside each settle that builds a term. The
+/// key is the fake source's, so its terms must equal a ZeroKMS-shaped
+/// cipher's over the same key, byte for byte.
+struct PerSettle {
+    inner: stack_encrypt::kms::FakeDataKeySource,
+    loads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl stack_encrypt::kms::DataKeySource for PerSettle {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<stack_encrypt::kms::GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<std::borrow::Cow<'_, stack_encrypt::kms::UnverifiedContext>>,
+    ) -> Result<Vec<stack_encrypt::kms::DataKeyWithTag>, stack_encrypt::kms::Error> {
+        self.inner
+            .generate_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<stack_encrypt::kms::RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&stack_encrypt::kms::UnverifiedContext>,
+    ) -> Result<Vec<stack_encrypt::kms::DataKey>, stack_encrypt::kms::Error> {
+        self.inner
+            .retrieve_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn load_settle_index_key(
+        &self,
+        keyset_id: Uuid,
+    ) -> Result<stack_encrypt::kms::IndexKey, stack_encrypt::kms::Error> {
+        use stack_encrypt::kms::IndexKeySource;
+        let _ = self.loads.fetch_add(1, Ordering::SeqCst);
+        let (_, key) = self
+            .inner
+            .load_index_key(Some(stack_encrypt::kms::IdentifiedBy::Uuid(keyset_id)))
+            .await?;
+        Ok(key)
+    }
+}
+
+impl stack_encrypt::kms::IndexKeySource for PerSettle {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<stack_encrypt::kms::IdentifiedBy>,
+    ) -> Result<(Uuid, stack_encrypt::kms::IndexKey), stack_encrypt::kms::Error> {
+        self.inner.load_index_key(keyset_id).await
+    }
+
+    async fn select_keyset(
+        &self,
+        keyset_id: Option<stack_encrypt::kms::IdentifiedBy>,
+    ) -> Result<stack_encrypt::kms::SelectedKeyset, stack_encrypt::kms::Error> {
+        let (keyset_id, _) = self.inner.load_index_key(keyset_id).await?;
+        Ok(stack_encrypt::kms::SelectedKeyset::PerSettle { keyset_id })
+    }
+}
+
+#[tokio::test]
+async fn a_term_derived_inside_the_settle_equals_one_derived_now() {
+    use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerms, OreTerm};
+    use stack_encrypt::target::EncryptInto;
+
+    let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let deferred = StackCipher::builder()
+        .kms(PerSettle {
+            inner: stack_encrypt::kms::FakeDataKeySource::new(),
+            loads: std::sync::Arc::clone(&loads),
+        })
+        .init()
+        .await
+        .expect("a per-settle default keyset is accepted");
+    let eager = StackCipher::builder()
+        .kms(stack_encrypt::kms::FakeDataKeySource::new())
+        .init()
+        .await
+        .unwrap();
+    let (later, now) = (deferred.default_keyset(), eager.default_keyset());
+    assert_eq!(later.keyset_id(), now.keyset_id());
+    assert!(later.prf().is_none(), "the handle holds no index key");
+    assert!(now.prf().is_some());
+    assert_eq!(loads.load(Ordering::SeqCst), 0, "selection loads no key");
+
+    let ctx = nonempty!("users").with("email");
+    let borrowed = String::from("alice");
+    let a = later.equality_term(borrowed.as_str(), ctx).await.unwrap();
+    let b = now.equality_term(borrowed.as_str(), ctx).await.unwrap();
+    assert_eq!(a.as_bytes(), b.as_bytes());
+    assert_eq!(loads.load(Ordering::SeqCst), 1, "one load for the settle");
+
+    let a = later
+        .match_terms::<DefaultMatch>("alice wonderland", ctx)
+        .await
+        .unwrap();
+    let b = now
+        .match_terms::<DefaultMatch>("alice wonderland", ctx)
+        .await
+        .unwrap();
+    assert_eq!(a.positions(), b.positions());
+    assert_eq!(
+        later.ore_term(42u64, ctx).await.unwrap(),
+        now.ore_term(42u64, ctx).await.unwrap()
+    );
+    assert_eq!(
+        later.ope_term(42u64, ctx).await.unwrap(),
+        now.ope_term(42u64, ctx).await.unwrap()
+    );
+
+    // The target-directed path, and several terms in one settle: one load.
+    let before = loads.load(Ordering::SeqCst);
+    let eq = "bob".encrypt_into_with_context::<EqualityTerm, _>(&later, ctx);
+    let mt = "bob builder"
+        .to_string()
+        .encrypt_into_with_context::<MatchTerms<DefaultMatch>, _>(&later, ctx);
+    let ore = 7u64.encrypt_into_with_context::<OreTerm<u64>, _>(&later, ctx);
+    let pair = eq.zip(mt).zip(ore);
+    let ((eq, mt), ore) = pair.await.unwrap();
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        before + 1,
+        "one load per settle"
+    );
+    assert_eq!(
+        eq.as_bytes(),
+        now.equality_term("bob", ctx).await.unwrap().as_bytes()
+    );
+    assert_eq!(
+        mt.positions(),
+        now.match_terms::<DefaultMatch>("bob builder", ctx)
+            .await
+            .unwrap()
+            .positions()
+    );
+    assert_eq!(ore.into_inner(), now.ore_term(7u64, ctx).await.unwrap());
+
+    // A value still seals and opens through the per-settle keyset.
+    let sealed = later.encrypt("v".to_string(), AAD).await.unwrap();
+    let opened: String = deferred.decrypt(sealed, AAD).await.unwrap();
+    assert_eq!(opened, "v");
+}
