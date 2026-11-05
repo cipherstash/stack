@@ -32,7 +32,6 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::{nonempty, Error, Plan, PlanError, StackCipher};
 use stack_kms::FakeDataKeySource;
-use vitaminc_protected::Controlled as _;
 
 // =============================================================================
 // Setup
@@ -2933,6 +2932,7 @@ mod given_a_laid_out_plan {
 #[cfg(feature = "dynamic")]
 mod given_the_json_index_spec {
     use super::*;
+    use vitaminc_protected::Controlled as _;
 
     /// The spec's wire form is a fixed contract with stored data and the Go
     /// guest, so its strings are pinned literally.
