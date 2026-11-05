@@ -1,0 +1,57 @@
+{
+  "request": {
+    "body": {
+      "EncryptionContext": {
+        "cipherstash:aad": "BAAAAAAAAAAkAAAAAAAAAHN0YWNrLWttcy12ZW5kb3Ivd3JhcHBlZC1kYXRhLWtleS92MRAAAAAAAAAADx4tPEtaaXiHlqW0w9Lh8BAAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwsAAAAAAAAAdXNlcnMvZW1haWw",
+        "cipherstash:descriptor": "users/email",
+        "cipherstash:keyset-id": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+        "cipherstash:purpose": "data-key"
+      },
+      "KeyId": "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+      "KeySpec": "AES_256"
+    },
+    "headers": [
+      [
+        "content-type",
+        "application/x-amz-json-1.1"
+      ],
+      [
+        "x-amz-target",
+        "TrentService.GenerateDataKey"
+      ],
+      [
+        "host",
+        "kms.us-east-1.amazonaws.com"
+      ],
+      [
+        "x-amz-date",
+        "20261105T120000Z"
+      ],
+      [
+        "authorization",
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261105/us-east-1/kms/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-target, Signature=53c2c392adc7c80c76e0a0b77b8061735637915c738d82d7c40a3d9bf9874de1"
+      ]
+    ],
+    "method": "POST",
+    "url": "https://kms.us-east-1.amazonaws.com/"
+  },
+  "response": {
+    "status": 200,
+    "headers": [
+      [
+        "content-type",
+        "application/x-amz-json-1.1"
+      ],
+      [
+        "x-amzn-requestid",
+        "8a3e7b2c-5f1d-4c9a-9e0b-1d2c3b4a5f60"
+      ]
+    ],
+    "body": {
+      "CiphertextBlob": "AQIDAGRlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+Q==",
+      "KeyId": "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+      "KeyMaterialId": "0d4a6b1c2e3f40516273849506a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f",
+      "Plaintext": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    }
+  }
+}

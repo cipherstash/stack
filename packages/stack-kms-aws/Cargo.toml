@@ -40,6 +40,7 @@ stack-encrypt = { path = "../stack-encrypt", default-features = false }
 aes-gcm = { version = "0.10.3", features = ["zeroize"] }
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 uuid = { workspace = true }
+vitaminc = { workspace = true, features = ["protected", "random"] }
 
 [package.metadata.docs.rs]
 all-features = true
