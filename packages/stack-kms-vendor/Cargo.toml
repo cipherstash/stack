@@ -44,3 +44,11 @@ tokio = { workspace = true, features = ["rt", "macros", "time"] }
 
 [package.metadata.docs.rs]
 all-features = true
+
+[[test]]
+name = "contract"
+required-features = ["test-support"]
+
+[[test]]
+name = "router"
+required-features = ["test-support"]
