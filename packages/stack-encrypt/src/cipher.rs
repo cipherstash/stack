@@ -59,10 +59,12 @@
 //! `aws-lc-rs` on native, RustCrypto on wasm32; vitaminc's own random nonce
 //! and versioned leaf layout). The leaf AAD is the labelled derivation
 //! `leaf_aad` (private):
-//! `PAE("stack-encrypt/leaf", version, keyset_id, derived_aad, tag)`, with
-//! [`SealedValue::FORMAT_VERSION`] — the version byte that prefixes the
-//! leaf's frozen byte encoding ([`SealedValue::to_bytes`]) — and the keyset
-//! id bound under the tag, so a stored leaf relabelled with a different
+//! `PAE("stack-encrypt/leaf", header, keyset_id, derived_aad, tag)`, with
+//! the leaf's envelope header — the [`SealedValue::FORMAT_VERSION`] byte
+//! of a v1 (ZeroKMS) leaf, or `version ‖ backend ‖ mode` of a v2 leaf of a
+//! key vendor backend, the bytes that prefix the leaf's frozen byte
+//! encoding ([`SealedValue::to_bytes`]) — and the keyset id bound under
+//! the tag, so a stored leaf relabelled with a different
 //! version byte fails verification instead of selecting different parsing
 //! rules, and one re-pointed at another keyset fails instead of asking that
 //! keyset for a key it never minted. The `tag` is always bound, so the
@@ -90,7 +92,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource};
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource, KeyBackend, KeyMode,
+    KeyVendor,
+};
 #[cfg(feature = "http")]
 use stack_kms::{EnvKeyProvider, StackKms, StackKmsBuilder};
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
@@ -280,6 +285,33 @@ pub enum Error {
         )
     )]
     ForeignKeyset { expected: Uuid, found: Uuid },
+    /// A leaf names another key backend than the cipher's. A v1 leaf names
+    /// ZeroKMS; a v2 leaf names its key vendor backend
+    /// ([`SealedValue::key_backend`]). The cipher refuses the leaf before
+    /// any key call, as it refuses a [`ForeignKeyset`](Self::ForeignKeyset),
+    /// so the leaf never reaches a backend that did not seal it. The leaf's
+    /// backend byte is read before the leaf is authenticated: read this as
+    /// "not this cipher's leaf", never as "an untampered leaf".
+    #[error("leaf names key backend {found}, but this cipher's key backend is {expected}")]
+    #[diagnostic(
+        code(stack_encrypt::foreign_backend),
+        help("Open the value with a cipher that holds the key backend that sealed it.")
+    )]
+    ForeignBackend {
+        expected: KeyBackend,
+        found: KeyBackend,
+    },
+    /// A data key was requested from a key vendor backend. This build seals
+    /// v1 leaves only, and a v1 leaf names ZeroKMS, so it cannot seal under
+    /// another key backend. Refused before any key call.
+    #[error("this build cannot seal a value under key backend {backend}")]
+    #[diagnostic(
+        code(stack_encrypt::seal_unsupported),
+        help(
+            "Seal values under ZeroKMS. Sealing under a key vendor backend is not available yet."
+        )
+    )]
+    SealUnsupported { backend: KeyBackend },
     /// A data key was requested through a [`StackCipher`] rather than a
     /// [`KeysetCipher`]: a [`Request::generate_data_key`] needs a keyset
     /// to mint under, and only a keyset-scoped pending has one. Always a
@@ -346,6 +378,11 @@ impl crate::ErrorPayload for Error {
                 ("expected", expected.to_string().into()),
                 ("found", found.to_string().into()),
             ]),
+            Self::ForeignBackend { expected, found } => payload([
+                ("expected", expected.name().into()),
+                ("found", found.name().into()),
+            ]),
+            Self::SealUnsupported { backend } => payload([("backend", backend.name().into())]),
             #[cfg(feature = "http")]
             Self::Config(error) => error
                 .downcast_ref::<stack_kms::StackKmsBuilderError>()
@@ -954,8 +991,9 @@ impl<K: DataKeySource> StackCipher<K> {
     }
 }
 
-/// A single sealed leaf: the ZeroKMS metadata needed to retrieve its data key
-/// (`iv`, `tag`) plus the vitaminc `LocalCipherText` sealed under that key.
+/// A single sealed leaf: the key backend metadata needed to retrieve its
+/// data key (`iv`, `tag`) plus the vitaminc `LocalCipherText` sealed under
+/// that key.
 ///
 /// This is the only byte-format commitment the crate makes for *ciphertext* —
 /// the container tree ([`StackCipherText`]) has no canonical encoding, so
@@ -969,7 +1007,8 @@ impl<K: DataKeySource> StackCipher<K> {
 /// [`to_bytes`](Self::to_bytes) / [`from_bytes`](Self::from_bytes) are the
 /// canonical encoding — the one storage format every consumer (this crate,
 /// the language bindings, anything reading a database column) agrees on.
-/// The v1 layout:
+/// There are two versions. ZeroKMS writes v1, and only v1. A key vendor
+/// backend writes v2 (ADR-0010). The v1 layout:
 ///
 /// | offset          | field              | size            | value |
 /// |-----------------|--------------------|-----------------|-------|
@@ -980,10 +1019,30 @@ impl<K: DataKeySource> StackCipher<K> {
 /// | 35              | ZeroKMS key `tag`  | `tag_len`       | required to retrieve the key |
 /// | 35 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc `LocalCipherText` |
 ///
+/// The v2 layout adds two bytes after the version, and is otherwise the
+/// same:
+///
+/// | offset          | field              | size            | value |
+/// |-----------------|--------------------|-----------------|-------|
+/// | 0               | envelope version   | 1               | [`VENDOR_FORMAT_VERSION`](Self::VENDOR_FORMAT_VERSION) (`0x02`) |
+/// | 1               | key backend        | 1               | [`KeyVendor::byte`](stack_kms::KeyVendor::byte): AWS KMS `1`, Google Cloud KMS `2`, Azure Key Vault `3`, Vault `4`, static `5` |
+/// | 2               | key mode           | 1               | [`KeyMode::byte`](stack_kms::KeyMode::byte): wrapped `1`, derived `2` |
+/// | 3               | keyset id          | 16              | the keyset the data key belongs to, raw UUID bytes |
+/// | 19              | `iv`               | 16              | identifies the data key; under derived data keys, the derivation salt |
+/// | 35              | `tag_len`          | 2               | length of `tag`, `u16` little-endian |
+/// | 37              | `tag`              | `tag_len`       | under wrapped data keys, the wrapped data key; under derived data keys, empty |
+/// | 37 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc `LocalCipherText` |
+///
+/// The value `0` of the backend byte and of the mode byte is invalid, and
+/// [`from_bytes`](Self::from_bytes) refuses a byte that names no backend or
+/// no mode. ZeroKMS has no v2 backend byte, so a v2 leaf never names it.
+///
 /// The keyset id is what lets a leaf be opened without the caller saying
 /// which keyset it belongs to: retrieving the data key needs the keyset,
 /// and the leaf is self-describing so that a leaf lifted from a tree — what
-/// a database column holds — is too.
+/// a database column holds — is too. The backend byte does the same for
+/// the key backend: a cipher refuses a leaf that names another key backend
+/// than its own ([`Error::ForeignBackend`]) before any key call.
 ///
 /// The local ciphertext is itself a framed value — vitaminc's leaf wire
 /// format, versioned and owned by vitaminc — so the full stored byte string
@@ -997,22 +1056,26 @@ impl<K: DataKeySource> StackCipher<K> {
 /// └─────────────────────────────────────────────────────────────────────────────────────┘
 /// ```
 ///
-/// Both version bytes and the keyset id are authenticated under the one GCM
-/// tag, each bound by the layer that owns its framing: the envelope version
-/// and the keyset id through this crate's leaf-AAD derivation,
-/// `PAE("stack-encrypt/leaf", version, keyset_id, derived_aad, tag)`, and
-/// the inner version through vitaminc's `Context::for_leaf`, applied inside
-/// `Aes256Cipher` to the AAD this crate hands it. Relabel either version
-/// byte, or re-point the leaf at another keyset, in storage and the leaf
-/// fails authentication rather than parsing under the wrong rules. Parsing
-/// is structural only — nothing about a decoded leaf is trusted until it
-/// decrypts.
+/// Both version bytes, the v2 backend and mode bytes, and the keyset id are
+/// authenticated under the one GCM tag, each bound by the layer that owns
+/// its framing: the envelope header and the keyset id through this crate's
+/// leaf-AAD derivation,
+/// `PAE("stack-encrypt/leaf", header, keyset_id, derived_aad, tag)`, where
+/// `header` is the version byte of a v1 leaf and `version ‖ backend ‖ mode`
+/// of a v2 leaf, and the inner version through vitaminc's
+/// `Context::for_leaf`, applied inside `Aes256Cipher` to the AAD this crate
+/// hands it. Relabel a header byte, or re-point the leaf at another keyset,
+/// in storage and the leaf fails authentication rather than parsing under
+/// the wrong rules. Parsing is structural only — nothing about a decoded
+/// leaf is trusted until it decrypts.
 ///
 /// The `serde` `Serialize`/`Deserialize` derives and
 /// [`into_parts`](Self::into_parts) / [`from_parts`](Self::from_parts)
 /// remain for callers that manage their own storage format; they carry the
 /// same fields, but their wire form is the serialiser's, not a commitment
-/// of this crate.
+/// of this crate. The serde form of a v1 leaf has no field for the backend,
+/// and a v2 leaf adds one (`vendor`). `into_parts` drops the backend and
+/// the mode, so persist a v2 leaf with [`to_bytes`](Self::to_bytes).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(try_from = "SealedValueRepr")]
 pub struct SealedValue {
@@ -1026,12 +1089,79 @@ pub struct SealedValue {
     /// The leaf sealed by [`vitaminc_encrypt::Aes256Cipher`] under the data
     /// key: `version ‖ nonce ‖ ciphertext ‖ gcm_tag`.
     ciphertext: LocalCipherText,
+    /// The key vendor backend and key mode of a v2 leaf; `None` for a v1
+    /// (ZeroKMS) leaf. Last, and absent from a v1 leaf's serde form, so
+    /// that form does not change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vendor: Option<VendorHeader>,
+}
+
+/// The two v2 header bytes: the key vendor backend and the key mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "[u8; 2]", try_from = "[u8; 2]")]
+struct VendorHeader {
+    vendor: KeyVendor,
+    mode: KeyMode,
+}
+
+impl VendorHeader {
+    /// Decode the backend byte and the mode byte.
+    fn from_bytes(vendor: u8, mode: u8) -> Result<Self, LeafBytesError> {
+        Ok(Self {
+            vendor: KeyVendor::from_byte(vendor).ok_or(LeafBytesError::UnknownBackend(vendor))?,
+            mode: KeyMode::from_byte(mode).ok_or(LeafBytesError::UnknownMode(mode))?,
+        })
+    }
+}
+
+impl From<VendorHeader> for [u8; 2] {
+    fn from(header: VendorHeader) -> Self {
+        [header.vendor.byte(), header.mode.byte()]
+    }
+}
+
+impl TryFrom<[u8; 2]> for VendorHeader {
+    type Error = LeafBytesError;
+
+    fn try_from([vendor, mode]: [u8; 2]) -> Result<Self, Self::Error> {
+        Self::from_bytes(vendor, mode)
+    }
+}
+
+/// The envelope header bytes of a leaf, as written and as bound into the
+/// leaf AAD: `version` for v1, `version ‖ backend ‖ mode` for v2.
+struct LeafHeader {
+    bytes: [u8; 3],
+    len: usize,
+}
+
+impl LeafHeader {
+    fn of(vendor: Option<VendorHeader>) -> Self {
+        match vendor {
+            None => Self {
+                bytes: [SealedValue::FORMAT_VERSION, 0, 0],
+                len: 1,
+            },
+            Some(header) => Self {
+                bytes: [
+                    SealedValue::VENDOR_FORMAT_VERSION,
+                    header.vendor.byte(),
+                    header.mode.byte(),
+                ],
+                len: 3,
+            },
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
 }
 
 /// A [`SealedValue`] byte encoding failed to encode or decode. Purely
 /// structural — a leaf that *decodes* has proven nothing about integrity
 /// (that is the AEAD open's job); a leaf that fails here was never a valid
-/// v1 encoding at all.
+/// v1 or v2 encoding at all.
 #[derive(Debug, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum LeafBytesError {
@@ -1059,6 +1189,21 @@ pub enum LeafBytesError {
     #[error("key tag of {0} bytes exceeds the format's u16 length field")]
     #[diagnostic(code(stack_encrypt::leaf_tag_too_long))]
     TagTooLong(usize),
+    /// The backend byte of a v2 leaf names no key vendor backend this build
+    /// knows. `0` is never valid.
+    #[error("unknown sealed-leaf key backend {0}")]
+    #[diagnostic(
+        code(stack_encrypt::leaf_backend),
+        help("The value was sealed by a newer build of stack-encrypt, or the bytes are not a sealed value.")
+    )]
+    UnknownBackend(u8),
+    /// The mode byte of a v2 leaf names no key mode. `0` is never valid.
+    #[error("unknown sealed-leaf key mode {0}")]
+    #[diagnostic(
+        code(stack_encrypt::leaf_mode),
+        help("The value was sealed by a newer build of stack-encrypt, or the bytes are not a sealed value.")
+    )]
+    UnknownMode(u8),
 }
 
 impl crate::ErrorPayload for LeafBytesError {
@@ -1067,21 +1212,40 @@ impl crate::ErrorPayload for LeafBytesError {
         match self {
             Self::UnknownVersion(version) => payload([("version", (*version).into())]),
             Self::TagTooLong(len) => payload([("len", (*len).into())]),
+            Self::UnknownBackend(byte) => payload([("backend", (*byte).into())]),
+            Self::UnknownMode(byte) => payload([("mode", (*byte).into())]),
             Self::Truncated => serde_json::Map::new(),
         }
     }
 }
 
 impl SealedValue {
-    /// The version byte prefixing the frozen byte encoding
-    /// ([`to_bytes`](Self::to_bytes)). Also bound into every leaf's AAD (the
+    /// The version byte of the v1 encoding ([`to_bytes`](Self::to_bytes)),
+    /// the one ZeroKMS writes. Also bound into every leaf's AAD (the
     /// private `leaf_aad` derivation): bumping it re-keys authentication, so
     /// old leaves can never be relabelled as the new version (nor new as
     /// old).
     pub const FORMAT_VERSION: u8 = 1;
 
-    /// Encode into the frozen v1 byte layout — see the type-level docs for
-    /// the format. The inverse of [`from_bytes`](Self::from_bytes).
+    /// The version byte of the v2 encoding, the one a key vendor backend
+    /// writes. It is followed by the backend byte and the mode byte, and
+    /// all three are bound into the leaf AAD.
+    pub const VENDOR_FORMAT_VERSION: u8 = 2;
+
+    /// The version byte this leaf encodes with:
+    /// [`FORMAT_VERSION`](Self::FORMAT_VERSION) for a ZeroKMS leaf,
+    /// [`VENDOR_FORMAT_VERSION`](Self::VENDOR_FORMAT_VERSION) for a leaf of a
+    /// key vendor backend.
+    pub fn format_version(&self) -> u8 {
+        match self.vendor {
+            None => Self::FORMAT_VERSION,
+            Some(_) => Self::VENDOR_FORMAT_VERSION,
+        }
+    }
+
+    /// Encode into the frozen byte layout — v1 for a ZeroKMS leaf, v2 for a
+    /// leaf of a key vendor backend; see the type-level docs for the
+    /// format. The inverse of [`from_bytes`](Self::from_bytes).
     ///
     /// Infallible: every way of building a `SealedValue` rejects a tag too
     /// long for the `u16` length field ([`LeafBytesError::TagTooLong`]), so a
@@ -1093,10 +1257,13 @@ impl SealedValue {
         // The saturating fallback is unreachable, and asserted so in tests.
         let tag_len = u16::try_from(self.tag.len()).unwrap_or(u16::MAX);
         debug_assert_eq!(usize::from(tag_len), self.tag.len());
+        let header = LeafHeader::of(self.vendor);
+        let header = header.as_bytes();
         let ciphertext = self.ciphertext.as_ref();
-        let mut out =
-            Vec::with_capacity(1 + 16 + self.iv.len() + 2 + self.tag.len() + ciphertext.len());
-        out.push(Self::FORMAT_VERSION);
+        let mut out = Vec::with_capacity(
+            header.len() + 16 + self.iv.len() + 2 + self.tag.len() + ciphertext.len(),
+        );
+        out.extend_from_slice(header);
         out.extend_from_slice(self.keyset_id.as_bytes());
         out.extend_from_slice(&self.iv);
         out.extend_from_slice(&tag_len.to_le_bytes());
@@ -1105,16 +1272,23 @@ impl SealedValue {
         out
     }
 
-    /// Decode the frozen v1 byte layout — the inverse of
+    /// Decode the frozen v1 or v2 byte layout — the inverse of
     /// [`to_bytes`](Self::to_bytes). Structural only: a decoded leaf is
     /// untrusted bytes until it decrypts.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, LeafBytesError> {
         const IV_LEN: usize = 16;
 
         let (&version, rest) = bytes.split_first().ok_or(LeafBytesError::Truncated)?;
-        if version != Self::FORMAT_VERSION {
-            return Err(LeafBytesError::UnknownVersion(version));
-        }
+        let (vendor, rest) = match version {
+            Self::FORMAT_VERSION => (None, rest),
+            Self::VENDOR_FORMAT_VERSION => match rest {
+                [vendor, mode, rest @ ..] => {
+                    (Some(VendorHeader::from_bytes(*vendor, *mode)?), rest)
+                }
+                _ => return Err(LeafBytesError::Truncated),
+            },
+            _ => return Err(LeafBytesError::UnknownVersion(version)),
+        };
         if rest.len() < 16 + IV_LEN + 2 {
             return Err(LeafBytesError::Truncated);
         }
@@ -1134,6 +1308,7 @@ impl SealedValue {
             iv,
             tag: tag.to_vec(),
             ciphertext: LocalCipherText::from(ciphertext.to_vec()),
+            vendor,
         })
     }
 
@@ -1146,8 +1321,8 @@ impl SealedValue {
         Ok(())
     }
 
-    /// Rebuild a leaf from its persisted parts — the inverse of
-    /// [`into_parts`](Self::into_parts).
+    /// Rebuild a v1 (ZeroKMS) leaf from its persisted parts — the inverse
+    /// of [`into_parts`](Self::into_parts).
     ///
     /// Fails with [`LeafBytesError::TagTooLong`] if `tag` does not fit the
     /// byte format's `u16` length field. Structural only: nothing about the
@@ -1164,10 +1339,31 @@ impl SealedValue {
             iv,
             tag,
             ciphertext: LocalCipherText::from(ciphertext),
+            vendor: None,
         })
     }
 
+    /// Rebuild a v2 leaf of the key vendor backend `vendor`, in key mode
+    /// `mode`, from its parts. As [`from_parts`](Self::from_parts) in every
+    /// other way.
+    pub fn from_vendor_parts(
+        vendor: KeyVendor,
+        mode: KeyMode,
+        keyset_id: Uuid,
+        iv: stack_kms::Iv,
+        tag: Vec<u8>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Self, LeafBytesError> {
+        let mut leaf = Self::from_parts(keyset_id, iv, tag, ciphertext)?;
+        leaf.vendor = Some(VendorHeader { vendor, mode });
+        Ok(leaf)
+    }
+
     /// Decompose into `(keyset_id, iv, tag, ciphertext)` for persistence.
+    ///
+    /// The parts do not include the key backend or the key mode. A v2 leaf
+    /// rebuilt with [`from_parts`](Self::from_parts) is a v1 leaf, which
+    /// fails to open; persist a v2 leaf with [`to_bytes`](Self::to_bytes).
     pub fn into_parts(self) -> (Uuid, stack_kms::Iv, Vec<u8>, Vec<u8>) {
         (
             self.keyset_id,
@@ -1184,12 +1380,33 @@ impl SealedValue {
         self.keyset_id
     }
 
-    /// The ZeroKMS IV identifying this leaf's data key.
+    /// The key backend this leaf names: ZeroKMS for a v1 leaf, the key
+    /// vendor backend for a v2 leaf. Authenticated: a leaf relabelled with
+    /// another backend fails to open. A cipher refuses a leaf that names
+    /// another backend than its own before any key call
+    /// ([`Error::ForeignBackend`]).
+    pub fn key_backend(&self) -> KeyBackend {
+        match self.vendor {
+            None => KeyBackend::ZeroKms,
+            Some(header) => KeyBackend::Vendor(header.vendor),
+        }
+    }
+
+    /// The key mode of a v2 leaf; `None` for a v1 (ZeroKMS) leaf, since
+    /// ZeroKMS has no key mode. Authenticated as
+    /// [`key_backend`](Self::key_backend) is.
+    pub fn key_mode(&self) -> Option<KeyMode> {
+        self.vendor.map(|header| header.mode)
+    }
+
+    /// The IV identifying this leaf's data key. Under derived data keys, it
+    /// is the derivation salt.
     pub fn iv(&self) -> &stack_kms::Iv {
         &self.iv
     }
 
-    /// The ZeroKMS key tag.
+    /// The key tag. Under wrapped data keys, it is the wrapped data key;
+    /// under derived data keys, it is empty.
     pub fn tag(&self) -> &[u8] {
         &self.tag
     }
@@ -1207,6 +1424,7 @@ impl Clone for SealedValue {
             iv: self.iv,
             tag: self.tag.clone(),
             ciphertext: LocalCipherText::from(self.ciphertext.as_ref().to_vec()),
+            vendor: self.vendor,
         }
     }
 }
@@ -1232,6 +1450,8 @@ struct SealedValueRepr {
     iv: stack_kms::Iv,
     tag: Vec<u8>,
     ciphertext: LocalCipherText,
+    #[serde(default)]
+    vendor: Option<VendorHeader>,
 }
 
 impl TryFrom<SealedValueRepr> for SealedValue {
@@ -1243,6 +1463,7 @@ impl TryFrom<SealedValueRepr> for SealedValue {
             iv,
             tag,
             ciphertext,
+            vendor,
         } = repr;
         Self::tag_fits_length_field(&tag)?;
         Ok(Self {
@@ -1250,6 +1471,7 @@ impl TryFrom<SealedValueRepr> for SealedValue {
             iv,
             tag,
             ciphertext,
+            vendor,
         })
     }
 }
@@ -1502,11 +1724,24 @@ fn leaf_cipher(key: &DataKey) -> Result<Aes256Cipher, Unspecified> {
 /// dev-persisted data existed. A leaf sealed under an earlier form fails
 /// authentication in `open_leaf` with a plain AEAD error, indistinguishable
 /// from tampering; re-encrypt anything that matters.
-fn leaf_aad(aad: &Context<'_>, keyset_id: Uuid, tag: &[u8]) -> Context<'static> {
+///
+/// # The v2 header
+///
+/// The second piece is the leaf's envelope header: the version byte alone
+/// for a v1 leaf, so a v1 leaf's AAD is byte for byte what it always was,
+/// and `version ‖ backend ‖ mode` for a v2 leaf. PAE frames each piece with
+/// its length, so a v2 header can never encode as a v1 one, and a v2 leaf
+/// relabelled with another backend or mode fails verification.
+fn leaf_aad(
+    aad: &Context<'_>,
+    vendor: Option<VendorHeader>,
+    keyset_id: Uuid,
+    tag: &[u8],
+) -> Context<'static> {
     const LEAF_AAD_DOMAIN: &[u8] = b"stack-encrypt/leaf";
     Context::pae(&[
         LEAF_AAD_DOMAIN,
-        &[SealedValue::FORMAT_VERSION],
+        LeafHeader::of(vendor).as_bytes(),
         keyset_id.as_bytes(),
         aad.as_bytes(),
         tag,
@@ -1524,6 +1759,21 @@ fn seal_leaf(
     keyset_id: Uuid,
     key: DataKeyWithTag,
 ) -> Result<SealedValue, Unspecified> {
+    // Only ZeroKMS seals in this build, and a ZeroKMS leaf is v1. The settle
+    // refuses a data key from a key vendor backend before this point
+    // (`Error::SealUnsupported`).
+    seal_leaf_as(None, plaintext, aad, keyset_id, key)
+}
+
+/// [`seal_leaf`] in the v1 format (`vendor` is `None`) or the v2 format of
+/// a key vendor backend.
+fn seal_leaf_as(
+    vendor: Option<VendorHeader>,
+    plaintext: Protected<Vec<u8>>,
+    aad: &Context<'_>,
+    keyset_id: Uuid,
+    key: DataKeyWithTag,
+) -> Result<SealedValue, Unspecified> {
     // The `DataKeySource` is caller-supplied, so the key tag is not trusted
     // to fit the frozen byte format's `u16` length field: an oversized tag
     // must fail here — the last construction site — or `to_bytes` would emit
@@ -1532,12 +1782,13 @@ fn seal_leaf(
     SealedValue::tag_fits_length_field(&key.tag).map_err(|_| Unspecified)?;
     let iv = key.key.iv;
     let cipher = leaf_cipher(&key.key)?;
-    match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, keyset_id, &key.tag))? {
+    match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, vendor, keyset_id, &key.tag))? {
         AesCipherText::Single(ciphertext) => Ok(SealedValue {
             keyset_id,
             iv,
             tag: key.tag,
             ciphertext,
+            vendor,
         }),
         _ => Err(Unspecified),
     }
@@ -1559,7 +1810,10 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, 
     let cipher = leaf_cipher(&key)?;
     cipher
         .decipher(AesCipherText::Single(leaf.ciphertext))
-        .decrypt_bytes(ProtectedBytes, leaf_aad(aad, leaf.keyset_id, &leaf.tag))
+        .decrypt_bytes(
+            ProtectedBytes,
+            leaf_aad(aad, leaf.vendor, leaf.keyset_id, &leaf.tag),
+        )
 }
 
 /// Open one marker leaf (absent / empty-sequence / empty-map) and require the
@@ -2262,7 +2516,12 @@ mod tests {
     #[test]
     fn leaf_aad_bytes_are_pinned() {
         let keyset = Uuid::from_bytes(*b"keyset-fixture16");
-        let aad = leaf_aad(&Context::from_encoded(b"caller-aad"), keyset, b"key-tag");
+        let aad = leaf_aad(
+            &Context::from_encoded(b"caller-aad"),
+            None,
+            keyset,
+            b"key-tag",
+        );
         let hex: String = aad.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
         // PAE: LE64 count (5) ‖ per piece LE64 length ‖ piece, the pieces
         // being "stack-encrypt/leaf", [FORMAT_VERSION], the keyset id's 16
@@ -2271,5 +2530,182 @@ mod tests {
             hex,
             "05000000000000001200000000000000737461636b2d656e63727970742f6c65616601000000000000000110000000000000006b65797365742d6669787475726531360a0000000000000063616c6c65722d61616407000000000000006b65792d746167"
         );
+    }
+
+    /// The leaf-AAD pin for a v2 leaf: the header piece is
+    /// `version ‖ backend ‖ mode`, three bytes, where a v1 leaf's is one.
+    #[test]
+    fn v2_leaf_aad_bytes_are_pinned() {
+        let keyset = Uuid::from_bytes(*b"keyset-fixture16");
+        let header = VendorHeader {
+            vendor: KeyVendor::Aws,
+            mode: KeyMode::Wrapped,
+        };
+        let aad = leaf_aad(
+            &Context::from_encoded(b"caller-aad"),
+            Some(header),
+            keyset,
+            b"key-tag",
+        );
+        let hex: String = aad.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "05000000000000001200000000000000737461636b2d656e63727970742f6c656166030000000000000002010110000000000000006b65797365742d6669787475726531360a0000000000000063616c6c65722d61616407000000000000006b65792d746167"
+        );
+    }
+
+    const V2_HEADER: VendorHeader = VendorHeader {
+        vendor: KeyVendor::Static,
+        mode: KeyMode::Derived,
+    };
+
+    fn test_key() -> DataKeyWithTag {
+        DataKeyWithTag {
+            key: DataKey {
+                iv: *b"v2-leaf-iv-salt!",
+                key: [0x42; 32],
+            },
+            tag: Vec::new(),
+            decryption_policy: None,
+        }
+    }
+
+    fn open_with_test_key(leaf: SealedValue, aad: &Context<'_>) -> Result<Vec<u8>, Unspecified> {
+        let key = test_key().key;
+        open_leaf(KeyedLeaf { leaf, key }, aad).map(|plaintext| plaintext.risky_unwrap())
+    }
+
+    fn sealed_v2_bytes(aad: &Context<'_>) -> Vec<u8> {
+        let keyset = Uuid::from_bytes(*b"keyset-fixture16");
+        let leaf = seal_leaf_as(
+            Some(V2_HEADER),
+            Protected::new(b"v2 plaintext".to_vec()),
+            aad,
+            keyset,
+            test_key(),
+        )
+        .expect("seal a v2 leaf");
+        assert_eq!(leaf.format_version(), SealedValue::VENDOR_FORMAT_VERSION);
+        assert_eq!(
+            leaf.key_backend(),
+            KeyBackend::Vendor(KeyVendor::Static),
+            "the leaf names its key vendor backend"
+        );
+        assert_eq!(leaf.key_mode(), Some(KeyMode::Derived));
+        leaf.to_bytes()
+    }
+
+    /// A v2 leaf seals, survives its byte encoding, and opens under the
+    /// same key and AAD.
+    #[test]
+    fn a_v2_leaf_round_trips_through_its_bytes() {
+        let aad = Context::from_encoded(b"ctx");
+        let bytes = sealed_v2_bytes(&aad);
+        assert_eq!(
+            &bytes[..3],
+            &[2, KeyVendor::Static.byte(), KeyMode::Derived.byte()]
+        );
+        let leaf = SealedValue::from_bytes(&bytes).expect("decode v2 leaf");
+        assert_eq!(leaf.to_bytes(), bytes, "the v2 encoding is lossless");
+        assert_eq!(
+            open_with_test_key(leaf, &aad).expect("open v2 leaf"),
+            b"v2 plaintext"
+        );
+    }
+
+    /// The leaf AAD binds each v2 header byte: every other value of the
+    /// version, the backend or the mode byte is refused, by the decoder or
+    /// by the open. None of them opens.
+    #[test]
+    fn changing_any_v2_header_byte_makes_the_open_fail() {
+        let aad = Context::from_encoded(b"ctx");
+        let bytes = sealed_v2_bytes(&aad);
+        let mut opened_by_decoder = 0;
+        for position in 0..3 {
+            for value in 0..=u8::MAX {
+                if value == bytes[position] {
+                    continue;
+                }
+                let mut tampered = bytes.clone();
+                tampered[position] = value;
+                match SealedValue::from_bytes(&tampered) {
+                    Err(_) => {}
+                    Ok(leaf) => {
+                        opened_by_decoder += 1;
+                        assert!(
+                            open_with_test_key(leaf, &aad).is_err(),
+                            "byte {position} changed to {value} must not open"
+                        );
+                    }
+                }
+            }
+        }
+        // Every other valid backend and mode decodes, so the AEAD is what
+        // refuses them; the count proves the AEAD was reached. (Version 1
+        // reads the following bytes at v1 offsets, and this fixture's
+        // `tag_len` then overruns the buffer, so the decoder refuses it.
+        // `a_v2_leaf_relabelled_as_v1_does_not_open` covers the AEAD case.)
+        assert_eq!(
+            opened_by_decoder,
+            (KeyVendor::ALL.len() - 1) + (KeyMode::ALL.len() - 1)
+        );
+    }
+
+    /// The same header refusal holds when a v2 leaf is relabelled as v1
+    /// without a shift in the following bytes: a v1 leaf built from the v2
+    /// leaf's parts does not open.
+    #[test]
+    fn a_v2_leaf_relabelled_as_v1_does_not_open() {
+        let aad = Context::from_encoded(b"ctx");
+        let leaf = SealedValue::from_bytes(&sealed_v2_bytes(&aad)).expect("decode v2 leaf");
+        let (keyset, iv, tag, ciphertext) = leaf.into_parts();
+        let relabelled = SealedValue::from_parts(keyset, iv, tag, ciphertext).expect("v1 parts");
+        assert_eq!(relabelled.key_backend(), KeyBackend::ZeroKms);
+        assert!(open_with_test_key(relabelled, &aad).is_err());
+    }
+
+    /// A v1 leaf opens as it always did: the v1 AAD header is the version
+    /// byte alone.
+    #[test]
+    fn a_v1_leaf_still_opens_under_the_v1_aad() {
+        let aad = Context::from_encoded(b"ctx");
+        let keyset = Uuid::from_bytes(*b"keyset-fixture16");
+        let leaf = seal_leaf(
+            Protected::new(b"v1 plaintext".to_vec()),
+            &aad,
+            keyset,
+            test_key(),
+        )
+        .expect("seal a v1 leaf");
+        let bytes = leaf.to_bytes();
+        assert_eq!(bytes[0], SealedValue::FORMAT_VERSION);
+        assert_eq!(leaf.key_mode(), None);
+        let leaf = SealedValue::from_bytes(&bytes).expect("decode v1 leaf");
+        assert_eq!(
+            open_with_test_key(leaf, &aad).expect("open v1 leaf"),
+            b"v1 plaintext"
+        );
+    }
+
+    /// The serde form keeps the backend and the mode of a v2 leaf, and a v1
+    /// leaf's serde form has no field for them.
+    #[test]
+    fn serde_keeps_the_v2_header_and_leaves_v1_unchanged() {
+        let aad = Context::from_encoded(b"ctx");
+        let v2 = SealedValue::from_bytes(&sealed_v2_bytes(&aad)).expect("decode v2 leaf");
+        let json = serde_json::to_value(&v2).expect("serialise v2");
+        assert_eq!(json["vendor"], serde_json::json!([5, 2]));
+        let back: SealedValue = serde_json::from_value(json).expect("deserialise v2");
+        assert_eq!(back.to_bytes(), v2.to_bytes());
+
+        let v1 = SealedValue::from_parts(Uuid::nil(), [0; 16], vec![1], vec![2]).expect("v1");
+        let json = serde_json::to_value(&v1).expect("serialise v1");
+        assert!(json.get("vendor").is_none(), "{json}");
+        let back: SealedValue = serde_json::from_value(json).expect("deserialise v1");
+        assert_eq!(back.to_bytes(), v1.to_bytes());
+
+        let mut bad = serde_json::to_value(&v2).expect("serialise v2");
+        bad["vendor"] = serde_json::json!([0, 2]);
+        assert!(serde_json::from_value::<SealedValue>(bad).is_err());
     }
 }

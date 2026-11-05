@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use stack_encrypt::StackCipher;
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
-    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+    IndexKey, IndexKeySource, KeyBackend, RetrieveKeyPayload, UnverifiedContext,
 };
 use uuid::Uuid;
 
@@ -35,6 +35,7 @@ pub struct CountingSource {
     generate_calls: Arc<AtomicUsize>,
     retrieve_calls: Arc<AtomicUsize>,
     load_calls: Arc<AtomicUsize>,
+    backend: KeyBackend,
 }
 
 impl CountingSource {
@@ -44,6 +45,17 @@ impl CountingSource {
             generate_calls: Arc::new(AtomicUsize::new(0)),
             retrieve_calls: Arc::new(AtomicUsize::new(0)),
             load_calls: Arc::new(AtomicUsize::new(0)),
+            backend: KeyBackend::ZeroKms,
+        }
+    }
+
+    /// The same source, reporting `backend` as its key backend. The keys
+    /// still come from the fake, so this stands in for a key vendor backend
+    /// only in what the cipher routes on.
+    pub fn with_backend(backend: KeyBackend) -> Self {
+        Self {
+            backend,
+            ..Self::new()
         }
     }
 
@@ -81,6 +93,10 @@ impl DataKeySource for CountingSource {
         self.inner
             .retrieve_keys(payloads, keyset_id, unverified_context)
             .await
+    }
+
+    fn key_backend(&self) -> KeyBackend {
+        self.backend
     }
 }
 
