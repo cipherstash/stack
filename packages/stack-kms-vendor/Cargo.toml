@@ -1,0 +1,46 @@
+[package]
+name = "stack-kms-vendor"
+description = "Key vendor backends for Stack Encrypt: keyset records, the two key modes, and the static key backend"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Not published yet. The first vendor crate (CIP-5307) decides the release
+# group; release-plz.toml lists it with `release = false` until then.
+publish = false
+
+[features]
+# `stack_kms_vendor::contract` (the shared contract suite every key vendor
+# backend runs) and `FakeVendor` (an in-memory key vendor backend). The
+# contract suite drives a real `StackCipher`, so this pulls stack-encrypt in.
+test-support = ["dep:stack-encrypt", "stack-kms/test-support"]
+
+[dependencies]
+stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false }
+# The contract suite only: it seals and opens values through a cipher.
+stack-encrypt = { path = "../stack-encrypt", version = "0.2.0", default-features = false, optional = true }
+
+vitaminc = { workspace = true, features = ["protected", "random"] }
+aes-gcm = { version = "0.10.3", features = ["zeroize"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+futures = "0.3.25"
+hkdf = "0.13"
+sha2 = "0.11"
+miette = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+web-time = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
+stack-encrypt = { path = "../stack-encrypt", default-features = false }
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+
+[package.metadata.docs.rs]
+all-features = true
