@@ -25,6 +25,8 @@
 //! * [`VendorTransport`]: the HTTP seam a vendor client sends through, of
 //!   the same shape as [`ZeroKMSConnection`](stack_kms::ZeroKMSConnection),
 //!   so the same vendor code runs on native Rust and in the WASI guest.
+//!   `HttpVendorTransport` (feature `http`, native only) is the native
+//!   implementation; the WASI guest's lives in `stack-guest-abi`.
 //!
 //! # The two key modes
 //!
@@ -59,6 +61,8 @@
 mod batch;
 pub mod derive;
 mod error;
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+mod http;
 mod record;
 mod router;
 mod source;
@@ -81,6 +85,9 @@ pub use transport::{
     classify_status, TransportError, VendorRequest, VendorResponse, VendorTransport,
 };
 pub use vendor::{KeyBytes, KeyVendorBackend};
+
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+pub use http::{HttpVendorTransport, HttpVendorTransportOptions, DEFAULT_REQUEST_TIMEOUT};
 
 #[cfg(feature = "test-support")]
 pub use fake::{FakeVendor, FakeVendorCalls};
