@@ -74,8 +74,10 @@ pub(crate) fn seal_pending<'a, K>(
         .take(tree.key_count())
         .collect();
     Pending::request(cipher, requests, move |responses| {
+        let header = responses.seal_header();
         let mut keys = responses.drain_generated();
-        tree.seal_with(keyset_id, &mut keys).map_err(Error::from)
+        tree.seal_with(keyset_id, header, &mut keys)
+            .map_err(Error::from)
     })
 }
 
