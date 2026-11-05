@@ -234,3 +234,173 @@ the alternatives and the reason.
 - **Deferred to CIP-5306:** a cipher that holds ZeroKMS and one key vendor
   backend routes each leaf to the right one. Today a cipher holds one `K`,
   so `ForeignBackend` compares with that one backend.
+
+## CIP-5306: Keyset records, the two key modes, and the static key backend
+
+- **Decision:** the vendor code lives in a new crate,
+  `packages/stack-kms-vendor` (`stack-kms-vendor`), in the root workspace.
+  It depends on `stack-kms` only (plus `stack-encrypt` behind its
+  `test-support` feature, for the contract suite). It is `publish = false`
+  and listed in `release-plz.toml` with `release = false`.
+  **Alternative:** put it in `stack-kms`. **Reason:** `stack-kms` is the
+  ZeroKMS client; the vendor seam, records, HKDF and AES-GCM are a separate
+  concern, and each vendor crate depends on this one crate.
+  **Deferred to CIP-5307:** decide its release group and publish it with
+  the first vendor crate, which cannot publish while it depends on an
+  unpublished crate.
+- **Decision:** the vendor seam is the trait `KeyVendorBackend`: `vendor()`,
+  `supports_mode(mode)` (default both), `wrap(key_ref, key, aad)`,
+  `unwrap(key_ref, wrapped, aad)`, `generate_wrapped(key_ref, aad)`
+  (default: a CSPRNG key and one `wrap`) and `sleep(duration)` (default:
+  return at once). Keys are `KeyBytes = Protected<[u8; 32]>`. A vendor
+  reports failures as `stack_kms::Error::Backend` with `KeyVendor::name()`.
+  The adapter `VendorKeySource<B>` implements `DataKeySource` and
+  `IndexKeySource` on it, so a vendor crate never touches those traits.
+  **Reason:** the user named the term "key vendor backend"; the trait is
+  the smallest thing all four vendors can do.
+- **Decision:** a vendor with no native associated data (Azure Key Vault
+  RSA wrap) must bind `aad` itself, for example by wrapping
+  `SHA-256(aad) ‖ key`. The trait docs say so. **Deferred to CIP-5309.**
+- **Decision:** the keyset record text form is `stack-keyset:` + unpadded
+  base64url of `version(1)=1 ‖ backend(1) ‖ mode(1) ‖ keyset id(16) ‖
+  name len(1, 0 = none) ‖ name ‖ key ref len(2, BE) ‖ key ref ‖ wrapped
+  len(2, BE) ‖ wrapped key`. Parsing refuses an unknown version, backend
+  or mode, a length mismatch, an empty or over-long field and invalid
+  UTF-8. A test pins the text of one record. **Alternative:** CBOR or
+  JSON. **Reason:** a fixed binary layout has one encoding per record, no
+  new dependency, and the backend and mode bytes are the v2 leaf's.
+- **Decision:** the wrapped key in a record is bound with associated data
+  `frame["stack-kms-vendor/keyset-record-key/v1", purpose, keyset id,
+  vendor byte, mode byte]` (purpose `root-key` or `index-key`). A record
+  edited in its id, backend or mode does not unwrap. The name is not
+  bound: it is a local label, renamed by editing the record. The key ref is
+  not bound: the vendor key itself is the binding.
+- **Decision:** keyset names resolve locally from the loaded records, with
+  no freshness window. Duplicate ids or names are refused at load.
+- **Decision:** record creation is `KeysetRecord::create(&backend, key_ref,
+  mode, name)` (one vendor call; generates the keyset id and the key) and
+  `KeysetRecord::rewrap(&backend, new_key_ref)` (two calls; id, name and
+  mode stay). **Decision (open item of the ticket):** `stash` (TypeScript)
+  calls these through a Rust helper, not the vendor JS SDKs: a napi
+  function in a node binding (the way `@cipherstash/auth` ships), so the
+  request signing code exists once, in Rust. **Deferred to CIP-5312.**
+- **Decision:** framing for every label, info and associated data is
+  `frame(pieces)` = piece count, then each piece's length and bytes, all
+  lengths `u64` little-endian. Pinned by tests.
+- **Decision:** derived data keys: data key = `HKDF-SHA256(ikm = root, salt
+  = iv, info = frame["stack-kms-vendor/derived-data-key/v1", keyset id,
+  descriptor])`; index key = `HKDF-SHA256(ikm = root, salt = none, info =
+  frame["stack-kms-vendor/derived-index-key/v1", keyset id])`. The iv is
+  16 random bytes per value; the tag is empty, and a retrieve refuses a
+  non-empty tag. The `hkdf` 0.13 crate (RFC 5869 test vector pinned) and
+  `sha2` 0.11 are new dependencies. Both derivations are pinned.
+- **Decision:** wrapped data keys: each value's data key is a vendor
+  `generate_wrapped` under associated data `frame["stack-kms-vendor/
+  wrapped-data-key/v1", keyset id, iv, descriptor]`; the wrapped key is
+  the leaf's tag. The iv is 16 random bytes.
+- **Decision:** the default root key TTL is **5 minutes**
+  (`DEFAULT_ROOT_KEY_TTL`), set with `with_root_key_ttl`; `Duration::ZERO`
+  keeps none. The adapter, not the cipher, holds the root key, and drops
+  every expired root key on each lookup. A throttled record unwrap is
+  retried with the batch backoff.
+- **Decision (closes the CIP-5304 gap):** a vendor keyset is never given to
+  the cipher as an index key. New `IndexKeySource::select_keyset` returns
+  `SelectedKeyset::Loaded(LoadedIndexKey)` (the default, ZeroKMS) or
+  `SelectedKeyset::PerSettle { keyset_id }` (the vendor adapter, both
+  modes, no vendor call). For a per-settle keyset the `KeysetState` holds
+  no PRF, so the handle holds no key. A term built through it pushes a new
+  internal request kind (`IndexKeyForSettle`); `dispatch` loads the index
+  key once per keyset per settle through the new provided method
+  `DataKeySource::load_settle_index_key`, keeps the PRF in the
+  `Responses`, and drops it (wiping the key) when the settle ends. Under
+  wrapped data keys that is one vendor unwrap per settle; under derived
+  data keys it is an HKDF from the cached root key. **Nothing outlives a
+  settle** in either mode except, under derived data keys, the root key in
+  the adapter for its TTL, which is the ADR-0009 trade-off.
+  **Alternative:** keep the CIP-5304 behaviour (the handle holds the key).
+  **Reason:** the orchestrator review made this binding.
+- **Decision:** the term derivations run inside the settle through a
+  recording PRF backend (`sem/capture.rs`): a term's source may borrow, so
+  at build time the value is run against a backend that records every leaf
+  call (bytes, encoding, fully derived context) and the shape of every
+  sequence and map, owned; inside the settle the recording replays into the
+  real HMAC PRF through its own drivers. Tests show replay equals direct
+  derivation for every `vitaminc-prf` shape, and that a per-settle cipher
+  derives the same equality, match, ORE and OPE terms as a cipher that
+  holds the same key. The one assumption: a `PrfValue` passes its visitor
+  through unchanged (all `vitaminc-prf` impls do). Match terms copy the
+  text into a `Zeroizing<String>`; ORE and OPE sources are already owned.
+- **Decision (breaking, stack-encrypt):** `KeysetCipher::prf()` now returns
+  `Option<&HmacSha256Prf>`: `None` for a per-settle keyset. The commit is
+  marked `!`. **Alternative:** keep `&HmacSha256Prf`. **Reason:** a
+  per-settle handle has no PRF to return; returning a fake one would make
+  terms that match nothing. No caller in the tree used it outside `sem`.
+  An outside term type cannot defer yet (`Responses::index_prf` is
+  crate-private); revisit if a caller needs it.
+- **Decision:** the default keyset question: `init` accepts a per-settle
+  default keyset (it holds no key, so there is nothing to outlive). For a
+  vendor-only cipher (`StackCipher::builder().kms(VendorKeySource)`), the
+  default is the only record when there is exactly one, else the one set
+  with `with_default_keyset(id)`; with neither, `init` fails `NotFound`.
+  Under `KeyRouter` the default keyset is ZeroKMS's default.
+  `Error::DefaultKeysetLifetime` stays for a source that loads a short-lived
+  key eagerly.
+- **Decision:** new provided methods on `DataKeySource`:
+  `keyset_backend(keyset_id)` (default `key_backend()`), `key_mode(keyset_id)`
+  (default `None`) and `load_settle_index_key(keyset_id)` (default refuses
+  with `Error::Unexpected`). New pub field `RetrieveKeyPayload::key_mode`
+  and `with_key_mode`. Additive except that a struct-literal construction
+  of `RetrieveKeyPayload` breaks; stack-kms already takes a breaking bump in
+  this stack (CIP-5304), so the field rides on it.
+- **Decision:** `dispatch` now asks `keyset_backend` per keyset: a leaf is
+  refused (`ForeignBackend`) when it names another backend than the one
+  that holds its keyset, and a settle seals v2 with the keyset's mode when
+  a key vendor backend holds the pending's keyset. The leaf's mode goes to
+  the key source on retrieve, and the adapter refuses a mode that is not
+  its keyset's (`Backend { kind: InvalidCiphertext }`).
+- **Decision:** `Error::SealUnsupported` stays. It now means "a key vendor
+  backend holds the keyset but names no key mode for it", which is the one
+  case where the cipher cannot choose the leaf header.
+- **Decision:** routing between ZeroKMS and one vendor is `KeyRouter<Z, B>`
+  in `stack-kms-vendor`. A keyset id or name that a vendor record has goes
+  to the vendor (a local record name wins over a ZeroKMS keyset of the same
+  name); everything else, and the default keyset, goes to ZeroKMS. The type
+  holds exactly one vendor; `VendorKeySource::new` refuses records of two
+  vendors with `RecordError::SecondVendor`, and a record of another vendor
+  than the backend with `RecordError::ForeignVendor`.
+- **Decision:** the static key backend (`StaticKeyVendor`) wraps with
+  AES-256-GCM under a random 96-bit nonce: `version(1)=1 ‖ nonce(12) ‖
+  ciphertext ‖ tag`. It holds several keys by reference, for rotation.
+  `supports_mode` is derived only: `KeysetRecord::create` refuses wrapped
+  (`ModeUnsupported`), and so does `VendorKeySource::new` for a record that
+  names it. It uses `aes-gcm` 0.10.3, already in the lockfile.
+- **Decision:** batching is `run_batch(options, count, call, sleep)`:
+  `buffered` (order kept) with `BatchOptions { concurrency: 16,
+  max_attempts: 5, base_delay: 50 ms, max_delay: 2 s }`, exponential
+  backoff on `Throttled` only, and the first other failure (or a call still
+  throttled after the last attempt) fails the whole batch. It has no timer
+  of its own: the vendor's `sleep` is the timer, so it runs on native Rust
+  and in the WASI guest alike.
+- **Decision:** the vendor transport is `VendorTransport { send(VendorRequest)
+  -> VendorResponse, sleep(Duration) }`, futures bounded by `MaybeSend`, the
+  shape of `ZeroKMSConnection`, plus `classify_status` (401/403
+  AccessDenied, 404 NotFound, 429 Throttled, 5xx Unavailable, other 4xx
+  InvalidCiphertext). No vendor uses it yet. **Deferred to CIP-5307:** the
+  native (reqwest) implementation and the guest's `transport_send`
+  implementation.
+- **Decision:** the contract suite is `stack_kms_vendor::contract` (feature
+  `test-support`): `contract::run(make_backend, key_ref)` runs every check
+  for each mode the vendor offers, through `VendorKeySource` and a real
+  `StackCipher`. `Observed<B>` wraps any backend to count calls and inject
+  throttles, so lifetime, batching and backoff are tested on every vendor.
+  It runs here against `StaticKeyVendor` and `FakeVendor` (an in-memory
+  vendor, both modes, reported as AWS and Vault). Real-time TTL expiry is
+  tested once, here, with tokio.
+- **Decision:** `mise run wasm:wasi-check` now also checks
+  `stack-kms-vendor` (no JS-host or native-HTTP dependency on WASI), and
+  `tests-crates.yml` and `udeps.yml` include its path.
+- **Note:** the Go guest still compiles for wasm32-wasip1 with and without
+  `--features eql`. It does not use a key vendor backend yet (CIP-5311).
+- **Note:** `scripts` vitest: `bench-index-expressions` and
+  `check-auth-npm-changeset` fail on this machine for missing
+  `node_modules` content, with or without this change.
