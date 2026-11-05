@@ -154,6 +154,53 @@ async fn a_foreign_keyset_element_is_refused_before_retrieval() {
 }
 
 #[tokio::test]
+async fn a_byte_string_is_one_ciphertext_and_a_column_of_them_is_a_column() {
+    let (cipher, generates, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    // One byte leaf: one ciphertext, one key.
+    let blob: Ciphertext = vec![0u8, 1, 255].encrypt_into(&keyset).await.unwrap();
+    assert_eq!(
+        Vec::<u8>::decrypt_from(blob.clone(), &keyset)
+            .await
+            .unwrap(),
+        [0, 1, 255]
+    );
+    // A byte leaf opened as a `String` is a type mismatch, not tampering.
+    assert!(matches!(
+        keyset.decrypt::<String>(blob).await,
+        Err(Error::OpenedType { .. })
+    ));
+    assert_eq!(generates.load(Ordering::SeqCst), 1);
+    assert_eq!(retrieves.load(Ordering::SeqCst), 2);
+
+    // A column of byte strings, the empty one included, is one batch.
+    let blobs = vec![vec![1u8, 2, 3], vec![], vec![9]];
+    let column: Vec<Ciphertext> = blobs.clone().encrypt_into(&keyset).await.unwrap();
+    assert_eq!(column.len(), 3);
+    assert_eq!(generates.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        Vec::<Vec<u8>>::decrypt_from(column.clone(), &keyset)
+            .await
+            .unwrap(),
+        blobs
+    );
+    assert_eq!(retrieves.load(Ordering::SeqCst), 3);
+    // Each element is an ordinary byte-string ciphertext.
+    assert_eq!(
+        keyset.decrypt::<Vec<u8>>(column[2].clone()).await.unwrap(),
+        [9]
+    );
+
+    // A fixed-width byte array is a byte leaf too.
+    let key: Ciphertext = [7u8; 16].encrypt_into(&keyset).await.unwrap();
+    assert_eq!(
+        <[u8; 16]>::decrypt_from(key, &keyset).await.unwrap(),
+        [7u8; 16]
+    );
+}
+
+#[tokio::test]
 async fn nested_columns_settle_in_one_batch_and_keep_their_shape() {
     let (cipher, generates, retrieves) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();

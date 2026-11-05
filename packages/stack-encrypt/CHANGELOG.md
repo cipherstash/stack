@@ -53,10 +53,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no `Clone` bound; a column that fails after some elements were recovered
   wipes those before returning the error, and before unwinding when an
   element's conversion panics. `Vec<u8>` is not a column of
-  scalars: `u8` is not `OpaqueEncode`, because Vitamin C keeps `Vec<u8>` a
-  byte leaf, so it compiles to neither a column of bytes nor one ciphertext.
-  Direct `keyset.encrypt` still takes one scalar; `encrypt_tree` remains the
-  structural path.
+  scalars: `u8` is not `OpaqueEncode`, because Vitamin C keeps `Vec<u8>` one
+  byte leaf. Direct `keyset.encrypt` still takes one scalar; `encrypt_tree`
+  remains the structural path.
+- **Byte strings are opaque scalars: `Vec<u8>` and `[u8; N]` encrypt into
+  one `Ciphertext`, and a `Vec<Vec<u8>>` into a column.** `OpaqueEncode` is
+  now every owned `Zeroize` type whose borrow is a Vitamin C
+  `plaintext::Scalar` (one leaf), and `OpaqueDecode` every `Zeroize`
+  `FromScalar` target, in place of a hand-kept list that had already left
+  out the byte leaves Vitamin C defines. So
+  `keyset.encrypt(vec![1u8, 2, 3])` and
+  `Vec::<u8>::decrypt_from(ciphertext, &keyset)` now compile, as the
+  structural API and the Go SDK already sealed them. A type of your own
+  joins by implementing `Scalar` for its borrow and `Zeroize`. A `Vec` of
+  any other scalar, and `u8` on its own, still do not.
 
 ## [0.3.0] - 2026-10-27
 

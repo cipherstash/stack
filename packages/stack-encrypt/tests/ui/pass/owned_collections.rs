@@ -1,6 +1,7 @@
 //! The owned collection forms that must compile: a `Vec` of opaque scalars
 //! into a `Vec` of any owned target, with the element's caller-context
-//! capability, and back. `tests/ui/owned_collection_elements.rs` and
+//! capability, and back. A `Vec<u8>` is one byte leaf, so it is one
+//! `Ciphertext`, and a `Vec<Vec<u8>>` is a column of them. `tests/ui/owned_collection_elements.rs` and
 //! `tests/ui/owned_collection_context.rs` pin the forms that must not.
 use stack_encrypt::target::{
     AcceptsContext, DecryptSource, Decryption, EncryptTarget, Encryption, NoCallerContext,
@@ -72,6 +73,13 @@ async fn columns(
         .encrypt_into_with_context(keyset, ("users", "name"))
         .await?;
     let _: Vec<String> = Vec::decrypt_from_with_context(names, keyset, ("users", "name")).await?;
+    // A byte string is one leaf, and a column of byte strings is a column.
+    let blob: Ciphertext = vec![1u8, 2].encrypt_into(keyset).await?;
+    let _: Vec<u8> = Vec::decrypt_from(blob, keyset).await?;
+    let fixed_bytes: Ciphertext = [7u8; 4].encrypt_into(keyset).await?;
+    let _: [u8; 4] = <[u8; 4]>::decrypt_from(fixed_bytes, keyset).await?;
+    let blobs: Vec<Ciphertext> = vec![vec![1u8], vec![]].encrypt_into(keyset).await?;
+    let _: Vec<Vec<u8>> = Vec::decrypt_from(blobs, keyset).await?;
     // Nested columns, and a column of a non-`Clone` owned plaintext.
     let nested: Vec<Vec<Ciphertext>> = vec![vec![1i32], vec![]].encrypt_into(keyset).await?;
     let _: Vec<Vec<i32>> = Vec::decrypt_from(nested, keyset).await?;

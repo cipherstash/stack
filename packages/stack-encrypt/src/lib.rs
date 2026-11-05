@@ -282,17 +282,16 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! The column takes the element target's caller-context capability as its
 //! own, so a column of a target that requires a context cannot omit it, and
 //! a column of a target that accepts none cannot be given one. A `Vec<u8>`
-//! is not a column of scalars: `u8` is not an [`OpaqueEncode`] type, since
-//! Vitamin C keeps `Vec<u8>` a byte leaf and gives `u8` no source of its
-//! own, so `Vec<u8>` neither encrypts byte by byte nor as one `Ciphertext`
-//! here.
+//! is not a column of scalars: Vitamin C keeps `Vec<u8>` one byte leaf and
+//! gives `u8` no source of its own, so `u8` is not an [`OpaqueEncode`] type
+//! and a `Vec<u8>` encrypts as one `Ciphertext`, never byte by byte. A
+//! `Vec<Vec<u8>>` is a column of byte strings.
 //!
 //! Existing structural plans and derives still use [`StackCipherText`], a tree
 //! of sealed leaves. Their low-level direct entry points are
 //! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their
 //! borrowed conversion helpers live in [`target::legacy`]. They are separate
-//! from the owned scalar API. There is no generic `Serialize` fallback and
-//! no implicit `Vec<u8>` blob.
+//! from the owned scalar API. There is no generic `Serialize` fallback.
 //!
 //! # What is authenticated
 //!

@@ -15,11 +15,12 @@
 //! and an empty collection makes no request at all. The key source may
 //! still split one logical batch into several provider requests.
 //!
-//! A `Vec<u8>` is not a collection here: `u8` is not an opaque scalar, since
-//! Vitamin C keeps `Vec<u8>` a byte leaf and gives `u8` no source of its own,
-//! so neither `vec![1u8].encrypt_into::<Vec<Ciphertext>, _>(..)` nor a whole
-//! byte vector as one `Ciphertext` compiles. A nullable element, `Option<S>`,
-//! is likewise not an opaque scalar in this slice.
+//! A `Vec<u8>` is not a collection here: Vitamin C keeps `Vec<u8>` one byte
+//! leaf and gives `u8` no source of its own, so `u8` is not an opaque scalar
+//! and `vec![1u8].encrypt_into::<Vec<Ciphertext>, _>(..)` does not compile.
+//! The byte vector is one `Ciphertext`, and a `Vec<Vec<u8>>` is a column of
+//! them. A nullable element, `Option<S>`, is not an opaque scalar in this
+//! slice.
 use super::{DecryptSource, Decryption, EncryptTarget, Encryption, Pending};
 use stack_kms::MaybeSend;
 use zeroize::Zeroize;
