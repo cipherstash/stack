@@ -3367,6 +3367,7 @@ dependencies = [
  "miette",
  "proptest",
  "serde_json",
+ "stack-kms-vendor",
  "thiserror 1.0.69",
  "vitaminc-aead-value",
  "vitaminc-protected",

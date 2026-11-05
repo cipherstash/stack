@@ -107,3 +107,5 @@ pub mod status;
 pub mod abi;
 #[cfg(target_arch = "wasm32")]
 pub mod transport;
+#[cfg(feature = "vendor")]
+pub mod vendor_transport;
