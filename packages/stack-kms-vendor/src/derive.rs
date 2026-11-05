@@ -91,6 +91,81 @@ pub fn wrapped_data_key_aad(keyset_id: Uuid, iv: &[u8; 16], descriptor: &str) ->
     ])
 }
 
+/// Split bytes made by [`frame`] back into their pieces. `None` if the
+/// bytes are not exactly one frame.
+pub fn unframe(bytes: &[u8]) -> Option<Vec<&[u8]>> {
+    fn take_u64(bytes: &[u8]) -> Option<(usize, &[u8])> {
+        let (head, rest) = bytes.split_at_checked(8)?;
+        let value = u64::from_le_bytes(head.try_into().ok()?);
+        Some((usize::try_from(value).ok()?, rest))
+    }
+    let (count, mut rest) = take_u64(bytes)?;
+    // Each piece takes at least 8 bytes, so a larger count cannot fit.
+    if count > rest.len() / 8 {
+        return None;
+    }
+    let mut pieces = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (len, after) = take_u64(rest)?;
+        let (piece, after) = after.split_at_checked(len)?;
+        pieces.push(piece);
+        rest = after;
+    }
+    rest.is_empty().then_some(pieces)
+}
+
+/// What a vendor may show of the associated data it is given, for audit
+/// logs and access policies: the vendor's own context fields (AWS KMS
+/// encryption context, for example). See [`describe_aad`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AadDescription<'a> {
+    /// What the wrapped key is: `root-key` or `index-key` (the key in a
+    /// keyset record), or `data-key` (a wrapped data key).
+    pub purpose: &'a str,
+    /// The keyset the key belongs to.
+    pub keyset_id: Uuid,
+    /// The descriptor of the value, for a wrapped data key. `None` for the
+    /// key in a keyset record.
+    pub descriptor: Option<&'a str>,
+}
+
+/// Describe associated data made by [`record_key_aad`] or
+/// [`wrapped_data_key_aad`]. `None` for any other bytes.
+///
+/// The description is for a vendor that shows its associated data as
+/// fields. It does not replace the associated data: the vendor must still
+/// bind all of `aad` (see
+/// [`KeyVendorBackend`](crate::KeyVendorBackend)), because the description
+/// leaves out the iv, the vendor byte and the mode byte.
+pub fn describe_aad(aad: &[u8]) -> Option<AadDescription<'_>> {
+    let pieces = unframe(aad)?;
+    let keyset_id = |bytes: &[u8]| Uuid::from_slice(bytes).ok();
+    match pieces.as_slice() {
+        [label, purpose, id, vendor, mode]
+            if *label == RECORD_KEY_LABEL && vendor.len() == 1 && mode.len() == 1 =>
+        {
+            let purpose = match *purpose {
+                b"root-key" => "root-key",
+                b"index-key" => "index-key",
+                _ => return None,
+            };
+            Some(AadDescription {
+                purpose,
+                keyset_id: keyset_id(id)?,
+                descriptor: None,
+            })
+        }
+        [label, id, iv, descriptor] if *label == WRAPPED_DATA_KEY_LABEL && iv.len() == 16 => {
+            Some(AadDescription {
+                purpose: "data-key",
+                keyset_id: keyset_id(id)?,
+                descriptor: Some(std::str::from_utf8(descriptor).ok()?),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// `HKDF-SHA256(ikm, salt, info)`, 32 bytes, into a key that wipes itself.
 fn hkdf(ikm: &KeyBytes, salt: Option<&[u8]>, info: &[u8]) -> KeyBytes {
     let hkdf = Hkdf::<Sha256>::new(salt, ikm.risky_ref());
@@ -196,6 +271,80 @@ mod tests {
         assert_ne!(
             derived_index_key(&root, id).risky_ref(),
             derived_index_key(&root, Uuid::from_u128(2)).risky_ref()
+        );
+    }
+
+    #[test]
+    fn unframe_reverses_frame_and_refuses_anything_else() {
+        let pieces: [&[u8]; 3] = [b"ab", b"", b"cde"];
+        let framed = frame(&pieces);
+        assert_eq!(unframe(&framed).unwrap(), pieces);
+        assert_eq!(unframe(&frame(&[])).unwrap(), Vec::<&[u8]>::new());
+        let mut long = framed.clone();
+        long.push(0);
+        assert_eq!(unframe(&long), None);
+        assert_eq!(unframe(&framed[..framed.len() - 1]), None);
+        assert_eq!(unframe(&[1, 0, 0]), None);
+        assert_eq!(unframe(&u64::MAX.to_le_bytes()), None);
+    }
+
+    #[test]
+    fn describe_aad_names_the_purpose_keyset_and_descriptor() {
+        let id = Uuid::from_u128(7);
+        assert_eq!(
+            describe_aad(&record_key_aad(id, KeyVendor::Aws, KeyMode::Derived)),
+            Some(AadDescription {
+                purpose: "root-key",
+                keyset_id: id,
+                descriptor: None
+            })
+        );
+        assert_eq!(
+            describe_aad(&record_key_aad(id, KeyVendor::Aws, KeyMode::Wrapped))
+                .unwrap()
+                .purpose,
+            "index-key"
+        );
+        assert_eq!(
+            describe_aad(&wrapped_data_key_aad(id, &[1u8; 16], "users/email")),
+            Some(AadDescription {
+                purpose: "data-key",
+                keyset_id: id,
+                descriptor: Some("users/email")
+            })
+        );
+        assert_eq!(describe_aad(b"not a frame"), None);
+        assert_eq!(describe_aad(&frame(&[b"other-label", id.as_bytes()])), None);
+        assert_eq!(
+            describe_aad(&frame(&[RECORD_KEY_LABEL, b"x", id.as_bytes(), &[1], &[1]])),
+            None
+        );
+        assert_eq!(
+            describe_aad(&frame(&[
+                WRAPPED_DATA_KEY_LABEL,
+                b"short",
+                &[1u8; 16],
+                b"d"
+            ])),
+            None
+        );
+        assert_eq!(
+            describe_aad(&frame(&[
+                WRAPPED_DATA_KEY_LABEL,
+                id.as_bytes(),
+                &[1u8; 15],
+                b"d"
+            ])),
+            None
+        );
+        assert_eq!(
+            describe_aad(&frame(&[
+                WRAPPED_DATA_KEY_LABEL,
+                id.as_bytes(),
+                &[1u8; 16],
+                &[0xff]
+            ])),
+            None
         );
     }
 

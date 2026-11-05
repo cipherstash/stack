@@ -11,9 +11,15 @@ use std::future::Future;
 use std::time::Duration;
 
 use stack_kms::{BackendErrorKind, MaybeSend};
+use zeroize::Zeroizing;
 
 /// One signed HTTP request to a vendor.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The body can hold a key in the clear (an AWS `Encrypt` request) and the
+/// headers can hold a credential (a session token, a bearer token), so the
+/// body is wiped on drop and `Debug` shows only the method, the URL and
+/// the header names.
+#[derive(Clone, PartialEq, Eq)]
 pub struct VendorRequest {
     /// The HTTP method, upper case (`POST`).
     pub method: String,
@@ -21,19 +27,108 @@ pub struct VendorRequest {
     pub url: String,
     /// The headers, signature included, in the order they are sent.
     pub headers: Vec<(String, String)>,
-    /// The body.
-    pub body: Vec<u8>,
+    /// The body. Wiped on drop.
+    pub body: Zeroizing<Vec<u8>>,
+}
+
+impl VendorRequest {
+    /// A request with no headers and an empty body.
+    pub fn new(method: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            method: method.into(),
+            url: url.into(),
+            headers: Vec::new(),
+            body: Zeroizing::new(Vec::new()),
+        }
+    }
+
+    /// Add a header.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// Set the body.
+    pub fn body(mut self, body: Vec<u8>) -> Self {
+        self.body = Zeroizing::new(body);
+        self
+    }
+
+    /// The value of the first header named `name`, compared without case.
+    pub fn header_value(&self, name: &str) -> Option<&str> {
+        header_value(&self.headers, name)
+    }
+}
+
+impl std::fmt::Debug for VendorRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VendorRequest")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field(
+                "headers",
+                &self.headers.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+            )
+            .field("body_len", &self.body.len())
+            .finish()
+    }
 }
 
 /// A vendor's HTTP response.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The body can hold a key in the clear (an AWS `Decrypt` response) or a
+/// credential (an STS response), so it is wiped on drop and `Debug` shows
+/// only the status and the header names.
+#[derive(Clone, PartialEq, Eq)]
 pub struct VendorResponse {
     /// The HTTP status.
     pub status: u16,
     /// The headers.
     pub headers: Vec<(String, String)>,
-    /// The body.
-    pub body: Vec<u8>,
+    /// The body. Wiped on drop.
+    pub body: Zeroizing<Vec<u8>>,
+}
+
+impl VendorResponse {
+    /// A response with `status`, no headers and `body`.
+    pub fn new(status: u16, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            headers: Vec::new(),
+            body: Zeroizing::new(body),
+        }
+    }
+
+    /// Add a header.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// The value of the first header named `name`, compared without case.
+    pub fn header_value(&self, name: &str) -> Option<&str> {
+        header_value(&self.headers, name)
+    }
+}
+
+impl std::fmt::Debug for VendorResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VendorResponse")
+            .field("status", &self.status)
+            .field(
+                "headers",
+                &self.headers.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+            )
+            .field("body_len", &self.body.len())
+            .finish()
+    }
+}
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
 }
 
 /// The request did not get a response: the transport failed (DNS, TLS,
@@ -107,19 +202,16 @@ mod tests {
     #[tokio::test]
     async fn a_transport_sends_bytes_and_returns_the_response() {
         let transport = Scripted {
-            responses: Mutex::new(vec![VendorResponse {
-                status: 200,
-                headers: vec![],
-                body: b"{}".to_vec(),
-            }]),
+            responses: Mutex::new(vec![VendorResponse::new(200, b"{}".to_vec())]),
             sent: Mutex::new(vec![]),
         };
-        let request = VendorRequest {
-            method: "POST".into(),
-            url: "https://kms.example/".into(),
-            headers: vec![("x-amz-target".into(), "TrentService.Decrypt".into())],
-            body: b"{}".to_vec(),
-        };
+        let request = VendorRequest::new("POST", "https://kms.example/")
+            .header("x-amz-target", "TrentService.Decrypt")
+            .body(b"{}".to_vec());
+        assert_eq!(
+            request.header_value("X-Amz-Target"),
+            Some("TrentService.Decrypt")
+        );
         let response = transport.send(request.clone()).await.unwrap();
         assert_eq!(response.status, 200);
         assert_eq!(
@@ -127,6 +219,23 @@ mod tests {
             std::slice::from_ref(&request)
         );
         assert!(transport.send(request).await.is_err());
+    }
+
+    #[test]
+    fn debug_never_shows_a_body_or_a_header_value() {
+        let request = VendorRequest::new("POST", "https://kms.example/")
+            .header("x-amz-security-token", "secret-token")
+            .body(b"secret-key".to_vec());
+        let text = format!("{request:?}");
+        assert!(text.contains("x-amz-security-token"));
+        assert!(!text.contains("secret-token"));
+        assert!(!text.contains("secret-key"));
+        let response = VendorResponse::new(200, b"secret-plaintext".to_vec())
+            .header("set-cookie", "secret-cookie");
+        let text = format!("{response:?}");
+        assert!(!text.contains("secret-plaintext"));
+        assert!(!text.contains("secret-cookie"));
+        assert_eq!(response.header_value("Set-Cookie"), Some("secret-cookie"));
     }
 
     #[test]
