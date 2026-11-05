@@ -21,6 +21,7 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-kms-vendor/**
+      - packages/stack-kms-aws/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
@@ -46,6 +47,7 @@ on:
       - packages/stack-profile/**
       - packages/stack-kms/**
       - packages/stack-kms-vendor/**
+      - packages/stack-kms-aws/**
       - packages/stack-encrypt/**
       - conformance/stack-encrypt/**
       - packages/stack-encrypt-derive/**
@@ -153,12 +155,59 @@ jobs:
       # with no `version`, or a crate that uses API its dependency's packaged
       # source does not have yet. stack-profile and stack-auth are in the list
       # because stack-kms and stack-encrypt depend on them: without them, cargo
-      # resolves the published versions, which lag the tree. No token.
+      # resolves the published versions, which lag the tree. stack-kms-vendor
+      # and stack-kms-aws are publishable but staged in release-plz.toml (their
+      # first version is published by hand); packaging them here keeps them
+      # publishable meanwhile. No token.
       # `--allow-dirty` tolerates files earlier steps leave in the tree. Once a
       # version is on crates.io, cargo warns rather than fails on a dry run of
       # it.
       - name: Verify the stack-* crates package cleanly for crates.io
-        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt
+        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt -p stack-kms-vendor -p stack-kms-aws
+
+  # stack-kms-aws against a real AWS KMS API: LocalStack, as a service
+  # (ADR-0011). The `rust` job runs the same test binary, where it skips
+  # itself for want of an endpoint; this job sets the endpoint, and the mise
+  # task refuses to run without one, so a skip cannot read as a pass here.
+  localstack:
+    name: stack-kms-aws against LocalStack
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 30
+    env:
+      MISE_ENV: test
+      STACK_KMS_AWS_LOCALSTACK_ENDPOINT: http://localhost:4566
+    services:
+      localstack:
+        # Pinned by digest. 4.4 is a community release that needs no auth
+        # token.
+        image: localstack/localstack:4.4@sha256:b52c16663c70b7234f217cb993a339b46686e30a1a5d9279cb5feeb2202f837c
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: kms
+        options: >-
+          --health-cmd "curl -fs http://localhost:4566/_localstack/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: stack-kms-aws against LocalStack
+        run: mise run test:localstack:stack-kms-aws
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm

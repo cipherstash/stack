@@ -10,6 +10,8 @@
 includes = [
   "packages/stack-auth/tasks.toml",
   "packages/stack-kms/tasks.toml",
+  "packages/stack-kms-vendor/tasks.toml",
+  "packages/stack-kms-aws/tasks.toml",
   "packages/stack-profile/tasks.toml",
   "packages/stack-encrypt/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
@@ -120,8 +122,14 @@ check stack-auth --no-default-features
 check stack-kms --no-default-features
 check stack-encrypt --no-default-features
 # The vendor seam the guest will carry key vendor backends through
-# (ADR-0011): no transport of its own, so it must build for WASI as is.
+# (ADR-0011): no transport of its own, so it must build for WASI as is. Its
+# `http` feature is the native transport, gated to non-wasm32 targets, so it
+# must add nothing here either.
 check stack-kms-vendor
+check stack-kms-vendor --features http
+# The AWS KMS key vendor backend, default features on: its native transport
+# and workload identity credential sources are gated off on wasm32.
+check stack-kms-aws
 # The Go binding's credential guest (ADR-0005) compiles stack-profile for
 # WASI: the hostname and the process id are native-only there.
 check stack-profile
@@ -129,6 +137,8 @@ check stack-profile
 # status table, transport import); its export and import modules exist only
 # here.
 check stack-guest-abi
+# The guest's vendor transport over transport_send.
+check stack-guest-abi --features vendor
 echo "all WASI crates compile with no JS-host or native-HTTP deps"
 """
 
