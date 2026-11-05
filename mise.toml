@@ -119,6 +119,9 @@ check() {
 check stack-auth --no-default-features
 check stack-kms --no-default-features
 check stack-encrypt --no-default-features
+# The vendor seam the guest will carry key vendor backends through
+# (ADR-0011): no transport of its own, so it must build for WASI as is.
+check stack-kms-vendor
 # The Go binding's credential guest (ADR-0005) compiles stack-profile for
 # WASI: the hostname and the process id are native-only there.
 check stack-profile
