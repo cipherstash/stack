@@ -1,0 +1,127 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "http://127.0.0.1:8200/v1/transit/keys/cipherstash-fixture",
+      "headers": [
+        [
+          "x-vault-token",
+          "fixture-root-token"
+        ],
+        [
+          "x-vault-request",
+          "true"
+        ]
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "auth": null,
+        "data": {
+          "allow_plaintext_backup": false,
+          "auto_rotate_period": 0,
+          "deletion_allowed": false,
+          "derived": false,
+          "exportable": false,
+          "imported_key": false,
+          "keys": {
+            "1": 1793922877
+          },
+          "latest_version": 1,
+          "min_available_version": 0,
+          "min_decryption_version": 1,
+          "min_encryption_version": 0,
+          "name": "cipherstash-fixture",
+          "supports_decryption": true,
+          "supports_derivation": true,
+          "supports_encryption": true,
+          "supports_signing": false,
+          "type": "aes256-gcm96"
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "transit",
+        "renewable": false,
+        "request_id": "c455572a-2ca7-eae1-ce8d-2d0403dd99a0",
+        "warnings": null,
+        "wrap_info": null
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "http://127.0.0.1:8200/v1/transit/decrypt/cipherstash-fixture",
+      "headers": [
+        [
+          "x-vault-token",
+          "fixture-root-token"
+        ],
+        [
+          "x-vault-request",
+          "true"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "batch_input": [
+          {
+            "ciphertext": "vault:v1:qtbTUkudNVlrA8q3k2TsdeREewI5Q1Cy3/9EyvadgrMXRSPJ+UUkrmBV9v6guOeAHI0GVkZ2g219XOGKo1aJyQvKBM93I2q77oMyAVcljwXMLRM23AtCX0fGpH2E"
+          },
+          {
+            "ciphertext": "vault:v1:SOonZWYwK42Yw4XvZ9aUI0FbTGwejkrKwDYu/+sGs5e2pObSMuHzjBAVfbdvCwYkM/BFYOO2IlM4+6E7aovOdPUXj8pehEcooAoEYk/HCsBofzhAQGMwK5MOxe9k"
+          },
+          {
+            "ciphertext": "vault:v1:W1YvhTo4lMzGoxDKFjkFiTtoqehUXG5eOv4h1/bu0mfCW9A2Pzh4eDl0CrJ5rOGdFAxblEZX4HG4gxM2b0v1sbnglWSUAUNo7qF3EifWd5zWx6wmNuDGVLsQ26xi"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "auth": null,
+        "data": {
+          "batch_results": [
+            {
+              "plaintext": "AZlF03MkT4XV5cJBgwxOtLGKAfREkT2P6GPu03ek2dKRQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEA=",
+              "reference": ""
+            },
+            {
+              "plaintext": "AYMOBWlv4yz+mSGK1iKQB+ZgCqLsWJwttCwwiMtJEAyDQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=",
+              "reference": ""
+            },
+            {
+              "plaintext": "AZNt220tYX6khetAWOuhDwYVOlXKerI+xWj6h4juOyYOQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=",
+              "reference": ""
+            }
+          ]
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "transit",
+        "renewable": false,
+        "request_id": "8b096624-2285-a2d2-f0bc-00fd5e69cd42",
+        "warnings": null,
+        "wrap_info": null
+      }
+    }
+  }
+]
