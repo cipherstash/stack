@@ -82,6 +82,13 @@ mod tests {
                 expected: a,
                 found: b,
             },
+            Error::ForeignBackend { .. } => Error::ForeignBackend {
+                expected: crate::kms::KeyBackend::ZeroKms,
+                found: crate::kms::KeyBackend::Vendor(crate::kms::KeyVendor::Aws),
+            },
+            Error::SealUnsupported { .. } => Error::SealUnsupported {
+                backend: crate::kms::KeyBackend::Vendor(crate::kms::KeyVendor::Static),
+            },
             Error::NoKeyset => Error::NoKeyset,
             Error::NotOpened => Error::NotOpened,
             Error::Plan(_) => Error::Plan(PlanError::NoContext),
@@ -99,6 +106,8 @@ mod tests {
             LeafBytesError::UnknownVersion(_) => LeafBytesError::UnknownVersion(9),
             LeafBytesError::Truncated => LeafBytesError::Truncated,
             LeafBytesError::TagTooLong(_) => LeafBytesError::TagTooLong(70_000),
+            LeafBytesError::UnknownBackend(_) => LeafBytesError::UnknownBackend(0),
+            LeafBytesError::UnknownMode(_) => LeafBytesError::UnknownMode(0),
         ]));
         errors.extend(boxed(variants![
             TermError::Prf(_) => TermError::Prf(cause()),
@@ -489,6 +498,27 @@ mod tests {
                 json!({ "len": 70_000 }),
             ),
             (Box::new(LeafBytesError::Truncated), json!({})),
+            (
+                Box::new(LeafBytesError::UnknownBackend(9)),
+                json!({ "backend": 9 }),
+            ),
+            (
+                Box::new(LeafBytesError::UnknownMode(7)),
+                json!({ "mode": 7 }),
+            ),
+            (
+                Box::new(Error::ForeignBackend {
+                    expected: crate::kms::KeyBackend::ZeroKms,
+                    found: crate::kms::KeyBackend::Vendor(crate::kms::KeyVendor::Vault),
+                }),
+                json!({ "expected": "zerokms", "found": "vault-transit" }),
+            ),
+            (
+                Box::new(Error::SealUnsupported {
+                    backend: crate::kms::KeyBackend::Vendor(crate::kms::KeyVendor::Gcp),
+                }),
+                json!({ "backend": "gcp-kms" }),
+            ),
             (
                 Box::new(TermError::Bytes(TermBytesError::OddMatchTermsLength(3))),
                 json!({ "len": 3 }),

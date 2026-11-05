@@ -3,9 +3,10 @@
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::SealedValue;
 
-// Fuzz the frozen v1 leaf byte decoder. A stored ciphertext column comes back
-// through `SealedValue::from_bytes` before anything is authenticated, so the
-// bytes are attacker-controlled: decoding must never panic, only return `Err`.
+// Fuzz the frozen leaf byte decoder, v1 (ZeroKMS) and v2 (a key vendor
+// backend: `0x02 ‖ backend ‖ mode ‖ …`); the seed corpus holds both. A
+// stored ciphertext column comes back through `SealedValue::from_bytes`
+// before anything is authenticated, so the bytes are attacker-controlled: decoding must never panic, only return `Err`.
 //
 // The format is documented as lossless, so a second invariant is checked on
 // every accepted input: re-encoding gives back exactly the bytes decoded.

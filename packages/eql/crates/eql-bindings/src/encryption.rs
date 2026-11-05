@@ -571,6 +571,37 @@ mod tests {
         );
     }
 
+    /// EQL carries a leaf as its opaque `SealedValue` bytes, so a v2 leaf (a
+    /// key vendor backend's) passes through `c` unchanged: same prefix, same
+    /// payload shape, and the backend and mode read back as written.
+    #[test]
+    fn a_v2_leaf_passes_through_the_ciphertext_as_opaque_bytes() {
+        use stack_encrypt::kms::{KeyBackend, KeyMode, KeyVendor};
+
+        let leaf = SealedValue::from_vendor_parts(
+            KeyVendor::Aws,
+            KeyMode::Wrapped,
+            Default::default(),
+            [3; 16],
+            vec![9; 8],
+            vec![0xDE, 0xAD],
+        )
+        .unwrap();
+        let bytes = leaf.to_bytes();
+        let ciphertext = CiphertextVisitor.sealed(leaf).unwrap();
+        assert_eq!(
+            ciphertext.0,
+            format!("{CIPHERTEXT_PREFIX}{}", STANDARD.encode(&bytes))
+        );
+
+        let CipherText::Single(read) = ciphertext.read(NativeCiphertextVisitor).unwrap() else {
+            panic!("a ciphertext reads back as one leaf");
+        };
+        assert_eq!(read.to_bytes(), bytes);
+        assert_eq!(read.key_backend(), KeyBackend::Vendor(KeyVendor::Aws));
+        assert_eq!(read.key_mode(), Some(KeyMode::Wrapped));
+    }
+
     #[test]
     fn a_separator_in_a_name_is_escaped_never_a_third_part() {
         let odd = id("users/email", "x");

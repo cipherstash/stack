@@ -1,9 +1,11 @@
 //! Byte-level pins for the frozen encodings stack-encrypt commits to across
 //! languages:
 //!
-//! * the [`SealedValue`] leaf layout
-//!   (`version ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`) — the
-//!   storage
+//! * the [`SealedValue`] leaf layouts — v1
+//!   (`version ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`, which
+//!   ZeroKMS writes) and v2
+//!   (`version ‖ backend ‖ mode ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖
+//!   local_ciphertext`, which a key vendor backend writes) — the storage
 //!   format a database column holds, and
 //! * the index-term encodings (equality: raw 32 bytes; match: LE `u16`
 //!   positions; ORE/OPE: raw CLLW ciphertext bytes).
@@ -29,8 +31,9 @@ use stack_encrypt::sem::{
 use stack_encrypt::target::legacy::EncryptInto;
 use stack_encrypt::{CipherText, Error, LeafBytesError, SealedValue, StackCipher};
 use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
-    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+    DataKey, DataKeySource, DataKeyWithTag, DeterministicSource, FakeDataKeySource,
+    GenerateKeyPayload, IdentifiedBy, IndexKey, IndexKeySource, KeyBackend, KeyMode, KeyVendor,
+    RetrieveKeyPayload, UnverifiedContext,
 };
 use uuid::Uuid;
 
@@ -44,6 +47,13 @@ async fn cipher() -> StackCipher<FakeDataKeySource> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex(hex: &str) -> Vec<u8> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
+        .collect()
 }
 
 // =============================================================================
@@ -98,11 +108,168 @@ fn sealed_value_from_bytes_inverts_to_bytes() {
 #[test]
 fn sealed_value_rejects_unknown_version() {
     let mut bytes = fixture_leaf().to_bytes();
-    bytes[0] = 2;
-    assert!(matches!(
-        SealedValue::from_bytes(&bytes),
-        Err(LeafBytesError::UnknownVersion(2))
-    ));
+    for version in [0, 3, u8::MAX] {
+        bytes[0] = version;
+        assert_eq!(
+            SealedValue::from_bytes(&bytes).map(|_| ()),
+            Err(LeafBytesError::UnknownVersion(version))
+        );
+    }
+}
+
+/// A known-answer test for a real v1 leaf: these bytes were sealed once by
+/// [`DeterministicSource`] (seed `[7; 32]`) under the context
+/// `users/email`, and must open, unchanged, for as long as v1 is read. A
+/// change to the v1 framing, the v1 leaf AAD or the v1 decoder fails here.
+#[tokio::test]
+async fn a_pinned_v1_leaf_still_opens() {
+    const V1_LEAF: &str = "010000000000000000000000000000000045608626b2b6c6de1bfc90dd87c420ac2000d702c5b01099cca8d52801ec7a9ee26928d0f8c71e120a2a62cc9b7f2e96579a01c9186cd1c3d5e396fe5a727d374ab5cddf8abae2b708de5ceed1925f75508b9c4b271f1bff53234b";
+    let bytes = unhex(V1_LEAF);
+    let leaf = SealedValue::from_bytes(&bytes).expect("decode the pinned v1 leaf");
+    assert_eq!(leaf.format_version(), SealedValue::FORMAT_VERSION);
+    assert_eq!(leaf.key_backend(), KeyBackend::ZeroKms);
+    assert_eq!(leaf.key_mode(), None);
+    assert_eq!(
+        hex(&leaf.to_bytes()),
+        V1_LEAF,
+        "v1 re-encodes byte for byte"
+    );
+
+    let cipher = StackCipher::builder()
+        .kms(DeterministicSource::new([7; 32]))
+        .init()
+        .await
+        .expect("build cipher");
+    let plaintext: String = cipher
+        .decrypt(CipherText::Single(leaf), b"users/email".as_slice())
+        .await
+        .expect("the pinned v1 leaf opens");
+    assert_eq!(plaintext, "known answer");
+}
+
+// =============================================================================
+// SealedValue v2 leaf
+// =============================================================================
+
+/// [`fixture_leaf`]'s parts as a v2 leaf of `vendor` in `mode`.
+fn fixture_v2_leaf(vendor: KeyVendor, mode: KeyMode) -> SealedValue {
+    let (keyset_id, iv, tag, ciphertext) = fixture_leaf().into_parts();
+    SealedValue::from_vendor_parts(vendor, mode, keyset_id, iv, tag, ciphertext)
+        .expect("fixture tag fits the length field")
+}
+
+#[test]
+fn v2_sealed_value_layout_is_pinned() {
+    let bytes = fixture_v2_leaf(KeyVendor::Aws, KeyMode::Wrapped).to_bytes();
+
+    // version(02) ‖ backend(01 — AWS KMS) ‖ mode(01 — wrapped) ‖ then the
+    // v1 fields: keyset_id ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext.
+    assert_eq!(
+        hex(&bytes),
+        "0201016b65797365742d666978747572653136303132333435363738396162636465660300aabbccdeadbeef"
+    );
+    // Past the two extra header bytes, v2 is the v1 layout.
+    assert_eq!(&bytes[3..], &fixture_leaf().to_bytes()[1..]);
+}
+
+#[test]
+fn v2_sealed_value_from_bytes_inverts_to_bytes_for_every_backend_and_mode() {
+    for vendor in KeyVendor::ALL {
+        for mode in KeyMode::ALL {
+            let original = fixture_v2_leaf(vendor, mode);
+            let bytes = original.to_bytes();
+            assert_eq!(&bytes[..3], &[2, vendor.byte(), mode.byte()]);
+            let decoded = SealedValue::from_bytes(&bytes).expect("decode v2 leaf");
+            assert_eq!(decoded.format_version(), SealedValue::VENDOR_FORMAT_VERSION);
+            assert_eq!(decoded.key_backend(), KeyBackend::Vendor(vendor));
+            assert_eq!(decoded.key_mode(), Some(mode));
+            assert_eq!(decoded.keyset_id(), original.keyset_id());
+            assert_eq!(decoded.iv(), original.iv());
+            assert_eq!(decoded.tag(), original.tag());
+            assert_eq!(decoded.ciphertext(), original.ciphertext());
+            assert_eq!(decoded.to_bytes(), bytes);
+            assert_eq!(
+                decoded.clone().to_bytes(),
+                bytes,
+                "a clone keeps the v2 header"
+            );
+        }
+    }
+}
+
+#[test]
+fn v2_sealed_value_rejects_an_unknown_backend_or_mode() {
+    let bytes = fixture_v2_leaf(KeyVendor::Static, KeyMode::Derived).to_bytes();
+    for byte in [0, 6, u8::MAX] {
+        let mut backend = bytes.clone();
+        backend[1] = byte;
+        assert_eq!(
+            SealedValue::from_bytes(&backend).map(|_| ()),
+            Err(LeafBytesError::UnknownBackend(byte))
+        );
+    }
+    for byte in [0, 3, u8::MAX] {
+        let mut mode = bytes.clone();
+        mode[2] = byte;
+        assert_eq!(
+            SealedValue::from_bytes(&mode).map(|_| ()),
+            Err(LeafBytesError::UnknownMode(byte))
+        );
+    }
+}
+
+#[test]
+fn v2_sealed_value_rejects_truncation() {
+    let bytes = fixture_v2_leaf(KeyVendor::Vault, KeyMode::Wrapped).to_bytes();
+    let tag_end = 3 + 16 + 16 + 2 + 3;
+    for len in 0..tag_end {
+        assert_eq!(
+            SealedValue::from_bytes(&bytes[..len]).map(|_| ()),
+            Err(LeafBytesError::Truncated),
+            "prefix of {len} bytes must be rejected"
+        );
+    }
+    assert!(SealedValue::from_bytes(&bytes[..tag_end]).is_ok());
+}
+
+/// Under derived data keys the tag is empty: the shortest v2 leaf is the
+/// header and the fixed-width fields.
+#[test]
+fn v2_sealed_value_decodes_the_shortest_leaf_the_layout_allows() {
+    let leaf = SealedValue::from_vendor_parts(
+        KeyVendor::Static,
+        KeyMode::Derived,
+        Uuid::nil(),
+        [7; 16],
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("empty tag fits");
+    let bytes = leaf.to_bytes();
+    assert_eq!(bytes.len(), 3 + 16 + 16 + 2);
+    let decoded = SealedValue::from_bytes(&bytes).expect("the fixed fields alone are a leaf");
+    assert!(decoded.tag().is_empty());
+    assert!(decoded.ciphertext().is_empty());
+    assert_eq!(
+        SealedValue::from_bytes(&bytes[..bytes.len() - 1]).map(|_| ()),
+        Err(LeafBytesError::Truncated)
+    );
+}
+
+#[test]
+fn v2_sealed_value_rejects_oversized_tag_on_construction() {
+    let result = SealedValue::from_vendor_parts(
+        KeyVendor::Aws,
+        KeyMode::Wrapped,
+        Uuid::nil(),
+        [0; 16],
+        vec![0; usize::from(u16::MAX) + 1],
+        Vec::new(),
+    );
+    assert_eq!(
+        result.map(|_| ()),
+        Err(LeafBytesError::TagTooLong(usize::from(u16::MAX) + 1))
+    );
 }
 
 #[test]

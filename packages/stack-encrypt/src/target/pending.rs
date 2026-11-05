@@ -17,7 +17,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use stack_kms::{
-    DataKey, DataKeySource, GenerateKeyPayload, IndexKeySource, Iv, MaybeSend, RetrieveKeyPayload,
+    DataKey, DataKeySource, GenerateKeyPayload, IndexKeySource, Iv, KeyBackend, MaybeSend,
+    RetrieveKeyPayload,
 };
 use uuid::Uuid;
 
@@ -590,6 +591,7 @@ struct Retrieve {
     tag: Vec<u8>,
     descriptor: Descriptor,
     keyset_id: Uuid,
+    backend: KeyBackend,
 }
 
 /// Issue the batched ZeroKMS calls for `requests`: at most one
@@ -616,11 +618,13 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
                 tag,
                 descriptor,
                 keyset_id,
+                backend,
             } => retrieves.push(Retrieve {
                 iv,
                 tag,
                 descriptor,
                 keyset_id,
+                backend,
             }),
         }
     }
@@ -635,6 +639,27 @@ async fn dispatch<K: DataKeySource + IndexKeySource>(
         .iter()
         .chain(retrieves.iter().map(|retrieve| &retrieve.descriptor))
         .try_for_each(Descriptor::check)?;
+
+    // A leaf names the key backend that sealed it. One that names another
+    // backend than the cipher's is refused here, before any key call, as a
+    // foreign keyset is refused at construction: the leaf never reaches a
+    // backend that did not seal it.
+    let backend = cipher.kms().key_backend();
+    if let Some(retrieve) = retrieves
+        .iter()
+        .find(|retrieve| retrieve.backend != backend)
+    {
+        return Err(Error::ForeignBackend {
+            expected: backend,
+            found: retrieve.backend,
+        });
+    }
+    // Only ZeroKMS has a seal path in this build: a v1 leaf names ZeroKMS,
+    // so a key vendor backend must not write one. CIP-5306 adds the v2 seal
+    // path, which needs the keyset's key mode.
+    if !generates.is_empty() && backend != KeyBackend::ZeroKms {
+        return Err(Error::SealUnsupported { backend });
+    }
 
     // The retrieves and the keyset loads run beside each other, after the
     // generates. Both sides are built here, before any key has been through

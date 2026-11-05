@@ -155,6 +155,11 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // children asked for as a scalar, or an altered entry. The client
         // cannot tell which, so neither STATUS_AUTH nor a claim of either.
         stack_encrypt::Error::JsonNotALeaf => STATUS_ENCODING,
+        // A leaf that names another key backend than this guest's (a v2
+        // leaf of a key vendor backend, while this guest holds ZeroKMS) is
+        // refused before any key call. It is the caller's input, as a leaf
+        // this guest cannot decode is: no retry with other options opens it.
+        stack_encrypt::Error::ForeignBackend { .. } => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
@@ -475,6 +480,27 @@ mod tests {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::ContextMismatch { stored }),
             STATUS_CONTEXT_MISMATCH
+        );
+    }
+
+    /// A leaf of another key backend is the caller's input, never a
+    /// foreign keyset (no keyset constraint would let it open). A seal under
+    /// a key vendor backend cannot happen here, so it is internal.
+    #[test]
+    fn a_foreign_backend_is_encoding_and_an_unsupported_seal_is_internal() {
+        use stack_encrypt::kms::{KeyBackend, KeyVendor};
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::ForeignBackend {
+                expected: KeyBackend::ZeroKms,
+                found: KeyBackend::Vendor(KeyVendor::Aws),
+            }),
+            STATUS_ENCODING
+        );
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::SealUnsupported {
+                backend: KeyBackend::Vendor(KeyVendor::Aws),
+            }),
+            STATUS_INTERNAL
         );
     }
 

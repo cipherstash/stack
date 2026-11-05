@@ -150,12 +150,7 @@ fn collect_retrieve_requests(
 ) {
     match ciphertext {
         CipherText::Single(leaf) | CipherText::EmptySequence(leaf) | CipherText::EmptyMap(leaf) => {
-            out.push(Request::retrieve_under(
-                *leaf.iv(),
-                leaf.tag().to_vec(),
-                descriptor.clone(),
-                leaf.keyset_id(),
-            ));
+            out.push(Request::retrieve_leaf(leaf, descriptor.clone()));
         }
         CipherText::Sequence(items) => {
             for item in items {
