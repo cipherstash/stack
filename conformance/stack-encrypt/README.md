@@ -20,6 +20,8 @@ from each profile's own version. `<role>` is one of:
   producer regenerates this file, deliberately; runners compare against it.
 - `inputs.<runner>`: extra inputs keyed by case ID that only `<runner>` needs,
   such as Go host values that have no language-neutral form.
+- `enrollment`: the profile's requirement IDs mapped onto existing compiled
+  tests that are its evidence, rather than cases of its own.
 
 Every file has a `version` and `profile` header. An `expected` file also names
 its `producer`, and an `inputs` file names its `runner`.
@@ -37,11 +39,14 @@ these rules.
 | `record-contexts-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
 | `record-contexts-v1.expected.rust-native.json` | expected | `tests/context_conformance.rs` (writes it) | `context_conformance_test.go` |
 | `record-context-boundaries-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
+| `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
+| `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
 | `fixture-enrollment.json` | index | `tests/common/mod.rs` | `fixture_conformance_test.go` |
 
 Rust readers are under `packages/stack-encrypt/`; Go readers are under
-`languages/golang/encrypt/`. `fixture-enrollment.json` is not a profile: it maps
-requirement IDs onto existing fixtures and tests (see
+`languages/golang/encrypt/`; EQL's are under `packages/eql/`.
+`fixture-enrollment.json` is the one file not named after a profile: it maps
+requirement IDs of several profiles onto existing fixtures and tests (see
 [the fixture contract](fixture-contract.md)), and
 `scripts/stack-conformance-selection.mjs` reads it to choose the Go tests that
 `mise run test:conformance` runs.
@@ -70,6 +75,15 @@ is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
 
+## EQL and JSON operations
+
+The [EQL/JSON contract](eql-json-contract.md) enrolls resolver capabilities,
+document writes, queries, extraction/subtree reads, element-match and predicate
+matching. It reuses the native, Go and independent PostgreSQL suites and shares
+write/predicate case data. Run `mise run test:conformance:eql` and the separate
+required `test:conformance:eql:postgres` task; see the contract for guest builds,
+disposable database setup, intentional SQL differences and version reports.
+
 ## Context composition and expectations
 
 The [context contract](context-contract.md) covers ordered extensions, canonical
@@ -93,8 +107,8 @@ checks. The task runs the existing tests directly, and a missing guest fails
 when conformance is required. The ordinary CI suites already execute them.
 
 This is representative fixture coverage, not an exhaustive type/operator
-matrix. Wider fresh artifact exchange, shared query refusals and EQL/JSON
-operations remain separate work.
+matrix. Wider fresh artifact exchange and shared scalar query refusals remain
+separate work. The EQL/JSON profiles are described below.
 
 ## `record-reads-v1` contract
 

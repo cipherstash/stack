@@ -60,6 +60,7 @@ on:
       - scripts/go-binding-test.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
+      - scripts/stack-eql-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -99,6 +100,7 @@ on:
       - scripts/go-binding-test.sh
       - scripts/stack-conformance.sh
       - scripts/stack-conformance-selection.mjs
+      - scripts/stack-eql-conformance.mjs
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -143,6 +145,18 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+
+      # Native EQL conformance uses the EQL workspace's toolchain. Install it
+      # before root setup, so ordinary guest commands retain the root pin.
+      # Its local DATABASE_URL must not enable database tests in this job.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: packages/eql
+          env: false
+          cache: true
+          cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
@@ -257,6 +271,17 @@ jobs:
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      - name: Required EQL and JSON conformance
+        env:
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/eql-conformance-fast
+        run: mise run test:conformance:eql
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-conformance-fast
+          path: ${{ runner.temp }}/eql-conformance-fast/*.json
+          if-no-files-found: error
 
       - name: Fresh Go scalar artifacts open in Rust
         env:
@@ -392,6 +417,8 @@ jobs:
   # v4 bundle under packages/eql's mise config, which pins its own Rust; the
   # guests are the ones wasi-check built and checked.
   eql-postgres:
+    env:
+      MISE_ENV: test
     name: Go rows and queries in PostgreSQL with EQL v4
     needs: wasi-check
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -434,6 +461,16 @@ jobs:
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2204
 
+      # mise caches Rust symlinks, not ~/.rustup. A cache hit can leave a
+      # toolchain directory without cargo and still report "all tools installed".
+      # Reconcile both workspaces' configured toolchains before cargo is used.
+      - name: Restore Rust toolchains behind the cached mise links
+        run: |
+          mise install --force rust
+          mise -C packages/eql install --force rust
+          mise x -- cargo --version
+          mise -C packages/eql x -- cargo --version
+
       # `mise run build` compiles eql-codegen to write the bundle.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -459,10 +496,17 @@ jobs:
 
       # Builds the bundle from the tree, installs it, and runs the tests; a
       # skip fails the task, so a missing guest or database cannot pass.
-      - name: Go rows and queries through EQL v4
+      - name: Go rows, queries and required JSON conformance through EQL v4
         env:
           EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres sslmode=disable"
+          STACK_CONFORMANCE_REPORT_DIR: ${{ runner.temp }}/eql-conformance-postgres
         run: mise run go:test:postgres
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-conformance-postgres
+          path: ${{ runner.temp }}/eql-conformance-postgres/*.json
+          if-no-files-found: error
 
   # Round trips through real ZeroKMS. The Go live tests skip without their
   # STACK_ENCRYPT_TEST_* variables, so the secrets pre-flight runs first and

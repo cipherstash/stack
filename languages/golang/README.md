@@ -47,6 +47,9 @@ mise run go:test
 
 The `.wasm` files are build outputs and are not committed on development
 branches. `mise run go:test:postgres` also runs the PostgreSQL suite against
-the EQL v4 bundle built from this tree; it needs the database named by
-`EQL_TEST_DATABASE_URL`. See `mise.toml` and [AGENTS.md](../../AGENTS.md)
-for the build and release details.
+the EQL v4 bundle built from this tree, and the shared EQL/JSON conformance
+lane before it. It needs the disposable database named by
+`EQL_TEST_DATABASE_URL`, `psql`, and the Rust test tools
+(`mise install --env test`), because the conformance lane runs Rust tests too.
+See `mise.toml` and [AGENTS.md](../../AGENTS.md) for the build and release
+details.

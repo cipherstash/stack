@@ -382,8 +382,8 @@ run = """
 #!/usr/bin/env bash
 set -euo pipefail
 : "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
-mise -C packages/eql run build
-psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f packages/eql/release/cipherstash-encrypt-v4.sql
+# The conformance task owns SQL setup and the JSON PostgreSQL tests.
+mise run test:conformance:eql:postgres
 cd languages/golang
 # The PostgreSQL tests, named once: the -run pattern and the check below
 # are both derived from this list.
@@ -391,10 +391,6 @@ TESTS=(
   TestEQLTypesRoundTripAndQueryInPostgres
   TestEQLOrderMatchesPlaintextInPostgres
   TestQueriesRunAgainstPostgres
-  TestJSONDocumentsQueryAndReadInPostgres
-  TestJSONTypedDocumentsInPostgres
-  TestJSONElementMatchInPostgres
-  TestJSONPredicateMatchInPostgres
 )
 pattern="^($(IFS='|'; echo "${TESTS[*]}"))$"
 # The tests skip without DATABASE_URL and without their guest builds; -v and
@@ -432,4 +428,19 @@ cd languages/golang
 # Credentials come from encrypt.AutoCredentials: the CS_* variables
 # if set, else the developer profile. See encrypt/example/README.md.
 CGO_ENABLED=0 go run ./encrypt/example
+"""
+
+[tasks."test:conformance:eql"]
+description = "Required EQL/JSON profiles over native Rust and Go (build both deterministic guests first)"
+run = "node scripts/stack-eql-conformance.mjs fast"
+
+[tasks."test:conformance:eql:postgres"]
+description = "Build and install EQL v4 into disposable EQL_TEST_DATABASE_URL, then run required Rust/Go JSON PostgreSQL oracles"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+: "${EQL_TEST_DATABASE_URL:?set a disposable PostgreSQL database connection}"
+mise -C packages/eql run clean
+mise -C packages/eql run build
+node scripts/stack-eql-conformance.mjs postgres
 """

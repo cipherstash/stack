@@ -131,18 +131,12 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 
 /// The documents a batch carries, as values.
 fn documents() -> Vec<Value> {
-    vec![
-        json!({"name": "Alice", "age": 34, "visits": [{"at": 3, "where": "x"}, {"at": 1}], "tags": ["a", "b"]}),
-        json!({"name": "Bob", "age": 7.5, "nested": {"deep": [[1, 2], {}]}, "none": null}),
-        json!([1, "two", {"three": 3}]),
-        json!("a scalar root"),
-        json!(18446744073709551615u64),
-        json!(-9223372036854775808i64),
-        json!(-926_809.505_100_808_3),
-        Value::Null,
-        json!({}),
-        json!([]),
-    ]
+    conformance_cases()["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|text| serde_json::from_str(text.as_str().unwrap()).unwrap())
+        .collect()
 }
 
 /// The EQL value a sealed row stores for `profile`, parsed.
@@ -443,12 +437,9 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
     let (cipher, calls) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let plan = plan();
-    for (text, code) in [
-        (r#"{"secret": 1, "secret": 2}"#, "json_duplicate_key"),
-        ("99999999999999999999", "json_integer_range"),
-        (r#"{"secret": "#, "json_syntax"),
-        ("", "json_syntax"),
-    ] {
+    for case in conformance_cases()["invalid_documents"].as_array().unwrap() {
+        let text = case["text"].as_str().unwrap();
+        let code = case["reason"].as_str().unwrap();
         let source = BTreeMap::from([("profile", text)]);
         let error = match record::encrypt_with(&keyset, frame(&source), &plan, &Eql) {
             Err(error) => error,
@@ -1153,4 +1144,14 @@ async fn the_engine_and_the_table_agree_on_which_targets_take_json_options() {
         );
         assert_eq!(engine, !refused, "{}", target.name);
     }
+}
+
+fn conformance_cases() -> Value {
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../../../conformance/stack-encrypt/v1/eql-json-v1.cases.json"
+    ))
+    .unwrap();
+    assert_eq!(cases["version"], 1);
+    assert_eq!(cases["profile"], "eql-json-v1");
+    cases
 }

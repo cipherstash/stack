@@ -4,6 +4,7 @@ import { dirname, join, relative, sep } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { includes } from './lib/rust-compiled-files.mjs'
 import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -400,16 +401,29 @@ describe('the relevance filter still selects the imported tree', () => {
   })
 
   it('prefixes every source path with the subtree root', () => {
-    // Three legitimate exceptions, all outside the subtree by nature: the
+    // Legitimate exceptions, all outside the subtree by nature: the
     // workflow's own path, a composite action it `uses:`, and a crate the
     // workspace compiles by path (plus the root manifest it inherits from).
     const external = externalPathDependencies.dirs.map((dir) => `${dir}/**`)
+    // The EQL data-plan suite compiles the shared corpus from outside its
+    // subtree. Keep this exception tied to that actual dependency.
+    const sharedCorpus = 'conformance/stack-encrypt/v1/eql-json-v1.cases.json'
+    const usesSharedCorpus = includes(
+      readFileSync(
+        join(
+          REPO_ROOT,
+          'packages/eql/tests/encryption/tests/json_tree_data_plan.rs',
+        ),
+        'utf8',
+      ),
+    ).some((entry) => entry.literal?.endsWith(`/${sharedCorpus}`))
     const offenders = filterPaths.filter(
       (path) =>
         path !== EQL_WORKFLOW &&
         !path.startsWith(EQL_PREFIX) &&
         !localActionPrefixes.some((prefix) => path.startsWith(prefix)) &&
         !external.includes(path) &&
+        !(usesSharedCorpus && path === 'conformance/stack-encrypt/**') &&
         !(externalPathDependencies.inherits && path === 'Cargo.toml'),
     )
 
@@ -535,7 +549,11 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
     // Held non-empty, so a change to `isEqlJob` cannot empty the check.
     expect(EQL_RUST_CACHE_STEPS.length).toBeGreaterThan(0)
     const wrong = EQL_RUST_CACHE_STEPS.filter(
-      ({ step }) => step?.with?.workspaces !== CARGO_WORKSPACE,
+      ({ step }) =>
+        !String(step?.with?.workspaces ?? '')
+          .split('\n')
+          .map((line) => line.split('->')[0].trim())
+          .includes(CARGO_WORKSPACE),
     ).map((entry) =>
       stepLabel(entry, `workspaces: ${entry.step?.with?.workspaces}`),
     )

@@ -274,46 +274,28 @@ func TestMatchRefusalsNameTheConstructAndItsOffset(t *testing.T) {
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
 	f := testusers.EntityFields.CustomFieldValues
-	vars := map[string]any{"v": "secret-nz", "flag": true}
-	deep := strings.Repeat("(", 33) + "$.a == 1" + strings.Repeat(")", 33)
-	for _, tc := range []struct {
-		name, predicate string
-		vars            any
-		reason          string
-		construct       string
-		at              string // the text the offset points at
-	}{
-		{"text the grammar does not read", `$.extra.country = $v`, vars, "json_predicate_syntax", "text the grammar does not read", "= $v"},
-		{"like_regex", `$.extra.country like_regex "secret"`, vars, "json_predicate_unsupported", "`like_regex`", "like_regex"},
-		{"arithmetic", `$.weight + 1 == 2`, vars, "json_predicate_unsupported", "arithmetic (`+`, `-`, `*`, `/`, `%`)", "+ 1"},
-		{"a method", `$.weight.size() == 1`, vars, "json_predicate_unsupported", "a method (`.name()`)", ".size()"},
-		{"a filter outside exists", `$.extra.preferred_languages[*] ? (@ == $v) == 1`, vars, "json_predicate_unsupported", "a filter outside `exists`", "? (@"},
-		{"|| in a filter", `exists($.extra.emergency_contacts[*] ? (@.relationship == $v || @.age > 1))`, vars, "json_predicate_unsupported", "`||` in a filter", "|| @.age"},
-		{"an unknown variable", `$.extra.country == $missing`, vars, "json_predicate_unknown_variable", "a variable", "$missing"},
-		{"a value an ordering cannot take", `$.weight < $flag`, vars, "json_predicate_value_type", "a value", "$flag"},
-		{"an object", `$.extra.country == $obj`, map[string]any{"obj": map[string]any{"secret-nz": 1}}, "json_predicate_value_type", "a value", "$obj"},
-		{"!= at a wildcard", `$.extra.preferred_languages[*] != $v`, vars, "json_predicate_not_equal_at_wildcard", "`!=` at a path with a wildcard", "!= $v"},
-		{"too deep", deep, nil, "json_predicate_too_deep", "nesting", "$.a"},
-		{"a position", `$.extra.preferred_languages[2] == $v`, vars, "json_path_position", "a position (`[2]`)", "[2]"},
-		{"a filter with no wildcard", `exists($.address ? (@.postcode == $v))`, vars, "json_path_no_wildcard", "a filter on a path with no wildcard", "$.address ?"},
-		{"a wildcard in a member", `exists($.extra.emergency_contacts[*] ? (@.calls[*] == $v))`, vars, "json_path_wildcard", "a wildcard in a filter's member", "@.calls"},
-		{"a number JSON cannot hold", `$.weight == 1e999`, vars, "json_syntax", "a value", "1e999"},
-	} {
-		_, err := f.Match(ctx, cipher, tc.predicate, tc.vars, encrypt.JSONReadOptions{})
+	for _, tc := range jsonConformanceCases(t).PredicateRefusals {
+		var vars any
+		if tc.Vars != nil {
+			vars = tc.Vars
+		}
+		if strings.Index(tc.Predicate, tc.AtText) != tc.At {
+			t.Fatalf("%s: offset does not name at_text", tc.ID)
+		}
+		_, err := f.Match(ctx, cipher, tc.Predicate, vars, encrypt.JSONReadOptions{})
 		var d *encrypt.Diagnostic
 		if !errors.Is(err, encrypt.ErrEncoding) || !errors.As(err, &d) {
-			t.Errorf("%s: %v, want ErrEncoding with a Diagnostic", tc.name, err)
+			t.Errorf("%s: %v, want ErrEncoding with a Diagnostic", tc.ID, err)
 			continue
 		}
-		want := strings.Index(tc.predicate, tc.at)
-		if at, ok := d.At(); d.Reason() != tc.reason || d.Construct() != tc.construct || !ok || at != want {
-			t.Errorf("%s: reason %q, construct %q, at %d (%v); want %q, %q, %d: %v", tc.name, d.Reason(), d.Construct(), at, ok, tc.reason, tc.construct, want, err)
+		if at, ok := d.At(); d.Reason() != tc.Reason || d.Construct() != tc.Construct || !ok || at != tc.At {
+			t.Errorf("%s: reason %q, construct %q, at %d (%v); want %q, %q, %d: %v", tc.ID, d.Reason(), d.Construct(), at, ok, tc.Reason, tc.Construct, tc.At, err)
 		}
 		if d.Field() != "custom_field_values" || d.Code != "stack_encrypt::dynamic_predicate" {
-			t.Errorf("%s: field %q, code %q", tc.name, d.Field(), d.Code)
+			t.Errorf("%s: field %q, code %q", tc.ID, d.Field(), d.Code)
 		}
-		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), tc.predicate) {
-			t.Errorf("%s: the error holds the caller's text: %v", tc.name, err)
+		if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), tc.Predicate) {
+			t.Errorf("%s: the error holds the caller's text: %v", tc.ID, err)
 		}
 	}
 
@@ -363,7 +345,7 @@ func TestMatchRefusalsNameTheConstructAndItsOffset(t *testing.T) {
 		`$.score < 3`,
 		`exists($.extra.emergency_contacts[*] ? (@.name == $v && @.age > 1))`,
 	} {
-		_, err := f.Match(ctx, cipher, predicate, vars, encrypt.JSONReadOptions{})
+		_, err := f.Match(ctx, cipher, predicate, map[string]any{"v": "secret-nz", "flag": true}, encrypt.JSONReadOptions{})
 		var d *encrypt.Diagnostic
 		if !errors.Is(err, encrypt.ErrTerm) || !errors.As(err, &d) || d.Code != "stack_encrypt::json_path_not_ordered" {
 			t.Errorf("%s: %v, want ErrTerm json_path_not_ordered", predicate, err)

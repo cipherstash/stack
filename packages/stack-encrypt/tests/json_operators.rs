@@ -2183,6 +2183,45 @@ mod compiled_match {
             )
         }
 
+        /// Shared native/Go predicate refusals preserve structured diagnostics.
+        #[test]
+        fn shared_predicate_refusals() {
+            let cases: Value = serde_json::from_str(include_str!(
+                "../../../conformance/stack-encrypt/v1/eql-json-v1.cases.json"
+            ))
+            .unwrap();
+            assert_eq!(cases["version"], 1);
+            assert_eq!(cases["profile"], "eql-json-v1");
+            for case in cases["predicate_refusals"].as_array().unwrap() {
+                let predicate = case["predicate"].as_str().unwrap();
+                assert_eq!(
+                    predicate.find(case["at_text"].as_str().unwrap()),
+                    Some(case["at"].as_u64().unwrap() as usize)
+                );
+                let request = match case.get("vars") {
+                    Some(vars) => input(predicate, vars.clone()),
+                    None => json!({"predicate": predicate}),
+                };
+                let error = check(&request).unwrap_err();
+                let payload = stack_encrypt::ErrorPayload::payload(&error);
+                assert_eq!(
+                    error.reason().map(Reason::as_str),
+                    case["reason"].as_str(),
+                    "{}",
+                    case["id"]
+                );
+                assert_eq!(payload["at"], case["at"], "{}", case["id"]);
+                assert_eq!(payload["construct"], case["construct"], "{}", case["id"]);
+                assert_eq!(error.field(), Some("profile"));
+                let rendered = format!("{error} {payload:?}");
+                assert!(
+                    !rendered.contains("secret") && !rendered.contains(predicate),
+                    "{}: the error holds the caller's text: {rendered}",
+                    case["id"]
+                );
+            }
+        }
+
         /// A refusal names its reason, the construct and its offset in the
         /// caller's text, and the field; the input's own shape is refused
         /// as the other operators refuse theirs.

@@ -233,12 +233,13 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
  * conformance/stack-encrypt/README.md § Files: every file in v1/ is
  * <profile>.<role>.json, with the profile in its header, so a file's name
  * says which profile it belongs to and whether it holds cases, one
- * producer's frozen outputs or one runner's extra inputs.
+ * producer's frozen outputs, one runner's extra inputs or the index of
+ * existing tests enrolled as its evidence.
  */
 describe('conformance files are named after their profile and role', () => {
   const dir = 'conformance/stack-encrypt/v1'
   const NAME =
-    /^(?<profile>[a-z0-9-]+-v\d+)\.(?<role>cases|expected\.(?<producer>[a-z0-9-]+)|inputs\.(?<runner>[a-z0-9-]+))\.json$/
+    /^(?<profile>[a-z0-9-]+-v\d+)\.(?<role>cases|enrollment|expected\.(?<producer>[a-z0-9-]+)|inputs\.(?<runner>[a-z0-9-]+))\.json$/
   const files = readdirSync(join(REPO_ROOT, dir)).filter(
     (file) => file !== 'fixture-enrollment.json',
   )
@@ -254,6 +255,10 @@ describe('conformance files are named after their profile and role', () => {
       expect(files, `${file} has no cases file`).toContain(
         `${profile}.cases.json`,
       )
+    }
+    if (role === 'enrollment') {
+      expect(header.requirements?.length).toBeGreaterThan(0)
+    } else if (role !== 'cases') {
       expect(Object.keys(header.cases ?? {}).length).toBeGreaterThan(0)
     }
     if (producer) expect(header.producer).toMatch(new RegExp(`^${producer}`))

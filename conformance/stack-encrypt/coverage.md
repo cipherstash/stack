@@ -106,3 +106,19 @@ Go proves canonical AAD indirectly through its actual guest plan frame and nativ
 ciphertext opening; provider-call instrumentation remains a separate gap.
 Nested composite extensions remain a native API capability rather than an
 unsupported feature silently advertised by the Go/dynamic record profile.
+
+## EQL/JSON checkpoint
+
+The [EQL/JSON contract](eql-json-contract.md) and its enrollment index cover
+resolver/catalog capabilities, JSON writes and queries, request-bound reads,
+element-match and predicate-match. Existing Rust, Go and PostgreSQL suites stay
+in place. The common document and predicate-refusal tables now live in
+`v1/eql-json-v1.cases.json`: Rust and Go execute them, retaining native key-call checks,
+Go diagnostic mapping and all extra cases from the original suites.
+
+The database lane preserves independent plaintext oracles and generated
+properties. Required test inventory/no-skip checks and engine/guest/SQL identity
+reports make enrollment observable. This consolidates data and requirements;
+it does not replace adapter tests or claim whole-database authentication.
+Fresh JSON artifact exchange, released-version matrices and Python/TypeScript
+runners remain open.

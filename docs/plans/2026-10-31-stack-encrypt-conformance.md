@@ -224,3 +224,19 @@ binding/search-scope split.
 
 Next: the EQL/JSON operation profile. Python and TypeScript runner delivery
 and the wider fresh artifact exchange remain separate planned work.
+
+## EQL/JSON operation checkpoint
+
+Implemented the nine requirements in
+`conformance/stack-encrypt/eql-json-contract.md`, enrolling the existing engine,
+EQL binding, Go SDK and independent PostgreSQL suites. A shared corpus replaces
+duplicate write/refusal tables; existing typed, generated, property and
+adversarial assertions remain. Required fast and PostgreSQL commands check
+compiled native inventory and exact Go pass events, refuse skipped evidence,
+and report engine, lockfile, guest and installed SQL identities in CI artifacts.
+
+Next: backend lifecycle, cancellation, no-secret diagnostics, provider key-I/O
+and batching requirements. Python/TypeScript enrollment and the broader fresh
+artifact/version exchange remain separate delivery slices. The EQL/JSON profile
+does not complete the refactoring track or introduce the future binding/search
+scope split.

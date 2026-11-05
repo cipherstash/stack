@@ -64,6 +64,7 @@ on:
       - "packages/eql/docker/**"
       - "packages/eql/README.md"
       - "packages/eql/SUPABASE.md"
+      - "conformance/stack-encrypt/**"
       - "packages/stack-encrypt/**"
       - "packages/stack-encrypt-derive/**"
       - "packages/stack-kms/**"
