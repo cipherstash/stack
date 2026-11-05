@@ -24,6 +24,7 @@ use std::future::Future;
 use uuid::Uuid;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
+use crate::backend::KeyBackend;
 use crate::errors::Error;
 use crate::key::{DataKey, DataKeyWithTag, IndexKey};
 use crate::maybe_send::MaybeSend;
@@ -57,6 +58,19 @@ pub trait DataKeySource {
         keyset_id: Option<Uuid>,
         unverified_context: Option<&UnverifiedContext>,
     ) -> impl Future<Output = Result<Vec<DataKey>, Error>> + MaybeSend;
+
+    /// The key backend this source is.
+    ///
+    /// A cipher reads it before any key call. It refuses a sealed leaf that
+    /// names another key backend, as it refuses a leaf from a foreign
+    /// keyset, so a leaf never reaches a backend that did not seal it. The
+    /// default is [`KeyBackend::ZeroKms`], so every existing source keeps
+    /// the ZeroKMS behaviour. A key vendor backend overrides it to return
+    /// [`KeyBackend::Vendor`]. A wrapper that forwards to another source
+    /// must forward this method too.
+    fn key_backend(&self) -> KeyBackend {
+        KeyBackend::ZeroKms
+    }
 }
 
 /// The slice of ZeroKMS functionality required to *index* encrypted data:

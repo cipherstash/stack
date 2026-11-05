@@ -76,6 +76,7 @@ assert_eq!(keys.len(), 1);
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
 
+mod backend;
 #[cfg(feature = "http")]
 mod builder;
 mod client;
@@ -131,6 +132,9 @@ pub use stack_auth::{diagnostic, ErrorPayload};
 
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
+
+// Key backends and key modes (the v2 leaf's header bytes)
+pub use backend::{KeyBackend, KeyMode, KeyVendor};
 
 // Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
 #[cfg(feature = "test-support")]
