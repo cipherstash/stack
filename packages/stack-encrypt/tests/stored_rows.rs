@@ -218,7 +218,9 @@ fn refreeze_order_terms(stored: &mut Json, resealed: &Json) {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> Vec<u8> {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    vitaminc_protected::Controlled::risky_unwrap(
+        vitaminc_aead_frame::serde::to_vec(value).expect("frames"),
+    )
 }
 
 fn plan_of(json: &Json) -> DataPlan {
@@ -386,9 +388,9 @@ impl Value {
     }
 
     fn frame(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
+        let mut bytes = vitaminc_protected::Buffer::new();
         self.write(FrameWriter::new(&mut bytes)).expect("frames");
-        bytes
+        vitaminc_protected::Controlled::risky_unwrap(bytes)
     }
 }
 

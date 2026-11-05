@@ -12,6 +12,7 @@ use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::record::{self, NullMode, Output};
 use stack_encrypt::{ContextPiece, ErrorPayload};
+use vitaminc_protected::Controlled as _;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,9 +114,9 @@ fn shared_declaration_grammar() {
             case.id
         );
         let frame = match case.input {
-            Input::Json(value) => {
-                vitaminc_aead_frame::serde::to_vec(&projection(&value).unwrap()).unwrap()
-            }
+            Input::Json(value) => vitaminc_aead_frame::serde::to_vec(&projection(&value).unwrap())
+                .unwrap()
+                .risky_unwrap(),
             Input::FrameHex(text) => unhex(&text),
         };
         if let Some(boundary) = case.boundary_error {
@@ -211,11 +212,15 @@ fn projection(raw: &RawValue) -> Result<Projection, Box<dyn std::error::Error>> 
 fn json_projection_is_lexical_and_lossless() {
     fn encoded(text: &str) -> Vec<u8> {
         let raw = serde_json::from_str::<Box<RawValue>>(text).unwrap();
-        vitaminc_aead_frame::serde::to_vec(&projection(&raw).unwrap()).unwrap()
+        vitaminc_aead_frame::serde::to_vec(&projection(&raw).unwrap())
+            .unwrap()
+            .risky_unwrap()
     }
     assert_eq!(
         encoded("-0"),
-        vitaminc_aead_frame::serde::to_vec(&0i64).unwrap()
+        vitaminc_aead_frame::serde::to_vec(&0i64)
+            .unwrap()
+            .risky_unwrap()
     );
     assert_eq!(encoded(r#"{"z":1,"a":2}"#), encoded(r#"{"a":2,"z":1}"#));
     for invalid in ["18446744073709551616", "-9223372036854775809", "1e400"] {

@@ -19,6 +19,7 @@ use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
     CipherText, Ciphertext, Error, KeysetCipher, Label, SealedValue, StackCipherText,
 };
+use vitaminc_protected::Controlled as _;
 
 const PROFILE: &str = "record-scalars-v1";
 
@@ -77,7 +78,12 @@ fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
     let declaration = json!({corpus.field.clone(): {
         "context": context, "outputs": ["c", "eq"], "type": case.kind,
     }});
-    record::plan(&vitaminc_aead_frame::serde::to_vec(&declaration).unwrap()).unwrap()
+    record::plan(
+        &vitaminc_aead_frame::serde::to_vec(&declaration)
+            .unwrap()
+            .risky_unwrap(),
+    )
+    .unwrap()
 }
 
 fn stored(corpus: &Corpus, artifact: &Artifact) -> StackCipherText {

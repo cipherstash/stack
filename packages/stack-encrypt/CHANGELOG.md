@@ -17,6 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different terms and silently miss those old rows: they return no error. Keep
   the final extension alone for both reads and queries of old data, or re-encrypt
   and re-index it under the appended context. This does not migrate stored data.
+- **stack-encrypt requires the vitaminc 0.9 crates, clww-ore 0.7 and
+  ore-rs 0.11.** A crate that names a vitaminc type
+  stack-encrypt takes or returns moves to 0.9 with it. No sealed byte, term
+  or stored format changes. Two things in this crate's surface change.
+  The re-exported frame codec, `stack_encrypt::dynamic::frame`: its
+  `serde::to_vec` and `FrameWriter` now produce and write into a
+  `vitaminc_protected::Buffer`, which wipes each allocation it outgrows,
+  rather than a `Vec<u8>`. Read the bytes with `risky_ref`, or take them
+  with `risky_unwrap`; `Buffer` is re-exported as `stack_encrypt::Buffer`
+  beside `Protected`. `ValueFrame::into_inner` still returns
+  `Protected<Vec<u8>>`. And a repeated key in a value written to a frame
+  (`ValueFrame::of`, outside a passthrough) is now refused unnamed, as a
+  `DecodeError::Source` wrapping `FrameWriteError::DuplicateKey`, rather
+  than as `DecodeError::DuplicateKey(key)`: the 0.9 writer copies no key
+  out of the frame. A record source still reports `Reason::RepeatedKey`
+  for the field.
 
 ### Added
 

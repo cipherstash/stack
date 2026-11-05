@@ -410,5 +410,6 @@ pub use vitaminc_prf::PrfContext;
 pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};
 
 // And the wrapper plaintext comes back in (`ValueFrame::into_inner`, a
-// decrypted `Protected<T>`), with the trait that reads it.
-pub use vitaminc_protected::{Controlled, Protected};
+// decrypted `Protected<T>`), with the trait that reads it, and the wiping
+// buffer the re-exported frame writer writes into (`dynamic::frame`).
+pub use vitaminc_protected::{Buffer, Controlled, Protected};

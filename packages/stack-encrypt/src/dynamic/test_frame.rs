@@ -13,7 +13,7 @@ use vitaminc_aead::plaintext::{
     Sink, SourceError,
 };
 use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, Frame};
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::Controlled;
 
 /// A value as a test spells it: each scalar at its own width, a logical
 /// scalar under its type. Equality is structural and variable-time, which
@@ -77,7 +77,7 @@ impl PartialEq for Tree {
 impl Tree {
     /// The tree's frame, written by vitaminc's own frame writer, which
     /// refuses a repeated key.
-    pub(crate) fn to_frame(&self) -> Result<Protected<Vec<u8>>, FrameWriteError> {
+    pub(crate) fn to_frame(&self) -> Result<vitaminc_protected::Buffer, FrameWriteError> {
         to_frame(self)
     }
 
@@ -138,7 +138,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
 /// read back.
 pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> Tree {
     let frame = vitaminc_aead_frame::serde::to_vec(answer).expect("frames");
-    Tree::from_frame(&frame).expect("a value")
+    Tree::from_frame(frame.risky_ref()).expect("a value")
 }
 
 fn scalar<S: Sink>(sink: S, ty: Option<Logical>, value: &Tree) -> Result<S::Ok, S::Error> {

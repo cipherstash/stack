@@ -77,7 +77,9 @@ fn stats_cases() -> Vec<(Json, Stats)> {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> Vec<u8> {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    vitaminc_protected::Controlled::risky_unwrap(
+        vitaminc_aead_frame::serde::to_vec(value).expect("frames"),
+    )
 }
 
 /// A JSON value as the frame a binding sends: a number is a `u64` when it

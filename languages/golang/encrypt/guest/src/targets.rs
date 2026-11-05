@@ -321,7 +321,8 @@ mod tests {
                 }
             });
             let frame = dynamic::frame::serde::to_vec(&wire).expect("plan frame");
-            let plan = record::plan_with(&frame, &resolver()).expect("plan");
+            let plan = record::plan_with(stack_encrypt::Controlled::risky_ref(&frame), &resolver())
+                .expect("plan");
             dynamic::field_operators(&plan, "profile", &resolver())
                 .expect("operators")
                 .into_iter()

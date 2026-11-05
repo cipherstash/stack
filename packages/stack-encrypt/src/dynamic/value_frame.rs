@@ -37,7 +37,7 @@ use vitaminc_aead::plaintext::{
     TimeUnit, Width,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
-use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
+use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, Protected};
 
 use super::ValueKind;
 use crate::plan::IntoLabel;
@@ -92,9 +92,12 @@ impl ValueFrame {
     ///
     /// [`DecodeError::Expected`] for a scalar outside the model (a uuid, a
     /// logical type this build does not know, a date, decimal or timestamp
-    /// outside vitaminc's range), [`DecodeError::DuplicateKey`] for a map with a
-    /// repeated key, and [`DecodeError::Source`] for a source that fails or
-    /// a value deeper or longer than a frame carries.
+    /// outside vitaminc's range), [`DecodeError::DuplicateKey`] for a map in a
+    /// passthrough with a repeated key, and [`DecodeError::Source`] for a
+    /// source that fails, a value deeper or longer than a frame carries, or
+    /// a repeated key anywhere else. That last is the frame writer's
+    /// [`FrameWriteError::DuplicateKey`], which names no key: the key is
+    /// plaintext, and the writer copies none out of the frame.
     pub fn of<P: Encrypt>(value: P) -> Result<Self, DecodeError> {
         write(|writer| value.visit(Modeled::new(writer)))
     }
@@ -141,9 +144,16 @@ impl ValueFrame {
 
     /// A frame this module's writers wrote from frames already in the value
     /// model: the record a decrypt assembles. Checked to be one frame.
-    pub(super) fn from_written(buffer: Protected<Vec<u8>>) -> Result<Self, crate::Error> {
+    pub(super) fn from_written(buffer: Buffer) -> Result<Self, crate::Error> {
         let _ = Frame::parse(buffer.risky_ref()).map_err(|_| crate::Error::ResponseShape)?;
-        Ok(Self(buffer))
+        Ok(Self::from_buffer(buffer))
+    }
+
+    /// A frame a writer finished writing. The bytes move out of the
+    /// [`Buffer`] they grew in, which wiped every allocation it outgrew,
+    /// into the [`Protected`] the frame holds; nothing is copied.
+    fn from_buffer(buffer: Buffer) -> Self {
+        Self(Protected::new(buffer.risky_unwrap()))
     }
 
     /// The null, as a frame: what an absent value opens to.
@@ -286,9 +296,9 @@ impl MapSink for Check {
 fn write(
     f: impl FnOnce(FrameWriter<'_>) -> Result<(), DecodeError>,
 ) -> Result<ValueFrame, DecodeError> {
-    let mut buffer = Protected::new(Vec::new());
-    f(FrameWriter::new(buffer.risky_inner_mut()))?;
-    Ok(ValueFrame(buffer))
+    let mut buffer = Buffer::new();
+    f(FrameWriter::new(&mut buffer))?;
+    Ok(ValueFrame::from_buffer(buffer))
 }
 
 /// Walks the frame in place: no scalar leaves the buffer except to go
@@ -441,12 +451,29 @@ pub(super) struct FieldFault {
     pub(super) error: DecodeError,
 }
 
-/// A frame writer's refusal as a decode error. A repeated key is reported
-/// where the key is known ([`Modeled::entry`]). A value the model does not
-/// hold, or a repeated key, inside a passthrough subtree reaches here wrapped
-/// as the writer's source error ([`ModelOnly`] can only return the writer's
-/// error type), and is unwrapped, so it is refused as the same `Expected` or
-/// `DuplicateKey` a sealed value is.
+/// A frame writer's refusal as a decode error. A value the model does not
+/// hold inside a passthrough subtree reaches here wrapped as the writer's
+/// source error ([`ModelOnly`] can only return the writer's error type), and
+/// is unwrapped, so it is refused as the same `Expected` a sealed value is.
+///
+/// A repeated key stays the writer's own unnamed
+/// [`FrameWriteError::DuplicateKey`], in or out of a passthrough: the writer
+/// finds it when the map ends, among the keys already in the frame, and
+/// names none, since naming it would copy plaintext out of the frame where
+/// it would be freed unwiped. [`is_unnamed_repeated_key`] recognises it.
+/// Whether `error` is the frame writer's refusal of a repeated map key, which
+/// reaches a caller unnamed (see [`decode_error`]).
+pub(super) fn is_unnamed_repeated_key(error: &DecodeError) -> bool {
+    matches!(
+        error,
+        DecodeError::Source(source)
+            if matches!(
+                source.inner().downcast_ref::<FrameWriteError>(),
+                Some(FrameWriteError::DuplicateKey)
+            )
+    )
+}
+
 fn decode_error(error: FrameWriteError) -> DecodeError {
     match error {
         FrameWriteError::Source(error) => match error.inner().downcast_ref::<DecodeError>() {
@@ -553,9 +580,6 @@ impl MapSink for Modeled<FrameMap<'_>> {
                 inner: writer,
                 field,
             }),
-            Err(FrameWriteError::DuplicateKey) => {
-                Err(Modeled { inner: (), field }.fault(DecodeError::duplicate_key(key)))
-            }
             Err(error) => Err(Modeled { inner: (), field }.written(error)),
         }
     }
@@ -736,7 +760,7 @@ type Finish<T> = fn(bool, Vec<(Option<String>, ValueFrame)>) -> Result<T, Decode
 /// keeps a repeated key for `finish` to refuse.
 pub struct Children<T> {
     map: bool,
-    children: Vec<(Option<String>, Protected<Vec<u8>>)>,
+    children: Vec<(Option<String>, Buffer)>,
     finish: Finish<T>,
 }
 
@@ -750,21 +774,20 @@ impl<T> Children<T> {
     }
 
     fn next(&mut self, key: Option<&str>) -> Modeled<FrameWriter<'_>> {
-        self.children
-            .push((key.map(str::to_owned), Protected::new(Vec::new())));
+        self.children.push((key.map(str::to_owned), Buffer::new()));
         let buffer = match self.children.last_mut() {
             Some((_, buffer)) => buffer,
             // Pushed on the line above.
             None => unreachable!(),
         };
-        Modeled::new(FrameWriter::new(buffer.risky_inner_mut()))
+        Modeled::new(FrameWriter::new(buffer))
     }
 
     fn finish(self) -> Result<T, DecodeError> {
         let children = self
             .children
             .into_iter()
-            .map(|(key, buffer)| (key, ValueFrame(buffer)))
+            .map(|(key, buffer)| (key, ValueFrame::from_buffer(buffer)))
             .collect();
         (self.finish)(self.map, children)
     }
@@ -1195,7 +1218,7 @@ impl SeqSink for NotARow<'_> {
 /// names the entry's key in any refusal.
 pub(super) struct RowMap<O> {
     out: O,
-    entries: Vec<(String, Protected<Vec<u8>>)>,
+    entries: Vec<(String, Buffer)>,
 }
 
 impl<O> RowMap<O> {
@@ -1216,24 +1239,20 @@ impl<O: PutRow> MapSink for RowMap<O> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<Modeled<FrameWriter<'_>>, DecodeError> {
-        self.entries
-            .push((key.to_owned(), Protected::new(Vec::new())));
+        self.entries.push((key.to_owned(), Buffer::new()));
         let buffer = match self.entries.last_mut() {
             Some((_, buffer)) => buffer,
             // Pushed on the line above.
             None => unreachable!(),
         };
-        Ok(Modeled::in_field(
-            FrameWriter::new(buffer.risky_inner_mut()),
-            key,
-        ))
+        Ok(Modeled::in_field(FrameWriter::new(buffer), key))
     }
 
     fn end(self) -> Result<O::Ok, DecodeError> {
         let row = self
             .entries
             .into_iter()
-            .map(|(key, buffer)| (key, ValueFrame(buffer)))
+            .map(|(key, buffer)| (key, ValueFrame::from_buffer(buffer)))
             .collect();
         Ok(self.out.put(Some(row)))
     }
@@ -1610,10 +1629,12 @@ mod tests {
             ValueFrame::of(hidden),
             Err(DecodeError::Expected(_))
         ));
+        // A repeated key is refused when its map ends, unnamed: the writer
+        // copies no key out of the frame to say which one.
         let repeated = Tree::Object(vec![("k".into(), Tree::Null), ("k".into(), Tree::Null)]);
         assert!(matches!(
             ValueFrame::of(&repeated),
-            Err(DecodeError::DuplicateKey(key)) if key == "k"
+            Err(ref error) if super::is_unnamed_repeated_key(error)
         ));
         assert!(matches!(
             ValueFrame::from_bytes(&[]),

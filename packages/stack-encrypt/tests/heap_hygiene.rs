@@ -50,6 +50,7 @@ use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, OpSpec, Scop
 use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
 use vitaminc_aead::Frame;
+use vitaminc_protected::Controlled as _;
 
 /// What every plaintext under test carries.
 const MARK: &[u8] = b"zq-heap-marker-7f3a9c";
@@ -548,7 +549,9 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
                     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
     });
     let plan = record::plan_with(
-        &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+        &stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .risky_unwrap(),
         &Documents,
     )
     .unwrap();
@@ -916,7 +919,9 @@ mod json_index {
                         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age", "$.visits[*].at"]}}}
         });
         let plan = record::plan_with(
-            &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+            &stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+                .unwrap()
+                .risky_unwrap(),
             &Documents,
         )
         .unwrap();

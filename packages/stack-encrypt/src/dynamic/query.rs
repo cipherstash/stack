@@ -184,6 +184,7 @@ pub enum OpSpec {
     /// ```
     /// use serde_json::json;
     /// use stack_encrypt::dynamic::{check_query, frame, record, OpSpec, Reason, ValueFrame};
+    /// use stack_encrypt::Controlled;
     /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
     /// # use stack_encrypt::target::IndexSpec;
     /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
@@ -209,17 +210,18 @@ pub enum OpSpec {
     /// # }
     /// // A document field that orders `$.age`.
     /// let plan = record::plan_with(
-    ///     &frame::serde::to_vec(&json!({"profile": {
+    ///     frame::serde::to_vec(&json!({"profile": {
     ///         "context": ["users", "profile"], "type": "json", "null": "sql",
     ///         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}
-    ///     }}))?,
+    ///     }}))?
+    ///     .risky_ref(),
     ///     &Documents,
     /// )?;
     /// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
     /// // variables as the JSON text of one object.
     /// let input = |predicate: &str| -> ValueFrame {
     ///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
-    ///     ValueFrame::from_bytes(&frame::serde::to_vec(&input).unwrap()).unwrap()
+    ///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().risky_ref()).unwrap()
     /// };
     /// let check = |predicate: &str| {
     ///     check_query(&plan, "profile", OpSpec::Match, input(predicate), &Documents)
@@ -787,10 +789,11 @@ fn answers(
 /// ```
 /// use stack_encrypt::dynamic::{field_operators, record, NoTargets, OpSpec};
 /// use stack_encrypt::target::IndexSpec;
+/// use stack_encrypt::Controlled;
 ///
-/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let plan = record::plan(vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
-/// }))?)?;
+/// }))?.risky_ref())?;
 ///
 /// let operators = field_operators(&plan, "age", &NoTargets)?;
 /// assert_eq!(operators[0], (OpSpec::Eq, IndexSpec::Equality));
@@ -1191,14 +1194,14 @@ where
 /// ```
 /// use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand};
 /// use stack_encrypt::kms::FakeDataKeySource;
-/// use stack_encrypt::{op, Ore, Plan, StackCipher};
+/// use stack_encrypt::{op, Controlled, Ore, Plan, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let keyset = cipher.default_keyset();
-/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let plan = record::plan(vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
-/// }))?)?;
+/// }))?.risky_ref())?;
 ///
 /// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, 40u32, &NoTargets)?.await?;
 ///
@@ -2202,9 +2205,9 @@ mod tests {
             tokenizer: crate::sem::Tokenizer::Ngram { length: 0 },
             ..MatchOptions::default()
         };
-        let context = crate::dynamic::context(
+        let context = crate::dynamic::context(vitaminc_protected::Controlled::risky_ref(
             &vitaminc_aead_frame::serde::to_vec(&("users", "name")).expect("frames"),
-        )
+        ))
         .expect("context");
         let field = FieldPlan::new(
             "name",
@@ -2508,9 +2511,9 @@ mod tests {
 
         let stored = |value: &ValueFrame, name: &'static str| {
             let keyset = &keyset;
-            let ctx = super::super::context(
+            let ctx = super::super::context(vitaminc_protected::Controlled::risky_ref(
                 &vitaminc_aead_frame::serde::to_vec(&("users", name)).expect("frames"),
-            )
+            ))
             .expect("context");
             let value = value.clone();
             async move {
@@ -3173,8 +3176,7 @@ mod wire_bytes {
     use vitaminc_aead_frame::serde::to_vec;
 
     fn hex<T: Serialize>(value: &T) -> String {
-        to_vec(value)
-            .expect("frames")
+        vitaminc_protected::Controlled::risky_ref(&to_vec(value).expect("frames"))
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect()

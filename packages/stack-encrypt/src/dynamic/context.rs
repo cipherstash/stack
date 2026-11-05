@@ -74,11 +74,11 @@ use crate::{ContextPiece, NonEmpty};
 ///
 /// ```
 /// use stack_encrypt::dynamic::context;
-/// use stack_encrypt::{nonempty, IntoAad};
+/// use stack_encrypt::{nonempty, Controlled, IntoAad};
 ///
 /// // `[["users", "age"], 7u64]`, as a binding writes it.
 /// let frame = vitaminc_aead_frame::serde::to_vec(&(("users", "age"), 7u64))?;
-/// let parsed = context(&frame)?;
+/// let parsed = context(frame.risky_ref())?;
 /// let typed = nonempty!("users").with("age").with(7u64);
 /// assert_eq!(
 ///     parsed.into_inner().into_aad().as_bytes(),
@@ -546,7 +546,9 @@ mod tests {
     /// refused rather than widened.
     #[test]
     fn an_integer_is_read_at_its_own_width() {
-        let read = |frame: Vec<u8>| context(&frame).map(NonEmpty::into_inner);
+        let read = |frame: vitaminc_protected::Buffer| {
+            context(vitaminc_protected::Controlled::risky_ref(&frame)).map(NonEmpty::into_inner)
+        };
         assert_eq!(read(to_vec(&7i32).unwrap()).unwrap(), ContextPiece::I32(7));
         assert_eq!(read(to_vec(&7i64).unwrap()).unwrap(), ContextPiece::I64(7));
         assert_eq!(read(to_vec(&7u32).unwrap()).unwrap(), ContextPiece::U32(7));
@@ -602,7 +604,11 @@ mod tests {
     /// Bytes that are not one frame are not a context.
     #[test]
     fn bytes_that_are_not_a_frame_are_refused() {
-        for bytes in [&[][..], &[0xff, 1, 2], &to_vec(&"a").unwrap()[..2]] {
+        for bytes in [
+            &[][..],
+            &[0xff, 1, 2],
+            &vitaminc_protected::Controlled::risky_ref(&to_vec(&"a").unwrap())[..2],
+        ] {
             assert!(matches!(
                 context(bytes),
                 Err(Error::Context {

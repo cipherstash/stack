@@ -29,6 +29,7 @@
 
 use serde::{Deserialize, Serialize, Serializer};
 use stack_encrypt::dynamic::frame::serde::{from_slice, to_vec};
+use stack_encrypt::Controlled as _;
 use stack_guest_abi::last_error::malformed;
 use stack_guest_abi::step::{Request, Response};
 use zeroize::Zeroizing;
@@ -63,13 +64,14 @@ pub fn encode_step(handle: u64, requests: &[Request]) -> Result<Vec<u8>, u32> {
             })
             .collect(),
     };
-    let frame = Zeroizing::new(to_vec(&wire).map_err(|_| STATUS_ENCODING)?);
+    // A `Buffer`, which wipes on drop and as it grows.
+    let frame = to_vec(&wire).map_err(|_| STATUS_ENCODING)?;
     // Sized exactly, as every output is: the registry would otherwise
     // reallocate a buffer with spare capacity and leave the old one unwiped.
     let mut out = Vec::new();
     out.try_reserve_exact(frame.len())
         .map_err(|_| stack_guest_abi::last_error::internal("no memory for a step's requests"))?;
-    out.extend_from_slice(&frame);
+    out.extend_from_slice(frame.risky_ref());
     Ok(out)
 }
 

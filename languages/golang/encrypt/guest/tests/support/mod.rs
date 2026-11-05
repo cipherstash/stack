@@ -15,7 +15,7 @@ use stack_encrypt::dynamic::plaintext::{
     visit_map, visit_seq, Error as _, FixedType, Float, Int, Logical, MapSink, Physical, SeqSink,
     Sink, SourceError,
 };
-use stack_encrypt::{Controlled, Protected};
+use stack_encrypt::Controlled;
 use stack_encrypt::{DecodeError, Decrypt, Encrypt};
 
 /// A value as a test spells it: each scalar at its own width, a logical
@@ -80,7 +80,7 @@ impl PartialEq for Tree {
 impl Tree {
     /// The tree's frame, written by vitaminc's own frame writer, which
     /// refuses a repeated key.
-    pub(crate) fn to_frame(&self) -> Result<Protected<Vec<u8>>, FrameWriteError> {
+    pub(crate) fn to_frame(&self) -> Result<stack_encrypt::Buffer, FrameWriteError> {
         to_frame(self)
     }
 
@@ -141,7 +141,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
 /// read back.
 pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> Tree {
     let frame = stack_encrypt::dynamic::frame::serde::to_vec(answer).expect("frames");
-    Tree::from_frame(&frame).expect("a value")
+    Tree::from_frame(frame.risky_ref()).expect("a value")
 }
 
 fn scalar<S: Sink>(sink: S, ty: Option<Logical>, value: &Tree) -> Result<S::Ok, S::Error> {

@@ -25,6 +25,7 @@ use stack_encrypt::json::{JsonDocument, Tag};
 use stack_encrypt::target::{Borrowed, CallerContext, IndexSpec};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 use stack_kms::{DataKeySource, IndexKeySource};
+use vitaminc_protected::Controlled as _;
 
 /// What the helpers below run over: any key source a test builds its
 /// cipher on.
@@ -116,7 +117,11 @@ fn plan_of(target: Value) -> record::Plan {
     let wire = json!({
         "profile": {"context": ["users", "profile"], "type": "json", "null": "sql", "target": target}
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Documents).unwrap()
+    record::plan_with(
+        &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+        &Documents,
+    )
+    .unwrap()
 }
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -125,7 +130,7 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 
 /// A JSON value as a frame: what a binding sends as an input or a request.
 fn json_frame(value: &Value) -> ValueFrame {
-    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
+    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap().risky_unwrap()).unwrap()
 }
 
 async fn term<K: Source>(
@@ -743,7 +748,8 @@ async fn rows_that_are_not_the_reads_are_refused() {
             "prefs": {"context": ["users", "prefs"], "type": "json", "null": "sql",
                       "target": "JsonSearch"}
         }))
-        .unwrap(),
+        .unwrap()
+        .risky_unwrap(),
         &Documents,
     )
     .unwrap();
@@ -912,8 +918,11 @@ fn a_malformed_read_is_refused_before_any_key() {
     // A field that does not store a document has no reads.
     let wire =
         json!({"email": {"context": ["users", "email"], "type": "string", "outputs": ["c"]}});
-    let scalar =
-        record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Documents).unwrap();
+    let scalar = record::plan_with(
+        &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+        &Documents,
+    )
+    .unwrap();
     let error = dynamic::check_json_open(
         &scalar,
         "email",
@@ -1581,8 +1590,11 @@ mod element_match {
                 "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
                             "target": {"name": "JsonSearch", "options": {"ordered": ["$.a[*].b"]}}}
             });
-            let plan = record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Unnamed)
-                .unwrap();
+            let plan = record::plan_with(
+                &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+                &Unnamed,
+            )
+            .unwrap();
             let names = names(&plan, &Unnamed);
             assert!(names.contains(&"lt_at"), "the orderings still: {names:?}");
             assert!(!names.contains(&"element_match"), "{names:?}");
@@ -2373,8 +2385,11 @@ mod compiled_match {
                 "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
                             "target": "JsonSearch"}
             });
-            let plan = record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Unnamed)
-                .unwrap();
+            let plan = record::plan_with(
+                &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+                &Unnamed,
+            )
+            .unwrap();
             let names = names(&plan, &Unnamed);
             assert!(names.contains(&"eq_at"), "the others still: {names:?}");
             assert!(!names.contains(&"match"), "{names:?}");

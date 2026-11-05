@@ -20,6 +20,7 @@ use stack_kms::{
     UnverifiedContext,
 };
 use uuid::Uuid;
+use vitaminc_protected::Controlled as _;
 
 #[derive(Default)]
 struct Observations {
@@ -108,7 +109,8 @@ fn plan() -> record::Plan {
         &vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
             "value": {"context": ["lifecycle", "value"], "outputs": ["c"], "type": "string"}
         }))
-        .unwrap(),
+        .unwrap()
+        .risky_unwrap(),
     )
     .unwrap()
 }

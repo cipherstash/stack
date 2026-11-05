@@ -1186,6 +1186,7 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 /// ```
 /// use stack_encrypt::dynamic::{record, NoTargets, Output};
 /// use stack_encrypt::target::IndexSpec;
+/// use stack_encrypt::Controlled;
 ///
 /// // As a binding sends it: seal `age` under the label users/age and index
 /// // it for equality.
@@ -1196,7 +1197,7 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 ///         "type": "uint32",
 ///     },
 /// }))?;
-/// let plan = record::plan_with(&frame, &NoTargets)?;
+/// let plan = record::plan_with(frame.risky_ref(), &NoTargets)?;
 ///
 /// assert_eq!(plan.fields().len(), 1);
 /// assert_eq!(plan.fields()[0].name(), "age");
@@ -1587,7 +1588,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 ///
 /// ```
 /// use stack_encrypt::dynamic::{record, Scope, ValueFrame};
-/// use stack_encrypt::StackCipher;
+/// use stack_encrypt::{Controlled, StackCipher};
 /// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -1598,9 +1599,9 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// let keyset = cipher.default_keyset();
 ///
 /// // Seal `age` under users/age with an equality term beside it.
-/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let plan = record::plan(vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq"], "type": "uint32" },
-/// }))?)?;
+/// }))?.risky_ref())?;
 ///
 /// // The row as a binding hands it over: one transport frame. Here a Rust
 /// // map writes it; a binding's codec writes the same bytes.
@@ -2318,6 +2319,7 @@ fn split_refusal(error: DecodeError) -> Error {
     };
     let reason = match error {
         DecodeError::DuplicateKey(_) => Reason::RepeatedKey,
+        error if super::value_frame::is_unnamed_repeated_key(error) => Reason::RepeatedKey,
         DecodeError::Expected(_) => Reason::FieldType,
         _ => Reason::Unframeable,
     };
@@ -2624,8 +2626,8 @@ fn write_record(rows: Rows<Vec<(String, ValueFrame)>>) -> Result<ValueFrame, cra
         }
         map.end()
     }
-    let mut out = Protected::new(Vec::new());
-    let writer = FrameWriter::new(out.risky_inner_mut());
+    let mut out = vitaminc_protected::Buffer::new();
+    let writer = FrameWriter::new(&mut out);
     let written = match rows {
         Rows::One(fields) => writer
             .map(Some(fields.len()))
@@ -8193,7 +8195,7 @@ mod tests {
                 Some(vitaminc_aead::plaintext::Logical::Uuid),
                 vitaminc_aead::plaintext::Physical::Bytes(&[7; 16]),
             );
-            let mut frame = Vec::new();
+            let mut frame = vitaminc_protected::Buffer::new();
             {
                 let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
                     .map(Some(1))
@@ -8202,12 +8204,12 @@ mod tests {
                     .expect("written");
                 map.end().expect("ended");
             }
-            let source = vitaminc_aead::Frame::parse(&frame).expect("a frame");
+            let source = vitaminc_aead::Frame::parse(frame.risky_ref()).expect("a frame");
             let error = check_source(source, &plan).expect_err("a uuid field");
             expect(&error, "Source", Some("email"), FieldType);
             // The same inside a passthrough subtree: the field is named, and
             // the cause is the value's type, not an unframeable source.
-            let mut frame = Vec::new();
+            let mut frame = vitaminc_protected::Buffer::new();
             {
                 let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
                     .map(Some(1))
@@ -8218,7 +8220,7 @@ mod tests {
                     .expect("written");
                 map.end().expect("ended");
             }
-            let source = vitaminc_aead::Frame::parse(&frame).expect("a frame");
+            let source = vitaminc_aead::Frame::parse(frame.risky_ref()).expect("a frame");
             let error = check_source(source, &plan).expect_err("a uuid in a passthrough");
             expect(&error, "Source", Some("id"), FieldType);
             // Each row of a batch is split the same way, and the first fault

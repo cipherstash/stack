@@ -14,6 +14,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::Ordering,
 };
+use vitaminc_protected::Controlled as _;
 
 type Row = BTreeMap<String, Input>;
 
@@ -102,9 +103,12 @@ async fn shared_record_runtime_profile() {
         if !case.null.is_empty() {
             spec["null"] = json!(case.null);
         }
-        let plan =
-            record::plan(&vitaminc_aead_frame::serde::to_vec(&json!({"value":spec})).unwrap())
-                .unwrap();
+        let plan = record::plan(
+            &vitaminc_aead_frame::serde::to_vec(&json!({"value":spec}))
+                .unwrap()
+                .risky_unwrap(),
+        )
+        .unwrap();
         let keyset = cipher.default_keyset();
         match case.operation {
             Operation::Seal {

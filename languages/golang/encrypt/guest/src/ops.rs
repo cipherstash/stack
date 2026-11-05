@@ -49,10 +49,10 @@ use stack_encrypt::dynamic::frame::{decode_ciphertext, encode_ciphertext, Frame}
 use stack_encrypt::dynamic::{self, Scope, ValueFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
+use stack_encrypt::Controlled as _;
 use stack_encrypt::ErrorPayload;
 use stack_encrypt::{CipherText, KeysetCipher, Label, Node, SealedValue, StackCipherText};
 use stack_kms::{DataKeySource, IndexKeySource};
-use zeroize::Zeroizing;
 
 use stack_guest_abi::last_error;
 
@@ -621,11 +621,11 @@ fn not_a_frame() -> u32 {
 /// is sized as every other output is. A query term's search tokens are
 /// derived from plaintext, so the staging buffer is wiped once copied.
 fn encode_answer<T: serde::Serialize>(answer: &T) -> Result<Vec<u8>, u32> {
-    let frame = Zeroizing::new(
-        stack_encrypt::dynamic::frame::serde::to_vec(answer).map_err(|_| STATUS_ENCODING)?,
-    );
+    // A `Buffer`, which wipes on drop and as it grows.
+    let frame =
+        stack_encrypt::dynamic::frame::serde::to_vec(answer).map_err(|_| STATUS_ENCODING)?;
     let mut out = exact_buffer(Some(frame.len()))?;
-    out.extend_from_slice(&frame);
+    out.extend_from_slice(frame.risky_ref());
     Ok(out)
 }
 

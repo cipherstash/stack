@@ -415,7 +415,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// ```
 /// use stack_encrypt::dynamic::{context, term};
 /// use stack_encrypt::target::IndexSpec;
-/// use stack_encrypt::StackCipher;
+/// use stack_encrypt::{Controlled, StackCipher};
 /// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -426,7 +426,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// let keyset = cipher.default_keyset();
 ///
 /// // `["users", "age"]`, as a binding writes it.
-/// let ctx = context(&vitaminc_aead_frame::serde::to_vec(&("users", "age"))?)?;
+/// let ctx = context(vitaminc_aead_frame::serde::to_vec(&("users", "age"))?.risky_ref())?;
 /// let probe = term(&keyset, &34u32, &IndexSpec::Equality, ctx.clone()).await?;
 /// let typed = keyset.equality_term(34u32, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
@@ -1091,7 +1091,10 @@ mod tests {
 
     /// A one-part context, read from its frame as a binding sends it.
     fn ctx(label: &str) -> NonEmpty<crate::ContextPiece<'static>> {
-        context(&vitaminc_aead_frame::serde::to_vec(&label).expect("frames")).expect("context")
+        context(vitaminc_protected::Controlled::risky_ref(
+            &vitaminc_aead_frame::serde::to_vec(&label).expect("frames"),
+        ))
+        .expect("context")
     }
 
     fn s(value: &str) -> Tree {

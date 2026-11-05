@@ -32,6 +32,7 @@ use stack_encrypt::target::{
 };
 use stack_encrypt::{nonempty, Error, Plan, PlanError, StackCipher};
 use stack_kms::FakeDataKeySource;
+use vitaminc_protected::Controlled as _;
 
 // =============================================================================
 // Setup
@@ -2958,14 +2959,17 @@ mod given_the_json_index_spec {
             json!({"json": {"sealed_root": false, "ordered": []}}),
             "every option is written when any is not the default"
         );
-        let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"sealed_root": false}})).unwrap();
+        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"sealed_root": false}}))
+            .unwrap()
+            .risky_unwrap();
         assert_eq!(
             IndexSpec::from_frame(&frame).unwrap(),
             IndexSpec::Json(open_root()),
             "an option read from a frame"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"nope": true}})).unwrap();
+        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"nope": true}}))
+            .unwrap()
+            .risky_unwrap();
         assert!(
             IndexSpec::from_frame(&frame).is_err(),
             "an unknown option refuses the index"
@@ -2982,14 +2986,16 @@ mod given_the_json_index_spec {
         let frame = vitaminc_aead_frame::serde::to_vec(
             &json!({"json": {"ordered": ["$.age", "$.orders[*].total"]}}),
         )
-        .unwrap();
+        .unwrap()
+        .risky_unwrap();
         assert_eq!(
             IndexSpec::from_frame(&frame).unwrap(),
             ordered,
             "ordered paths read back parsed"
         );
-        let frame =
-            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
+        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}}))
+            .unwrap()
+            .risky_unwrap();
         assert!(
             IndexSpec::from_frame(&frame).is_err(),
             "a text that is not a path refuses the index"
@@ -2998,7 +3004,8 @@ mod given_the_json_index_spec {
         // can reach the leaf it names.
         let frame =
             vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["$.scores[2]"]}}))
-                .unwrap();
+                .unwrap()
+                .risky_unwrap();
         assert!(
             IndexSpec::from_frame(&frame).is_err(),
             "a position in an ordered path refuses the index"

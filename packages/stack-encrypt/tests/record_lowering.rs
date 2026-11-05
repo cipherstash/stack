@@ -36,6 +36,7 @@ use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::{Encrypted, IndexSpec};
 use stack_encrypt::{CipherText, Error, Label, Plan, SealedValue, StackCipher, StackCipherText};
 use vitaminc_aead_frame::serde::from_slice;
+use vitaminc_protected::Controlled as _;
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
@@ -94,7 +95,9 @@ fn plaintext_json() -> Json {
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
 fn frame_of_json(value: &Json) -> Vec<u8> {
-    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
+    vitaminc_aead_frame::serde::to_vec(value)
+        .expect("frames")
+        .risky_unwrap()
 }
 
 /// The plaintext as the binding sends it: each field at the kind the plan
