@@ -251,14 +251,14 @@ describe('conformance files are named after their profile and role', () => {
     const header = JSON.parse(readRepo(`${dir}/${file}`))
     expect(header.version).toBe(1)
     expect(header.profile).toBe(profile)
-    if (role !== 'cases') {
+    if (role === 'enrollment') {
+      // An index of existing tests; a profile may have no cases of its own.
+      expect(header.requirements?.length).toBeGreaterThan(0)
+    } else if (role !== 'cases') {
+      // Outputs and runner inputs are keyed by the case IDs beside them.
       expect(files, `${file} has no cases file`).toContain(
         `${profile}.cases.json`,
       )
-    }
-    if (role === 'enrollment') {
-      expect(header.requirements?.length).toBeGreaterThan(0)
-    } else if (role !== 'cases') {
       expect(Object.keys(header.cases ?? {}).length).toBeGreaterThan(0)
     }
     if (producer) expect(header.producer).toMatch(new RegExp(`^${producer}`))

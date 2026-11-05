@@ -122,3 +122,17 @@ reports make enrollment observable. This consolidates data and requirements;
 it does not replace adapter tests or claim whole-database authentication.
 Fresh JSON artifact exchange, released-version matrices and Python/TypeScript
 runners remain open.
+
+## Lifecycle checkpoint
+
+The [lifecycle contract](lifecycle-contract.md) enrolls native pending/KMS tests,
+heap observations, guest ABI cleanup, Go cancellation/memory tests and public SDK
+diagnostics. New probes cover unpolled and in-flight drops, provider failure,
+cleanup after a late authenticated type failure, and chunk concurrency/drop.
+Existing runtime/read/context vectors retain their provider-call counters.
+
+This adds required execution and explicit observation limits; it removes no
+backend-specific tests. The known Go post-decryption shadow-stack gap and native
+heap-observer exclusions stay visible in reports. Logical batching is distinct
+from downstream chunking and unobserved live HTTP behavior. Python and TypeScript
+lifecycle evidence is pending.
