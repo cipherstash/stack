@@ -1,0 +1,573 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "04ac44c812155faecfbb44e8c8e275d77da37f1e",
+  "head_sha": "385c84144b6d42413fcdff4d4641aabdec7114c0",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff / git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "57 check runs on the head commit: 55 success, 2 skipped (review, fuzz campaign). Names only; no logs or per-test results."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md / CLAUDE.md at head read as context; no design docs for the auth strategy beyond rustdoc."
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "No package graph supplied; consumers found with git grep at head."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (all files owned by @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No information on release timing, customer adoption, CTS rate limits or usage metering."
+    }
+  },
+  "summary": "Fixes a cross-user identity bug (#1045): OidcFederationStrategy now calls the provider on every getToken() and keeps one CTS token per SHA-256 of the whole provider JWT in a bounded LRU cache, stamps federated tokens with `federated_from`, and only serves a stored token to the JWT that produced it. Node and wasm-inline wrappers call getJwt on the JS side and hand it to a new getTokenForJwt; Go and JS gain a cacheCapacity option. The core Rust change is careful and well tested (per-JWT isolation, interleaved users, eviction, cancellation, stored-token matching), and CI on the head commit is green. The remaining risk is mostly outside the strategy: (1) the shipped docs and agent skills now say one long-lived strategy serves every user, while the @cipherstash/stack native client still calls getJwt from a Neon channel that does not carry the request's AsyncLocalStorage (#1065 open), so a shared client with an ALS-reading getJwt can still bind one user's data to another user's identity; (2) more CTS exchanges when IdPs rotate JWTs quickly, plus one re-federation per legacy stored token at upgrade; (3) in Go, one strategy shared across users runs every user's provider call and any CTS exchange under one per-strategy mutex. Release readiness: focused review of the customer-facing guidance and the Go locking, not a block on the core fix.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "security_boundary",
+      "description": "OidcFederationStrategy caches CTS tokens per SHA-256 digest of the full provider JWT (LRU, default 1024 entries) instead of one token for all callers; the provider is now called on every get_token, not only on (re)federation.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "state_or_persistence",
+      "description": "Federated tokens carry an optional `federated_from` hex digest in their persisted JSON; a TokenStore token is served only when its digest matches the caller's JWT. Legacy tokens (no field) and tokens from another JWT are cache misses and are overwritten by a fresh exchange.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "Node (@cipherstash/auth index.js) and wasm-inline wrappers now call getJwt in the getToken() caller's async context and call a new native getTokenForJwt(jwt); create/createWithStore take an optional cacheCapacity. The raw native getToken() still calls getJwt through a ThreadsafeFunction.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "public_contract",
+      "description": "Go stackauth: OIDCProvider is now called on every Strategy.Token call (previously only when a CTS token had to be minted); new WithCacheCapacity option passed to the guest.",
+      "certainty": "observed",
+      "evidence": ["E-9", "E-10"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "error_handling",
+      "description": "An account-level refusal (UsageLimitExceeded, OrgNotProvisioned) is remembered strategy-wide for 60 s and refuses new engines for every JWT; engines whose first exchange fails take no cache slot; cancelled calls clear their pending entry.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-11"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "Customer-facing guidance flips from 'construct one client per request/user' to 'one long-lived strategy serves many users; a module-level strategy is fine', with a caveat for the @cipherstash/stack native client (#1065) and a note for earlier @cipherstash/auth releases. Shipped skills stash-auth, stash-encryption, stash-supabase, stash-edge and both READMEs are updated.",
+      "certainty": "observed",
+      "evidence": ["E-12", "E-13", "E-14"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "stack-auth crate (OidcFederationStrategy, oidc_refresher, token, cache)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Core per-JWT cache, token stamping, account-denial handling.",
+      "evidence": ["E-1", "E-2", "E-4"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/auth (Node native binding and wasm-inline entry)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "New getTokenForJwt, JS-side getJwt call, cacheCapacity argument; minor changeset.",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/stack native Encryption client via protect-ffi NeonJsAuthStrategy",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "protect-ffi reads the strategy object's `getToken` property (now the wrapper's own property that runs getJwt) and calls it through a Neon Channel on every ZeroKMS request.",
+      "evidence": ["E-15", "E-7"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Go stackauth / stackencrypt (WASI guest + host)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Provider called on every Token call under the strategy mutex; WithCacheCapacity option.",
+      "evidence": ["E-9", "E-10"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Shipped agent skills and READMEs (stash tarball, @cipherstash/stack README)",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Guidance on client lifetime for OIDC federation; copied into customer repos.",
+      "evidence": ["E-12", "E-13", "E-14"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Customer TokenStores / cookies (createWithStore, next.mjs helper)",
+      "kind": "external_consumer",
+      "relationship": "confirmed",
+      "how": "Stored token JSON gains federated_from; legacy entries become a miss and are re-federated once.",
+      "evidence": ["E-5", "E-6", "E-16"]
+    },
+    {
+      "id": "AC-7",
+      "name": "CipherStash CTS /api/authorise",
+      "kind": "service",
+      "relationship": "likely",
+      "how": "Exchange volume changes: per distinct JWT rather than per strategy, and per IdP JWT rotation.",
+      "evidence": ["E-17"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Shared @cipherstash/stack native client with an AsyncLocalStorage getJwt still binds users to the wrong identity",
+      "trigger": "A customer follows the new 'one long-lived strategy serves many users / a module-level strategy is fine' guidance and builds one @cipherstash/stack (native entry) Encryption client lazily on the first request, with a getJwt that reads the request from AsyncLocalStorage (Clerk auth(), Next.js headers()).",
+      "affected_components": ["AC-3", "AC-5", "AC-2"],
+      "mechanism": "protect-ffi's NeonJsAuthStrategy calls `strategy.getToken` via a Neon Channel obtained at client construction (lib.rs 515-560). The new index.js wrapper runs getJwt inside that getToken, so getJwt sees the async context of the channel, not of the operation's request. The PR itself states the ALS request is not visible on this path (#1065 open). If the client was created inside request A, getJwt can resolve A's session for every later caller; the per-JWT cache then faithfully serves A's token. The skill headline says sharing is fine; the caveat is in a following paragraph.",
+      "consequence": "Values encrypted under lock context for user B are bound to user A's identity: B cannot decrypt them, and audit logs show A. This is the #1045 bug kept alive by a configuration the new docs encourage. If no request is visible, the failure is loud (getJwt throws) rather than silent.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-15", "E-7", "E-12", "E-13", "E-18"],
+      "existing_verification": [
+        {
+          "description": "Node test runs getJwt in each getToken() caller's ALS scope against @cipherstash/auth directly (not through protect-ffi).",
+          "status": "ran_passed",
+          "evidence": ["E-19", "E-20"]
+        }
+      ],
+      "missing_verification": [
+        "No test drives a shared @cipherstash/stack native client from two ALS request scopes and checks which JWT getJwt saw.",
+        "No confirmation of which async context the Neon Channel callback runs in (creation-time context vs none)."
+      ],
+      "mitigation": "Until #1065 lands, make the stash-auth headline conditional: say plainly that the @cipherstash/stack native client must be built per request (or getJwt must close over req), and drop 'a module-level strategy is fine' from the general paragraph. Alternatively, have the native client fail closed or warn when getJwt resolves with no request context.",
+      "domain_tags": [
+        "authorization",
+        "tenant_isolation",
+        "encryption",
+        "public_api"
+      ]
+    },
+    {
+      "id": "FS-2",
+      "title": "Go strategy shared across users serialises every user's provider call and CTS exchange behind one mutex",
+      "trigger": "A Go service shares one stackencrypt/stackauth OIDC strategy across many users (as the new docs invite), and one user's provider call or first CTS exchange is slow or hangs.",
+      "affected_components": ["AC-4"],
+      "mechanism": "Strategy.Token takes s.mu for the whole guest call (strategy.go 184-193), and the provider runs inside that guest call while the ProfileStore is locked (transport.go 27-32). Before this change the provider and the exchange ran only on renewal of a single token; now the provider runs on every Token call and every new or rotated user JWT triggers an HTTP exchange while the lock is held.",
+      "consequence": "Head-of-line blocking: token fetches for every user on that strategy wait on one user's IdP call or CTS round trip, raising p99 latency and possibly causing timeouts under load. Availability degradation, no data impact.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-9", "E-10"],
+      "existing_verification": [
+        {
+          "description": "Go tests check each provider token is federated once and capacity zero exchanges every call; Go binding CI jobs passed.",
+          "status": "ran_passed",
+          "evidence": ["E-21", "E-20"]
+        }
+      ],
+      "missing_verification": [
+        "No concurrent multi-user Go test with a slow provider or slow CTS to measure blocking.",
+        "No load or latency measurement of the per-call provider invocation through the WASI host."
+      ],
+      "mitigation": "Document that a Go strategy serialises calls and size the deployment accordingly, or narrow the lock so cache hits do not wait on another user's exchange. Add a concurrency test with a gated provider.",
+      "domain_tags": ["concurrency", "public_api"]
+    },
+    {
+      "id": "FS-3",
+      "title": "More CTS exchanges from JWT rotation and legacy stored tokens; an account refusal then blocks every new user",
+      "trigger": "An IdP issuing short-lived JWTs (rotated more often than the ~15 min CTS token lifetime), or the first request per user after upgrade when cookies hold unstamped tokens.",
+      "affected_components": ["AC-1", "AC-6", "AC-7"],
+      "mechanism": "The cache key is the whole JWT, so each rotation is a new entry and a new /api/authorise call (changeset says so). BoundStore treats tokens without federated_from as a miss, so every active user re-federates once after upgrade. If CTS answers UsageLimitExceeded, settle() stores a strategy-wide StickyDenial (60 s) that refuses new engines for all JWTs.",
+      "consequence": "Higher exchange volume and per-operation latency on cache misses; if exchanges count toward a usage limit, a burst can lock out every user without a cached token for up to a minute at a time.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-17", "E-5", "E-1", "E-11"],
+      "existing_verification": [
+        {
+          "description": "Rust tests cover unstamped and mismatched stored tokens as misses and an account refusal remembered across JWTs.",
+          "status": "ran_passed",
+          "evidence": ["E-22", "E-20"]
+        }
+      ],
+      "missing_verification": [
+        "No measurement of exchange rate against real IdP rotation intervals (e.g. Clerk session tokens).",
+        "Unknown whether CTS meters or rate-limits /api/authorise per call."
+      ],
+      "mitigation": "Call out the upgrade-time re-federation and rotation cost in release notes; watch /api/authorise rate and USAGE_LIMIT_EXCEEDED after release; consider a staged rollout to customers with high user counts.",
+      "domain_tags": ["configuration", "distributed_state"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Guidance to share clients outlives the fix: version skew or rollback reintroduces #1045",
+      "trigger": "A customer changes their code to share one client (per the new skills/READMEs) while running an @cipherstash/auth older than this fix, or the auth release is rolled back after customers adopted sharing.",
+      "affected_components": ["AC-5", "AC-2"],
+      "mechanism": "Docs ship as a `stash`/`@cipherstash/stack` patch and the fix as an `@cipherstash/auth` minor. @cipherstash/stack pins auth via workspace:* so its own release carries the fix, but a project using @cipherstash/auth directly, or skills copied by a newer stash CLI into a repo with an older auth, gets the sharing advice without the per-JWT cache. The skill names no minimum version. Older versions deserialise the new token JSON (no deny_unknown_fields) and serve the single cached token to everyone.",
+      "consequence": "Cross-user identity binding as in #1045: data encrypted for one user bound to another, wrong audit identity.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-14", "E-12", "E-23", "E-24"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No check that the skills name the minimum @cipherstash/auth version that makes sharing safe."
+      ],
+      "mitigation": "Once the release version is known, write the minimum @cipherstash/auth version into stash-auth 'Client lifetime'. Treat rollback of the auth release as unsafe without a customer notice to revert to per-request clients.",
+      "domain_tags": ["tenant_isolation", "build_release", "public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No end-to-end test of the @cipherstash/stack native client shared across ALS request scopes (the #1065 path).",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-15", "E-18"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No Go concurrency test with multiple users sharing one OIDC strategy and a slow provider or slow CTS.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-9", "E-21"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No evidence about CTS exchange metering or rate limits, or the exchange rate under real IdP rotation.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-17"]
+    },
+    {
+      "id": "VG-4",
+      "description": "Skills do not state the minimum @cipherstash/auth version for safe sharing.",
+      "scenarios": ["FS-4"],
+      "evidence": ["E-14"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Review stash-auth 'Client lifetime' and the READMEs: the general rule should not say a module-level strategy is fine for the @cipherstash/stack native client while #1065 is open.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add a protect-ffi or stack integration test that shares one client across two AsyncLocalStorage scopes and asserts which JWT getJwt received (expected to document the limitation or fail closed).",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "test",
+      "description": "Add a Go test with two users on one strategy, one provider gated, asserting the other user's cached-token call does not wait (or document the serialisation).",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "monitoring",
+      "description": "After release, watch /api/authorise request rate and USAGE_LIMIT_EXCEEDED responses for federated workspaces, especially the first hours after upgrade.",
+      "addresses": ["FS-3", "VG-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "documentation",
+      "description": "Put the minimum @cipherstash/auth version in the skills once it is known, and note in the release notes that rolling back requires reverting to per-request clients.",
+      "addresses": ["FS-4", "VG-4"]
+    },
+    {
+      "id": "RC-6",
+      "kind": "rollback_plan",
+      "description": "Treat rollback of @cipherstash/auth as a security-relevant action: pair it with a customer notice, since older versions serve one token to all callers.",
+      "addresses": ["FS-4"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Read closely: stack-auth oidc_federation_strategy.rs (implementation), cache.rs, oidc_refresher.rs, token.rs, auto_refresh.rs changes, Node index.js / lib.rs, wasm-inline.mjs, Go strategy.go/transport.go/guest auth.rs, skills and READMEs. Skimmed: the ~1000 lines of new Rust tests, Node and Go test bodies, lockfiles, stack-auth-wasm beyond the factory changes.",
+      "effect": "Test strength is judged from names and a sample; a weak assertion in a skimmed test would not be noticed."
+    },
+    {
+      "id": "CL-2",
+      "description": "Which async context a Neon Channel callback runs in was not verified from Neon source; FS-1 relies on the PR's own statement that the request is not visible there.",
+      "effect": "FS-1 could be loud (no request, getJwt throws) rather than silent for many apps; the silent case needs a client created inside a request."
+    },
+    {
+      "id": "CL-3",
+      "description": "CI results are check-run names and conclusions only; no logs, so which tests ran in each job is inferred from job names.",
+      "effect": "ran_passed claims are at job level, not per test."
+    },
+    {
+      "id": "CL-4",
+      "description": "No deployment context: CTS metering, rate limits, customer adoption of shared clients, release timing.",
+      "effect": "Impact of FS-3 and FS-4 cannot be sized."
+    },
+    {
+      "id": "CL-5",
+      "description": "History signal: credentials.go usually co-changes with credentials_test.go, which is not in this diff (only a doc comment changed in credentials.go).",
+      "effect": "Checked; the credentials.go change is documentation only, so no missing test was inferred."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack-auth/src/oidc_federation_strategy.rs",
+      "rev": "head",
+      "line_start": 214,
+      "line_end": 273,
+      "claim": "engine_for looks up the engine by JwtDigest in an LRU cache or pending map, refusing new engines while an account denial is fresh; settle promotes successes to the cache, drops failures, and records account refusals strategy-wide.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack-auth/src/oidc_federation_strategy.rs",
+      "rev": "head",
+      "line_start": 389,
+      "line_end": 396,
+      "claim": "get_token calls provider.fetch() on every call and delegates to get_token_for_jwt.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack-auth/src/oidc_federation_strategy/cache.rs",
+      "rev": "head",
+      "line_start": 53,
+      "line_end": 79,
+      "claim": "Bounded LRU insert; capacity 0 retains nothing; evictions logged at debug.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack-auth/src/oidc_refresher.rs",
+      "rev": "head",
+      "line_start": 260,
+      "line_end": 266,
+      "claim": "JwtRefresher::refresh stamps federated_from with the hex SHA-256 of the JWT.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack-auth/src/oidc_federation_strategy.rs",
+      "rev": "head",
+      "line_start": 156,
+      "line_end": 173,
+      "claim": "BoundStore::load serves a stored token only if federated_from matches the caller's JWT digest; otherwise a miss.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack-auth/src/token.rs",
+      "rev": "head",
+      "line_start": 47,
+      "line_end": 50,
+      "claim": "federated_from is an optional serde field (default, skip if none); Token has no deny_unknown_fields.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "languages/typescript/packages/auth/index.js",
+      "rev": "head",
+      "line_start": 127,
+      "line_end": 148,
+      "claim": "ownGetJwt defines an own getToken property that awaits getJwt in the caller's context and calls getTokenForJwt.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "diff",
+      "path": "languages/typescript/packages/auth/src/lib.rs",
+      "rev": "head",
+      "claim": "napi create/createWithStore gain cache_capacity: Option<u32>; new get_token_for_jwt method.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "languages/golang/stackauth/strategy.go",
+      "rev": "head",
+      "line_start": 184,
+      "line_end": 193,
+      "claim": "Strategy.Token holds s.mu for the whole guest call.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "languages/golang/stackauth/transport.go",
+      "rev": "head",
+      "line_start": 18,
+      "line_end": 32,
+      "claim": "OIDCProvider is asked on every Strategy.Token call and runs inside the guest call while the ProfileStore is locked.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack-auth/src/error.rs",
+      "rev": "head",
+      "line_start": 625,
+      "line_end": 627,
+      "claim": "is_account_refusal is true only for UsageLimitExceeded and OrgNotProvisioned; DENIAL_TTL_SECS is 60 (auto_refresh.rs:68).",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "documentation",
+      "path": "skills/stash-auth/SKILL.md",
+      "rev": "head",
+      "line_start": 291,
+      "line_end": 316,
+      "claim": "Skill says one long-lived strategy serves many users and 'a module-level strategy is fine', then gives the @cipherstash/stack native caveat (#1065).",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "documentation",
+      "path": "languages/typescript/packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 797,
+      "line_end": 808,
+      "claim": "Stack docs say one strategy serves every user and that on the native entry getJwt cannot see ALS; example captures req.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "documentation",
+      "path": "skills/stash-auth/SKILL.md",
+      "rev": "head",
+      "line_start": 318,
+      "line_end": 322,
+      "claim": "Earlier @cipherstash/auth releases are described without a version number.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "languages/typescript/packages/protect-ffi/crates/protect-ffi/src/lib.rs",
+      "rev": "head",
+      "line_start": 510,
+      "line_end": 560,
+      "claim": "NeonJsAuthStrategy stores a Channel from the creating call, reads the strategy's getToken property and calls it on every ZeroKMS request.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": "languages/typescript/packages/auth/next.mjs",
+      "rev": "head",
+      "line_start": 34,
+      "line_end": 34,
+      "claim": "Next.js cookie helper passes getJwt through to the strategy; cookie-backed store is affected by the federated_from check.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "documentation",
+      "path": ".changeset/oidc-federation-per-user-tokens.md",
+      "rev": "head",
+      "line_start": 26,
+      "line_end": 35,
+      "claim": "Changeset states legacy stored tokens are re-federated once and IdPs rotating JWTs faster than ~15 min re-federate on each rotation.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "pr_description",
+      "claim": "PR states the native binding invokes getJwt outside the getToken() caller's ALS scope for @cipherstash/stack and that a long-lived strategy reading ALS can still select the wrong user; reproduced on Node 22 and 24.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "test",
+      "path": "languages/typescript/packages/auth/__tests__/oidc-federation-strategy.test.ts",
+      "rev": "head",
+      "line_start": 456,
+      "line_end": 514,
+      "claim": "Tests run getJwt in per-call ALS scopes and assert a second user never gets the first user's token, against @cipherstash/auth directly.",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "ci_result",
+      "claim": "ci.json: 55 of 57 check runs succeeded on the head commit, including 'fmt, clippy, nextest, doctests, rustdoc', 'node bindings, napi typings, stack-auth-wasm', 'Run Tests (Node 22)', 'Run Tests (Node 24)', 'WASI check, guests and Go (Linux)', 'Go binding (macos-latest)', 'Go binding (windows-latest)', 'Mutants gate', 'protect-ffi integration suite'; 2 skipped.",
+      "status": "verified"
+    },
+    {
+      "id": "E-21",
+      "kind": "test",
+      "path": "languages/golang/stackauth/strategy_test.go",
+      "rev": "head",
+      "line_start": 118,
+      "line_end": 231,
+      "claim": "Go tests: each provider token federated once; capacity zero exchanges every call. No concurrent multi-user test.",
+      "status": "verified"
+    },
+    {
+      "id": "E-22",
+      "kind": "test",
+      "path": "packages/stack-auth/src/oidc_federation_strategy.rs",
+      "rev": "head",
+      "line_start": 1166,
+      "line_end": 1241,
+      "claim": "Rust tests: stored token from another JWT, unstamped stored token and expired stored token are all re-federated.",
+      "status": "verified"
+    },
+    {
+      "id": "E-23",
+      "kind": "documentation",
+      "path": ".changeset/oidc-federation-per-user-docs.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 4,
+      "claim": "Docs/skills change ships as patch bumps of @cipherstash/stack and stash, separate from the @cipherstash/auth minor.",
+      "status": "verified"
+    },
+    {
+      "id": "E-24",
+      "kind": "code",
+      "path": "languages/typescript/packages/stack/package.json",
+      "rev": "head",
+      "line_start": 232,
+      "line_end": 232,
+      "claim": "@cipherstash/stack depends on @cipherstash/auth via workspace:*, so a stack release pins the auth version built with it.",
+      "status": "verified"
+    }
+  ]
+}

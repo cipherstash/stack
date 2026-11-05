@@ -1,0 +1,48 @@
+{
+  "case": "stack-905",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "jsonwebtoken 10 inside stack-auth rejects or mishandles service-issued tokens, breaking auth for every encrypt/decrypt",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The cited lockfile and build_strategy lines show only that stack-auth uses jsonwebtoken, not that 0.42.2 handles tokens differently, so the auth-failure mechanism is speculative."
+    },
+    {
+      "id": "FS-2",
+      "title": "jsonwebtoken 10's aws-lc-rs backend breaks the wasm32 build or panics at first token use on wasm",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Head Cargo.lock shows jsonwebtoken switching from ring to aws-lc-rs, and Cargo.toml/client_options.rs confirm stack-auth is compiled and used on wasm32, so a wasm build or runtime-provider failure is plausible and caused by the change; cargo tree with the wasm32 target is a concrete check."
+    },
+    {
+      "id": "FS-3",
+      "title": "Rust crates move to 0.42.2 while the documented-lockstep npm @cipherstash/auth catalog stays at 0.42.0",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The cited dependabot.yml comment (=0.42.0, bump in step with the npm catalog) and the pnpm-workspace.yaml @cipherstash/auth 0.42.0 entry were left unchanged while the crates moved to 0.42.2, a real skew against documented policy that this change introduced."
+    }
+  ],
+  "cost_usd": 1.3756709,
+  "wall_seconds": 202.188661,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

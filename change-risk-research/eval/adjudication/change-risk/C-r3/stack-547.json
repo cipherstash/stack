@@ -1,0 +1,69 @@
+{
+  "case": "stack-547",
+  "evaluator": "change-risk/C-r3",
+  "run": 3,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "`stash eql upgrade --eql-version 3` (or install --force) drops every eql_v3.* user column",
+      "impact": "critical",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "v3 filter operands put real ciphertext and all index terms into URL logs",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Unexposed eql_v3 schema makes encrypted filters silently return wrong rows",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Default free-text config makes v3 like/ilike silently miss matches",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-5",
+      "title": "protect-ffi 0.27 changes bulkDecrypt failure shape for existing v2 callers",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Cites the commit that changed the failure shape."
+    }
+  ],
+  "cost_usd": 2.9794149,
+  "wall_seconds": 323.399009
+}

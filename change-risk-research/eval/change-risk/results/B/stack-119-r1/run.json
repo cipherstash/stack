@@ -1,0 +1,158 @@
+{
+  "case": "stack-119",
+  "pr": 119,
+  "condition": "B",
+  "run": 1,
+  "model_requested": "claude-opus-5-5",
+  "exit_code": 0,
+  "started": "2026-10-12T01:08:06.195087+00:00",
+  "wall_seconds": 172.951819,
+  "isolation": {
+    "hidden_paths": [
+      "/home/claude/stack",
+      "/tmp/claude-0",
+      "/root/.claude/projects"
+    ],
+    "git_protocols": "file",
+    "mcp": "none"
+  },
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "skills_loaded": [
+    "session-start-hook",
+    "change-risk",
+    "deep-research",
+    "design",
+    "slides",
+    "design-sync",
+    "dataviz",
+    "artifact-diagramming",
+    "artifact-capabilities",
+    "update-config",
+    "verify",
+    "debug",
+    "code-review",
+    "simplify",
+    "batch",
+    "fewer-permission-prompts",
+    "doctor",
+    "loop",
+    "claude-api",
+    "workflow-authoring",
+    "run",
+    "run-skill-generator",
+    "plugin-authoring",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "anthropic-skills:deep-research",
+    "anthropic-skills:docs",
+    "anthropic-skills:docx",
+    "anthropic-skills:google-workspace",
+    "anthropic-skills:import-memory",
+    "anthropic-skills:morning",
+    "anthropic-skills:pdf",
+    "anthropic-skills:pptx",
+    "anthropic-skills:skill-creator",
+    "anthropic-skills:xlsx"
+  ],
+  "total_cost_usd": 1.3716107000000004,
+  "duration_ms": 171419,
+  "duration_api_ms": 167409,
+  "num_turns": 35,
+  "is_error": false,
+  "subtype": "success",
+  "usage": {
+    "input_tokens": 54,
+    "cache_creation_input_tokens": 77591,
+    "cache_read_input_tokens": 1880839,
+    "output_tokens": 18717,
+    "output_tokens_details": {
+      "thinking_tokens": 4502
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 77591,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 940,
+        "cache_read_input_tokens": 103213,
+        "cache_creation_input_tokens": 1825,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1825
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1469,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0001589,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 54,
+      "outputTokens": 18717,
+      "cacheReadInputTokens": 1880839,
+      "cacheCreationInputTokens": 77591,
+      "webSearchRequests": 0,
+      "costUSD": 1.3714518000000004,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 4502,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "tool_calls": 33,
+  "tool_counts": {
+    "Skill": 1,
+    "Read": 2,
+    "Bash": 26,
+    "Grep": 2,
+    "Write": 1,
+    "Edit": 1
+  },
+  "skill_invoked": true,
+  "audit": {
+    "flags": [],
+    "clean": true
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "audit_previous": {
+    "flags": [
+      {
+        "tool": "Write",
+        "why": "network-looking",
+        "input": "{\"file_path\": \"/srv/cr/stack-119-B-r1/out/assessment.json\", \"content\": \"{\\n  \\\"schema_version\\\": \\\"1\\\",\\n  \\\"repository\\\": \\\"cipherstash/stack\\\",\\n  \\\"base_sha\\\": \\\"33ac5e5a074b288eb0435cf9b2bf41d062e1767d\\\",\\n  \\\"head_sha\\\": \\\"35c482112c8f4016cc86fd885e309a1778d64f9b\\\",\\n  \\\"assessor\\\": {\\n    \\\"ag"
+      }
+    ],
+    "clean": false
+  }
+}

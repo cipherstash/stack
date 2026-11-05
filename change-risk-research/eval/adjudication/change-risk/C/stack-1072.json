@@ -1,0 +1,47 @@
+{
+  "case": "stack-1072",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A plan-only PR merges unchecked and turns main red",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "The new filter evaluator makes a coverage guard pass for a filter that drops a binding input",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "lint-release.yml's justification for not running test:scripts is now slightly out of date",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.3229573,
+  "wall_seconds": 157.483879
+}

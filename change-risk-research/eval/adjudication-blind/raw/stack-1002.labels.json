@@ -1,0 +1,76 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Identifies that a cross-built binary with wrong libc can ship because the publish-path build verifies only tarball name and .node presence, with libc checks confined to the dispatch-only preflight."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "gnu legs build with plain napi build on Ubuntu 24.04 runners without the glibc 2.28 pin the FFI line uses, and no symbol-version check exists; plausible raised glibc floor."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Workflow-level push paths now include root Cargo files and crate dirs, and the EQL release job has no further path gating, so it runs on unrelated pushes."
+    },
+    {
+      "id": "F-04",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Musl leg built with only musl-tools on an Ubuntu host may produce an incorrectly linked binary that fails on Alpine, and no check positively verifies musl linkage on the publish path or preflight."
+    },
+    {
+      "id": "F-05",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Claim that no .node is produced and the build fails loudly rests on unverified rustc behaviour; the cited code does not show the build fails, and the actual risk is a mis-linked binary being produced."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Widened push filter boots the credentialed EQL release job on root-workspace pushes, contrary to the file's own comment; supported by cited lines."
+    },
+    {
+      "id": "F-07",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Flags the musl leg as built without proper linkage configuration on a glibc host and notes the preflight's musl check would not catch a mis-linked binary that fails on Alpine, recommending an Alpine load test."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "release job requires publish-auth success when auth=true and EQL artefact jobs need release, so an auth build failure holds other releases; a fail-closed availability risk introduced by this change."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same glibc-floor concern as F-02, supported by plain napi build on recent runners versus the FFI zigbuild .2.28 pin and the preflight's lack of symbol-version checks."
+    }
+  ]
+}

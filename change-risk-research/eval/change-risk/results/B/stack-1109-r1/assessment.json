@@ -1,0 +1,244 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "9c2fc652a80c1264ae3a283c5913d9ce03940122",
+  "head_sha": "a258a817bc373605193259443775c1e25ce50544",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": {
+      "status": "partial",
+      "note": "Only the title from CASE.md ('chore(deps): bump proxy-addr from 2.0.7 to 2.0.8'); no body."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied."
+    },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; package layout read from pnpm-lock.yaml importers and package.json at head."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "note": "Derived by reading pnpm-lock.yaml at head; no separate graph supplied."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (pnpm-lock.yaml -> @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Lockfile-only change (pnpm-lock.yaml). Despite the title naming only proxy-addr 2.0.7->2.0.8, the lockfile also moves hono 4.13.7->4.13.13, jose 6.2.9->6.2.12 (for @modelcontextprotocol/sdk only), express-rate-limit 8.6.2->8.7.1, ip-address 10.7.2->10.7.3, negotiator 1.0.0->1.1.0 (now depends on content-type 2.1.0, already in the lockfile), shell-quote 1.10.0->1.12.0 (optional, via gel) and acorn 8.18.0->8.19.0 (optional, via terser). All are patch/minor upgrades in the transitive tree of @modelcontextprotocol/sdk (pulled in by @anthropic-ai/claude-agent-sdk in the @cipherstash/wizard package) or optional build tooling. No package.json specifier changes. The wizard build uses skipNodeModulesBundle, so these resolutions are not bundled into the published tarball; npm consumers resolve their own versions. Effect is confined to the monorepo's install, dev, test and build environment. Impact low; the main reviewer note is that the PR scope is wider than its title.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "dependency",
+      "description": "proxy-addr resolution for express@5.2.1 moves from 2.0.7 to 2.0.8 (the titled change). proxy-addr computes client addresses from X-Forwarded-For trust settings in express.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "dependency",
+      "description": "Additional transitive upgrades not mentioned in the title, all within @modelcontextprotocol/sdk@1.29.0's dependency tree: hono 4.13.13, jose 6.2.12, express-rate-limit 8.7.1 (with ip-address 10.7.3), negotiator 1.1.0 (via accepts 2.0.0; adds content-type 2.1.0 dependency and engines >=18).",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "dependency",
+      "description": "Optional-only upgrades: shell-quote 1.12.0 (via optional gel@2.2.0) and acorn 8.19.0 (via optional terser@5.44.1); acorn 8.18.0 remains for other dependents.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-5"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "low",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "pnpm-lock.yaml (workspace dependency resolution)",
+      "kind": "other",
+      "relationship": "changed",
+      "how": "Only file in the diff.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/wizard (languages/typescript/packages/wizard)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Depends on @anthropic-ai/claude-agent-sdk, which peers on @modelcontextprotocol/sdk@1.29.0, whose resolved deps (express, hono, jose, express-rate-limit) change. The wizard lazy-imports the agent SDK at runtime; the build does not bundle node_modules, so the published tarball is unaffected by lockfile resolutions.",
+      "evidence": ["E-3", "E-6", "E-7"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/nextjs",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Direct jose dependency stays on 6.2.9; not changed by this diff (checked to rule out an impact).",
+      "evidence": ["E-8"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Unannounced transitive upgrades in the agent-SDK/MCP stack break wizard dev or test runs",
+      "trigger": "A behavioural change in hono, jose, express-rate-limit or negotiator between the old and new patch/minor versions that the MCP SDK relies on.",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "The lockfile changes eight resolutions while the title names one, so reviewers may not examine the others. They all sit under @modelcontextprotocol/sdk@1.29.0 used by the wizard's agent SDK. The only tests that exercise the real SDK are skipped unless WIZARD_INTEGRATION=1.",
+      "consequence": "Wizard local/CI runs that use the agent SDK fail or behave differently. Published packages are not affected because the lockfile is not shipped and the wizard bundle excludes node_modules. Recovery is reverting the lockfile.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-3", "E-4", "E-7", "E-9"],
+      "existing_verification": [
+        {
+          "description": "agent-sdk.test.ts exercises the real Claude Agent SDK, but is skipped by default (describe.skipIf(!RUN_INTEGRATION)).",
+          "status": "exists_not_run",
+          "evidence": ["E-9"]
+        }
+      ],
+      "missing_verification": [
+        "CI results for install, build and wizard tests at head.",
+        "Integrity/provenance check of the new tarballs (cannot be done offline)."
+      ],
+      "mitigation": "Confirm the extra bumps are intended (typical of a Dependabot rebase onto a refreshed lockfile) and that CI passes `pnpm install --frozen-lockfile`, build and tests; revert the lockfile if anything regresses.",
+      "domain_tags": ["dependency", "build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No CI results were supplied and the real-SDK wizard tests are opt-in, so nothing seen exercises the upgraded transitive packages.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-9"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Reviewer should acknowledge that the lockfile changes hono, jose, express-rate-limit, ip-address, negotiator, shell-quote and acorn in addition to proxy-addr, and check that CI install/build/test is green before merging.",
+      "addresses": ["FS-1", "VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No network access: upstream changelogs, advisories and tarball integrity hashes for the new versions could not be checked.",
+      "effect": "Whether any upgrade changes behaviour or fixes/introduces a vulnerability is unknown; assessment relies on semver ranges and dependency placement."
+    },
+    {
+      "id": "CL-2",
+      "description": "No CI results and no PR body.",
+      "effect": "Cannot state that install, build or tests pass at head, or why the scope exceeds the title."
+    },
+    {
+      "id": "CL-3",
+      "description": "Did not trace which other workspace packages (beyond the wizard) might reach express/hono at runtime; only importers whose resolution strings reference @modelcontextprotocol/sdk were found (wizard).",
+      "effect": "Small chance of an additional dev-time consumer; does not change the low impact since no shipped artefact embeds the lockfile."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "pnpm-lock.yaml",
+      "claim": "Diff touches only pnpm-lock.yaml (+45/-30) and changes resolutions for proxy-addr, hono, jose, express-rate-limit, ip-address, negotiator, shell-quote and acorn; no package.json changes.",
+      "status": "verified",
+      "command": "git -C repo diff --stat 9c2fc652a8 a258a817bc"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 5122,
+      "line_end": 5143,
+      "claim": "express@5.2.1 snapshot now depends on proxy-addr 2.0.8.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 4265,
+      "line_end": 4282,
+      "claim": "@modelcontextprotocol/sdk@1.29.0 resolves @hono/node-server(hono@4.13.13), express 5.2.1, express-rate-limit 8.7.1, hono 4.13.13 and jose 6.2.12.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 5568,
+      "line_end": 5570,
+      "claim": "negotiator 1.1.0 snapshot depends on content-type 2.1.0, which already exists in the lockfile (line 4966).",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 5248,
+      "line_end": 5258,
+      "claim": "shell-quote 1.12.0 is reached only via gel@2.2.0, which is marked optional.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 764,
+      "line_end": 768,
+      "claim": "The wizard importer depends on @anthropic-ai/claude-agent-sdk resolved with @modelcontextprotocol/sdk@1.29.0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "languages/typescript/packages/wizard/tsup.config.ts",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 18,
+      "claim": "Wizard build sets skipNodeModulesBundle: true, so dependency code is not bundled into the published dist.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 357,
+      "line_end": 361,
+      "claim": "@cipherstash/nextjs's direct jose dependency still resolves to 6.2.9.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "test",
+      "path": "languages/typescript/packages/wizard/src/__tests__/agent-sdk.test.ts",
+      "rev": "head",
+      "line_start": 20,
+      "line_end": 26,
+      "claim": "Real-SDK integration tests are skipped unless WIZARD_INTEGRATION=1.",
+      "status": "verified"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "case": "stack-656",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [],
+  "cost_usd": null,
+  "wall_seconds": null
+}

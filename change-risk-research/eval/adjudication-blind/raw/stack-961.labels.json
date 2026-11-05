@@ -1,0 +1,92 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "inspectReinstallDependencies refuses every non-index dependant before mutation and install/upgrade map the refusal to CliExit(1), a real exit-code behaviour change versus base's silent CASCADE, shipped as a minor bump."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The bundle's DROP SCHEMA CASCADE, the non-concurrent CREATE INDEX replay and ANALYZE all run in one transaction (lines 678-691), so table locks taken at the drop are held for the whole rebuild, and the README only says to use a maintenance window."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "CASCADE drops dependants without per-object ownership checks, but the replayed CREATE INDEX needs table ownership; preflight checks only EQL schema drop rights, and index.ts wraps the resulting error as a generic rollback."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same mechanism as F-02, confirmed in the code: one transaction holds the ACCESS EXCLUSIVE locks from the cascade drop through the plain CREATE INDEX rebuilds and ANALYZE until COMMIT."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The backing index of an exclusion constraint has relkind 'i' with no pg_inherits row, so it is classified 'index'; the constraint is only reached through an internal dependency that points the other way; pg_get_indexdef replay creates a plain index, and verification never checks indisexclusion or constraints."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "rebuildIndexes replays CREATE INDEX, which needs table ownership, while preflight (installation-state.ts:205-231) checks only database/public CREATE, pgcrypto and EQL schema ownership, so a non-owner role fails mid-transaction after the drop."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Partitioned and attached indexes plus all non-index dependants are classified unsafe and refused, and upgrade.ts maps the refusal to exit 1, a real contract change with no CLI path for partitioned tables."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The cited single transaction and non-concurrent rebuild are present; the README and SKILL require a maintenance window but never say that tables are locked against reads during the rebuild."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "pg_get_indexdef(oid) omits the TABLESPACE clause, and neither the capture query nor VERIFY_REBUILT_INDEXES_SQL reads reltablespace, so rebuilt indexes silently land in default_tablespace."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Captured definitions are replayed verbatim and verification requires an exact pg_get_indexdef match, so a future bundle that changes an index-referenced function makes the upgrade fail and roll back where base succeeded."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Capture and the bundle are separate READ COMMITTED statements and the advisory lock serializes only stash commands, so an EQL index committed in between is dropped by the cascade and never restored or checked; the README documents this only as an operator requirement."
+    }
+  ]
+}

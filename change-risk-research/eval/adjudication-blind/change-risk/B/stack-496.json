@@ -1,0 +1,71 @@
+{
+  "case": "stack-496",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "protect-ffi 0.24 bump in the main Node entry ships without EQL lockstep or payload-compatibility evidence",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Lockstep comments are unchanged, but no evidence shows 0.24 changed payload format; consequence is speculative."
+    },
+    {
+      "id": "FS-2",
+      "title": "Hand-set 0.18.0 plus a pending minor changeset publishes an unexpected version and drops the CHANGELOG entry",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Hand-set 0.18.0 plus pending minor changeset yields 0.19.0, which the example's ^0.18.0 specifier excludes, and no changeset documents the new subpath."
+    },
+    {
+      "id": "FS-3",
+      "title": "WASM client reuses the Node API names with a different contract: it throws instead of returning a Result, and encrypts null",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "WASM encrypt/decrypt return raw values/throw instead of Result objects and lack the null guard the Node entry has; divergence is introduced by this new subpath."
+    },
+    {
+      "id": "FS-4",
+      "title": "Consumers using moduleResolution 'bundler' get protect-ffi's WASM typings behind stack's public types",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same as F-04: published types reference protect-ffi whose conditional exports give WASM typings to consumers without the node condition."
+    },
+    {
+      "id": "FS-5",
+      "title": "CLI and wizard login depend on a new auth 0.38 native-binding layout",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Auth 0.38 moves platform bindings to optional peers and the catalog lists only six platforms as optionalDependencies, so unlisted platforms may lack a binding; plausible and caused by this change."
+    }
+  ],
+  "cost_usd": 2.2611126999999995,
+  "wall_seconds": 320.366164,
+  "case_note": "Missed KD-1 (duplicated classes across separate declaration builds).",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

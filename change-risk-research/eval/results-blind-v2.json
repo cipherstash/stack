@@ -1,0 +1,452 @@
+{
+  "scoring_version": "2",
+  "split": "holdout",
+  "post_hoc_defects": false,
+  "evaluators": {
+    "change-risk/A": {
+      "cases": 31,
+      "findings": 86,
+      "findings_per_case": 2.77,
+      "labels": {
+        "match": 4,
+        "valid": 61,
+        "unsupported": 16,
+        "trivial": 5
+      },
+      "scenario_validity_all": {
+        "k": 65,
+        "n": 86,
+        "value": 0.756,
+        "ci95": [0.655, 0.834]
+      },
+      "scenario_validity_material": {
+        "k": 65,
+        "n": 81,
+        "value": 0.802,
+        "ci95": [0.703, 0.875]
+      },
+      "known_defect_recall": {
+        "k": 4,
+        "n": 11,
+        "value": 0.364,
+        "ci95": [0.152, 0.646]
+      },
+      "defect_case_recall": {
+        "k": 4,
+        "n": 8,
+        "value": 0.5,
+        "ci95": [0.215, 0.785]
+      },
+      "high_impact_attention": {
+        "k": 9,
+        "n": 10,
+        "value": 0.9,
+        "ci95": [0.596, 0.982]
+      },
+      "false_positive_burden_per_case": 0.52,
+      "low_impact_overflag": {
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
+      },
+      "low_impact_attention": {
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
+      },
+      "attention_recall": {
+        "k": 21,
+        "n": 22,
+        "value": 0.955,
+        "ci95": [0.782, 0.992]
+      },
+      "attention_rate": {
+        "k": 22,
+        "n": 31,
+        "value": 0.71,
+        "ci95": [0.534, 0.839]
+      },
+      "impact_exact_agreement": {
+        "k": 21,
+        "n": 31,
+        "value": 0.677,
+        "ci95": [0.501, 0.814]
+      },
+      "impact_within_one": {
+        "k": 29,
+        "n": 31,
+        "value": 0.935,
+        "ci95": [0.793, 0.982]
+      },
+      "impact_weighted_kappa": 0.718,
+      "material_findings": 81,
+      "evidence_checked": 81,
+      "evidence_passed": 81,
+      "evidence_failed": 0,
+      "evidence_unassessed": 0,
+      "evidence_verification_coverage": {
+        "k": 81,
+        "n": 81,
+        "value": 1.0,
+        "ci95": [0.955, 1.0]
+      },
+      "evidence_correctness_checked": {
+        "k": 81,
+        "n": 81,
+        "value": 1.0,
+        "ci95": [0.955, 1.0]
+      },
+      "actionability": {
+        "k": 65,
+        "n": 65,
+        "value": 1.0,
+        "ci95": [0.944, 1.0]
+      },
+      "cost_usd": {
+        "mean": 1.5,
+        "total": 46.51,
+        "n": 31
+      },
+      "wall_seconds": {
+        "mean": 197.1,
+        "n": 31
+      }
+    },
+    "change-risk/B": {
+      "cases": 31,
+      "findings": 87,
+      "findings_per_case": 2.81,
+      "labels": {
+        "valid": 62,
+        "unsupported": 15,
+        "trivial": 7,
+        "match": 3
+      },
+      "scenario_validity_all": {
+        "k": 65,
+        "n": 87,
+        "value": 0.747,
+        "ci95": [0.647, 0.827]
+      },
+      "scenario_validity_material": {
+        "k": 65,
+        "n": 80,
+        "value": 0.812,
+        "ci95": [0.713, 0.883]
+      },
+      "known_defect_recall": {
+        "k": 3,
+        "n": 11,
+        "value": 0.273,
+        "ci95": [0.097, 0.566]
+      },
+      "defect_case_recall": {
+        "k": 3,
+        "n": 8,
+        "value": 0.375,
+        "ci95": [0.137, 0.694]
+      },
+      "high_impact_attention": {
+        "k": 9,
+        "n": 10,
+        "value": 0.9,
+        "ci95": [0.596, 0.982]
+      },
+      "false_positive_burden_per_case": 0.48,
+      "low_impact_overflag": {
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
+      },
+      "low_impact_attention": {
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
+      },
+      "attention_recall": {
+        "k": 21,
+        "n": 22,
+        "value": 0.955,
+        "ci95": [0.782, 0.992]
+      },
+      "attention_rate": {
+        "k": 22,
+        "n": 31,
+        "value": 0.71,
+        "ci95": [0.534, 0.839]
+      },
+      "impact_exact_agreement": {
+        "k": 23,
+        "n": 31,
+        "value": 0.742,
+        "ci95": [0.568, 0.863]
+      },
+      "impact_within_one": {
+        "k": 30,
+        "n": 31,
+        "value": 0.968,
+        "ci95": [0.838, 0.994]
+      },
+      "impact_weighted_kappa": 0.78,
+      "material_findings": 80,
+      "evidence_checked": 80,
+      "evidence_passed": 80,
+      "evidence_failed": 0,
+      "evidence_unassessed": 0,
+      "evidence_verification_coverage": {
+        "k": 80,
+        "n": 80,
+        "value": 1.0,
+        "ci95": [0.954, 1.0]
+      },
+      "evidence_correctness_checked": {
+        "k": 80,
+        "n": 80,
+        "value": 1.0,
+        "ci95": [0.954, 1.0]
+      },
+      "actionability": {
+        "k": 65,
+        "n": 65,
+        "value": 1.0,
+        "ci95": [0.944, 1.0]
+      },
+      "cost_usd": {
+        "mean": 1.48,
+        "total": 46.01,
+        "n": 31
+      },
+      "wall_seconds": {
+        "mean": 189.3,
+        "n": 31
+      }
+    },
+    "change-risk/C": {
+      "cases": 31,
+      "findings": 84,
+      "findings_per_case": 2.71,
+      "labels": {
+        "valid": 54,
+        "match": 6,
+        "unsupported": 18,
+        "trivial": 6
+      },
+      "scenario_validity_all": {
+        "k": 60,
+        "n": 84,
+        "value": 0.714,
+        "ci95": [0.61, 0.8]
+      },
+      "scenario_validity_material": {
+        "k": 60,
+        "n": 78,
+        "value": 0.769,
+        "ci95": [0.664, 0.849]
+      },
+      "known_defect_recall": {
+        "k": 4,
+        "n": 11,
+        "value": 0.364,
+        "ci95": [0.152, 0.646]
+      },
+      "defect_case_recall": {
+        "k": 4,
+        "n": 8,
+        "value": 0.5,
+        "ci95": [0.215, 0.785]
+      },
+      "high_impact_attention": {
+        "k": 8,
+        "n": 10,
+        "value": 0.8,
+        "ci95": [0.49, 0.943]
+      },
+      "false_positive_burden_per_case": 0.58,
+      "low_impact_overflag": {
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
+      },
+      "low_impact_attention": {
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
+      },
+      "attention_recall": {
+        "k": 21,
+        "n": 22,
+        "value": 0.955,
+        "ci95": [0.782, 0.992]
+      },
+      "attention_rate": {
+        "k": 22,
+        "n": 31,
+        "value": 0.71,
+        "ci95": [0.534, 0.839]
+      },
+      "impact_exact_agreement": {
+        "k": 20,
+        "n": 31,
+        "value": 0.645,
+        "ci95": [0.469, 0.789]
+      },
+      "impact_within_one": {
+        "k": 30,
+        "n": 31,
+        "value": 0.968,
+        "ci95": [0.838, 0.994]
+      },
+      "impact_weighted_kappa": 0.716,
+      "material_findings": 78,
+      "evidence_checked": 78,
+      "evidence_passed": 78,
+      "evidence_failed": 0,
+      "evidence_unassessed": 0,
+      "evidence_verification_coverage": {
+        "k": 78,
+        "n": 78,
+        "value": 1.0,
+        "ci95": [0.953, 1.0]
+      },
+      "evidence_correctness_checked": {
+        "k": 78,
+        "n": 78,
+        "value": 1.0,
+        "ci95": [0.953, 1.0]
+      },
+      "actionability": {
+        "k": 60,
+        "n": 60,
+        "value": 1.0,
+        "ci95": [0.94, 1.0]
+      },
+      "cost_usd": {
+        "mean": 1.51,
+        "total": 46.96,
+        "n": 31
+      },
+      "wall_seconds": {
+        "mean": 194.9,
+        "n": 31
+      }
+    },
+    "coderabbit/original": {
+      "cases": 19,
+      "findings": 119,
+      "findings_per_case": 6.26,
+      "labels": {
+        "incorrect": 38,
+        "trivial": 57,
+        "unsupported": 6,
+        "valid": 17,
+        "match": 1
+      },
+      "scenario_validity_all": {
+        "k": 18,
+        "n": 119,
+        "value": 0.151,
+        "ci95": [0.098, 0.226]
+      },
+      "scenario_validity_material": {
+        "k": 18,
+        "n": 62,
+        "value": 0.29,
+        "ci95": [0.192, 0.413]
+      },
+      "known_defect_recall": {
+        "k": 1,
+        "n": 8,
+        "value": 0.125,
+        "ci95": [0.022, 0.471]
+      },
+      "defect_case_recall": {
+        "k": 1,
+        "n": 6,
+        "value": 0.167,
+        "ci95": [0.03, 0.564]
+      },
+      "high_impact_attention": {
+        "k": 3,
+        "n": 6,
+        "value": 0.5,
+        "ci95": [0.188, 0.812]
+      },
+      "false_positive_burden_per_case": 2.32,
+      "low_impact_overflag": {
+        "k": 0,
+        "n": 4,
+        "value": 0.0,
+        "ci95": [0.0, 0.49]
+      },
+      "low_impact_attention": {
+        "k": 0,
+        "n": 4,
+        "value": 0.0,
+        "ci95": [0.0, 0.49]
+      },
+      "attention_recall": {
+        "k": 7,
+        "n": 15,
+        "value": 0.467,
+        "ci95": [0.248, 0.699]
+      },
+      "attention_rate": {
+        "k": 7,
+        "n": 19,
+        "value": 0.368,
+        "ci95": [0.191, 0.59]
+      },
+      "impact_exact_agreement": {
+        "k": 0,
+        "n": 0,
+        "value": null,
+        "ci95": null
+      },
+      "impact_within_one": {
+        "k": 0,
+        "n": 0,
+        "value": null,
+        "ci95": null
+      },
+      "impact_weighted_kappa": null,
+      "material_findings": 62,
+      "evidence_checked": 62,
+      "evidence_passed": 29,
+      "evidence_failed": 33,
+      "evidence_unassessed": 0,
+      "evidence_verification_coverage": {
+        "k": 62,
+        "n": 62,
+        "value": 1.0,
+        "ci95": [0.942, 1.0]
+      },
+      "evidence_correctness_checked": {
+        "k": 29,
+        "n": 62,
+        "value": 0.468,
+        "ci95": [0.349, 0.59]
+      },
+      "actionability": {
+        "k": 18,
+        "n": 18,
+        "value": 1.0,
+        "ci95": [0.824, 1.0]
+      },
+      "cost_usd": {
+        "mean": null,
+        "total": 0,
+        "n": 0
+      },
+      "wall_seconds": {
+        "mean": null,
+        "n": 0
+      }
+    }
+  }
+}

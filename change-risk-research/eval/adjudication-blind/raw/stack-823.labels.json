@@ -1,0 +1,148 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "post-agent throws on any skip/unswept dir after the agent edited code and run.ts's catch exits 1, skipping finalize."
+    },
+    {
+      "id": "F-02",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Rewriter edits only SQL so the drizzle snapshot diverges, and the next generate re-emits ADD COLUMN for the twin."
+    },
+    {
+      "id": "F-03",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The add-only rewrite leaves the TS schema and snapshot declaring the source column encrypted, so they diverge from the DB."
+    },
+    {
+      "id": "F-04",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "The cited test forces the failure with a mocked fs write, not chmod 0o444, and no chmod appears in the tests."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "install-eql.ts's Drizzle path catches the new CliExit from the fail-closed sweep and reports it as a drizzle-kit problem without setting eqlMigrationPending."
+    },
+    {
+      "id": "F-06",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "post-agent.ts at head throws rather than emitting a warning with a dangling colon, so no duplicate warning exists at the cited line."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "skills/stash-drizzle/SKILL.md:64 still calls the repair data-destroying and wasn't updated, while stash-cli's skill was."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Every skip now causes a CliExit(1) or wizard throw on every run, and there is no way to acknowledge a reviewed statement."
+    },
+    {
+      "id": "F-09",
+      "label": "match",
+      "matches": ["KD-3"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The wizard's sweepMigrationDirs uses an unchecked err cast, so a null/undefined throw raises TypeError inside the catch."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "init's Drizzle path swallows the sweep CliExit, which leads index.ts to report 'EQL NOT installed' with wrong advice."
+    },
+    {
+      "id": "F-11",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The rewrite changes only SQL, leaving schema.ts and the snapshot declaring the source column encrypted."
+    },
+    {
+      "id": "F-12",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The same init misreporting of the fail-closed sweep as a drizzle-kit failure, supported by install-eql.ts and index.ts."
+    },
+    {
+      "id": "F-13",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The stash-drizzle skill is stale against the new non-destructive, fail-closed behaviour."
+    },
+    {
+      "id": "F-14",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Flagged statements cause permanent non-zero exits with no override, and each run writes another install migration."
+    },
+    {
+      "id": "F-15",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "install.ts has only 227 lines and contains no partial-result cast; the CLI migration.ts already guards with isPartialRewriteResult."
+    },
+    {
+      "id": "F-16",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "After the add-only rewrite the TS schema and snapshot still say the source column is encrypted, so they diverge from the DB."
+    },
+    {
+      "id": "F-17",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "migration.ts already calls p.outro('Migration aborted.') when not embedded before throwing CliExit(1)."
+    },
+    {
+      "id": "F-18",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is a comment/documentation consistency nit between the two rewriter copies."
+    }
+  ]
+}

@@ -1,0 +1,1800 @@
+{
+  "by_evaluator": {
+    "change-risk/C": {
+      "findings": 84,
+      "raw_agreement": 0.786,
+      "kappa_5_labels": 0.556,
+      "kappa_sound": 0.546,
+      "known_defects_first": [
+        "stack-1002:KD-1",
+        "stack-666:KD-1",
+        "stack-823:KD-2",
+        "stack-941:KD-2"
+      ],
+      "known_defects_blind": [
+        "stack-1002:KD-1",
+        "stack-666:KD-1",
+        "stack-823:KD-2",
+        "stack-941:KD-2"
+      ],
+      "metrics_first": {
+        "cases": 31,
+        "findings": 84,
+        "findings_per_case": 2.71,
+        "labels": {
+          "valid": 63,
+          "match": 5,
+          "unsupported": 10,
+          "trivial": 6
+        },
+        "scenario_precision_all": {
+          "k": 68,
+          "n": 84,
+          "value": 0.81,
+          "ci95": [0.713, 0.879]
+        },
+        "scenario_precision_material": {
+          "k": 68,
+          "n": 78,
+          "value": 0.872,
+          "ci95": [0.78, 0.929]
+        },
+        "known_defect_recall": {
+          "k": 4,
+          "n": 11,
+          "value": 0.364,
+          "ci95": [0.152, 0.646]
+        },
+        "defect_case_recall": {
+          "k": 4,
+          "n": 8,
+          "value": 0.5,
+          "ci95": [0.215, 0.785]
+        },
+        "high_impact_attention": {
+          "k": 8,
+          "n": 10,
+          "value": 0.8,
+          "ci95": [0.49, 0.943]
+        },
+        "false_positive_burden_per_case": 0.32,
+        "low_impact_overflag": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "low_impact_attention": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "attention_recall": {
+          "k": 21,
+          "n": 22,
+          "value": 0.955,
+          "ci95": [0.782, 0.992]
+        },
+        "attention_rate": {
+          "k": 22,
+          "n": 31,
+          "value": 0.71,
+          "ci95": [0.534, 0.839]
+        },
+        "impact_exact_agreement": {
+          "k": 20,
+          "n": 31,
+          "value": 0.645,
+          "ci95": [0.469, 0.789]
+        },
+        "impact_within_one": {
+          "k": 30,
+          "n": 31,
+          "value": 0.968,
+          "ci95": [0.838, 0.994]
+        },
+        "impact_weighted_kappa": 0.716,
+        "evidence_quality": {
+          "k": 1,
+          "n": 1,
+          "value": 1.0,
+          "ci95": [0.207, 1.0]
+        },
+        "actionability": {
+          "k": 65,
+          "n": 68,
+          "value": 0.956,
+          "ci95": [0.878, 0.985]
+        },
+        "cost_usd": {
+          "mean": 1.51,
+          "total": 46.96,
+          "n": 31
+        },
+        "wall_seconds": {
+          "mean": 194.9,
+          "n": 31
+        }
+      },
+      "metrics_blind": {
+        "cases": 31,
+        "findings": 84,
+        "findings_per_case": 2.71,
+        "labels": {
+          "valid": 54,
+          "match": 6,
+          "unsupported": 18,
+          "trivial": 6
+        },
+        "scenario_precision_all": {
+          "k": 60,
+          "n": 84,
+          "value": 0.714,
+          "ci95": [0.61, 0.8]
+        },
+        "scenario_precision_material": {
+          "k": 60,
+          "n": 78,
+          "value": 0.769,
+          "ci95": [0.664, 0.849]
+        },
+        "known_defect_recall": {
+          "k": 4,
+          "n": 11,
+          "value": 0.364,
+          "ci95": [0.152, 0.646]
+        },
+        "defect_case_recall": {
+          "k": 4,
+          "n": 8,
+          "value": 0.5,
+          "ci95": [0.215, 0.785]
+        },
+        "high_impact_attention": {
+          "k": 8,
+          "n": 10,
+          "value": 0.8,
+          "ci95": [0.49, 0.943]
+        },
+        "false_positive_burden_per_case": 0.58,
+        "low_impact_overflag": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "low_impact_attention": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "attention_recall": {
+          "k": 21,
+          "n": 22,
+          "value": 0.955,
+          "ci95": [0.782, 0.992]
+        },
+        "attention_rate": {
+          "k": 22,
+          "n": 31,
+          "value": 0.71,
+          "ci95": [0.534, 0.839]
+        },
+        "impact_exact_agreement": {
+          "k": 20,
+          "n": 31,
+          "value": 0.645,
+          "ci95": [0.469, 0.789]
+        },
+        "impact_within_one": {
+          "k": 30,
+          "n": 31,
+          "value": 0.968,
+          "ci95": [0.838, 0.994]
+        },
+        "impact_weighted_kappa": 0.716,
+        "evidence_quality": {
+          "k": 78,
+          "n": 78,
+          "value": 1.0,
+          "ci95": [0.953, 1.0]
+        },
+        "actionability": {
+          "k": 60,
+          "n": 60,
+          "value": 1.0,
+          "ci95": [0.94, 1.0]
+        },
+        "cost_usd": {
+          "mean": 1.51,
+          "total": 46.96,
+          "n": 31
+        },
+        "wall_seconds": {
+          "mean": 194.9,
+          "n": 31
+        }
+      }
+    },
+    "change-risk/B": {
+      "findings": 87,
+      "raw_agreement": 0.793,
+      "kappa_5_labels": 0.506,
+      "kappa_sound": 0.465,
+      "known_defects_first": [
+        "stack-666:KD-1",
+        "stack-823:KD-2",
+        "stack-941:KD-2"
+      ],
+      "known_defects_blind": [
+        "stack-666:KD-1",
+        "stack-823:KD-2",
+        "stack-941:KD-2"
+      ],
+      "metrics_first": {
+        "cases": 31,
+        "findings": 87,
+        "findings_per_case": 2.81,
+        "labels": {
+          "valid": 68,
+          "trivial": 8,
+          "unsupported": 8,
+          "match": 3
+        },
+        "scenario_precision_all": {
+          "k": 71,
+          "n": 87,
+          "value": 0.816,
+          "ci95": [0.722, 0.884]
+        },
+        "scenario_precision_material": {
+          "k": 71,
+          "n": 79,
+          "value": 0.899,
+          "ci95": [0.813, 0.948]
+        },
+        "known_defect_recall": {
+          "k": 3,
+          "n": 11,
+          "value": 0.273,
+          "ci95": [0.097, 0.566]
+        },
+        "defect_case_recall": {
+          "k": 3,
+          "n": 8,
+          "value": 0.375,
+          "ci95": [0.137, 0.694]
+        },
+        "high_impact_attention": {
+          "k": 9,
+          "n": 10,
+          "value": 0.9,
+          "ci95": [0.596, 0.982]
+        },
+        "false_positive_burden_per_case": 0.26,
+        "low_impact_overflag": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "low_impact_attention": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "attention_recall": {
+          "k": 21,
+          "n": 22,
+          "value": 0.955,
+          "ci95": [0.782, 0.992]
+        },
+        "attention_rate": {
+          "k": 22,
+          "n": 31,
+          "value": 0.71,
+          "ci95": [0.534, 0.839]
+        },
+        "impact_exact_agreement": {
+          "k": 23,
+          "n": 31,
+          "value": 0.742,
+          "ci95": [0.568, 0.863]
+        },
+        "impact_within_one": {
+          "k": 30,
+          "n": 31,
+          "value": 0.968,
+          "ci95": [0.838, 0.994]
+        },
+        "impact_weighted_kappa": 0.78,
+        "evidence_quality": {
+          "k": 2,
+          "n": 2,
+          "value": 1.0,
+          "ci95": [0.342, 1.0]
+        },
+        "actionability": {
+          "k": 68,
+          "n": 71,
+          "value": 0.958,
+          "ci95": [0.883, 0.986]
+        },
+        "cost_usd": {
+          "mean": 1.48,
+          "total": 46.01,
+          "n": 31
+        },
+        "wall_seconds": {
+          "mean": 189.3,
+          "n": 31
+        }
+      },
+      "metrics_blind": {
+        "cases": 31,
+        "findings": 87,
+        "findings_per_case": 2.81,
+        "labels": {
+          "valid": 62,
+          "unsupported": 15,
+          "trivial": 7,
+          "match": 3
+        },
+        "scenario_precision_all": {
+          "k": 65,
+          "n": 87,
+          "value": 0.747,
+          "ci95": [0.647, 0.827]
+        },
+        "scenario_precision_material": {
+          "k": 65,
+          "n": 80,
+          "value": 0.812,
+          "ci95": [0.713, 0.883]
+        },
+        "known_defect_recall": {
+          "k": 3,
+          "n": 11,
+          "value": 0.273,
+          "ci95": [0.097, 0.566]
+        },
+        "defect_case_recall": {
+          "k": 3,
+          "n": 8,
+          "value": 0.375,
+          "ci95": [0.137, 0.694]
+        },
+        "high_impact_attention": {
+          "k": 9,
+          "n": 10,
+          "value": 0.9,
+          "ci95": [0.596, 0.982]
+        },
+        "false_positive_burden_per_case": 0.48,
+        "low_impact_overflag": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "low_impact_attention": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "attention_recall": {
+          "k": 21,
+          "n": 22,
+          "value": 0.955,
+          "ci95": [0.782, 0.992]
+        },
+        "attention_rate": {
+          "k": 22,
+          "n": 31,
+          "value": 0.71,
+          "ci95": [0.534, 0.839]
+        },
+        "impact_exact_agreement": {
+          "k": 23,
+          "n": 31,
+          "value": 0.742,
+          "ci95": [0.568, 0.863]
+        },
+        "impact_within_one": {
+          "k": 30,
+          "n": 31,
+          "value": 0.968,
+          "ci95": [0.838, 0.994]
+        },
+        "impact_weighted_kappa": 0.78,
+        "evidence_quality": {
+          "k": 80,
+          "n": 80,
+          "value": 1.0,
+          "ci95": [0.954, 1.0]
+        },
+        "actionability": {
+          "k": 65,
+          "n": 65,
+          "value": 1.0,
+          "ci95": [0.944, 1.0]
+        },
+        "cost_usd": {
+          "mean": 1.48,
+          "total": 46.01,
+          "n": 31
+        },
+        "wall_seconds": {
+          "mean": 189.3,
+          "n": 31
+        }
+      }
+    },
+    "change-risk/A": {
+      "findings": 86,
+      "raw_agreement": 0.814,
+      "kappa_5_labels": 0.573,
+      "kappa_sound": 0.529,
+      "known_defects_first": [
+        "stack-1002:KD-1",
+        "stack-666:KD-1",
+        "stack-823:KD-2",
+        "stack-941:KD-1"
+      ],
+      "known_defects_blind": [
+        "stack-1002:KD-1",
+        "stack-666:KD-1",
+        "stack-823:KD-2",
+        "stack-941:KD-1"
+      ],
+      "metrics_first": {
+        "cases": 31,
+        "findings": 86,
+        "findings_per_case": 2.77,
+        "labels": {
+          "match": 4,
+          "valid": 65,
+          "trivial": 7,
+          "unsupported": 10
+        },
+        "scenario_precision_all": {
+          "k": 69,
+          "n": 86,
+          "value": 0.802,
+          "ci95": [0.706, 0.873]
+        },
+        "scenario_precision_material": {
+          "k": 69,
+          "n": 79,
+          "value": 0.873,
+          "ci95": [0.782, 0.93]
+        },
+        "known_defect_recall": {
+          "k": 4,
+          "n": 11,
+          "value": 0.364,
+          "ci95": [0.152, 0.646]
+        },
+        "defect_case_recall": {
+          "k": 4,
+          "n": 8,
+          "value": 0.5,
+          "ci95": [0.215, 0.785]
+        },
+        "high_impact_attention": {
+          "k": 9,
+          "n": 10,
+          "value": 0.9,
+          "ci95": [0.596, 0.982]
+        },
+        "false_positive_burden_per_case": 0.32,
+        "low_impact_overflag": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "low_impact_attention": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "attention_recall": {
+          "k": 21,
+          "n": 22,
+          "value": 0.955,
+          "ci95": [0.782, 0.992]
+        },
+        "attention_rate": {
+          "k": 22,
+          "n": 31,
+          "value": 0.71,
+          "ci95": [0.534, 0.839]
+        },
+        "impact_exact_agreement": {
+          "k": 21,
+          "n": 31,
+          "value": 0.677,
+          "ci95": [0.501, 0.814]
+        },
+        "impact_within_one": {
+          "k": 29,
+          "n": 31,
+          "value": 0.935,
+          "ci95": [0.793, 0.982]
+        },
+        "impact_weighted_kappa": 0.718,
+        "evidence_quality": {
+          "k": 1,
+          "n": 1,
+          "value": 1.0,
+          "ci95": [0.207, 1.0]
+        },
+        "actionability": {
+          "k": 67,
+          "n": 69,
+          "value": 0.971,
+          "ci95": [0.9, 0.992]
+        },
+        "cost_usd": {
+          "mean": 1.5,
+          "total": 46.51,
+          "n": 31
+        },
+        "wall_seconds": {
+          "mean": 197.1,
+          "n": 31
+        }
+      },
+      "metrics_blind": {
+        "cases": 31,
+        "findings": 86,
+        "findings_per_case": 2.77,
+        "labels": {
+          "match": 4,
+          "valid": 61,
+          "unsupported": 16,
+          "trivial": 5
+        },
+        "scenario_precision_all": {
+          "k": 65,
+          "n": 86,
+          "value": 0.756,
+          "ci95": [0.655, 0.834]
+        },
+        "scenario_precision_material": {
+          "k": 65,
+          "n": 81,
+          "value": 0.802,
+          "ci95": [0.703, 0.875]
+        },
+        "known_defect_recall": {
+          "k": 4,
+          "n": 11,
+          "value": 0.364,
+          "ci95": [0.152, 0.646]
+        },
+        "defect_case_recall": {
+          "k": 4,
+          "n": 8,
+          "value": 0.5,
+          "ci95": [0.215, 0.785]
+        },
+        "high_impact_attention": {
+          "k": 9,
+          "n": 10,
+          "value": 0.9,
+          "ci95": [0.596, 0.982]
+        },
+        "false_positive_burden_per_case": 0.52,
+        "low_impact_overflag": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "low_impact_attention": {
+          "k": 1,
+          "n": 9,
+          "value": 0.111,
+          "ci95": [0.02, 0.435]
+        },
+        "attention_recall": {
+          "k": 21,
+          "n": 22,
+          "value": 0.955,
+          "ci95": [0.782, 0.992]
+        },
+        "attention_rate": {
+          "k": 22,
+          "n": 31,
+          "value": 0.71,
+          "ci95": [0.534, 0.839]
+        },
+        "impact_exact_agreement": {
+          "k": 21,
+          "n": 31,
+          "value": 0.677,
+          "ci95": [0.501, 0.814]
+        },
+        "impact_within_one": {
+          "k": 29,
+          "n": 31,
+          "value": 0.935,
+          "ci95": [0.793, 0.982]
+        },
+        "impact_weighted_kappa": 0.718,
+        "evidence_quality": {
+          "k": 81,
+          "n": 81,
+          "value": 1.0,
+          "ci95": [0.955, 1.0]
+        },
+        "actionability": {
+          "k": 65,
+          "n": 65,
+          "value": 1.0,
+          "ci95": [0.944, 1.0]
+        },
+        "cost_usd": {
+          "mean": 1.5,
+          "total": 46.51,
+          "n": 31
+        },
+        "wall_seconds": {
+          "mean": 197.1,
+          "n": 31
+        }
+      }
+    },
+    "coderabbit/original": {
+      "findings": 119,
+      "raw_agreement": 0.588,
+      "kappa_5_labels": 0.375,
+      "kappa_sound": 0.45,
+      "known_defects_first": ["stack-823:KD-3"],
+      "known_defects_blind": ["stack-823:KD-3"],
+      "metrics_first": {
+        "cases": 19,
+        "findings": 119,
+        "findings_per_case": 6.26,
+        "labels": {
+          "valid": 40,
+          "trivial": 71,
+          "unsupported": 4,
+          "incorrect": 2,
+          "match": 2
+        },
+        "scenario_precision_all": {
+          "k": 42,
+          "n": 119,
+          "value": 0.353,
+          "ci95": [0.273, 0.442]
+        },
+        "scenario_precision_material": {
+          "k": 42,
+          "n": 48,
+          "value": 0.875,
+          "ci95": [0.753, 0.941]
+        },
+        "known_defect_recall": {
+          "k": 1,
+          "n": 8,
+          "value": 0.125,
+          "ci95": [0.022, 0.471]
+        },
+        "defect_case_recall": {
+          "k": 1,
+          "n": 6,
+          "value": 0.167,
+          "ci95": [0.03, 0.564]
+        },
+        "high_impact_attention": {
+          "k": 4,
+          "n": 6,
+          "value": 0.667,
+          "ci95": [0.3, 0.903]
+        },
+        "false_positive_burden_per_case": 0.32,
+        "low_impact_overflag": {
+          "k": 0,
+          "n": 4,
+          "value": 0.0,
+          "ci95": [0.0, 0.49]
+        },
+        "low_impact_attention": {
+          "k": 0,
+          "n": 4,
+          "value": 0.0,
+          "ci95": [0.0, 0.49]
+        },
+        "attention_recall": {
+          "k": 11,
+          "n": 15,
+          "value": 0.733,
+          "ci95": [0.48, 0.891]
+        },
+        "attention_rate": {
+          "k": 11,
+          "n": 19,
+          "value": 0.579,
+          "ci95": [0.363, 0.769]
+        },
+        "impact_exact_agreement": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "ci95": null
+        },
+        "impact_within_one": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "ci95": null
+        },
+        "impact_weighted_kappa": null,
+        "evidence_quality": {
+          "k": 0,
+          "n": 2,
+          "value": 0.0,
+          "ci95": [0.0, 0.658]
+        },
+        "actionability": {
+          "k": 42,
+          "n": 42,
+          "value": 1.0,
+          "ci95": [0.916, 1.0]
+        },
+        "cost_usd": {
+          "mean": null,
+          "total": 0,
+          "n": 0
+        },
+        "wall_seconds": {
+          "mean": null,
+          "n": 0
+        }
+      },
+      "metrics_blind": {
+        "cases": 19,
+        "findings": 119,
+        "findings_per_case": 6.26,
+        "labels": {
+          "incorrect": 38,
+          "trivial": 57,
+          "unsupported": 6,
+          "valid": 17,
+          "match": 1
+        },
+        "scenario_precision_all": {
+          "k": 18,
+          "n": 119,
+          "value": 0.151,
+          "ci95": [0.098, 0.226]
+        },
+        "scenario_precision_material": {
+          "k": 18,
+          "n": 62,
+          "value": 0.29,
+          "ci95": [0.192, 0.413]
+        },
+        "known_defect_recall": {
+          "k": 1,
+          "n": 8,
+          "value": 0.125,
+          "ci95": [0.022, 0.471]
+        },
+        "defect_case_recall": {
+          "k": 1,
+          "n": 6,
+          "value": 0.167,
+          "ci95": [0.03, 0.564]
+        },
+        "high_impact_attention": {
+          "k": 3,
+          "n": 6,
+          "value": 0.5,
+          "ci95": [0.188, 0.812]
+        },
+        "false_positive_burden_per_case": 2.32,
+        "low_impact_overflag": {
+          "k": 0,
+          "n": 4,
+          "value": 0.0,
+          "ci95": [0.0, 0.49]
+        },
+        "low_impact_attention": {
+          "k": 0,
+          "n": 4,
+          "value": 0.0,
+          "ci95": [0.0, 0.49]
+        },
+        "attention_recall": {
+          "k": 7,
+          "n": 15,
+          "value": 0.467,
+          "ci95": [0.248, 0.699]
+        },
+        "attention_rate": {
+          "k": 7,
+          "n": 19,
+          "value": 0.368,
+          "ci95": [0.191, 0.59]
+        },
+        "impact_exact_agreement": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "ci95": null
+        },
+        "impact_within_one": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "ci95": null
+        },
+        "impact_weighted_kappa": null,
+        "evidence_quality": {
+          "k": 29,
+          "n": 62,
+          "value": 0.468,
+          "ci95": [0.349, 0.59]
+        },
+        "actionability": {
+          "k": 18,
+          "n": 18,
+          "value": 1.0,
+          "ci95": [0.824, 1.0]
+        },
+        "cost_usd": {
+          "mean": null,
+          "total": 0,
+          "n": 0
+        },
+        "wall_seconds": {
+          "mean": null,
+          "n": 0
+        }
+      }
+    }
+  },
+  "disagreements": [
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-1002",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "match",
+      "title": "linux-x64-musl leg built without -crt-static: cdylib dropped, auth build fails and blocks the JS release",
+      "blind_reason": "Flags the musl leg as built without proper linkage configuration on a glibc host and notes the preflight's musl check would not catch a mis-linked binary that fails on Alpine, recommending an Alpine load test."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-1072",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "The new filter evaluator makes a coverage guard pass for a filter that drops a binding input",
+      "blind_reason": "negationRemovesAll does deliberately fail open on file-type negations, but this only affects a hypothetical future filter, and the finding itself says the fail-closed coverage guards would still catch it, leaving at most stale comment guidance."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-1090",
+      "finding": "FS-4",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Guidance to share clients outlives the fix: version skew or rollback reintroduces #1045",
+      "blind_reason": "The skill already tells users of releases before the #1045 fix to build one client per user; a missing version number is a minor docs gap, and the rollback scenario is speculative."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-1111",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Cold cache after merge makes every job recompile its cargo tools",
+      "blind_reason": "The cited cargo tools and fuzz timeout-minutes: 30 exist, but a one-off slow cold-cache run is an expected, self-healing consequence, and head CI shows no timeouts."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-330",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Published stash CLI fails at startup for every command because @cipherstash/auth does not load",
+      "blind_reason": "Nothing shows that @cipherstash/auth's default-import interop actually fails. The startup crash is conjecture about an unspecified platform or packaging."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-330",
+      "finding": "FS-4",
+      "first": "unsupported",
+      "blind": "valid",
+      "title": "Downgraded and exact-pinned runtime dependencies change library behaviour for consumers",
+      "blind_reason": "The downgrades and exact pins of evlog and @byteslice/result are confirmed in package.json and the lockfile diff."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-349",
+      "finding": "FS-3",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Changed Drizzle dataType string causes regenerated ALTERs on already-encrypted columns, which the sweep turns into DROPs",
+      "blind_reason": "The snapshot-diff-to-DROP chain assumes the rewriter matches whatever drizzle-kit emits; the quoted-type rendering problem is only mentioned as something to verify and is not identified as the mechanism."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-496",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "protect-ffi 0.24.0 native bump changes payloads or API for existing Node users without a matching EQL bump",
+      "blind_reason": "Payload-format incompatibility of protect-ffi 0.24 is hypothetical; no cited code shows a format change and CI e2e against EQL 2.3.1 passes."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-502",
+      "finding": "FS-2",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "Exported constructors and class identity become semver-bound public API",
+      "blind_reason": "The core claim holds (value exports expose constructors that take the internal Client; tsup builds separate entries with no splitting option); the CJS instanceof point is hedged as unverified but plausible."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-568",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Node explicit authStrategy path fails every ZeroKMS request if protect-ffi 0.28 native does not unwrap the auth Result (",
+      "blind_reason": "Rests on the unverified assumption that the native protect-ffi 0.28 newClient does not unwrap the Result (or rejects plain {token}); the finding admits protect-ffi source was unavailable."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-568",
+      "finding": "FS-3",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Wizard reports an unexpected error instead of 'missing credentials' if auth 0.41's failure.type strings differ from the ",
+      "blind_reason": "Same speculative literal-mismatch concern with no evidence that auth 0.41 uses different type strings; the changeset shows NOT_AUTHENTICATED is still used."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-860",
+      "finding": "FS-2",
+      "first": "unsupported",
+      "blind": "valid",
+      "title": "Native entry passes authStrategy under the pre-0.31 `strategy` key",
+      "blind_reason": "Native newClient still passes `strategy` while the PR renames the WASM field to authStrategy and calls `strategy` a deprecated alias, so native auth depends on an unverified alias; passing authStrategy is an easy fix."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-905",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Release-time platform build of the new graph fails or misbehaves on a target PR CI does not build",
+      "blind_reason": "aws-lc-rs was already built on all release platforms at base via rustls/vitaminc, as the finding itself notes, and no target-specific failure mechanism is shown."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-981",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "hickory 0.26 / reqwest 0.13.4 behaviour change breaks ZeroKMS connectivity in the test harness",
+      "blind_reason": "Speculative resolver behaviour change with no concrete mechanism, and its own cited CI evidence shows the e2e property suite and build jobs passing on the head commit."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-981",
+      "finding": "FS-2",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "Re-resolved windows-sys / macOS system-configuration edges break non-Linux developer builds",
+      "blind_reason": "The lockfile does re-point windows-sys and add macOS system-configuration edges, but Cargo resolves these within declared ranges and the finding itself concedes breakage is unlikely; no concrete break mechanism is shown."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-982",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "next 15.5.24 patch changes next/server or next/headers behaviour used by @cipherstash/nextjs",
+      "blind_reason": "Cited code is accurate, but no concrete break caused by 15.5.24 is shown, and its claim that no CI job typechecks packages/nextjs is contradicted by tests.yml:220-221."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-996",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Supabase per-term fallback now fails queries it previously sent",
+      "blind_reason": "Accurate description of the intended per-term null guard (query-encrypt.ts:417-421, plus its test). It can only fire when the client breaks its contract, and it turns silently wrong results into a loud error, so it is immaterial to release risk."
+    },
+    {
+      "evaluator": "change-risk/C",
+      "case": "stack-998",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "First no-EQL-bump release runs the lock-refresh and asset steps for real and stops the release",
+      "blind_reason": "The cited code skips the asset rebuild when nothing is skewed and deliberately runs cargo update online; the failure modes listed (resolution error, pre-existing tree skew) are hypothetical, are not shown to follow from this change, and lead to an outcome no worse than the base's unconditional throw."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-1002",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "musl leg produces no .node and the armed release holds every JS publish on that push",
+      "blind_reason": "Claim that no .node is produced and the build fails loudly rests on unverified rustc behaviour; the cited code does not show the build fails, and the actual risk is a mis-linked binary being produced."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-1026",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "npm listing lag beyond 15 minutes blocks every JS release in that run",
+      "blind_reason": "The timeout behaviour is accurately described, but the finding itself concludes it is a loud, recoverable, intended trade-off and recommends accepting it."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-1072",
+      "finding": "FS-3",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "EQL cutover plan can drift from FROZEN_PUBLISHERS unchecked",
+      "blind_reason": "The PR removes the DOCS entry that held the EQL plan to FROZEN_PUBLISHERS, while release-gate.mjs still points operators at that plan's Phase-5 cutover, so the plan can now drift with nothing checking it."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-1111",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "One-time cold mise cache on every affected job",
+      "blind_reason": "A one-time cold cache after a key change is the expected, self-healing cost of re-keying the cache; it is not material release risk, and head CI passed."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-330",
+      "finding": "FS-4",
+      "first": "unsupported",
+      "blind": "valid",
+      "title": "Exact-pin downgrades of @byteslice/result and evlog change library runtime for all consumers",
+      "blind_reason": "The lockfile diff confirms the downgrades (byteslice 0.2.2 to 0.2.0, evlog 1.11.0 to 1.9.0) and the exact pins. This is a plausible consumer-facing runtime change introduced by the PR, though its impact is unproven."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-349",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Changed Drizzle type string turns existing encrypted columns into ALTERs that the rewrite converts to DROP of ciphertext",
+      "blind_reason": "Assumes drizzle-kit emits a clean ALTER to \"public\".\"eql_v2_encrypted\" that the rewriter matches; the pre-quoted type is actually mis-rendered, so the claimed DROP-of-ciphertext chain is speculative and not shown by the code."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-371",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "Future copy edits in messages.ts change CLI output with E2E staying green",
+      "blind_reason": "Base tests hard-coded literals while head tests read the shared constants, so wording changes in messages.ts change CLI output with no failing test; the finding correctly scopes this as minor and suggests a snapshot."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-496",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "protect-ffi 0.24 bump in the main Node entry ships without EQL lockstep or payload-compatibility evidence",
+      "blind_reason": "Lockstep comments are unchanged, but no evidence shows 0.24 changed payload format; consequence is speculative."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-502",
+      "finding": "FS-2",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "Operation constructors become a semver-bound contract",
+      "blind_reason": "Same accurate point: value re-exports make constructors and class identity public surface in a minor release; the cited lines confirm value export and type-only new imports."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-568",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Native-path protect-ffi 0.28 handling of the getToken() Result envelope is unverified",
+      "blind_reason": "Hypothesizes that protect-ffi 0.28's native newClient may not handle the Result envelope, but nothing in the cited code or repo shows the native binding behaves differently; the risk is unverified rather than demonstrated."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-568",
+      "finding": "FS-3",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Consumers importing the AuthError type from @cipherstash/stack stop compiling",
+      "blind_reason": "Intentional, changeset-documented type rename in a 0.x minor; the compile break is the expected migration."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-568",
+      "finding": "FS-4",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Wizard prerequisites check may throw instead of reporting missing credentials if auth 0.41 failure.type strings differ",
+      "blind_reason": "Speculative: the changeset itself documents SCREAMING_CASE failure types like NOT_AUTHENTICATED, and the PascalCase value is only a hand-written test mock, so no renamed variant is shown."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-860",
+      "finding": "FS-1",
+      "first": "unsupported",
+      "blind": "valid",
+      "title": "Native entry passes the auth strategy under the pre-0.31 `strategy` key",
+      "blind_reason": "Same native `strategy` vs authStrategy inconsistency, supported by index.ts and the WASM test comment; the fix is concrete."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-964",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Published dist/wasm-inline.d.ts differs from the previous surface for edge consumers",
+      "blind_reason": "A surface difference is only hypothesized, no concrete changed export is shown, and dist is shipped whole via package.json files while the CI gates resolve the emitted wasm-inline declarations."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-981",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "EQL SQLx/e2e CI fails or flakes because the test harness's ZeroKMS client resolves DNS differently",
+      "blind_reason": "Cited lockfile/workflow lines exist, but the claimed DNS-resolution difference is pure speculation ('if ... could') with no code showing any resolver config change that would break ZeroKMS lookups on Ubuntu runners."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-982",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "Patch-level change in next 15.5.24 breaks @cipherstash/nextjs typecheck or tests",
+      "blind_reason": "Cited imports, test file, tsup config and CI step exist, but the finding identifies no concrete change in next 15.5.24 affecting NextRequest/NextResponse/cookies; it is a speculative 'run CI' concern about a patch-level lockfile bump."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-996",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Supabase per-term fallback now throws where it used to send a \"null\" operand",
+      "blind_reason": "The new null-envelope check in encryptGroupPerTerm is real, but it is an intended fail-closed improvement on a narrow fallback path, so it adds no release risk."
+    },
+    {
+      "evaluator": "change-risk/B",
+      "case": "stack-998",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Non-EQL releases now run the Cargo.lock refresh and can commit unrelated lock churn",
+      "blind_reason": "The lock churn depends on a committed Cargo.lock already drifting from its manifests, which is a pre-existing tree state and not caused by this change; on an in-sync lock, `cargo update -p eql-bindings` at an unchanged version is a no-op."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-1072",
+      "finding": "FS-2",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "EQL absorption plan drifts unguarded while release tooling still points operators to it",
+      "blind_reason": "The plan was removed from DOCS (so it escapes the iff and LIVE_VERDICT checks), yet release-gate.mjs:922-926 and release.yml:1026 still direct readers to it; the cited lines and the empty FROZEN_PUBLISHERS are accurate."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-1111",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Cold mise caches after merge slow every job and may hit job timeouts",
+      "blind_reason": "Cold caches after re-keying are an expected one-off cost that self-heals; immaterial to release risk."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-330",
+      "finding": "FS-4",
+      "first": "unsupported",
+      "blind": "valid",
+      "title": "Library consumers silently get older evlog and @byteslice/result versions with exact pins",
+      "blind_reason": "The exact pins and dependency downgrades are confirmed in package.json and the lockfile. The finding itself rates the impact low, and its mitigation (confirm intent) is reasonable."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-349",
+      "finding": "FS-2",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Type-string change makes drizzle-kit regenerate ALTERs for already-encrypted columns, which the rewriter turns into DROP",
+      "blind_reason": "Same speculative snapshot-diff-to-DROP chain; it assumes drizzle-kit emits the exact qualified form the regex matches, which the cited code does not show."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-371",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "E2E tests no longer catch regressions in asserted CLI copy",
+      "blind_reason": "The diff replaces the literal E2E expectations with the same messages.* constants that prod uses, so copy regressions (including an emptied constant, since toContain('') always passes) no longer fail tests; a snapshot test of messages is a concrete mitigation."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-496",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "protect-ffi 0.24 changes main-entry behaviour or payloads without the EQL/CLI lockstep bump",
+      "blind_reason": "Payload change is speculative, and the main-entry non-node bundling concern is conjecture not shown by the cited code."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-496",
+      "finding": "FS-4",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "auth 0.38 bump breaks CLI login or wizard credential detection",
+      "blind_reason": "Asserts auth 0.38 breaks login/detect without showing any API or binding-load change in the cited code."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-502",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "Operation class constructors become a semver-locked public contract",
+      "blind_reason": "The classes are value-exported (not export type), so constructors taking the internal Client become public API under a minor changeset that frames the change as type-only."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-568",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Node authStrategy path breaks if protect-ffi 0.28's native newClient does not handle the new getToken() Result envelope ",
+      "blind_reason": "Same speculative native protect-ffi envelope concern; the cited lines only show forwarding and the changeset not mentioning native, not an actual mismatch."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-568",
+      "finding": "FS-3",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Wizard prerequisites rethrows instead of reporting 'not authenticated' if auth 0.41 failure type strings differ",
+      "blind_reason": "Speculative mismatch of failure.type literals; the changeset documents NOT_AUTHENTICATED as a 0.41 type, and the PascalCase value comes from an unrelated test mock."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-568",
+      "finding": "FS-4",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Removal of the AuthError type export breaks TypeScript consumers that import it",
+      "blind_reason": "The AuthError to AuthFailure rename is an intentional breaking type change, explicitly documented in the changeset for a 0.x minor bump."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-860",
+      "finding": "FS-1",
+      "first": "unsupported",
+      "blind": "valid",
+      "title": "Native client auth strategy passed under pre-0.31 `strategy` key",
+      "blind_reason": "The native path still sends `strategy` after the rename, and only a mocked test covers it, so a plausible unverified risk follows from the pin; confirm the field or pass authStrategy."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-964",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Published dist/wasm-inline.d.ts is incomplete or wrong after moving DTS emission into the dual-format config",
+      "blind_reason": "No concrete missing or widened export is identified; the declaration-surface change is hypothetical, and the new dist-types gates typecheck the wasm-inline exports from the built dist in CI."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-981",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "hickory 0.26 resolver change breaks the EQL test harness build or its ZeroKMS calls in CI",
+      "blind_reason": "Accurately describes the dependency graph, but provides no concrete compile incompatibility or resolver behaviour change; the failure mechanism is hypothetical and not supported by the cited code."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-982",
+      "finding": "FS-1",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "Patch-level next change breaks @cipherstash/nextjs build or tests",
+      "blind_reason": "Citations are accurate, but no specific behavioural or type change in next 15.5.24 is shown that would break @cipherstash/nextjs; the breakage is hypothetical."
+    },
+    {
+      "evaluator": "change-risk/A",
+      "case": "stack-998",
+      "finding": "FS-1",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Non-EQL releases now reach the lock refresh and skew-gated asset steps that they previously never ran",
+      "blind_reason": "It is true that steps 3-4 now run on non-EQL releases, but that is the PR's intent: prepareBindingAssets skips when there is no skew, and by the finding's own account the worst case (a loud failure) is no worse than the base, which failed every such release."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-1090",
+      "finding": "CR-1",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Do not let failed JWT engines consume successful-user cache slots. `engine_for` inserts each new engine before `get_toke",
+      "blind_reason": "New engines go into pending, not the LRU, and settle() on Err removes the engine from pending and from the cache, so failed engines never take cache slots."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-1090",
+      "finding": "CR-2",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Remove the pending engine when `get_token` is cancelled. `engine_for` inserts a new engine into `engines.pending` at Lin",
+      "blind_reason": "get_token_for_jwt wraps the engine in an InFlight guard whose Drop removes the pending entry when the future is cancelled, so the cancelled engine is already cleaned up."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-1090",
+      "finding": "CR-3",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Bump `@cipherstash/auth` to a major version. The previous contract called `getJwt` for federation and re-federation, whi",
+      "blind_reason": "@cipherstash/auth is at 0.44.1, where a minor bump is the semver-breaking bump, so asking for a major version is a misreading."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-1090",
+      "finding": "CR-4",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Qualify the one-exchange guarantee. Line 8 says each JWT is exchanged once while its CTS token is valid. The LRU can evi",
+      "blind_reason": "The changeset sentence already qualifies reuse with 'and the JWT's entry is still in the bounded least-recently-used cache (eviction before expiry, or cacheCapacity: 0, means another exchange)'."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-314",
+      "finding": "CR-1",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Fail fast when `DATABASE_URL` is missing instead of relying on `!`. Line 4 can pass `undefined` at runtime and fail late",
+      "blind_reason": "An undefined databaseUrl is caught by the zod schema with a clear 'databaseUrl is required' message, so it does not fail later with an unclear error."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-314",
+      "finding": "CR-5",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Avoid `process.exit` inside exported library API. `loadStashConfig()` is publicly exported; forcefully exiting the proce",
+      "blind_reason": "process.exit in an exported loader is a documented API design preference, not a release defect."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-314",
+      "finding": "CR-8",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Add a timeout/abort path to remote script download. `fetch(url)` without an abort signal can hang indefinitely on networ",
+      "blind_reason": "fetch has no timeout, but in an interactive CLI that is a minor UX robustness nit."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-314",
+      "finding": "CR-16",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Don\u2019t assume the first export is an initialized `EncryptionClient`. Line 170 selects `Object.values(moduleExports)[0]` a",
+      "blind_reason": "At head the code uses Object.values(...).find() with a getEncryptConfig type guard and a null check, not [0] with an unguarded call."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-330",
+      "finding": "CR-1",
+      "first": "unsupported",
+      "blind": "trivial",
+      "title": "Avoid logging raw subcommand input. `subcommand` is user-provided; echoing it directly can leak plaintext if sensitive d",
+      "blind_reason": "Echoing an unknown subcommand back to the user's own terminal is immaterial."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-330",
+      "finding": "CR-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Add error handling and fix variable shadowing in `login()`. Lines 8 and 20 can reject without a catch block. If line 20 ",
+      "blind_reason": "The cited line numbers (8, 20, 25) don't match the code in login(). The real points are shadowing of `auth` and a spinner left running when pollForToken rejects. Both are cosmetic, since the rejection reaches main() and the process exits anyway."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-330",
+      "finding": "CR-3",
+      "first": "trivial",
+      "blind": "valid",
+      "title": "Avoid `process.exit()` in helper and avoid raw error-message logging. Line 38 hard-exits from a reusable helper, which m",
+      "blind_reason": "bindDevice calls process.exit(1) at line 63. The init orchestration can't recover from that and aborts, which is a real brittleness introduced by this change."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-349",
+      "finding": "CR-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Restrict permissions on the written .env.production.local file. writeFileSync writes production credentials (CS_CLIENT_K",
+      "blind_reason": "writeFileSync uses default permissions like any .env file the user writes; this is minor hardening on an experimental, opt-in command."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-349",
+      "finding": "CR-3",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "flush() is not idempotent despite the JSDoc claim; render() iterates over the full entries array each time, so calling f",
+      "blind_reason": "The JSDoc overstates idempotency, but run.ts calls flush only once per path, so no duplicate entries occur in practice."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-349",
+      "finding": "CR-8",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Auto-fallback triggers on !isSuperuser regardless of whether permissions are already sufficient, so non-superuser roles ",
+      "blind_reason": "Creating operator classes/families needs superuser in Postgres, so falling back to the no-operator-family variant for non-superusers is needed, not a wrongful downgrade."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-349",
+      "finding": "CR-16",
+      "first": "trivial",
+      "blind": "unsupported",
+      "title": "Back-compat detection is correct, but the parallel implementation in packages/drizzle only emits/detects the bare eql_v2",
+      "blind_reason": "This is a hypothetical about a future change to packages/drizzle, not a defect caused by this PR."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-1",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Harden GitHub token exposure in the new `wasm-e2e-tests` job. Line 164 adds a job without explicit `permissions`, and Li",
+      "blind_reason": "At head the wasm-e2e-tests job sets permissions contents: read and persist-credentials: false."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-2",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Keep `.env.example` aligned with what the function actually reads. `CS_WORKSPACE_CRN` is documented as required here, bu",
+      "blind_reason": "At head .env.example deliberately omits CS_WORKSPACE_CRN with a comment explaining why."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-6",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Return a stable `{ failure }` object and avoid exposing stack traces. The error response returns raw `stack` and does no",
+      "blind_reason": "At head the example's error response returns only code and message; the stack is logged, not returned."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-7",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "optionalDependencies version drift: pnpm catalogs support exists, but this repo\u2019s catalog can\u2019t replace the 6 platform p",
+      "blind_reason": "At head the catalog defines all six platform packages and cli/package.json already uses catalog:repo for them."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-8",
+      "first": "valid",
+      "blind": "unsupported",
+      "title": "Restore CJS subpath export for `./wasm-inline`. `packages/stack/package.json` exports `./wasm-inline` with only an `\"imp",
+      "blind_reason": "wasm-inline is a new ESM-only subpath for edge runtimes; nothing was removed and no breakage is shown."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-9",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Hide the raw-client constructor before this API ships. A public `constructor(client: unknown)` lets consumers create inv",
+      "blind_reason": "At head the constructor is gated by a module-private symbol and throws for external callers."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-10",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Broaden the JSON value types on the public wrapper. The schema layer already supports `cast_as: 'json'`, but this wrappe",
+      "blind_reason": "WasmPlaintext already includes null and recursive arrays, so JSON null/array payloads are not blocked."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-496",
+      "finding": "CR-11",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Reject conflicting auth inputs explicitly. `WasmClientConfig` documents `accessKey` and `strategy` as mutually exclusive",
+      "blind_reason": "At head resolveStrategy throws when both strategy and accessKey are set; it does not silently prefer strategy."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-503",
+      "finding": "CR-1",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Update `bugs.url` to the migrated repo too. `repository` now points at `cipherstash/stack`, but `bugs.url` above still s",
+      "blind_reason": "At head, bugs.url in packages/drizzle/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-503",
+      "finding": "CR-2",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Migrate `bugs.url` along with `repository.url`. This manifest still advertises the old `cipherstash/protectjs` issue tra",
+      "blind_reason": "At head, bugs.url in packages/nextjs/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-503",
+      "finding": "CR-3",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Point `bugs.url` at `cipherstash/stack` as well. Right now npm metadata would still route users to the old `protectjs` i",
+      "blind_reason": "At head, bugs.url in packages/protect-dynamodb/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-503",
+      "finding": "CR-4",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "`bugs.url` still targets the pre-migration repo. The repository metadata has moved to `cipherstash/stack`, but npm users",
+      "blind_reason": "At head, bugs.url in packages/protect/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-503",
+      "finding": "CR-5",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Finish the repo migration by updating `bugs.url`. This package now declares `cipherstash/stack` as its repository, but t",
+      "blind_reason": "At head, bugs.url in packages/schema/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-503",
+      "finding": "CR-6",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Update `bugs.url` to the migrated repository as well. Line 18 updates `repository.url` to `cipherstash/stack`, but Line ",
+      "blind_reason": "At head, bugs.url in packages/stack/package.json:14 already points to cipherstash/stack/issues; the PR updated it."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-503",
+      "finding": "CR-7",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Pin npm for trusted publishing to the npm 11.x line (>= 11.5.1) instead of `latest`. Trusted publishing requires npm CLI",
+      "blind_reason": "The step already installs npm@^11.5.1 and does not use `latest`, so the suggestion describes code that is not there."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-547",
+      "finding": "CR-4",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Reject `--migrations-dir` for EQL v3 too. `--migrations-dir` is migration-path-only, but v3 routing skips migration sele",
+      "blind_reason": "validateInstallFlags at head already rejects --migrations-dir with --eql-version 3 (install.ts:562-569)."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-547",
+      "finding": "CR-5",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Guard the structural lock-context check before using `in`. Line 45 can throw a `TypeError` for plain JS callers that pas",
+      "blind_reason": "'in' on null throws a TypeError only for plain-JS misuse of a typed API; an error results either way."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-562",
+      "finding": "CR-1",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Deprecation warning is silently skipped when both fields are set. The warning only fires `if (clientConfig?.strategy && ",
+      "blind_reason": "At head the warning fires whenever clientConfig.strategy is set (index.ts:864), even alongside authStrategy; the quoted `&& !authStrategy` condition does not exist."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-562",
+      "finding": "CR-2",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Mutual-exclusion error mentions `authStrategy` even when the deprecated `strategy` field caused it. `authStrategy` here ",
+      "blind_reason": "At head, wasm-inline.ts:450 picks the field name ('authStrategy' vs 'strategy') for the error message, so the message names the deprecated field when only that one was set."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-568",
+      "finding": "CR-2",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Failure-type handling is less granular than the sibling implementation. `checkExistingAuth()` treats every `detected.fai",
+      "blind_reason": "checkExistingAuth already swallowed every error before this change, so behavior is preserved; this is a consistency/style remark."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-568",
+      "finding": "CR-5",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Consider adding a test for the `AccessKeyStrategy.create` failure path. The mock at Line 22 only returns `{ data: ... }`",
+      "blind_reason": "This PR already adds a test, 'throws when AccessKeyStrategy.create returns a failure Result', that covers the failure path via mockReturnValueOnce."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-666",
+      "finding": "CR-2",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "`warnOnVersionSkew` loses the prod/dev split, so its alignment command misclassifies `stash`. `skewed.map(({ pkg }) => p",
+      "blind_reason": "There is no warnOnVersionSkew at head; align commands are built through splitProdDev, which puts stash in dev."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-666",
+      "finding": "CR-4",
+      "first": "valid",
+      "blind": "trivial",
+      "title": "Verify all first-party packages in the manual-install guidance. Checking only `@cipherstash/stack` does not detect skew ",
+      "blind_reason": "Only a documentation wording suggestion for the skill notes; init itself already checks adapter skew."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-676",
+      "finding": "CR-1",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Handle `ope` in the WASM query resolver. `resolveQueryIndex()` still maps `orderAndRange` to `ore` and only infers `ore`",
+      "blind_reason": "toFfiQueryTerm uses the shared resolveIndexType, which already handles ope (it swaps ope in for orderAndRange and infers ore/ope)."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-676",
+      "finding": "CR-2",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Assert that containment needles omit the version envelope. The helper claims to enforce strict `{ sv: [...] }`, but a pa",
+      "blind_reason": "assertContainmentNeedle already asserts that `'v' in obj` is false (line 94)."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-676",
+      "finding": "CR-3",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Only swallow the expected WASM rejection. `expectRejected()` catches every thrown value, but the WASM client surfaces pl",
+      "blind_reason": "expectRejected rethrows any error whose message does not match the capability-rejection patterns, so it does not swallow every failure."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-676",
+      "finding": "CR-4",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Consider documenting the `as never` casts per Biome-ignore convention. The new FFI calls (Lines 414-422, 459-464) extend",
+      "blind_reason": "The new `as never` casts in encryptQuery and encryptQueryBulk already have biome-ignore comments that explain them."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-676",
+      "finding": "CR-5",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Redundant `null as unknown as string` casts \u2014 `WasmPlaintext` already includes `null`. All three sites cast a literal `n",
+      "blind_reason": "No `null as unknown as string` casts exist in wasm-inline-query.test.ts."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-728",
+      "finding": "CR-1",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Skipped near-misses aren't re-surfaced at the closing note (inconsistent with `migration.ts`). When `skipped.length > 0`",
+      "blind_reason": "At head, install.ts sets sweepIncomplete when skipped.length > 0 and logs a warning again right after 'Migration created', before the Next Steps note, so near-misses are re-surfaced."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-823",
+      "finding": "CR-1",
+      "first": "valid",
+      "blind": "incorrect",
+      "title": "Partial-progress tests depend on `chmod 0o444` actually blocking a write. Both copies force the sweep to throw by making",
+      "blind_reason": "The cited test forces the failure with a mocked fs write, not chmod 0o444, and no chmod appears in the tests."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-823",
+      "finding": "CR-2",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Close the clack session before exiting non-zero. Every other abort path in this function emits `if (!embedded) p.outro('",
+      "blind_reason": "migration.ts already calls p.outro('Migration aborted.') when not embedded before throwing CliExit(1)."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-823",
+      "finding": "CR-3",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Duplicate warning with a dangling colon. `rewriteEncryptedMigrations` already emits the identical \"\u2026the rewrite left alo",
+      "blind_reason": "post-agent.ts at head throws rather than emitting a warning with a dangling colon, so no duplicate warning exists at the cited line."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-823",
+      "finding": "CR-6",
+      "first": "match",
+      "blind": "unsupported",
+      "title": "Guard the partial-result carrier before reading it. A caught value may be `null`/`undefined`; this assertion does not ch",
+      "blind_reason": "install.ts has only 227 lines and contains no partial-result cast; the CLI migration.ts already guards with isPartialRewriteResult."
+    },
+    {
+      "evaluator": "coderabbit/original",
+      "case": "stack-840",
+      "finding": "CR-1",
+      "first": "trivial",
+      "blind": "incorrect",
+      "title": "Do not describe `bulkEncrypt` as untyped. Line 234 groups `bulkEncrypt` with `bulkDecrypt` as untyped, but `bulkEncrypt`",
+      "blind_reason": "At head, README line 234 explicitly says bulkEncrypt is typed like encrypt via { table, column } and only bulkDecrypt resolves to the untyped union; the PR removed the 'untyped passthroughs' wording the finding complains about."
+    }
+  ],
+  "overall": {
+    "findings": 376,
+    "raw_agreement": 0.731,
+    "kappa_5_labels": 0.562,
+    "kappa_sound": 0.614,
+    "confusion_first_by_blind": {
+      "incorrect->incorrect": 2,
+      "match->match": 13,
+      "match->unsupported": 1,
+      "trivial->incorrect": 21,
+      "trivial->trivial": 55,
+      "trivial->unsupported": 8,
+      "trivial->valid": 8,
+      "unsupported->trivial": 1,
+      "unsupported->unsupported": 25,
+      "unsupported->valid": 6,
+      "valid->incorrect": 15,
+      "valid->match": 1,
+      "valid->trivial": 19,
+      "valid->unsupported": 21,
+      "valid->valid": 180
+    }
+  }
+}

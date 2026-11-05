@@ -1,0 +1,14 @@
+{
+  "case": "stack-656",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "high",
+  "attention": false,
+  "valid_output": true,
+  "findings": [],
+  "cost_usd": 0.7571239000000001,
+  "wall_seconds": 77.463099,
+  "case_note": "No scenarios; rated low."
+}

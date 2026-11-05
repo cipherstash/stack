@@ -1,0 +1,22 @@
+{
+  "case": "stack-996",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Publish the widened operation type as a major release. `EncryptOperation.getOperation().plaintext` changed from `Plaintext | null` to `PlaintextInput | null`. `",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "getOperation() on the exported EncryptOperation now returns plaintext: PlaintextInput | null (encrypt.ts:136), where PlaintextInput = Plaintext | JsonDocument, so the output type widens in a release labeled patch and consumers assigning it to Plaintext | null can break."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

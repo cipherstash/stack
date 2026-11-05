@@ -1,0 +1,25 @@
+{
+  "case": "stack-982",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "high",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "next 15.5.24 patch changes next/server or next/headers behaviour used by @cipherstash/nextjs",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative patch-bump caution."
+    }
+  ],
+  "cost_usd": 0.9343031,
+  "wall_seconds": 140.384651
+}

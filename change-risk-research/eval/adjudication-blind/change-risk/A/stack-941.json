@@ -1,0 +1,60 @@
+{
+  "case": "stack-941",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "After cutover, an EQL-only release publishes npm and crate but silently skips the SQL release, docs and image",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Identifies that eql-sql/docs/image if: lack a status function so the implicit success() skips them when publish-ffi upstream is skipped."
+    },
+    {
+      "id": "FS-2",
+      "title": "Once armed, any branch with a `chore(release):` HEAD can publish an EQL prerelease to npm and crates.io without review",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same dispatch-from-unmerged-branch exposure: prerelease jobs hold id-token/contents write with no environment gate, as the cited lines and commit message show."
+    },
+    {
+      "id": "FS-3",
+      "title": "classify becomes a new prerequisite of every JS and FFI publish",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "classify is a new job and ffi-artifacts/publish-ffi/release now require its mode=='production' output, so a classify failure blocks JS/FFI releases; low-impact but real and introduced by this change (push trigger itself was pre-existing)."
+    },
+    {
+      "id": "FS-4",
+      "title": "Docs site no longer receives a rebuild webhook on @cipherstash/stack releases",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "rebuild-docs.yml is deleted but AGENTS.md states the site and webhook are retired; impact is speculative and immaterial to release risk."
+    }
+  ],
+  "cost_usd": 2.4004656,
+  "wall_seconds": 328.389447,
+  "case_note": "KD-1 found; KD-2 missed.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

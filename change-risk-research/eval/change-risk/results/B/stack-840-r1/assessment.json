@@ -1,0 +1,253 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c8b1325a7e06675ec7c3d70f0af3624fe20e0ce8",
+  "head_sha": "c379d44a1b05074165fe4f8aba68b32f8b1bfa3b",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md and the changeset text in the diff were available."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied; collect-evidence reports ci.available=false."
+    },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md inputs; only in-repo code comments were read."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (all files owned by @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Documentation and test change with no runtime behaviour change. The source edits in client-v3.ts and wasm-inline.ts are JSDoc and comments only; the raw decrypt/bulkDecrypt methods remain bare delegations with no Date reconstruction, exactly as at base. README and the stash-encryption agent skill (which ships inside the `stash` CLI tarball) now document the raw-vs-model Date boundary and correct the stated reason; I checked the new claims against the code (raw paths delegate unchanged, bulkEncrypt is typed by { table, column }) and found them accurate. New runtime and type-level tests pin the existing boundary; they were not run here (no node_modules, no CI results). The changeset patch-bumps @cipherstash/stack and stash, which publishes doc-only releases. No material failure scenario identified.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "documentation",
+      "description": "JSDoc on EncryptionClient.decrypt/bulkDecrypt (native v3 client) and WasmEncryptionClient.decrypt/bulkDecrypt now states that date/timestamp columns come back as stored strings, and replaces the incorrect 'lone ciphertext carries no column identity' rationale with a static-typing rationale. Code bodies are unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-4", "E-5"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "documentation",
+      "description": "Shipped guidance changes: packages/stack/README.md and skills/stash-encryption/SKILL.md (bundled into the stash CLI and copied into customer repos by `stash init`) add a raw-path Date warning and stop describing bulkEncrypt as an untyped passthrough.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-3", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "test_only",
+      "description": "Adds runtime tests pinning that the v3 wrapper's decrypt/bulkDecrypt return stored strings unchanged, and type tests pinning that raw paths resolve to JsPlaintext (no Date arm) while decryptModel(row, table) resolves Date and the table-less form resolves string. Existing stubs re-cast from EncryptionClient to the native client parameter type; no assertion was removed.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8", "E-9"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "A changeset patch-bumps @cipherstash/stack and stash, so merging produces published patch releases whose only content difference is documentation/skills.",
+      "certainty": "observed",
+      "evidence": ["E-10"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack v3 EncryptionClient (client-v3.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "JSDoc and comments only; decrypt/bulkDecrypt wiring and passthrough maps unchanged.",
+      "evidence": ["E-1", "E-2", "E-11"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack WASM entry (wasm-inline.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "JSDoc added to decrypt and bulkDecrypt; bodies unchanged.",
+      "evidence": ["E-1", "E-4", "E-5"]
+    },
+    {
+      "id": "AC-3",
+      "name": "stash-encryption agent skill and @cipherstash/stack README",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Customer-facing guidance edited; the skill is copied into the CLI dist and installed into user repos.",
+      "evidence": ["E-1", "E-6"]
+    },
+    {
+      "id": "AC-4",
+      "name": "stash CLI package (published tarball bundling skills/)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "tsup onSuccess copies ../../skills into dist/skills, so the edited SKILL.md ships in the next stash release; the changeset bumps stash.",
+      "evidence": ["E-6", "E-10"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Confirm in CI that `vitest run` and `test:types` (vitest --typecheck.only over __tests__/**/*.test-d.ts) pass for packages/stack, since the new type assertions use instantiation expressions on overloaded methods and were not run during this assessment.",
+      "addresses": []
+    },
+    {
+      "id": "RC-2",
+      "kind": "review_focus",
+      "description": "Reviewer to read the new SKILL.md raw-path note (skills/stash-encryption/SKILL.md:369) for accuracy, since it is copied into customer repositories and is not type-checked.",
+      "addresses": []
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Tests were not executed: no node_modules in the checkout and no network access; no CI results were supplied.",
+      "effect": "Test status for the new runtime and type tests is exists_not_run; a typecheck failure in the new test-d assertions would surface only in CI (loud, not a release-safety issue)."
+    },
+    {
+      "id": "CL-2",
+      "description": "No PR description, architecture docs or deployment context were available.",
+      "effect": "Intent was taken from the changeset text and code comments; release mechanics were judged from the changeset and tsup config only."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "claim": "All hunks in client-v3.ts and wasm-inline.ts are comment/JSDoc additions or rewrites; no executable lines change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 523,
+      "line_end": 528,
+      "claim": "decrypt and bulkDecrypt are bare delegations to the underlying client with no Date mapping, matching the new documentation.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 285,
+      "line_end": 288,
+      "claim": "bulkEncrypt is generic over Table/Col and takes BulkEncryptPayloadFor<Col> with { table, column }, supporting the doc correction that it is typed like encrypt.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 834,
+      "line_end": 845,
+      "claim": "WASM decrypt returns the FFI plaintext cast to WasmPlaintext with no Date reconstruction.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 1107,
+      "line_end": 1125,
+      "claim": "WASM bulkDecrypt decrypts via the fallible batch FFI and returns plaintexts with no Date reconstruction.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 82,
+      "line_end": 88,
+      "claim": "The CLI build copies the monorepo skills/ directory into dist/skills so stash init can install them into user repositories.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "test",
+      "path": "packages/stack/__tests__/typed-client-v3.test.ts",
+      "rev": "head",
+      "line_start": 267,
+      "line_end": 333,
+      "claim": "New runtime tests assert decrypt and bulkDecrypt return the stored ISO string (not a Date) and forward payloads unchanged. Not run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "packages/stack/__tests__/typed-client-v3.test-d.ts",
+      "rev": "head",
+      "line_start": 222,
+      "line_end": 262,
+      "claim": "New type tests assert raw decrypt resolves to JsPlaintext without a Date arm, decryptModel with table yields Date, and table-less yields string. Not run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/vitest.config.ts",
+      "rev": "head",
+      "line_start": 31,
+      "line_end": 46,
+      "claim": "Typecheck runs only over __tests__/**/*.test-d.ts; runtime *.test.ts suites are not typechecked, so the stub re-cast in typed-client-v3.test.ts has no CI type effect.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "documentation",
+      "path": ".changeset/raw-decrypt-date-boundary.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 4,
+      "claim": "Changeset patch-bumps @cipherstash/stack and stash, and states no behaviour change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 393,
+      "line_end": 394,
+      "claim": "Table-less passthrough maps are unchanged; only the surrounding comment was rewritten.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[0]",
+      "claim": "typed-client-v3.test.ts usually co-changes with src/encryption/v3.ts, absent here; expected because this change adds tests for existing behaviour rather than altering v3.ts.",
+      "status": "inferred"
+    }
+  ]
+}

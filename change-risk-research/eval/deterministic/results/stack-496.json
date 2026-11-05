@@ -1,0 +1,558 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+  "head_sha": "c39e895ca967c5b1f8241539da0b543334d973bd",
+  "merge_base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+    "cutoff_date": "2026-05-26T15:24:34+10:00",
+    "commits_read": 1068,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 17,
+    "additions": 1072,
+    "deletions": 107,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 9,
+      "added": 8
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/stack": 5,
+      "examples/supabase-worker": 4,
+      ".": 3,
+      "e2e": 3,
+      "packages/cli": 1,
+      "packages/wizard": 1
+    },
+    "component_count": 6,
+    "top_level_dirs": {
+      "packages": 7,
+      "examples": 4,
+      "e2e": 3,
+      ".": 2,
+      ".github": 1
+    },
+    "languages": {
+      "JSON": 7,
+      "TypeScript": 5,
+      "YAML": 3,
+      "other": 1,
+      "Markdown": 1
+    }
+  },
+  "path_classes": {
+    "dependency_manifest": 6,
+    "test": 4,
+    "build_config": 2,
+    "ci_workflow": 1,
+    "docs": 1,
+    "security_sensitive": 1,
+    "lockfile": 1
+  },
+  "files": [
+    {
+      "path": ".github/workflows/tests.yml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 77,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "e2e/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest", "test"],
+      "component": "e2e",
+      "language": "JSON"
+    },
+    {
+      "path": "e2e/wasm/deno.json",
+      "status": "added",
+      "previous_path": null,
+      "additions": 15,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "e2e",
+      "language": "JSON"
+    },
+    {
+      "path": "e2e/wasm/roundtrip.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 94,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "e2e",
+      "language": "TypeScript"
+    },
+    {
+      "path": "examples/supabase-worker/.env.example",
+      "status": "added",
+      "previous_path": null,
+      "additions": 11,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "examples/supabase-worker",
+      "language": "other"
+    },
+    {
+      "path": "examples/supabase-worker/README.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 65,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "examples/supabase-worker",
+      "language": "Markdown"
+    },
+    {
+      "path": "examples/supabase-worker/package.json",
+      "status": "added",
+      "previous_path": null,
+      "additions": 15,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "examples/supabase-worker",
+      "language": "JSON"
+    },
+    {
+      "path": "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 90,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "examples/supabase-worker",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/cli",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack/__tests__/wasm-inline-normalize.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 96,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 13,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/stack",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack/src/wasm-inline.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 334,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/tsconfig.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 8,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/stack",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack/tsup.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 30,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/wizard/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/wizard",
+      "language": "JSON"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 187,
+      "deletions": 102,
+      "binary": false,
+      "classes": ["lockfile"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 18,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": ".",
+      "language": "YAML"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "pnpm-lock.yaml",
+        "commits": 158,
+        "commits_last_90d": 56,
+        "distinct_authors": 7
+      },
+      {
+        "path": "packages/stack/package.json",
+        "commits": 45,
+        "commits_last_90d": 37,
+        "distinct_authors": 7
+      },
+      {
+        "path": "packages/cli/package.json",
+        "commits": 34,
+        "commits_last_90d": 34,
+        "distinct_authors": 4
+      },
+      {
+        "path": ".github/workflows/tests.yml",
+        "commits": 33,
+        "commits_last_90d": 21,
+        "distinct_authors": 7
+      },
+      {
+        "path": "pnpm-workspace.yaml",
+        "commits": 27,
+        "commits_last_90d": 15,
+        "distinct_authors": 5
+      },
+      {
+        "path": "packages/wizard/package.json",
+        "commits": 11,
+        "commits_last_90d": 11,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack/tsup.config.ts",
+        "commits": 6,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "e2e/package.json",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack/tsconfig.json",
+        "commits": 1,
+        "commits_last_90d": 0,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "e2e/package.json",
+        "usually_changes_with": "package.json",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/package.json",
+        "usually_changes_with": "packages/cli/CHANGELOG.md",
+        "co_commits": 21,
+        "confidence": 0.68,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/wizard/package.json",
+        "usually_changes_with": "packages/cli/CHANGELOG.md",
+        "co_commits": 6,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/wizard/package.json",
+        "usually_changes_with": "packages/protect-dynamodb/package.json",
+        "co_commits": 6,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/wizard/package.json",
+        "usually_changes_with": "packages/protect/package.json",
+        "co_commits": 6,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/wizard/package.json",
+        "usually_changes_with": "packages/wizard/CHANGELOG.md",
+        "co_commits": 6,
+        "confidence": 0.6,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 15
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".github/workflows/tests.yml": ["@cipherstash/developers"],
+      "e2e/package.json": ["@cipherstash/developers"],
+      "e2e/wasm/deno.json": ["@cipherstash/developers"],
+      "e2e/wasm/roundtrip.test.ts": ["@cipherstash/developers"],
+      "examples/supabase-worker/.env.example": ["@cipherstash/developers"],
+      "examples/supabase-worker/README.md": ["@cipherstash/developers"],
+      "examples/supabase-worker/package.json": ["@cipherstash/developers"],
+      "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/package.json": ["@cipherstash/developers"],
+      "packages/stack/__tests__/wasm-inline-normalize.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/package.json": ["@cipherstash/developers"],
+      "packages/stack/src/wasm-inline.ts": ["@cipherstash/developers"],
+      "packages/stack/tsconfig.json": ["@cipherstash/developers"],
+      "packages/stack/tsup.config.ts": ["@cipherstash/developers"],
+      "packages/wizard/package.json": ["@cipherstash/developers"],
+      "pnpm-lock.yaml": ["@cipherstash/developers"],
+      "pnpm-workspace.yaml": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 25
+      }
+    }
+  },
+  "dependencies": [
+    {
+      "file": "e2e/package.json",
+      "dependencies": [
+        {
+          "section": "dependencies",
+          "name": "@cipherstash/stack",
+          "from": null,
+          "to": "workspace:*"
+        }
+      ]
+    },
+    {
+      "file": "examples/supabase-worker/package.json",
+      "dependencies": [],
+      "fields_changed": ["engines", "version", "type"]
+    },
+    {
+      "file": "packages/cli/package.json",
+      "dependencies": [
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-darwin-arm64",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-darwin-x64",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-linux-arm64-gnu",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-linux-x64-gnu",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-linux-x64-musl",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-win32-x64-msvc",
+          "from": null,
+          "to": "catalog:repo"
+        }
+      ]
+    },
+    {
+      "file": "packages/stack/package.json",
+      "dependencies": [
+        {
+          "section": "dependencies",
+          "name": "@cipherstash/auth",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "dependencies",
+          "name": "@cipherstash/protect-ffi",
+          "from": "0.23.0",
+          "to": "0.24.0"
+        }
+      ],
+      "fields_changed": ["exports", "version"]
+    },
+    {
+      "file": "packages/wizard/package.json",
+      "dependencies": [
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-darwin-arm64",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-darwin-x64",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-linux-arm64-gnu",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-linux-x64-gnu",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-linux-x64-musl",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "optionalDependencies",
+          "name": "@cipherstash/auth-win32-x64-msvc",
+          "from": null,
+          "to": "catalog:repo"
+        }
+      ]
+    }
+  ],
+  "tests": {
+    "test_files_changed": 4,
+    "source_files_changed": 3,
+    "source_without_related_test": [
+      "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts"
+    ],
+    "source_with_related_test_unchanged": ["packages/stack/tsup.config.ts"],
+    "mapping": [
+      {
+        "source": "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/wasm-inline.ts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/wasm-inline-normalize.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/stack/tsup.config.ts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/cjs-require.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

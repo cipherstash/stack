@@ -1,0 +1,37 @@
+{
+  "case": "stack-981",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "high",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "hickory 0.26 / reqwest 0.13.4 behaviour change breaks ZeroKMS connectivity in the test harness",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative resolver behaviour change with no concrete mechanism, and its own cited CI evidence shows the e2e property suite and build jobs passing on the head commit."
+    },
+    {
+      "id": "FS-2",
+      "title": "Re-resolved windows-sys / macOS system-configuration edges break non-Linux developer builds",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The lockfile does re-point windows-sys and add macOS system-configuration edges, but Cargo resolves these within declared ranges and the finding itself concedes breakage is unlikely; no concrete break mechanism is shown."
+    }
+  ],
+  "cost_usd": 0.7207319,
+  "wall_seconds": 95.100881,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,526 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "33ac5e5a074b288eb0435cf9b2bf41d062e1767d",
+  "head_sha": "35c482112c8f4016cc86fd885e309a1778d64f9b",
+  "merge_base_sha": "33ac5e5a074b288eb0435cf9b2bf41d062e1767d",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "33ac5e5a074b288eb0435cf9b2bf41d062e1767d",
+    "cutoff_date": "2025-03-24T18:17:23-06:00",
+    "commits_read": 307,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 19,
+    "additions": 2656,
+    "deletions": 1305,
+    "binary_files": 0,
+    "by_status": {
+      "added": 10,
+      "modified": 7,
+      "deleted": 2
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/protect": 14,
+      ".": 5
+    },
+    "component_count": 2,
+    "top_level_dirs": {
+      "packages": 14,
+      "docs": 4,
+      ".changeset": 1
+    },
+    "languages": {
+      "TypeScript": 13,
+      "Markdown": 6
+    }
+  },
+  "path_classes": {
+    "security_sensitive": 7,
+    "docs": 6,
+    "serialization_or_protocol": 2,
+    "test": 1,
+    "public_api_surface": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/every-dryers-wink.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "docs/README.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "docs/getting-started.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 41,
+      "deletions": 36,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "docs/reference/bulk-encryption-decryption.md",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 185,
+      "binary": false,
+      "classes": ["docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "docs/reference/model-operations.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 228,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/protect/README.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 316,
+      "deletions": 161,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/protect",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/protect/__tests__/protect.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 482,
+      "deletions": 87,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/eql.schema.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 26,
+      "deletions": 26,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 56,
+      "deletions": 699,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/model-helpers.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 585,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/operations/bulk-decrypt-models.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 140,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/operations/bulk-encrypt-models.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 148,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/operations/decrypt-model.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 123,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/operations/decrypt.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 139,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/operations/encrypt-model.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 135,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/operations/encrypt.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 172,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/ffi/payload-helpers.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 104,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 4,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["public_api_surface"],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/src/types.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 55,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/protect/README.md",
+        "commits": 12,
+        "commits_last_90d": 12,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/protect/__tests__/protect.test.ts",
+        "commits": 9,
+        "commits_last_90d": 9,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect/src/ffi/index.ts",
+        "commits": 9,
+        "commits_last_90d": 9,
+        "distinct_authors": 1
+      },
+      {
+        "path": "docs/README.md",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/protect/src/ffi/payload-helpers.ts",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect/src/index.ts",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 1
+      },
+      {
+        "path": "docs/getting-started.md",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 2
+      },
+      {
+        "path": "docs/reference/bulk-encryption-decryption.md",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect/src/eql.schema.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/protect/src/index.ts",
+        "usually_changes_with": "README.md",
+        "co_commits": 4,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/index.ts",
+        "usually_changes_with": "packages/protect/package.json",
+        "co_commits": 4,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/index.ts",
+        "usually_changes_with": "pnpm-lock.yaml",
+        "co_commits": 4,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/index.ts",
+        "usually_changes_with": "apps/drizzle/src/select.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/ffi/payload-helpers.ts",
+        "usually_changes_with": "README.md",
+        "co_commits": 4,
+        "confidence": 0.67,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/ffi/payload-helpers.ts",
+        "usually_changes_with": "packages/protect/package.json",
+        "co_commits": 4,
+        "confidence": 0.67,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/ffi/payload-helpers.ts",
+        "usually_changes_with": "pnpm-lock.yaml",
+        "co_commits": 4,
+        "confidence": 0.67,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/ffi/index.ts",
+        "usually_changes_with": "README.md",
+        "co_commits": 5,
+        "confidence": 0.62,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/ffi/index.ts",
+        "usually_changes_with": "packages/protect/package.json",
+        "co_commits": 5,
+        "confidence": 0.62,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/ffi/index.ts",
+        "usually_changes_with": "pnpm-lock.yaml",
+        "co_commits": 5,
+        "confidence": 0.62,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/__tests__/protect.test.ts",
+        "usually_changes_with": "README.md",
+        "co_commits": 5,
+        "confidence": 0.56,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect/src/ffi/payload-helpers.ts",
+        "usually_changes_with": "apps/drizzle/src/select.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 4
+  },
+  "ownership": {
+    "codeowners_found": false,
+    "owners_by_file": {},
+    "pr_commit_authors": 2,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 17
+      },
+      "author_2": {
+        "prior_commits_touching_changed_files": 0
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 1,
+    "source_files_changed": 11,
+    "source_without_related_test": [
+      "packages/protect/src/eql.schema.ts",
+      "packages/protect/src/ffi/index.ts",
+      "packages/protect/src/ffi/model-helpers.ts",
+      "packages/protect/src/ffi/operations/decrypt.ts",
+      "packages/protect/src/ffi/operations/encrypt.ts",
+      "packages/protect/src/index.ts",
+      "packages/protect/src/types.ts"
+    ],
+    "source_with_related_test_unchanged": [],
+    "mapping": [
+      {
+        "source": "packages/protect/src/eql.schema.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/protect/src/ffi/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/protect/src/ffi/model-helpers.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/protect/src/ffi/operations/bulk-decrypt-models.ts",
+        "related_tests_at_head": ["packages/protect/__tests__/protect.test.ts"],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/protect/src/ffi/operations/bulk-encrypt-models.ts",
+        "related_tests_at_head": ["packages/protect/__tests__/protect.test.ts"],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/protect/src/ffi/operations/decrypt-model.ts",
+        "related_tests_at_head": ["packages/protect/__tests__/protect.test.ts"],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/protect/src/ffi/operations/decrypt.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/protect/src/ffi/operations/encrypt-model.ts",
+        "related_tests_at_head": ["packages/protect/__tests__/protect.test.ts"],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/protect/src/ffi/operations/encrypt.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/protect/src/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/protect/src/types.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

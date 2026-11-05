@@ -1,0 +1,457 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "814593681eac5c4c3872ca4453de4281d355a8cd",
+  "head_sha": "722408fe7129fdc3755a97967de34119e360b356",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base reachable. No node_modules installed, so the @cipherstash/auth 0.41 and @cipherstash/protect-ffi 0.28 package sources and type declarations could not be read."
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md. The added changeset (.changeset/stack-auth-0-41-result-api.md) is part of the diff and is treated as the author's claims."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; in-repo JSDoc/comments read as code."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed as an input in CASE.md; not used."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (skill 1.0.0), base ancestry only"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Bumps @cipherstash/auth 0.40 -> 0.41 (whose strategy constructors, getToken() and device-code flow now return Result envelopes instead of throwing) and @cipherstash/protect-ffi 0.27 -> 0.28, and migrates the in-repo call sites in stack (wasm-inline resolveStrategy), the stash CLI and the wizard. The in-repo migrations look internally consistent. The release risk sits in the published @cipherstash/stack surface: stack re-exports AccessKeyStrategy / OidcFederationStrategy / AutoStrategy / DeviceSessionStrategy unchanged, so their new Result-returning behaviour flows to every consumer, while stack's own JSDoc still shows `authStrategy: XStrategy.create(...)` and the changeset lists only the AuthError rename as breaking. On the Node path config.authStrategy is passed straight to protect-ffi's native newClient, and the changeset only claims that 0.28's WASM newClient unwraps the new getToken() envelope; whether the native binding does, and whether plain `{ token }` custom strategies still work, could not be checked. All changed tests mock auth and protect-ffi, no results were seen, and the only real round-trip (Deno e2e) skips without CS_* secrets. Verification of the cross-package token contract is the gap.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "dependency",
+      "description": "@cipherstash/auth (and its six per-platform native bindings) moves 0.40.0 -> 0.41.0 via the workspace catalog, pulling in @byteslice/result 0.3.0; stack's @cipherstash/protect-ffi moves 0.27.0 -> 0.28.0. Per the changeset, auth 0.41 returns Result<T, AuthFailure> from create/detect/fromProfile/getToken and the device-code flow, and renames AuthError to AuthFailure keyed by `type`.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack's public type re-exports drop `AuthError` and add `AuthFailure`. Its runtime re-exports of AccessKeyStrategy/AutoStrategy/DeviceSessionStrategy/OidcFederationStrategy (and the wasm-inline re-exports) are unchanged in source but now carry auth 0.41's Result-returning constructors to consumers.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "error_handling",
+      "description": "wasm-inline resolveStrategy now unwraps the Result from AccessKeyStrategy.create and throws an `[encryption]: failed to construct AccessKeyStrategy ... (<type>): <message>` error on failure instead of the auth library throwing.",
+      "certainty": "observed",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "public_contract",
+      "description": "The token object a stack-provided strategy's getToken() resolves to changes from `{ token, ... }` to a Result envelope `{ data: { token, ... } }` / `{ failure }`. The changeset says protect-ffi 0.28 unwraps this in its WASM newClient; on the Node entry config.authStrategy is forwarded unchanged to the native newClient as `strategy`.",
+      "certainty": "inferred",
+      "evidence": ["E-3", "E-8", "E-9"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "error_handling",
+      "description": "CLI (`stash auth login`, device binding, init auth check) and wizard (token acquisition, prompt fetch, prerequisites check) now branch on `result.failure` / `failure.type` instead of try/catch on thrown errors and `error.code`. The wizard prerequisites check now also treats a detect() failure, not only a getToken() failure, as 'not authenticated' when its type is NOT_AUTHENTICATED or MISSING_WORKSPACE_CRN, and rethrows other failures.",
+      "certainty": "observed",
+      "evidence": ["E-10", "E-11", "E-12"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "test_only",
+      "description": "The Deno WASM e2e import map switches from pinned `npm:` specifiers (which were stale: protect-ffi 0.26.0, auth 0.40.0) to files inside packages/stack/node_modules, including protect-ffi's internal dist path `dist/wasm/protect_ffi_inline.js`.",
+      "certainty": "observed",
+      "evidence": ["E-13"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack (published npm package: Node entry and /wasm-inline entry)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Dependency bumps, public type re-export rename, resolveStrategy unwrap; re-exports auth strategies whose return shapes changed.",
+      "evidence": ["E-2", "E-4", "E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Encryption client init on the Node entry (EncryptionClient.init -> protect-ffi native newClient)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Forwards config.authStrategy to protect-ffi newClient as `strategy`; protect-ffi invokes its getToken() on every ZeroKMS request, so the token shape change reaches here.",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "External consumers of @cipherstash/stack that construct strategies or import AuthError",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Stack's JSDoc tells consumers to pass `AccessKeyStrategy.create(...)` / `OidcFederationStrategy.create(...)` directly as authStrategy, and documents custom `{ getToken(): Promise<{ token }> }` objects. No external code was read.",
+      "evidence": ["E-6", "E-9", "E-14"]
+    },
+    {
+      "id": "AC-4",
+      "name": "stash CLI (packages/cli) auth login, device binding, init authenticate step",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Migrated to Result API.",
+      "evidence": ["E-10", "E-11"]
+    },
+    {
+      "id": "AC-5",
+      "name": "@cipherstash/wizard prerequisites check, token acquisition and prompt fetch",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Migrated to Result API; prerequisites now matches on AuthFailure.type strings.",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Deno WASM e2e (e2e/wasm)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Import map now points at workspace-installed files; test is skipped when CS_* env vars are absent.",
+      "evidence": ["E-13", "E-15"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Node authStrategy path breaks if protect-ffi 0.28's native newClient does not handle the new getToken() Result envelope (or no longer accepts plain { token })",
+      "trigger": "A Node consumer passes config.authStrategy: an auth 0.41 strategy (e.g. OidcFederationStrategy for identity-bound encryption, or AccessKeyStrategy), or a custom `{ getToken: async () => ({ token }) }` object as documented.",
+      "affected_components": ["AC-1", "AC-2", "AC-3"],
+      "mechanism": "EncryptionClient.init forwards config.authStrategy unchanged to protect-ffi's native newClient (packages/stack/src/encryption/index.ts:154-165). With auth 0.41 a strategy's getToken() resolves to `{ data: { token } }`. The changeset only asserts that protect-ffi 0.28 unwraps `.data.token` in its WASM newClient; it says 0.27 read `.token` and got undefined. Nothing in the diff or repo shows the native binding does the same, nor that 0.28 still accepts the un-enveloped `{ token }` shape that stack's AuthStrategy docs (types.ts:21-29, 155-157) still advertise.",
+      "consequence": "Encryption client init or every ZeroKMS request fails ('token field is not a string'-style) for all Node users of config.authStrategy, including identity-bound (lock context) encryption; or, conversely, custom strategies break. Loud failure, but it is a runtime break of a published package across the authStrategy path.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-8", "E-9", "E-16"],
+      "existing_verification": [
+        {
+          "description": "init-strategy.test.ts checks only that authStrategy is forwarded to newClient; protect-ffi is vi.mock'ed and the strategy returns a plain { token }.",
+          "status": "exists_not_run",
+          "evidence": ["E-16"]
+        }
+      ],
+      "missing_verification": [
+        "A Node integration round-trip (encrypt/decrypt) with config.authStrategy set to a real auth 0.41 AccessKeyStrategy/OidcFederationStrategy against protect-ffi 0.28's native binding.",
+        "Confirmation from protect-ffi 0.28 release notes/source that the native newClient accepts both the Result envelope and plain { token }."
+      ],
+      "mitigation": "Run the Node e2e suite with authStrategy against real credentials before release; if native 0.28 only accepts one shape, normalise in stack (wrap the strategy so getToken() always yields what the FFI expects) and update the AuthStrategy docs.",
+      "domain_tags": ["encryption", "public_api", "dependency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Re-exported strategy constructors now return Result envelopes, but stack docs and release note still show passing them directly as authStrategy",
+      "trigger": "A consumer upgrades @cipherstash/stack and keeps (or copies from stack's JSDoc) `authStrategy: AccessKeyStrategy.create(crn, key)` / `OidcFederationStrategy.create(crn, getJwt)`, or uses AutoStrategy.detect()/DeviceSessionStrategy.fromProfile() from the stack re-export.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "packages/stack/src/index.ts:26-36 and wasm-inline.ts:90-93 re-export auth 0.41's strategy classes; per the changeset their create/detect/fromProfile now return `{ data } | { failure }`. Stack's own docs at encryption/index.ts:756-781, identity/index.ts:65-73 and wasm-inline.ts:44-56 were not updated and still pass the create() result straight into authStrategy. The changeset lists only the AuthError rename as the stack breaking change.",
+      "consequence": "TypeScript consumers get compile errors (if protect-ffi's AuthStrategy type requires getToken); JS/Deno consumers pass a `{ data }` envelope whose getToken is undefined, so client init or the first encrypt/decrypt fails. Construction failures (bad CRN/key) that used to throw are now silently carried in `.failure` unless the consumer checks it.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-5", "E-6", "E-14"],
+      "existing_verification": [
+        {
+          "description": "wasm-inline-strategy.test.ts covers stack's internal unwrap in resolveStrategy (success and failure arms) using a mocked auth module; nothing covers consumer-side use of the re-exports.",
+          "status": "exists_not_run",
+          "evidence": ["E-17"]
+        }
+      ],
+      "missing_verification": [
+        "A type-level test (tsd / compile check) that the documented authStrategy examples compile against the published types.",
+        "Release-note review that the Result-returning re-exports are called out as breaking for @cipherstash/stack consumers."
+      ],
+      "mitigation": "Update the JSDoc examples to unwrap `.data` (or provide a stack helper that unwraps/throws), and extend the changeset to state that the re-exported strategy constructors and getToken() now return Result.",
+      "domain_tags": ["public_api", "dependency"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Wizard prerequisites rethrows instead of reporting 'not authenticated' if auth 0.41 failure type strings differ",
+      "trigger": "A user runs the wizard without credentials and auth 0.41 reports the condition with a `type` other than exactly 'NOT_AUTHENTICATED' or 'MISSING_WORKSPACE_CRN' (or detect() now fails for a reason that previously surfaced only at getToken()).",
+      "affected_components": ["AC-5"],
+      "mechanism": "hasCredentials matches on failure.type literal strings and throws failure.error for anything else (packages/wizard/src/lib/prerequisites.ts:44-58). These strings were carried over from the 0.40 `error.code` values (base prerequisites.ts:44-45); the auth 0.41 AuthFailure union could not be read. The only test feeds a hand-written mock with type 'NOT_AUTHENTICATED'; another new test in stack uses a differently-cased type ('InvalidWorkspaceCrn'), so the casing convention is not established in-repo.",
+      "consequence": "Unauthenticated users see an uncaught auth error from the wizard instead of the missing-prerequisites guidance. Developer tooling only, loud and recoverable.",
+      "impact": "medium",
+      "basis": "speculative",
+      "evidence": ["E-12", "E-18", "E-17"],
+      "existing_verification": [
+        {
+          "description": "prerequisites.test.ts mocks auth with a NOT_AUTHENTICATED failure from getToken(); detect() failure arm and other types untested.",
+          "status": "exists_not_run",
+          "evidence": ["E-18"]
+        }
+      ],
+      "missing_verification": [
+        "Check the AuthFailure `type` union in @cipherstash/auth 0.41 declarations against the two literals (a typed `failure.type === ...` comparison would be compile-checked only if the type is a literal union)."
+      ],
+      "mitigation": "Confirm the literals against auth 0.41's .d.ts; type the helper parameter as AuthFailure so mismatches fail compilation.",
+      "domain_tags": ["configuration", "dependency"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Removal of the AuthError type export breaks TypeScript consumers that import it",
+      "trigger": "A consumer does `import type { AuthError } from '@cipherstash/stack'`.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "packages/stack/src/index.ts:39 (base) exported AuthError; head (index.ts:39-43) exports AuthFailure instead with no deprecated alias.",
+      "consequence": "Compile error on upgrade; no runtime effect. Documented in the changeset and shipped as a minor bump on a 0.x package.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-4", "E-5"],
+      "existing_verification": [],
+      "missing_verification": [],
+      "mitigation": "Optionally keep `export type AuthError = AuthFailure` as a deprecated alias for one release.",
+      "domain_tags": ["public_api"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "Every test touching the changed auth behaviour mocks @cipherstash/auth and/or @cipherstash/protect-ffi, so none exercises the real 0.41/0.28 token contract. No test results were supplied or run.",
+      "scenarios": ["FS-1", "FS-2", "FS-3"],
+      "evidence": ["E-16", "E-17", "E-18"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The only real WASM round-trip (e2e/wasm/roundtrip.test.ts) is ignored when CS_* env vars are absent, and there is no evidence it ran for this change; it covers the access-key arm only, not authStrategy and not the Node native path.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-15"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No compile check of stack's documented authStrategy examples against the published types.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-6"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Before publishing, run a credentialed Node encrypt/decrypt round-trip with config.authStrategy set to a real auth 0.41 strategy and with a plain `{ getToken: async () => ({ token }) }` object, plus the Deno WASM e2e, and record the results.",
+      "addresses": ["FS-1", "VG-1", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "documentation",
+      "description": "Update JSDoc in encryption/index.ts, identity/index.ts, wasm-inline.ts and types.ts (AuthStrategy shape) for the Result-returning constructors/getToken, and expand the changeset's breaking-change list beyond the AuthError rename.",
+      "addresses": ["FS-2", "VG-3"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "compatibility_check",
+      "description": "Read protect-ffi 0.28 release notes or source to confirm the native newClient's accepted getToken() shapes, and the auth 0.41 AuthFailure type union, before release.",
+      "addresses": ["FS-1", "FS-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "review_focus",
+      "description": "Reviewer to check whether stack should normalise strategies itself (wrapper that unwraps create()/getToken()) rather than pushing the Result API onto consumers, and whether to keep a deprecated AuthError alias.",
+      "addresses": ["FS-2", "FS-4"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "node_modules is not installed and network access is not permitted, so the source, type declarations and changelogs of @cipherstash/auth 0.41.0 and @cipherstash/protect-ffi 0.28.0 could not be read. All claims about their behaviour come from the changeset and code comments in the diff.",
+      "effect": "FS-1 and FS-3 cannot be confirmed or ruled out; impact is assessed on mechanism, not lowered for lack of visibility."
+    },
+    {
+      "id": "CL-2",
+      "description": "No CI results or PR description were provided and no tests or type checks were run (dependencies not installed).",
+      "effect": "All existing verification is exists_not_run; it is unknown whether the migrated call sites type-check against auth 0.41."
+    },
+    {
+      "id": "CL-3",
+      "description": "pnpm-lock.yaml changes were checked for version consistency only (all seven auth entries move to 0.41.0; protect-ffi platform packages to 0.28.0); integrity hashes were not verified.",
+      "effect": "Supply-chain integrity of the new packages is not assessed."
+    },
+    {
+      "id": "CL-4",
+      "description": "Other workspace packages (e.g. packages/nextjs, drizzle, examples) were searched for auth strategy API usage by name only; no other call sites of the changed auth functions were found in source.",
+      "effect": "An indirect consumer reached via dynamic access would be missed."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "pnpm-workspace.yaml",
+      "line_start": 14,
+      "line_end": 20,
+      "claim": "Workspace catalog moves @cipherstash/auth and all six platform bindings to 0.41.0 in lockstep.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "diff",
+      "path": "packages/stack/package.json",
+      "line_start": 245,
+      "line_end": 247,
+      "claim": "Stack depends on @cipherstash/auth via catalog and pins @cipherstash/protect-ffi 0.28.0 (was 0.27.0).",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "diff",
+      "path": ".changeset/stack-auth-0-41-result-api.md",
+      "line_start": 9,
+      "line_end": 17,
+      "claim": "Author's claims: auth 0.41 returns Result from create/detect/fromProfile/getToken/device flow; AuthError renamed AuthFailure; protect-ffi 0.28 unwraps .data.token in its WASM newClient while 0.27 read .token and failed. Only the AuthError rename is listed as stack-breaking.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/index.ts",
+      "rev": "base",
+      "line_start": 39,
+      "line_end": 39,
+      "claim": "Base exported type AuthError from @cipherstash/stack.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack/src/index.ts",
+      "line_start": 24,
+      "line_end": 43,
+      "claim": "Head re-exports auth's AccessKeyStrategy/AutoStrategy/DeviceSessionStrategy/OidcFederationStrategy unchanged and exports AuthFailure instead of AuthError.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "line_start": 756,
+      "line_end": 781,
+      "claim": "Stack JSDoc still shows `authStrategy: AccessKeyStrategy.create(...)` and `authStrategy: OidcFederationStrategy.create(...)` passed directly, without unwrapping a Result.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "diff",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "line_start": 468,
+      "line_end": 480,
+      "claim": "resolveStrategy unwraps AccessKeyStrategy.create's Result and throws a descriptive [encryption] error on failure.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "line_start": 146,
+      "line_end": 166,
+      "claim": "Node EncryptionClient.init passes config.authStrategy unchanged to protect-ffi newClient as `strategy`; protect-ffi calls its getToken() on every ZeroKMS request.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/src/types.ts",
+      "line_start": 21,
+      "line_end": 29,
+      "claim": "AuthStrategy (type imported from protect-ffi) is still documented as any object with getToken(): Promise<{ token: string }>.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "line_start": 37,
+      "line_end": 82,
+      "claim": "CLI login/bindDevice unwrap Result and exit(1) on failure with failure.error.message.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "diff",
+      "path": "packages/cli/src/commands/init/steps/authenticate.ts",
+      "line_start": 17,
+      "line_end": 36,
+      "claim": "init checkExistingAuth treats detect()/getToken() failure as not authenticated.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "packages/wizard/src/lib/prerequisites.ts",
+      "line_start": 39,
+      "line_end": 61,
+      "claim": "hasCredentials returns false only for failure.type NOT_AUTHENTICATED or MISSING_WORKSPACE_CRN and rethrows failure.error otherwise, for both detect() and getToken().",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "diff",
+      "path": "e2e/wasm/deno.json",
+      "line_start": 3,
+      "line_end": 14,
+      "claim": "Deno e2e import map now points at packages/stack/node_modules files including protect-ffi's internal dist/wasm/protect_ffi_inline.js; previously pinned stale npm versions (protect-ffi 0.26.0, auth 0.40.0).",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "packages/stack/src/identity/index.ts",
+      "line_start": 65,
+      "line_end": 73,
+      "claim": "identity module docs pass OidcFederationStrategy.create(...) directly as authStrategy.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "test",
+      "path": "e2e/wasm/roundtrip.test.ts",
+      "line_start": 36,
+      "line_end": 52,
+      "claim": "The Deno WASM round-trip is ignored when any CS_* env var is missing; it uses workspaceCrn/accessKey (access-key arm).",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "test",
+      "path": "packages/stack/__tests__/init-strategy.test.ts",
+      "line_start": 23,
+      "line_end": 60,
+      "claim": "protect-ffi newClient is vi.mock'ed; authStrategy tests use a plain { token } getToken and only assert forwarding.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "test",
+      "path": "packages/stack/__tests__/wasm-inline-strategy.test.ts",
+      "line_start": 18,
+      "line_end": 97,
+      "claim": "resolveStrategy tests mock @cipherstash/auth/wasm-inline with { data } success and a { failure: { type: 'InvalidWorkspaceCrn' } } failure.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "test",
+      "path": "packages/wizard/src/__tests__/prerequisites.test.ts",
+      "line_start": 7,
+      "line_end": 25,
+      "claim": "Wizard prerequisites test mocks auth with a getToken() failure of type NOT_AUTHENTICATED only.",
+      "status": "verified"
+    }
+  ]
+}

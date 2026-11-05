@@ -1,0 +1,59 @@
+{
+  "case": "stack-568",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Node authStrategy path breaks if protect-ffi 0.28's native newClient does not handle the new getToken() Result envelope (or no longer accepts plain { token })",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Same speculative native protect-ffi envelope concern; the cited lines only show forwarding and the changeset not mentioning native, not an actual mismatch."
+    },
+    {
+      "id": "FS-2",
+      "title": "Re-exported strategy constructors now return Result envelopes, but stack docs and release note still show passing them directly as authStrategy",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Correctly notes that the re-exported strategy constructors now return Result while stack docs still show them passed directly, and the changeset lists only the AuthError rename as breaking."
+    },
+    {
+      "id": "FS-3",
+      "title": "Wizard prerequisites rethrows instead of reporting 'not authenticated' if auth 0.41 failure type strings differ",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative mismatch of failure.type literals; the changeset documents NOT_AUTHENTICATED as a 0.41 type, and the PascalCase value comes from an unrelated test mock."
+    },
+    {
+      "id": "FS-4",
+      "title": "Removal of the AuthError type export breaks TypeScript consumers that import it",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The AuthError to AuthFailure rename is an intentional breaking type change, explicitly documented in the changeset for a 0.x minor bump."
+    }
+  ],
+  "cost_usd": 1.5189631000000001,
+  "wall_seconds": 201.986991,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

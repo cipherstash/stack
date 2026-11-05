@@ -1,0 +1,19 @@
+{
+  "pr": 371,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/371#pullrequestreview-4202524863",
+      "path": "packages/cli/AGENTS.md",
+      "line": "83-84",
+      "severity_label": "⚠️ Potential issue | 🟡 Minor | ⚡ Quick win",
+      "claim": "Remove stale “phase-2 messages module” wording. This now conflicts with the current state (the module is implemented in this PR), so the plan section should reference it as existing, not planned.",
+      "is_nitpick": false
+    }
+  ],
+  "notes": "One CodeRabbit review (COMMENTED) with a single outside-diff-range comment (no inline threads). Summary comment present; pre-merge checks 4 passed, 1 warning (Docstring Coverage 0.00%), noted but not counted. CodeRabbit status 'Review completed'. Release-notes block removed from description."
+}

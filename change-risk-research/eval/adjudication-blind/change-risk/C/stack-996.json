@@ -1,0 +1,37 @@
+{
+  "case": "stack-996",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "high",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Minor release breaks downstream TypeScript builds that dereference Json encrypt results",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same type-level breaking change as F-04, supported by encrypt.ts:41 and the client-v3 signature, and shipped as a minor release."
+    },
+    {
+      "id": "FS-2",
+      "title": "Supabase per-term fallback now fails queries it previously sent",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Accurate description of the intended per-term null guard (query-encrypt.ts:417-421, plus its test). It can only fire when the client breaks its contract, and it turns silently wrong results into a loud error, so it is immaterial to release risk."
+    }
+  ],
+  "cost_usd": 1.6935542999999997,
+  "wall_seconds": 168.586693,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

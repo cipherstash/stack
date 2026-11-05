@@ -1,0 +1,76 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "tests.yml now skips PRs touching only docs/plans/** while push to main is unfiltered, and the new guard only greps test files for literal docs/plans/*.md paths, so a by-type scan (e.g. Biome's '**' includes) or a computed path can break main after merge."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The cited filter, unfiltered push trigger and literal-path-only guard are as described, so a plan-only change read by an unguarded check would first fail on main after merge."
+    },
+    {
+      "id": "F-03",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "negationRemovesAll does deliberately fail open on file-type negations, but this only affects a hypothetical future filter, and the finding itself says the fail-closed coverage guards would still catch it, leaving at most stale comment guidance."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Path-filtered workflows report no checks, so required Test JS checks would stay Pending, as test-eql.yml documents. The repo says no required checks exist today, so the risk is conditional but plausible and introduced by this filter."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The PR removes the DOCS entry that held the EQL plan to FROZEN_PUBLISHERS, while release-gate.mjs still points operators at that plan's Phase-5 cutover, so the plan can now drift with nothing checking it."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same conditional required-check mechanism as F-04; the cited filter and the test-eql.yml comment saying there is no required_status_checks rule are accurate."
+    },
+    {
+      "id": "F-07",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The lint-release.yml comment saying test:scripts runs on every PR is now slightly inaccurate, but none of the files it covers are under docs/plans, so this is only comment wording."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The plan was removed from DOCS (so it escapes the iff and LIVE_VERDICT checks), yet release-gate.mjs:922-926 and release.yml:1026 still direct readers to it; the cited lines and the empty FROZEN_PUBLISHERS are accurate."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Correctly notes that the guard skips non-test scripts and runtime-built paths while the PR run is skipped, so main's push run is the first check; the cited release-gate string and the lint-no-dead-package-paths exclusion check out."
+    }
+  ]
+}

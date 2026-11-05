@@ -1,0 +1,319 @@
+{
+  "pr": 314,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906783",
+      "path": "examples/basic/stash.config.ts",
+      "line": 6,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fail fast when `DATABASE_URL` is missing instead of relying on `!`. Line 4 can pass `undefined` at runtime and fail later with a less clear error. Add an explicit guard so the example fails with an actionable message.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-2",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906800",
+      "path": "packages/stack-forge/README.md",
+      "line": 124,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fix markdownlint table spacing (MD058). At least one table block in this section is missing required surrounding blank lines, which can keep markdown lint checks noisy/failing.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-3",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906806",
+      "path": "packages/stack-forge/src/bin/stash-forge.ts",
+      "line": 8,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Version output is inconsistent with package metadata. CLI help/version currently reports `0.1.0` while the package manifest is `0.0.0`, which will mislead users.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-4",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906809",
+      "path": "packages/stack-forge/src/bin/stash-forge.ts",
+      "line": 104,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid emitting raw runtime error messages. Printing arbitrary `error.message` can leak sensitive plaintext from downstream errors.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-5",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906814",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 118,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid `process.exit` inside exported library API. `loadStashConfig()` is publicly exported; forcefully exiting the process makes it unsafe to consume programmatically and bypasses upstream error handling.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-6",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906820",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 114,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Do not log raw error objects from config loading. Logging the full caught error can expose sensitive plaintext from config/runtime failures.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-7",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906823",
+      "path": "packages/stack-forge/src/installer/index.ts",
+      "line": 220,
+      "severity_label": "⚠️ Potential issue | 🔴 Critical",
+      "claim": "Ensure `pg.Client` is always closed, including connect failures. `client.end()` is currently in the second try/finally block (lines 218–220), so a `connect()` error on line 191 exits before guaranteed cleanup occurs. The client instance created on line 188 will leak if the first try/catch throws.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-8",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906827",
+      "path": "packages/stack-forge/src/installer/index.ts",
+      "line": 259,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Add a timeout/abort path to remote script download. `fetch(url)` without an abort signal can hang indefinitely on network stalls, blocking CLI completion. Since this downloads from an external service (GitHub), a timeout is critical for reliable CLI UX.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-9",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2885906837",
+      "path": "packages/stack-forge/vitest.config.ts",
+      "line": 10,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid direct `__dirname` usage in config to stay ESM-safe. Line 10 uses `__dirname` without defining it, which will cause a `ReferenceError` in this ESM package (`\"type\": \"module\"`). Derive the path from `import.meta.url` instead, following the pattern already used elsewhere in the codebase (e.g., `packages/stack/src/bin/stash.ts`).",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-10",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651216",
+      "path": ".changeset/config.json",
+      "line": 13,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Global peer-dependent bump behavior changed; this can silently skip coordinated releases. Lines 11–13 enable `onlyUpdatePeerDependentsWhenOutOfRange: true`, which suppresses automatic bumping of peer dependents when internal peers update but remain within the dependent's version range. With existing peer ranges like `workspace:*` (packages/protect-dynamodb) and `>=...` (packages/drizzle), peer dependents will not be bumped unless the peer version goes **out of range**—causing silent version coordination drift.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-11",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651221",
+      "path": ".changeset/curvy-bushes-mix.md",
+      "line": 5,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Use the exact API name in the changeset note. Line 5 doesn’t match the actual public surface added in this PR. The note should reference `EncryptionClient.getEncryptConfig()` explicitly to avoid confusing consumers.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-12",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651223",
+      "path": "packages/stack-forge/package.json",
+      "line": 29,
+      "severity_label": "⚠️ Potential issue | 🔴 Critical",
+      "claim": "Fix `require.types` path to match tsup's actual output. Line 28 points `require.types` to `./dist/index.d.cts`, but tsup's `dts: true` with default settings emits only `./dist/index.d.ts`. This mismatch breaks type resolution for CJS consumers.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-13",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651229",
+      "path": "packages/stack-forge/src/commands/install.ts",
+      "line": 126,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Use `execFileSync` with array args and pass `--out=${outDir}` explicitly to avoid command injection. Line 125 interpolates the user-supplied `migrationName` directly into a shell string passed to `execSync`, creating a command injection vulnerability. Additionally, `outDir` is computed on line 107 but never passed to the drizzle-kit command, so the `--out` flag is currently ignored.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-14",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651231",
+      "path": "packages/stack-forge/src/commands/push.ts",
+      "line": 42,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Make config state transition atomic and scoped to active rows. Lines 33-42 perform a global state rewrite plus insert without a transaction. If insert fails after update, you can end up with no active config.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-15",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651234",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 149,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fix the config key name in the error guidance. Line 149 says to check `\"encryptClient\"` in `stash.config.ts`, but the actual config field is `client`.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-16",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651238",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 179,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Don’t assume the first export is an initialized `EncryptionClient`. Line 170 selects `Object.values(moduleExports)[0]` and Line 179 calls `getEncryptConfig()` unguarded. This is fragile and can throw at runtime (or silently return `undefined`) if export order or shape differs.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-17",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651241",
+      "path": "skills/stash-forge/SKILL.md",
+      "line": 104,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Add integrity verification for downloaded install SQL. The flow currently documents downloading SQL from GitHub releases and writing it directly into migrations, but doesn’t mention checksum/signature verification. That creates a supply-chain risk for schema changes.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-18",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651246",
+      "path": "skills/stash-forge/SKILL.md",
+      "line": 146,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid `process.exit(1)` behavior in a programmatic API contract. For a library API, documenting hard process termination is risky for consumers. Prefer throwing a typed error and let CLI wrappers decide exit behavior.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-19",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886651254",
+      "path": "skills/stash-forge/SKILL.md",
+      "line": 173,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Permission requirements are inconsistent between sections. The `checkPermissions` section includes an extra `pgcrypto` branch (`SUPERUSER` or `CREATEDB`), but “Common issues” omits it. Align both sections to avoid operator confusion.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-20",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886909159",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 49,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "`stashConfigSchema` omits declared config fields and drops them from resolved output. `StashConfig` declares `workspaceId` and `clientAccessKey`, but validation only keeps `databaseUrl` and `client`. Any provided values for those optional fields are lost after parsing.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-21",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/314#discussion_r2886909164",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 152,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Resolve `client` path relative to the located config file, not only `process.cwd()`. If the command runs from a subdirectory, `loadStashConfig()` can find a parent `stash.config.ts`, but `loadEncryptConfig()` resolves `client` from current working directory and can point to the wrong file.",
+      "is_nitpick": false
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3891798837",
+      "path": "examples/basic/package.json",
+      "line": 1,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟠 Major",
+      "claim": "Add required Node/pnpm constraints for the example app. This manifest is missing explicit runtime/tooling constraints for the example project.",
+      "is_nitpick": false,
+      "id": "CR-22"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3891798837",
+      "path": "packages/stack-forge/src/commands/init.ts",
+      "line": 3,
+      "severity_label": "nitpick",
+      "claim": "Consider a shared 'not implemented' command helper to reduce duplication. init/status/push/migrate currently repeat the same placeholder pattern.",
+      "is_nitpick": true,
+      "id": "CR-23"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3891798837",
+      "path": "packages/stack-forge/src/__tests__/installer.test.ts",
+      "line": 34,
+      "severity_label": "nitpick",
+      "claim": "Prefer importing EQLInstaller through the public API in tests. These tests currently reach into @/installer/index.ts; switching to @/index.ts keeps tests aligned with the supported surface.",
+      "is_nitpick": true,
+      "id": "CR-24"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3891798837",
+      "path": "packages/stack-forge/src/__tests__/config.test.ts",
+      "line": 34,
+      "severity_label": "nitpick",
+      "claim": "Prefer testing through the package public entrypoint. These tests currently import loadStashConfig from an internal module path.",
+      "is_nitpick": true,
+      "id": "CR-25"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3892606753",
+      "path": "packages/stack-forge/src/bin/stash-forge.ts",
+      "line": 68,
+      "severity_label": "duplicate comment | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "Version output is hardcoded and can drift from package metadata. Line 69 prints 0.1.0, which can diverge from packages/stack-forge/package.json.",
+      "is_nitpick": false,
+      "id": "CR-26"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3892606753",
+      "path": "examples/basic/stash.config.ts",
+      "line": 3,
+      "severity_label": "duplicate comment | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fail fast when DATABASE_URL is missing. Line 4 uses a non-null assertion, so missing env can fail later with a less actionable error.",
+      "is_nitpick": false,
+      "id": "CR-27"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3892606753",
+      "path": "packages/stack-forge/README.md",
+      "line": 88,
+      "severity_label": "duplicate comment | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fix MD058 by surrounding both tables with blank lines.",
+      "is_nitpick": false,
+      "id": "CR-28"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3892606753",
+      "path": "packages/stack/src/encryption/index.ts",
+      "line": 599,
+      "severity_label": "nitpick",
+      "claim": "Return a defensive copy instead of the internal config reference. getEncryptConfig returns the internal encryptConfig object directly, so callers can mutate client state from outside.",
+      "is_nitpick": true,
+      "id": "CR-29"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3892884805",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 149,
+      "severity_label": "duplicate comment | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "Fix the config key name in the error message (Line 149). The guidance says \"encryptClient\", but the config field is client.",
+      "is_nitpick": false,
+      "id": "CR-30"
+    },
+    {
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/314#pullrequestreview-3892884805",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "line": 112,
+      "severity_label": "duplicate comment | ⚠️ Potential issue | 🟠 Major",
+      "claim": "Avoid logging raw error objects; use sanitized diagnostics only. console.error(error) can print plaintext from thrown messages/stack traces.",
+      "is_nitpick": false,
+      "id": "CR-31"
+    }
+  ],
+  "notes": "CodeRabbit reviews: 3 with bodies (9, 10 and 2 actionable comments posted) plus 3 empty-body review entries (reply threads). Review-body findings (outside-diff, nitpick, duplicate) transcribed from review bodies; findings labelled 'duplicate comment' restate earlier inline comments. CodeRabbit replies to calvinbrewer in 3 threads conceded the dev-CLI error-logging / process.exit points. Release-notes summary removed from PR body.; CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/314#discussion_r2885916095 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/314#discussion_r2885917715 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/314#discussion_r2885917884 (not a finding)"
+}

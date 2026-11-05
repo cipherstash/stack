@@ -1,0 +1,8 @@
+{
+  "pr": 1002,
+  "coderabbit_present": false,
+  "collected_via": "github mcp",
+  "summary_comment_present": false,
+  "findings": [],
+  "notes": "No reviews, review comments or issue comments by coderabbitai. Reviews: freshtonic APPROVED (1 non-blocking inline comment), coderdan APPROVED. Issue comments: changeset-bot, github-actions cargo-mutants report. Description kept verbatim including the author's 'Generated with Claude Code' footer (part of the author-written body, not a bot-inserted block)."
+}

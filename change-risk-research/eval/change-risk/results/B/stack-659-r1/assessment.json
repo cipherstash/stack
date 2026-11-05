@@ -1,0 +1,499 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+  "head_sha": "3e040fad4db2c9a8ab3262eba80da51ce49beba1",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the PR title is given in CASE.md. The changeset in the diff states the author's intent and is cited as a claim."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied; collect-evidence reports ci.available=false."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md / CLAUDE.md and skills/stash-supabase/SKILL.md read from the head checkout only."
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Consumers found with grep over the head checkout only; no external consumer list."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (all files owned by @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No release or rollout notes; npm publishing is effectively irreversible."
+    }
+  },
+  "summary": "Three fixes, shipped as patch bumps of @cipherstash/stack-supabase and @cipherstash/stack. (1) The Supabase v3 builder now rejects a free-text needle that is empty or shorter than the ngram token_length (3 codepoints). The check sits in the term resolver that every encrypted filter term goes through (matches, like/ilike, not, or, raw cs). This closes a real fail-open: a short needle blooms to nothing, so the filter matched every row and the caller decrypted the whole table. That also applied to update/delete filtered by such a needle. The fix is fail-closed. Its release risk is that existing callers who pass short or empty search terms now get an error instead of rows, in a patch release. (2) withLockContext on the Supabase builder now accepts a plain { identityClaim } as well as a LockContext. This is a type-only widening: the value is passed unchanged to encryption operations that already accept LockContextInput and resolve it with resolveLockContext. (3) EncryptionErrorTypes is now `as const`, which narrows EncryptionError['type'] from string to a union of literals. This is compile-time only, but it can stop some TypeScript consumers compiling after the upgrade. A tsconfig paths entry affects type tests only; no src file imports that specifier. No tests were run and no CI results were available. Impact is medium. A focused review should look at the user-visible behaviour change and the patch-level type narrowing. The v2 Supabase like/ilike paths stay unguarded; that was already true at base and is not caused by this change.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "security_boundary",
+      "description": "Supabase v3 encrypted free-text terms (matches, like/ilike delegated to matches, not(col,'matches'), or() conditions, raw cs filters) whose string value is empty or has fewer codepoints than the column's ngram token_length now throw in assertTermQueryable before any encryption or PostgREST call. Previously they were encrypted to an empty bloom and matched every row.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "error_handling",
+      "description": "The new rejection comes back as { data: null, error, status: 500, statusText: 'Encryption Error' }, or is rethrown under throwOnError(). It is thrown during filter encryption, which runs before the query, so a mutation with such a filter is not executed. error.encryptionError is unset because the error is a plain Error, not an EncryptionFailedError.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "The withLockContext parameter on EncryptedQueryBuilderImpl and EncryptedQueryBuilderCore, and the protected lockContext field, are widened from LockContext to LockContextInput (LockContext | { identityClaim: string[] }). LockContextInput is re-exported from @cipherstash/stack-supabase. Runtime behaviour is unchanged: the value is passed as-is to encrypt/decrypt operations that already accept LockContextInput.",
+      "certainty": "observed",
+      "evidence": ["E-13", "E-14", "E-15", "E-16"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "public_contract",
+      "description": "EncryptionErrorTypes is now `as const`. Its members, EncryptionError['type'], and the type field of each StackError member change from string to string-literal types. The runtime values are unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-10", "E-11", "E-12"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "configuration",
+      "description": "packages/stack/tsconfig.json maps @cipherstash/stack/errors to source, so type tests use current source instead of dist. tsup's dts build reads this tsconfig, but no packages/stack/src file imports that specifier, so build output should not change.",
+      "certainty": "inferred",
+      "evidence": ["E-17", "E-18"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack-supabase v3 query builder (encryptedSupabaseV3)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "The term resolver now rejects short or empty free-text needles. withLockContext typing is widened.",
+      "evidence": ["E-1", "E-14"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack/errors public types (EncryptionErrorTypes, EncryptionError, StackError)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Error type fields narrow from string to literal unions.",
+      "evidence": ["E-10", "E-11"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/stack identity / encryption operations (resolveLockContext, Encrypt/Decrypt operations)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "They receive the widened lockContext from the Supabase builder and already accept LockContextInput.",
+      "evidence": ["E-13", "E-15"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/stack schema match-defaults (matchNeedleError) and v3 column builders",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "The new Supabase guard calls matchNeedleError, imported via adapter-kit, with column.build().indexes.match. Every freeTextSearch domain emits that match block.",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "AC-5",
+      "name": "skills/stash-supabase/SKILL.md (shipped in the stash tarball)",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "It already tells customers that short terms are rejected with an error. The change makes the v3 runtime match that guidance.",
+      "evidence": ["E-19"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Applications using encryptedSupabaseV3 free-text search",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Callers that pass user-entered terms, which may be empty or 1-2 characters, now get errors instead of rows.",
+      "evidence": ["E-7", "E-21"]
+    },
+    {
+      "id": "AC-7",
+      "name": "TypeScript consumers of @cipherstash/stack error types",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "Code that compares, assigns or mutates error type values as plain strings may stop compiling.",
+      "evidence": ["E-10", "E-11"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Short or empty search terms that used to return rows now return status 500 after a patch upgrade",
+      "trigger": "An application on encryptedSupabaseV3 passes an empty or 1-2 character term to matches(), like('%ab%'), ilike, or(), or not(col,'matches',...). Typical sources are search-as-you-type or an empty search box treated as 'show all'.",
+      "affected_components": ["AC-1", "AC-6"],
+      "mechanism": "assertTermQueryable now calls matchNeedleError for every freeTextSearch term (query-builder-v3.ts:504-512). like/ilike strip the surrounding % and delegate to matches (844-875). or() maps matches/contains to freeTextSearch (908-916). The thrown Error is caught in execute() and returned as status 500, or rethrown under throwOnError (query-builder.ts:428-458).",
+      "consequence": "Search or listing features in consumer apps that used to return results (in fact the whole table) now fail with an error after a patch-level upgrade, or throw under throwOnError. The failure is loud and fail-closed, and no data is exposed or corrupted. Callers must add their own length check. Negated not(col,'matches','ab') used to return no rows and now errors.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-5", "E-7", "E-21"],
+      "existing_verification": [
+        {
+          "description": "supabase-v3-builder.test.ts asserts matches('email','ab') returns status 500 with the guard message",
+          "status": "exists_not_run",
+          "evidence": ["E-8"]
+        },
+        {
+          "description": "match-needle-guard.test.ts covers matchNeedleError for empty, short, astral and NFD needles and non-string values",
+          "status": "exists_not_run",
+          "evidence": ["E-9"]
+        }
+      ],
+      "missing_verification": [
+        "No Supabase test for like('%ab%') / ilike, or() string and structured conditions, not(col,'matches',...), raw filter(col,'cs',...), or an empty-string needle",
+        "No test or note on the throwOnError path for the new rejection",
+        "No test results seen; tests were not run (no node_modules, no CI)"
+      ],
+      "mitigation": "State clearly in the release notes that empty and short free-text terms now error, and consider a minor bump rather than patch. Document the threshold so callers can skip the filter for short terms (matchNeedleError is exported from adapter-kit). Add the missing path tests listed above.",
+      "domain_tags": ["public_api", "plaintext_exposure"]
+    },
+    {
+      "id": "FS-2",
+      "title": "`as const` on EncryptionErrorTypes breaks compilation for some TypeScript consumers in a patch release",
+      "trigger": "A consumer's TypeScript code compares error.type with a string outside the five literals, assigns a string-typed value to the type field of an EncryptionError-shaped object (for example in mocks or wrappers), or assigns to an EncryptionErrorTypes member.",
+      "affected_components": ["AC-2", "AC-7"],
+      "mechanism": "EncryptionError.type is typed as the value type of EncryptionErrorTypes (errors/index.ts:38). With `as const` (line 13) that type is now a union of literals instead of string, so the code above raises TS2367 (no overlap), TS2322 (string not assignable) or TS2540 (read-only).",
+      "consequence": "After upgrading the patch version, affected consumer builds fail type-checking. Runtime behaviour does not change, and the fix on the consumer side is mechanical.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-10", "E-11", "E-12", "E-21"],
+      "existing_verification": [
+        {
+          "description": "error-discriminated-union.test-d.ts asserts the literal types and exhaustive narrowing (the intended positive case)",
+          "status": "exists_not_run",
+          "evidence": ["E-12"]
+        }
+      ],
+      "missing_verification": [
+        "No workspace-wide typecheck result showing that the other in-repo packages (stack-supabase, stack-drizzle, protect, migrate, prisma-next, cli) still compile with the narrowed type",
+        "No consideration of semver level for a type narrowing on a public export"
+      ],
+      "mitigation": "Run a full workspace typecheck/build before release. Call out the type narrowing in the changeset or bump minor. Optionally keep a widened alias for consumers that need string.",
+      "domain_tags": ["public_api", "build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The new guard is unit-tested only through matches() with a 2-character needle. The like/ilike, or(), not() and raw cs spellings and the empty-string case are not exercised at the Supabase layer.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-8", "E-3", "E-4"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No test or CI result was seen for any changed behaviour. Dependencies are not installed, so the suites could not be run locally.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-20"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No evidence of a typecheck across all workspace packages after the error-type narrowing.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-20", "E-11"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Add stack-supabase v3 tests that short and empty needles are rejected through like('%ab%'), ilike, or('email.cs.ab') and structured or, not(col,'matches','ab'), and filter(col,'cs','ab'), and that a 3-codepoint needle still passes.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "documentation",
+      "description": "Make the changeset say explicitly that short or empty free-text terms now return an error (status 500 / throw), and that EncryptionError['type'] is now a literal union. Consider a minor bump for both packages.",
+      "addresses": ["FS-1", "FS-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "compatibility_check",
+      "description": "Run pnpm build plus the test:types / tsc typecheck across every workspace package (and the examples) before publishing, to confirm the narrowing compiles everywhere in-repo.",
+      "addresses": ["FS-2", "VG-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "review_focus",
+      "description": "Review query-builder-v3.ts:498-512 to confirm the guard runs for every encrypted free-text spelling and that the 500/throwOnError surface is acceptable for this rejection.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "test",
+      "description": "Run the stack-supabase and stack unit and type suites (pnpm --filter @cipherstash/stack-supabase test; pnpm --filter @cipherstash/stack test:types) and attach the results.",
+      "addresses": ["VG-2"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No tests, typecheck or build could be run: node_modules is absent and network access is not allowed. No CI results were supplied.",
+      "effect": "Every verification is exists_not_run. Whether the in-repo packages still compile after the type narrowing is not established."
+    },
+    {
+      "id": "CL-2",
+      "description": "Consumers outside this repository are unknown. Whether real applications send short or empty free-text terms is not established.",
+      "effect": "FS-1 and FS-2 are rated plausible, not observed. Their likelihood is unknown."
+    },
+    {
+      "id": "CL-3",
+      "description": "Pre-existing and not caused by this change: the v2 Supabase like/ilike paths and other v2 free-text spellings remain unguarded and still fail open (match-defaults.ts:123-129).",
+      "effect": "Not counted as a scenario. Reviewers should not read this change as closing the fail-open for v2 users."
+    },
+    {
+      "id": "CL-4",
+      "description": "The ngram tokenizer's handling of whitespace-only or punctuation-only 3+ codepoint needles was not checked. The guard counts codepoints only, the same as the Drizzle adapter.",
+      "effect": "A residual fail-open for such needles, if one exists, would be shared with Drizzle and not introduced here. Unassessed."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/stack-supabase/src/query-builder-v3.ts",
+      "rev": "head",
+      "line_start": 498,
+      "line_end": 512,
+      "claim": "The new block calls matchNeedleError(term.value, column.build().indexes.match) when queryType is freeTextSearch and throws a [supabase v3] Error when it returns a reason.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack-supabase/src/query-builder-v3.ts",
+      "rev": "head",
+      "line_start": 549,
+      "line_end": 562,
+      "claim": "encryptCollectedTerms calls assertTermQueryable for every collected term before any bulkEncrypt.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack-supabase/src/query-builder-v3.ts",
+      "rev": "head",
+      "line_start": 844,
+      "line_end": 875,
+      "claim": "like/ilike on encrypted v3 columns strip leading/trailing % and delegate to matches(), so like('%ab%') produces the needle 'ab'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack-supabase/src/query-builder-v3.ts",
+      "rev": "head",
+      "line_start": 908,
+      "line_end": 916,
+      "claim": "Structured or() conditions with op matches/contains map to freeTextSearch, so they reach the same guard.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack/src/schema/match-defaults.ts",
+      "rev": "head",
+      "line_start": 131,
+      "line_end": 146,
+      "claim": "matchNeedleError returns a reason for an empty string or fewer codepoints than the ngram token_length, and undefined for non-strings.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/eql/v3/columns.ts",
+      "rev": "head",
+      "line_start": 366,
+      "line_end": 378,
+      "claim": "Every v3 domain with the freeTextSearch capability emits indexes.match (ngram, token_length 3), so the guard's match lookup is always present for free-text columns.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack-supabase/src/query-builder.ts",
+      "rev": "head",
+      "line_start": 402,
+      "line_end": 458,
+      "claim": "execute() encrypts filter values (step 4) before building and running the query (step 5). Any throw becomes { data: null, error, status: 500 }, or is rethrown under throwOnError.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+      "rev": "head",
+      "line_start": 206,
+      "line_end": 216,
+      "claim": "A new test asserts matches('email','ab') yields status 500 and the guard message. It covers only the matches() spelling.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "test",
+      "path": "packages/stack/__tests__/match-needle-guard.test.ts",
+      "rev": "head",
+      "line_start": 25,
+      "line_end": 93,
+      "claim": "Existing unit tests cover matchNeedleError for short, empty, astral, NFD and non-string inputs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": "packages/stack/src/errors/index.ts",
+      "rev": "head",
+      "line_start": 7,
+      "line_end": 13,
+      "claim": "EncryptionErrorTypes now ends with `as const`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack/src/errors/index.ts",
+      "rev": "head",
+      "line_start": 37,
+      "line_end": 72,
+      "claim": "EncryptionError.type and each specific error's type are derived from EncryptionErrorTypes, so they narrow from string to literal types.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "test",
+      "path": "packages/stack/__tests__/error-discriminated-union.test-d.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 52,
+      "claim": "A new type test asserts the literal member types and exhaustive switch narrowing.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/stack/src/identity/index.ts",
+      "rev": "head",
+      "line_start": 35,
+      "line_end": 48,
+      "claim": "LockContextInput = LockContext | Context, and resolveLockContext handles both a plain { identityClaim } and a LockContext.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "packages/stack-supabase/src/query-builder.ts",
+      "rev": "head",
+      "line_start": 373,
+      "line_end": 376,
+      "claim": "withLockContext stores the LockContextInput unchanged. It is later passed only to operation.withLockContext(...) on the encrypt and decrypt paths.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/operations/encrypt.ts",
+      "rev": "head",
+      "line_start": 45,
+      "line_end": 45,
+      "claim": "EncryptOperation.withLockContext already accepts LockContextInput. grep shows the same for decrypt, bulk and model operations.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "test",
+      "path": "packages/stack-supabase/__tests__/supabase-v3.test-d.ts",
+      "rev": "head",
+      "line_start": 435,
+      "line_end": 447,
+      "claim": "A new type test checks that withLockContext accepts { identityClaim } and rejects an unknown key.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": "packages/stack/tsconfig.json",
+      "rev": "head",
+      "line_start": 52,
+      "line_end": 60,
+      "claim": "A paths entry maps @cipherstash/stack/errors to src/errors/index.ts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "command_output",
+      "command": "grep -rn \"@cipherstash/stack/errors\" packages/stack/src",
+      "claim": "No packages/stack/src file imports @cipherstash/stack/errors (grep exit 1), so the new paths entry should not change tsup dts output.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "documentation",
+      "path": "skills/stash-supabase/SKILL.md",
+      "rev": "head",
+      "line_start": 541,
+      "line_end": 545,
+      "claim": "The shipped Supabase skill already says terms shorter than 3 characters are rejected with an error.",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "command_output",
+      "command": "ls node_modules",
+      "claim": "Dependencies are not installed in the checkout, so tests and typecheck could not be run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-21",
+      "kind": "diff",
+      "path": ".changeset/v3-supabase-needle-lockcontext-errors.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 21,
+      "claim": "The changeset releases both packages as patch. The author describes the short-needle rejection and the as-const change as correctness fixes.",
+      "status": "verified"
+    },
+    {
+      "id": "E-22",
+      "kind": "code",
+      "path": "packages/stack/src/schema/match-defaults.ts",
+      "rev": "head",
+      "line_start": 123,
+      "line_end": 129,
+      "claim": "The doc comment says v2 like/ilike remains unguarded and fails open (pre-existing).",
+      "status": "verified"
+    },
+    {
+      "id": "E-23",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[1]",
+      "claim": "packages/stack/tsconfig.json usually changes with vitest.shared.ts. vitest.shared.ts already maps @cipherstash/stack/errors at head, so the omission is consistent.",
+      "status": "inferred"
+    }
+  ]
+}

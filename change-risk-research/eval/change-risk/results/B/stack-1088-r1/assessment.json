@@ -1,0 +1,289 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "b6e6100c848039528c19d82c39f96c19c730e32a",
+  "head_sha": "ac5f088a6eb7efe753740149e0fce8926e354f5a",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff / git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md; commit subjects read from git log base..head."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results provided; node_modules absent and no network, so tests were not run."
+    },
+    "architecture_docs": { "status": "unavailable" },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Consumers found with git grep only."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md inputs."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Titled as a vitest bump, the change does two things: (1) moves @cipherstash/auth and @cipherstash/profile devDependency vitest from ^3 to the repo catalog (4.1.11), removing vitest 3 from the lockfile; (2) relaxes the CI gate that requires an @cipherstash/auth changeset, adding a `--shipped` filter that drops test/example/config paths and binding manifests whose only change is devDependencies, and diffing with --no-renames. Nothing that ships to npm changes. The main risk is the release guard now failing open for devDependency-only manifest edits, which include @napi-rs/cli, the tool that builds the shipped native binary; the consequence is a toolchain change merged without its own release, not a broken package. The filter fails closed on unreadable/added/deleted manifests and on script errors, and has new unit and workflow-shape tests (not run here).",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "The require-auth-npm-changeset workflow now pipes the changed stack-auth paths through `check-auth-npm-changeset.mjs --shipped`; PRs touching only __tests__/, examples/, vitest.config.ts, tsconfig.json of the auth package, or only devDependencies of the auth/wasm/platform manifests, no longer require an @cipherstash/auth changeset.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "build_or_release",
+      "description": "Changed paths are listed with --no-renames so a shipped file moved into an unshipped location is still reported by its source path.",
+      "certainty": "observed",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "Manifest comparison reads the base side from the PR base tip (`git show $BASE_SHA:path`) and the head side from the working tree, while the path list is computed against the merge-base (`BASE...HEAD`). Missing, added or unparseable manifests are treated as shipped (fail closed).",
+      "certainty": "observed",
+      "evidence": ["E-2"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "dependency",
+      "description": "auth and profile test suites move from vitest 3 to vitest 4.1.11 via `catalog:repo`; vitest 3 entries are removed from pnpm-lock.yaml. Dev-only; not in either package's published files.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/require-auth-npm-changeset.yml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Gate deciding whether an auth PR must carry a changeset.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "scripts/check-auth-npm-changeset.mjs",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New --shipped mode and exported isShipped; changeset-validation mode unchanged in logic, wrapped in a function.",
+      "evidence": ["E-2"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/auth npm release process",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "The workflow comment states nothing else releases the npm binary built from the crate; the gate is the trigger for versioning.",
+      "evidence": ["E-1", "E-3"]
+    },
+    {
+      "id": "AC-4",
+      "name": "auth and profile vitest suites",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Test runner major version changes; configs are minimal (testTimeout only).",
+      "evidence": ["E-4", "E-5"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Build-toolchain devDependency bump in auth/package.json merges without an auth release",
+      "trigger": "A PR changes only devDependencies of languages/typescript/packages/auth/package.json, e.g. bumping @napi-rs/cli (used by build:native) or typescript.",
+      "affected_components": ["AC-1", "AC-2", "AC-3"],
+      "mechanism": "UNSHIPPED_MANIFEST_FIELDS treats every devDependencies change as non-shipping, but @napi-rs/cli is a devDependency that drives `napi build`, which produces the shipped per-platform .node binaries. isShipped returns false, SHIPPED_CHANGES is empty, the workflow exits 0.",
+      "consequence": "The toolchain change lands with no version bump and is picked up silently by the next unrelated auth release; a build regression it introduces surfaces only then, attributed to the wrong change. No published package changes at merge time.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-3"],
+      "existing_verification": [
+        {
+          "description": "Unit test asserts devDependency-only manifest edits are dropped (intended behaviour), and that version/files/peerDependencies/dependencies/exports changes are kept.",
+          "status": "exists_not_run",
+          "evidence": ["E-7"]
+        }
+      ],
+      "missing_verification": [
+        "No rule or test distinguishing build-affecting devDependencies (@napi-rs/cli) from test-only ones (vitest)."
+      ],
+      "mitigation": "Decide explicitly whether @napi-rs/cli changes should require a release; if so, keep it out of the ignored set (e.g. ignore only named test devDependencies).",
+      "domain_tags": ["build_release", "dependency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Manifest compared against base tip rather than merge-base causes spurious changeset demands",
+      "trigger": "A long-lived PR touches only auth devDependencies while main has since bumped the auth version (Version Packages PR).",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "gitReader reads `$BASE_SHA:path` (base tip) while the path list comes from `BASE...HEAD`; the non-dev fields differ because of main's own change, so isShipped returns true.",
+      "consequence": "Fails closed: the PR is asked for an unnecessary changeset until rebased. Friction only; no unreleased change escapes.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No test with a base that has advanced past the merge-base."
+      ],
+      "mitigation": "Read the base side at `git merge-base $BASE_SHA HEAD`, or accept the friction.",
+      "domain_tags": ["build_release"]
+    },
+    {
+      "id": "FS-3",
+      "title": "vitest 4 major upgrade changes auth/profile test behaviour",
+      "trigger": "Running `vitest run` in the auth or profile package under 4.1.11.",
+      "affected_components": ["AC-4"],
+      "mechanism": "Major-version runner change (defaults, mocking, pools). Configs set only testTimeout, so removed v3 options are not in play.",
+      "consequence": "Most likely a loud test failure in CI; dev-only, nothing shipped changes.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-4", "E-5", "E-6"],
+      "existing_verification": [],
+      "missing_verification": [
+        "CI results for the auth and profile test jobs at head were not provided."
+      ],
+      "mitigation": "Confirm the auth and profile `test` jobs pass in CI on this PR.",
+      "domain_tags": ["dependency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "None of the new isShipped / --shipped / workflow-shape tests, nor the vitest-4 package suites, were run or seen passing (no CI results, no node_modules).",
+      "scenarios": ["FS-1", "FS-3"],
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No test covers a base branch that advanced beyond the merge-base.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-2"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Reviewer to confirm the policy that all auth devDependencies (including @napi-rs/cli) are non-release-relevant, and the NEVER_SHIPPED list against the package `files` field.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Check CI results for scripts/__tests__/check-auth-npm-changeset.test.mjs and the auth/profile vitest runs before merging.",
+      "addresses": ["VG-1", "FS-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No CI results and no installed dependencies; no tests executed.",
+      "effect": "All verification is exists_not_run; confidence capped at medium."
+    },
+    {
+      "id": "CL-2",
+      "description": "Lockfile diff (249 lines) only spot-checked: vitest 3 entries absent at head, vitest 4.1.11 present.",
+      "effect": "Transitive resolution changes and frozen-lockfile consistency not verified."
+    },
+    {
+      "id": "CL-3",
+      "description": "PR description, CODEOWNERS and release workflow behaviour not assessed beyond the guard workflow.",
+      "effect": "How the release pipeline uses changesets is taken from the workflow comment."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": ".github/workflows/require-auth-npm-changeset.yml",
+      "rev": "head",
+      "line_start": 81,
+      "line_end": 104,
+      "claim": "CHANGED is computed with `git diff --name-only --no-renames BASE...HEAD`, filtered by `--shipped \"$BASE_SHA\"`; empty result exits 0 without a changeset; script failure exits 1.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "scripts/check-auth-npm-changeset.mjs",
+      "rev": "head",
+      "line_start": 25,
+      "line_end": 93,
+      "claim": "NEVER_SHIPPED prefixes, UNSHIPPED_MANIFEST_FIELDS=['devDependencies'], isShipped returns true for missing/unparseable manifests, base read via `git show baseSha:path`, head via fs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "languages/typescript/packages/auth/package.json",
+      "rev": "head",
+      "line_start": 55,
+      "line_end": 114,
+      "claim": "`files` excludes __tests__, examples, tsconfig.json, vitest.config.ts; build:native runs `napi build` from devDependency @napi-rs/cli.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "diff",
+      "path": "languages/typescript/packages/profile/package.json",
+      "rev": "head",
+      "line_start": 43,
+      "line_end": 43,
+      "claim": "vitest devDependency changed from ^3 to catalog:repo (also in auth package.json).",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "pnpm-workspace.yaml",
+      "rev": "head",
+      "line_start": 45,
+      "line_end": 45,
+      "claim": "Catalog `repo` pins vitest 4.1.11.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "languages/typescript/packages/auth/vitest.config.ts",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 7,
+      "claim": "Config sets only testTimeout.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "test",
+      "path": "scripts/__tests__/check-auth-npm-changeset.test.mjs",
+      "rev": "head",
+      "line_start": 96,
+      "line_end": 299,
+      "claim": "New tests cover isShipped drop/keep cases, the --shipped CLI against HEAD and the empty tree, and the workflow's --no-renames and --shipped wiring.",
+      "status": "verified"
+    }
+  ]
+}

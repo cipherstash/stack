@@ -1,0 +1,222 @@
+{
+  "case": "stack-547",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Drop bigint/int8 from the v3 release note. The typed client reconstructs `Date` only; `int8`/`bigint` is explicitly deferred in `packages/stack/src/encryption/v",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Changeset wording mentions bigint reconstruction that v3.ts omits; a release-note accuracy nit."
+    },
+    {
+      "id": "CR-2",
+      "title": "Drop `bigint` from the release note. `.changeset/eql-v3-typed-schema.md:5-7` should describe Date-only support; v3 still omits int8/bigint domains until lossles",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Changeset mentions int8/bigint support that columns.ts omits; a release-note wording nit."
+    },
+    {
+      "id": "CR-3",
+      "title": "Thread `eqlVersion` into the permission check. The v3 path still calls the v2-oriented `checkPermissions()`, which requires CREATE on `public` for `public.eql_v",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "install still calls the v2-oriented checkPermissions (CREATE on public for eql_v2_encrypted) for v3 installs, which can block or misroute v3 installs; the cited line is near the call at line 190 rather than on it."
+    },
+    {
+      "id": "CR-4",
+      "title": "Reject `--migrations-dir` for EQL v3 too. `--migrations-dir` is migration-path-only, but v3 routing skips migration selection and proceeds with direct install. ",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "validateInstallFlags at head already rejects --migrations-dir with --eql-version 3 (install.ts:562-569)."
+    },
+    {
+      "id": "CR-5",
+      "title": "Guard the structural lock-context check before using `in`. Line 45 can throw a `TypeError` for plain JS callers that pass `null`, `undefined`, or a primitive. A",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "'in' on null throws a TypeError only for plain-JS misuse of a typed API; an error results either way."
+    },
+    {
+      "id": "CR-6",
+      "title": "Narrow structured `.or()` conditions to `FK`. `PendingOrCondition[]` keeps `column: string`, so v3 callers can still compile filters against storage-only encryp",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Structured or() takes PendingOrCondition[] with column:string, which bypasses the FK narrowing that the other filter methods enforce for v3 (runtime still throws on unsupported capability)."
+    },
+    {
+      "id": "CR-7",
+      "title": "Blank line inside blockquote (MD028). Static analysis flags a blank line inside/adjacent to the new blockquote, which can cause inconsistent rendering (split in",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Markdown lint issue in an internal plan doc."
+    },
+    {
+      "id": "CR-8",
+      "title": "Blank line inside blockquote (MD028). Same issue as the sibling plan doc \u2014 the blank line inside/adjacent to the new blockquote can split rendering into two quo",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Markdown lint issue in an internal plan doc."
+    },
+    {
+      "id": "CR-9",
+      "title": "Blank line inside blockquote (MD028). Same issue as the sibling docs \u2014 the blank line inside/adjacent to the new blockquote can split rendering into two quote b",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Markdown lint issue: a blank line between blockquotes in an internal design doc."
+    },
+    {
+      "id": "CR-10",
+      "title": "Route raw encrypted filters through query-type and operator seams. For v3, `.filter('email', 'like', value)` is collected as an equality term and later sent as ",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Raw filters are always collected with queryType 'equality' and applied with the raw operator via q.filter, so on v3 a raw like/ilike skips the cs remap and capability check."
+    },
+    {
+      "id": "CR-11",
+      "title": "Map ordered columns through the dialect seam. Filters/selects/mutations resolve v3 property names to DB names, but `order('createdAt')` still reaches PostgREST ",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Order transforms call query.order(t.column) without filterColumnName, so v3 property names that differ from DB names reach PostgREST unmapped."
+    },
+    {
+      "id": "CR-12",
+      "title": "Update the public `EncryptOptions.column` doc to match the widened contract. Line 253 still documents only `EncryptedColumn` / `EncryptedField`, but Line 254 no",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "Doc-comment wording out of date."
+    },
+    {
+      "id": "CR-13",
+      "title": "Env var set without cleanup across test runs. `process.env.CS_WORKSPACE_CRN` is set in `beforeEach` but never restored/deleted in an `afterEach`.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Test-hygiene nit: an env var set in beforeEach with no cleanup."
+    },
+    {
+      "id": "CR-14",
+      "title": "User-supplied match opts aliased by reference, unlike the v3 counterpart. `defaults` are fresh objects, but when a caller passes `opts.tokenizer`/`opts.token_fi",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "v2 freeTextSearch storing caller opts by reference is a minor aliasing nit (largely pre-existing) with no realistic release impact."
+    },
+    {
+      "id": "CR-15",
+      "title": "Reaching into private helper for tests. This test imports `resolveEncryptColumnMap` directly from `@/encryption/helpers/model-helpers`, which is not re-exported",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "Test style nit about importing an internal helper."
+    },
+    {
+      "id": "CR-16",
+      "title": "`EncryptedTextSearchColumn.build()` duplicates `indexesForCapabilities` output instead of reusing it. The override hand-rolls `{ unique: { token_filters: [] }, ",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Code-duplication refactor suggestion with no behavioural impact."
+    },
+    {
+      "id": "CR-17",
+      "title": "Module-load-time env gates are import-order fragile. `LIVE_CIPHERSTASH_ENABLED`/`LIVE_EQL_V3_PG_ENABLED` are computed once at import time.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Test-helper design nit about env gates computed at import time, which the file already documents."
+    },
+    {
+      "id": "CR-18",
+      "title": "Parallelize per-domain query-term encryption in `beforeAll`. The `eqDomains`/`ordDomains`/`matchDomains` loops `await client.encryptQuery(...)` sequentially, on",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Test performance suggestion."
+    },
+    {
+      "id": "CR-19",
+      "title": "Move the shared installer helper out of `__tests__`. This script performs live installation work but imports from the test tree.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "Code-organisation nit about a script importing from the test tree."
+    },
+    {
+      "id": "CR-20",
+      "title": "Add `persist-credentials: false` to the read-only checkout. This job only reads source for static analysis (`permissions: contents: read`, no push).",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "CI hardening nit on a read-only analysis job."
+    },
+    {
+      "id": "CR-21",
+      "title": "Extract shared EQL version validation. `upgrade.ts` duplicates the same unknown `--eql-version` check and the v3/`--latest` incompatibility already centralized ",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Duplicated validation refactor suggestion."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

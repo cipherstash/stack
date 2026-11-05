@@ -1,0 +1,48 @@
+{
+  "case": "stack-728",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A valid, data-preserving v3 domain change is rewritten into DROP COLUMN, destroying encrypted data",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The strict regex keys only on the eql_v3_* target, and renderSafeAlter always emits ADD/DROP/RENAME. A jsonb or v3-domain source change that may have been castable is therefore turned into a column drop, and the tests have no such source case."
+    },
+    {
+      "id": "FS-2",
+      "title": "Plaintext\u2192v3 migration on a populated table now runs and drops the plaintext instead of failing",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "renderSafeAlter has no row-count guard, and the change extends the destructive rewrite to v3 targets and the v3 migration command. SKILL.md documents empty-table-only safety but nothing enforces it."
+    },
+    {
+      "id": "FS-3",
+      "title": "Already-applied v3 migrations are rewritten on disk, so fresh environments get a different schema from production",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The v3 eql migration path now sweeps all sibling files with no journal check, so applied v3 migrations can be rewritten and fresh environments diverge from production."
+    }
+  ],
+  "cost_usd": 1.3179745,
+  "wall_seconds": 179.178638,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

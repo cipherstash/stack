@@ -1,0 +1,604 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "abf3ddd89593290fe88f657c97570ea44816401a",
+  "head_sha": "8ebc77b5efb6df66525665781c4a9ea922732356",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor. No node_modules, so nothing could be built or tested."
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the PR title was given in CASE.md."
+    },
+    "ci_results": {
+      "status": "unavailable"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Package manifests, READMEs and skills/stash-cli/SKILL.md at head; no architecture docs supplied."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "note": "Workspace package.json files and pnpm-lock.yaml read at both revisions; no external consumer graph."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "No CODEOWNERS reported by collect-evidence."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (evidence.json, evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "npm publishing state, dist-tags and gateway service were not visible."
+    }
+  },
+  "summary": "Renames @cipherstash/stack-forge to @cipherstash/cli (1.0.0-rc.0), moves the `stash` CLI (auth, init, secrets) out of @cipherstash/stack into it, adds an AI 'wizard' that runs the Claude Agent SDK against the user's project through a CipherStash gateway, and moves the root dependency overrides. Four mechanisms matter for release: (1) the CLI binary is now built with skipNodeModulesBundle, so its static imports of @cipherstash/stack (only a devDependency) are left external and the published binary may fail to start where that package cannot be resolved; (2) the wizard lists every tool in allowedTools, which in the Agent SDK auto-approves them, so the canUseTool gate that blocks .env reads and non-allowlisted Bash may never run, sending local secrets to the gateway; (3) pnpm overrides moved to a top-level `overrides` field that pnpm does not read, and the lockfile has lost its overrides block and now resolves esbuild 0.18/0.19; (4) @cipherstash/stack loses its `stash` bin with no changeset or deprecation path. Nothing could be built or run, and the relevant tests do not exercise the packaged binary or the real SDK permission flow. Impact high; verification low.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "Package @cipherstash/stack-forge (bin `stash-forge`) is renamed to @cipherstash/cli 1.0.0-rc.0 with a single bin `stash`; db commands move under `stash db <sub>` (init becomes `db setup`), and a new `schema build` and `wizard` command are added. Generated stash.config.ts now imports from '@cipherstash/cli'.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-17"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack no longer ships a `stash` bin or its tsup bin build, and drops its @cipherstash/auth dependency. Users who ran `npx stash init|auth|secrets` from @cipherstash/stack must switch to @cipherstash/cli. No changeset accompanies this.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4", "E-16"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "The CLI bin bundle changes from bundling non-dependency imports (base: external: [], noExternal dotenv/@clack/prompts, so devDependencies such as @cipherstash/stack were inlined) to skipNodeModulesBundle: true, which leaves every bare-specifier import external at runtime.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6", "E-7", "E-8", "E-9"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "security_boundary",
+      "description": "New `wizard` command runs a Claude Agent SDK agent with Read/Write/Edit/Glob/Grep/Bash in the user's project, permissionMode acceptEdits, all six tools in allowedTools, a canUseTool callback meant to block sensitive files and non-allowlisted Bash, and the full process.env passed to the agent. Model traffic goes to https://wizard.getstash.sh with the user's CipherStash token; the system prompt is fetched from that gateway.",
+      "certainty": "observed",
+      "evidence": ["E-10", "E-11", "E-12"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "external_side_effect",
+      "description": "After the agent reports success (including when the user types 'done'), the wizard runs install, `db setup`, `db push`, `drizzle-kit generate` and optionally `drizzle-kit migrate`/`prisma migrate dev` against the user's project and database, swallowing each step's failure, then prints 'Encryption is set up! Your data is now protected'.",
+      "certainty": "observed",
+      "evidence": ["E-13", "E-14"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "dependency",
+      "description": "Root dependency overrides move from `pnpm.overrides` to a top-level `overrides` field (and the @cipherstash/protect-ffi override is dropped). The regenerated lockfile has no overrides block; pg now resolves 8.13.1 instead of 8.16.3 and esbuild 0.18.20 / 0.19.12 appear. protect-ffi bumps 0.21.0 -> 0.21.2 in protect and stack.",
+      "certainty": "observed",
+      "evidence": ["E-15", "E-18", "E-19"]
+    },
+    {
+      "id": "BC-7",
+      "kind": "external_side_effect",
+      "description": "Device-code login now sends client id `cli-<referrer>` (e.g. cli-supabase, cli-drizzle, cli-cipherstash) instead of `cli`; init offers to reuse an existing token; init's interactive schema builder is replaced by a placeholder client plus a pointer to the wizard.",
+      "certainty": "observed",
+      "evidence": ["E-20"]
+    },
+    {
+      "id": "BC-8",
+      "kind": "documentation",
+      "description": "Shipped agent skill skills/stash-forge is renamed to skills/stash-cli and rewritten for the new commands; stash-secrets skill and READMEs updated.",
+      "certainty": "observed",
+      "evidence": ["E-17"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/cli (published package, bin `stash`)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "New published package and binary replacing stack-forge; bundling behaviour changed.",
+      "evidence": ["E-1", "E-5"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack (published package)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Loses its `stash` bin and @cipherstash/auth dependency; is imported at runtime by the CLI's db push and secrets commands.",
+      "evidence": ["E-3", "E-7", "E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Wizard agent permission layer (packages/cli/src/commands/wizard/agent)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "New security boundary between an LLM agent and the user's filesystem, shell and secrets.",
+      "evidence": ["E-10", "E-11"]
+    },
+    {
+      "id": "AC-4",
+      "name": "CipherStash wizard gateway (wizard.getstash.sh)",
+      "kind": "service",
+      "relationship": "confirmed",
+      "how": "Receives the user's bearer token, prompt context and all agent model traffic, including any file contents the agent reads.",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Customer databases and projects running the wizard / db commands",
+      "kind": "external_consumer",
+      "relationship": "confirmed",
+      "how": "Post-agent steps run db setup/push and drizzle/prisma migrations via execSync in the user's cwd.",
+      "evidence": ["E-13"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Monorepo dependency resolution (root package.json, pnpm-lock.yaml) and CI/release install",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Security overrides no longer recorded in the lockfile; release.yml and tests.yml run `pnpm install` from this lockfile.",
+      "evidence": ["E-15", "E-18", "E-19", "E-21"]
+    },
+    {
+      "id": "AC-7",
+      "name": "Existing users of `npx stash` from @cipherstash/stack and of @cipherstash/stack-forge / `stash-forge`",
+      "kind": "external_consumer",
+      "relationship": "likely",
+      "how": "Scripts, docs and CI invoking the removed bins break on upgrade; old package names remain in customer stash.config.ts.",
+      "evidence": ["E-3", "E-2"]
+    },
+    {
+      "id": "AC-8",
+      "name": "Release pipeline (changesets publish)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "`changeset publish` publishes any package whose version is not yet on npm, so @cipherstash/cli 1.0.0-rc.0 would publish on the next main push without a changeset.",
+      "evidence": ["E-21", "E-16"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Published `stash` binary fails to start because @cipherstash/stack is external but only a devDependency",
+      "trigger": "A user runs `npx @cipherstash/cli <any command>` (the documented entry point) where @cipherstash/stack is not resolvable from the CLI's install location, e.g. the npx cache or a pnpm project that has not hoisted it.",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "tsup bin build now sets skipNodeModulesBundle: true (packages/cli/tsup.config.ts:40), so bare imports are left external. bin/stash.ts statically imports commands/index.js, which statically imports db/push.ts (value import `toEqlCastAs` from '@cipherstash/stack/schema') and secrets/helpers.ts (value import `Secrets` from '@cipherstash/stack/secrets'). @cipherstash/stack is listed only in devDependencies (packages/cli/package.json:54), so npm does not install it for consumers. At base, tsup's default bundled devDependencies into stash-forge.js, so the same import was inlined.",
+      "consequence": "Every CLI command, including `--help`, `auth login` and `init`, exits with ERR_MODULE_NOT_FOUND before main() runs, because ESM resolves static imports at load. Where it does resolve, the CLI silently runs against whatever @cipherstash/stack version the project has, rather than the one it was built with.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-5", "E-6", "E-7", "E-8", "E-9"],
+      "existing_verification": [
+        {
+          "description": "config.test.ts and installer.test.ts exercise source modules through vitest, not the built bin or a packed tarball.",
+          "status": "exists_not_run",
+          "evidence": ["E-22"]
+        }
+      ],
+      "missing_verification": [
+        "Build the package, `npm pack`, install the tarball into an empty directory and run `npx stash --help` and `stash db push --dry-run`.",
+        "Inspect dist/bin/stash.js for bare imports of @cipherstash/stack."
+      ],
+      "mitigation": "Move @cipherstash/stack to dependencies (or peerDependencies with a clear install step), or add it to noExternal for the bin build; add a packed-tarball smoke test to CI before publishing.",
+      "domain_tags": ["build_release", "dependency", "public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Wizard's canUseTool gate is bypassed by allowedTools, letting the agent read .env secrets and send them to the gateway",
+      "trigger": "The wizard runs and the agent (steered by the gateway-supplied prompt or by text in the project) reads .env, ~/.cipherstash/auth.json or other credential files, or runs a Bash command outside the allowlist.",
+      "affected_components": ["AC-3", "AC-4", "AC-5"],
+      "mechanism": "sdkOptions lists Read, Write, Edit, Glob, Grep and Bash in allowedTools with permissionMode 'acceptEdits' (interface.ts:311-315). In the Claude Agent SDK, tools in allowedTools are auto-approved before the canUseTool callback is consulted, and a sandboxed Bash is auto-allowed by default, so wizardCanUseTool (sensitive-path blocking, Bash allowlist, operator scan) may never be called (interface.ts:320-331). The sandbox only constrains Bash writes, not the Read tool. The integration test that exercises canUseTool deliberately omits allowedTools, so it does not cover this configuration. The post-tool scanners in hooks.ts (scanPostToolUseRead/Write) are exported and unit-tested but not wired into the agent.",
+      "consequence": "Contents of .env (DATABASE_URL with password, CS_CLIENT_KEY / CS_CLIENT_ACCESS_KEY) or CipherStash auth tokens enter the model context and leave the machine via the gateway; non-allowlisted shell commands run in the user's project. For an encryption product this is plaintext-secret exposure to a third party.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-10", "E-11", "E-23"],
+      "existing_verification": [
+        {
+          "description": "interface.test.ts unit-tests wizardCanUseTool as a pure function (blocks .env, operators, non-allowlisted commands).",
+          "status": "exists_not_run",
+          "evidence": ["E-24"]
+        },
+        {
+          "description": "agent-sdk.test.ts 'canUseTool blocks disallowed commands' is skipped unless WIZARD_INTEGRATION=1, runs without allowedTools, and asserts only expect(true).toBe(true).",
+          "status": "exists_not_run",
+          "evidence": ["E-23"]
+        }
+      ],
+      "missing_verification": [
+        "An SDK-level test using the exact sdkOptions from interface.ts that asserts canUseTool is invoked and a Read of .env is denied.",
+        "Confirmation of the pinned @anthropic-ai/claude-agent-sdk ^0.2.87 permission-evaluation order."
+      ],
+      "mitigation": "Remove the tools from allowedTools (keep them in `tools`) so every call reaches canUseTool, or enforce the same rules in a PreToolUse hook; set permissionMode 'default'; wire the post-tool scanners as hooks or delete the claim; do not pass the full process.env to the agent.",
+      "domain_tags": ["plaintext_exposure", "authorization", "configuration"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Dependency security overrides silently stop applying after moving to a top-level `overrides` field",
+      "trigger": "Any `pnpm install` in the repo or in CI/release with pnpm 10.14.0 (packageManager).",
+      "affected_components": ["AC-6"],
+      "mechanism": "Overrides moved from `pnpm.overrides` (base package.json:49) to a top-level `overrides` key (head package.json:77), which is npm's field; pnpm reads `pnpm.overrides` or `overrides` in pnpm-workspace.yaml, and the head pnpm-workspace.yaml has none. The regenerated lockfile confirms it: its `overrides:` block is removed, pg resolves 8.13.1 instead of the forced ^8.16.3, and esbuild 0.18.20 and 0.19.12 now resolve (pnpm-lock.yaml:3471, 4275) despite the `esbuild@<=0.24.2: >=0.25.0` rule.",
+      "consequence": "Previously patched transitive versions (esbuild, and potentially vite, next, rollup, lodash, qs and others on future installs) are no longer forced, so the repo's dev, build and example toolchain regains known-vulnerable versions while the manifest still appears to pin them. Published library tarballs are not directly affected, since overrides never apply to consumers.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-15", "E-18", "E-19"],
+      "existing_verification": [
+        {
+          "description": "osv-scanner workflow exists and may flag the new versions; no result was available.",
+          "status": "unknown",
+          "evidence": ["E-21"]
+        }
+      ],
+      "missing_verification": [
+        "A diff of resolved versions for every previously overridden package between the base and head lockfiles.",
+        "OSV scanner result on the head lockfile."
+      ],
+      "mitigation": "Restore the block under `pnpm.overrides` or move it to `overrides:` in pnpm-workspace.yaml, re-run `pnpm install`, and confirm the lockfile's overrides block returns.",
+      "domain_tags": ["dependency", "configuration"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Removing the `stash` bin from @cipherstash/stack breaks existing users with no changeset or migration path",
+      "trigger": "The next release of @cipherstash/stack (version bump driven by any later changeset), or users upgrading stack-forge to the renamed package.",
+      "affected_components": ["AC-2", "AC-7", "AC-8"],
+      "mechanism": "packages/stack/package.json removes `bin.stash` and its postbuild; the bin source is deleted. No .changeset entry is added, so the removal ships under whatever bump the next unrelated changeset chooses, possibly a patch or minor. @cipherstash/stack-forge is renamed in place with no deprecation release; @cipherstash/cli 1.0.0-rc.0 is not covered by a changeset but would be published by `changeset publish`, which publishes unpublished versions.",
+      "consequence": "`npx stash init|auth|secrets` and CI scripts that use it fail after a routine @cipherstash/stack upgrade. The failure is loud but surprising and unannounced. A prerelease version may publish to the default dist-tag depending on publish tooling.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-4", "E-16", "E-21"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A changeset marking a major (or documented breaking) bump for @cipherstash/stack and an initial release for @cipherstash/cli.",
+        "A check of which dist-tag `changeset publish` uses for 1.0.0-rc.0."
+      ],
+      "mitigation": "Add changesets; keep a deprecated `stash` shim in @cipherstash/stack for one release that tells users to run `npx @cipherstash/cli`; publish a final @cipherstash/stack-forge with an npm deprecate message; publish the rc under a `next` tag or in changesets pre mode.",
+      "domain_tags": ["public_api", "build_release"]
+    },
+    {
+      "id": "FS-5",
+      "title": "Wizard reports encryption is set up even when setup, push or migration failed or the user aborted",
+      "trigger": "Any post-agent step fails (no DATABASE_URL, the FS-1 module error in nested `npx @cipherstash/cli db push`, or a migration error), or the user types 'done' or cancels at an agent question.",
+      "affected_components": ["AC-5", "AC-3"],
+      "mechanism": "Typing 'done' or cancelling sets success = true (interface.ts:433-435). runPostAgentSteps then runs each command through runStep, which catches every execSync error and only logs a warning (post-agent.ts:97-115). run.ts then unconditionally prints 'Encryption is set up! Your data is now protected by CipherStash.' (run.ts:160).",
+      "consequence": "Users may believe sensitive columns are encrypted when the encrypt config was never pushed, the migration did not run, or the agent's code changes were partial. Plaintext keeps being written while the tool reports protection.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-13", "E-14"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A test of run() where a post-agent step fails, asserting a non-success outro and non-zero exit."
+      ],
+      "mitigation": "Have runStep return a status; print the success outro only when every required step succeeded; treat 'done' or cancel as an aborted run that skips push and migrations.",
+      "domain_tags": ["plaintext_exposure", "persistence_migration"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test builds, packs and runs the published CLI binary, so packaging and externals regressions are invisible to the unit tests.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-22"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The wizard's permission gate is tested only as a pure function; no test runs the real SDK with the shipped sdkOptions, and the only SDK permission test is skipped by default and asserts nothing.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-23", "E-24"]
+    },
+    {
+      "id": "VG-3",
+      "description": "Nothing checks that the lockfile still carries the security overrides.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-18"]
+    },
+    {
+      "id": "VG-4",
+      "description": "No test covers the wizard's run() outcome reporting when post-agent steps fail.",
+      "scenarios": ["FS-5"],
+      "evidence": ["E-13"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Add a CI job that runs tsup, `npm pack`s packages/cli, installs the tarball in a clean temp project with no @cipherstash/stack, and runs `stash --help`, `stash db validate` and `stash secrets --help`.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "review_focus",
+      "description": "Security review of wizard/agent/interface.ts: drop tools from allowedTools so they reach canUseTool, enforce the rules in PreToolUse hooks, restrict the env passed to the agent, and wire or remove the post-tool scanners.",
+      "addresses": ["FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "other",
+      "description": "Restore overrides under `pnpm.overrides` (or pnpm-workspace.yaml), reinstall, and diff resolved versions of every overridden package against the base lockfile.",
+      "addresses": ["FS-3", "VG-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "documentation",
+      "description": "Add changesets (breaking for @cipherstash/stack, initial for @cipherstash/cli), publish the rc under a non-latest dist-tag, and deprecate @cipherstash/stack-forge with a pointer to the new package.",
+      "addresses": ["FS-4"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "test",
+      "description": "Make post-agent failures and 'done'/cancel paths produce a failure outro, and cover them with a unit test.",
+      "addresses": ["FS-5", "VG-4"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No node_modules and no network: the CLI could not be built, packed or tested, and tsup's skipNodeModulesBundle externals behaviour was taken from its documented semantics rather than observed output.",
+      "effect": "FS-1 stays plausible_failure; tsup's tsconfig `paths` handling (the '@/...' alias) was assumed to keep aliases bundled."
+    },
+    {
+      "id": "CL-2",
+      "description": "Claude Agent SDK permission ordering (allowedTools before canUseTool; sandboxed Bash auto-allow) was taken from SDK documentation knowledge, not verified against the pinned ^0.2.87 source.",
+      "effect": "FS-2 depends on this; if the SDK consults canUseTool for allowedTools entries, FS-2's mechanism is weaker, though the post-tool scanners are still unwired."
+    },
+    {
+      "id": "CL-3",
+      "description": "The wizard's system prompt is fetched at runtime from the gateway and was unavailable, so what the agent is told to edit (schema column-type changes, migrations) could not be assessed.",
+      "effect": "Data-migration risk from agent-edited Drizzle/Prisma schemas followed by auto-run migrations is not assessed."
+    },
+    {
+      "id": "CL-4",
+      "description": "The 1575-line lockfile diff was checked only for the overrides block and previously-overridden packages; the new transitive tree of @anthropic-ai/claude-agent-sdk and posthog-node was not reviewed. Example app changes (examples/basic), README rewrites and the rewritten skills/stash-cli/SKILL.md were skimmed, not checked line by line against the commands.",
+      "effect": "Drift between shipped skill guidance and actual CLI behaviour could be missed."
+    },
+    {
+      "id": "CL-5",
+      "description": "No CI results, PR description, CODEOWNERS or npm registry state (published versions, dist-tags) were available.",
+      "effect": "Release-time behaviour of changesets for 1.0.0-rc.0 and whether any tests pass at head are unknown."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/package.json",
+      "rev": "head",
+      "line_start": 2,
+      "line_end": 17,
+      "claim": "Package named @cipherstash/cli, version 1.0.0-rc.0, bin `stash` -> ./dist/bin/stash.js.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack-forge/package.json",
+      "rev": "base",
+      "line_start": 15,
+      "line_end": 17,
+      "claim": "At base the package was @cipherstash/stack-forge with bin `stash-forge`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "base",
+      "line_start": 30,
+      "line_end": 32,
+      "claim": "At base @cipherstash/stack shipped bin `stash`; the head manifest has no bin field.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "diff",
+      "path": "packages/stack/tsup.config.ts",
+      "claim": "The stack tsup bin build entry for src/bin/stash.ts is removed, and src/bin/stash.ts is deleted.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 27,
+      "line_end": 41,
+      "claim": "The CLI bin build uses skipNodeModulesBundle: true with no noExternal list.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack-forge/tsup.config.ts",
+      "rev": "base",
+      "line_start": 39,
+      "line_end": 40,
+      "claim": "At base the bin build used external: [] and noExternal: ['dotenv', '@clack/prompts'], so tsup's default externals (dependencies and peerDependencies only) applied and devDependencies were bundled.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/push.ts",
+      "rev": "head",
+      "line_start": 3,
+      "line_end": 3,
+      "claim": "push.ts has a runtime value import of toEqlCastAs from '@cipherstash/stack/schema'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/cli/src/commands/secrets/helpers.ts",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 4,
+      "claim": "secrets/helpers.ts has a runtime import of Secrets from '@cipherstash/stack/secrets' (at base it was a relative import inside @cipherstash/stack).",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/cli/package.json",
+      "rev": "head",
+      "line_start": 53,
+      "line_end": 54,
+      "claim": "@cipherstash/stack is only a devDependency of @cipherstash/cli; bin/stash.ts statically imports commands/index.js, which statically re-exports push and secrets.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/cli/src/commands/wizard/agent/interface.ts",
+      "rev": "head",
+      "line_start": 309,
+      "line_end": 338,
+      "claim": "sdkOptions sets permissionMode 'acceptEdits', allowedTools and tools to all of Read/Write/Edit/Glob/Grep/Bash, a canUseTool callback, and sandbox allowWrite for cwd and /tmp.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/cli/src/commands/wizard/agent/interface.ts",
+      "rev": "head",
+      "line_start": 103,
+      "line_end": 160,
+      "claim": "wizardCanUseTool is the only place that blocks .env/auth.json/credential reads and enforces the Bash allowlist.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": "packages/cli/src/commands/wizard/lib/constants.ts",
+      "rev": "head",
+      "line_start": 18,
+      "line_end": 22,
+      "claim": "Model traffic goes to GATEWAY_URL https://wizard.getstash.sh; interface.ts passes ANTHROPIC_BASE_URL=GATEWAY_URL and the CipherStash token as ANTHROPIC_AUTH_TOKEN, plus ...process.env.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "rev": "head",
+      "line_start": 92,
+      "line_end": 115,
+      "claim": "runStep catches every execSync failure, logs a warning and returns normally.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": "packages/cli/src/commands/wizard/run.ts",
+      "rev": "head",
+      "line_start": 150,
+      "line_end": 161,
+      "claim": "After result.success, runPostAgentSteps runs and the success outro 'Encryption is set up! Your data is now protected' prints unconditionally; interface.ts sets success=true when the user types 'done' or cancels.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 64,
+      "line_end": 98,
+      "claim": "The head root manifest has `pnpm` without overrides and a top-level `overrides` object; packageManager is pnpm@10.14.0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": ".changeset/config.json",
+      "rev": "head",
+      "claim": "The change adds no .changeset/*.md file; .changeset contains only README.md and config.json at head.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": "packages/cli/src/bin/stash.ts",
+      "rev": "head",
+      "line_start": 26,
+      "line_end": 75,
+      "claim": "The CLI help lists init, auth, secrets, wizard, db install|upgrade|setup|push|validate|migrate|status|test-connection and schema build.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "diff",
+      "path": "pnpm-lock.yaml",
+      "claim": "The lockfile's top-level `overrides:` block (including esbuild@<=0.24.2: '>=0.25.0' and pg: ^8.16.3) is removed, and examples/basic and drizzle now resolve pg 8.13.1.",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "code",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 3469,
+      "line_end": 3471,
+      "claim": "@esbuild-kit/core-utils resolves esbuild 0.18.20 and drizzle-kit resolves esbuild 0.19.12 (line 4275) at head, versions the base override forbade.",
+      "status": "verified"
+    },
+    {
+      "id": "E-20",
+      "kind": "diff",
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "claim": "beginDeviceCodeFlow client id changes from 'cli' to `cli-${referrer ?? 'cipherstash'}`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-21",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 37,
+      "line_end": 46,
+      "claim": "Release runs `pnpm install` then changesets/action with `pnpm run release` (build && changeset publish).",
+      "status": "verified"
+    },
+    {
+      "id": "E-22",
+      "kind": "test",
+      "path": "packages/cli/src/__tests__/installer.test.ts",
+      "rev": "head",
+      "claim": "The CLI's existing tests import source modules via the '@/' alias; none builds or executes dist/bin/stash.js.",
+      "status": "verified"
+    },
+    {
+      "id": "E-23",
+      "kind": "test",
+      "path": "packages/cli/src/commands/wizard/__tests__/agent-sdk.test.ts",
+      "rev": "head",
+      "line_start": 224,
+      "line_end": 303,
+      "claim": "The canUseTool SDK test is under describe.skipIf(!WIZARD_INTEGRATION), passes no allowedTools, and ends with expect(true).toBe(true).",
+      "status": "verified"
+    },
+    {
+      "id": "E-24",
+      "kind": "test",
+      "path": "packages/cli/src/commands/wizard/__tests__/interface.test.ts",
+      "rev": "head",
+      "claim": "wizardCanUseTool is unit-tested directly for .env blocking, operator blocking and the allowlist.",
+      "status": "verified"
+    }
+  ]
+}

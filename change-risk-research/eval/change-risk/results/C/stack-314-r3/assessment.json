@@ -1,0 +1,534 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "d3bc40e182cfb85735c3164d2b05a7e8428b8041",
+  "head_sha": "bcfeeb8ed14f4412b599d802514ff55d8cdc364b",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "partial",
+      "source": "ci.json",
+      "note": "Check-run names and conclusions only; no logs, so which packages' tests ran is inferred from the workflow and turbo filter."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md at head (describes Protect.js layout, partly stale); checked-in EQL 2.1.8 SQL used as reference for the eql_v2_configuration contract."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "No CODEOWNERS file at head (collector: codeowners_found=false)."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No release workflow run, npm publish state, or knowledge of the current 'latest' EQL GitHub release."
+    }
+  },
+  "summary": "Adds a new published package and CLI, @cipherstash/stack-forge (stash-forge install / push), and a small additive getEncryptConfig() method on the @cipherstash/stack EncryptionClient. The runtime SDK's behaviour is otherwise untouched. The risk sits in what the new CLI does to customer databases. `push` deactivates every active row in eql_v2_configuration and then inserts a new one, as two autocommitted statements with no transaction. The SDK's schema builder emits cast_as values ('number', 'bigint', 'json') that the EQL 2.1.8 CHECK constraint in this repo rejects, so for those schemas the insert fails after the deactivation has already committed, which leaves the database with no active configuration. `install` downloads and executes the unpinned releases/latest EQL SQL without an integrity check, so the installed SQL version is not tied to the SDK version. `install --drizzle` silently ignores --supabase and --exclude-operator-family. The unit tests mock pg and fetch and cover only the config loader and the installer. Nothing tests push or the Drizzle path. CI 'Run Tests' passed. A repository-wide experimental changesets option also changes how peer dependents are bumped at release.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "external_side_effect",
+      "description": "New `stash-forge push` writes to the customer's public.eql_v2_configuration: it runs UPDATE ... SET state='inactive' on all rows, then INSERTs the client's encrypt config with state 'active'. These are separate autocommitted statements, and the command bypasses EQL's pending/encrypting lifecycle functions.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "external_side_effect",
+      "description": "New `stash-forge install` connects to the customer database, checks role privileges, downloads cipherstash-encrypt(.sql|-supabase.sql) from GitHub releases/latest, and executes it in a transaction. With --supabase it also grants USAGE/ALL on schema eql_v2 objects to anon, authenticated and service_role.",
+      "certainty": "observed",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "external_side_effect",
+      "description": "`stash-forge install --drizzle` shells out to `npx drizzle-kit generate --custom`, then overwrites the newest matching migration file with the downloaded EQL SQL, always from the non-Supabase URL.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "public_contract",
+      "description": "@cipherstash/stack EncryptionClient gains a public getEncryptConfig() that returns the internal encryptConfig object by reference. Additive, released as a minor bump.",
+      "certainty": "observed",
+      "evidence": ["E-9", "E-10"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "build_or_release",
+      "description": "New public npm package @cipherstash/stack-forge (ESM+CJS library, ESM bin, engines node>=22, initial minor changeset). Changesets config adds the experimental onlyUpdatePeerDependentsWhenOutOfRange option, which changes how every package's peer dependents are bumped.",
+      "certainty": "observed",
+      "evidence": ["E-11", "E-12"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "documentation",
+      "description": "New agent skill skills/stash-forge/SKILL.md and package README that describe the CLI. The README states that runtime encryption (@cipherstash/stack) reads the active configuration from eql_v2_configuration, but no code in packages/stack references that table.",
+      "certainty": "observed",
+      "evidence": ["E-13", "E-14"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack-forge (new package and stash-forge CLI)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "New package, publishConfig access public.",
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Customer PostgreSQL: public.eql_v2_configuration",
+      "kind": "database",
+      "relationship": "confirmed",
+      "how": "push.ts updates and inserts into it. The EQL SQL defines it with a CHECK constraint on data and a unique active index.",
+      "evidence": ["E-1", "E-3", "E-4"]
+    },
+    {
+      "id": "AC-3",
+      "name": "EQL SQL install bundle (GitHub releases/latest)",
+      "kind": "external_consumer",
+      "relationship": "confirmed",
+      "how": "Downloaded by URL and executed against customer databases by installer and the --drizzle path.",
+      "evidence": ["E-5", "E-8"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/stack EncryptionClient",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "New getEncryptConfig() method. stack-forge's loadEncryptConfig duck-types on it.",
+      "evidence": ["E-9", "E-15"]
+    },
+    {
+      "id": "AC-5",
+      "name": "@cipherstash/stack schema builder (buildEncryptConfig / column build)",
+      "kind": "module",
+      "relationship": "confirmed",
+      "how": "Produces the config that push inserts. Its cast_as values flow straight into the EQL CHECK constraint.",
+      "evidence": ["E-2", "E-15"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Release tooling (.changeset/config.json, release workflow)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Experimental peer-dependent bump option applies to all packages.",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "AC-7",
+      "name": "skills/stash-forge/SKILL.md and stack-forge README",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Agent guidance copied into customer repos describing install/push behaviour.",
+      "evidence": ["E-13", "E-14"]
+    },
+    {
+      "id": "AC-8",
+      "name": "examples/basic",
+      "kind": "other",
+      "relationship": "changed",
+      "how": "Adds stash.config.ts, pg and stack-forge devDependency.",
+      "evidence": ["E-16"]
+    },
+    {
+      "id": "AC-9",
+      "name": "Readers of the active EQL configuration (EQL config functions; possibly CipherStash Proxy)",
+      "kind": "external_consumer",
+      "relationship": "hypothetical",
+      "how": "EQL's own functions select the 'active' row. Whether Proxy or other services depend on it in customer deployments was not visible.",
+      "evidence": ["E-17"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "push deactivates the active EQL configuration and then fails to insert the new one, leaving no active config",
+      "trigger": "`stash-forge push` against a database where EQL 2.1.8 (or any version with the same CHECK) is installed, with a schema that uses .dataType('number'|'bigint') or .searchableJson()/'json'. Alternatively, any other insert failure such as a connection drop or a constraint violation.",
+      "affected_components": ["AC-1", "AC-2", "AC-5", "AC-9"],
+      "mechanism": "push.ts:33-42 runs `UPDATE eql_v2_configuration SET state = 'inactive'` and then the INSERT as separate statements on a pg.Client with no BEGIN, so each autocommits. The schema builder emits cast_as 'number', 'bigint' or 'json' and maps only 'string' to 'text' (schema/index.ts:26-27, 341). EQL's eql_v2_configuration_data_check calls config_check_cast, which RAISEs unless cast_as is in {text, int, small_int, big_int, real, double, boolean, date, jsonb} (cipherstash-encrypt-2-1-8.sql:3598-3604, 3644-3650). The INSERT therefore raises after the deactivation has committed.",
+      "consequence": "The customer database has no active encryption configuration. Anything that reads the active row (EQL config functions, and possibly Proxy) sees no config until someone fixes it by hand. The CLI reports 'Failed' with the raw CHECK error, but the earlier state is already lost. Separately, push cannot succeed at all for schemas with number, bigint or json columns, and writing 'active' directly skips EQL's pending/encrypting migration lifecycle.",
+      "impact": "high",
+      "basis": "observed_defect",
+      "evidence": ["E-1", "E-2", "E-3", "E-4"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A test for push showing that the update and insert are atomic (rollback on insert failure).",
+        "An integration test pushing a schema with number, bigint and json columns into a real EQL install.",
+        "Confirmation of which cast_as vocabulary the current releases/latest EQL accepts."
+      ],
+      "mitigation": "Wrap the deactivate and insert in BEGIN/COMMIT with ROLLBACK on error, or use EQL's config functions. Map SDK cast_as values to EQL's vocabulary (or validate before writing) and add a push test against real EQL.",
+      "domain_tags": [
+        "persistence_migration",
+        "serialization_compatibility",
+        "configuration"
+      ]
+    },
+    {
+      "id": "FS-2",
+      "title": "install applies an unpinned, unverified releases/latest EQL SQL bundle that may not match the SDK version",
+      "trigger": "A new EQL release is published (or the release asset is replaced) after this stack-forge version ships, and a user runs `stash-forge install` or `install --drizzle`.",
+      "affected_components": ["AC-1", "AC-3", "AC-2"],
+      "mechanism": "installer/index.ts:3-6 and install.ts:242-262 fetch `.../releases/latest/download/cipherstash-encrypt*.sql` and execute it (installer:200-208) or write it into a migration (install.ts:188). There is no version pin, checksum, or check against the SDK's expected EQL version. The repo's own checked-in bundle is versioned (local/cipherstash-encrypt-2-1-8.sql).",
+      "consequence": "Different users, or the same Drizzle migration regenerated on another day, get different EQL versions. If latest changes function signatures, payload expectations or config validation, SDK-generated search terms or configs stop matching the installed SQL. Arbitrary downloaded SQL runs with superuser or admin privileges in the customer database, and the installed version cannot be reproduced.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-5", "E-8", "E-6"],
+      "existing_verification": [
+        {
+          "description": "installer.test.ts asserts fetch is called with the latest URL and that SQL runs in a transaction with rollback, using mocked pg and fetch. CI 'Run Tests' passed; that it covered stack-forge is inferred from the turbo filter.",
+          "status": "ran_passed",
+          "evidence": ["E-18", "E-19"]
+        }
+      ],
+      "missing_verification": [
+        "No check that the installed EQL version is compatible with the @cipherstash/stack version.",
+        "No integrity verification of the downloaded SQL."
+      ],
+      "mitigation": "Pin the EQL release URL to a version tied to the stack-forge/stack release (or bundle the SQL in the package) and verify a checksum. Optionally check eql_v2.version() after install.",
+      "domain_tags": [
+        "serialization_compatibility",
+        "dependency",
+        "build_release"
+      ]
+    },
+    {
+      "id": "FS-3",
+      "title": "install --drizzle silently drops --supabase and --exclude-operator-family",
+      "trigger": "A Supabase or non-superuser user runs `stash-forge install --drizzle --supabase` (or with --exclude-operator-family).",
+      "affected_components": ["AC-1", "AC-3", "AC-7"],
+      "mechanism": "installCommand passes only name, out and dryRun to generateDrizzleMigration (install.ts:29-35). downloadEqlSql always fetches the full cipherstash-encrypt.sql (install.ts:242-244) and never adds the Supabase role grants.",
+      "consequence": "The generated migration contains operator-family DDL that a non-superuser cannot run, so `drizzle-kit migrate` fails. Or, if it applies, Supabase roles get no grants and API-role queries using eql_v2 fail. The migration may already be committed to the user's history, and the CLI gives no warning.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-7", "E-8"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No test of the --drizzle path or of flag combinations."
+      ],
+      "mitigation": "Pass excludeOperatorFamily and supabase through to the Drizzle path (choose the Supabase URL and append the grants), or reject the combination with an error.",
+      "domain_tags": ["configuration", "persistence_migration"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Experimental changesets option changes peer-dependent version bumps for every package",
+      "trigger": "Next `changeset version` run in which a package that others list as a peer dependency (e.g. @cipherstash/protect for drizzle) is bumped within the declared range, or a changesets patch release renames the experimental key.",
+      "affected_components": ["AC-6"],
+      "mechanism": ".changeset/config.json:11-13 adds `___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH.onlyUpdatePeerDependentsWhenOutOfRange`. Dependents are no longer bumped when the peer stays in range, and the key is explicitly unstable.",
+      "consequence": "Release versions differ from previous practice (dependents not republished), or the release tooling fails or ignores the option after a changesets patch upgrade. Both are visible at release time and recoverable with a new release.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-12", "E-20"],
+      "existing_verification": [],
+      "missing_verification": [
+        "A `changeset status`/version dry-run showing the resulting bumps."
+      ],
+      "mitigation": "Run a changeset version dry-run before publishing and pin @changesets/cli.",
+      "domain_tags": ["build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "stash-forge push has no tests: no atomicity test and no test against a real EQL CHECK constraint with the SDK's cast_as values.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-1", "E-18"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The --drizzle install path and its flag handling are untested.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-7", "E-18"]
+    },
+    {
+      "id": "VG-3",
+      "description": "No compatibility check between the EQL SQL that gets installed and the SDK version. All installer tests mock pg and fetch.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-5", "E-18"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Make push transactional (or use EQL's config functions) and add a test that a failing insert leaves the previous active row intact.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "compatibility_check",
+      "description": "Push a schema with number, bigint and json columns into the EQL version stack-forge installs, and reconcile cast_as vocabularies before release.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "review_focus",
+      "description": "Pin the EQL install bundle to a specific release (or ship it in the package) with a checksum, and record the version installed.",
+      "addresses": ["FS-2", "VG-3"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "test",
+      "description": "Fix flag passthrough on the --drizzle path and add tests for --drizzle with --supabase / --exclude-operator-family.",
+      "addresses": ["FS-3", "VG-2"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "other",
+      "description": "Run a changesets version dry-run to confirm the resulting bumps before the first release with the experimental option.",
+      "addresses": ["FS-4"]
+    },
+    {
+      "id": "RC-6",
+      "kind": "documentation",
+      "description": "Correct the README claim that @cipherstash/stack reads eql_v2_configuration, since the shipped SKILL.md will propagate it.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "The content and cast_as vocabulary of the current GitHub releases/latest EQL bundle could not be checked (no network). The CHECK constraint analysis uses the checked-in EQL 2.1.8 bundle.",
+      "effect": "If a newer EQL accepts 'number', 'bigint' and 'json', the cast_as trigger in FS-1 would not fire, but the non-atomic deactivate-then-insert still stands for any other insert failure."
+    },
+    {
+      "id": "CL-2",
+      "description": "What reads the active eql_v2_configuration row in customer deployments (e.g. CipherStash Proxy) is outside this repository.",
+      "effect": "The consequence of FS-1 beyond EQL's own functions is unverified. The impact could be lower if nothing at runtime reads it."
+    },
+    {
+      "id": "CL-3",
+      "description": "ci.json gives check names and conclusions only, with no logs.",
+      "effect": "That stack-forge's unit tests ran in 'Run Tests' is inferred from `turbo test --filter './packages/*'`. The build of the bin bundle (tsup banner, path aliases) was not observed or run."
+    },
+    {
+      "id": "CL-4",
+      "description": "README.md and SKILL.md were skimmed for claims about the config key, push and flags, not read in full. pnpm-lock.yaml changes were not reviewed beyond the collector's dependency summary.",
+      "effect": "Further documentation drift may exist."
+    },
+    {
+      "id": "CL-5",
+      "description": "No tests or builds were run locally.",
+      "effect": "All test statuses come from CI or are exists_not_run."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack-forge/src/commands/push.ts",
+      "rev": "head",
+      "line_start": 25,
+      "line_end": 54,
+      "claim": "push connects with a plain pg.Client and runs the UPDATE to 'inactive' and then the INSERT 'active' with no BEGIN/COMMIT. On error it only logs and exits.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/schema/index.ts",
+      "rev": "head",
+      "line_start": 26,
+      "line_end": 27,
+      "claim": "castAsEnum includes 'bigint', 'number' and 'json'. Column build (line 341) maps only 'string' to 'text' and passes other values through as cast_as.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "local/cipherstash-encrypt-2-1-8.sql",
+      "rev": "head",
+      "line_start": 3598,
+      "line_end": 3650,
+      "claim": "config_check_cast RAISEs unless cast_as is in {text, int, small_int, big_int, real, double, boolean, date, jsonb}. It is enforced by the eql_v2_configuration_data_check CHECK constraint.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "local/cipherstash-encrypt-2-1-8.sql",
+      "rev": "head",
+      "line_start": 1689,
+      "line_end": 1695,
+      "claim": "public.eql_v2_configuration has state enum (default 'pending') and data jsonb.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack-forge/src/installer/index.ts",
+      "rev": "head",
+      "line_start": 3,
+      "line_end": 6,
+      "claim": "Install URLs point at GitHub releases/latest with no version pin. downloadInstallScript (244-268) does no integrity check.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack-forge/src/installer/index.ts",
+      "rev": "head",
+      "line_start": 180,
+      "line_end": 239,
+      "claim": "install executes downloaded SQL inside BEGIN/COMMIT. Supabase mode grants ALL on eql_v2 tables, routines and sequences to anon, authenticated and service_role.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack-forge/src/commands/install.ts",
+      "rev": "head",
+      "line_start": 29,
+      "line_end": 35,
+      "claim": "The --drizzle branch passes only name, out and dryRun. supabase and excludeOperatorFamily are dropped.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/stack-forge/src/commands/install.ts",
+      "rev": "head",
+      "line_start": 242,
+      "line_end": 262,
+      "claim": "downloadEqlSql always fetches the non-Supabase cipherstash-encrypt.sql from releases/latest.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 594,
+      "line_end": 601,
+      "claim": "New public getEncryptConfig() returns this.encryptConfig by reference.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": ".changeset/curvy-bushes-mix.md",
+      "rev": "head",
+      "claim": "@cipherstash/stack minor changeset for the new method.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack-forge/package.json",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 62,
+      "claim": "New package with bin stash-forge, ESM/CJS exports, deps pg, jiti, zod, @clack/prompts and dotenv, publishConfig access public, engines node>=22.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": ".changeset/config.json",
+      "rev": "head",
+      "line_start": 11,
+      "line_end": 13,
+      "claim": "Adds the experimental onlyUpdatePeerDependentsWhenOutOfRange option.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "documentation",
+      "path": "packages/stack-forge/README.md",
+      "rev": "head",
+      "line_start": 189,
+      "line_end": 189,
+      "claim": "README claims runtime encryption (@cipherstash/stack) reads the active configuration from eql_v2_configuration. git grep finds no reference to that table in packages/stack/src.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "documentation",
+      "path": "skills/stash-forge/SKILL.md",
+      "rev": "head",
+      "line_start": 125,
+      "line_end": 129,
+      "claim": "The shipped agent skill describes push as marking existing rows inactive and inserting a new active row.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": "packages/stack-forge/src/config/index.ts",
+      "rev": "head",
+      "line_start": 170,
+      "line_end": 193,
+      "claim": "loadEncryptConfig finds an export with getEncryptConfig() and returns its config, which push inserts unchanged.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "diff",
+      "path": "examples/basic/stash.config.ts",
+      "rev": "head",
+      "claim": "The example adds stash.config.ts pointing at ./encrypt.ts.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": "local/cipherstash-encrypt-2-1-8.sql",
+      "rev": "head",
+      "line_start": 2967,
+      "line_end": 2967,
+      "claim": "EQL functions select the row WHERE state = 'active' from eql_v2_configuration.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "test",
+      "path": "packages/stack-forge/src/__tests__/installer.test.ts",
+      "rev": "head",
+      "line_start": 113,
+      "line_end": 167,
+      "claim": "Installer tests mock pg and fetch and cover the transaction and rollback. No test file covers push or the --drizzle path (only config.test.ts and installer.test.ts exist).",
+      "status": "verified"
+    },
+    {
+      "id": "E-19",
+      "kind": "ci_result",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 35,
+      "line_end": 35,
+      "claim": "ci.json: 'Run Tests' completed with success on the head commit. The root test script runs turbo test over ./packages/*, which includes stack-forge (its own test script is vitest run); that it ran is inferred.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-20",
+      "kind": "code",
+      "path": "packages/drizzle/package.json",
+      "rev": "head",
+      "line_start": 45,
+      "line_end": 47,
+      "claim": "packages/drizzle declares @cipherstash/protect >=10.5.0 as a peer, so the peer-bump option changes its release behaviour.",
+      "status": "verified"
+    }
+  ]
+}

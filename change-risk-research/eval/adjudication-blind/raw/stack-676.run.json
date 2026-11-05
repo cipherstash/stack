@@ -1,0 +1,12 @@
+{
+  "case": "stack-676",
+  "exit_code": 0,
+  "started": "2026-10-12T23:56:57.776822+00:00",
+  "wall_seconds": 51.867944,
+  "net_flags": [
+    "cd /srv/blind/stack-676; python3 - <<'E'\nimport json\nL=[]\ndef a(i,l,e,ac,r): L.append({\"id\":i,\"label\":l,\"matches\":[],\"evidence_ok\":e,\"actionable\":ac,\"reason\":r})\na(\"F-01\",\"valid\",True,True,\"WASM adapt"
+  ],
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "total_cost_usd": 0.39624729999999997
+}

@@ -1,0 +1,100 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "classify is a new job and ffi-artifacts/publish-ffi/release now require its mode=='production' output, so a classify failure blocks JS/FFI releases; low-impact but real and introduced by this change (push trigger itself was pre-existing)."
+    },
+    {
+      "id": "F-02",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Identifies that eql_published is set by a step after changeset publish, so a failed/re-run publish leaves npm V without the SQL/docs/image artefacts."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "New workflow_dispatch plus classify treating any non-main chore(release) HEAD as prerelease, with arming read from the dispatched ref and no environment protection, lets unreviewed branches cut releases/tags (and publish after cutover)."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same dispatch-from-unmerged-branch exposure: prerelease jobs hold id-token/contents write with no environment gate, as the cited lines and commit message show."
+    },
+    {
+      "id": "F-05",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Describes the irreversible npm publish preceding eql-sql/docs/image so a downstream failure leaves the npm package without matching SQL/docs/image artefacts (lockstep broken)."
+    },
+    {
+      "id": "F-06",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "rebuild-docs.yml is deleted but AGENTS.md states the site and webhook are retired; impact is speculative and immaterial to release risk."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same as F-01: release/publish-ffi now depend on classify's production output, so a classify fault skips live JS/FFI releases."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Production npm publish of @cipherstash/eql is gated by gate rather than eql-armed and AGENTS.md admits no test ties them, an untested invariant introduced here."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "release-plz.yml's release job is gated only on eql-armed on its own push trigger, so the crate can publish when release.yml's gate or npm publish fails; this is the reverse direction of KD-2 and not its mechanism."
+    },
+    {
+      "id": "F-10",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Identifies that eql-sql/docs/image if: lack a status function so the implicit success() skips them when publish-ffi upstream is skipped."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "_build-eql-sql.yml regenerates SQL with mise run --force build under rust=latest instead of attaching the committed verified bytes, so release/image SQL can diverge from npm under the same stamp."
+    },
+    {
+      "id": "F-12",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same rebuild-vs-committed-bytes divergence as F-11, supported by _build-eql-sql.yml:87 and AGENTS.md."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "pr": 119,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "defect",
+  "expert_impact": "medium",
+  "attention_warranted": true,
+  "impact_confidence": "medium",
+  "rationale": "Introduced model encrypt/decrypt helpers that treat only null as empty; undefined fields are sent to encryption. Older PR (2025), no description; baseline reconstruction is exact but review context thin.",
+  "known_defects": [
+    {
+      "id": "KD-1",
+      "description": "Model helpers skip only `null` fields; `undefined` fields are passed to the encryption operation",
+      "fixed_by": "#144",
+      "mechanism": "prepareFieldsForOperation checks value === null only",
+      "match_criteria": "Scenario identifies that undefined/missing model field values are not handled like null and reach encryption, or produce an error/incorrect output.",
+      "impact": "medium",
+      "evidence": ["https://github.com/cipherstash/stack/pull/144"]
+    },
+    {
+      "id": "KD-2",
+      "description": "bulk model reconstruction splits the `${index}-${field}` key on every '-', so hyphenated field names are truncated and the encrypted value lands under the wrong key",
+      "fixed_by": "#548 (fixed in the stack copy; the protect copy was not changed)",
+      "mechanism": "key.split('-') in model-helpers reconstruction",
+      "match_criteria": "Scenario identifies that hyphenated field keys are mis-parsed when bulk model results are reassembled, leaving values under the wrong key.",
+      "impact": "high",
+      "evidence": ["https://github.com/cipherstash/stack/pull/548"],
+      "added_post_hoc": true,
+      "added_reason": "Found in an evaluator's finding during dev-split adjudication and confirmed by a later fix in the repository. Excluded from the pre-registered metrics; reported separately."
+    }
+  ],
+  "notes": ""
+}

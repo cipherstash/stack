@@ -1,0 +1,223 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c8b1325a7e06675ec7c3d70f0af3624fe20e0ce8",
+  "head_sha": "c379d44a1b05074165fe4f8aba68b32f8b1bfa3b",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md; the .changeset file in the diff was read as part of the change, not as a PR description"
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; in-code comments read only as part of the source checkout"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": { "status": "unavailable" },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (skill 1.0.0), base ancestry only"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Documentation and test change with no runtime behaviour change. The only edits under packages/stack/src are JSDoc and comment text in client-v3.ts and wasm-inline.ts (the non-comment diff there is a single blank line). It corrects the stated reason why decrypt/bulkDecrypt do not reconstruct Date values, documents that boundary in the package README and the shipped stash-encryption agent skill, and adds runtime and type tests pinning the existing behaviour. The new docs are consistent with the code read at head: the typed client's decrypt/bulkDecrypt are bare delegations, and only the table-taking model paths build date reconstructors. The skill text ships to customers via the CLI, so its accuracy matters, but nothing I read was inaccurate. No material failure scenario was found. The new tests were not run here (no dependencies installed, no CI results).",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "documentation",
+      "description": "JSDoc on EncryptionClient.decrypt, the new bulkDecrypt JSDoc, the one-arg decryptModel overload and the passthrough comment in createEncryptionClient now say why raw decrypt skips Date reconstruction: static typing, not missing column identity. WasmEncryptionClient.decrypt/bulkDecrypt get matching JSDoc. No executable code changed.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "documentation",
+      "description": "The customer-facing guidance in packages/stack/README.md and skills/stash-encryption/SKILL.md now says raw decrypt/bulkDecrypt return date/timestamp columns as strings. It also stops calling bulkEncrypt an untyped passthrough, and limits the Date reconstruction claim to the table-taking model forms.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "test_only",
+      "description": "Adds runtime tests that pin decrypt/bulkDecrypt to return the stored string through createEncryptionClient, and type tests that pin the raw paths to JsPlaintext with no Date arm (versus Date on the table-taking model path and string on the table-less path). Existing stubs are retyped to the native client parameter type.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "Adds a changeset that marks @cipherstash/stack and stash as patch releases, so the next release publishes the updated README and bundled skill text.",
+      "certainty": "observed",
+      "evidence": ["E-8"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack (client-v3.ts, wasm-inline.ts JSDoc)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Comment-only edits. The emitted type declarations will carry the new JSDoc; runtime output does not change.",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "skills/stash-encryption/SKILL.md",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Agent guidance on raw-vs-model decrypt and bulkEncrypt typing was rewritten.",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "AC-3",
+      "name": "stash CLI skill installation (customer repositories)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "install-skills.ts installs stash-encryption into customer repos from the bundled /skills directory. The new guidance reaches customer agents at the next stash release.",
+      "evidence": ["E-9"]
+    },
+    {
+      "id": "AC-4",
+      "name": "packages/stack/README.md",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Public README text about bulkEncrypt/bulkDecrypt and decrypt.",
+      "evidence": ["E-4"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The new runtime tests (typed-client-v3.test.ts) and type tests (typed-client-v3.test-d.ts, run by test:types) were not run: there are no installed dependencies and no CI results. If one fails, CI fails loudly. Shipped behaviour is unaffected because no source code changed.",
+      "scenarios": [],
+      "evidence": ["E-6", "E-7", "E-10"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Before merging, confirm that both `pnpm test` and `pnpm test:types` pass in packages/stack in CI.",
+      "addresses": ["VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No CI results, PR description, CODEOWNERS or deployment context were available, and tests could not be run offline without installed dependencies.",
+      "effect": "Test outcomes are unknown. They do not affect runtime risk because the source diff is comment-only."
+    },
+    {
+      "id": "CL-2",
+      "description": "The JsPlaintext definition in @cipherstash/protect-ffi 0.30.0 was not inspected, because node_modules is absent. The docs' claim that JsPlaintext has no Date arm rests on in-repo comments (types.ts) and on the new type test.",
+      "effect": "If that claim were wrong, the type test would fail in CI rather than mislead silently."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "command_output",
+      "command": "git diff BASE HEAD -- packages/stack/src | grep '^[+-]' | grep -v -E '^[+-]\\s*(//|\\*|/\\*\\*)'",
+      "claim": "With comment lines filtered out, the only remaining source-diff line is one added blank line. No executable code changed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 523,
+      "line_end": 528,
+      "claim": "The typed client's decrypt and bulkDecrypt are bare delegations to the underlying client, with no reconstruction, which matches the new docs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 834,
+      "line_end": 834,
+      "claim": "WASM decrypt is unchanged and returns WasmPlaintext. datePropertyPaths, which the new JSDoc references, exists at line 647 and is used only for model reconstruction.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "diff",
+      "path": "packages/stack/README.md",
+      "rev": "head",
+      "claim": "README now documents that raw decrypt/bulkDecrypt return no Date, and that bulkEncrypt is typed via { table, column }.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "diff",
+      "path": "skills/stash-encryption/SKILL.md",
+      "rev": "head",
+      "claim": "The skill adds a raw-path Date note, narrows the reconstruction claim to the table-taking model forms, and updates the method table.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "test",
+      "path": "packages/stack/__tests__/typed-client-v3.test.ts",
+      "rev": "head",
+      "line_start": 267,
+      "line_end": 333,
+      "claim": "New runtime tests check that decrypt/bulkDecrypt return the stored ISO string and forward the payload untouched.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "test",
+      "path": "packages/stack/__tests__/typed-client-v3.test-d.ts",
+      "rev": "head",
+      "line_start": 222,
+      "line_end": 273,
+      "claim": "New type tests pin the raw decrypt types to JsPlaintext with no Date arm, the model path to Date, and the table-less path to string.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "diff",
+      "path": ".changeset/raw-decrypt-date-boundary.md",
+      "rev": "head",
+      "claim": "The changeset bumps @cipherstash/stack and stash at patch level and states there is no behaviour change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/cli/src/commands/init/lib/install-skills.ts",
+      "rev": "head",
+      "line_start": 8,
+      "line_end": 20,
+      "claim": "The CLI bundles /skills and installs stash-encryption into customer projects.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/stack/vitest.config.ts",
+      "rev": "head",
+      "claim": "The typecheck include is __tests__/**/*.test-d.ts, so the new type tests run under test:types. The runtime *.test.ts files are not typechecked.",
+      "status": "verified"
+    }
+  ]
+}

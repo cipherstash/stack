@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Print the markdown metric tables used in eval/comparison.md.
+
+    report_tables.py [--split holdout]
+
+Two views:
+  all      every case each evaluator has an adjudication for (n differs by evaluator)
+  paired   only the cases every change-risk condition (A, B, C) completed, so the ablation compares like with like
+Also writes eval/results-summary-v2.json (all cases) and eval/results-paired-v2.json.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import tempfile
+from pathlib import Path
+
+from score_results import ROOT, score
+
+
+def fmt(p: dict) -> str:
+    if not p or p.get("n", 0) == 0:
+        return "n/a"
+    lo, hi = p["ci95"]
+    return f"{p['k']}/{p['n']} ({p['value']:.0%}; {lo:.0%}–{hi:.0%})"
+
+
+ROWS = [
+    ("Cases", lambda v: str(v["cases"])),
+    ("Findings (per case)", lambda v: f"{v['findings']} ({v['findings_per_case']})"),
+    ("Adjudicated scenario validity (material)", lambda v: fmt(v["scenario_validity_material"])),
+    ("Material findings", lambda v: str(v["material_findings"])),
+    ("Evidence checked", lambda v: str(v["evidence_checked"])),
+    ("Evidence passed / failed / unassessed", lambda v: f"{v['evidence_passed']} / {v['evidence_failed']} / {v['evidence_unassessed']}"),
+    ("Evidence verification coverage", lambda v: fmt(v["evidence_verification_coverage"])),
+    ("Evidence correctness among checked", lambda v: fmt(v["evidence_correctness_checked"])),
+    ("Known-defect recall", lambda v: fmt(v["known_defect_recall"])),
+    ("Defect cases with ≥1 match", lambda v: fmt(v["defect_case_recall"])),
+    ("Attention where warranted", lambda v: fmt(v["attention_recall"])),
+    ("Attention on expert-low cases", lambda v: fmt(v["low_impact_attention"])),
+    ("Attention rate overall", lambda v: fmt(v["attention_rate"])),
+    ("High-impact cases rated high+ with attention", lambda v: fmt(v["high_impact_attention"])),
+    ("Unsupported + incorrect per case", lambda v: str(v["false_positive_burden_per_case"])),
+    ("Impact within one level", lambda v: fmt(v["impact_within_one"])),
+    ("Impact exact", lambda v: fmt(v["impact_exact_agreement"])),
+    ("Weighted kappa (impact)", lambda v: str(v["impact_weighted_kappa"])),
+    ("Actionable (match/valid)", lambda v: fmt(v["actionability"])),
+    ("Mean cost USD", lambda v: str(v["cost_usd"]["mean"])),
+    ("Mean wall seconds", lambda v: str(v["wall_seconds"]["mean"])),
+]
+
+
+def table(results: dict, order: list[str]) -> str:
+    cols = [k for k in order if k in results]
+    out = ["| Metric | " + " | ".join(cols) + " |", "|---" * (len(cols) + 1) + "|"]
+    for name, f in ROWS:
+        out.append(f"| {name} | " + " | ".join(f(results[c]) for c in cols) + " |")
+    return "\n".join(out)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--split", default="holdout")
+    args = ap.parse_args()
+    corpus = json.loads((ROOT / "eval/corpus.json").read_text())
+    cases = {c["id"]: c for c in corpus["cases"]}
+    gt = {int(p.stem): json.loads(p.read_text()) for p in (ROOT / "eval/ground-truth").glob("*.json")}
+    adj = ROOT / "eval/adjudication"
+    order = ["change-risk/C", "change-risk/B", "change-risk/A", "coderabbit/original", "deterministic/rule-v1"]
+    split = None if args.split == "all" else args.split
+
+    full = {f"{d.parent.name}/{d.name}": score(d, gt, cases, split)
+            for d in sorted(adj.glob("*/*")) if d.is_dir()}
+    print("## All adjudicated cases\n")
+    print(table(full, order))
+
+    sets = [{p.stem for p in (adj / "change-risk" / c).glob("*.json")} for c in "ABC"]
+    common = set.intersection(*sets)
+    common = {c for c in common if split is None or cases[c]["split"] == split}
+    paired = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in [*(f"change-risk/{c}" for c in "CBA"), "coderabbit/original", "deterministic/rule-v1"]:
+            src = adj / name
+            dst = Path(tmp) / name
+            dst.mkdir(parents=True)
+            for c in common:
+                if (src / f"{c}.json").exists():
+                    shutil.copy(src / f"{c}.json", dst / f"{c}.json")
+            paired[name] = score(dst, gt, cases, split)
+    print(f"\n## Paired: the {len(common)} {args.split} cases all three conditions completed\n")
+    print(table(paired, order))
+
+    (ROOT / "eval/results-summary-v2.json").write_text(json.dumps({"scoring_version": "2", "split": args.split, "evaluators": full}, indent=2) + "\n")
+    (ROOT / "eval/results-paired-v2.json").write_text(json.dumps({"scoring_version": "2", "split": args.split, "cases": sorted(common),
+                                                               "evaluators": paired}, indent=2) + "\n")
+    blind = {f"{d.parent.name}/{d.name}": score(d, gt, cases, split)
+             for d in sorted((ROOT / "eval/adjudication-blind").glob("*/*"))
+             if d.is_dir() and d.parent.name in ("change-risk", "coderabbit")}
+    report = """# Change-risk evaluation: scoring v2
+
+Generated by `python3 change-risk-research/harness/report_tables.py` from recorded
+adjudications. Original `results-summary.json`, `results-paired.json`, ground truth,
+assessments and labels are preserved. Definitions: [methodology](../research/methodology.md).
+
+## Interpretation
+
+The central question is whether the skill identifies a credible, consequential
+failure scenario or missing verification that existing review would otherwise
+miss. Adjudicated scenario validity is not bug-detection precision: `match` means
+a known-defect mechanism, while `valid` means an agent judged a plausible scenario
+code-supported. Unsupported, incorrect, and trivial findings are separate labels
+in the JSON summaries. Human practical-usefulness judgement remains outstanding.
+
+All ground truth and both adjudications are agent-generated. No human annotations
+are present. The second, evaluator-blinded agent adjudication uses the same Claude
+Opus family, shares design assumptions, and can share reasoning errors. Blinding
+is partial because writing style can reveal evaluator identity; it does not
+establish objective correctness or independent human verification.
+
+CodeRabbit covered 19 of 31 historical holdout PRs, including intermediate pushes;
+the skill covered the reconstructed final head of all 31. CodeRabbit comments may
+have caused fixes before that head. Its columns below are historical context,
+not equivalent inputs or evidence that one tool outperforms the other.
+
+## First agent adjudication
+
+""" + table(full, order) + """
+
+Condition C produced 84 findings, 78 material. Only 1/78 material findings had an
+explicit evidence check recorded; 1/1 of those passed and 77 were unassessed.
+That correctness fraction cannot establish evidence quality across the whole set.
+
+## Second, evaluator-blinded agent adjudication
+
+""" + table(blind, order) + """
+
+## What remains useful and uncertain
+
+Condition C's material scenario validity is 68/78 (87%) in the first adjudication
+and 60/78 (77%) in the second. Both credit 4/11 known defects; the important
+plaintext-exposure defect in #547 remains missed. These values describe the
+original 1.0 experiment, not the revised skill's effectiveness. The original
+holdout is now development evidence for 1.1; no fresh recall claim is made.
+
+A/B/C did not show a clear benefit from adding deterministic history and PR/CI
+context. The sample is too small to establish equivalence. History is consequently
+optional in normal use, without rerunning or tuning the historical experiment.
+
+The tools appear complementary: retain CodeRabbit for general review and use
+change-risk on demand to investigate contracts, consumers and consequential
+failure scenarios. Raw counts do not establish incremental value. Human review
+must judge validity, actionability, reviewer workload, impacted contracts and
+missing verification. See the [review package](../docs/human-review.md),
+[miss analysis](../docs/missed-failure-modes.md), and preserved
+[agreement](agreement.json) / [stability](stability.json) records.
+
+Qodo and CodeScene are closed research options, not remaining prerequisites.
+No paid service, CI activation or merge gate is required.
+"""
+    if args.split == "holdout":
+        (ROOT / "eval/comparison.md").write_text(report)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

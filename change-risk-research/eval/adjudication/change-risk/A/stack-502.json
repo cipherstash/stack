@@ -1,0 +1,36 @@
+{
+  "case": "stack-502",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Operation class constructors become a semver-locked public contract",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Same class names exported from two subpaths refer to different classes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 0.9575656999999999,
+  "wall_seconds": 140.494142
+}

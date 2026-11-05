@@ -1,0 +1,36 @@
+{
+  "case": "stack-562",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Direct EncryptionClient.init({ strategy }) callers silently fall back to the default auto credentials",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Direct init() path ignores the deprecated key."
+    },
+    {
+      "id": "FS-2",
+      "title": "Test-only deprecation-latch reset exported from public entry points",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.0978873000000002,
+  "wall_seconds": 137.571387
+}

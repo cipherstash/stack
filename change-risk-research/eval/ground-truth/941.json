@@ -1,0 +1,33 @@
+{
+  "pr": 941,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "defect",
+  "expert_impact": "high",
+  "attention_warranted": true,
+  "impact_confidence": "high",
+  "rationale": "Ported the EQL release pipeline. Asset jobs (SQL bundle release, docs, postgres-eql image) were gated on an output set only after a successful changeset publish and used conditions with the implicit success(), which is false when any ancestor job (publish-ffi/publish-auth) was skipped. EQL 3.0.6 reached npm without its SQL release/tag/image.",
+  "known_defects": [
+    {
+      "id": "KD-1",
+      "description": "EQL asset jobs skipped whenever an upstream publish job is skipped (implicit success())",
+      "fixed_by": "#1026 (issue #1035)",
+      "mechanism": "job `if:` without status function inherits success() over the whole needs chain",
+      "match_criteria": "Scenario identifies that the asset jobs' conditions skip when an upstream job is skipped or fails (needs-chain / implicit success / skipped ancestors).",
+      "impact": "high",
+      "evidence": ["https://github.com/cipherstash/stack/pull/1026"]
+    },
+    {
+      "id": "KD-2",
+      "description": "Assets gated on a flag set after changeset publish; a failed or re-run publish never builds them",
+      "fixed_by": "#1026",
+      "mechanism": "eql_published output set by a later step",
+      "match_criteria": "Scenario identifies that partial failure or re-run of the publish step leaves the npm package published without the matching SQL/docs/image artefacts (artefacts out of lockstep).",
+      "impact": "high",
+      "evidence": ["https://github.com/cipherstash/stack/pull/1026"]
+    }
+  ],
+  "notes": ""
+}

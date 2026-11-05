@@ -1,0 +1,58 @@
+{
+  "case": "stack-905",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "jsonwebtoken 10 changes token handling in stack-auth, so ZeroKMS auth fails or tokens are mis-treated",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Major bump named; no behaviour difference shown."
+    },
+    {
+      "id": "FS-2",
+      "title": "wasm32 build breaks because jsonwebtoken 10 now pulls in aws-lc-rs",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Opaque patch changes in cipherstash-client/core/config or zerokms-protocol alter ciphertext or protocol behaviour",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    },
+    {
+      "id": "FS-4",
+      "title": "Rust crates move to 0.42.2 while the @cipherstash/auth npm catalog stays at 0.42.0, leaving the CVE in the auth binding",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Concrete version skew leaves the CVE in the npm binding."
+    }
+  ],
+  "cost_usd": 1.4029971,
+  "wall_seconds": 200.211822
+}

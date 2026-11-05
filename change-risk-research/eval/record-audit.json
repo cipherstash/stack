@@ -1,0 +1,2725 @@
+{
+  "audit_version": "1",
+  "validator_revision": "1.1",
+  "validation_scope": "schema and semantics only; historical repository evidence not rechecked",
+  "credential_scan_scope": "heuristic token/private-key/JWT patterns; no proof of absence of sensitive data",
+  "retention": "retain unique transcripts in existing Git paths pending an approved accessible archive; no upload",
+  "assessments": [
+    {
+      "path": "eval/change-risk/results/A/stack-1002-r1/assessment.json",
+      "sha256": "64273db3f7b24780cc0dcb761f7762508c87217e0e280b1dccdfb9a72e92b871",
+      "base_sha": "c93a39b034238d6479beef9b967a5347ca2d9549",
+      "head_sha": "2a38fb4e0de22309a30b47ac679a3373d54f6bc4",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1006-r1/assessment.json",
+      "sha256": "99c66faff512437d9f0e62b879a29488260e9e2f49dc33b1642aaa16bd9a5790",
+      "base_sha": "9d221fb838de867656f987386410cd13a3338b6b",
+      "head_sha": "c20df92a20cf0cab84a0f76543dcb615cc713332",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1026-r1/assessment.json",
+      "sha256": "5775de84f2c37ef782d915e1c753656dfcf234203c55829d24a870d02ed8955b",
+      "base_sha": "c4ab67ac3257f234bb635a87feaa1dc9e6cd5b5d",
+      "head_sha": "d4a95551a1cc90e311f1e6755222f745305be5c2",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1072-r1/assessment.json",
+      "sha256": "cd08d406368a6de601ebf44dbebe96c4d8d0c17c7293965fc46a886cde980f61",
+      "base_sha": "c4df82de3f3ed2c9ff6a292151e42b29f417962f",
+      "head_sha": "792ddd03474c6617a46f3a4e54cf70b9a990d16a",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1090-r1/assessment.json",
+      "sha256": "273713056ec5d5a0e1e07c71f9be5bf2ba250fe2a2248145a9d5be92e675c18d",
+      "base_sha": "04ac44c812155faecfbb44e8c8e275d77da37f1e",
+      "head_sha": "385c84144b6d42413fcdff4d4641aabdec7114c0",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1111-r1/assessment.json",
+      "sha256": "e4cbedef20614bf877be7e79b2db63b50ca1bb9b7ed8bd6d03f4adfb4b1ee36a",
+      "base_sha": "5dd37db087698d38e4824e6a50414fb03d56bb8f",
+      "head_sha": "063530d063163196e181e1f142e4f89a0a28b5e8",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-314-r1/assessment.json",
+      "sha256": "57dcf4255726e5a49997f9baab0f0d5a87315e4c4e9bfcc28de2d7b82a572521",
+      "base_sha": "d3bc40e182cfb85735c3164d2b05a7e8428b8041",
+      "head_sha": "bcfeeb8ed14f4412b599d802514ff55d8cdc364b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-330-r1/assessment.json",
+      "sha256": "1012e6de7dbf4adaba51417daf38fc773db9f00737bb92f050ece0edaed8fe0c",
+      "base_sha": "b1b5157c326ce1ebd4e89942e71279e8dc5450d5",
+      "head_sha": "07f5c4c1ece4b77589eb746efb00da88b0704dfe",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-349-r1/assessment.json",
+      "sha256": "d8e5dcac1ea1cc41ed4441307002d91b8d540110e5b75af3701da398fc3e8236",
+      "base_sha": "530625f59cc8e1a177f4ac31ae112f0d7b350557",
+      "head_sha": "a47a63e40bb78e05505fca577d2c8a48d50c6a70",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-371-r1/assessment.json",
+      "sha256": "0b1c8e8a5a794af39149abc102c09a39a7c49e92d56e713810098a6b3f85a0a7",
+      "base_sha": "cf8ebc23880abc7c51c4353551f3b4f9261f78ce",
+      "head_sha": "d257468c35efffdfe17f8e2b2cdcd744abfdf76a",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-496-r1/assessment.json",
+      "sha256": "1abd3a35a6208e33ca47a605cdc37629665b233a9c5e707f7b2da0104fb4dbfb",
+      "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+      "head_sha": "c39e895ca967c5b1f8241539da0b543334d973bd",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-502-r1/assessment.json",
+      "sha256": "1b79ab1d998a1509182914a0388f20503266d3256de455bfac59a30ee46650cb",
+      "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+      "head_sha": "6e7ae4e117c4847b62491d63da8df5e74b4a5bc9",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-503-r1/assessment.json",
+      "sha256": "f734a5f06e2647e3b6efefb3e81814e41f5c199189ba202db2c838f7b09fe9f5",
+      "base_sha": "fcb7e336ded91cbf00318785996c3ea833cc9944",
+      "head_sha": "c28b5e46fd29889667a14eab94e9b6213e553271",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-547-r1/assessment.json",
+      "sha256": "2c4aaabd77b246c3652071e01b6460bf75db8ce7949203452dcc8085558d859d",
+      "base_sha": "b405a54850ce8e85170355b99a8baeac956be635",
+      "head_sha": "e027b7492a097cef6b21aee990678cd6e4520482",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-562-r1/assessment.json",
+      "sha256": "314c6c729703849550d3ea638db87c511b139340cba3e5f1cf44ac40f4494e74",
+      "base_sha": "7f67e116fab4a18382ecbc50af56d72d80316deb",
+      "head_sha": "9e082520fbaa3a9c8878ddcff89b4207ec625e5e",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-568-r1/assessment.json",
+      "sha256": "ca59585d08c283c951876f4853bba367ac8b03137324a9b9d4b598b299af5975",
+      "base_sha": "814593681eac5c4c3872ca4453de4281d355a8cd",
+      "head_sha": "722408fe7129fdc3755a97967de34119e360b356",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-656-r1/assessment.json",
+      "sha256": "1e69ca623259a0e2d24db57a8591b66b1b1e6db8e17ed54c33c4a8d82b6355f1",
+      "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+      "head_sha": "7744caf8fef3234fca7dd28cb59c9a2516a5fdd3",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": false,
+      "errors": [
+        "high verification confidence requires executed passing verification"
+      ],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-666-r1/assessment.json",
+      "sha256": "f6e9a995f03beed71951e049c480c2257b78381016bad26f36e781efea2f10f7",
+      "base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+      "head_sha": "67dcd0b562016d830331b73328fedcec4e3baa25",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-676-r1/assessment.json",
+      "sha256": "5299651719a6345cdd3332a8cdf59719ffa977f3d2cfa869bdcb6b83256b61a5",
+      "base_sha": "bab1307fb2e663eca3a143ced81df6d99a04e80f",
+      "head_sha": "804fe3b3317a76eea8247f8a661b0cec6abdc890",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-728-r1/assessment.json",
+      "sha256": "365fd1f5484a9fb46b755e8f79ab7b9183cb9abee8d3259e845e8cc21e21fbe2",
+      "base_sha": "48889952ecb25dcf3c31481e7c7197099b85adb8",
+      "head_sha": "8dcbf05390020d7fe8ffca6aa7d2bbee3d41fc73",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-823-r1/assessment.json",
+      "sha256": "2ff9fa9682e77cfb0a715cececc4e673ffffce7be98e9ed8c0ef647b9bf3c669",
+      "base_sha": "bf7be0999816b517437a827df90b7cf97ce0c2f3",
+      "head_sha": "143a99d1781314974c16bb3b662939c4111c5448",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-840-r1/assessment.json",
+      "sha256": "249fa3c55ece3a5743bc5a17e331fd051a35c9d92182f50a0e47c920bbcdcfcd",
+      "base_sha": "c8b1325a7e06675ec7c3d70f0af3624fe20e0ce8",
+      "head_sha": "c379d44a1b05074165fe4f8aba68b32f8b1bfa3b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-860-r1/assessment.json",
+      "sha256": "093580858f49cec226d7d5757279a7c7ea81d5216c46f66daa0ca0e7cea86258",
+      "base_sha": "970e759801fd9f655c8b13db97dfe04fb5d06e96",
+      "head_sha": "49325032a84f9e438f09d771c29ccd8dd9ab9e66",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-905-r1/assessment.json",
+      "sha256": "48a09b8eca1a508e72b7c52520b86879c952d2d8f00de3ba26b2dead68f0449c",
+      "base_sha": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+      "head_sha": "415ab2d43bddd7eb78517676788408041d6d1c73",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-941-r1/assessment.json",
+      "sha256": "9540a697587aaa19cb4c783439228ae7d10dbf85473731e479f6db8fc0639df8",
+      "base_sha": "c806cfd83c5bff9df8d76a886f1658d6c9a5521c",
+      "head_sha": "37c32967ba73a69c10db604445c663bab92f1807",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-961-r1/assessment.json",
+      "sha256": "d415b74b4c4c4c68b383dcff27d85680a99cd4793b33ed6787ba5c5c4c17fa4c",
+      "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+      "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-964-r1/assessment.json",
+      "sha256": "ee090ece1bca8b59798c05266ee5cd60265adabd0d265ecc72e1bb7a66562c4b",
+      "base_sha": "17c9fadd51c748eb4e0b0d67db01bae5d39d04b0",
+      "head_sha": "c034508d747e75548878a8af166f83a1a25fd99b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-981-r1/assessment.json",
+      "sha256": "61ca4d958fc8bff63ac132978b364df0ee7a362a8bf367ff8fbeac981cfb5ed6",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "12d0ed73f5626eba5faf9a9825883482b4495099",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-982-r1/assessment.json",
+      "sha256": "aa1da534a95bffe1d5118665cb168a65e9db5637094b017116718d6f6f254f18",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "aca5cc8ebeb99a825c43bd2d9d18d7bdc1f17413",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-996-r1/assessment.json",
+      "sha256": "dc858801f4cfc7904a7556974a74773081b0e64e8777cb11722c71d3137f2c0f",
+      "base_sha": "e4a814b0266b714abca19b8583fe14f4f1061841",
+      "head_sha": "6ad6c76e7d7dccb2ecde472a20bda8e51cea9f56",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-998-r1/assessment.json",
+      "sha256": "8ac83b014f4a5552ec7f1480a8087cdbc6ab978c8c5cb97b702d5df8340601b6",
+      "base_sha": "e239a73c1f78cc1c790a17173b3dec7bf6158605",
+      "head_sha": "09ec296f066c9d3527f7d96ce617e8c7577eec85",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "A"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1002-r1/assessment.json",
+      "sha256": "2cb3afde4a89ef606d2e468c75e5093d4fc66182640e2b7262c0a0edac271dcf",
+      "base_sha": "c93a39b034238d6479beef9b967a5347ca2d9549",
+      "head_sha": "2a38fb4e0de22309a30b47ac679a3373d54f6bc4",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1006-r1/assessment.json",
+      "sha256": "90cc4cf972ad0df84863c61762f8f6acc721462b96bd6ae76732a9e1e55dc8d7",
+      "base_sha": "9d221fb838de867656f987386410cd13a3338b6b",
+      "head_sha": "c20df92a20cf0cab84a0f76543dcb615cc713332",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1022-r1/assessment.json",
+      "sha256": "3432d39558dd301b9ee795f83eaee9cec2a296235c6e1c72e78ee964add71220",
+      "base_sha": "3e8f6cb8ce846eb9773d545c79b11c6e187dbd7a",
+      "head_sha": "ab8ca589fac1be02bb893917556823cc8f77270d",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1026-r1/assessment.json",
+      "sha256": "0b358fd84ed5b66f6667f2684b203d708dc9fcef19c19aaaf6fa3f97e61b22da",
+      "base_sha": "c4ab67ac3257f234bb635a87feaa1dc9e6cd5b5d",
+      "head_sha": "d4a95551a1cc90e311f1e6755222f745305be5c2",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1072-r1/assessment.json",
+      "sha256": "1541d62c8619566611514b37c024844336801fc3dec04fdeb8f3437ed0d99ab2",
+      "base_sha": "c4df82de3f3ed2c9ff6a292151e42b29f417962f",
+      "head_sha": "792ddd03474c6617a46f3a4e54cf70b9a990d16a",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1088-r1/assessment.json",
+      "sha256": "6b950a653f9eddffa1b09069a4f1b3f4264bda453354cd9826698bdd239eccbc",
+      "base_sha": "b6e6100c848039528c19d82c39f96c19c730e32a",
+      "head_sha": "ac5f088a6eb7efe753740149e0fce8926e354f5a",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1090-r1/assessment.json",
+      "sha256": "40081b693fe9b06ea6ecbaef5d6648c6a9d26987f45238a247b5538a287fc04d",
+      "base_sha": "04ac44c812155faecfbb44e8c8e275d77da37f1e",
+      "head_sha": "385c84144b6d42413fcdff4d4641aabdec7114c0",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1109-r1/assessment.json",
+      "sha256": "6e5d4d72f4a929a62001513706ed0377c78c34b99e192e783fe5de298160b8a0",
+      "base_sha": "9c2fc652a80c1264ae3a283c5913d9ce03940122",
+      "head_sha": "a258a817bc373605193259443775c1e25ce50544",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1111-r1/assessment.json",
+      "sha256": "c32e3d3f2f69ab4c6b6b16213286f1c502a228072cd551e22194b255c0c399d0",
+      "base_sha": "5dd37db087698d38e4824e6a50414fb03d56bb8f",
+      "head_sha": "063530d063163196e181e1f142e4f89a0a28b5e8",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-119-r1/assessment.json",
+      "sha256": "a0103bd8e2992a56ab1392cf0c9c60cbb2820cdbafcd89634fdea3a8c1321279",
+      "base_sha": "33ac5e5a074b288eb0435cf9b2bf41d062e1767d",
+      "head_sha": "35c482112c8f4016cc86fd885e309a1778d64f9b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-301-r1/assessment.json",
+      "sha256": "f2b449ffbb09b559e69d2479e397181b087e09ad629519f1aca219470d67187f",
+      "base_sha": "7ba9119c7e66a331f0b47ecc2fe377f3a716a911",
+      "head_sha": "c447e26192143763874cd1340836289fbb2fa133",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-314-r1/assessment.json",
+      "sha256": "94dc54d2c67381e77b2272700a84719eea340480520ffe29e0530b39783bdeb4",
+      "base_sha": "d3bc40e182cfb85735c3164d2b05a7e8428b8041",
+      "head_sha": "bcfeeb8ed14f4412b599d802514ff55d8cdc364b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-330-r1/assessment.json",
+      "sha256": "4fbae6b56edfa7aa421b8aeb4b6f155db9d4cc75a7bbd3431f2cfc7304ce9af1",
+      "base_sha": "b1b5157c326ce1ebd4e89942e71279e8dc5450d5",
+      "head_sha": "07f5c4c1ece4b77589eb746efb00da88b0704dfe",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-336-r1/assessment.json",
+      "sha256": "017699e49d7114a9d1680d109d704efd7c044e370e421931f343707d0a61af89",
+      "base_sha": "abf3ddd89593290fe88f657c97570ea44816401a",
+      "head_sha": "8ebc77b5efb6df66525665781c4a9ea922732356",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-349-r1/assessment.json",
+      "sha256": "10c64157cbbd2525388c536340521fd4b0eb98658ca84dfeb1fb9e19f59769af",
+      "base_sha": "530625f59cc8e1a177f4ac31ae112f0d7b350557",
+      "head_sha": "a47a63e40bb78e05505fca577d2c8a48d50c6a70",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-371-r1/assessment.json",
+      "sha256": "d5b9e5d7addbe02054c6d6c4fdb1307907c84e37bd7187ca1b0566ba597e8399",
+      "base_sha": "cf8ebc23880abc7c51c4353551f3b4f9261f78ce",
+      "head_sha": "d257468c35efffdfe17f8e2b2cdcd744abfdf76a",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-496-r1/assessment.json",
+      "sha256": "7303cf9da75dbc5daf3503f8d79f1bb896cb84255fb79e57ad663e1e5df86177",
+      "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+      "head_sha": "c39e895ca967c5b1f8241539da0b543334d973bd",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-502-r1/assessment.json",
+      "sha256": "9a57b1ee738b010f50223812643eac2f8be09d6b397e31f4ca9a66bd1b617e6b",
+      "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+      "head_sha": "6e7ae4e117c4847b62491d63da8df5e74b4a5bc9",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": false,
+      "errors": ["ready_for_review with an observed defect"],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-503-r1/assessment.json",
+      "sha256": "07a3c52459111d950c725fa6139e9f14fd32ca91ed3433902eb7bdb570b8f949",
+      "base_sha": "fcb7e336ded91cbf00318785996c3ea833cc9944",
+      "head_sha": "c28b5e46fd29889667a14eab94e9b6213e553271",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-547-r1/assessment.json",
+      "sha256": "aa4aece39f8dba23e06c09967b1a173b174cf0bec89e415706f385bb1a4c7c98",
+      "base_sha": "b405a54850ce8e85170355b99a8baeac956be635",
+      "head_sha": "e027b7492a097cef6b21aee990678cd6e4520482",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-548-r1/assessment.json",
+      "sha256": "ee0001338dbd51737c76a6f8a16e1a302724f877be11601f6bdf59dcdfaf1d5c",
+      "base_sha": "b650a8c29720731d40fc9705f021e75af3047e4f",
+      "head_sha": "632bdf61b3e4dc23cee6f492a2b2009ab4abe195",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-562-r1/assessment.json",
+      "sha256": "4daba3e8326bc2ea16b93024d377d9a0053b8103019c958edf80a33fd9112611",
+      "base_sha": "7f67e116fab4a18382ecbc50af56d72d80316deb",
+      "head_sha": "9e082520fbaa3a9c8878ddcff89b4207ec625e5e",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-568-r1/assessment.json",
+      "sha256": "d7f77e0d635f9b02e9814f329e966edc165936f6016dc4b14a93ff18d0600163",
+      "base_sha": "814593681eac5c4c3872ca4453de4281d355a8cd",
+      "head_sha": "722408fe7129fdc3755a97967de34119e360b356",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-656-r1/assessment.json",
+      "sha256": "6f3f42325b852f628be1a802c4ec800dfa0fe5decc950c93117b46b7ac7731d0",
+      "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+      "head_sha": "7744caf8fef3234fca7dd28cb59c9a2516a5fdd3",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": false,
+      "errors": [
+        "high verification confidence requires executed passing verification"
+      ],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-659-r1/assessment.json",
+      "sha256": "b1e73b56d8c40fe4941a4cc856ad683d97d38451168d3555d8d88e34141dba32",
+      "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+      "head_sha": "3e040fad4db2c9a8ab3262eba80da51ce49beba1",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-666-r1/assessment.json",
+      "sha256": "49196a598adb6e5b9d1f50b7e3d2d3548c838589cb475c558cec1870113f9468",
+      "base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+      "head_sha": "67dcd0b562016d830331b73328fedcec4e3baa25",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-676-r1/assessment.json",
+      "sha256": "2eb9cacbd0df69f1cc85474c9f79ee51a0c7a64f051151b1453e46b4658de1ad",
+      "base_sha": "bab1307fb2e663eca3a143ced81df6d99a04e80f",
+      "head_sha": "804fe3b3317a76eea8247f8a661b0cec6abdc890",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-728-r1/assessment.json",
+      "sha256": "8393bd7c0123644c1afbcbbbc7329ced7786e2c07d7712964d7a5045b8fa4120",
+      "base_sha": "48889952ecb25dcf3c31481e7c7197099b85adb8",
+      "head_sha": "8dcbf05390020d7fe8ffca6aa7d2bbee3d41fc73",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-823-r1/assessment.json",
+      "sha256": "c35160e648addbffbbf29a384839a73cf7d12ee6192dfdf8d807b151eb17bded",
+      "base_sha": "bf7be0999816b517437a827df90b7cf97ce0c2f3",
+      "head_sha": "143a99d1781314974c16bb3b662939c4111c5448",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-840-r1/assessment.json",
+      "sha256": "498d0695ff8a0e025f72ee1d983642192112e171585c31a3b4bf1c8d2eb0093c",
+      "base_sha": "c8b1325a7e06675ec7c3d70f0af3624fe20e0ce8",
+      "head_sha": "c379d44a1b05074165fe4f8aba68b32f8b1bfa3b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-860-r1/assessment.json",
+      "sha256": "5c4c69b3cec9137b57b717f5cdbd3e8f6de9f73a84a47b780279daec29b5e226",
+      "base_sha": "970e759801fd9f655c8b13db97dfe04fb5d06e96",
+      "head_sha": "49325032a84f9e438f09d771c29ccd8dd9ab9e66",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-878-r1/assessment.json",
+      "sha256": "3426df4b5de12f84fef853bd2c88954404a56b759f4d102e660d1dfc82db47fc",
+      "base_sha": "62e6c4392f2f602f12f19643c6aa4325695c9c41",
+      "head_sha": "71a243635607fac92c76ed5730418d989bfd86d6",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-905-r1/assessment.json",
+      "sha256": "703ff01b62667003a27b1769f0d9b520b33ef0c3c4c553825969fb6f53e06f2d",
+      "base_sha": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+      "head_sha": "415ab2d43bddd7eb78517676788408041d6d1c73",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-941-r1/assessment.json",
+      "sha256": "66e59987262d294068cb40677549ecc804f312303b24dd45feb1273913c99fbd",
+      "base_sha": "c806cfd83c5bff9df8d76a886f1658d6c9a5521c",
+      "head_sha": "37c32967ba73a69c10db604445c663bab92f1807",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-961-r1/assessment.json",
+      "sha256": "0b9f35b5128b47117c782bd207557f875e1e10c71d152d74e70290e47a92bea1",
+      "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+      "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-964-r1/assessment.json",
+      "sha256": "2e40e2e23bef2e67d97ac2b326197ab1951387854b9f057a024fa27c446526b8",
+      "base_sha": "17c9fadd51c748eb4e0b0d67db01bae5d39d04b0",
+      "head_sha": "c034508d747e75548878a8af166f83a1a25fd99b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-975-r1/assessment.json",
+      "sha256": "06c4bed431a5e6501f74a99ebae94776bc1e791e9178c92980d1204317c4cb30",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "24f7b2c6043bf62b14b58f8b5d191946df9f617d",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-981-r1/assessment.json",
+      "sha256": "cab2427b015ccc2ee1be08d250928ffbeabd99f30be2eb058eb8d6421276c3ca",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "12d0ed73f5626eba5faf9a9825883482b4495099",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-982-r1/assessment.json",
+      "sha256": "336106237e1c91436dc188d9787079193665db94aacfba6055282f16f763dc32",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "aca5cc8ebeb99a825c43bd2d9d18d7bdc1f17413",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-996-r1/assessment.json",
+      "sha256": "56c69c6725249821d87730a2cc99f3ca56ab406e7649d2d27409165d5d9184ed",
+      "base_sha": "e4a814b0266b714abca19b8583fe14f4f1061841",
+      "head_sha": "6ad6c76e7d7dccb2ecde472a20bda8e51cea9f56",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-998-r1/assessment.json",
+      "sha256": "6ddc46476a4e59fd0c93eea47911bfb1bf7c8a48b1a525dc949118c66451a578",
+      "base_sha": "e239a73c1f78cc1c790a17173b3dec7bf6158605",
+      "head_sha": "09ec296f066c9d3527f7d96ce617e8c7577eec85",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "B"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1002-r1/assessment.json",
+      "sha256": "a9d9c7b8c750c84141ddfb400c9b9ce08b8094cc4ce9d53fb8bf5650abc6cd7d",
+      "base_sha": "c93a39b034238d6479beef9b967a5347ca2d9549",
+      "head_sha": "2a38fb4e0de22309a30b47ac679a3373d54f6bc4",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1002-r2/assessment.json",
+      "sha256": "cca0209d334081ec0a07c9b9811c067750c1c933e2d3f1907690e257ad610f0b",
+      "base_sha": "c93a39b034238d6479beef9b967a5347ca2d9549",
+      "head_sha": "2a38fb4e0de22309a30b47ac679a3373d54f6bc4",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1002-r3/assessment.json",
+      "sha256": "6e04b661a138d859a7d4f435bcf7e0dae00e6c2a6eb4148a478075298ee160df",
+      "base_sha": "c93a39b034238d6479beef9b967a5347ca2d9549",
+      "head_sha": "2a38fb4e0de22309a30b47ac679a3373d54f6bc4",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1006-r1/assessment.json",
+      "sha256": "c5206df7be3363ef9643deebd60eafd10c87ff7b638329c86a1d1e9288a5a554",
+      "base_sha": "9d221fb838de867656f987386410cd13a3338b6b",
+      "head_sha": "c20df92a20cf0cab84a0f76543dcb615cc713332",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1026-r1/assessment.json",
+      "sha256": "d99df887b872f7798779c12417e0b8ea89b944d83e92de5528a5d116d3ca3c46",
+      "base_sha": "c4ab67ac3257f234bb635a87feaa1dc9e6cd5b5d",
+      "head_sha": "d4a95551a1cc90e311f1e6755222f745305be5c2",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1072-r1/assessment.json",
+      "sha256": "fa3126a93c28040ca964dc7c33429de69a7f63c40943b2e93b5070b7973c7638",
+      "base_sha": "c4df82de3f3ed2c9ff6a292151e42b29f417962f",
+      "head_sha": "792ddd03474c6617a46f3a4e54cf70b9a990d16a",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1090-r1/assessment.json",
+      "sha256": "742fb293f71d1e11dd00fbb85e7ea68c478bc06fb470a37537b05e9e2077ae5f",
+      "base_sha": "04ac44c812155faecfbb44e8c8e275d77da37f1e",
+      "head_sha": "385c84144b6d42413fcdff4d4641aabdec7114c0",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1111-r1/assessment.json",
+      "sha256": "c45d67378a105adcc40bd0cf723d197c86404ba6505eeae87fb9291962e2ba15",
+      "base_sha": "5dd37db087698d38e4824e6a50414fb03d56bb8f",
+      "head_sha": "063530d063163196e181e1f142e4f89a0a28b5e8",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-314-r1/assessment.json",
+      "sha256": "c629ae43a0eb00ac15a39126d90d67be8a3d4b0fe9cc5fa14828bc7cefc8cf7e",
+      "base_sha": "d3bc40e182cfb85735c3164d2b05a7e8428b8041",
+      "head_sha": "bcfeeb8ed14f4412b599d802514ff55d8cdc364b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-314-r2/assessment.json",
+      "sha256": "7934b2e7e7312163bd7ea3a2d5d2696d1406ba89e950b80c53912f18122d7b7f",
+      "base_sha": "d3bc40e182cfb85735c3164d2b05a7e8428b8041",
+      "head_sha": "bcfeeb8ed14f4412b599d802514ff55d8cdc364b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-314-r3/assessment.json",
+      "sha256": "7c5c778a0f4458b244611204abfaadf6fb59fcfd81f7e51923da3b83ca2ade2c",
+      "base_sha": "d3bc40e182cfb85735c3164d2b05a7e8428b8041",
+      "head_sha": "bcfeeb8ed14f4412b599d802514ff55d8cdc364b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": false,
+      "errors": [
+        "FS-2.existing_verification[0]: 'ran_passed' needs verified ci_result or command_output evidence"
+      ],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-330-r1/assessment.json",
+      "sha256": "49f416b44584c879e89384fd2dc4b385cb9dbaf9064cc672c9137ea5f59588bd",
+      "base_sha": "b1b5157c326ce1ebd4e89942e71279e8dc5450d5",
+      "head_sha": "07f5c4c1ece4b77589eb746efb00da88b0704dfe",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-349-r1/assessment.json",
+      "sha256": "72c90ece1b543bd374afaf0642868bd3bbbc33997abf7bd38d225b23c8eb54f2",
+      "base_sha": "530625f59cc8e1a177f4ac31ae112f0d7b350557",
+      "head_sha": "a47a63e40bb78e05505fca577d2c8a48d50c6a70",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-371-r1/assessment.json",
+      "sha256": "63df96c5bd6906feff177c416ec9a4b998bf406cf87f1b3c6df79a71cb358b2c",
+      "base_sha": "cf8ebc23880abc7c51c4353551f3b4f9261f78ce",
+      "head_sha": "d257468c35efffdfe17f8e2b2cdcd744abfdf76a",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-496-r1/assessment.json",
+      "sha256": "0303c7aa2e128be904847187e8370820249a1bf471e2b0cfc651c2eaac62adba",
+      "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+      "head_sha": "c39e895ca967c5b1f8241539da0b543334d973bd",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-502-r1/assessment.json",
+      "sha256": "0016b7e3ea838a6346668c0934f213c2b50514c7f673508c9df25a7d2b6c56d3",
+      "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+      "head_sha": "6e7ae4e117c4847b62491d63da8df5e74b4a5bc9",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-503-r1/assessment.json",
+      "sha256": "b9f94da7642c3ede1f801c4d4fe0eb702916726944618e64ee45bb1617e266f8",
+      "base_sha": "fcb7e336ded91cbf00318785996c3ea833cc9944",
+      "head_sha": "c28b5e46fd29889667a14eab94e9b6213e553271",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-547-r1/assessment.json",
+      "sha256": "60f82b0d4ac32cc0383c6f724e61a3c97e2d15886f3e82b149682773c0a5a217",
+      "base_sha": "b405a54850ce8e85170355b99a8baeac956be635",
+      "head_sha": "e027b7492a097cef6b21aee990678cd6e4520482",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-547-r2/assessment.json",
+      "sha256": "76d6f1c072d0268361c09919de6f460b3a5c17b83a30f0191f5e71d3794fb51c",
+      "base_sha": "b405a54850ce8e85170355b99a8baeac956be635",
+      "head_sha": "e027b7492a097cef6b21aee990678cd6e4520482",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-547-r3/assessment.json",
+      "sha256": "07d682fda1a6dfd86e1122ac929f391ab97e0f40c4e2d8d53eca9a8578ca433b",
+      "base_sha": "b405a54850ce8e85170355b99a8baeac956be635",
+      "head_sha": "e027b7492a097cef6b21aee990678cd6e4520482",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-562-r1/assessment.json",
+      "sha256": "1108e01c76e0a16cf615bf943fce7b498590b681a5d112d846609ecbc92bc8dc",
+      "base_sha": "7f67e116fab4a18382ecbc50af56d72d80316deb",
+      "head_sha": "9e082520fbaa3a9c8878ddcff89b4207ec625e5e",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-568-r1/assessment.json",
+      "sha256": "bf7b1f554f7458d60dfcf84b54de30f054fc12ee51e18f76364f0f568bcb0301",
+      "base_sha": "814593681eac5c4c3872ca4453de4281d355a8cd",
+      "head_sha": "722408fe7129fdc3755a97967de34119e360b356",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-656-r1/assessment.json",
+      "sha256": "a37d55a7cdec753f88c04d1957cff3eb9e8a5b99ae9889d850372d931cb696f2",
+      "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+      "head_sha": "7744caf8fef3234fca7dd28cb59c9a2516a5fdd3",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-666-r1/assessment.json",
+      "sha256": "bbf322799f46c787303a3f84f7fac575ab3ca6b39d5259d3678f19b9e97f472f",
+      "base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+      "head_sha": "67dcd0b562016d830331b73328fedcec4e3baa25",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-666-r2/assessment.json",
+      "sha256": "abc93b484e67b8d505d100d82df4a6e1a31fc7a9a9daaf27371ec5360cec97f2",
+      "base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+      "head_sha": "67dcd0b562016d830331b73328fedcec4e3baa25",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-666-r3/assessment.json",
+      "sha256": "522fdd6a726c16eca174f3dcdc0132573e25840fb9cdc59e590bd0ba5bf33ccb",
+      "base_sha": "760ba20a8bbd2a52c679e714404c9955d44dfc6e",
+      "head_sha": "67dcd0b562016d830331b73328fedcec4e3baa25",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-676-r1/assessment.json",
+      "sha256": "c3d196ee9996ffd737006444a08154b9da6e58348ae1cdbcd374665ed3ce7db7",
+      "base_sha": "bab1307fb2e663eca3a143ced81df6d99a04e80f",
+      "head_sha": "804fe3b3317a76eea8247f8a661b0cec6abdc890",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-728-r1/assessment.json",
+      "sha256": "b6d0ec9166c7054a97fbf69d90885fd5fad5b1d06cc8bd07066ea072c73074dd",
+      "base_sha": "48889952ecb25dcf3c31481e7c7197099b85adb8",
+      "head_sha": "8dcbf05390020d7fe8ffca6aa7d2bbee3d41fc73",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-823-r1/assessment.json",
+      "sha256": "31485a25ffa4ddd03f5ae0198a55651fbb1ae7bb40c5d1b1260976f3b7d93b01",
+      "base_sha": "bf7be0999816b517437a827df90b7cf97ce0c2f3",
+      "head_sha": "143a99d1781314974c16bb3b662939c4111c5448",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-823-r2/assessment.json",
+      "sha256": "847af8c7e0f81abf23be361d9b3d19873adbc49022a3f90aaf88913183c6b895",
+      "base_sha": "bf7be0999816b517437a827df90b7cf97ce0c2f3",
+      "head_sha": "143a99d1781314974c16bb3b662939c4111c5448",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-823-r3/assessment.json",
+      "sha256": "8986b41d0dcbb2f364fb1b4d97880e07ecfec28d0b70674390daea4da14391fc",
+      "base_sha": "bf7be0999816b517437a827df90b7cf97ce0c2f3",
+      "head_sha": "143a99d1781314974c16bb3b662939c4111c5448",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-840-r1/assessment.json",
+      "sha256": "78c7e1bf9a85676b302233ab3b2cebe27cd9a59c9062d811055be820499e94e1",
+      "base_sha": "c8b1325a7e06675ec7c3d70f0af3624fe20e0ce8",
+      "head_sha": "c379d44a1b05074165fe4f8aba68b32f8b1bfa3b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-860-r1/assessment.json",
+      "sha256": "b2141094e5517781ab06740cc656542c0ae6b41f0189883f5ce2694553ac17fc",
+      "base_sha": "970e759801fd9f655c8b13db97dfe04fb5d06e96",
+      "head_sha": "49325032a84f9e438f09d771c29ccd8dd9ab9e66",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-860-r2/assessment.json",
+      "sha256": "585be4179491c64cd4f980f29594e4494012ae08123e8d22da95ab1d32293eef",
+      "base_sha": "970e759801fd9f655c8b13db97dfe04fb5d06e96",
+      "head_sha": "49325032a84f9e438f09d771c29ccd8dd9ab9e66",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-860-r3/assessment.json",
+      "sha256": "b46f4367c9c8008071b5c8f2c8e1f009d50652cbc9c2b56c5b630e53505c2148",
+      "base_sha": "970e759801fd9f655c8b13db97dfe04fb5d06e96",
+      "head_sha": "49325032a84f9e438f09d771c29ccd8dd9ab9e66",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-905-r1/assessment.json",
+      "sha256": "ea57aa70f987b1ae88daccfbbd856a5946269aac884e470b17885ad394b5818f",
+      "base_sha": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+      "head_sha": "415ab2d43bddd7eb78517676788408041d6d1c73",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-941-r1/assessment.json",
+      "sha256": "433fb370c7ad93fad82ee5f58969faf25c7038aad1129a92f5077e88cbf257bb",
+      "base_sha": "c806cfd83c5bff9df8d76a886f1658d6c9a5521c",
+      "head_sha": "37c32967ba73a69c10db604445c663bab92f1807",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-941-r2/assessment.json",
+      "sha256": "c88ec5ff25a51acc9a949e9dfb650b015cd879fe4cc04d22cb0085c5b770dc52",
+      "base_sha": "c806cfd83c5bff9df8d76a886f1658d6c9a5521c",
+      "head_sha": "37c32967ba73a69c10db604445c663bab92f1807",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-941-r3/assessment.json",
+      "sha256": "db54c2c0e6e03f4cbb5b3a5aafe73ea7921ce1557352404274a6745eb0b1e77f",
+      "base_sha": "c806cfd83c5bff9df8d76a886f1658d6c9a5521c",
+      "head_sha": "37c32967ba73a69c10db604445c663bab92f1807",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-961-r1/assessment.json",
+      "sha256": "1693ece2ab55468139156143564223f00ac44abcc27fc0131d10513739645f5d",
+      "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+      "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-961-r2/assessment.json",
+      "sha256": "90a69c067bcbe703151cda676b43830ce003af5ebce1dc6c78541dfa73837df0",
+      "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+      "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-961-r3/assessment.json",
+      "sha256": "fa5329758a7a29d262bbe1841dd3ecdf0f121d04b1bde499959302ebab6f027d",
+      "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+      "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-964-r1/assessment.json",
+      "sha256": "28130c900ecafa5685990e5c1a9288e8a00f227ab3a05c45f033b50e9990c170",
+      "base_sha": "17c9fadd51c748eb4e0b0d67db01bae5d39d04b0",
+      "head_sha": "c034508d747e75548878a8af166f83a1a25fd99b",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-981-r1/assessment.json",
+      "sha256": "ae5e471aa0f2bfc591b9b7005255d21e5da9dde4691fc6191924e552d471e83c",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "12d0ed73f5626eba5faf9a9825883482b4495099",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C",
+        "generated_at": "2026-10-12"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-982-r1/assessment.json",
+      "sha256": "51578a9c8fc890b42360b09956ac802d3bbb1e1a58cf986fcd8fb93f75a6410e",
+      "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+      "head_sha": "aca5cc8ebeb99a825c43bd2d9d18d7bdc1f17413",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-996-r1/assessment.json",
+      "sha256": "48fe0d320da5794dc0bde8ee38b28a72713d24715da9648066dc162e4ae18293",
+      "base_sha": "e4a814b0266b714abca19b8583fe14f4f1061841",
+      "head_sha": "6ad6c76e7d7dccb2ecde472a20bda8e51cea9f56",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-998-r1/assessment.json",
+      "sha256": "90d3f531f2f20561a0fb3873639462d8e0051d6977c884f085b03c53502b3c11",
+      "base_sha": "e239a73c1f78cc1c790a17173b3dec7bf6158605",
+      "head_sha": "09ec296f066c9d3527f7d96ce617e8c7577eec85",
+      "assessor": {
+        "agent": "claude-code (headless)",
+        "model": "claude-opus-5-5",
+        "skill_version": "1.0.0",
+        "condition": "C"
+      },
+      "valid": true,
+      "errors": [],
+      "warnings": []
+    }
+  ],
+  "transcripts": [
+    {
+      "path": "eval/adjudication-blind/raw/stack-1002.transcript.jsonl.gz",
+      "bytes": 45146,
+      "sha256": "67d3f238ed3c260d71585446d02d7d10faf6b6a9fcc4dbc13ccf0f6f7d575196",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-1006.transcript.jsonl.gz",
+      "bytes": 52131,
+      "sha256": "fd035a8e6d860f5d287c31a25afeb1c226bede2a77ddbeaa48d64bb41e140fae",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-1026.transcript.jsonl.gz",
+      "bytes": 54411,
+      "sha256": "9fcd078a0543d882f1dcb4651a81a20319983876ed418b4663a7946832f61288",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-1072.transcript.jsonl.gz",
+      "bytes": 53830,
+      "sha256": "a175799fe110a982863384045073d831c5e8a2c1f40a5b4555f11910a05588ef",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-1090.transcript.jsonl.gz",
+      "bytes": 74424,
+      "sha256": "00d313fe828e7c5a1b554c3c1711e880af68c0c45beb78d3a5b24ca2a363bbae",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-1111.transcript.jsonl.gz",
+      "bytes": 30398,
+      "sha256": "feefae387b4fbde2b785325bdddf99651ba161d49358c9d50d696eb4861c64f0",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-314.transcript.jsonl.gz",
+      "bytes": 134598,
+      "sha256": "8177864c9ca1fbb01da916019ad5c34ca7f415ae95ee61ed4021ec5e06451b89",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-330.transcript.jsonl.gz",
+      "bytes": 66679,
+      "sha256": "791839f28a0ff49aff9349beb7310f2808a32bd4e597854d96639afab198ad13",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-349.transcript.jsonl.gz",
+      "bytes": 128470,
+      "sha256": "3ad75e8a06777552a1686f0839a6de74405334e0b6c65614cfab4bca8861f1a5",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-371.transcript.jsonl.gz",
+      "bytes": 21610,
+      "sha256": "227b41bb2545b86a68fdec087676b7c0724640d71c6d67bcd4bdd948d418f0be",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-496.transcript.jsonl.gz",
+      "bytes": 86382,
+      "sha256": "216f94a568512c46d9c1503d0d204a20e5b4bea379ba046a3a5afc673928df9d",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-502.transcript.jsonl.gz",
+      "bytes": 33977,
+      "sha256": "e54238c146f0d1712d334b9c072f4ba25fa13da6ba362da53ead076e8af401aa",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-503.transcript.jsonl.gz",
+      "bytes": 48699,
+      "sha256": "a1df7fd70216ae2a45eafb55573869b92ff1d6ea4250089ca5f4a2060b1af4dd",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-547.transcript.jsonl.gz",
+      "bytes": 186615,
+      "sha256": "29cc6e44deac29bb09e144976684492d2684b26503756af536ff64d7b77952b0",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-562.transcript.jsonl.gz",
+      "bytes": 34785,
+      "sha256": "76acc4d784f31e66fb6b2f1de34a8eabc9d4f15b0ef2eab68a73f27c7733e002",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-568.transcript.jsonl.gz",
+      "bytes": 65114,
+      "sha256": "78a9c9cb4c264fc6dd7330adfb97c5c09d3971e21091d6174ea6865187a5d1d6",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-656.transcript.jsonl.gz",
+      "bytes": 8627,
+      "sha256": "247f0689f2f380fefcbaa67fec6976227e59a2282cc8c3d589c3c8bb871f9ee7",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-666.transcript.jsonl.gz",
+      "bytes": 45552,
+      "sha256": "5cd3e9711f43664c50b4c54d3077728672dd11ccaf4a1ba3ae9ffe532d9b250d",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-676.transcript.jsonl.gz",
+      "bytes": 62656,
+      "sha256": "3d777159fe5f1de8dc9ad7bd565afb38fe1d21e2c355ed864fec2efc41a5156e",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-728.transcript.jsonl.gz",
+      "bytes": 54226,
+      "sha256": "fc0fffe67c9438bfe808f94c6008769468fbe237042fc0dcfe58f2b8c84bf327",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-823.transcript.jsonl.gz",
+      "bytes": 61155,
+      "sha256": "cf670c10d8101c400e5266669bff2caa9ef83ab4091b844c7d64deaa86260dc8",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-840.transcript.jsonl.gz",
+      "bytes": 13901,
+      "sha256": "7121696337395ad4b76fc6499136a49097337bd8cc95e65d6ad24dc84e80a6e5",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-860.transcript.jsonl.gz",
+      "bytes": 53160,
+      "sha256": "2111959a91003fddba743887ddc05f1a4f323966d88f46ec9e6aa58182a9f78b",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-905.transcript.jsonl.gz",
+      "bytes": 61877,
+      "sha256": "87526ecca9dd638216e0468cabbd505fa08a10b94e4d3846bb14cc55131be534",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-941.transcript.jsonl.gz",
+      "bytes": 55828,
+      "sha256": "d596e17a71b9b381594eeeb1421e6cbe64c83986ce451ab5706234a059b4bf9d",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-961.transcript.jsonl.gz",
+      "bytes": 95342,
+      "sha256": "67f9f9ba79ff8ba79bc0a32283f0fa24e7811477993a3c54fa6e5f11d31a6eaa",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-964.transcript.jsonl.gz",
+      "bytes": 50767,
+      "sha256": "76e544a8c32d3db39bb9eac22b9015e8032c40ad038d26e798e30312a24eed5d",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-981.transcript.jsonl.gz",
+      "bytes": 24339,
+      "sha256": "6f52f73046f2ab3bf0baeebf5ca047f7f6c8ac9a98dbd63eeb62494949637f74",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-982.transcript.jsonl.gz",
+      "bytes": 21541,
+      "sha256": "0af7e5ae1c4c7af0b665a303541abe3e9fdd5083a5afc90bc23b58067ab3b044",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-996.transcript.jsonl.gz",
+      "bytes": 40572,
+      "sha256": "c352524dbacf7effa080b1156432873f567333ffb34438bf0c73295111bd22a4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/adjudication-blind/raw/stack-998.transcript.jsonl.gz",
+      "bytes": 27446,
+      "sha256": "82d0cfd0197d8e400bc764a43279f0569d38082035243f0bd82cbcd1420a2993",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1002-r1/transcript.jsonl.gz",
+      "bytes": 255232,
+      "sha256": "50dec6bc99436cb6c9b2029958108a7bbc94474a426f570a33784184c04d60cf",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1006-r1/transcript.jsonl.gz",
+      "bytes": 294634,
+      "sha256": "499748f2cca9a19ac8e29cc1086e752e8295087026973126390922e7a4e72b04",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1026-r1/transcript.jsonl.gz",
+      "bytes": 244871,
+      "sha256": "21d9e55eeb1f17c70ce43bde1fdbd8455c90994c25b825fa72d331d583dfca66",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1072-r1/transcript.jsonl.gz",
+      "bytes": 217545,
+      "sha256": "93d73240924b70ab0cc5791152611a4039c5d3a71787503f1d91f3eb2a8af68d",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1090-r1/transcript.jsonl.gz",
+      "bytes": 279034,
+      "sha256": "35547137056db9a47c0fbb97ecf573a6998411871dc6975cbac25283f9565a02",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-1111-r1/transcript.jsonl.gz",
+      "bytes": 133641,
+      "sha256": "70edb386e08590fd39490273645908d557fd1d9c980b47b323392682679f7a05",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-314-r1/transcript.jsonl.gz",
+      "bytes": 198270,
+      "sha256": "04406508efb9749b0258bd865c25f308c098cd1eea9cdd424eb338013040d37c",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-330-r1/transcript.jsonl.gz",
+      "bytes": 185463,
+      "sha256": "27eea16b0d94307d3d4772025bc079991b8694130fe5d421807be4d306e35174",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-349-r1/transcript.jsonl.gz",
+      "bytes": 275078,
+      "sha256": "dccbcb6bf997e516b94576af2afcde5adc7ceff810514d02373a4834179243ad",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-371-r1/transcript.jsonl.gz",
+      "bytes": 103191,
+      "sha256": "668acbc2d824339e56fc6ee0e0df999a428d13c79761b8f8d6e8cfb39e38433f",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-496-r1/transcript.jsonl.gz",
+      "bytes": 227538,
+      "sha256": "6ceda48006a0d467b58a3337f41342aaff9278feaa149c7f5e46b1d838438e9f",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-502-r1/transcript.jsonl.gz",
+      "bytes": 145500,
+      "sha256": "205670c8bd4480d10931aa07d2c47e94f0a283959a0d4689965618336cb22937",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-503-r1/transcript.jsonl.gz",
+      "bytes": 220513,
+      "sha256": "3d07c82558b01a3ddb6ed8c9f4faffca86497c5e2d3ac2ea16036cc597cce85b",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-547-r1/transcript.jsonl.gz",
+      "bytes": 310852,
+      "sha256": "9051d889bbbf985638aa0d6a555f1ad84fd8107d412a017fed0b09754368b264",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-562-r1/transcript.jsonl.gz",
+      "bytes": 162562,
+      "sha256": "aedd8f210680be7b9232fc50b6866096625b909e060a6efb9d9d06bd70297562",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-568-r1/transcript.jsonl.gz",
+      "bytes": 222562,
+      "sha256": "d134f8224d9b672dceb96b7418e6ce59f8353f642e5a66543d1c13d3aab21796",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-656-r1/transcript.jsonl.gz",
+      "bytes": 69538,
+      "sha256": "b0db679742142174da5843082594a94bafd38f146745b5bd43e32bed2a7ff822",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-666-r1/transcript.jsonl.gz",
+      "bytes": 177505,
+      "sha256": "c7a3dc93deca305fa490be6a561915a1c4827ddad3a1a6aeaf398c29e8116b57",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-676-r1/transcript.jsonl.gz",
+      "bytes": 251107,
+      "sha256": "bd8eae3414c6a356726adebf907380fa26c11b2298611b3847f11bc9a4701e87",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-728-r1/transcript.jsonl.gz",
+      "bytes": 240551,
+      "sha256": "c716e032baa3a1b58abb3cb890316a9a8db665698affc8390926f2a2c7a4b5a5",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-823-r1/transcript.jsonl.gz",
+      "bytes": 224008,
+      "sha256": "bfc64c3226249b9369d34f763c219a3fa5716a1f2c11feac1968c355adec4975",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-840-r1/transcript.jsonl.gz",
+      "bytes": 129251,
+      "sha256": "5afa9aaddedadc40e195c4d4c2e37be6c8ddaf5f04e823144d55aa10ed907f5f",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-860-r1/transcript.jsonl.gz",
+      "bytes": 247763,
+      "sha256": "633371ca4669d6793a1fd16e6ade1dead1a4cd3b86b9c85fe04e8c1b8fa6fb28",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-905-r1/transcript.jsonl.gz",
+      "bytes": 197010,
+      "sha256": "bffbd249e7add1b97ec482c007d7fb8bb9e1adba3376cd798828d8588d26f63c",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-941-r1/transcript.jsonl.gz",
+      "bytes": 311221,
+      "sha256": "bd4ee99da45087bd982470d71eec579981b779bbff18239feb92a2e88fb27dcb",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-961-r1/transcript.jsonl.gz",
+      "bytes": 288649,
+      "sha256": "ad64e6e36dbf12e192b57bcf728fd650bac4e616d5aa859c8c30422a2d979a58",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-964-r1/transcript.jsonl.gz",
+      "bytes": 248435,
+      "sha256": "6a1db05a10c68f993c92b8606c57e0e22576ec68ea2356ef02f7a3082f9b61e2",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-981-r1/transcript.jsonl.gz",
+      "bytes": 135151,
+      "sha256": "9531990acd0569f37588cab6d1b7e8638bbd0f9eaab20881ced8a5cdbcf95531",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-982-r1/transcript.jsonl.gz",
+      "bytes": 135085,
+      "sha256": "85be4922f581dd267cb6df36e285ed01b08d333c27d526bd80eb7067806eb7a5",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-996-r1/transcript.jsonl.gz",
+      "bytes": 194813,
+      "sha256": "f2738bf073de11f0a57818d6034b87022e033a5d81f478e9543b427a278084f6",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/A/stack-998-r1/transcript.jsonl.gz",
+      "bytes": 127603,
+      "sha256": "df43eb17b169ff7c18e119338ac2e59e863f41f8dd579e8b81f4c09675564137",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1002-r1/transcript.jsonl.gz",
+      "bytes": 292316,
+      "sha256": "0609ac81b59bb895f4fece8acf6d38286a4c6a1c4ef4d0c33847476317d9c98a",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1006-r1/transcript.jsonl.gz",
+      "bytes": 252556,
+      "sha256": "5f873308a184181e9ab8e1bc9597c360c4d7c60946749e83d78fe57f9490a220",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1022-r1/transcript.jsonl.gz",
+      "bytes": 148568,
+      "sha256": "b0104ab49665fa58ccf511ed22a95a90f060915a03d953c3c1f1845ec253ef11",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1026-r1/transcript.jsonl.gz",
+      "bytes": 176289,
+      "sha256": "e0fe5e879f81331e935e501894640c92baace416f7512f1f1ae7da6813240ee6",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1072-r1/transcript.jsonl.gz",
+      "bytes": 133581,
+      "sha256": "03e974c548ddfdcf86b234e32c7c043eac2b11582c6ec95a4cd79369e9bbcca3",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1088-r1/transcript.jsonl.gz",
+      "bytes": 139861,
+      "sha256": "8164ee6a14fe6140d1bbf6e6c19b88904235245a0fe645f4411e8678c062b883",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1090-r1/transcript.jsonl.gz",
+      "bytes": 238964,
+      "sha256": "9a2bf3e9a61fc3f69ec7c61641bafadf571ad0d264319ddbb5269b6115816968",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1109-r1/transcript.jsonl.gz",
+      "bytes": 109297,
+      "sha256": "9f3f3af07e2b9b9b551b7dbdef552f6c3f334d7deb53cd2d81191f42c9bcd26a",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-1111-r1/transcript.jsonl.gz",
+      "bytes": 120552,
+      "sha256": "87024777608300fcb172abb9a70823ddd423ccf025b6e471f7af1ef281e5dc78",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-119-r1/transcript.jsonl.gz",
+      "bytes": 174449,
+      "sha256": "7edcf9061ad2cbe3fef24f545b926abda4508571e5399ffd24cd54283ee4e52b",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-301-r1/transcript.jsonl.gz",
+      "bytes": 255715,
+      "sha256": "52b888719ac53cec852a1a5c742fbdd25576b0dc60a28d6a8c27d45556cbaf40",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-314-r1/transcript.jsonl.gz",
+      "bytes": 201702,
+      "sha256": "423f180d550c1d8e8b65555bebdf15f3b6ce79262a829cd8ba0a89d90f943676",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-330-r1/transcript.jsonl.gz",
+      "bytes": 197058,
+      "sha256": "836417ccddd7fcbdc3b916874ab4fc740a75a41c2294f290f262bc98802130de",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-336-r1/transcript.jsonl.gz",
+      "bytes": 306807,
+      "sha256": "98ae8cb7420d358b44c4d3d554c3d7fbd5f26206e0582b9b072c6fbee035e715",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-349-r1/transcript.jsonl.gz",
+      "bytes": 234916,
+      "sha256": "193f41ec533cef8e6a2eab71373b0a08fd7f65bb02ad2f2a0446e6122624effe",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-371-r1/transcript.jsonl.gz",
+      "bytes": 106122,
+      "sha256": "b6c7a8de9f917f0e55d1654593768c4edc94b55282249a869605fc3ebb3aaaf3",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-496-r1/transcript.jsonl.gz",
+      "bytes": 326368,
+      "sha256": "c24b5920f84bac7a3332ba90d41d02597aa980dd23d3ef15e2a0f0e64603931d",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-502-r1/transcript.jsonl.gz",
+      "bytes": 149483,
+      "sha256": "de6c308cec8f916ce0b0b6ce39a04810967e08db587371f085cf14ea85263e14",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-503-r1/transcript.jsonl.gz",
+      "bytes": 135641,
+      "sha256": "f900d9a81f99f8c2c85e3aed4989575af0dfb25b90c8edd932393769672d01c2",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-547-r1/transcript.jsonl.gz",
+      "bytes": 278527,
+      "sha256": "7d7199c9dda863c6c0ea17683b2fa5c87c051e036b5f04a44e2385c07efcb716",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-548-r1/transcript.jsonl.gz",
+      "bytes": 118588,
+      "sha256": "c0d0d91d93755a9d4c4c6584914740cee901e235fe6ef024b80968919ee2be07",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-562-r1/transcript.jsonl.gz",
+      "bytes": 153795,
+      "sha256": "e283680691cf6795162654f94dd2ccd1e2d30007d1c0f7fea9b98b341392dc24",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-568-r1/transcript.jsonl.gz",
+      "bytes": 233044,
+      "sha256": "b99a652e0fca10f8bafe4d6fc69c900b6ecdd8264b16995d244ffde5afc70436",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-656-r1/transcript.jsonl.gz",
+      "bytes": 93506,
+      "sha256": "e80e6d3b95feccf36518a3b9bf66bde11a561d1fd30beff1c64a42562b1d3c4c",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-659-r1/transcript.jsonl.gz",
+      "bytes": 233588,
+      "sha256": "b7936528fef80f9d3759cc794b3560dba56ae274fa6a74872ca97f97979a2be8",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-666-r1/transcript.jsonl.gz",
+      "bytes": 180592,
+      "sha256": "62dfae899f5066462a8853ededdd283e9a171408f5ecb6d02640cb5c95fec95c",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-676-r1/transcript.jsonl.gz",
+      "bytes": 248006,
+      "sha256": "d38e8b43a63bea8879bf3cea665a4ca5653f4a8ff9f0fc5071e9176f7d0ba4c6",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-728-r1/transcript.jsonl.gz",
+      "bytes": 227703,
+      "sha256": "c1ac2ba78e2d1e5dda20e4117ca177624e9bf51b62352ea9329bf953a9a14b9e",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-823-r1/transcript.jsonl.gz",
+      "bytes": 244035,
+      "sha256": "24f2227ebf6452801bac1b087d14faee9aa9a9bf90074ea8fecb4c80d17674c4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-840-r1/transcript.jsonl.gz",
+      "bytes": 105039,
+      "sha256": "13bf7ea38cb21c9120540b013fdafbd3851af27fb3ada970a0463648d9a79e6f",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-860-r1/transcript.jsonl.gz",
+      "bytes": 178681,
+      "sha256": "fb38c4a017d89368114f4a2cd1b7ffbcee5936339e538b7ad8a40bb967faf69b",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-878-r1/transcript.jsonl.gz",
+      "bytes": 219207,
+      "sha256": "f887d57aebbebe25128c49c69d4071f795e1295a5e2a31c76036ab0cfb624ea3",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-905-r1/transcript.jsonl.gz",
+      "bytes": 189476,
+      "sha256": "241b53540ff62bff70138a27638ffdc2ab091806d7e10f008cab18c889d0a7ad",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-941-r1/transcript.jsonl.gz",
+      "bytes": 238071,
+      "sha256": "5831f7a292c4c44a36895d8d11b087c644d5f20f66036884a35faad10865337b",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-961-r1/transcript.jsonl.gz",
+      "bytes": 320930,
+      "sha256": "002d8bed8b9759f1962cb83449b8682a5cbd0945035e2ac7e661225c449a6b75",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-964-r1/transcript.jsonl.gz",
+      "bytes": 207990,
+      "sha256": "edaae63c1c64a4a599f990dab8178b899f3fed38113094ad42119ca92df8b4f1",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-975-r1/transcript.jsonl.gz",
+      "bytes": 141931,
+      "sha256": "fa28d9a37df7837a6c83309cd33767240bbb1349d6505b7141f8019f7a829ac9",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-981-r1/transcript.jsonl.gz",
+      "bytes": 137458,
+      "sha256": "051e91d453e67cb22ba59e6f5622efc8e9946734de64e18635c3bcf688b18efd",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-982-r1/transcript.jsonl.gz",
+      "bytes": 101019,
+      "sha256": "774566553cd760c6ab59d0600aa78dcbf0cf003da5c52f464f9ed80c51a3b314",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-996-r1/transcript.jsonl.gz",
+      "bytes": 219938,
+      "sha256": "84f437a33fcd68d3bf3241cd21f9ab0f19f48fe7ff4c16bb6eb06e555c1621ce",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/B/stack-998-r1/transcript.jsonl.gz",
+      "bytes": 147608,
+      "sha256": "5719ab1bbd3d1c21e4edab5797c3afb1ea692423c449d9ea1c5bb75e574a91e5",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1002-r1/transcript.jsonl.gz",
+      "bytes": 240053,
+      "sha256": "b9fc98e32864bb7ac472ddfdaac31e4b2807b80ef99bc36e2c92a31442cd23c4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1002-r2/transcript.jsonl.gz",
+      "bytes": 312911,
+      "sha256": "365d075f4bdf69cdfef97057f40419812072c5f845ee225b2aeafa5211351030",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1002-r3/transcript.jsonl.gz",
+      "bytes": 212363,
+      "sha256": "1b8efacc57ce845806acf85beccf740bde8f58faf0459bcec92630bed07d603c",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1006-r1/transcript.jsonl.gz",
+      "bytes": 264961,
+      "sha256": "00fe7a20683d61141813de67e38f9a8a786638d98b45c998742c7d02ff5b09c4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1026-r1/transcript.jsonl.gz",
+      "bytes": 189702,
+      "sha256": "77994a7544841434aad7bb98421804a8995fba8d117efd8dc9b313f7d2c087b4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1072-r1/transcript.jsonl.gz",
+      "bytes": 154853,
+      "sha256": "2abc3cd1caf5970966a99ad1d0ec0008553ee763a8e6f7d031a4d761663c57a6",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1090-r1/transcript.jsonl.gz",
+      "bytes": 290485,
+      "sha256": "cfd32fa3813b1572fc725ac734ba772f550836eb5d5c90d24e4ba9d2eedecdbb",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-1111-r1/transcript.jsonl.gz",
+      "bytes": 144919,
+      "sha256": "5e6df348b48747c547b626609ce3141d166c67c5be8418296a2ff8d15604f709",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-314-r1/transcript.jsonl.gz",
+      "bytes": 227224,
+      "sha256": "acc5860ba1bc452690f3f108273c6ae4c249b38968202a19592a96b8e20ae3fd",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-314-r2/transcript.jsonl.gz",
+      "bytes": 173079,
+      "sha256": "e8b523c6198b3274f9dcc388404963376dbf685d0f295e9dceb18ace9aeb93e6",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-314-r3/transcript.jsonl.gz",
+      "bytes": 174400,
+      "sha256": "d52d39359b063dc82af83bb69e4fd9a228d5330b75702b2283aed534523c8d4a",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-330-r1/transcript.jsonl.gz",
+      "bytes": 176174,
+      "sha256": "cddc2ee1ab5fdba716eac6b2dbb20974f3ab91fc6beb7d68f5a02b95416f79e4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-349-r1/transcript.jsonl.gz",
+      "bytes": 232129,
+      "sha256": "8fb2140c1d161865e9ef7e1523201245c76732412564c9fb8d5c1223dd2f56ef",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-371-r1/transcript.jsonl.gz",
+      "bytes": 102897,
+      "sha256": "99ded1c58c9d509db8dd7ac4371e68180f0fca32ce062529b53998ee1c552839",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-496-r1/transcript.jsonl.gz",
+      "bytes": 252932,
+      "sha256": "4400ff4a6e76eb00d22935a45926deb9729c5eb6c6c738f9f7c4328a5d5268aa",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-502-r1/transcript.jsonl.gz",
+      "bytes": 124662,
+      "sha256": "2e3be4d1a48d6e1f0c66cbededa76fd906ef06392e5779dae5580612da4acf69",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-503-r1/transcript.jsonl.gz",
+      "bytes": 170653,
+      "sha256": "5cb0a045517408b12eda1b5956c2dbcce5604eeed2c432af5f7c86c0f1e53227",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-547-r1/transcript.jsonl.gz",
+      "bytes": 290978,
+      "sha256": "2df9c3629cb139b1e68638422706752cd31b859ee35cb9eb601c3a535123f11e",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-547-r2/transcript.jsonl.gz",
+      "bytes": 275082,
+      "sha256": "5b97531e12fea9b1928922df12407d2085ed45490b4b5bd96ba6502a524de2b0",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-547-r3/transcript.jsonl.gz",
+      "bytes": 367580,
+      "sha256": "9e51160aab9f364aa14ac0d49cdb8ed7243c963d243b04e2c59aae9ba0f9fa83",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-562-r1/transcript.jsonl.gz",
+      "bytes": 176710,
+      "sha256": "7ae000f1e6622ef1d33a0494e8ed296ebf54b39d9c71747c63346df666fcbf8e",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-568-r1/transcript.jsonl.gz",
+      "bytes": 274642,
+      "sha256": "5f24fe19142a14c2b1c47087211d48bf793e6db643e29a44d767b84ed2e96471",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-656-r1/transcript.jsonl.gz",
+      "bytes": 81733,
+      "sha256": "dd1ccaad5b8a3e4275358ec8c10bcfbb124777c28c820c5567791a4f8761e004",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-666-r1/transcript.jsonl.gz",
+      "bytes": 192276,
+      "sha256": "49028b6dfc8e35b2102358517c8fcfcea8a8a497ae550c4912c60d2b67b93997",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-666-r2/transcript.jsonl.gz",
+      "bytes": 216960,
+      "sha256": "c24eaa870f82303254990b400c3fbab41b16ceb0dea8529c53108d65ee38bc87",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-666-r3/transcript.jsonl.gz",
+      "bytes": 206484,
+      "sha256": "5e6b1fa643c3f25109b8e95fabd6e640359d98ccfebadec722a1d9d88181d564",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-676-r1/transcript.jsonl.gz",
+      "bytes": 209303,
+      "sha256": "06a6ca536a2c78739810db60638a16c75bbe757b83129c7919679940b48d8250",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-728-r1/transcript.jsonl.gz",
+      "bytes": 180155,
+      "sha256": "8db7ce31611cbd3307e4047a6a20fce96be97499032612119effa3da775503d7",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-823-r1/transcript.jsonl.gz",
+      "bytes": 269464,
+      "sha256": "370b8461f0744f84653d961834120aa20f5c5913393d65d55f928586e5c092e4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-823-r2/transcript.jsonl.gz",
+      "bytes": 250907,
+      "sha256": "e91df661b0dc78a6716d2491b0082ea4e4785606273a12d4c88ab897399c929d",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-823-r3/transcript.jsonl.gz",
+      "bytes": 246216,
+      "sha256": "a76ad7e8ededb3fae4e6685f6e19c99e336ddee393c0da2b2624ee9fefe3d1fb",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-840-r1/transcript.jsonl.gz",
+      "bytes": 122676,
+      "sha256": "ec1b5afe8e1e606dfc1c19c7924abda7fce9f0c8bf4e0a41846b946ed6c9a2d4",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-860-r1/transcript.jsonl.gz",
+      "bytes": 268191,
+      "sha256": "6e3eb4a4dc8387f242c53a2d6f9af12cf85b5becee8f435bced872a44f6f4071",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-860-r2/transcript.jsonl.gz",
+      "bytes": 257706,
+      "sha256": "3481aa182fc5eb10a86177f4bef76e050038b597c9ecd7a7f7f23d534c39441a",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-860-r3/transcript.jsonl.gz",
+      "bytes": 221150,
+      "sha256": "6bf2a6c700f19c5dc1635b0603bc933a23fcf011a8957ee3e581d2aa0bfb4b93",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-905-r1/transcript.jsonl.gz",
+      "bytes": 187468,
+      "sha256": "2bf3b7ecf1e6fad3bd217ad3a53e9ec368b256ab52e8984a08166504e460eefa",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-941-r1/transcript.jsonl.gz",
+      "bytes": 239397,
+      "sha256": "812b69b418357bcb06e20166fb6c74fcda7d1add5d9919f976e96c53e71c3599",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-941-r2/transcript.jsonl.gz",
+      "bytes": 272841,
+      "sha256": "b0ba8daa275f0629bc54a288e9aad0ec0ab06948982691e4a212ac98427522a8",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-941-r3/transcript.jsonl.gz",
+      "bytes": 327405,
+      "sha256": "3494e75aac4aae22ba9a313e674c00474ab8011d7db6eef7ccc25f873fe44df7",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-961-r1/transcript.jsonl.gz",
+      "bytes": 221988,
+      "sha256": "32569995a8c067bda776222b420cfe93d9fc3440891d377d0bb35db72e3e2243",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-961-r2/transcript.jsonl.gz",
+      "bytes": 305710,
+      "sha256": "461974b6006dbac72ead79a67fe11eff9e218095223809406fd37fe340cf7d2f",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-961-r3/transcript.jsonl.gz",
+      "bytes": 289795,
+      "sha256": "a08734c7426e8f06e458524d6b08a366fc70312eb43bd06733f5b207c282e49b",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-964-r1/transcript.jsonl.gz",
+      "bytes": 251910,
+      "sha256": "a75a02243191cfd253dd565c4bdc886b0a9ced8cb077eacd977b306d2bb626d0",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-981-r1/transcript.jsonl.gz",
+      "bytes": 100213,
+      "sha256": "46f38b5519133700acbc15b1065037b20ad415513426c5de3c0b5c6ca2020901",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-982-r1/transcript.jsonl.gz",
+      "bytes": 146751,
+      "sha256": "3fa1b8fdb787fea05b04f63935e4d00aa28b0b28adfdbe1732bba1c83847fee7",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-996-r1/transcript.jsonl.gz",
+      "bytes": 213039,
+      "sha256": "85035eb1486809472bb91e185b095d2d1c4ce0dd7332f7e651b6f01d9b2be90e",
+      "credential_pattern_counts": {}
+    },
+    {
+      "path": "eval/change-risk/results/C/stack-998-r1/transcript.jsonl.gz",
+      "bytes": 167371,
+      "sha256": "e9f655455e4c82b08890550203ed1ca3fc91648dd672085324976277cc490567",
+      "credential_pattern_counts": {}
+    }
+  ]
+}

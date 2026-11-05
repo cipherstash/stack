@@ -1,0 +1,71 @@
+{
+  "case": "stack-547",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "v3 upgrade/reinstall drops customer columns that use eql_v3 domains",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new v3 upgrade/install path re-runs a bundle starting with DROP SCHEMA eql_v3 CASCADE, where the column domains live, so dependent customer columns would be dropped; v2 avoids this via a public type created only if absent."
+    },
+    {
+      "id": "FS-2",
+      "title": "Supabase v3 filters put decryptable ciphertext and all index terms into request URLs",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same verified full-envelope-in-URL mechanism in query-builder-v3 encryptCollectedTerms; the change introduces it."
+    },
+    {
+      "id": "FS-3",
+      "title": "Encrypted like/ilike on default-configured v3 text columns silently returns no rows",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The default include_original:true plus the cs remap with a full-envelope operand means default TextSearch like/ilike silently miss substring matches, as the code comment and docs acknowledge."
+    },
+    {
+      "id": "FS-4",
+      "title": "wasm-inline client accepts v3 schemas but emits v2-wire envelopes",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "wasm-inline Encryption() calls wasmNewClient without eqlVersion or the mixed-schema guard while the change widens getColumnName to accept v3 columns, so v3 use on edge runtimes would get the FFI's v2 default wire format."
+    },
+    {
+      "id": "FS-5",
+      "title": "protect-ffi 0.27 bump changes v2 behaviour for existing users",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculation that protect-ffi 0.27 changes v2 output; no cited code shows a v2 wire change and eqlVersion stays undefined for v2."
+    }
+  ],
+  "cost_usd": 2.4099875000000006,
+  "wall_seconds": 262.125678,
+  "case_note": "Missed KD-1.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

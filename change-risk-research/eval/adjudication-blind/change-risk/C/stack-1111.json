@@ -1,0 +1,37 @@
+{
+  "case": "stack-1111",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A pinned mise-action version ignores cache_key_prefix, so the shared key and the glibc failure come back",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The mechanism depends on an unverified assumption that the pinned mise-action versions drop cache_key_prefix; the cited YAML and test show nothing of the kind, and head CI is green."
+    },
+    {
+      "id": "FS-2",
+      "title": "Cold cache after merge makes every job recompile its cargo tools",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The cited cargo tools and fuzz timeout-minutes: 30 exist, but a one-off slow cold-cache run is an expected, self-healing consequence, and head CI shows no timeouts."
+    }
+  ],
+  "cost_usd": 1.0228692999999998,
+  "wall_seconds": 156.096163,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

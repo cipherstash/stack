@@ -1,0 +1,272 @@
+{
+  "case": "stack-314",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Fail fast when `DATABASE_URL` is missing instead of relying on `!`. Line 4 can pass `undefined` at runtime and fail later with a less clear error. Add an explic",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "An undefined databaseUrl is caught by the zod schema with a clear 'databaseUrl is required' message, so it does not fail later with an unclear error."
+    },
+    {
+      "id": "CR-2",
+      "title": "Fix markdownlint table spacing (MD058). At least one table block in this section is missing required surrounding blank lines, which can keep markdown lint check",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "Markdown lint spacing."
+    },
+    {
+      "id": "CR-3",
+      "title": "Version output is inconsistent with package metadata. CLI help/version currently reports `0.1.0` while the package manifest is `0.0.0`, which will mislead users",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Hardcoded '0.1.0' version string differs from the manifest's 0.0.0, but this is a cosmetic mismatch that changesets will bump anyway."
+    },
+    {
+      "id": "CR-4",
+      "title": "Avoid emitting raw runtime error messages. Printing arbitrary `error.message` can leak sensitive plaintext from downstream errors.",
+      "nitpick": false,
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "No shown path by which plaintext reaches error.message in the CLI's top-level handler."
+    },
+    {
+      "id": "CR-5",
+      "title": "Avoid `process.exit` inside exported library API. `loadStashConfig()` is publicly exported; forcefully exiting the process makes it unsafe to consume programmat",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "process.exit in an exported loader is a documented API design preference, not a release defect."
+    },
+    {
+      "id": "CR-6",
+      "title": "Do not log raw error objects from config loading. Logging the full caught error can expose sensitive plaintext from config/runtime failures.",
+      "nitpick": false,
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Config-load errors come from evaluating the config file; no mechanism is shown by which plaintext would leak."
+    },
+    {
+      "id": "CR-7",
+      "title": "Ensure `pg.Client` is always closed, including connect failures. `client.end()` is currently in the second try/finally block (lines 218\u2013220), so a `connect()` e",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "If client.connect() throws at installer/index.ts:191, the error is rethrown before the try/finally that calls client.end(), so the client is not cleaned up (low impact)."
+    },
+    {
+      "id": "CR-8",
+      "title": "Add a timeout/abort path to remote script download. `fetch(url)` without an abort signal can hang indefinitely on network stalls, blocking CLI completion. Since",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "fetch has no timeout, but in an interactive CLI that is a minor UX robustness nit."
+    },
+    {
+      "id": "CR-9",
+      "title": "Avoid direct `__dirname` usage in config to stay ESM-safe. Line 10 uses `__dirname` without defining it, which will cause a `ReferenceError` in this ESM package",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Vitest/Vite bundle config files and inject __dirname, so using __dirname in vitest.config.ts works in type:module packages."
+    },
+    {
+      "id": "CR-10",
+      "title": "Global peer-dependent bump behavior changed; this can silently skip coordinated releases. Lines 11\u201313 enable `onlyUpdatePeerDependentsWhenOutOfRange: true`, whi",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same confirmed experimental changesets option that changes peer-dependent bump behavior repo-wide."
+    },
+    {
+      "id": "CR-11",
+      "title": "Use the exact API name in the changeset note. Line 5 doesn\u2019t match the actual public surface added in this PR. The note should reference `EncryptionClient.getEn",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Changeset wording only."
+    },
+    {
+      "id": "CR-12",
+      "title": "Fix `require.types` path to match tsup's actual output. Line 28 points `require.types` to `./dist/index.d.cts`, but tsup's `dts: true` with default settings emi",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "tsup with format ['cjs','esm'] and dts:true emits index.d.cts for the cjs build, so the require.types path is correct."
+    },
+    {
+      "id": "CR-13",
+      "title": "Use `execFileSync` with array args and pass `--out=${outDir}` explicitly to avoid command injection. Line 125 interpolates the user-supplied `migrationName` dir",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "install.ts:125 interpolates --name into an execSync shell string, and outDir (line 107) is never passed to drizzle-kit, so --out can disagree with where the migration is generated."
+    },
+    {
+      "id": "CR-14",
+      "title": "Make config state transition atomic and scoped to active rows. Lines 33-42 perform a global state rewrite plus insert without a transaction. If insert fails aft",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "push.ts:33-42 is non-atomic and unscoped; a failed INSERT leaves no active config."
+    },
+    {
+      "id": "CR-15",
+      "title": "Fix the config key name in the error guidance. Line 149 says to check `\"encryptClient\"` in `stash.config.ts`, but the actual config field is `client`.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Error text says \"encryptClient\" instead of \"client\"; message wording only."
+    },
+    {
+      "id": "CR-16",
+      "title": "Don\u2019t assume the first export is an initialized `EncryptionClient`. Line 170 selects `Object.values(moduleExports)[0]` and Line 179 calls `getEncryptConfig()` u",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head the code uses Object.values(...).find() with a getEncryptConfig type guard and a null check, not [0] with an unguarded call."
+    },
+    {
+      "id": "CR-17",
+      "title": "Add integrity verification for downloaded install SQL. The flow currently documents downloading SQL from GitHub releases and writing it directly into migrations",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The documented drizzle flow writes SQL downloaded from GitHub into migrations with no integrity check, matching the code in install.ts."
+    },
+    {
+      "id": "CR-18",
+      "title": "Avoid `process.exit(1)` behavior in a programmatic API contract. For a library API, documenting hard process termination is risky for consumers. Prefer throwing",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "An API design preference about documented process.exit."
+    },
+    {
+      "id": "CR-19",
+      "title": "Permission requirements are inconsistent between sections. The `checkPermissions` section includes an extra `pgcrypto` branch (`SUPERUSER` or `CREATEDB`), but \u201c",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Documentation consistency between SKILL.md sections."
+    },
+    {
+      "id": "CR-20",
+      "title": "`stashConfigSchema` omits declared config fields and drops them from resolved output. `StashConfig` declares `workspaceId` and `clientAccessKey`, but validation",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The zod schema at config/index.ts:44-49 only declares databaseUrl and client, so the declared workspaceId/clientAccessKey are stripped from ResolvedStashConfig."
+    },
+    {
+      "id": "CR-21",
+      "title": "Resolve `client` path relative to the located config file, not only `process.cwd()`. If the command runs from a subdirectory, `loadStashConfig()` can find a par",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "findConfigFile walks up parent dirs, but loadEncryptConfig resolves client against process.cwd() (line 145), so running from a subdirectory resolves the wrong path."
+    },
+    {
+      "id": "CR-22",
+      "title": "Add required Node/pnpm constraints for the example app. This manifest is missing explicit runtime/tooling constraints for the example project.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Missing engines field in an example package.json is a style or tooling nit."
+    },
+    {
+      "id": "CR-23",
+      "title": "Consider a shared 'not implemented' command helper to reduce duplication. init/status/push/migrate currently repeat the same placeholder pattern.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "A refactoring or duplication suggestion."
+    },
+    {
+      "id": "CR-24",
+      "title": "Prefer importing EQLInstaller through the public API in tests. These tests currently reach into @/installer/index.ts; switching to @/index.ts keeps tests aligne",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "A test import-path preference, with no release risk."
+    },
+    {
+      "id": "CR-25",
+      "title": "Prefer testing through the package public entrypoint. These tests currently import loadStashConfig from an internal module path.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "A test import-path style preference."
+    },
+    {
+      "id": "CR-29",
+      "title": "Return a defensive copy instead of the internal config reference. getEncryptConfig returns the internal encryptConfig object directly, so callers can mutate cli",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Returning the internal reference from the getter is a defensive-copy style concern, not a material risk."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,58 @@
+{
+  "case": "stack-860",
+  "evaluator": "change-risk/C-r2",
+  "run": 2,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Deployments with a base64 clientKey fail at client construction after upgrading",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Native entry still passes `strategy`; a supplied authStrategy could be dropped by 0.31",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "As r1."
+    },
+    {
+      "id": "FS-3",
+      "title": "WASM encryptConfig no longer pre-normalised; a cast mapped differently by 0.31 would change column semantics",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    },
+    {
+      "id": "FS-4",
+      "title": "Callers branching on DynamoDB error.code stop matching transport errors",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.8267221,
+  "wall_seconds": 245.359816
+}

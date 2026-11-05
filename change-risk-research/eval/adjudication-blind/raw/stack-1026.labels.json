@@ -1,0 +1,76 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "eqlAssets throws or reports not-on-npm without thisRun or a changesets tag (eql-release-assets.mjs:91-105), and the release.yml comment's claim that changesets/action sets publishedPackages after a failed publish is untested (tests inject it), so the 3.0.6 repair may fail on every push."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "eqlAssets returns needed=false as soon as the eql-<v> tag exists, without checking for docs or image, so once eql-sql has succeeded a failed eql-docs/eql-image (e.g. GHCR access, listed as outstanding in AGENTS.md) is never repaired by later pushes."
+    },
+    {
+      "id": "F-03",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculative registry-cache inconsistency after the wait succeeds; the E402 risk pre-existed and nothing in the cited code shows the change causes it."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new repair path calls head's local reusable workflow (pinned mise 2026.4.0, head's task invocation and paths) but checks out an older inputs.ref, a tooling mismatch the change introduces; it plausibly causes build failures or SQL that does not match the npm tarball."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new wait step throws at its 900 s deadline before changesets/action runs, holding the whole JS release until a re-run; this is a real, loud consequence of the change."
+    },
+    {
+      "id": "F-06",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The timeout behaviour is accurately described, but the finding itself concludes it is a loud, recoverable, intended trade-off and recommends accepting it."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Recovery depends on changesets/action setting publishedPackages and pushing tags when the publish command fails, which is unverified (tests inject it); otherwise eqlAssets throws on every production push."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Repair builds rebuild old source with head's workflow and a 'latest' Rust toolchain; AGENTS.md says nothing proves the rebuilt bytes match npm's, so a released SQL bundle or image could differ silently."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The cited code shows eqlAssets throws without thisRun or a changesets tag and eql-assets runs on every production push; changesets/action runs the publish via getExecOutput, which throws on a non-zero exit before outputs and tags are set, so the targeted repair can fail repeatedly."
+    }
+  ]
+}

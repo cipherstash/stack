@@ -1,0 +1,133 @@
+{
+  "summary": {
+    "cases": 8,
+    "impact_identical_all_runs": 6,
+    "verdict_identical_all_runs": 4,
+    "attention_identical_all_runs": 8,
+    "known_defects": 9,
+    "known_defects_found_in_all_3": 3,
+    "known_defects_found_in_1_or_2": 1,
+    "known_defects_never_found": 5
+  },
+  "cases": [
+    {
+      "case": "stack-314",
+      "expert_impact": "medium",
+      "impact": ["high", "high", "high"],
+      "verdict": [
+        "changes_or_verification_required",
+        "changes_or_verification_required",
+        "changes_or_verification_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [[], [], []],
+      "known_defect_hits_of_3": {
+        "KD-1": 0
+      }
+    },
+    {
+      "case": "stack-547",
+      "expert_impact": "critical",
+      "impact": ["critical", "critical", "critical"],
+      "verdict": [
+        "changes_or_verification_required",
+        "changes_or_verification_required",
+        "changes_or_verification_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [[], [], []],
+      "known_defect_hits_of_3": {
+        "KD-1": 0
+      }
+    },
+    {
+      "case": "stack-666",
+      "expert_impact": "medium",
+      "impact": ["medium", "medium", "medium"],
+      "verdict": [
+        "changes_or_verification_required",
+        "focused_review_required",
+        "focused_review_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [["KD-1"], ["KD-1"], ["KD-1"]],
+      "known_defect_hits_of_3": {
+        "KD-1": 3
+      }
+    },
+    {
+      "case": "stack-823",
+      "expert_impact": "high",
+      "impact": ["high", "high", "high"],
+      "verdict": [
+        "changes_or_verification_required",
+        "changes_or_verification_required",
+        "changes_or_verification_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [["KD-2"], ["KD-2"], ["KD-2"]],
+      "known_defect_hits_of_3": {
+        "KD-1": 0,
+        "KD-2": 3,
+        "KD-3": 0
+      }
+    },
+    {
+      "case": "stack-860",
+      "expert_impact": "high",
+      "impact": ["high", "high", "high"],
+      "verdict": [
+        "changes_or_verification_required",
+        "focused_review_required",
+        "focused_review_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [[], [], []],
+      "known_defect_hits_of_3": {}
+    },
+    {
+      "case": "stack-941",
+      "expert_impact": "high",
+      "impact": ["medium", "high", "high"],
+      "verdict": [
+        "focused_review_required",
+        "changes_or_verification_required",
+        "focused_review_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [["KD-2"], ["KD-2"], ["KD-2"]],
+      "known_defect_hits_of_3": {
+        "KD-1": 0,
+        "KD-2": 3
+      }
+    },
+    {
+      "case": "stack-961",
+      "expert_impact": "high",
+      "impact": ["high", "high", "high"],
+      "verdict": [
+        "focused_review_required",
+        "focused_review_required",
+        "focused_review_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [[], [], []],
+      "known_defect_hits_of_3": {}
+    },
+    {
+      "case": "stack-1002",
+      "expert_impact": "high",
+      "impact": ["high", "high", "medium"],
+      "verdict": [
+        "changes_or_verification_required",
+        "focused_review_required",
+        "focused_review_required"
+      ],
+      "attention": [true, true, true],
+      "matched": [["KD-1"], ["KD-1"], []],
+      "known_defect_hits_of_3": {
+        "KD-1": 2
+      }
+    }
+  ]
+}

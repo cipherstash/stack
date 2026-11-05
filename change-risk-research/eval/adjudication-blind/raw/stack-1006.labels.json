@@ -1,0 +1,76 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The two-value marker and the known-red live check are a documented, time-boxed test-hygiene follow-up; forgetting it weakens a guard but carries no direct release risk."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new 3.0.6 data edge runs the full bundle, which opens with DROP SCHEMA eql_v3 CASCADE and has no dependency protections (per safe-eql-reinstall.md), so dependent policies, indexes and grants are dropped on every existing database for a stamp-only release."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "1.x databases now walk both the 3.0.5 and 3.0.6 reinstall edges in one migrate, as the migration header and changeset confirm, which lengthens the cascading-DDL lock window; this is plausible, though the transaction behaviour is not directly verified."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Re-emitting the baseline and adding the 3.0.6 invariant to head.json means stale vendored spaces (now including 3.0.5-from-main ones) make db init refuse the data-class edges, as the pinned DEFECT test shows; the mechanism partly predates this change."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "At head eql is 3.0.5 while the migrations bake 3.0.6; the lockstep test only requires that some migration bakes the installed digest and the marker accepts both versions, so nothing offline blocks a stack-prisma release that pins eql 3.0.5 while installing 3.0.6."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same release-ordering gap as F-05: eql is outside stack-prisma's fixed changeset group and the relaxed lockstep test passes, so stack-prisma could ship baking 3.0.6 against a pinned eql 3.0.5."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The 3.0.6 edge executes readVerifiedInstallSql(), whose bundle begins with DROP SCHEMA ... CASCADE, so existing databases (newly including those already at 3.0.5) lose dependent objects for a version-stamp-only change."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The baked 9b6dab78 digest is attested only by itself while the in-tree manifest is 3.0.5/accde003, and the relaxed lockstep test means drift or an inverted release order is not caught offline."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new 3.0.6 edge reruns the full CASCADE reinstall on every existing database for a stamp-only change, and dependent indexes, policies and grants are not restored; the changeset confirms this."
+    }
+  ]
+}

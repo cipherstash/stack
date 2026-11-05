@@ -1,0 +1,6 @@
+{
+  "F-01": {
+    "evaluator": "coderabbit/original",
+    "finding": "CR-1"
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "case": "stack-349",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Rewritten migration drops the original column on a populated table, losing its data",
+      "impact": "critical",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Type-string change makes drizzle-kit regenerate ALTERs for already-encrypted columns, which the rewriter turns into DROPs of ciphertext",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Adjacent to KD-1 as in B and C; not a match."
+    },
+    {
+      "id": "FS-3",
+      "title": "Shipped stash-cli skill and stack README still instruct the removed `db setup` command",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Auto-detection without opt-out picks the wrong install mode",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-5",
+      "title": "New .env precedence silently retargets DATABASE_URL for db install/push and migrations",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.8407256999999997,
+  "wall_seconds": 247.370268,
+  "case_note": "KD-1 not matched; FS-2 adjacent."
+}

@@ -1,0 +1,60 @@
+{
+  "case": "stack-314",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "push leaves the database with no active EQL configuration when the insert fails",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "push.ts:33-42 runs an unscoped UPDATE and a separate INSERT with no transaction, so an INSERT failure (e.g. the cast_as CHECK) leaves no active config."
+    },
+    {
+      "id": "FS-2",
+      "title": "install --force drops EQL-dependent indexes and constraints on encrypted columns",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "--force re-executes the EQL script, which begins with DROP SCHEMA eql_v2 CASCADE, dropping dependent constraints and indexes, while the code calls it 'safe to re-run'."
+    },
+    {
+      "id": "FS-3",
+      "title": "install executes an unpinned, unverified 'latest' EQL SQL bundle as a privileged role",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Unpinned releases/latest SQL is executed without integrity or version check, while the repo vendors EQL 2.1.8."
+    },
+    {
+      "id": "FS-4",
+      "title": "A positional argument after --dry-run silently disables the dry run",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "parseArgs (stash-forge.ts:43-53) consumes the next non-flag token as a value, so '--dry-run foo' leaves flags['dry-run'] unset and the command runs for real."
+    }
+  ],
+  "cost_usd": 1.7105069000000002,
+  "wall_seconds": 226.653946,
+  "case_note": "Missed KD-1 (jiti default-export interop).",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

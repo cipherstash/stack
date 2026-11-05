@@ -1,0 +1,47 @@
+{
+  "case": "stack-503",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Partial release: some packages publish via OIDC, others fail, leaving published dependents pinned to unpublished sibling versions",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Unpinned npm@^11.5.1 is fetched into the job that can mint npm publish credentials",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Rated critical; overstated."
+    },
+    {
+      "id": "FS-3",
+      "title": "First post-merge release fails closed because the OIDC path is not actually used by changesets/pnpm",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    }
+  ],
+  "cost_usd": 1.4309488999999997,
+  "wall_seconds": 228.167313
+}

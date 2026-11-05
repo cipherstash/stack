@@ -1,0 +1,58 @@
+{
+  "case": "stack-941",
+  "evaluator": "change-risk/C-r3",
+  "run": 3,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "No test pins the production-mode guard on the JS/FFI publish jobs, now that release.yml can be dispatched",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Once armed, the crate and npm EQL releases can diverge, because release-plz does not depend on release.yml's outcome",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "GitHub-release and image SQL are rebuilt separately from the bytes npm and the crate ship, with no digest cross-check",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "If an armed production release fails after the npm publish, nothing can produce the SQL, docs and image afterwards",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Chain keyed on this run's publishedPackages; a failed run cannot be re-driven."
+    }
+  ],
+  "cost_usd": 2.3438927000000005,
+  "wall_seconds": 338.009382
+}

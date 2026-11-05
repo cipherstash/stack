@@ -1,0 +1,62 @@
+{
+  "case": "stack-666",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Add E2E coverage for the missing-package guidance. This install hint is user-facing, so keep it covered by a CLI regression in the E2E suite.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is a request for more test coverage of a hint message and points to no defect."
+    },
+    {
+      "id": "CR-2",
+      "title": "`warnOnVersionSkew` loses the prod/dev split, so its alignment command misclassifies `stash`. `skewed.map(({ pkg }) => pinnedSpec(pkg))` is passed as the *prod*",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "There is no warnOnVersionSkew at head; align commands are built through splitProdDev, which puts stash in dev."
+    },
+    {
+      "id": "CR-3",
+      "title": "Print alignment commands when missing packages and skew coexist non-interactively. This path installs only missing packages, but never displays `alignCommands`.",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "When missing packages and skew both occur non-interactively, the code takes the install path and never prints alignCommands, which contradicts the docstring's promise to print the exact align commands."
+    },
+    {
+      "id": "CR-4",
+      "title": "Verify all first-party packages in the manual-install guidance. Checking only `@cipherstash/stack` does not detect skew in the integration adapter (affects skil",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Only a documentation wording suggestion for the skill notes; init itself already checks adapter skew."
+    },
+    {
+      "id": "CR-5",
+      "title": "Do not report success while alignment failed or skew remains. An alignment command can fail while every package remains present at its old version.",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The post-install re-check only tests presence, so a failed align command leaves the old versions present and still logs 'Stack dependencies installed.' even though skew remains."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,48 @@
+{
+  "case": "stack-503",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Partial publish leaves released packages depending on unpublished siblings",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "With NPM_TOKEN removed, each package publishes only through its own Trusted Publisher, so a missing registration can partially publish packages that pin workspace:* siblings (protect->schema, prisma-next->stack), as the cited lines confirm."
+    },
+    {
+      "id": "FS-2",
+      "title": "Floating npm@^11.5.1 install runs unpinned code in the OIDC-capable release job",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The PR adds a floating `npm install -g npm@^11.5.1` in a job with id-token: write, and that npm performs the publish: a newly introduced supply-chain exposure with a clear pinning mitigation."
+    },
+    {
+      "id": "FS-3",
+      "title": "OIDC auth path not actually taken by changeset publish, so every publish still fails",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative: the finding concedes neither changesets/action .npmrc behavior nor pnpm-to-npm delegation was checked, the cited code shows no failing mechanism, and the consequence equals the base state."
+    }
+  ],
+  "cost_usd": 1.1051046999999998,
+  "wall_seconds": 177.867274,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

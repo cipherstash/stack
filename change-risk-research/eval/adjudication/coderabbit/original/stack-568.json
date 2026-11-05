@@ -1,0 +1,61 @@
+{
+  "case": "stack-568",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "`result.failure.error.message` uses the wrong shape. `failure` should expose the message directly; otherwise an auth-construction failure can throw a secondary ",
+      "nitpick": false,
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "withdrawn by CodeRabbit itself on the PR"
+    },
+    {
+      "id": "CR-2",
+      "title": "Failure-type handling is less granular than the sibling implementation. `checkExistingAuth()` treats every `detected.failure` / `result.failure` as \"not authent",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "all failures treated as not authenticated; minor"
+    },
+    {
+      "id": "CR-3",
+      "title": "Consider extracting the repeated failure-handling into a helper. The `if (x.failure) { log; process.exit(1) }` pattern is repeated three times (Lines 40-43, 57-",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    },
+    {
+      "id": "CR-4",
+      "title": "Consider covering the rethrow and `detect()`-failure branches. The mock only drives the `getToken()` \u2192 `NOT_AUTHENTICATED` path.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    },
+    {
+      "id": "CR-5",
+      "title": "Consider adding a test for the `AccessKeyStrategy.create` failure path. The mock at Line 22 only returns `{ data: ... }`.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

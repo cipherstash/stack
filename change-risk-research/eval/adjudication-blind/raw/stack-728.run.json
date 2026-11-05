@@ -1,0 +1,12 @@
+{
+  "case": "stack-728",
+  "exit_code": 0,
+  "started": "2026-10-12T23:57:17.955456+00:00",
+  "wall_seconds": 43.366725,
+  "net_flags": [
+    "cat > /srv/blind/stack-728/labels.json <<'EOF'\n{\"labels\": [\n{\"id\": \"F-01\", \"label\": \"valid\", \"matches\": [], \"evidence_ok\": true, \"actionable\": true, \"reason\": \"The newly wired v3 sweep rewrites every "
+  ],
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "total_cost_usd": 0.3402615
+}

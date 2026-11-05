@@ -1,0 +1,49 @@
+{
+  "case": "stack-1002",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "linux-gnu auth binaries built on Ubuntu 24.04 with no glibc floor fail to load on older Linux",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "gnu legs build with plain napi build on Ubuntu 24.04 runners without the glibc 2.28 pin the FFI line uses, and no symbol-version check exists; plausible raised glibc floor."
+    },
+    {
+      "id": "FS-2",
+      "title": "linux-x64-musl leg built without -crt-static: cdylib dropped, auth build fails and blocks the JS release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Flags the musl leg as built without proper linkage configuration on a glibc host and notes the preflight's musl check would not catch a mis-linked binary that fails on Alpine, recommending an Alpine load test."
+    },
+    {
+      "id": "FS-3",
+      "title": "Publish path ships platform binaries without the architecture/libc/load checks the preflight performs",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Identifies that a cross-built binary with wrong libc can ship because the publish-path build verifies only tarball name and .node presence, with libc checks confined to the dispatch-only preflight."
+    }
+  ],
+  "cost_usd": 1.8737635000000001,
+  "wall_seconds": 262.459647,
+  "case_note": "KD-1 found.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,290 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "013e3ff31f41d39244ece5c4f2f46422ef4ed668",
+  "head_sha": "aca5cc8ebeb99a825c43bd2d9d18d7bdc1f17413",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "B",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "partial",
+      "source": "CASE.md",
+      "note": "Only the title 'fix(deps): bump next to 15.5.24' is given; no PR body."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI runs for the head commit were provided."
+    },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; package layout was read from source at head instead."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "source": "pnpm-lock.yaml and package.json files at head",
+      "note": "Derived from the lockfile and manifests in the checkout; no external graph was supplied."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "collect-evidence reported no CODEOWNERS data relevant to this change."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, base ancestry only)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No release or deployment notes were provided."
+    }
+  },
+  "summary": "Dependency-only change: the `security` catalog pin for `next` moves from 15.5.23 to 15.5.24 and the workspace override floor is raised from `next@<15.5.18 -> ~15.5.18` to `next@<15.5.24 -> ~15.5.24` (comment cites GHSA-2xp9-vwfh-vxw4 / CVE-2026-75604). The lockfile is regenerated to match: next, @next/env and the eight @next/swc-* binaries move to 15.5.24, and the dependents @clerk/nextjs and evlog are re-keyed. In this repository `next` is only a devDependency of @cipherstash/nextjs (whose published peer range `^14 || ^15` is unchanged, and tsup externalises it) and an optional peer of evlog, a runtime dependency of @cipherstash/stack. The lockfile and overrides are not published, so customers' installed next version and the shipped dist output do not change. The realistic failure is a local/CI one: a patch-level behaviour or type change in next/server or next/headers breaking @cipherstash/nextjs typecheck or tests. Impact is low. CI wiring that would catch that exists (frozen-lockfile install, nextjs typecheck, turbo test) but no CI results were provided. A side note for reviewers: this bump does not fix the CVE for customers, who pick their own next version.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "dependency",
+      "description": "The workspace `security` catalog pins next to 15.5.24 (was 15.5.23); @cipherstash/nextjs consumes it as a devDependency via `catalog:security`. Lockfile resolves next@15.5.24 and its @next/env and @next/swc-* platform binaries with new integrity hashes.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-4"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "configuration",
+      "description": "The pnpm override is tightened from `next@<15.5.18 -> ~15.5.18` to `next@<15.5.24 -> ~15.5.24`. In the lockfile this also rewrites the recorded `next` peer range of @clerk/nextjs and evlog to `~15.5.24`. Overrides only apply to installs of this workspace; they are not part of any published package manifest.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-1"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "No change to the published @cipherstash/nextjs contract: its peerDependency stays `next: ^14 || ^15`, and tsup (default externals) does not bundle next into dist. Published @cipherstash/stack lists evlog 1.11.0 unchanged; next remains evlog's optional peer that consumers resolve themselves.",
+      "certainty": "inferred",
+      "evidence": ["E-4", "E-5", "E-6"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "low",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "pnpm-workspace.yaml / pnpm-lock.yaml (workspace dependency resolution)",
+      "kind": "other",
+      "relationship": "changed",
+      "how": "Catalog pin, override and lockfile entries for next updated.",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/nextjs (packages/nextjs)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "devDependency on next via catalog:security; src imports next/server and next/headers, and its test suite imports next/server. Build and typecheck run against the bumped next.",
+      "evidence": ["E-4", "E-7", "E-8"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/stack (evlog optional peer on next)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "Depends on evlog 1.11.0, whose lockfile snapshot now resolves its optional next peer to 15.5.24 inside the workspace only.",
+      "evidence": ["E-6", "E-1"]
+    },
+    {
+      "id": "AC-4",
+      "name": "CI tests workflow (frozen-lockfile install, nextjs typecheck, turbo test)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Installs with --frozen-lockfile and runs `turbo run typecheck --filter @cipherstash/nextjs` and `pnpm run test`, so it consumes the new lockfile.",
+      "evidence": ["E-9", "E-10"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Patch-level change in next 15.5.24 breaks @cipherstash/nextjs typecheck or tests",
+      "trigger": "next 15.5.24 (a security patch release) changes types or runtime behaviour of NextResponse, NextRequest or cookies() used by packages/nextjs.",
+      "affected_components": ["AC-2", "AC-4"],
+      "mechanism": "packages/nextjs is compiled, typechecked and tested against the catalog-pinned next. Security fixes in middleware or request handling can tighten behaviour that the middleware helpers or their tests rely on.",
+      "consequence": "CI fails for the nextjs package or, if tests are not run, a local dev/test mismatch. Published dist is unaffected because next is external and the peer range is unchanged; customers run whichever next they install.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-7", "E-8", "E-5", "E-10"],
+      "existing_verification": [
+        {
+          "description": "CI typecheck of @cipherstash/nextjs against the installed next.",
+          "status": "exists_not_run",
+          "evidence": ["E-10"]
+        },
+        {
+          "description": "packages/nextjs/__tests__/nextjs.test.ts exercises getCtsToken/resetCtsToken/protectMiddleware using next/server, reached through the root `turbo test --filter './packages/**'`.",
+          "status": "exists_not_run",
+          "evidence": ["E-8", "E-9"]
+        }
+      ],
+      "missing_verification": [
+        "No CI result for the head commit was available to confirm install, typecheck and tests pass with next 15.5.24."
+      ],
+      "mitigation": "Confirm the tests workflow (frozen-lockfile install, nextjs typecheck, pnpm run test) passes on the head commit before merging. Reverting is a one-commit lockfile/workspace revert.",
+      "domain_tags": ["dependency", "build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No CI results provided; install with --frozen-lockfile, nextjs typecheck and tests against next 15.5.24 are wired but not shown to have run.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-9", "E-10"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Require a green tests workflow on the head commit (frozen-lockfile install, `turbo run typecheck --filter @cipherstash/nextjs`, `pnpm run test`).",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "documentation",
+      "description": "Do not treat this as fixing CVE-2026-75604 for customers: @cipherstash/nextjs still accepts `next ^14 || ^15`. If customer guidance is wanted, it belongs in release notes or the peer range, which is a separate decision.",
+      "addresses": []
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No CI results were available, and no install/build/test command was run (no network).",
+      "effect": "Verification confidence is low; whether the lockfile installs and the nextjs package passes against 15.5.24 is unconfirmed."
+    },
+    {
+      "id": "CL-2",
+      "description": "The next 15.5.23 -> 15.5.24 upstream changelog and the cited advisory could not be read (no network).",
+      "effect": "Upstream behaviour changes in the patch release are unknown; FS-1 rests on the general mechanism, not a known change."
+    },
+    {
+      "id": "CL-3",
+      "description": "Whether next 15.5.24 satisfies the workspace `minimumReleaseAge` (7 days) and whether lockfile integrity hashes match the registry could not be checked offline.",
+      "effect": "A supply-chain or cooldown issue with the new version would not be detected by this assessment."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "pnpm-lock.yaml",
+      "rev": "head",
+      "line_start": 2901,
+      "line_end": 2901,
+      "claim": "Lockfile resolves next@15.5.24 (previously 15.5.23) with a new integrity hash; @next/env, @next/swc-*, @clerk/nextjs and evlog snapshots re-keyed accordingly.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "pnpm-workspace.yaml",
+      "rev": "head",
+      "line_start": 65,
+      "line_end": 65,
+      "claim": "The `security` catalog pins next: 15.5.24.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "pnpm-workspace.yaml",
+      "rev": "head",
+      "line_start": 84,
+      "line_end": 84,
+      "claim": "Override `'next@<15.5.24': '~15.5.24'` with comment citing GHSA-2xp9-vwfh-vxw4 / CVE-2026-75604.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/nextjs/package.json",
+      "rev": "head",
+      "line_start": 44,
+      "line_end": 50,
+      "claim": "@cipherstash/nextjs has next as a devDependency (catalog:security) and an unchanged peerDependency `^14 || ^15`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/nextjs/tsup.config.ts",
+      "rev": "head",
+      "line_start": 3,
+      "line_end": 8,
+      "claim": "tsup config does not set noExternal; by tsup's defaults peer dependencies such as next are external, so next is not bundled into dist.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 234,
+      "line_end": 234,
+      "claim": "@cipherstash/stack depends on evlog 1.11.0, whose optional next peer is resolved in the lockfile.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/nextjs/src/index.ts",
+      "rev": "head",
+      "line_start": 2,
+      "line_end": 4,
+      "claim": "@cipherstash/nextjs imports cookies from next/headers and NextRequest/NextResponse from next/server.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "packages/nextjs/__tests__/nextjs.test.ts",
+      "rev": "head",
+      "line_start": 17,
+      "line_end": 17,
+      "claim": "The nextjs test suite imports NextRequest/NextResponse from next/server, so it runs against the installed next.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 106,
+      "line_end": 106,
+      "claim": "CI installs with `pnpm install --frozen-lockfile` and later runs `pnpm run test` (line 357), which is `turbo test --filter './packages/**'` per the root package.json.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 220,
+      "line_end": 221,
+      "claim": "CI runs `pnpm exec turbo run typecheck --filter @cipherstash/nextjs`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "history_signal",
+      "path": "pnpm-lock.yaml",
+      "signal": "churn.hotspots[0]",
+      "claim": "pnpm-lock.yaml is a frequent-change hotspot (246 commits, 83 in last 90 days); routine dependency churn, not itself a risk signal.",
+      "status": "verified"
+    }
+  ]
+}

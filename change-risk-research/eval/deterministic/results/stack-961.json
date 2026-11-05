@@ -1,0 +1,916 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+  "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+  "merge_base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+    "cutoff_date": "2026-09-02T09:58:03+10:00",
+    "commits_read": 4003,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 38,
+    "additions": 4002,
+    "deletions": 604,
+    "binary_files": 0,
+    "by_status": {
+      "added": 13,
+      "modified": 25
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/cli": 27,
+      ".": 9,
+      "packages/eql": 1,
+      "packages/eql/tests/sqlx": 1
+    },
+    "component_count": 4,
+    "top_level_dirs": {
+      "packages": 29,
+      "scripts": 3,
+      ".": 2,
+      ".changeset": 1,
+      ".github": 1,
+      "docs": 1,
+      "skills": 1
+    },
+    "languages": {
+      "TypeScript": 25,
+      "Markdown": 5,
+      "JavaScript": 3,
+      "YAML": 2,
+      "JSON": 2,
+      "Rust": 1
+    }
+  },
+  "path_classes": {
+    "test": 15,
+    "docs": 5,
+    "ci_workflow": 1,
+    "serialization_or_protocol": 1,
+    "dependency_manifest": 1,
+    "security_sensitive": 1,
+    "lockfile": 1,
+    "agent_instructions": 1,
+    "build_config": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/safe-eql-reinstall.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 20,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": ".github/workflows/tests.yml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 16,
+      "deletions": 5,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "docs/adr/0001-eql-data-survives-disposable-schema-reinstall.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 25,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs", "serialization_or_protocol"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/README.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 14,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/cli",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/cli",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/cli/src/__tests__/installer.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 452,
+      "deletions": 12,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/__tests__/install-verify-gate.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 33,
+      "deletions": 14,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/__tests__/install.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 93,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/__tests__/status.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 52,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/__tests__/upgrade.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 74,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/install.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 33,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/status.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 37,
+      "deletions": 53,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/upgrade.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 26,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/eql/migration.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/eql/validate.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 69,
+      "deletions": 21,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/eql/verify.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 2,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/__tests__/bundle-digest.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/__tests__/installation-state.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 248,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/__tests__/reinstall.live.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 638,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/__tests__/restoration-scenarios.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 215,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/__tests__/upgrade-encrypted-indexes.live.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 173,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive", "test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/__tests__/verify.live.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/__tests__/verify.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 149,
+      "deletions": 7,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 701,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/eql-bundle.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 23,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/grants.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 38,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 74,
+      "deletions": 335,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/installation-state.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 297,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/verify.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 152,
+      "deletions": 96,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/vitest.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 4,
+      "deletions": 4,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/eql/CONTEXT.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/eql",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/eql/tests/sqlx/tests/v3_uninstall_tests.rs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 177,
+      "deletions": 20,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/eql/tests/sqlx",
+      "language": "Rust"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 11,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["lockfile"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "scripts/__tests__/cli-live-postgres-ci.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 51,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/lint-no-eql-registry-pins.test.mjs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 28,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/lint-no-eql-registry-pins.mjs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 26,
+      "deletions": 12,
+      "binary": false,
+      "classes": [],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "skills/stash-cli/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 15,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "turbo.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": ".",
+      "language": "JSON"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "pnpm-lock.yaml",
+        "commits": 245,
+        "commits_last_90d": 82,
+        "distinct_authors": 10
+      },
+      {
+        "path": ".github/workflows/tests.yml",
+        "commits": 91,
+        "commits_last_90d": 55,
+        "distinct_authors": 9
+      },
+      {
+        "path": "skills/stash-cli/SKILL.md",
+        "commits": 83,
+        "commits_last_90d": 71,
+        "distinct_authors": 7
+      },
+      {
+        "path": "packages/cli/package.json",
+        "commits": 62,
+        "commits_last_90d": 25,
+        "distinct_authors": 7
+      },
+      {
+        "path": "packages/cli/src/commands/db/install.ts",
+        "commits": 51,
+        "commits_last_90d": 35,
+        "distinct_authors": 5
+      },
+      {
+        "path": "packages/cli/README.md",
+        "commits": 28,
+        "commits_last_90d": 21,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/cli/src/installer/index.ts",
+        "commits": 22,
+        "commits_last_90d": 16,
+        "distinct_authors": 5
+      },
+      {
+        "path": "packages/cli/src/commands/eql/migration.ts",
+        "commits": 21,
+        "commits_last_90d": 21,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/cli/src/commands/db/status.ts",
+        "commits": 18,
+        "commits_last_90d": 12,
+        "distinct_authors": 4
+      },
+      {
+        "path": "turbo.json",
+        "commits": 17,
+        "commits_last_90d": 13,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/cli/src/commands/db/upgrade.ts",
+        "commits": 15,
+        "commits_last_90d": 9,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/cli/src/__tests__/installer.test.ts",
+        "commits": 10,
+        "commits_last_90d": 8,
+        "distinct_authors": 5
+      },
+      {
+        "path": "packages/cli/src/commands/eql/validate.ts",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/cli/vitest.config.ts",
+        "commits": 6,
+        "commits_last_90d": 4,
+        "distinct_authors": 3
+      },
+      {
+        "path": "scripts/__tests__/lint-no-eql-registry-pins.test.mjs",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/cli/src/commands/eql/validate.ts",
+        "usually_changes_with": ".changeset/proud-ravens-repeat.md",
+        "co_commits": 5,
+        "confidence": 0.71,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/cli/src/commands/eql/validate.ts",
+        "usually_changes_with": "packages/cli/src/commands/eql/__tests__/validate.test.ts",
+        "co_commits": 5,
+        "confidence": 0.71,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/src/commands/db/upgrade.ts",
+        "usually_changes_with": "packages/cli/src/commands/db/push.ts",
+        "co_commits": 6,
+        "confidence": 0.67,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/cli/src/commands/eql/migration.ts",
+        "usually_changes_with": "packages/cli/src/commands/eql/__tests__/migration.test.ts",
+        "co_commits": 12,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "scripts/lint-no-eql-registry-pins.mjs",
+        "usually_changes_with": "AGENTS.md",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "scripts/lint-no-eql-registry-pins.mjs",
+        "usually_changes_with": "docs/plans/2026-08-13-eql-monorepo-absorption.md",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/package.json",
+        "usually_changes_with": "packages/cli/CHANGELOG.md",
+        "co_commits": 29,
+        "confidence": 0.56,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/src/commands/db/status.ts",
+        "usually_changes_with": "packages/cli/src/commands/db/push.ts",
+        "co_commits": 6,
+        "confidence": 0.5,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/cli/src/__tests__/installer.test.ts",
+        "usually_changes_with": "packages/cli/src/__tests__/supabase-migration.test.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/cli/src/__tests__/installer.test.ts",
+        "usually_changes_with": "packages/cli/src/bin/main.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 93
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/safe-eql-reinstall.md": ["@cipherstash/developers"],
+      ".github/workflows/tests.yml": ["@cipherstash/developers"],
+      "docs/adr/0001-eql-data-survives-disposable-schema-reinstall.md": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/README.md": ["@cipherstash/developers"],
+      "packages/cli/package.json": ["@cipherstash/developers"],
+      "packages/cli/src/__tests__/installer.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/db/__tests__/install-verify-gate.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/db/__tests__/install.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/db/__tests__/status.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/db/__tests__/upgrade.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/commands/db/install.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/db/status.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/db/upgrade.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/eql/migration.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/eql/validate.ts": ["@cipherstash/developers"],
+      "packages/cli/src/commands/eql/verify.ts": ["@cipherstash/developers"],
+      "packages/cli/src/installer/__tests__/bundle-digest.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/__tests__/installation-state.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/__tests__/reinstall.live.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/__tests__/restoration-scenarios.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/__tests__/upgrade-encrypted-indexes.live.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/__tests__/verify.live.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/__tests__/verify.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/derived-search-index-restoration.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/eql-bundle.ts": ["@cipherstash/developers"],
+      "packages/cli/src/installer/grants.ts": ["@cipherstash/developers"],
+      "packages/cli/src/installer/index.ts": ["@cipherstash/developers"],
+      "packages/cli/src/installer/installation-state.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/cli/src/installer/verify.ts": ["@cipherstash/developers"],
+      "packages/cli/vitest.config.ts": ["@cipherstash/developers"],
+      "packages/eql/CONTEXT.md": ["@cipherstash/developers"],
+      "packages/eql/tests/sqlx/tests/v3_uninstall_tests.rs": [
+        "@cipherstash/developers"
+      ],
+      "pnpm-lock.yaml": ["@cipherstash/developers"],
+      "scripts/__tests__/cli-live-postgres-ci.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/lint-no-eql-registry-pins.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/lint-no-eql-registry-pins.mjs": ["@cipherstash/developers"],
+      "skills/stash-cli/SKILL.md": ["@cipherstash/developers"],
+      "turbo.json": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 140
+      }
+    }
+  },
+  "dependencies": [
+    {
+      "file": "packages/cli/package.json",
+      "dependencies": [
+        {
+          "section": "devDependencies",
+          "name": "@cipherstash/eql-upgrade-baseline",
+          "from": null,
+          "to": "npm:@cipherstash/eql@3.0.2"
+        },
+        {
+          "section": "devDependencies",
+          "name": "@cipherstash/protect-ffi",
+          "from": null,
+          "to": "workspace:*"
+        }
+      ]
+    }
+  ],
+  "tests": {
+    "test_files_changed": 15,
+    "source_files_changed": 14,
+    "source_without_related_test": [
+      "packages/cli/src/installer/eql-bundle.ts",
+      "packages/cli/src/installer/index.ts"
+    ],
+    "source_with_related_test_unchanged": [
+      "packages/cli/src/commands/eql/migration.ts",
+      "packages/cli/src/commands/eql/validate.ts",
+      "packages/cli/src/installer/grants.ts",
+      "packages/cli/vitest.config.ts"
+    ],
+    "mapping": [
+      {
+        "source": "packages/cli/src/commands/db/install.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/db/__tests__/install.test.ts",
+          "packages/test-kit/src/__tests__/install.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/db/status.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/db/__tests__/status.test.ts",
+          "packages/cli/src/commands/status/__tests__/status.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/db/upgrade.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/db/__tests__/upgrade.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/eql/migration.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/eql/__tests__/migration.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/eql/validate.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/eql/__tests__/validate.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/eql/verify.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/installer/__tests__/verify.live.test.ts",
+          "packages/cli/src/installer/__tests__/verify.test.ts",
+          "packages/eql/tasks/test/verify_installer_complete.sh",
+          "packages/eql/tasks/test/verify_symbol_order_v3.sh"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/installer/derived-search-index-restoration.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/installer.test.ts",
+          "packages/cli/src/commands/db/__tests__/install.test.ts",
+          "packages/cli/src/commands/db/__tests__/upgrade.test.ts",
+          "packages/cli/src/installer/__tests__/reinstall.live.test.ts",
+          "packages/cli/src/installer/__tests__/restoration-scenarios.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/installer/eql-bundle.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/installer/grants.ts",
+        "related_tests_at_head": [
+          "packages/stack-supabase/integration/grants.integration.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/installer/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/installer/installation-state.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/installer/__tests__/installation-state.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/installer/verify.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/installer/__tests__/verify.live.test.ts",
+          "packages/cli/src/installer/__tests__/verify.test.ts",
+          "packages/eql/tasks/test/verify_installer_complete.sh",
+          "packages/eql/tasks/test/verify_symbol_order_v3.sh"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/vitest.config.ts",
+        "related_tests_at_head": [
+          "e2e/vitest.config.ts",
+          "examples/prisma/test/e2e/vitest.config.ts",
+          "packages/protect-ffi/integration-tests/vitest.config.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "scripts/lint-no-eql-registry-pins.mjs",
+        "related_tests_at_head": [
+          "scripts/__tests__/lint-no-eql-registry-pins.test.mjs"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

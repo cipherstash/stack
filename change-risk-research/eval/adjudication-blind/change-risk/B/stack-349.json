@@ -1,0 +1,71 @@
+{
+  "case": "stack-349",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Wizard rewrites encryption migration into DROP COLUMN and runs it, destroying existing plaintext data",
+      "impact": "critical",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The wizard selects populated columns, the rewriter drops the original column with no data copy, and the migrate prompt defaults to yes."
+    },
+    {
+      "id": "FS-2",
+      "title": "Changed Drizzle type string turns existing encrypted columns into ALTERs that the rewrite converts to DROP of ciphertext",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Assumes drizzle-kit emits a clean ALTER to \"public\".\"eql_v2_encrypted\" that the rewriter matches; the pre-quoted type is actually mis-rendered, so the claimed DROP-of-ciphertext chain is speculative and not shown by the code."
+    },
+    {
+      "id": "FS-3",
+      "title": "`db install` in Drizzle projects silently stops installing EQL and edits migration files instead",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "resolveProviderOptions auto-enables drizzle with no way to negate it via parseArgs, and the drizzle path returns after writing a migration without installing EQL."
+    },
+    {
+      "id": "FS-4",
+      "title": "New .env.local precedence points db commands at a different database",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new env-file load order lets .env.local's DATABASE_URL override .env's, retargeting db commands."
+    },
+    {
+      "id": "FS-5",
+      "title": "Shipped skills and the stack README still instruct the removed `db setup`",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The bundled skill and README still reference db setup, which now hits the unknown-subcommand path."
+    }
+  ],
+  "cost_usd": 1.7075736,
+  "wall_seconds": 215.890377,
+  "case_note": "KD-1 not matched; FS-2 is adjacent.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

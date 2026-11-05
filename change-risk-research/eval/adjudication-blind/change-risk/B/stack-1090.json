@@ -1,0 +1,48 @@
+{
+  "case": "stack-1090",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Shared @cipherstash/stack client following the new 'one strategy serves every user' guidance still binds operations to the wrong user on the native entry",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new 'one strategy serves every user' framing, combined with the stack native path that cannot see ALS and a closure example capturing req, lets a cached long-lived client serve one user's JWT to everyone; this path has no test."
+    },
+    {
+      "id": "FS-2",
+      "title": "Provider callback on the hot path: IdP latency or errors now hit every operation, serialized under the Go strategy lock",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "get_token now calls provider.fetch() on every call before any cache lookup, and Go's Strategy.Token holds s.mu around the guest call that runs the provider, so IdP latency and errors now reach every operation."
+    },
+    {
+      "id": "FS-3",
+      "title": "JWT rotation multiplies CTS exchanges and can trip a strategy-wide usage-limit lockout",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Per-JWT keying multiplies exchanges as JWTs rotate, and settle() records account refusals strategy-wide, which engine_for returns for every new JWT during the denial TTL, as cited."
+    }
+  ],
+  "cost_usd": 1.8081183000000003,
+  "wall_seconds": 211.995121,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

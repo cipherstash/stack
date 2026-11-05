@@ -1,0 +1,49 @@
+{
+  "case": "stack-1002",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "linux-x64-musl auth binary built statically (no -crt-static) and published without any check that would notice",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Musl leg built with only musl-tools on an Ubuntu host may produce an incorrectly linked binary that fails on Alpine, and no check positively verifies musl linkage on the publish path or preflight."
+    },
+    {
+      "id": "FS-2",
+      "title": "Once armed, any auth build failure holds every JS and EQL npm release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "release job requires publish-auth success when auth=true and EQL artefact jobs need release, so an auth build failure holds other releases; a fail-closed availability risk introduced by this change."
+    },
+    {
+      "id": "FS-3",
+      "title": "Widened release-plz.yml triggers start the armed EQL crate job on unrelated root-workspace pushes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Workflow-level push paths now include root Cargo files and crate dirs, and the EQL release job has no further path gating, so it runs on unrelated pushes."
+    }
+  ],
+  "cost_usd": 2.2537785,
+  "wall_seconds": 247.22026,
+  "case_note": "KD-1 found.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

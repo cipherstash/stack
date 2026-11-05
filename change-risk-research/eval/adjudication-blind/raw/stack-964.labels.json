@@ -1,0 +1,68 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The head skills now recommend cross-entry schemas, and the fallback only says 'upgrade' without naming a version, so customers whose separately versioned stash skills sit next to an older stack get TS2322 that agents may silence with casts."
+    },
+    {
+      "id": "F-02",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The claim that shared chunks carry imports edge checkers cannot resolve is speculative (the author did not inspect the output), and the dist-types gates already compile dist/wasm-inline.d.ts in CI."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The pending changeset supabase-docs-wasm-inline-entry.md still states that wasm-inline schemas don't compile with encryptedSupabase and cites the deleted guard, which contradicts the new changeset in the same release."
+    },
+    {
+      "id": "F-04",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "No concrete missing or widened export is identified; the declaration-surface change is hypothetical, and the new dist-types gates typecheck the wasm-inline exports from the built dist in CI."
+    },
+    {
+      "id": "F-05",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The finding admits no instanceof check exists at head and runtime detection is structural and fails closed, so the harm depends on hypothetical future code."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The version-skew core holds (the skills promise sharing and name no minimum version), though the CommonJS part mostly describes the pre-existing lack of a require branch for wasm-inline."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "stash's optional peer range >=1.0.0-rc.0 lets the new skills sit next to an older stack, and the skills' 'older versions' fallback names no version."
+    },
+    {
+      "id": "F-08",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "A surface difference is only hypothesized, no concrete changed export is shown, and dist is shipped whole via package.json files while the CI gates resolve the emitted wasm-inline declarations."
+    }
+  ]
+}

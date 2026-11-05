@@ -1,0 +1,8 @@
+{
+  "pr": 502,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [],
+  "notes": "CodeRabbit summary/walkthrough comment present stating 'No actionable comments were generated in the recent review.' No CodeRabbit reviews or review comments. CodeRabbit commit status: success with description 'Review skipped' (at head 6e7ae4e). Release-notes block removed from description."
+}

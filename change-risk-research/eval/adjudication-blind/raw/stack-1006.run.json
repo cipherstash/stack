@@ -1,0 +1,12 @@
+{
+  "case": "stack-1006",
+  "exit_code": 0,
+  "started": "2026-10-12T23:52:01.163024+00:00",
+  "wall_seconds": 42.990427,
+  "net_flags": [
+    "cd /srv/blind/stack-1006; cat > labels.json <<'EOF'\n{\"labels\": [\n{\"id\": \"F-01\", \"label\": \"trivial\", \"matches\": [], \"evidence_ok\": true, \"actionable\": null, \"reason\": \"The two-value marker and the know"
+  ],
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "total_cost_usd": 0.3168187
+}

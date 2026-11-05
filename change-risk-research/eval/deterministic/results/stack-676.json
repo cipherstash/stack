@@ -1,0 +1,387 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "bab1307fb2e663eca3a143ced81df6d99a04e80f",
+  "head_sha": "804fe3b3317a76eea8247f8a661b0cec6abdc890",
+  "merge_base_sha": "bab1307fb2e663eca3a143ced81df6d99a04e80f",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "bab1307fb2e663eca3a143ced81df6d99a04e80f",
+    "cutoff_date": "2026-07-16T17:55:57+10:00",
+    "commits_read": 1506,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 13,
+    "additions": 1344,
+    "deletions": 31,
+    "binary_files": 0,
+    "by_status": {
+      "added": 6,
+      "modified": 7
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/stack": 6,
+      ".": 3,
+      "e2e": 3,
+      "packages/test-kit": 1
+    },
+    "component_count": 4,
+    "top_level_dirs": {
+      "packages": 7,
+      "e2e": 3,
+      ".github": 2,
+      ".changeset": 1
+    },
+    "languages": {
+      "TypeScript": 9,
+      "YAML": 2,
+      "Markdown": 1,
+      "other": 1
+    }
+  },
+  "path_classes": {
+    "test": 6,
+    "ci_workflow": 2,
+    "docs": 1,
+    "security_sensitive": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/wasm-encrypt-query.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 18,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": ".github/workflows/integration-drizzle.yml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 10,
+      "deletions": 4,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": ".github/workflows/tests.yml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 4,
+      "deletions": 4,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "e2e/wasm/deno.lock",
+      "status": "added",
+      "previous_path": null,
+      "additions": 18,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "e2e",
+      "language": "other"
+    },
+    {
+      "path": "e2e/wasm/query-types.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 235,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "e2e",
+      "language": "TypeScript"
+    },
+    {
+      "path": "e2e/wasm/roundtrip.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 77,
+      "deletions": 16,
+      "binary": false,
+      "classes": ["test"],
+      "component": "e2e",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/__tests__/wasm-inline-query.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 257,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/integration/vitest.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 17,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/integration/wasm/adapter.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 427,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/integration/wasm/families.integration.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 14,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/wasm-inline.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 254,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/test-kit/src/adapter.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/test-kit",
+      "language": "TypeScript"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": ".github/workflows/tests.yml",
+        "commits": 56,
+        "commits_last_90d": 44,
+        "distinct_authors": 9
+      },
+      {
+        "path": "packages/stack/src/wasm-inline.ts",
+        "commits": 23,
+        "commits_last_90d": 23,
+        "distinct_authors": 2
+      },
+      {
+        "path": ".github/workflows/integration-drizzle.yml",
+        "commits": 12,
+        "commits_last_90d": 12,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/integration/vitest.config.ts",
+        "commits": 8,
+        "commits_last_90d": 8,
+        "distinct_authors": 1
+      },
+      {
+        "path": "e2e/wasm/roundtrip.test.ts",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/test-kit/src/adapter.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": ".github/workflows/integration-drizzle.yml",
+        "usually_changes_with": ".github/workflows/integration-supabase.yml",
+        "co_commits": 8,
+        "confidence": 0.73,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "e2e/wasm/roundtrip.test.ts",
+        "usually_changes_with": "examples/supabase-worker/.env.example",
+        "co_commits": 4,
+        "confidence": 0.67,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "e2e/wasm/roundtrip.test.ts",
+        "usually_changes_with": "examples/supabase-worker/supabase/functions/cipherstash-roundtrip/index.ts",
+        "co_commits": 4,
+        "confidence": 0.67,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "e2e/wasm/roundtrip.test.ts",
+        "usually_changes_with": "examples/supabase-worker/README.md",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "e2e/wasm/roundtrip.test.ts",
+        "usually_changes_with": "packages/stack/package.json",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 21
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/wasm-encrypt-query.md": ["@cipherstash/developers"],
+      ".github/workflows/integration-drizzle.yml": ["@cipherstash/developers"],
+      ".github/workflows/tests.yml": ["@cipherstash/developers"],
+      "e2e/wasm/deno.lock": ["@cipherstash/developers"],
+      "e2e/wasm/query-types.test.ts": ["@cipherstash/developers"],
+      "e2e/wasm/roundtrip.test.ts": ["@cipherstash/developers"],
+      "packages/stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/__tests__/wasm-inline-query.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/integration/vitest.config.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/integration/wasm/adapter.ts": ["@cipherstash/developers"],
+      "packages/stack/integration/wasm/families.integration.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/src/wasm-inline.ts": ["@cipherstash/developers"],
+      "packages/test-kit/src/adapter.ts": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 47
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 6,
+    "source_files_changed": 4,
+    "source_without_related_test": ["packages/test-kit/src/adapter.ts"],
+    "source_with_related_test_unchanged": [
+      "packages/stack/integration/vitest.config.ts"
+    ],
+    "mapping": [
+      {
+        "source": "packages/stack/integration/vitest.config.ts",
+        "related_tests_at_head": [
+          "e2e/vitest.config.ts",
+          "examples/prisma/test/e2e/vitest.config.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/integration/wasm/adapter.ts",
+        "related_tests_at_head": [
+          "packages/stack/integration/wasm/families.integration.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/stack/src/wasm-inline.ts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/helpers/stub-auth-wasm-inline.ts",
+          "packages/stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts",
+          "packages/stack/__tests__/wasm-inline-column-name.test.ts",
+          "packages/stack/__tests__/wasm-inline-new-client.test.ts",
+          "packages/stack/__tests__/wasm-inline-normalize.test.ts",
+          "packages/stack/__tests__/wasm-inline-query.test.ts",
+          "packages/stack/__tests__/wasm-inline-strategy.test.ts",
+          "packages/stack/__tests__/wasm-inline-v3.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/test-kit/src/adapter.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

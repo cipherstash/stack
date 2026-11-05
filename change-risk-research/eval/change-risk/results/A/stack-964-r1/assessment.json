@@ -1,0 +1,425 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "17c9fadd51c748eb4e0b0d67db01bae5d39d04b0",
+  "head_sha": "c034508d747e75548878a8af166f83a1a25fd99b",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md; the changeset text was read as untrusted content"
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md/CLAUDE.md at head (skills ship in the stash and wizard tarballs), in-repo comments, turbo.json and workflow files"
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Consumers found by git grep only"
+    },
+    "codeowners": {
+      "status": "available",
+      "source": ".github/CODEOWNERS (default owner @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Build-config change to the published @cipherstash/stack package: the type declarations for the ESM-only `./wasm-inline` entry are now emitted by the main dual-format tsup config, so they share the column-class declaration chunk with `./eql/v3`, `./v3` and `./adapter-kit`. The JS bundle for wasm-inline is unchanged. The result is that tables authored from either entry now typecheck against the other entry and against adapter `schemas` types. Shipped agent skills (copied into customer repos by `stash`) are rewritten to recommend sharing one schema module across entries, and a text guard that enforced the old rule is deleted and replaced by new dist-level type gates that run in CI. There is no runtime code change apart from an error-message string. I found no `instanceof` checks on stack classes in any package source, so the runtime cross-entry use the docs now encourage still goes through the existing structural checks. The main risk is the published `dist/wasm-inline.d.ts` shape, a type-level contract. The new gates cover it and CI runs them, but I did not see a result. Smaller risks are doc and version skew in shipped skills and a contradictory pending changeset. Impact is medium and verification is medium. A focused review of the emitted declarations is recommended.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "`dist/wasm-inline.d.ts` is now produced by the main config's DTS pass (`dts.entry` = main entries + `src/wasm-inline.ts`), and the wasm-inline config sets `dts: false`. The declarations now reference the shared `types-public-*.d.ts` chunk instead of inlining a private copy of every column class. A new unreferenced `dist/wasm-inline.d.cts` is also emitted.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "Type-level contract: tables and columns authored with `encryptedTable`/`types` from `@cipherstash/stack/wasm-inline` become assignable to `AnyV3Table` from `./eql/v3` (and therefore to adapter `schemas`), and native-authored tables are accepted by the WASM `Encryption`. Before, both directions failed with a private-member nominal mismatch.",
+      "certainty": "inferred",
+      "evidence": ["E-4", "E-5", "E-11"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "documentation",
+      "description": "Shipped skills (stash-edge, stash-encryption, stash-managed-platforms, stash-supabase) reverse their guidance. They now say one schema module may be authored from either entry and passed to either client or to `encryptedSupabase`, with a note that older stack versions reject this.",
+      "certainty": "observed",
+      "evidence": ["E-9"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "test_only",
+      "description": "The text guard `scripts/__tests__/skills-supabase-edge-schema-entry.test.mjs`, which failed if shipped docs paired wasm-inline tables with `encryptedSupabase`, is deleted. New compile-only gates over the emitted `dist/` (`dist-types/wasm-inline-type-identity.ts`, additions to `dist-types/node16/wasm-inline.mts`) assert identity in both directions. `logger-edge-safety.test.ts` now throws when `dist/` is missing under `CI`. Two error-matcher assertions are tightened.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-12", "E-15"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "error_handling",
+      "description": "The `[supabase v3]` EQL-v2-table construction error message now also names `@cipherstash/stack/wasm-inline` as a valid authoring entry. Message text only; the throw condition is unchanged.",
+      "certainty": "observed",
+      "evidence": ["E-16"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack build (tsup.config.ts) and published dist declarations",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "The DTS emission for ./wasm-inline moved to the main config and the chunk layout changed.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/stack `./wasm-inline` export (types condition)",
+      "kind": "public_api",
+      "relationship": "confirmed",
+      "how": "The exports map points `import.types` at `./dist/wasm-inline.d.ts`, which this change now produces differently.",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/stack-supabase `schemas` typing (V3Schemas)",
+      "kind": "package",
+      "relationship": "confirmed",
+      "how": "`V3Schemas = Record<string, AnyV3Table>` imports `AnyV3Table` from `@cipherstash/stack/eql/v3`, so it now accepts wasm-inline-authored tables. At runtime it already probed columns structurally.",
+      "evidence": ["E-13", "E-17"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Shipped agent skills in the `stash` package (copied into customer repos)",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "The guidance on where to author schemas is reversed. `stash` declares `@cipherstash/stack` as an optional peer `>=1.0.0-rc.0`, so the skills can be installed alongside an older stack.",
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "AC-5",
+      "name": "CI gate `test:types:dist` (tests.yml) over emitted declarations",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "The new and extended dist-types gates run only through this step, which depends on `build`.",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "AC-6",
+      "name": "Release notes generated from pending changesets",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "A pending changeset in the same .changeset directory describes the rule this change reverses and cites the deleted guard.",
+      "evidence": ["E-10", "E-11"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Published dist/wasm-inline.d.ts is incomplete or wrong after moving DTS emission into the dual-format config",
+      "trigger": "Release build of @cipherstash/stack with the new tsup config. The DTS rollup over 11 entries re-partitions shared chunks, and the wasm-inline entry's declarations (WasmEncryptionClient, Encryption overloads, Wasm* types, re-exports of `@/eql/v3`, external `@cipherstash/protect-ffi/wasm-inline` and `@cipherstash/auth/wasm-inline` types) are now emitted alongside the native entries.",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "Before, `dist/wasm-inline.d.ts` came from a separate self-contained DTS pass (base tsup.config.ts). Now it is emitted by the main config (`dts: { entry: [...mainEntry, 'src/wasm-inline.ts'] }`, tsup.config.ts:52) and imports shared chunks. Any difference in how that pass resolves or names the wasm-inline exports, such as a declaration landing in a chunk the `.d.ts` does not re-export, or chunk-name changes, alters the type surface that edge consumers resolve through `exports['./wasm-inline'].import.types`. The JS stays on the old pass (`dts: false`, :78), so types and JS now come from two different builds.",
+      "consequence": "Edge and Deno/Workers/Supabase consumers on TypeScript get compile errors or missing or `any`-widened types after upgrading. A widened schema type would weaken typed `encryptQuery`/domain checks without a runtime signal. Fixing it needs a new npm release.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-5", "E-6"],
+      "existing_verification": [
+        {
+          "description": "dist-types/wasm-inline-type-identity.ts and dist-types/node16/wasm-inline.mts typecheck the emitted declarations, including cross-entry assignability in both directions and pre-existing schema/config shape probes, via `test:types:dist` in tests.yml.",
+          "status": "exists_not_run",
+          "evidence": ["E-4", "E-5", "E-6", "E-7"]
+        }
+      ],
+      "missing_verification": [
+        "No CI result was supplied for `test:types:dist` at head.",
+        "No comparison of the exported symbol list of dist/wasm-inline.d.ts at base vs head (e.g. `pnpm pack` and a diff of the public declaration surface)."
+      ],
+      "mitigation": "Before publishing, build at base and head and diff the exported names and types of `dist/wasm-inline.d.ts`, or run an API-extractor-style report, and confirm the `test:types:dist` step is green on this commit.",
+      "domain_tags": ["public_api", "build_release"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Shipped skills recommend cross-entry schemas to customers whose installed @cipherstash/stack predates the fix",
+      "trigger": "A customer upgrades `stash` (which carries skills/ and copies them into the repo) but keeps an older `@cipherstash/stack`, which the optional peer range `>=1.0.0-rc.0` allows. Their coding agent then follows the new example that authors `schemas` from `@cipherstash/stack/wasm-inline` for `encryptedSupabase`.",
+      "affected_components": ["AC-4", "AC-3"],
+      "mechanism": "skills/stash-edge/SKILL.md:384-450 and the other three skills now present wasm-inline authoring as correct. The fallback note refers only to 'older versions' and 'a version predating that fix' and names no version, so neither an agent nor a human can check applicability.",
+      "consequence": "`tsc` fails with the private-member error on older stacks, and the agent may reach for `as any`, which the skills themselves warn against. The failure is loud and compile-time. Runtime behaviour is unaffected because adapters probe columns structurally.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-8", "E-9", "E-13", "E-14"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No check ties the skill text to a minimum @cipherstash/stack version."
+      ],
+      "mitigation": "Name the first @cipherstash/stack version containing the fix in the 'older versions' notes once it is known, or raise the stash peer floor.",
+      "domain_tags": ["public_api", "other"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Pending changeset contradicts the new guidance in the same release's changelog",
+      "trigger": "The next release consumes both `.changeset/supabase-docs-wasm-inline-entry.md` and `.changeset/wasm-inline-type-identity.md`.",
+      "affected_components": ["AC-6"],
+      "mechanism": "supabase-docs-wasm-inline-entry.md:49-58 states that wasm-inline-authored schemas do not compile with `encryptedSupabase`, that schemas must come from `eql/v3`, and that a guard (`skills-supabase-edge-schema-entry.test.mjs`) enforces this. This change deletes that guard and reverses the rule, but leaves that changeset unedited.",
+      "consequence": "Published CHANGELOGs for stash and @cipherstash/stack-supabase carry two contradictory statements and reference a test that no longer exists, which confuses readers. This is documentation only.",
+      "impact": "low",
+      "basis": "observed_defect",
+      "evidence": ["E-10", "E-11", "E-15"],
+      "existing_verification": [],
+      "missing_verification": [],
+      "mitigation": "Amend the earlier pending changeset, or note in the new one that it supersedes that guidance.",
+      "domain_tags": ["other"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The only gates over the moved declarations are compile-only `tsc` checks in the `test:types:dist` CI step. No result was available, and the toolchain could not be run here (no node_modules or dist in the checkout; no network).",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No base-vs-head comparison of the published wasm-inline declaration surface. The gates check specific assignability and shape probes, not that every previously exported type is still exported unchanged.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-4", "E-5"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "compatibility_check",
+      "description": "Build @cipherstash/stack at base and head and diff `dist/wasm-inline.d.ts` (plus the chunks it references) for exported names and types, or run `pnpm pack` and inspect the tarball, before publishing.",
+      "addresses": ["FS-1", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "review_focus",
+      "description": "Confirm the 'Typecheck (stack — emitted declarations, not source)' CI step ran and passed on this head commit.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "State the minimum @cipherstash/stack version in the skills' 'older versions' notes, and amend or supersede `.changeset/supabase-docs-wasm-inline-entry.md` so release notes do not contradict each other.",
+      "addresses": ["FS-2", "FS-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "I could not run the build or `test:types:dist`; there is no node_modules or dist in the checkout and no network access, and no CI results were supplied.",
+      "effect": "Whether the emitted declarations are correct is inferred from the config and the gate source, not observed."
+    },
+    {
+      "id": "CL-2",
+      "description": "Runtime safety of the newly encouraged cross-entry usage was checked only by grepping `packages/*/src` for `instanceof` / constructor-identity checks (none found) and reading `isV3ColumnLike`. Customer-side or example code was not examined.",
+      "effect": "An identity check in code outside packages/*/src would not have been found."
+    },
+    {
+      "id": "CL-3",
+      "description": "Skill markdown changes were read, not executed. Snippets in skills are not compiled by any gate I found.",
+      "effect": "Snippet correctness is assumed from the type gates, not checked directly."
+    },
+    {
+      "id": "CL-4",
+      "description": "Release workflow and the deployment/publishing context were not reviewed beyond the changeset files.",
+      "effect": "I cannot say which pending changesets ship together or when."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack/tsup.config.ts",
+      "rev": "head",
+      "line_start": 29,
+      "line_end": 52,
+      "claim": "The main dual-format config now emits declarations for `src/wasm-inline.ts` via `dts: { entry: [...mainEntry, 'src/wasm-inline.ts'] }`, and the comment notes an extra unreferenced `dist/wasm-inline.d.cts`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/tsup.config.ts",
+      "rev": "head",
+      "line_start": 70,
+      "line_end": 82,
+      "claim": "The ESM-only wasm-inline config keeps JS emission with `noExternal` bundling but sets `dts: false` (it was a separate dts pass at base).",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 175,
+      "line_end": 180,
+      "claim": "The `./wasm-inline` export has only an `import` branch, with types `./dist/wasm-inline.d.ts`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "test",
+      "path": "packages/stack/dist-types/wasm-inline-type-identity.ts",
+      "rev": "head",
+      "line_start": 75,
+      "line_end": 114,
+      "claim": "The new compile-only gate asserts that wasm-inline tables and columns are assignable to `AnyV3Table`, and that both `Encryption` factories accept tables from either entry.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "test",
+      "path": "packages/stack/dist-types/node16/wasm-inline.mts",
+      "rev": "head",
+      "line_start": 89,
+      "line_end": 99,
+      "claim": "The node16 gate resolves both entries by package name and asserts cross-entry assignability in both directions.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 254,
+      "line_end": 255,
+      "claim": "CI runs `turbo run test:types:dist --filter @cipherstash/stack`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "turbo.json",
+      "rev": "head",
+      "line_start": 61,
+      "line_end": 64,
+      "claim": "`test:types:dist` depends on `build`, so the gate typechecks freshly emitted declarations.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/cli/package.json",
+      "rev": "head",
+      "line_start": 69,
+      "line_end": 71,
+      "claim": "`stash` declares `@cipherstash/stack` as a peer dependency `>=1.0.0-rc.0` (optional), so shipped skills can sit next to an older stack.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "documentation",
+      "path": "skills/stash-edge/SKILL.md",
+      "rev": "head",
+      "line_start": 384,
+      "line_end": 450,
+      "claim": "The skill now says schema modules cross entries and shows wasm-inline-authored tables passed to `encryptedSupabase`. The fallback refers to 'older versions' without naming one.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "documentation",
+      "path": ".changeset/supabase-docs-wasm-inline-entry.md",
+      "rev": "head",
+      "line_start": 49,
+      "line_end": 58,
+      "claim": "The pending changeset states that wasm-inline schemas do not compile with `encryptedSupabase` and cites the guard `skills-supabase-edge-schema-entry.test.mjs`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "documentation",
+      "path": ".changeset/wasm-inline-type-identity.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 18,
+      "claim": "The new changeset (patch for stack, stack-supabase, stash) describes the type-identity fix and says the runtime was unaffected.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "test",
+      "path": "packages/stack/__tests__/logger-edge-safety.test.ts",
+      "rev": "head",
+      "line_start": 36,
+      "line_end": 46,
+      "claim": "The test now throws at module scope when `dist/adapter-kit.js` is missing and `CI` is set, instead of silently skipping.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/stack-supabase/src/column-map.ts",
+      "rev": "head",
+      "line_start": 68,
+      "line_end": 68,
+      "claim": "`isV3ColumnLike` is a structural probe, not `instanceof`, so wasm-authored columns are recognised at runtime.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "command_output",
+      "command": "git -C repo grep -n -E \"instanceof [A-Z][A-Za-z0-9_]*\" c034508d -- 'packages/*/src' | grep -v -E 'instanceof (Error|Date|Uint8Array|Array|Map|Set|RegExp|Promise|TypeError|Buffer|Object|ArrayBuffer|BigInt|Function|URL|Response|Request)'",
+      "claim": "No `instanceof` checks against non-builtin classes exist in any package source at head, so the cross-entry runtime use the docs now encourage relies on structural checks.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "diff",
+      "path": "scripts/__tests__/skills-supabase-edge-schema-entry.test.mjs",
+      "rev": "base",
+      "line_start": 1,
+      "line_end": 40,
+      "claim": "The deleted guard enforced the old rule (wasm-inline schemas must not be paired with `encryptedSupabase` in shipped docs).",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "diff",
+      "path": "packages/stack-supabase/src/create.ts",
+      "rev": "head",
+      "line_start": 404,
+      "line_end": 408,
+      "claim": "Only the error message text changed. It now also names `@cipherstash/stack/wasm-inline`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": "packages/stack-supabase/src/schema-builder.ts",
+      "rev": "head",
+      "line_start": 3,
+      "line_end": 7,
+      "claim": "`V3Schemas = Record<string, AnyV3Table>`, with `AnyV3Table` imported from `@cipherstash/stack/eql/v3`.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[0]",
+      "claim": "`packages/stack/tsup.config.ts` usually changes with `packages/stack/package.json` (17 commits, conf 0.85) but package.json is unchanged here. I checked the exports map, and it needs no change for `./wasm-inline` types.",
+      "status": "verified"
+    }
+  ]
+}

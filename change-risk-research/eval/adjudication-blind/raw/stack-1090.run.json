@@ -1,0 +1,12 @@
+{
+  "case": "stack-1090",
+  "exit_code": 0,
+  "started": "2026-10-12T23:52:44.166685+00:00",
+  "wall_seconds": 62.162415,
+  "net_flags": [
+    "cd /srv/blind/stack-1090; cat > labels.json <<'EOF'\n{\"labels\": [\n{\"id\": \"F-01\", \"label\": \"valid\", \"matches\": [], \"evidence_ok\": true, \"actionable\": true, \"reason\": \"The new guidance ('a module-level s"
+  ],
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "total_cost_usd": 0.46973960000000003
+}

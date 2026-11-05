@@ -1,0 +1,14 @@
+{
+  "pr": 1022,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "no_known_defect",
+  "expert_impact": "medium",
+  "attention_warranted": true,
+  "impact_confidence": "low",
+  "rationale": "Go SDK: encryption Context now copies byte-slice parts to avoid aliasing; affects what context is bound at encrypt/decrypt.",
+  "known_defects": [],
+  "notes": "No known defect does not mean risk-free; reported scenarios on this case are adjudicated individually (valid / unsupported / incorrect)."
+}

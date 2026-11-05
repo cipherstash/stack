@@ -1,0 +1,462 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "fcb7e336ded91cbf00318785996c3ea833cc9944",
+  "head_sha": "c28b5e46fd29889667a14eab94e9b6213e553271",
+  "merge_base_sha": "fcb7e336ded91cbf00318785996c3ea833cc9944",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "fcb7e336ded91cbf00318785996c3ea833cc9944",
+    "cutoff_date": "2026-06-02T12:43:21+10:00",
+    "commits_read": 1070,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 10,
+    "additions": 42,
+    "deletions": 14,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 10
+    }
+  },
+  "dispersion": {
+    "components": {
+      ".": 1,
+      "packages/cli": 1,
+      "packages/drizzle": 1,
+      "packages/migrate": 1,
+      "packages/nextjs": 1,
+      "packages/protect-dynamodb": 1,
+      "packages/protect": 1,
+      "packages/schema": 1,
+      "packages/stack": 1,
+      "packages/wizard": 1
+    },
+    "component_count": 10,
+    "top_level_dirs": {
+      "packages": 9,
+      ".github": 1
+    },
+    "languages": {
+      "JSON": 9,
+      "YAML": 1
+    }
+  },
+  "path_classes": {
+    "dependency_manifest": 9,
+    "ci_workflow": 1,
+    "release_tooling": 1,
+    "database_schema": 1,
+    "serialization_or_protocol": 1
+  },
+  "files": [
+    {
+      "path": ".github/workflows/release.yml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 10,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["ci_workflow", "release_tooling"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "packages/cli/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/cli",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/drizzle/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["database_schema", "dependency_manifest"],
+      "component": "packages/drizzle",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/migrate/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/migrate",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/nextjs/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/nextjs",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-dynamodb/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-dynamodb",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/schema/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest", "serialization_or_protocol"],
+      "component": "packages/schema",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/stack",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/wizard/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/wizard",
+      "language": "JSON"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/protect/package.json",
+        "commits": 86,
+        "commits_last_90d": 17,
+        "distinct_authors": 9
+      },
+      {
+        "path": "packages/stack/package.json",
+        "commits": 46,
+        "commits_last_90d": 33,
+        "distinct_authors": 7
+      },
+      {
+        "path": "packages/nextjs/package.json",
+        "commits": 39,
+        "commits_last_90d": 4,
+        "distinct_authors": 5
+      },
+      {
+        "path": "packages/protect-dynamodb/package.json",
+        "commits": 35,
+        "commits_last_90d": 10,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/cli/package.json",
+        "commits": 34,
+        "commits_last_90d": 34,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/drizzle/package.json",
+        "commits": 31,
+        "commits_last_90d": 5,
+        "distinct_authors": 6
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "commits": 16,
+        "commits_last_90d": 10,
+        "distinct_authors": 6
+      },
+      {
+        "path": "packages/schema/package.json",
+        "commits": 13,
+        "commits_last_90d": 4,
+        "distinct_authors": 4
+      },
+      {
+        "path": "packages/wizard/package.json",
+        "commits": 11,
+        "commits_last_90d": 11,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/migrate/package.json",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 3
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/migrate/package.json",
+        "usually_changes_with": "pnpm-lock.yaml",
+        "co_commits": 5,
+        "confidence": 0.83,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect-dynamodb/package.json",
+        "usually_changes_with": "packages/protect-dynamodb/CHANGELOG.md",
+        "co_commits": 24,
+        "confidence": 0.69,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/basic/CHANGELOG.md",
+        "co_commits": 9,
+        "confidence": 0.69,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/basic/package.json",
+        "co_commits": 9,
+        "confidence": 0.69,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "packages/protect-dynamodb/CHANGELOG.md",
+        "co_commits": 9,
+        "confidence": 0.69,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "packages/protect/CHANGELOG.md",
+        "co_commits": 9,
+        "confidence": 0.69,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "packages/schema/CHANGELOG.md",
+        "co_commits": 9,
+        "confidence": 0.69,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/cli/package.json",
+        "usually_changes_with": "packages/cli/CHANGELOG.md",
+        "co_commits": 21,
+        "confidence": 0.68,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": ".github/workflows/release.yml",
+        "usually_changes_with": ".github/workflows/tests.yml",
+        "co_commits": 9,
+        "confidence": 0.64,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect-dynamodb/package.json",
+        "usually_changes_with": "examples/basic/package.json",
+        "co_commits": 22,
+        "confidence": 0.63,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect-dynamodb/package.json",
+        "usually_changes_with": "packages/protect/CHANGELOG.md",
+        "co_commits": 21,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/wizard/package.json",
+        "usually_changes_with": "packages/cli/CHANGELOG.md",
+        "co_commits": 6,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/wizard/package.json",
+        "usually_changes_with": "packages/wizard/CHANGELOG.md",
+        "co_commits": 6,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/nextjs/package.json",
+        "usually_changes_with": "packages/nextjs/CHANGELOG.md",
+        "co_commits": 22,
+        "confidence": 0.58,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect-dynamodb/package.json",
+        "usually_changes_with": "examples/basic/CHANGELOG.md",
+        "co_commits": 20,
+        "confidence": 0.57,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/protect-dynamodb/package.json",
+        "usually_changes_with": "examples/dynamo/package.json",
+        "co_commits": 19,
+        "confidence": 0.54,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/dynamo/CHANGELOG.md",
+        "co_commits": 7,
+        "confidence": 0.54,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/dynamo/package.json",
+        "co_commits": 7,
+        "confidence": 0.54,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/next-drizzle-mysql/CHANGELOG.md",
+        "co_commits": 7,
+        "confidence": 0.54,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/next-drizzle-mysql/package.json",
+        "co_commits": 7,
+        "confidence": 0.54,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/nextjs-clerk/CHANGELOG.md",
+        "co_commits": 7,
+        "confidence": 0.54,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/schema/package.json",
+        "usually_changes_with": "examples/nextjs-clerk/package.json",
+        "co_commits": 7,
+        "confidence": 0.54,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/protect-dynamodb/package.json",
+        "usually_changes_with": "examples/dynamo/CHANGELOG.md",
+        "co_commits": 18,
+        "confidence": 0.51,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack/package.json",
+        "usually_changes_with": "examples/basic/package.json",
+        "co_commits": 21,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack/package.json",
+        "usually_changes_with": "packages/stack/CHANGELOG.md",
+        "co_commits": 21,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 15
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".github/workflows/release.yml": ["@cipherstash/developers"],
+      "packages/cli/package.json": ["@cipherstash/developers"],
+      "packages/drizzle/package.json": ["@cipherstash/developers"],
+      "packages/migrate/package.json": ["@cipherstash/developers"],
+      "packages/nextjs/package.json": ["@cipherstash/developers"],
+      "packages/protect-dynamodb/package.json": ["@cipherstash/developers"],
+      "packages/protect/package.json": ["@cipherstash/developers"],
+      "packages/schema/package.json": ["@cipherstash/developers"],
+      "packages/stack/package.json": ["@cipherstash/developers"],
+      "packages/wizard/package.json": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 16
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 0,
+    "source_files_changed": 0,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [],
+    "mapping": [],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

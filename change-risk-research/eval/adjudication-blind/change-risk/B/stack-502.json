@@ -1,0 +1,48 @@
+{
+  "case": "stack-502",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "low",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Same-named operation classes from /encryption and /dynamodb confuse consumers' type annotations",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Both entry points now export distinct same-named classes (dynamodb EncryptModelOperation extends DynamoDBOperation with private fields), so they are non-assignable and confusable; this is a naming hazard introduced by the new exports."
+    },
+    {
+      "id": "FS-2",
+      "title": "Operation constructors become a semver-bound contract",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same accurate point: value re-exports make constructors and class identity public surface in a minor release; the cited lines confirm value export and type-only new imports."
+    },
+    {
+      "id": "FS-3",
+      "title": "WithLockContext variants lose @internal despite the changeset saying they stay internal",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The @internal tags on the WithLockContext classes were removed while the changeset says they stay internal, but they are not exported, so this is only a doc-comment inconsistency (and no other WithLockContext class carries @internal either)."
+    }
+  ],
+  "cost_usd": 0.9703377,
+  "wall_seconds": 152.414739,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

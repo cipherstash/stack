@@ -1,0 +1,49 @@
+{
+  "pr": 1090,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/1090#discussion_r4191166694",
+      "path": "packages/stack-auth/src/oidc_federation_strategy.rs",
+      "line": 335,
+      "severity_label": "🚀 Performance & Scalability | 🟡 Minor | ⚡ Quick win",
+      "claim": "Do not let failed JWT engines consume successful-user cache slots. `engine_for` inserts each new engine before `get_token` performs the federation. A failed exchange records its denial inside `AutoRefresh`, but nothing removes that engine from the outer LRU.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-2",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/1090#discussion_r4191539900",
+      "path": "packages/stack-auth/src/oidc_federation_strategy.rs",
+      "line": 384,
+      "severity_label": "🩺 Stability & Availability | 🟡 Minor | ⚡ Quick win",
+      "claim": "Remove the pending engine when `get_token` is cancelled. `engine_for` inserts a new engine into `engines.pending` at Line 225. Only `settle` removes it.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-3",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/1090#discussion_r4192737715",
+      "path": ".changeset/oidc-federation-per-user-tokens.md",
+      "line": 2,
+      "severity_label": "🗄️ Data Integrity & Integration | 🟠 Major | ⚡ Quick win",
+      "claim": "Bump `@cipherstash/auth` to a major version. The previous contract called `getJwt` for federation and re-federation, while reusing the cached CTS token between them. This change calls `getJwt` on every `getToken()`, which changes the documented callback contract.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-4",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/1090#discussion_r4192737754",
+      "path": ".changeset/oidc-federation-per-user-tokens.md",
+      "line": 8,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Qualify the one-exchange guarantee. Line 8 says each JWT is exchanged once while its CTS token is valid. The LRU can evict that JWT before expiry, and `cacheCapacity: 0` disables reuse.",
+      "is_nitpick": false
+    }
+  ],
+  "notes": "4 CodeRabbit inline threads (actionable counts in review bodies: 1, 1, 2; no nitpick or outside-diff sections). Two CodeRabbit reviews with empty bodies (5423769366, 5424312968). Summary/walkthrough issue comment present; it reports 'Reviews paused'; pre-merge checks list a Docstring Coverage warning (74.10% < 80%), not counted as a finding. Other review threads by chatgpt-codex-connector and cipherstash-bot excluded.; CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/1090#discussion_r4191512270 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/1090#discussion_r4191985583 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/1090#discussion_r4192818852 (not a finding); CodeRabbit reply in thread https://github.com/cipherstash/stack/pull/1090#discussion_r4192798929 (not a finding)"
+}

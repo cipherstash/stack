@@ -1,0 +1,327 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+  "head_sha": "6e7ae4e117c4847b62491d63da8df5e74b4a5bc9",
+  "merge_base_sha": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "b9c4fe5598130f66f43ba43d29bed192634ad875",
+    "cutoff_date": "2026-05-26T15:24:34+10:00",
+    "commits_read": 1068,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 8,
+    "additions": 54,
+    "deletions": 14,
+    "binary_files": 0,
+    "by_status": {
+      "added": 1,
+      "modified": 7
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/stack": 7,
+      ".": 1
+    },
+    "component_count": 2,
+    "top_level_dirs": {
+      "packages": 7,
+      ".changeset": 1
+    },
+    "languages": {
+      "TypeScript": 7,
+      "Markdown": 1
+    }
+  },
+  "path_classes": {
+    "security_sensitive": 3,
+    "docs": 1,
+    "serialization_or_protocol": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/export-operation-result-types.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 15,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack/src/dynamodb/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/encryption/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 24,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/encryption/operations/encrypt-query.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/schema/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/types-public.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/types.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "packages/stack/src/types.ts",
+        "commits": 13,
+        "commits_last_90d": 6,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/src/encryption/index.ts",
+        "commits": 12,
+        "commits_last_90d": 9,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/src/schema/index.ts",
+        "commits": 10,
+        "commits_last_90d": 4,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+        "commits": 5,
+        "commits_last_90d": 3,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/src/encryption/operations/encrypt-query.ts",
+        "commits": 5,
+        "commits_last_90d": 3,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/src/types-public.ts",
+        "commits": 4,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/src/dynamodb/index.ts",
+        "commits": 2,
+        "commits_last_90d": 0,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/stack/src/encryption/operations/encrypt-query.ts",
+        "usually_changes_with": "packages/stack/src/encryption/operations/bulk-encrypt.ts",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack/src/encryption/operations/encrypt-query.ts",
+        "usually_changes_with": "packages/stack/src/encryption/operations/decrypt.ts",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack/src/encryption/operations/encrypt-query.ts",
+        "usually_changes_with": "packages/stack/src/encryption/operations/encrypt.ts",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack/src/schema/index.ts",
+        "usually_changes_with": "packages/stack/__tests__/schema-builders.test.ts",
+        "co_commits": 6,
+        "confidence": 0.75,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 15
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/export-operation-result-types.md": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/src/dynamodb/index.ts": ["@cipherstash/developers"],
+      "packages/stack/src/encryption/index.ts": ["@cipherstash/developers"],
+      "packages/stack/src/encryption/operations/batch-encrypt-query.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/src/encryption/operations/encrypt-query.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/src/schema/index.ts": ["@cipherstash/developers"],
+      "packages/stack/src/types-public.ts": ["@cipherstash/developers"],
+      "packages/stack/src/types.ts": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 5
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 0,
+    "source_files_changed": 7,
+    "source_without_related_test": [
+      "packages/stack/src/dynamodb/index.ts",
+      "packages/stack/src/encryption/index.ts",
+      "packages/stack/src/schema/index.ts",
+      "packages/stack/src/types-public.ts",
+      "packages/stack/src/types.ts"
+    ],
+    "source_with_related_test_unchanged": [
+      "packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+      "packages/stack/src/encryption/operations/encrypt-query.ts"
+    ],
+    "mapping": [
+      {
+        "source": "packages/stack/src/dynamodb/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/encryption/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/null-guards.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/encryption/operations/encrypt-query.ts",
+        "related_tests_at_head": [
+          "packages/protect/__tests__/encrypt-query.test.ts",
+          "packages/stack/__tests__/encrypt-query.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/schema/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/types-public.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/types.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

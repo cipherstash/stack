@@ -1,0 +1,71 @@
+{
+  "case": "stack-941",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "After cutover, npm publishes EQL V but the SQL/docs/image chain does not, and a re-run cannot re-drive it",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Identifies that eql_published is set by a step after changeset publish, so a failed/re-run publish leaves npm V without the SQL/docs/image artefacts."
+    },
+    {
+      "id": "FS-2",
+      "title": "SQL attached to the GitHub release and baked into the image is rebuilt, not the bytes npm and the crate shipped",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "_build-eql-sql.yml regenerates SQL with mise run --force build under rust=latest instead of attaching the committed verified bytes, so release/image SQL can diverge from npm under the same stamp."
+    },
+    {
+      "id": "FS-3",
+      "title": "release-plz publishes the crate on a push the release gate refused",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "release-plz.yml's release job is gated only on eql-armed on its own push trigger, so the crate can publish when release.yml's gate or npm publish fails; this is the reverse direction of KD-2 and not its mechanism."
+    },
+    {
+      "id": "FS-4",
+      "title": "Production npm half of the EQL switch is held by a different reader than the other four artefacts",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Production npm publish of @cipherstash/eql is gated by gate rather than eql-armed and AGENTS.md admits no test ties them, an untested invariant introduced here."
+    },
+    {
+      "id": "FS-5",
+      "title": "Live JS/FFI releases now depend on the new `classify` job",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same as F-01: release/publish-ffi now depend on classify's production output, so a classify fault skips live JS/FFI releases."
+    }
+  ],
+  "cost_usd": 1.8083932999999999,
+  "wall_seconds": 238.977408,
+  "case_note": "KD-2 found; KD-1 missed.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

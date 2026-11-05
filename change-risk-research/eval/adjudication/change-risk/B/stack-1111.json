@@ -1,0 +1,36 @@
+{
+  "case": "stack-1111",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "cache_key_prefix silently ignored on the v3.6.3 mise-action pin",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    },
+    {
+      "id": "FS-2",
+      "title": "One-time cold mise cache on every affected job",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 0.8468530999999999,
+  "wall_seconds": 109.593564
+}

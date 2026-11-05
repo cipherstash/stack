@@ -1,0 +1,260 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Separate regexes can tag one line with different kinds (e.g. select and update), which is arguably correct and only affects a report."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "rewriteEncryptedMigrations returns after the first existing candidate dir even if the drizzle out dir is a different one, so real migrations can go unrewritten."
+    },
+    {
+      "id": "F-03",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Creating operator classes/families needs superuser in Postgres, so falling back to the no-operator-family variant for non-superusers is needed, not a wrongful downgrade."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "stash.ts now loads .env.local etc. before .env and dotenv does not overwrite, so DATABASE_URL can resolve differently than at base, where only config() ran."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "resolveProviderOptions auto-enables drizzle with no way to negate it via parseArgs, and the drizzle path returns after writing a migration without installing EQL."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "renderSafeAlter adds a tmp column, leaves the UPDATE commented out, then drops the original column, and the wizard defaults to running the migration, so populated data is lost."
+    },
+    {
+      "id": "F-07",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "writeFileSync uses default permissions like any .env file the user writes; this is minor hardening on an experimental, opt-in command."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The regex swallows trailing clauses such as USING and the sweep rewrites every .sql file in outDir, not only newly generated ones."
+    },
+    {
+      "id": "F-09",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Assumes drizzle-kit emits a clean ALTER to \"public\".\"eql_v2_encrypted\" that the rewriter matches; the pre-quoted type is actually mis-rendered, so the claimed DROP-of-ciphertext chain is speculative and not shown by the code."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "cpSync with force:true overwrites existing .claude/skills/<name> files, and the confirm prompt does not warn that they will be overwritten."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Auto-detected drizzle routes to generateDrizzleMigration and returns without a DB install, and the non-superuser OPE fallback only applies on the direct path."
+    },
+    {
+      "id": "F-12",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The setup case was removed from the db dispatch, yet the bundled stash-cli SKILL.md (lines 69-72) and the stack README (line 469) still tell users to run db setup."
+    },
+    {
+      "id": "F-13",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is a hypothetical about a future change to packages/drizzle, not a defect caused by this PR."
+    },
+    {
+      "id": "F-14",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is only about how verbose the logging is."
+    },
+    {
+      "id": "F-15",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The rewrite emits DROP COLUMN with only a commented-out UPDATE, and the wizard's migrate prompt defaults to yes, so populated columns are silently lost."
+    },
+    {
+      "id": "F-16",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The extra suffix check is redundant but harmless."
+    },
+    {
+      "id": "F-17",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "--write is missing from the help text of an experimental command."
+    },
+    {
+      "id": "F-18",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The removed db setup command is still documented in the shipped skill (which the wizard copies into user repos) and in the stack README."
+    },
+    {
+      "id": "F-19",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Detection has no opt-out because parseArgs only sets flags to true, and Supabase detection only matches host suffixes, whereas the removed setup asked the user explicitly."
+    },
+    {
+      "id": "F-20",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Same speculative snapshot-diff-to-DROP chain; it assumes drizzle-kit emits the exact qualified form the regex matches, which the cited code does not show."
+    },
+    {
+      "id": "F-21",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The JSDoc wording is inaccurate."
+    },
+    {
+      "id": "F-22",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The wizard selects populated columns, the rewriter drops the original column with no data copy, and the migrate prompt defaults to yes."
+    },
+    {
+      "id": "F-23",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The bundled skill and README still reference db setup, which now hits the unknown-subcommand path."
+    },
+    {
+      "id": "F-24",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is about whether the comment's 'Next.js precedence' wording is accurate."
+    },
+    {
+      "id": "F-25",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The JSDoc overstates idempotency, but run.ts calls flush only once per path, so no duplicate entries occur in practice."
+    },
+    {
+      "id": "F-26",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is a style nit about building paths by hand."
+    },
+    {
+      "id": "F-27",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The snapshot-diff-to-DROP chain assumes the rewriter matches whatever drizzle-kit emits; the quoted-type rendering problem is only mentioned as something to verify and is not identified as the mechanism."
+    },
+    {
+      "id": "F-28",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The non-null assertion in the scaffolded config only affects the error message."
+    },
+    {
+      "id": "F-29",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The redundant prompt options are a style issue."
+    },
+    {
+      "id": "F-30",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new env-file load order lets .env.local's DATABASE_URL override .env's, retargeting db commands."
+    },
+    {
+      "id": "F-31",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is about testability and style."
+    },
+    {
+      "id": "F-32",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is about the code pattern and testability."
+    }
+  ]
+}

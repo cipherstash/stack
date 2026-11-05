@@ -1,0 +1,28 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Cited imports, test file, tsup config and CI step exist, but the finding identifies no concrete change in next 15.5.24 affecting NextRequest/NextResponse/cookies; it is a speculative 'run CI' concern about a patch-level lockfile bump."
+    },
+    {
+      "id": "F-02",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Citations are accurate, but no specific behavioural or type change in next 15.5.24 is shown that would break @cipherstash/nextjs; the breakage is hypothetical."
+    },
+    {
+      "id": "F-03",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Cited code is accurate, but no concrete break caused by 15.5.24 is shown, and its claim that no CI job typechecks packages/nextjs is contradicted by tests.yml:220-221."
+    }
+  ]
+}

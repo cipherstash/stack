@@ -1,0 +1,76 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The newly wired v3 sweep rewrites every .sql in outDir except the generated file, without checking the journal. Because v3 targets now match, already-applied jsonb/v3-source ALTERs can have their committed history edited."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The strict regex keys only on the eql_v3_* target, and renderSafeAlter always emits ADD/DROP/RENAME. A jsonb or v3-domain source change that may have been castable is therefore turned into a column drop, and the tests have no such source case."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same source-type-blind mechanism, confirmed in rewrite-migrations.ts and the codec.ts jsonb-domain comment. A domain-to-domain change is rewritten into a destructive DROP."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The base regex matched only eql_v2_encrypted, so a v2->v3 or v3->v3 ALTER went through unchanged or failed loudly. At head it is rewritten to drop the existing ciphertext column, and the cited base/head lines and the ops.json domain DDL support this."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The v3 eql migration path now sweeps all sibling files with no journal check, so applied v3 migrations can be rewritten and fresh environments diverge from production."
+    },
+    {
+      "id": "F-06",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, install.ts sets sweepIncomplete when skipped.length > 0 and logs a warning again right after 'Migration created', before the Next Steps note, so near-misses are re-surfaced."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "At base, migration.ts had no sweep and the regex ignored v3, so plaintext->v3 failed at migrate. At head it is silently rewritten into ADD/DROP/RENAME with only comment and info-level warnings and no non-empty-table guard."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The head v3 migration path auto-rewrites to destructive SQL, logs at info level, and still tells the user to run drizzle-kit migrate, so a loud failure on a populated table becomes data loss."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "renderSafeAlter has no row-count guard, and the change extends the destructive rewrite to v3 targets and the v3 migration command. SKILL.md documents empty-table-only safety but nothing enforces it."
+    }
+  ]
+}

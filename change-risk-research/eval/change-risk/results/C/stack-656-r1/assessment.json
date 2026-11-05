@@ -1,0 +1,162 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+  "head_sha": "7744caf8fef3234fca7dd28cb59c9a2516a5fdd3",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "9 check runs on head, all success; CodeRabbit status success"
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md at head (the changed file itself) and packages/stack/CHANGELOG.md; no separate architecture docs provided"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership",
+      "note": "AGENTS.md owned by @cipherstash/developers"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Documentation-only, one-line correction in the repository-root AGENTS.md: the identity-aware-encryption bullet now names the ClientConfig auth-strategy key as `config.authStrategy` instead of `config.strategy`. The head source confirms `authStrategy` is the documented field and `strategy` is a deprecated alias that still works but warns at runtime, so the old text was stale guidance and the new text matches the code. AGENTS.md is not in the published package's `files` list and the root package is private, so nothing shipped to customers changes. No code, tests, build or release configuration change. No material failure scenario was found.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "documentation",
+      "description": "Repo-internal agent guidance (AGENTS.md line 160) now tells agents and contributors to pass OidcFederationStrategy via `config.authStrategy` rather than the deprecated `config.strategy` alias. No runtime behaviour changes.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "high",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "AGENTS.md (repository-root agent instructions)",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "One bullet corrected to name `config.authStrategy`.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Contributors and coding agents working in this repository",
+      "kind": "documentation",
+      "relationship": "likely",
+      "how": "They read AGENTS.md as guidance when writing examples or code for identity-aware encryption, and are now pointed at the non-deprecated key. The file is not shipped in the @cipherstash/stack tarball.",
+      "evidence": ["E-1", "E-4", "E-5"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "documentation",
+      "description": "Optional follow-up outside this change: grep shipped agent skills and READMEs for the deprecated `config.strategy` wording, since drift there reaches customers.",
+      "addresses": []
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Other documentation and shipped skills were not exhaustively audited for the same stale key. A head `git grep` for `config.strategy` found it only in CHANGELOG history, tests of the deprecated alias, and the alias-handling source.",
+      "effect": "Similar drift elsewhere is outside this change and would not alter its risk."
+    },
+    {
+      "id": "CL-2",
+      "description": "No dependency graph or deployment context was provided.",
+      "effect": "Not relevant to a doc-only change to an unpublished file; no effect on the verdict."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 160,
+      "line_end": 160,
+      "claim": "The only change replaces `config.strategy` with `config.authStrategy` in the identity-aware-encryption bullet.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 142,
+      "line_end": 173,
+      "claim": "ClientConfig declares `authStrategy?: AuthStrategy` as the documented field (line 166) and `strategy?: AuthStrategy` as a @deprecated alias still honoured with a runtime warning (lines 168-173).",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "documentation",
+      "path": "packages/stack/CHANGELOG.md",
+      "rev": "head",
+      "line_start": 635,
+      "line_end": 652,
+      "claim": "The changelog records the rename from `config.strategy` to `config.authStrategy`, with `strategy` kept as a deprecated alias.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 28,
+      "claim": "Published `files` are dist, README.md, LICENSE and CHANGELOG.md; AGENTS.md is not shipped.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 4,
+      "claim": "The root package is private, so the root AGENTS.md is not published to npm.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "ci_result",
+      "claim": "All 9 check runs on head (tests on Node 22/24/Bun, E2E, WASM E2E, Biome lint, CodeQL, OSV) concluded success.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "history_signal",
+      "path": "AGENTS.md",
+      "signal": "churn",
+      "claim": "AGENTS.md is a hotspot (19 prior commits, 14 recent, 4 authors); no usually-co-changed files are missing.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "pr_description",
+      "claim": "The PR states this is a one-line doc fix and that AGENTS.md is not shipped in any tarball; E-2, E-4 and E-5 bear this out.",
+      "status": "verified"
+    }
+  ]
+}

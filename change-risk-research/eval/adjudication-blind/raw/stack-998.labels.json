@@ -1,0 +1,28 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "It is true that steps 3-4 now run on non-EQL releases, but that is the PR's intent: prepareBindingAssets skips when there is no skew, and by the finding's own account the worst case (a loud failure) is no worse than the base, which failed every such release."
+    },
+    {
+      "id": "F-02",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The cited code skips the asset rebuild when nothing is skewed and deliberately runs cargo update online; the failure modes listed (resolution error, pre-existing tree skew) are hypothetical, are not shown to follow from this change, and lead to an outcome no worse than the base's unconditional throw."
+    },
+    {
+      "id": "F-03",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The lock churn depends on a committed Cargo.lock already drifting from its manifests, which is a pre-existing tree state and not caused by this change; on an in-sync lock, `cargo update -p eql-bindings` at an unchanged version is a no-op."
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "case": "stack-1072",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A plan-only PR merges unchecked and turns main red",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "tests.yml now skips PRs touching only docs/plans/** while push to main is unfiltered, and the new guard only greps test files for literal docs/plans/*.md paths, so a by-type scan (e.g. Biome's '**' includes) or a computed path can break main after merge."
+    },
+    {
+      "id": "FS-2",
+      "title": "The new filter evaluator makes a coverage guard pass for a filter that drops a binding input",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "negationRemovesAll does deliberately fail open on file-type negations, but this only affects a hypothetical future filter, and the finding itself says the fail-closed coverage guards would still catch it, leaving at most stale comment guidance."
+    },
+    {
+      "id": "FS-3",
+      "title": "lint-release.yml's justification for not running test:scripts is now slightly out of date",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The lint-release.yml comment saying test:scripts runs on every PR is now slightly inaccurate, but none of the files it covers are under docs/plans, so this is only comment wording."
+    }
+  ],
+  "cost_usd": 1.3229573,
+  "wall_seconds": 157.483879,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,81 @@
+{
+  "case": "stack-676",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Handle `ope` in the WASM query resolver. `resolveQueryIndex()` still maps `orderAndRange` to `ore` and only infers `ore`, so columns that expose `ope` without `",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "ope-only columns not handled by the WASM resolver"
+    },
+    {
+      "id": "CR-2",
+      "title": "Assert that containment needles omit the version envelope. The helper claims to enforce strict `{ sv: [...] }`, but a payload containing `v` still passes.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "test assertion strictness"
+    },
+    {
+      "id": "CR-3",
+      "title": "Only swallow the expected WASM rejection. `expectRejected()` catches every thrown value, but the WASM client surfaces plain `Error`s here, not a typed `AuthFail",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "test helper swallows unexpected errors, so tests can pass on infrastructure failures"
+    },
+    {
+      "id": "CR-4",
+      "title": "Consider documenting the `as never` casts per Biome-ignore convention. The new FFI calls (Lines 414-422, 459-464) extend the file's existing `as never` pattern ",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    },
+    {
+      "id": "CR-5",
+      "title": "Redundant `null as unknown as string` casts \u2014 `WasmPlaintext` already includes `null`. All three sites cast a literal `null` through `as unknown as string` when",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    },
+    {
+      "id": "CR-6",
+      "title": "Narrow the selector without `as unknown`. Use a type-predicate assertion or explicit `typeof selector !== 'string'` guard before reading `.length`.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    },
+    {
+      "id": "CR-7",
+      "title": "Remove the blanket schema type escapes. `as never` and `as unknown` suppress validation of the dynamic schema-to-column mapping.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

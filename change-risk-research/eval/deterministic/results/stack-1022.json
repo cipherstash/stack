@@ -1,0 +1,329 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "3e8f6cb8ce846eb9773d545c79b11c6e187dbd7a",
+  "head_sha": "ab8ca589fac1be02bb893917556823cc8f77270d",
+  "merge_base_sha": "3e8f6cb8ce846eb9773d545c79b11c6e187dbd7a",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "3e8f6cb8ce846eb9773d545c79b11c6e187dbd7a",
+    "cutoff_date": "2026-10-02T17:38:21-07:00",
+    "commits_read": 4766,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 7,
+    "additions": 385,
+    "deletions": 19,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 7
+    }
+  },
+  "dispersion": {
+    "components": {
+      "languages/golang": 7
+    },
+    "component_count": 1,
+    "top_level_dirs": {
+      "languages": 7
+    },
+    "languages": {
+      "Go": 7
+    }
+  },
+  "path_classes": {
+    "security_sensitive": 7,
+    "test": 3
+  },
+  "files": [
+    {
+      "path": "languages/golang/stackencrypt/cipher.go",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 18,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/golang",
+      "language": "Go"
+    },
+    {
+      "path": "languages/golang/stackencrypt/context.go",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 16,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/golang",
+      "language": "Go"
+    },
+    {
+      "path": "languages/golang/stackencrypt/doc.go",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/golang",
+      "language": "Go"
+    },
+    {
+      "path": "languages/golang/stackencrypt/guest_test.go",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 49,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["security_sensitive", "test"],
+      "component": "languages/golang",
+      "language": "Go"
+    },
+    {
+      "path": "languages/golang/stackencrypt/live_test.go",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 28,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive", "test"],
+      "component": "languages/golang",
+      "language": "Go"
+    },
+    {
+      "path": "languages/golang/stackencrypt/record.go",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 94,
+      "deletions": 12,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/golang",
+      "language": "Go"
+    },
+    {
+      "path": "languages/golang/stackencrypt/unit_test.go",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 173,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive", "test"],
+      "component": "languages/golang",
+      "language": "Go"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "languages/golang/stackencrypt/guest_test.go",
+        "commits": 23,
+        "commits_last_90d": 23,
+        "distinct_authors": 3
+      },
+      {
+        "path": "languages/golang/stackencrypt/doc.go",
+        "commits": 18,
+        "commits_last_90d": 18,
+        "distinct_authors": 2
+      },
+      {
+        "path": "languages/golang/stackencrypt/live_test.go",
+        "commits": 15,
+        "commits_last_90d": 15,
+        "distinct_authors": 3
+      },
+      {
+        "path": "languages/golang/stackencrypt/unit_test.go",
+        "commits": 13,
+        "commits_last_90d": 13,
+        "distinct_authors": 3
+      },
+      {
+        "path": "languages/golang/stackencrypt/record.go",
+        "commits": 8,
+        "commits_last_90d": 8,
+        "distinct_authors": 2
+      },
+      {
+        "path": "languages/golang/stackencrypt/cipher.go",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/golang/stackencrypt/context.go",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "languages/golang/stackencrypt/cipher.go",
+        "usually_changes_with": "languages/golang/stackencrypt/client.go",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "languages/golang/stackencrypt/live_test.go",
+        "usually_changes_with": "languages/golang/stackencrypt/client.go",
+        "co_commits": 12,
+        "confidence": 0.8,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "languages/golang/stackencrypt/doc.go",
+        "usually_changes_with": "languages/golang/stackencrypt/client.go",
+        "co_commits": 14,
+        "confidence": 0.78,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "languages/golang/stackencrypt/guest_test.go",
+        "usually_changes_with": "languages/golang/stackencrypt/client.go",
+        "co_commits": 14,
+        "confidence": 0.64,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "languages/golang/stackencrypt/live_test.go",
+        "usually_changes_with": "languages/golang/stackencrypt/README.md",
+        "co_commits": 9,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "languages/golang/stackencrypt/live_test.go",
+        "usually_changes_with": "languages/golang/stackencrypt/memory_test.go",
+        "co_commits": 9,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "languages/golang/stackencrypt/doc.go",
+        "usually_changes_with": "languages/golang/stackencrypt/README.md",
+        "co_commits": 9,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 100
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      "languages/golang/stackencrypt/cipher.go": ["@cipherstash/developers"],
+      "languages/golang/stackencrypt/context.go": ["@cipherstash/developers"],
+      "languages/golang/stackencrypt/doc.go": ["@cipherstash/developers"],
+      "languages/golang/stackencrypt/guest_test.go": [
+        "@cipherstash/developers"
+      ],
+      "languages/golang/stackencrypt/live_test.go": ["@cipherstash/developers"],
+      "languages/golang/stackencrypt/record.go": ["@cipherstash/developers"],
+      "languages/golang/stackencrypt/unit_test.go": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 27
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 3,
+    "source_files_changed": 4,
+    "source_without_related_test": [],
+    "source_with_related_test_unchanged": [
+      "languages/golang/stackencrypt/context.go"
+    ],
+    "mapping": [
+      {
+        "source": "languages/golang/stackencrypt/cipher.go",
+        "related_tests_at_head": [
+          "languages/golang/stackencrypt/credentials_test.go",
+          "languages/golang/stackencrypt/export_test.go",
+          "languages/golang/stackencrypt/guest_test.go",
+          "languages/golang/stackencrypt/live_test.go",
+          "languages/golang/stackencrypt/memory_linux_test.go",
+          "languages/golang/stackencrypt/memory_test.go",
+          "languages/golang/stackencrypt/options_test.go",
+          "languages/golang/stackencrypt/order_live_test.go"
+        ],
+        "match": "package",
+        "related_test_changed": true
+      },
+      {
+        "source": "languages/golang/stackencrypt/context.go",
+        "related_tests_at_head": [
+          "packages/stack-encrypt/tests/ui/context_field_conflicts.rs",
+          "packages/stack-encrypt/tests/ui/context_field_conflicts.stderr",
+          "packages/stack-encrypt/tests/ui/context_type_conflicts.rs",
+          "packages/stack-encrypt/tests/ui/context_type_conflicts.stderr"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "languages/golang/stackencrypt/doc.go",
+        "related_tests_at_head": [
+          "languages/golang/stackencrypt/credentials_test.go",
+          "languages/golang/stackencrypt/export_test.go",
+          "languages/golang/stackencrypt/guest_test.go",
+          "languages/golang/stackencrypt/live_test.go",
+          "languages/golang/stackencrypt/memory_linux_test.go",
+          "languages/golang/stackencrypt/memory_test.go",
+          "languages/golang/stackencrypt/options_test.go",
+          "languages/golang/stackencrypt/order_live_test.go"
+        ],
+        "match": "package",
+        "related_test_changed": true
+      },
+      {
+        "source": "languages/golang/stackencrypt/record.go",
+        "related_tests_at_head": [
+          "languages/golang/stackencrypt/credentials_test.go",
+          "languages/golang/stackencrypt/export_test.go",
+          "languages/golang/stackencrypt/guest_test.go",
+          "languages/golang/stackencrypt/live_test.go",
+          "languages/golang/stackencrypt/memory_linux_test.go",
+          "languages/golang/stackencrypt/memory_test.go",
+          "languages/golang/stackencrypt/options_test.go",
+          "languages/golang/stackencrypt/order_live_test.go"
+        ],
+        "match": "package",
+        "related_test_changed": true
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

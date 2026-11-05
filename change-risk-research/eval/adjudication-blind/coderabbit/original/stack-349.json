@@ -1,0 +1,182 @@
+{
+  "case": "stack-349",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "JSDoc for excludeOperatorFamily is misleading: it says undefined means auto-detect via detectSupabase, but the auto-fallback is driven by the permissions.isSupe",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The JSDoc wording is inaccurate."
+    },
+    {
+      "id": "CR-2",
+      "title": "Restrict permissions on the written .env.production.local file. writeFileSync writes production credentials (CS_CLIENT_KEY) with the default umask (typically 0o",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "writeFileSync uses default permissions like any .env file the user writes; this is minor hardening on an experimental, opt-in command."
+    },
+    {
+      "id": "CR-3",
+      "title": "flush() is not idempotent despite the JSDoc claim; render() iterates over the full entries array each time, so calling flush() twice writes duplicate entries.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The JSDoc overstates idempotency, but run.ts calls flush only once per path, so no duplicate entries occur in practice."
+    },
+    {
+      "id": "CR-4",
+      "title": "force: true silently overwrites user customizations in .claude/skills/<name>/; the confirm prompt doesn't mention that existing files will be clobbered.",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "cpSync with force:true overwrites existing .claude/skills/<name> files, and the confirm prompt does not warn that they will be overwritten."
+    },
+    {
+      "id": "CR-5",
+      "title": "Early return on the first existing candidate dir may skip the real migrations directory; rewriteEncryptedMigrations returns on the first DRIZZLE_OUT_DIRS entry ",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "rewriteEncryptedMigrations returns after the first existing candidate dir even if the drizzle out dir is a different one, so real migrations can go unrewritten."
+    },
+    {
+      "id": "CR-6",
+      "title": "Duplicate matches when a single line triggers multiple kinds (e.g. .from(users) and .update(users) on one line), producing two report entries for the same sourc",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Separate regexes can tag one line with different kinds (e.g. select and update), which is arguably correct and only affects a report."
+    },
+    {
+      "id": "CR-7",
+      "title": "env --write is wired but undocumented in HELP. flags.write is read but the HELP text for the env command and the flags block don't mention --write.",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "--write is missing from the help text of an experimental command."
+    },
+    {
+      "id": "CR-8",
+      "title": "Auto-fallback triggers on !isSuperuser regardless of whether permissions are already sufficient, so non-superuser roles with explicit grants are silently downgr",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Creating operator classes/families needs superuser in Postgres, so falling back to the no-operator-family variant for non-superusers is needed, not a wrongful downgrade."
+    },
+    {
+      "id": "CR-9",
+      "title": "err.message duplicates noise now that stderr streams to the terminal; logging it mostly restates the generic 'Command failed' text.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is only about how verbose the logging is."
+    },
+    {
+      "id": "CR-10",
+      "title": "process.exit(1) is used instead of the p.cancel + return pattern used by other cancellation paths, skipping future cleanup and making the function harder to tes",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is about the code pattern and testability."
+    },
+    {
+      "id": "CR-11",
+      "title": "Redundant defaultValue/initialValue pairing in the clientPath prompt.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The redundant prompt options are a style issue."
+    },
+    {
+      "id": "CR-12",
+      "title": "Generated config uses non-null assertion on DATABASE_URL; if unset, downstream code receives undefined and fails with a less helpful error than an explicit thro",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The non-null assertion in the scaffolded config only affects the error message."
+    },
+    {
+      "id": "CR-13",
+      "title": "Use path.join instead of manual string concatenation; hard-coded forward slashes won't handle Windows paths cleanly.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is a style nit about building paths by hand."
+    },
+    {
+      "id": "CR-14",
+      "title": ".pooler.supabase.com is already covered by .supabase.com; the third branch is dead.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The extra suffix check is redundant but harmless."
+    },
+    {
+      "id": "CR-15",
+      "title": "\"Next.js precedence\" isn't exactly Next.js: .env.development is loaded unconditionally regardless of NODE_ENV.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is about whether the comment's 'Next.js precedence' wording is accurate."
+    },
+    {
+      "id": "CR-16",
+      "title": "Back-compat detection is correct, but the parallel implementation in packages/drizzle only emits/detects the bare eql_v2_encrypted form; if it is updated to emi",
+      "nitpick": true,
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is a hypothetical about a future change to packages/drizzle, not a defect caused by this PR."
+    },
+    {
+      "id": "CR-17",
+      "title": "detectDrizzle(process.cwd()) hard-codes the working directory instead of threading cwd through as an option.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "This is about testability and style."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

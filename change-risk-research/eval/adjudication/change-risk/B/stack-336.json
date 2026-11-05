@@ -1,0 +1,72 @@
+{
+  "case": "stack-336",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Published `stash` binary fails to start because @cipherstash/stack is external but only a devDependency",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified: skipNodeModulesBundle true, @cipherstash/stack devDependency only. Later fixed by aa06dd126 (fix: cli runtime, adds optional peer dep). Post-hoc defect candidate.",
+      "post_hoc_matches": ["KD-2"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Wizard's canUseTool gate is bypassed by allowedTools, letting the agent read .env secrets and send them to the gateway",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "allowedTools are resolved before canUseTool in the Agent SDK permission order, so the custom gate is skipped for listed tools. Not traced to a later fix."
+    },
+    {
+      "id": "FS-3",
+      "title": "Dependency security overrides silently stop applying after moving to a top-level `overrides` field",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified top-level npm-format overrides at head; AGENTS.md documents pnpm ignores it. Later removed as inert by d2322980e. Post-hoc defect candidate.",
+      "post_hoc_matches": ["KD-3"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Removing the `stash` bin from @cipherstash/stack breaks existing users with no changeset or migration path",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified no changeset at head and bin removed from stack."
+    },
+    {
+      "id": "FS-5",
+      "title": "Wizard reports encryption is set up even when setup, push or migration failed or the user aborted",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified runStep swallows errors and run.ts prints success unconditionally."
+    }
+  ],
+  "cost_usd": 2.3869495,
+  "wall_seconds": 303.390076,
+  "case_note": "Missed KD-1 (client_id cli-referrer). Five valid findings, two of which were later fixed in the repository."
+}

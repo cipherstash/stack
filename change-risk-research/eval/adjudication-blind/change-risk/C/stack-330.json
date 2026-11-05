@@ -1,0 +1,59 @@
+{
+  "case": "stack-330",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Published stash CLI fails at startup for every command because @cipherstash/auth does not load",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Nothing shows that @cipherstash/auth's default-import interop actually fails. The startup crash is conjecture about an unspecified platform or packaging."
+    },
+    {
+      "id": "FS-2",
+      "title": "stash init cannot complete without interactive network login and device binding",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same confirmed mechanism as F-04: an unconditional auth step plus unhandled errors and process.exit(1) block init."
+    },
+    {
+      "id": "FS-3",
+      "title": "New docs and init next steps say no env vars are needed, but stash secrets and LockContext still require CS_* credentials",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Confirmed: the README and next-steps now say no credentials are needed, but secrets getConfig and loadWorkSpaceId still require CS_* or TOML."
+    },
+    {
+      "id": "FS-4",
+      "title": "Downgraded and exact-pinned runtime dependencies change library behaviour for consumers",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The downgrades and exact pins of evlog and @byteslice/result are confirmed in package.json and the lockfile diff."
+    }
+  ],
+  "cost_usd": 1.2641941,
+  "wall_seconds": 183.136572,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

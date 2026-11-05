@@ -1,0 +1,48 @@
+{
+  "case": "stack-964",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Shipped skills recommend cross-entry schemas to customers whose installed @cipherstash/stack predates the fix",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The head skills now recommend cross-entry schemas, and the fallback only says 'upgrade' without naming a version, so customers whose separately versioned stash skills sit next to an older stack get TS2322 that agents may silence with casts."
+    },
+    {
+      "id": "FS-2",
+      "title": "Types now assert one EncryptedV3Column while runtime has several copies, so a future instanceof check silently misclassifies wasm-authored tables",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The finding admits no instanceof check exists at head and runtime detection is structural and fails closed, so the harm depends on hypothetical future code."
+    },
+    {
+      "id": "FS-3",
+      "title": "Re-chunked wasm-inline declarations fail to resolve or degrade to any for edge type-checkers",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The claim that shared chunks carry imports edge checkers cannot resolve is speculative (the author did not inspect the output), and the dist-types gates already compile dist/wasm-inline.d.ts in CI."
+    }
+  ],
+  "cost_usd": 1.9926926999999992,
+  "wall_seconds": 219.957945,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

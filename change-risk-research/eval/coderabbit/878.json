@@ -1,0 +1,8 @@
+{
+  "pr": 878,
+  "coderabbit_present": false,
+  "collected_via": "github mcp",
+  "summary_comment_present": false,
+  "findings": [],
+  "notes": "No reviews, review comments or issue comments authored by coderabbitai on GitHub. Reviewers on GitHub were copilot-pull-request-reviewer (3 inline comments), coderdan and tobyhede. The PR body mentions 'Three CodeRabbit rounds, 9 findings' but none are visible on the PR via the GitHub API (possibly run outside GitHub)."
+}

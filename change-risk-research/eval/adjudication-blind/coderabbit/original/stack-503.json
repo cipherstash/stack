@@ -1,0 +1,82 @@
+{
+  "case": "stack-503",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Update `bugs.url` to the migrated repo too. `repository` now points at `cipherstash/stack`, but `bugs.url` above still sends npm users to the old `cipherstash/p",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, bugs.url in packages/drizzle/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "CR-2",
+      "title": "Migrate `bugs.url` along with `repository.url`. This manifest still advertises the old `cipherstash/protectjs` issue tracker even though the package source now ",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, bugs.url in packages/nextjs/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "CR-3",
+      "title": "Point `bugs.url` at `cipherstash/stack` as well. Right now npm metadata would still route users to the old `protectjs` issues page even though the package repos",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, bugs.url in packages/protect-dynamodb/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "CR-4",
+      "title": "`bugs.url` still targets the pre-migration repo. The repository metadata has moved to `cipherstash/stack`, but npm users would still be sent to `cipherstash/pro",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, bugs.url in packages/protect/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "CR-5",
+      "title": "Finish the repo migration by updating `bugs.url`. This package now declares `cipherstash/stack` as its repository, but the issue tracker metadata still points t",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, bugs.url in packages/schema/package.json already points to cipherstash/stack/issues."
+    },
+    {
+      "id": "CR-6",
+      "title": "Update `bugs.url` to the migrated repository as well. Line 18 updates `repository.url` to `cipherstash/stack`, but Line 14 still points to `cipherstash/protectj",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, bugs.url in packages/stack/package.json:14 already points to cipherstash/stack/issues; the PR updated it."
+    },
+    {
+      "id": "CR-7",
+      "title": "Pin npm for trusted publishing to the npm 11.x line (>= 11.5.1) instead of `latest`. Trusted publishing requires npm CLI **11.5.1+** (and Node.js **22.14.0+**).",
+      "nitpick": true,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The step already installs npm@^11.5.1 and does not use `latest`, so the suggestion describes code that is not there."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

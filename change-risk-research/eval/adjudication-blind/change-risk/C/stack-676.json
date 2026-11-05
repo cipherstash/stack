@@ -1,0 +1,48 @@
+{
+  "case": "stack-676",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Declared return type omits the bare selector string returned for searchableJson selectors",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "encryptQuery is typed EncryptedQuery|null with no string arm, but the docblock and the e2e test confirm that searchableJson selectors return a bare string."
+    },
+    {
+      "id": "FS-2",
+      "title": "JSON containment/selector terms never matched against a real EQL database",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The WASM adapter's SUPPORTED_OPS is scalar-only and the Deno suite only checks JSON term shapes, so the newly documented JSON containment/selector SQL is never row-matched."
+    },
+    {
+      "id": "FS-3",
+      "title": "Public guidance invites logging query terms that leak equality/order relationships",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The new docblock does say terms are safe to log-scrub less aggressively, yet deterministic HMAC/ORE terms leak equality and order relationships."
+    }
+  ],
+  "cost_usd": 1.5665611000000004,
+  "wall_seconds": 201.845545,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

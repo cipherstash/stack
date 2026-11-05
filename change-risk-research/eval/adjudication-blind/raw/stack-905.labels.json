@@ -1,0 +1,76 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The lockfile shows jsonwebtoken 10.4.0 now depends on aws-lc-rs (aws-lc-sys builds C via cc/cmake) instead of ring, and stack-auth is an unconditional dependency compiled for wasm32, so a wasm32 build break is a plausible, change-caused risk; confirming the wasm32 clippy and wasm-pack builds is concrete verification."
+    },
+    {
+      "id": "F-02",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The cited code only shows tokens being wrapped as ServiceToken; nothing shows stack-auth 0.42.2 decodes or validates tokens in a way jsonwebtoken 10 would reject, so the auth-outage mechanism is speculation from the major version bump."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "dependabot.yml documents that the four crates are bumped in step with the @cipherstash/auth catalog, which stays at 0.42.0 while the crates move to 0.42.2 and the comment is left stale, and lib.rs shows JS-backed strategies crossing that boundary; this is a real deviation from the documented lockstep policy, introduced by this change."
+    },
+    {
+      "id": "F-04",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The finding admits the upstream stack-auth diff was not read and cites only dependency wiring, so the claim that claim handling or refresh breaks is speculative, and its own evidence reports green integration and WASM checks."
+    },
+    {
+      "id": "F-05",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "aws-lc-rs was already built on all release platforms at base via rustls/vitaminc, as the finding itself notes, and no target-specific failure mechanism is shown."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The cited dependabot.yml comment (=0.42.0, bump in step with the npm catalog) and the pnpm-workspace.yaml @cipherstash/auth 0.42.0 entry were left unchanged while the crates moved to 0.42.2, a real skew against documented policy that this change introduced."
+    },
+    {
+      "id": "F-07",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "No evidence is offered that the cipherstash-client or zerokms-protocol patch releases change payload or search-term encoding; the claim rests only on the upstream sources not being visible."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Head Cargo.lock shows jsonwebtoken switching from ring to aws-lc-rs, and Cargo.toml/client_options.rs confirm stack-auth is compiled and used on wasm32, so a wasm build or runtime-provider failure is plausible and caused by the change; cargo tree with the wasm32 target is a concrete check."
+    },
+    {
+      "id": "F-09",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The cited lockfile and build_strategy lines show only that stack-auth uses jsonwebtoken, not that 0.42.2 handles tokens differently, so the auth-failure mechanism is speculative."
+    }
+  ]
+}

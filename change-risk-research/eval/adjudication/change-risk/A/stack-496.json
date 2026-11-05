@@ -1,0 +1,59 @@
+{
+  "case": "stack-496",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "protect-ffi 0.24 changes main-entry behaviour or payloads without the EQL/CLI lockstep bump",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Manual 0.18.0 bump collides with changesets; example's ^0.18.0 never resolves",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "WASM client encrypts null instead of passing it through",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "auth 0.38 bump breaks CLI login or wizard credential detection",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Some mechanism (binding packaging change); low."
+    }
+  ],
+  "cost_usd": 1.5191341,
+  "wall_seconds": 233.692735,
+  "case_note": "Missed KD-1."
+}

@@ -1,0 +1,461 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c93a39b034238d6479beef9b967a5347ca2d9549",
+  "head_sha": "2a38fb4e0de22309a30b47ac679a3373d54f6bc4",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "git diff base..head (changes.diff listed in CASE.md)"
+    },
+    "source_checkout": {
+      "status": "available",
+      "note": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "partial",
+      "note": "Only the title in CASE.md and the three commit subjects; no PR body."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md and CONTRIBUTING.md at head, read as data"
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "note": ".github/CODEOWNERS exists at head; not used for any conclusion"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (history before base only)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No view of npm / crates.io trusted-publisher configuration or repository secrets"
+    }
+  },
+  "summary": "Adds two publishing pipelines for the imported @cipherstash/auth napi packages (release.yml auth-artifacts/publish-auth via a new reusable _build-auth-artifacts.yml, plus a manual auth-preflight.yml) and for the stack-auth/stack-profile crates (release-plz.yml release-crates with a new root release-plz.toml). Both are inert at head: the npm jobs only run when the gate reports auth=true, and while the seven auth packages are in FROZEN_PUBLISHERS that state makes the gate exit non-zero first; the crates job is keyed on the same @cipherstash/auth entry. The live behaviour changes today are small: the release gate now classifies auth names separately (auth instead of js), the Release job waits on publish-auth, and release-plz.yml triggers on more paths, which also runs the armed EQL crate job more often. The material risk is latent and lands at the arming PR: the auth musl leg is built without the -crt-static flag the protect-ffi pipeline uses, and neither the release path nor the preflight would catch a statically linked musl binary, so a broken binary could be published irreversibly. Also, once armed, a failure in any of the six auth builds holds every JS release. Static workflow tests were added but not run here (no node_modules, no CI results).",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "release-gate.mjs classify() returns a third flag `auth` for names starting with @cipherstash/auth; those names no longer count toward `js`. The gate writes ffi/auth/js to GITHUB_OUTPUT and the gate job exposes `auth` as an output.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "build_or_release",
+      "description": "release.yml gains auth-artifacts (calls the new reusable build of six napi binaries + wasm + wrapper) and publish-auth (npm OIDC publish of six platform tarballs then the wrapper, git tags, GitHub release). Both run only in production mode when gate.outputs.auth == 'true'.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "concurrency_or_ordering",
+      "description": "The Release job (changeset publish, Version Packages PR, and the EQL production chain hanging off it) now needs publish-auth and requires it to have succeeded whenever gate.outputs.auth == 'true'.",
+      "certainty": "observed",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "release-plz.yml adds crates-armed + release-crates (publish-only release-plz run against the root workspace with release-plz.toml), armed when @cipherstash/auth leaves FROZEN_PUBLISHERS. Its push path filter now also includes packages/stack-auth/**, packages/stack-profile/**, Cargo.toml, Cargo.lock, release-plz.toml and cliff.toml, which starts the whole workflow, including the already-armed EQL `release` job, on those pushes.",
+      "certainty": "observed",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "configuration",
+      "description": "The seven @cipherstash/auth packages become a changesets `fixed` group, and each gains a `repository` field (needed for npm provenance). A new manual workflow, auth-preflight.yml, builds the tarballs, checks architecture and libc statically, and smoke-loads the linux-x64-gnu pair.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9"]
+    },
+    {
+      "id": "BC-6",
+      "kind": "test_only",
+      "description": "Static tests are added or extended for the gate classification, the arming switch for the crates line, the release-plz.toml membership, the build workflow shape and the repository URLs. The lint target lists and the supply-chain path filters now include the two new workflows.",
+      "certainty": "observed",
+      "evidence": ["E-10", "E-11"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/release.yml (gate, auth-artifacts, publish-auth, release)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New auth jobs; the Release job now depends on publish-auth.",
+      "evidence": ["E-3", "E-5"]
+    },
+    {
+      "id": "AC-2",
+      "name": ".github/workflows/_build-auth-artifacts.yml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New reusable build of the seven auth tarballs.",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "AC-3",
+      "name": "scripts/release-gate.mjs",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "classify() and outputs changed. FROZEN_PUBLISHERS is the arming switch.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-4",
+      "name": ".github/workflows/release-plz.yml + release-plz.toml + cliff.toml",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New crates line and widened push triggers.",
+      "evidence": ["E-6", "E-7"]
+    },
+    {
+      "id": "AC-5",
+      "name": "@cipherstash/auth and @cipherstash/auth-* npm packages (published artefacts)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "publish-auth publishes the tarballs that _build-auth-artifacts produces. The consumers (stack, cli, wizard) install them through catalog:repo pins in pnpm-workspace.yaml.",
+      "evidence": ["E-4", "E-13"]
+    },
+    {
+      "id": "AC-6",
+      "name": "EQL crate release job in release-plz.yml (`release`)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "It shares the workflow, so it now also runs on the new root-workspace path triggers.",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "AC-7",
+      "name": "stack-auth / stack-profile crates on crates.io",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "release-crates publishes them once armed.",
+      "evidence": ["E-6"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "linux-x64-musl auth binary built statically (no -crt-static) and published without any check that would notice",
+      "trigger": "The arming PR removes the @cipherstash/auth entries and a version bump makes gate report auth=true, so auth-artifacts builds and publish-auth publishes.",
+      "affected_components": ["AC-2", "AC-1", "AC-5"],
+      "mechanism": "The musl leg of _build-auth-artifacts.yml installs only musl-tools and runs `napi build --target x86_64-unknown-linux-musl` (lines 68-73, 116). It sets no RUSTFLAGS, and the auth crate's .cargo/config.toml sets flags only for macOS. The protect-ffi pipeline explicitly exports `-C target-feature=-crt-static` for the same target (_build-ffi-artifacts.yml:238) so that the binary links musl dynamically. With Rust's crt-static default on musl, the auth cdylib is either dropped (a loud build failure) or produced self-contained. The release path checks only that a non-empty .node file exists and is in the tarball (lines 131, 163). The manual preflight's musl check only asserts there is NO glibc NEEDED entry (auth-preflight.yml:91-95), which a static binary also satisfies, and the smoke test loads only linux-x64-gnu (line 109).",
+      "consequence": "@cipherstash/auth-linux-x64-musl could ship a .node that fails to load, or crashes, on Alpine/musl hosts. Every stack/CLI install on those hosts would hit 'Failed to load native binding'. npm publishes cannot be undone, so recovery needs a new version of all seven packages.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-12", "E-14", "E-15", "E-16"],
+      "existing_verification": [
+        {
+          "description": "auth-preflight.yml architecture/libc static check and linux-x64-gnu smoke test (manual dispatch only; the musl check cannot distinguish static from dynamic musl)",
+          "status": "exists_not_run",
+          "evidence": ["E-15"]
+        },
+        {
+          "description": "scripts/__tests__/auth-build-artifacts.test.mjs asserts workflow shape, not binary linkage",
+          "status": "exists_not_run",
+          "evidence": ["E-10"]
+        }
+      ],
+      "missing_verification": [
+        "A check that the musl binary has a NEEDED entry for libc.musl / ld-musl (a positive assertion, not only the absence of glibc)",
+        "A load test of the musl tarball in an Alpine container",
+        "Evidence of how cipherstash-suite built the published 0.44.0 musl binary, to compare"
+      ],
+      "mitigation": "Mirror the FFI leg: export RUSTFLAGS='-C target-feature=-crt-static' (and the musl linker) for the musl target. In auth-preflight, require a musl NEEDED entry and smoke-load the musl pair in node:22-alpine. Run auth-preflight against the Version Packages branch before the first armed release.",
+      "domain_tags": ["build_release"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Once armed, any auth build failure holds every JS and EQL npm release",
+      "trigger": "After arming, a release that bumps the auth group hits a failure in any of the six platform builds or in the wasm/wrapper job (e.g. runner image change, the gate's frozen-bytes or tree-drift checks, wasm-pack/mise download failure).",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "publish-auth is skipped when auth-artifacts fails. The Release job requires `needs.gate.outputs.auth != 'true' || needs.publish-auth.result == 'success'` (release.yml:478-482), so changeset publish, the Version Packages PR update and the EQL production chain (eql-sql/eql-docs/eql-image need `release`) all skip. Because changesets uses `fixed` groups, an auth bump can travel in the same Version PR as unrelated packages.",
+      "consequence": "Releases of @cipherstash/stack, stash and @cipherstash/eql are delayed until the auth build is fixed or the auth bump is split out. The design fails closed, so nothing broken ships.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-5", "E-17"],
+      "existing_verification": [
+        {
+          "description": "release-gate.test.mjs asserts the Release job condition holds the release for publish-auth",
+          "status": "exists_not_run",
+          "evidence": ["E-11"]
+        }
+      ],
+      "missing_verification": [
+        "A dry run of the full auth build on GitHub runners (auth-preflight) before arming"
+      ],
+      "mitigation": "Run auth-preflight before arming and before every auth release. Release auth bumps in their own Version PR. Document the runbook for a stuck auth build.",
+      "domain_tags": ["build_release"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Widened release-plz.yml triggers start the armed EQL crate job on unrelated root-workspace pushes",
+      "trigger": "A push to main that touches only Cargo.lock, Cargo.toml, release-plz.toml, cliff.toml or the stack-auth/stack-profile crates.",
+      "affected_components": ["AC-4", "AC-6"],
+      "mechanism": "The new paths sit in the workflow-level `on.push.paths` (release-plz.yml:47-54), so eql-armed and the EQL `release` job (line 86) run as well as crates-armed. The EQL job queries crates.io, and if the eql-bindings version is not on crates.io it enforces the SQL-stamp guard, imports the GPG key and runs release-plz release for packages/eql. The non-cancelling `release-plz` concurrency group serialises the runs.",
+      "consequence": "There are more EQL release runs, each normally a no-op. If an eql-bindings version is left unpublished, it publishes on whichever push comes next, or a crates.io API failure turns an unrelated push red. The failure is visible and recoverable.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-7"],
+      "existing_verification": [
+        {
+          "description": "eql-pipeline-armed.test.mjs pins that release-crates is the only job gated on crates-armed",
+          "status": "exists_not_run",
+          "evidence": ["E-10"]
+        }
+      ],
+      "missing_verification": [
+        "No check that the EQL job is scoped to EQL-relevant pushes"
+      ],
+      "mitigation": "Gate the EQL `release` job on a dorny/paths-filter for packages/eql/**, or split the crates line into its own trigger condition. (The filename is bound by crates.io, so splitting into a new file would need a second Trusted Publishing entry.)",
+      "domain_tags": ["build_release", "configuration"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "Nothing in the automatic release path inspects the built binaries (architecture, libc linkage, loadability). The only binary checks are in the manually dispatched auth-preflight.yml, and its musl check accepts a static binary.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-15", "E-12"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No test results were available. The new and changed vitest suites under scripts/__tests__ were not run (no node_modules; no CI results supplied), and the new workflows have never run, since auth-preflight is dispatch-only and must be on the default branch.",
+      "scenarios": ["FS-1", "FS-2", "FS-3"],
+      "evidence": ["E-10", "E-11"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Review the linux-x64-musl leg of _build-auth-artifacts.yml against _build-ffi-artifacts.yml (RUSTFLAGS -crt-static, linker) and against how cipherstash-suite built the published musl binary.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Strengthen auth-preflight: require a musl dynamic-loader NEEDED entry for linux-x64-musl, and smoke-load the musl pair in an Alpine container alongside the gnu one.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "staged_rollout",
+      "description": "Before the arming PR, merge this, dispatch auth-preflight against main, and keep the green run as a prerequisite of arming. For the first armed release, bump only the auth group in its own Version PR.",
+      "addresses": ["FS-1", "FS-2", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "review_focus",
+      "description": "Decide whether the EQL `release` job in release-plz.yml should run on root-workspace pushes, and if not, scope it with a paths filter.",
+      "addresses": ["FS-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "test",
+      "description": "Confirm CI ran the scripts/__tests__ suites (release-gate, eql-pipeline-armed, release-plz-root-config, auth-build-artifacts, auth-repository-urls, lint-release-scope) and lint-release/actionlint on this change.",
+      "addresses": ["VG-2"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No CI results, and the vitest suites could not run locally (no node_modules, no network). Running the modified arming script by hand was not approved in this session.",
+      "effect": "Every test is exists_not_run. Inertness rests on reading release.yml, release-gate.mjs and eql-pipeline-armed.mjs, not on observed runs."
+    },
+    {
+      "id": "CL-2",
+      "description": "No view of npm or crates.io trusted-publisher settings, repository secrets (GPG_PRIVATE_KEY), or how cipherstash-suite built the currently published auth binaries.",
+      "effect": "FS-1 rests on comparing this repo's two pipelines and on Rust's documented musl default. Whether the existing published musl binary is dynamic is unknown."
+    },
+    {
+      "id": "CL-3",
+      "description": "Read closely: release.yml, release-plz.yml, _build-auth-artifacts.yml, auth-preflight.yml, release-gate.mjs, eql-pipeline-armed.mjs, release-plz.toml, .changeset/config.json and the auth package.json files. Skimmed: cliff.toml, the lint script/test edits, AGENTS.md/CONTRIBUTING.md wording.",
+      "effect": "Changelog formatting and the minor lint edits got only a light review."
+    },
+    {
+      "id": "CL-4",
+      "description": "Steps in publish-auth use tag-pinned actions (actions/download-artifact@v4, actions/setup-node@v6.5.0) in a job with id-token: write. This matches the existing publish-ffi job in the same file at base, so it is pre-existing practice rather than something this change introduces.",
+      "effect": "Not raised as a scenario."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 69,
+      "line_end": 99,
+      "claim": "AUTH_PREFIX and classify() now return {ffi, auth, js}; auth names are excluded from js.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "scripts/release-gate.mjs",
+      "rev": "head",
+      "line_start": 1040,
+      "line_end": 1073,
+      "claim": "The gate writes ffi/auth/js outputs before checking blockers, then exits 1 on any blocker (including an unpublished frozen package), which fails the gate job.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 350,
+      "line_end": 366,
+      "claim": "auth-artifacts and publish-auth run only when mode == production and gate.outputs.auth == 'true', with no always(), so a failed gate skips them.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 390,
+      "line_end": 422,
+      "claim": "publish-auth publishes the six platform tarballs, then the wrapper, with npm OIDC provenance, skipping versions already on npm.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 457,
+      "line_end": 483,
+      "claim": "The Release job needs publish-auth and requires its success whenever gate.outputs.auth == 'true'.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/release-plz.yml",
+      "rev": "head",
+      "line_start": 191,
+      "line_end": 263,
+      "claim": "crates-armed runs `node scripts/eql-pipeline-armed.mjs crates`; release-crates runs release-plz release on the root workspace only when armed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": ".github/workflows/release-plz.yml",
+      "rev": "head",
+      "line_start": 44,
+      "line_end": 54,
+      "claim": "Workflow-level push paths now include the root Cargo files, release-plz.toml, cliff.toml and the two crates, alongside packages/eql/**; the EQL `release` job has no further path gating.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "diff",
+      "path": ".changeset/config.json",
+      "rev": "head",
+      "claim": "The seven auth packages are added as a changesets fixed group; they are workspace members via pnpm-workspace.yaml's auth/platforms/* glob.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".github/workflows/auth-preflight.yml",
+      "rev": "head",
+      "line_start": 15,
+      "line_end": 21,
+      "claim": "auth-preflight is workflow_dispatch-only, with contents: read.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "test",
+      "path": "scripts/__tests__/eql-pipeline-armed.test.mjs",
+      "rev": "head",
+      "claim": "The tests cover the crates line keying on @cipherstash/auth, independence from the EQL entry, and that only release-crates is gated on crates-armed. Not run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "test",
+      "path": "scripts/__tests__/release-gate.test.mjs",
+      "rev": "head",
+      "claim": "The tests cover classify() for auth names, the three GITHUB_OUTPUT flags, and the Release job's wait on publish-auth. Not run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": ".github/workflows/_build-auth-artifacts.yml",
+      "rev": "head",
+      "line_start": 68,
+      "line_end": 164,
+      "claim": "The musl leg installs musl-tools and runs napi build with --target only, with no RUSTFLAGS. The post-build checks are only that the .node exists, is non-empty and is in the tarball.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "pnpm-workspace.yaml",
+      "rev": "head",
+      "claim": "The catalog `repo` pins @cipherstash/auth and its six platform packages at 0.44.0 for consuming packages.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "code",
+      "path": ".github/workflows/_build-ffi-artifacts.yml",
+      "rev": "head",
+      "line_start": 236,
+      "line_end": 238,
+      "claim": "The protect-ffi musl build exports RUSTFLAGS='-C target-feature=-crt-static' to keep the binary dynamically linked against musl.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "code",
+      "path": ".github/workflows/auth-preflight.yml",
+      "rev": "head",
+      "line_start": 84,
+      "line_end": 110,
+      "claim": "The musl check only asserts the absence of a glibc NEEDED entry. The smoke install uses the linux-x64-gnu tarball only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": "languages/typescript/packages/auth/.cargo/config.toml",
+      "rev": "head",
+      "line_start": 10,
+      "line_end": 11,
+      "claim": "The auth crate's cargo config sets rustflags only for macOS targets.",
+      "status": "verified"
+    },
+    {
+      "id": "E-17",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 660,
+      "line_end": 670,
+      "claim": "eql-sql (and eql-docs/eql-image after it) need the Release job, so a skipped Release skips the EQL production artefacts.",
+      "status": "verified"
+    }
+  ]
+}

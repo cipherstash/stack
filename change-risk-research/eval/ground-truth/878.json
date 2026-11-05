@@ -1,0 +1,33 @@
+{
+  "pr": 878,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "defect",
+  "expert_impact": "medium",
+  "attention_warranted": true,
+  "impact_confidence": "high",
+  "rationale": "New release pipeline for seven FFI packages. Failed on first real run: `neon dist` invoked through `pnpm exec` without the crate name; `tar tzf | grep -q` under pipefail produced SIGPIPE false failures on Linux/Windows; the same pattern made the musl C-library check in ffi-preflight fail open. Release blocked (fail closed) except the preflight check which fails open.",
+  "known_defects": [
+    {
+      "id": "KD-1",
+      "description": "`pnpm exec neon dist` without `-n`: $npm_package_name undefined, every platform build fails",
+      "fixed_by": "#882",
+      "mechanism": "neon dist defaults the crate name from npm_package_name, only set in lifecycle scripts",
+      "match_criteria": "Scenario names the neon dist / artefact-copy step failing because of how it is invoked (crate name / environment variable), or flags that step as unverified and likely to fail.",
+      "impact": "medium",
+      "evidence": ["https://github.com/cipherstash/stack/pull/882"]
+    },
+    {
+      "id": "KD-2",
+      "description": "`grep -q` in a pipefail pipeline (tar listing, readelf) reports SIGPIPE 141; tarball check fails spuriously, musl libc check fails open",
+      "fixed_by": "#882",
+      "mechanism": "grep -q exits at first match; writer gets SIGPIPE; pipefail propagates",
+      "match_criteria": "Scenario identifies the pipeline exit-status / SIGPIPE / pipefail interaction in the verification steps, or that a verification check can pass/fail incorrectly because of shell pipeline semantics.",
+      "impact": "medium",
+      "evidence": ["https://github.com/cipherstash/stack/pull/882"]
+    }
+  ],
+  "notes": ""
+}

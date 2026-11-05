@@ -1,0 +1,26 @@
+{
+  "case": "stack-981",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "EQL SQLx/e2e CI fails or flakes because the test harness's ZeroKMS client resolves DNS differently",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Cited lockfile/workflow lines exist, but the claimed DNS-resolution difference is pure speculation ('if ... could') with no code showing any resolver config change that would break ZeroKMS lookups on Ubuntu runners."
+    }
+  ],
+  "cost_usd": 0.8917432000000001,
+  "wall_seconds": 128.154078,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

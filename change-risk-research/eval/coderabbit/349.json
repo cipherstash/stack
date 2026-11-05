@@ -1,0 +1,179 @@
+{
+  "pr": 349,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/349#discussion_r3101067662",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "line": 32,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "JSDoc for excludeOperatorFamily is misleading: it says undefined means auto-detect via detectSupabase, but the auto-fallback is driven by the permissions.isSuperuser check inside installCommand.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-2",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/349#discussion_r3101067686",
+      "path": "packages/cli/src/commands/env/index.ts",
+      "line": 60,
+      "severity_label": "⚠️ Potential issue | 🟠 Major",
+      "claim": "Restrict permissions on the written .env.production.local file. writeFileSync writes production credentials (CS_CLIENT_KEY) with the default umask (typically 0o644, world-readable).",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-3",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/349#discussion_r3101067702",
+      "path": "packages/cli/src/commands/wizard/lib/changelog.ts",
+      "line": 57,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "flush() is not idempotent despite the JSDoc claim; render() iterates over the full entries array each time, so calling flush() twice writes duplicate entries.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-4",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/349#discussion_r3101067712",
+      "path": "packages/cli/src/commands/wizard/lib/install-skills.ts",
+      "line": 62,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "force: true silently overwrites user customizations in .claude/skills/<name>/; the confirm prompt doesn't mention that existing files will be clobbered.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-5",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/349#discussion_r3101067718",
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "line": 133,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Early return on the first existing candidate dir may skip the real migrations directory; rewriteEncryptedMigrations returns on the first DRIZZLE_OUT_DIRS entry that exists regardless of whether it contains the emitted migrations.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-6",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/349#discussion_r3101067726",
+      "path": "packages/cli/src/commands/wizard/lib/wire-call-sites.ts",
+      "line": 122,
+      "severity_label": "⚠️ Potential issue | 🟡 Minor",
+      "claim": "Duplicate matches when a single line triggers multiple kinds (e.g. .from(users) and .update(users) on one line), producing two report entries for the same source position.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-7",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/bin/stash.ts",
+      "line": 76,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "env --write is wired but undocumented in HELP. flags.write is read but the HELP text for the env command and the flags block don't mention --write.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-8",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "line": 84,
+      "severity_label": "outside diff range | ⚠️ Potential issue | 🟡 Minor",
+      "claim": "Auto-fallback triggers on !isSuperuser regardless of whether permissions are already sufficient, so non-superuser roles with explicit grants are silently downgraded to the no-operator-family variant.",
+      "is_nitpick": false
+    },
+    {
+      "id": "CR-9",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/init/steps/install-forge.ts",
+      "line": 60,
+      "severity_label": "nitpick",
+      "claim": "err.message duplicates noise now that stderr streams to the terminal; logging it mostly restates the generic 'Command failed' text.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-10",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/env/index.ts",
+      "line": 33,
+      "severity_label": "nitpick",
+      "claim": "process.exit(1) is used instead of the p.cancel + return pattern used by other cancellation paths, skipping future cleanup and making the function harder to test.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-11",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/db/config-scaffold.ts",
+      "line": 52,
+      "severity_label": "nitpick",
+      "claim": "Redundant defaultValue/initialValue pairing in the clientPath prompt.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-12",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/db/config-scaffold.ts",
+      "line": 71,
+      "severity_label": "nitpick",
+      "claim": "Generated config uses non-null assertion on DATABASE_URL; if unset, downstream code receives undefined and fails with a less helpful error than an explicit throw.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-13",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/wizard/lib/wire-call-sites.ts",
+      "line": 60,
+      "severity_label": "nitpick",
+      "claim": "Use path.join instead of manual string concatenation; hard-coded forward slashes won't handle Windows paths cleanly.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-14",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/db/detect.ts",
+      "line": 22,
+      "severity_label": "nitpick",
+      "claim": ".pooler.supabase.com is already covered by .supabase.com; the third branch is dead.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-15",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/bin/stash.ts",
+      "line": 3,
+      "severity_label": "nitpick",
+      "claim": "\"Next.js precedence\" isn't exactly Next.js: .env.development is loaded unconditionally regardless of NODE_ENV.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-16",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/stack/src/drizzle/index.ts",
+      "line": 176,
+      "severity_label": "nitpick",
+      "claim": "Back-compat detection is correct, but the parallel implementation in packages/drizzle only emits/detects the bare eql_v2_encrypted form; if it is updated to emit the schema-qualified form its detection would silently miss encrypted columns.",
+      "is_nitpick": true
+    },
+    {
+      "id": "CR-17",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/349#pullrequestreview-4129668520",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "line": 172,
+      "severity_label": "nitpick",
+      "claim": "detectDrizzle(process.cwd()) hard-codes the working directory instead of threading cwd through as an option.",
+      "is_nitpick": true
+    }
+  ],
+  "notes": "One CodeRabbit review (COMMENTED, 6 actionable inline comments, 2 outside-diff, 9 nitpicks). Release-notes summary removed from PR body."
+}

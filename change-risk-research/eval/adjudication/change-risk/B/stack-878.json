@@ -1,0 +1,48 @@
+{
+  "case": "stack-878",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A mis-targeted native binary can be published, because the release path skips the arch/libc and load checks",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified arch/libc checks only in dispatch-only ffi-preflight.yml. The musl-links-glibc failure it describes later happened (#1002/#1018). Not KD-1/KD-2."
+    },
+    {
+      "id": "FS-2",
+      "title": "The new gate job is a hard prerequisite for every JS release and Version PR update",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Gate is a hard prerequisite for release; loud, recoverable."
+    },
+    {
+      "id": "FS-3",
+      "title": "Partial FFI release: npm packages published but tags, release or the dependent Stack publish missing",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Publish-before-tag ordering can leave a partial release; loud, recoverable."
+    }
+  ],
+  "cost_usd": 1.7773639,
+  "wall_seconds": 225.331164,
+  "case_note": "Missed KD-1 (neon dist invocation) and KD-2 (grep -q under pipefail)."
+}

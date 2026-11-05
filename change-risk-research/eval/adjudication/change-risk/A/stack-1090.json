@@ -1,0 +1,47 @@
+{
+  "case": "stack-1090",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Stack native client with a shared strategy runs getJwt in the client-creation request's context and binds users to the wrong identity",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Same known limitation as B FS-1; borderline pre-existing."
+    },
+    {
+      "id": "FS-2",
+      "title": "Frequent JWT rotation multiplies CTS exchanges and a usage-limit refusal locks out every rotating user for 60 s",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Stored tokens from earlier releases, mixed-version deploys and shared stores miss the cache",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 2.0319943,
+  "wall_seconds": 266.546834
+}

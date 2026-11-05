@@ -1,0 +1,883 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "62e6c4392f2f602f12f19643c6aa4325695c9c41",
+  "head_sha": "71a243635607fac92c76ed5730418d989bfd86d6",
+  "merge_base_sha": "62e6c4392f2f602f12f19643c6aa4325695c9c41",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "62e6c4392f2f602f12f19643c6aa4325695c9c41",
+    "cutoff_date": "2026-08-11T09:25:03+10:00",
+    "commits_read": 2272,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 43,
+    "additions": 2982,
+    "deletions": 857,
+    "binary_files": 0,
+    "by_status": {
+      "added": 16,
+      "modified": 22,
+      "deleted": 5
+    }
+  },
+  "dispersion": {
+    "components": {
+      ".": 26,
+      "packages/protect-ffi": 8,
+      "packages/protect-ffi/crates/protect-ffi": 2,
+      "e2e": 1,
+      "packages/protect-ffi/platforms/darwin-arm64": 1,
+      "packages/protect-ffi/platforms/darwin-x64": 1,
+      "packages/protect-ffi/platforms/linux-arm64-gnu": 1,
+      "packages/protect-ffi/platforms/linux-x64-gnu": 1,
+      "packages/protect-ffi/platforms/linux-x64-musl": 1,
+      "packages/protect-ffi/platforms/win32-x64-msvc": 1
+    },
+    "component_count": 10,
+    "top_level_dirs": {
+      "packages": 16,
+      "scripts": 14,
+      ".github": 6,
+      ".changeset": 2,
+      ".": 2,
+      "docs": 1,
+      "e2e": 1,
+      "skills": 1
+    },
+    "languages": {
+      "JavaScript": 13,
+      "YAML": 11,
+      "JSON": 8,
+      "Markdown": 5,
+      "other": 2,
+      "TypeScript": 2,
+      "TOML": 1,
+      "Rust": 1
+    }
+  },
+  "path_classes": {
+    "test": 13,
+    "release_tooling": 9,
+    "dependency_manifest": 9,
+    "docs": 5,
+    "ci_workflow": 5,
+    "agent_instructions": 2,
+    "public_api_surface": 1,
+    "security_sensitive": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/protect-ffi-repository-url.md.deferred",
+      "status": "added",
+      "previous_path": null,
+      "additions": 19,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": ".",
+      "language": "other"
+    },
+    {
+      "path": ".changeset/supply-chain-skill-ffi-release-path.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 39,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": ".github/actionlint.yaml",
+      "status": "added",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": ".github/workflows/_build-ffi-artifacts.yml",
+      "status": "added",
+      "previous_path": null,
+      "additions": 468,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": ".github/workflows/ffi-preflight.yml",
+      "status": "added",
+      "previous_path": null,
+      "additions": 151,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": ".github/workflows/lint-release.yml",
+      "status": "added",
+      "previous_path": null,
+      "additions": 85,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 221,
+      "deletions": 5,
+      "binary": false,
+      "classes": ["ci_workflow", "release_tooling"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": ".github/workflows/tests-supply-chain.yml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["ci_workflow"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "AGENTS.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 18,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "docs/plans/2026-08-04-protect-ffi-monorepo-absorption.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 99,
+      "deletions": 50,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "e2e/tests/supply-chain.e2e.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 190,
+      "deletions": 17,
+      "binary": false,
+      "classes": ["test"],
+      "component": "e2e",
+      "language": "TypeScript"
+    },
+    {
+      "path": "package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": ".",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/.github/.env",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect-ffi",
+      "language": "other"
+    },
+    {
+      "path": "packages/protect-ffi/.github/actions/setup/action.yml",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 88,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect-ffi",
+      "language": "YAML"
+    },
+    {
+      "path": "packages/protect-ffi/.github/workflows/build.yml",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 291,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect-ffi",
+      "language": "YAML"
+    },
+    {
+      "path": "packages/protect-ffi/.github/workflows/release.yml",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 167,
+      "binary": false,
+      "classes": ["release_tooling"],
+      "component": "packages/protect-ffi",
+      "language": "YAML"
+    },
+    {
+      "path": "packages/protect-ffi/.github/workflows/test.yml",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 123,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect-ffi",
+      "language": "YAML"
+    },
+    {
+      "path": "packages/protect-ffi/README.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/protect-ffi",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/protect-ffi/crates/protect-ffi/Cargo.toml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 8,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/crates/protect-ffi",
+      "language": "TOML"
+    },
+    {
+      "path": "packages/protect-ffi/crates/protect-ffi/src/lib.rs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["public_api_surface"],
+      "component": "packages/protect-ffi/crates/protect-ffi",
+      "language": "Rust"
+    },
+    {
+      "path": "packages/protect-ffi/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 3,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/platforms/darwin-arm64/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/platforms/darwin-arm64",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/platforms/darwin-x64/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/platforms/darwin-x64",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/platforms/linux-arm64-gnu/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/platforms/linux-arm64-gnu",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/platforms/linux-x64-gnu/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/platforms/linux-x64-gnu",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/platforms/linux-x64-musl/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/platforms/linux-x64-musl",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/platforms/win32-x64-msvc/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect-ffi/platforms/win32-x64-msvc",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect-ffi/src/lintWiring.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 23,
+      "deletions": 36,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/protect-ffi",
+      "language": "TypeScript"
+    },
+    {
+      "path": "scripts/__tests__/cargo-publish-opt-out.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 76,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling", "test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/ffi-release-matrix.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 204,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling", "test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/ffi-repository-urls.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 110,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/fixtures/lint-no-workflow-caching/mise-default-cache.yml",
+      "status": "added",
+      "previous_path": null,
+      "additions": 17,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "scripts/__tests__/lint-no-workflow-caching.test.mjs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 47,
+      "deletions": 14,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/lint-release-scope.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 69,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling", "test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/release-gate.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 176,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling", "test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/workflow-dispatch-job-conditions.test.mjs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/workflow-inline-node-quoting.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 192,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/workflow-paths-filter-parity.test.mjs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 10,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/__tests__/workflow-publish-permissions.test.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 244,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling", "security_sensitive", "test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/ffi-release-matrix.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 130,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/lint-no-workflow-caching.mjs",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 74,
+      "deletions": 33,
+      "binary": false,
+      "classes": [],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "scripts/release-gate.mjs",
+      "status": "added",
+      "previous_path": null,
+      "additions": 187,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["release_tooling"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "skills/stash-supply-chain-security/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 73,
+      "deletions": 5,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "package.json",
+        "commits": 181,
+        "commits_last_90d": 41,
+        "distinct_authors": 9
+      },
+      {
+        "path": "AGENTS.md",
+        "commits": 44,
+        "commits_last_90d": 35,
+        "distinct_authors": 5
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "commits": 34,
+        "commits_last_90d": 17,
+        "distinct_authors": 6
+      },
+      {
+        "path": "e2e/tests/supply-chain.e2e.test.ts",
+        "commits": 12,
+        "commits_last_90d": 9,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/protect-ffi/package.json",
+        "commits": 11,
+        "commits_last_90d": 2,
+        "distinct_authors": 3
+      },
+      {
+        "path": ".github/workflows/tests-supply-chain.yml",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 2
+      },
+      {
+        "path": "scripts/__tests__/lint-no-workflow-caching.test.mjs",
+        "commits": 7,
+        "commits_last_90d": 7,
+        "distinct_authors": 3
+      },
+      {
+        "path": "skills/stash-supply-chain-security/SKILL.md",
+        "commits": 7,
+        "commits_last_90d": 6,
+        "distinct_authors": 3
+      },
+      {
+        "path": "scripts/lint-no-workflow-caching.mjs",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/protect-ffi/README.md",
+        "commits": 4,
+        "commits_last_90d": 2,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/protect-ffi/src/lintWiring.test.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect-ffi/platforms/darwin-arm64/package.json",
+        "commits": 3,
+        "commits_last_90d": 0,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect-ffi/platforms/darwin-x64/package.json",
+        "commits": 3,
+        "commits_last_90d": 0,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect-ffi/platforms/linux-arm64-gnu/package.json",
+        "commits": 3,
+        "commits_last_90d": 0,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect-ffi/platforms/linux-x64-gnu/package.json",
+        "commits": 3,
+        "commits_last_90d": 0,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/protect-ffi/src/lintWiring.test.ts",
+        "usually_changes_with": ".github/workflows/tests.yml",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": ".github/workflows/tests-supply-chain.yml",
+        "usually_changes_with": ".github/workflows/prisma-next-e2e.yml",
+        "co_commits": 6,
+        "confidence": 0.86,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": ".github/workflows/tests-supply-chain.yml",
+        "usually_changes_with": ".github/workflows/tests.yml",
+        "co_commits": 6,
+        "confidence": 0.86,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": ".github/workflows/tests-supply-chain.yml",
+        "usually_changes_with": ".github/workflows/codeql.yml",
+        "co_commits": 5,
+        "confidence": 0.71,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": ".github/workflows/tests-supply-chain.yml",
+        "usually_changes_with": ".github/workflows/tests-bench.yml",
+        "co_commits": 5,
+        "confidence": 0.71,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": ".github/workflows/tests-supply-chain.yml",
+        "usually_changes_with": ".github/workflows/fta-v3.yml",
+        "co_commits": 4,
+        "confidence": 0.57,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": ".github/workflows/tests-supply-chain.yml",
+        "usually_changes_with": ".github/workflows/prisma-example-readme-e2e.yml",
+        "co_commits": 4,
+        "confidence": 0.57,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "package.json",
+        "usually_changes_with": "package-lock.json",
+        "co_commits": 87,
+        "confidence": 0.5,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "skills/stash-supply-chain-security/SKILL.md",
+        "usually_changes_with": ".github/dependabot.yml",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-supply-chain-security/SKILL.md",
+        "usually_changes_with": "pnpm-workspace.yaml",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 39
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/protect-ffi-repository-url.md.deferred": [
+        "@cipherstash/developers"
+      ],
+      ".changeset/supply-chain-skill-ffi-release-path.md": [
+        "@cipherstash/developers"
+      ],
+      ".github/actionlint.yaml": ["@cipherstash/developers"],
+      ".github/workflows/_build-ffi-artifacts.yml": ["@cipherstash/developers"],
+      ".github/workflows/ffi-preflight.yml": ["@cipherstash/developers"],
+      ".github/workflows/lint-release.yml": ["@cipherstash/developers"],
+      ".github/workflows/release.yml": ["@cipherstash/developers"],
+      ".github/workflows/tests-supply-chain.yml": ["@cipherstash/developers"],
+      "AGENTS.md": ["@cipherstash/developers"],
+      "docs/plans/2026-08-04-protect-ffi-monorepo-absorption.md": [
+        "@cipherstash/developers"
+      ],
+      "e2e/tests/supply-chain.e2e.test.ts": ["@cipherstash/developers"],
+      "package.json": ["@cipherstash/developers"],
+      "packages/protect-ffi/.github/.env": ["@cipherstash/developers"],
+      "packages/protect-ffi/.github/actions/setup/action.yml": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/.github/workflows/build.yml": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/.github/workflows/release.yml": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/.github/workflows/test.yml": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/README.md": ["@cipherstash/developers"],
+      "packages/protect-ffi/crates/protect-ffi/Cargo.toml": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/crates/protect-ffi/src/lib.rs": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/package.json": ["@cipherstash/developers"],
+      "packages/protect-ffi/platforms/darwin-arm64/package.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/platforms/darwin-x64/package.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/platforms/linux-arm64-gnu/package.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/platforms/linux-x64-gnu/package.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/platforms/linux-x64-musl/package.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/platforms/win32-x64-msvc/package.json": [
+        "@cipherstash/developers"
+      ],
+      "packages/protect-ffi/src/lintWiring.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/cargo-publish-opt-out.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/ffi-release-matrix.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/ffi-repository-urls.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/fixtures/lint-no-workflow-caching/mise-default-cache.yml": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/lint-no-workflow-caching.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/lint-release-scope.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/release-gate.test.mjs": ["@cipherstash/developers"],
+      "scripts/__tests__/workflow-dispatch-job-conditions.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/workflow-inline-node-quoting.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/workflow-paths-filter-parity.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/__tests__/workflow-publish-permissions.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "scripts/ffi-release-matrix.mjs": ["@cipherstash/developers"],
+      "scripts/lint-no-workflow-caching.mjs": ["@cipherstash/developers"],
+      "scripts/release-gate.mjs": ["@cipherstash/developers"],
+      "skills/stash-supply-chain-security/SKILL.md": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 41
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 13,
+    "source_files_changed": 4,
+    "source_without_related_test": [
+      "packages/protect-ffi/crates/protect-ffi/src/lib.rs"
+    ],
+    "source_with_related_test_unchanged": [],
+    "mapping": [
+      {
+        "source": "packages/protect-ffi/crates/protect-ffi/src/lib.rs",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "scripts/ffi-release-matrix.mjs",
+        "related_tests_at_head": [
+          "scripts/__tests__/ffi-release-matrix.test.mjs"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "scripts/lint-no-workflow-caching.mjs",
+        "related_tests_at_head": [
+          "scripts/__tests__/lint-no-workflow-caching.test.mjs"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "scripts/release-gate.mjs",
+        "related_tests_at_head": ["scripts/__tests__/release-gate.test.mjs"],
+        "match": "name",
+        "related_test_changed": true
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

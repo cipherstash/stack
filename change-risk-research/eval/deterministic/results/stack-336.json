@@ -1,0 +1,2076 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "abf3ddd89593290fe88f657c97570ea44816401a",
+  "head_sha": "8ebc77b5efb6df66525665781c4a9ea922732356",
+  "merge_base_sha": "abf3ddd89593290fe88f657c97570ea44816401a",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "abf3ddd89593290fe88f657c97570ea44816401a",
+    "cutoff_date": "2026-03-30T14:59:16+11:00",
+    "commits_read": 814,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 93,
+    "additions": 6764,
+    "deletions": 1348,
+    "binary_files": 0,
+    "by_status": {
+      "modified": 13,
+      "added": 36,
+      "renamed": 37,
+      "deleted": 7
+    }
+  },
+  "dispersion": {
+    "components": {
+      "packages/cli": 69,
+      ".": 8,
+      "examples/basic": 7,
+      "packages/stack": 7,
+      "packages/protect": 2
+    },
+    "component_count": 5,
+    "top_level_dirs": {
+      "packages": 81,
+      "examples": 7,
+      ".": 3,
+      "skills": 2
+    },
+    "languages": {
+      "TypeScript": 76,
+      "JSON": 6,
+      "Markdown": 6,
+      "SQL": 3,
+      "YAML": 2
+    }
+  },
+  "path_classes": {
+    "security_sensitive": 18,
+    "test": 11,
+    "dependency_manifest": 6,
+    "docs": 6,
+    "serialization_or_protocol": 5,
+    "database_schema": 3,
+    "build_config": 3,
+    "agent_instructions": 2,
+    "public_api_surface": 1,
+    "lockfile": 1
+  },
+  "files": [
+    {
+      "path": "examples/basic/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 26,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "examples/basic",
+      "language": "TypeScript"
+    },
+    {
+      "path": "examples/basic/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "examples/basic",
+      "language": "JSON"
+    },
+    {
+      "path": "examples/basic/src/encryption/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 16,
+      "deletions": 7,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "examples/basic",
+      "language": "TypeScript"
+    },
+    {
+      "path": "examples/basic/src/lib/supabase/encrypted.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "examples/basic",
+      "language": "TypeScript"
+    },
+    {
+      "path": "examples/basic/src/lib/supabase/server.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 8,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "examples/basic",
+      "language": "TypeScript"
+    },
+    {
+      "path": "examples/basic/src/queries/contacts.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 61,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "examples/basic",
+      "language": "TypeScript"
+    },
+    {
+      "path": "examples/basic/stash.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "examples/basic",
+      "language": "TypeScript"
+    },
+    {
+      "path": "package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 42,
+      "deletions": 27,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": ".",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/cli/CHANGELOG.md",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/CHANGELOG.md",
+      "additions": 3,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/cli",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/README.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 459,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/cli",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/cli/package.json",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/package.json",
+      "additions": 10,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/cli",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/cli/src/__tests__/config.test.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/__tests__/config.test.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/__tests__/installer.test.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/__tests__/installer.test.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/bin/stash.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 251,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/auth/index.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 51,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/auth/login.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/auth/login.ts",
+      "additions": 12,
+      "deletions": 9,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/install.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/commands/install.ts",
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/push.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/commands/push.ts",
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/setup.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/commands/init.ts",
+      "additions": 5,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/status.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/commands/status.ts",
+      "additions": 3,
+      "deletions": 3,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/test-connection.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/commands/test-connection.ts",
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/upgrade.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/commands/upgrade.ts",
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/db/validate.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/commands/validate.ts",
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/index.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 15,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/index.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/index.ts",
+      "additions": 18,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/providers/base.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/providers/base.ts",
+      "additions": 7,
+      "deletions": 4,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/providers/drizzle.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 31,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/providers/supabase.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/providers/supabase.ts",
+      "additions": 8,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/authenticate.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 62,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/build-schema.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 66,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/install-forge.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/steps/install-forge.ts",
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/next-steps.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/steps/next-steps.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/steps/select-connection.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/steps/select-connection.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/types.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/types.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/init/utils.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/init/utils.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/schema/build.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 443,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/secrets/delete.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/secrets/delete.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/secrets/get-many.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/secrets/get-many.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/secrets/get.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/secrets/get.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/secrets/helpers.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/secrets/helpers.ts",
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/secrets/index.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/secrets/index.ts",
+      "additions": 6,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/secrets/list.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/secrets/list.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/secrets/set.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack/src/bin/commands/secrets/set.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/agent-sdk.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 304,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/commandments.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 30,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/detect.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 157,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/format.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 85,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["serialization_or_protocol", "test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/gateway-messages.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 263,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/health-checks.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 71,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/hooks.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 112,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/interface.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 115,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/__tests__/wizard-tools.test.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 213,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/agent/commandments.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 17,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/agent/errors.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 116,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/agent/fetch-prompt.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 79,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/agent/hooks.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 93,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/agent/interface.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 521,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/health-checks/index.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 70,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/analytics.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 145,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/constants.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 43,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/detect.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 72,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/format.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 107,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/gather.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 348,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 115,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 50,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/lib/types.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 82,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/run.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 212,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/commands/wizard/tools/wizard-tools.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 191,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/config/index.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/config/index.ts",
+      "additions": 3,
+      "deletions": 3,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/index.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/index.ts",
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["public_api_surface"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/installer/index.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/installer/index.ts",
+      "additions": 3,
+      "deletions": 3,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/src/sql/cipherstash-encrypt-no-operator-family.sql",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/sql/cipherstash-encrypt-no-operator-family.sql",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "packages/cli",
+      "language": "SQL"
+    },
+    {
+      "path": "packages/cli/src/sql/cipherstash-encrypt-supabase.sql",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/sql/cipherstash-encrypt-supabase.sql",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "packages/cli",
+      "language": "SQL"
+    },
+    {
+      "path": "packages/cli/src/sql/cipherstash-encrypt.sql",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/src/sql/cipherstash-encrypt.sql",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["database_schema", "security_sensitive"],
+      "component": "packages/cli",
+      "language": "SQL"
+    },
+    {
+      "path": "packages/cli/tsconfig.json",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/tsconfig.json",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/cli",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/cli/tsup.config.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/tsup.config.ts",
+      "additions": 3,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/cli/vitest.config.ts",
+      "status": "renamed",
+      "previous_path": "packages/stack-forge/vitest.config.ts",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/cli",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/protect/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/protect",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/protect/src/bin/stash.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 24,
+      "deletions": 24,
+      "binary": false,
+      "classes": [],
+      "component": "packages/protect",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-forge/README.md",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 464,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack-forge/src/bin/stash-forge.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 149,
+      "binary": false,
+      "classes": [],
+      "component": ".",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-forge/src/commands/index.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 11,
+      "binary": false,
+      "classes": [],
+      "component": ".",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/README.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 19,
+      "deletions": 19,
+      "binary": false,
+      "classes": ["docs"],
+      "component": "packages/stack",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack/package.json",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 6,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": "packages/stack",
+      "language": "JSON"
+    },
+    {
+      "path": "packages/stack/src/bin/commands/auth/index.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 33,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/bin/commands/init/steps/authenticate.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 13,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/bin/commands/init/steps/build-schema.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 205,
+      "binary": false,
+      "classes": ["serialization_or_protocol"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/bin/stash.ts",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 97,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/tsup.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 16,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1419,
+      "deletions": 156,
+      "binary": false,
+      "classes": ["lockfile"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["dependency_manifest"],
+      "component": ".",
+      "language": "YAML"
+    },
+    {
+      "path": "skills/stash-cli/SKILL.md",
+      "status": "renamed",
+      "previous_path": "skills/stash-forge/SKILL.md",
+      "additions": 44,
+      "deletions": 44,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-secrets/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 11,
+      "deletions": 11,
+      "binary": false,
+      "classes": ["agent_instructions", "docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "pnpm-lock.yaml",
+        "commits": 112,
+        "commits_last_90d": 27,
+        "distinct_authors": 6
+      },
+      {
+        "path": "packages/protect/package.json",
+        "commits": 72,
+        "commits_last_90d": 11,
+        "distinct_authors": 7
+      },
+      {
+        "path": "package.json",
+        "commits": 66,
+        "commits_last_90d": 12,
+        "distinct_authors": 6
+      },
+      {
+        "path": "examples/basic/package.json",
+        "commits": 33,
+        "commits_last_90d": 15,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/package.json",
+        "commits": 21,
+        "commits_last_90d": 21,
+        "distinct_authors": 3
+      },
+      {
+        "path": "pnpm-workspace.yaml",
+        "commits": 13,
+        "commits_last_90d": 2,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/README.md",
+        "commits": 12,
+        "commits_last_90d": 12,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/src/bin/commands/init/steps/authenticate.ts",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 1
+      },
+      {
+        "path": "examples/basic/index.ts",
+        "commits": 4,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-forge/README.md",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-forge/src/bin/stash-forge.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-forge/src/commands/index.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack/src/bin/stash.ts",
+        "commits": 4,
+        "commits_last_90d": 4,
+        "distinct_authors": 1
+      },
+      {
+        "path": "examples/basic/stash.config.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/protect/src/bin/stash.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/stack-forge/README.md",
+        "usually_changes_with": "skills/stash-forge/SKILL.md",
+        "co_commits": 4,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/bin/stash-forge.ts",
+        "usually_changes_with": "skills/stash-forge/SKILL.md",
+        "co_commits": 4,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/commands/index.ts",
+        "usually_changes_with": "skills/stash-forge/SKILL.md",
+        "co_commits": 4,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/stash.config.ts",
+        "usually_changes_with": "packages/stack-forge/package.json",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/stash.config.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/install.ts",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/stash.config.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/push.ts",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/stash.config.ts",
+        "usually_changes_with": "packages/stack-forge/src/config/index.ts",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/stash.config.ts",
+        "usually_changes_with": "skills/stash-forge/SKILL.md",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "skills/stash-secrets/SKILL.md",
+        "usually_changes_with": "skills/stash-drizzle/SKILL.md",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-secrets/SKILL.md",
+        "usually_changes_with": "skills/stash-encryption/SKILL.md",
+        "co_commits": 3,
+        "confidence": 1.0,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "examples/basic/CHANGELOG.md",
+        "co_commits": 29,
+        "confidence": 0.94,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-forge/README.md",
+        "usually_changes_with": "packages/stack-forge/package.json",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/README.md",
+        "usually_changes_with": "packages/stack-forge/src/commands/init.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/README.md",
+        "usually_changes_with": "packages/stack-forge/src/commands/install.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/README.md",
+        "usually_changes_with": "packages/stack-forge/src/commands/push.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/README.md",
+        "usually_changes_with": "packages/stack-forge/src/config/index.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/bin/stash-forge.ts",
+        "usually_changes_with": "packages/stack-forge/package.json",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/bin/stash-forge.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/init.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/bin/stash-forge.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/install.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/bin/stash-forge.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/push.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/bin/stash-forge.ts",
+        "usually_changes_with": "packages/stack-forge/src/config/index.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/commands/index.ts",
+        "usually_changes_with": "packages/stack-forge/package.json",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/commands/index.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/init.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/commands/index.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/install.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/commands/index.ts",
+        "usually_changes_with": "packages/stack-forge/src/commands/push.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack-forge/src/commands/index.ts",
+        "usually_changes_with": "packages/stack-forge/src/config/index.ts",
+        "co_commits": 3,
+        "confidence": 0.75,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "packages/protect/CHANGELOG.md",
+        "co_commits": 21,
+        "confidence": 0.68,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack/package.json",
+        "usually_changes_with": "packages/stack/CHANGELOG.md",
+        "co_commits": 12,
+        "confidence": 0.67,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "examples/nextjs-clerk/CHANGELOG.md",
+        "co_commits": 20,
+        "confidence": 0.65,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "examples/nextjs-clerk/package.json",
+        "co_commits": 20,
+        "confidence": 0.65,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack/README.md",
+        "usually_changes_with": "skills/stash-encryption/SKILL.md",
+        "co_commits": 6,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "examples/next-drizzle-mysql/CHANGELOG.md",
+        "co_commits": 18,
+        "confidence": 0.58,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "examples/next-drizzle-mysql/package.json",
+        "co_commits": 18,
+        "confidence": 0.58,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "packages/stack/package.json",
+        "usually_changes_with": "examples/basic/CHANGELOG.md",
+        "co_commits": 10,
+        "confidence": 0.56,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "examples/dynamo/CHANGELOG.md",
+        "co_commits": 17,
+        "confidence": 0.55,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "examples/dynamo/package.json",
+        "co_commits": 17,
+        "confidence": 0.55,
+        "exists_at_head": false
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "packages/protect-dynamodb/CHANGELOG.md",
+        "co_commits": 17,
+        "confidence": 0.55,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "examples/basic/package.json",
+        "usually_changes_with": "packages/protect-dynamodb/package.json",
+        "co_commits": 17,
+        "confidence": 0.55,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 11
+  },
+  "ownership": {
+    "codeowners_found": false,
+    "owners_by_file": {},
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 115
+      }
+    }
+  },
+  "dependencies": [
+    {
+      "file": "examples/basic/package.json",
+      "dependencies": [
+        {
+          "section": "devDependencies",
+          "name": "@cipherstash/cli",
+          "from": null,
+          "to": "workspace:*"
+        },
+        {
+          "section": "devDependencies",
+          "name": "@cipherstash/stack-forge",
+          "from": "workspace:*",
+          "to": null
+        }
+      ]
+    },
+    {
+      "file": "packages/cli/package.json",
+      "dependencies": [
+        {
+          "section": "dependencies",
+          "name": "@anthropic-ai/claude-agent-sdk",
+          "from": null,
+          "to": "^0.2.87"
+        },
+        {
+          "section": "dependencies",
+          "name": "@cipherstash/auth",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "dependencies",
+          "name": "@clack/prompts",
+          "from": null,
+          "to": "0.10.1"
+        },
+        {
+          "section": "dependencies",
+          "name": "dotenv",
+          "from": null,
+          "to": "16.4.7"
+        },
+        {
+          "section": "dependencies",
+          "name": "jiti",
+          "from": null,
+          "to": "2.6.1"
+        },
+        {
+          "section": "dependencies",
+          "name": "pg",
+          "from": null,
+          "to": "8.13.1"
+        },
+        {
+          "section": "dependencies",
+          "name": "picocolors",
+          "from": null,
+          "to": "^1.1.1"
+        },
+        {
+          "section": "dependencies",
+          "name": "posthog-node",
+          "from": null,
+          "to": "^5.28.9"
+        },
+        {
+          "section": "dependencies",
+          "name": "zod",
+          "from": null,
+          "to": "^4.3.6"
+        },
+        {
+          "section": "devDependencies",
+          "name": "@cipherstash/stack",
+          "from": null,
+          "to": "workspace:*"
+        },
+        {
+          "section": "devDependencies",
+          "name": "@types/pg",
+          "from": null,
+          "to": "^8.11.11"
+        },
+        {
+          "section": "devDependencies",
+          "name": "tsup",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "devDependencies",
+          "name": "tsx",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "devDependencies",
+          "name": "typescript",
+          "from": null,
+          "to": "catalog:repo"
+        },
+        {
+          "section": "devDependencies",
+          "name": "vitest",
+          "from": null,
+          "to": "catalog:repo"
+        }
+      ],
+      "fields_changed": [
+        "exports",
+        "main",
+        "module",
+        "types",
+        "bin",
+        "engines",
+        "version",
+        "type",
+        "files"
+      ]
+    },
+    {
+      "file": "packages/protect/package.json",
+      "dependencies": [
+        {
+          "section": "dependencies",
+          "name": "@cipherstash/protect-ffi",
+          "from": "0.21.0",
+          "to": "0.21.2"
+        }
+      ]
+    },
+    {
+      "file": "packages/stack/package.json",
+      "dependencies": [
+        {
+          "section": "dependencies",
+          "name": "@cipherstash/auth",
+          "from": "0.34.2",
+          "to": null
+        },
+        {
+          "section": "dependencies",
+          "name": "@cipherstash/protect-ffi",
+          "from": "0.21.0",
+          "to": "0.21.2"
+        }
+      ],
+      "fields_changed": ["bin"]
+    }
+  ],
+  "tests": {
+    "test_files_changed": 11,
+    "source_files_changed": 59,
+    "source_without_related_test": [
+      "examples/basic/index.ts",
+      "examples/basic/src/encryption/index.ts",
+      "examples/basic/src/lib/supabase/encrypted.ts",
+      "examples/basic/src/lib/supabase/server.ts",
+      "examples/basic/src/queries/contacts.ts",
+      "examples/basic/stash.config.ts",
+      "packages/cli/src/bin/stash.ts",
+      "packages/cli/src/commands/auth/index.ts",
+      "packages/cli/src/commands/auth/login.ts",
+      "packages/cli/src/commands/db/push.ts",
+      "packages/cli/src/commands/db/setup.ts",
+      "packages/cli/src/commands/db/status.ts",
+      "packages/cli/src/commands/db/test-connection.ts",
+      "packages/cli/src/commands/db/upgrade.ts",
+      "packages/cli/src/commands/db/validate.ts",
+      "packages/cli/src/commands/index.ts",
+      "packages/cli/src/commands/init/index.ts",
+      "packages/cli/src/commands/init/providers/base.ts",
+      "packages/cli/src/commands/init/steps/authenticate.ts",
+      "packages/cli/src/commands/init/steps/build-schema.ts",
+      "packages/cli/src/commands/init/steps/install-forge.ts",
+      "packages/cli/src/commands/init/steps/next-steps.ts",
+      "packages/cli/src/commands/init/steps/select-connection.ts",
+      "packages/cli/src/commands/init/types.ts",
+      "packages/cli/src/commands/init/utils.ts",
+      "packages/cli/src/commands/schema/build.ts",
+      "packages/cli/src/commands/secrets/delete.ts",
+      "packages/cli/src/commands/secrets/get-many.ts",
+      "packages/cli/src/commands/secrets/get.ts",
+      "packages/cli/src/commands/secrets/index.ts",
+      "packages/cli/src/commands/secrets/list.ts",
+      "packages/cli/src/commands/secrets/set.ts",
+      "packages/cli/src/commands/wizard/agent/errors.ts",
+      "packages/cli/src/commands/wizard/agent/fetch-prompt.ts",
+      "packages/cli/src/commands/wizard/health-checks/index.ts",
+      "packages/cli/src/commands/wizard/lib/analytics.ts",
+      "packages/cli/src/commands/wizard/lib/gather.ts",
+      "packages/cli/src/commands/wizard/lib/post-agent.ts",
+      "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+      "packages/cli/src/commands/wizard/lib/types.ts",
+      "packages/cli/src/commands/wizard/run.ts",
+      "packages/cli/src/config/index.ts",
+      "packages/cli/src/index.ts",
+      "packages/cli/src/installer/index.ts",
+      "packages/cli/tsup.config.ts",
+      "packages/cli/vitest.config.ts",
+      "packages/protect/src/bin/stash.ts",
+      "packages/stack/tsup.config.ts"
+    ],
+    "source_with_related_test_unchanged": [
+      "packages/cli/src/commands/init/providers/drizzle.ts",
+      "packages/cli/src/commands/init/providers/supabase.ts",
+      "packages/cli/src/commands/secrets/helpers.ts"
+    ],
+    "mapping": [
+      {
+        "source": "examples/basic/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "examples/basic/src/encryption/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "examples/basic/src/lib/supabase/encrypted.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "examples/basic/src/lib/supabase/server.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "examples/basic/src/queries/contacts.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "examples/basic/stash.config.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/bin/stash.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/auth/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/auth/login.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/install.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/__tests__/installer.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/db/push.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/setup.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/status.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/test-connection.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/upgrade.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/db/validate.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/providers/base.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/providers/drizzle.ts",
+        "related_tests_at_head": ["packages/drizzle/__tests__/drizzle.test.ts"],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/providers/supabase.ts",
+        "related_tests_at_head": [
+          "packages/protect/__tests__/supabase.test.ts",
+          "packages/stack/__tests__/supabase.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/authenticate.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/build-schema.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/install-forge.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/next-steps.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/steps/select-connection.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/types.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/init/utils.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/schema/build.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/secrets/delete.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/secrets/get-many.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/secrets/get.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/secrets/helpers.ts",
+        "related_tests_at_head": [
+          "packages/protect/__tests__/helpers.test.ts",
+          "packages/stack/__tests__/helpers.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/secrets/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/secrets/list.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/secrets/set.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/agent/commandments.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/wizard/__tests__/commandments.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/agent/errors.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/agent/fetch-prompt.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/agent/hooks.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/wizard/__tests__/hooks.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/agent/interface.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/wizard/__tests__/interface.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/health-checks/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/analytics.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/constants.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/wizard/__tests__/health-checks.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/detect.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/wizard/__tests__/detect.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/format.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/wizard/__tests__/format.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/gather.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/post-agent.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/prerequisites.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/lib/types.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/run.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/commands/wizard/tools/wizard-tools.ts",
+        "related_tests_at_head": [
+          "packages/cli/src/commands/wizard/__tests__/wizard-tools.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/cli/src/config/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/src/installer/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/tsup.config.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/cli/vitest.config.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/protect/src/bin/stash.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/tsup.config.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

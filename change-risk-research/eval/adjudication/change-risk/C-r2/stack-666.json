@@ -1,0 +1,36 @@
+{
+  "case": "stack-666",
+  "evaluator": "change-risk/C-r2",
+  "run": 2,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Stale pin after a sibling-only release makes init offer to downgrade a newer @cipherstash/* package",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Pinned sibling version not on the registry breaks init installs and stash wizard for every new user",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.4132269000000002,
+  "wall_seconds": 218.14569
+}

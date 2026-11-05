@@ -1,0 +1,116 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new guidance ('a module-level strategy is fine') sits next to a caveat that says the request is only 'not visible' on the stack native path; protect-ffi calls getToken through a Channel from the creating context, so a client built inside a request could silently resolve the first user's JWT, and no test covers that path."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Keying on the whole JWT makes every rotation a new /api/authorise exchange, and settle() records UsageLimitExceeded/OrgNotProvisioned as a strategy-wide 60s denial that engine_for returns for every new JWT, as the cited code shows."
+    },
+    {
+      "id": "F-03",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "The changeset sentence already qualifies reuse with 'and the JWT's entry is still in the bounded least-recently-used cache (eviction before expiry, or cacheCapacity: 0, means another exchange)'."
+    },
+    {
+      "id": "F-04",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "@cipherstash/auth is at 0.44.1, where a minor bump is the semver-breaking bump, so asking for a major version is a misreading."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "BoundStore treats unstamped tokens as a miss and the cache is keyed per JWT, so exchange volume rises; a strategy-wide account-refusal denial then blocks every uncached JWT for the TTL, as the cited code shows."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "get_token now calls provider.fetch() on every call before any cache lookup, and Go's Strategy.Token holds s.mu around the guest call that runs the provider, so IdP latency and errors now reach every operation."
+    },
+    {
+      "id": "F-07",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "get_token_for_jwt wraps the engine in an InFlight guard whose Drop removes the pending entry when the future is cancelled, so the cancelled engine is already cleaned up."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Strategy.Token holds the mutex for the whole guest call, and the provider and per-user exchanges now run inside it, so one slow user's IdP call or CTS round trip blocks every user on a shared Go strategy."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The skill's headline says a module-level strategy is fine while the stack native path calls getJwt from a Neon channel outside the caller's ALS context, so a shared client can bind users to the wrong identity, and no test covers it."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "BoundStore misses unstamped tokens, and older releases still write unstamped tokens while ignoring the field on read, so new instances re-exchange during a mixed-version deploy; the effect is limited to performance."
+    },
+    {
+      "id": "F-11",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The skill already tells users of releases before the #1045 fix to build one client per user; a missing version number is a minor docs gap, and the rollback scenario is speculative."
+    },
+    {
+      "id": "F-12",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new 'one strategy serves every user' framing, combined with the stack native path that cannot see ALS and a closure example capturing req, lets a cached long-lived client serve one user's JWT to everyone; this path has no test."
+    },
+    {
+      "id": "F-13",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Per-JWT keying multiplies exchanges as JWTs rotate, and settle() records account refusals strategy-wide, which engine_for returns for every new JWT during the denial TTL, as cited."
+    },
+    {
+      "id": "F-14",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "New engines go into pending, not the LRU, and settle() on Err removes the engine from pending and from the cache, so failed engines never take cache slots."
+    }
+  ]
+}

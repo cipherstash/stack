@@ -1,0 +1,37 @@
+{
+  "case": "stack-562",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Direct EncryptionClient.init({ strategy }) silently drops the custom auth strategy",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same verified mechanism: the init() rename drops a legacy strategy key without warning, and the alias handling exists only in Encryption() at lines 864-867."
+    },
+    {
+      "id": "FS-2",
+      "title": "Test-only latch reset becomes a published API on two entries",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The test reset hook really is exported from the published ./encryption and ./wasm-inline subpaths, but as the finding admits it is only an API-hygiene issue with no data or security effect."
+    }
+  ],
+  "cost_usd": 1.0802792999999997,
+  "wall_seconds": 121.86552,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}
