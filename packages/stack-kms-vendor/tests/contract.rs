@@ -21,3 +21,13 @@ async fn the_fake_vendor_meets_the_contract_in_both_modes() {
         contract::run(|| FakeVendor::new(vendor), FakeVendor::KEY_REF).await;
     }
 }
+
+#[tokio::test]
+async fn the_fake_vendor_meets_the_contract_with_vendor_batches() {
+    let limit = std::num::NonZeroUsize::new(4).unwrap();
+    contract::run(
+        || FakeVendor::new(KeyVendor::Vault).with_batch_limit(limit),
+        FakeVendor::KEY_REF,
+    )
+    .await;
+}

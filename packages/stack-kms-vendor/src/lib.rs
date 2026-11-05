@@ -19,6 +19,8 @@
 //!   source, routed by keyset.
 //! * [`StaticKeyVendor`]: the static key backend, for development or for
 //!   customers who manage the key themselves. Derived data keys only.
+//! * [`bound`]: associated data bound by us, for a vendor key that has
+//!   none of its own (a non-derived Vault Transit key, an Azure RSA key).
 //! * [`run_batch`]: N vendor calls with a concurrency limit, backoff on
 //!   [`Throttled`](stack_kms::BackendErrorKind::Throttled), and
 //!   fail-whole-batch.
@@ -59,6 +61,7 @@
 #![cfg_attr(test, allow(unused_results))]
 
 mod batch;
+pub mod bound;
 pub mod derive;
 mod error;
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
@@ -84,7 +87,7 @@ pub use static_key::StaticKeyVendor;
 pub use transport::{
     classify_status, TransportError, VendorRequest, VendorResponse, VendorTransport,
 };
-pub use vendor::{KeyBytes, KeyVendorBackend};
+pub use vendor::{KeyBytes, KeyVendorBackend, UnwrapItem, WrapItem};
 
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 pub use http::{HttpVendorTransport, HttpVendorTransportOptions, DEFAULT_REQUEST_TIMEOUT};

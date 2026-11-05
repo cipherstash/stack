@@ -24,6 +24,8 @@
 //!   builds a term unwraps the index key again and the handle holds none;
 //!   under derived data keys the root key is unwrapped once per TTL;
 //! * a batch keeps its order;
+//! * a vendor with a batch operation wraps and unwraps the wrapped data
+//!   keys of a batch in one call per chunk of at most its batch limit;
 //! * a throttled call is retried, and a call still throttled after the last
 //!   attempt fails the whole batch.
 //!
@@ -34,6 +36,7 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 use std::borrow::Cow;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,7 +48,10 @@ use stack_encrypt::kms::{
 };
 use stack_encrypt::{nonempty, CipherText, Error, StackCipher, StackCipherText};
 
-use crate::{BatchOptions, KeyBytes, KeyVendorBackend, KeysetRecord, RecordError, VendorKeySource};
+use crate::{
+    BatchOptions, KeyBytes, KeyVendorBackend, KeysetRecord, RecordError, UnwrapItem,
+    VendorKeySource, WrapItem,
+};
 
 /// Run every check of the contract against the backends `make` builds, for
 /// each key mode the backend offers. `key_ref` names a vendor key the
@@ -66,6 +72,7 @@ where
         refuses_zerokms_features(make(), key_ref, mode).await;
         obeys_the_key_lifetime(&make, key_ref, mode).await;
         keeps_batch_order(make(), key_ref, mode).await;
+        uses_vendor_batches(make(), key_ref, mode).await;
         backs_off_when_throttled(&make, key_ref, mode).await;
     }
 }
@@ -76,6 +83,7 @@ pub struct Observed<B> {
     inner: B,
     wraps: Arc<AtomicUsize>,
     unwraps: Arc<AtomicUsize>,
+    batches: Arc<AtomicUsize>,
     throttle_next: Arc<AtomicUsize>,
 }
 
@@ -85,10 +93,18 @@ pub struct Observed<B> {
 pub struct Observer {
     wraps: Arc<AtomicUsize>,
     unwraps: Arc<AtomicUsize>,
+    batches: Arc<AtomicUsize>,
     throttle_next: Arc<AtomicUsize>,
 }
 
 impl Observer {
+    /// Batch calls forwarded so far ([`KeyVendorBackend::wrap_batch`] and
+    /// [`KeyVendorBackend::unwrap_batch`]). Their keys also count as wraps
+    /// and unwraps.
+    pub fn batches(&self) -> usize {
+        self.batches.load(Ordering::SeqCst)
+    }
+
     /// Wrap calls forwarded so far (`generate_wrapped` included).
     pub fn wraps(&self) -> usize {
         self.wraps.load(Ordering::SeqCst)
@@ -111,6 +127,7 @@ impl<B: KeyVendorBackend> Observed<B> {
         let observer = Observer {
             wraps: Arc::default(),
             unwraps: Arc::default(),
+            batches: Arc::default(),
             throttle_next: Arc::default(),
         };
         (
@@ -118,6 +135,7 @@ impl<B: KeyVendorBackend> Observed<B> {
                 inner,
                 wraps: Arc::clone(&observer.wraps),
                 unwraps: Arc::clone(&observer.unwraps),
+                batches: Arc::clone(&observer.batches),
                 throttle_next: Arc::clone(&observer.throttle_next),
             },
             observer,
@@ -163,6 +181,32 @@ impl<B: KeyVendorBackend> KeyVendorBackend for Observed<B> {
         self.throttle()?;
         let _ = self.unwraps.fetch_add(1, Ordering::SeqCst);
         self.inner.unwrap(key_ref, wrapped, aad).await
+    }
+
+    fn batch_limit(&self) -> Option<NonZeroUsize> {
+        self.inner.batch_limit()
+    }
+
+    async fn wrap_batch(
+        &self,
+        key_ref: &str,
+        items: &[WrapItem<'_>],
+    ) -> Result<Vec<Vec<u8>>, KmsError> {
+        self.throttle()?;
+        let _ = self.batches.fetch_add(1, Ordering::SeqCst);
+        let _ = self.wraps.fetch_add(items.len(), Ordering::SeqCst);
+        self.inner.wrap_batch(key_ref, items).await
+    }
+
+    async fn unwrap_batch(
+        &self,
+        key_ref: &str,
+        items: &[UnwrapItem<'_>],
+    ) -> Result<Vec<KeyBytes>, KmsError> {
+        self.throttle()?;
+        let _ = self.batches.fetch_add(1, Ordering::SeqCst);
+        let _ = self.unwraps.fetch_add(items.len(), Ordering::SeqCst);
+        self.inner.unwrap_batch(key_ref, items).await
     }
 
     // `generate_wrapped` is not forwarded: the default (a local key and
@@ -522,6 +566,44 @@ pub async fn keeps_batch_order<B: KeyVendorBackend>(backend: B, key_ref: &str, m
         .await
         .unwrap_or_else(|error| panic!("{mode}: opening a batch failed: {error}"));
     assert_eq!(opened, values, "{mode}: a batch keeps its order");
+}
+
+/// A vendor with a batch operation makes one call per chunk of wrapped data
+/// keys, under wrapped data keys. Nothing to check for another vendor or
+/// mode.
+pub async fn uses_vendor_batches<B: KeyVendorBackend>(backend: B, key_ref: &str, mode: KeyMode) {
+    let Some(limit) = backend.batch_limit() else {
+        return;
+    };
+    if mode != KeyMode::Wrapped {
+        return;
+    }
+    let limit = limit.get();
+    let (cipher, _, observer) = cipher_over(backend, key_ref, mode, |s| s).await;
+    let count = 2 * limit + 1;
+    let values: Vec<String> = (0..count).map(|n| format!("value-{n}")).collect();
+    let before = observer.batches();
+    let sealed = cipher
+        .default_keyset()
+        .encrypt(values.clone(), b"batch")
+        .await
+        .unwrap_or_else(|error| panic!("{mode}: sealing in vendor batches failed: {error}"));
+    assert_eq!(
+        observer.batches() - before,
+        3,
+        "{mode}: {count} values seal in three batch calls of at most {limit}"
+    );
+    let before = observer.batches();
+    let opened: Vec<String> = cipher
+        .decrypt(sealed, b"batch")
+        .await
+        .unwrap_or_else(|error| panic!("{mode}: opening in vendor batches failed: {error}"));
+    assert_eq!(opened, values, "{mode}: vendor batches keep their order");
+    assert_eq!(
+        observer.batches() - before,
+        3,
+        "{mode}: {count} values open in three batch calls of at most {limit}"
+    );
 }
 
 /// A throttled call is retried; one throttled past the last attempt fails

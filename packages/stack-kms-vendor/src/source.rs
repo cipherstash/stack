@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -19,7 +20,7 @@ use crate::batch::{run_batch, BatchOptions};
 use crate::derive::{derived_data_key, derived_index_key, wrapped_data_key_aad};
 use crate::error::RecordError;
 use crate::record::KeysetRecord;
-use crate::vendor::{random_bytes, KeyBytes, KeyVendorBackend};
+use crate::vendor::{random_bytes, random_key, KeyBytes, KeyVendorBackend, UnwrapItem, WrapItem};
 
 /// How long the adapter keeps an unwrapped root key (derived data keys)
 /// before it asks the vendor again: five minutes.
@@ -39,8 +40,11 @@ struct CachedRoot {
 ///
 /// * **Wrapped data key.** Each generate makes one vendor call per value
 ///   ([`KeyVendorBackend::generate_wrapped`]) and puts the wrapped data key
-///   in the leaf's tag. Each retrieve makes one vendor call per value. The
-///   calls of one batch run through [`run_batch`]. The index key is
+///   in the leaf's tag. Each retrieve makes one vendor call per value. A
+///   vendor with a batch operation ([`KeyVendorBackend::batch_limit`])
+///   instead gets one call per chunk of values
+///   ([`KeyVendorBackend::wrap_batch`], [`KeyVendorBackend::unwrap_batch`]).
+///   The calls of one batch run through [`run_batch`]. The index key is
 ///   unwrapped from the record once per settle and never kept.
 /// * **Derived data key.** The adapter unwraps the root key once, keeps it
 ///   for the root key TTL ([`DEFAULT_ROOT_KEY_TTL`]), and derives every data
@@ -106,6 +110,14 @@ fn not_found(vendor: KeyVendor) -> Error {
         vendor: vendor.name(),
         kind: BackendErrorKind::NotFound,
         source: "no keyset record for this keyset".into(),
+    }
+}
+
+fn unavailable(vendor: KeyVendor, message: &'static str) -> Error {
+    Error::Backend {
+        vendor: vendor.name(),
+        kind: BackendErrorKind::Unavailable,
+        source: message.into(),
     }
 }
 
@@ -300,6 +312,121 @@ impl<B: KeyVendorBackend> VendorKeySource<B> {
         Ok(IndexKey::from_key_bytes(key))
     }
 
+    /// Generate one wrapped data key for each descriptor, in vendor batch
+    /// calls of at most [`KeyVendorBackend::batch_limit`] keys. Each data key
+    /// comes from the CSPRNG. The chunks run through [`run_batch`], so a
+    /// throttled chunk backs off and is sent again whole.
+    async fn generate_in_vendor_batches(
+        &self,
+        record: &KeysetRecord,
+        descriptors: &[&str],
+    ) -> Result<Vec<DataKeyWithTag>, Error> {
+        let vendor = self.vendor();
+        let limit = self.backend.batch_limit().map_or(1, NonZeroUsize::get);
+        let chunks: Vec<&[&str]> = descriptors.chunks(limit).collect();
+        let results = run_batch(
+            &self.batch,
+            chunks.len(),
+            |chunk| {
+                let chunk = chunks[chunk];
+                async move {
+                    let mut ivs = Vec::with_capacity(chunk.len());
+                    let mut keys = Vec::with_capacity(chunk.len());
+                    let mut aads = Vec::with_capacity(chunk.len());
+                    for descriptor in chunk {
+                        let iv = random_bytes::<16>(vendor)?;
+                        aads.push(wrapped_data_key_aad(record.id(), &iv, descriptor));
+                        ivs.push(iv);
+                        keys.push(random_key(vendor)?);
+                    }
+                    let items: Vec<WrapItem<'_>> = keys
+                        .iter()
+                        .zip(&aads)
+                        .map(|(key, aad)| WrapItem { key, aad })
+                        .collect();
+                    let wrapped = self.backend.wrap_batch(record.key_ref(), &items).await?;
+                    if wrapped.len() != chunk.len() {
+                        return Err(unavailable(
+                            vendor,
+                            "a batch returned another count of keys",
+                        ));
+                    }
+                    Ok(ivs
+                        .into_iter()
+                        .zip(keys)
+                        .zip(wrapped)
+                        .map(|((iv, key), tag)| DataKeyWithTag {
+                            key: DataKey {
+                                iv,
+                                key: *key.risky_ref(),
+                            },
+                            tag,
+                            decryption_policy: None,
+                        })
+                        .collect::<Vec<_>>())
+                }
+            },
+            |delay| self.backend.sleep(delay),
+        )
+        .await?;
+        Ok(results.into_iter().flatten().collect())
+    }
+
+    /// Unwrap the wrapped data key of each payload, in vendor batch calls
+    /// of at most [`KeyVendorBackend::batch_limit`] keys.
+    async fn retrieve_in_vendor_batches(
+        &self,
+        record: &KeysetRecord,
+        payloads: &[RetrieveKeyPayload<'_>],
+    ) -> Result<Vec<DataKey>, Error> {
+        let vendor = self.vendor();
+        let limit = self.backend.batch_limit().map_or(1, NonZeroUsize::get);
+        let chunks: Vec<&[RetrieveKeyPayload<'_>]> = payloads.chunks(limit).collect();
+        let results = run_batch(
+            &self.batch,
+            chunks.len(),
+            |chunk| {
+                let chunk = chunks[chunk];
+                async move {
+                    let ivs: Vec<[u8; 16]> = chunk.iter().map(|p| p.iv_bytes()).collect();
+                    let aads: Vec<Vec<u8>> = chunk
+                        .iter()
+                        .zip(&ivs)
+                        .map(|(payload, iv)| {
+                            wrapped_data_key_aad(record.id(), iv, payload.descriptor)
+                        })
+                        .collect();
+                    let items: Vec<UnwrapItem<'_>> = chunk
+                        .iter()
+                        .zip(&aads)
+                        .map(|(payload, aad)| UnwrapItem {
+                            wrapped: payload.tag,
+                            aad,
+                        })
+                        .collect();
+                    let keys = self.backend.unwrap_batch(record.key_ref(), &items).await?;
+                    if keys.len() != chunk.len() {
+                        return Err(unavailable(
+                            vendor,
+                            "a batch returned another count of keys",
+                        ));
+                    }
+                    Ok(ivs
+                        .into_iter()
+                        .zip(keys)
+                        .map(|(iv, key)| DataKey {
+                            iv,
+                            key: *key.risky_ref(),
+                        })
+                        .collect::<Vec<_>>())
+                }
+            },
+            |delay| self.backend.sleep(delay),
+        )
+        .await?;
+        Ok(results.into_iter().flatten().collect())
+    }
+
     /// The lifetime of `record`'s index key, for a caller of
     /// [`IndexKeySource::load_index_key_with_lifetime`].
     fn lifetime(&self, record: &KeysetRecord) -> KeyLifetime {
@@ -338,6 +465,13 @@ impl<B: KeyVendorBackend> DataKeySource for VendorKeySource<B> {
                         })
                     })
                     .collect()
+            }
+            KeyMode::Wrapped if self.backend.batch_limit().is_some() => {
+                let descriptors: Vec<&str> = payloads
+                    .iter()
+                    .map(GenerateKeyPayload::descriptor)
+                    .collect();
+                self.generate_in_vendor_batches(record, &descriptors).await
             }
             KeyMode::Wrapped => {
                 run_batch(
@@ -404,6 +538,9 @@ impl<B: KeyVendorBackend> DataKeySource for VendorKeySource<B> {
                         }
                     })
                     .collect())
+            }
+            KeyMode::Wrapped if self.backend.batch_limit().is_some() => {
+                self.retrieve_in_vendor_batches(record, &payloads).await
             }
             KeyMode::Wrapped => {
                 run_batch(
