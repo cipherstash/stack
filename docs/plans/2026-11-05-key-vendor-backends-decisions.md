@@ -605,3 +605,13 @@ the alternatives and the reason.
 - **Note:** `scripts` vitest still has the two failures noted in CIP-5306
   (`bench-index-expressions`, `check-auth-npm-changeset`, missing
   `node_modules` content); every other file passes.
+
+## Orchestrator review of CIP-5307
+
+- **Revisit:** an unknown AWS 4xx error code maps to `AccessDenied`. That
+  makes a malformed request look like a permission problem. Accepted for now,
+  because `AccessDenied` is never retried, so the failure is loud. A later
+  change can add a `Rejected` kind if real cases appear.
+- **Note:** the vendor crates are staged (`release = false`). Arming them is
+  a manual step after stack-kms and stack-encrypt from this stack are on
+  crates.io (see the CIP-5307 section).
