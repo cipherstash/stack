@@ -139,7 +139,7 @@ func TestReadConformance(t *testing.T) {
 		RequiredCapabilities []string   `json:"required_capabilities"`
 		Cases                []readCase `json:"cases"`
 	}
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "reads.json"), &corpus)
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-reads-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "record-reads-v1" || len(corpus.Cases) == 0 {
 		t.Fatal("unsupported or empty read corpus")
 	}

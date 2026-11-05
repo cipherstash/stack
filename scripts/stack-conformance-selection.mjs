@@ -3,14 +3,18 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
+export const coreGoTests = [
+  'TestStackConformance',
+  'TestDeclarationConformance',
+  'TestRuntimeConformance',
+  'TestReadConformance',
+  'TestContextConformance',
+  'TestContextBoundaries',
+  'TestFixtureConformanceRequiresGuest',
+]
+
 export function goSelection(index) {
-  const tests = new Set([
-    'TestStackConformance',
-    'TestDeclarationConformance',
-    'TestRuntimeConformance',
-    'TestReadConformance',
-    'TestFixtureConformanceRequiresGuest',
-  ])
+  const tests = new Set(coreGoTests)
   for (const profile of index.profiles) {
     for (const requirement of profile.requirements) {
       for (const name of requirement.go_tests) {
@@ -28,7 +32,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const index = JSON.parse(
     readFileSync(
       new URL(
-        '../conformance/stack-encrypt/v1/fixture-profiles.json',
+        '../conformance/stack-encrypt/v1/fixture-enrollment.json',
         import.meta.url,
       ),
       'utf8',

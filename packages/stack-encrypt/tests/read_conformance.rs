@@ -195,7 +195,7 @@ fn mutate(tree: &mut StackCipherText, mutation: &Mutation, context_name: &str) {
 #[test]
 fn shared_record_read_profile() {
     let corpus: Corpus = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/reads.json"
+        "../../../conformance/stack-encrypt/v1/record-reads-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(corpus.version, 1);
@@ -331,7 +331,7 @@ async fn check_case(case: Case) {
 #[test]
 fn expected_context_must_be_a_nonempty_label_when_present() {
     let corpus: Value = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/reads.json"
+        "../../../conformance/stack-encrypt/v1/record-reads-v1.cases.json"
     ))
     .unwrap();
     let mut case = corpus["cases"][0].clone();

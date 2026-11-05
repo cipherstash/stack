@@ -840,3 +840,8 @@ async fn the_fixture_records_are_bound_to_their_labels() {
         Ok(_) => panic!("a leaf under another field's label opened"),
     }
 }
+
+#[test]
+fn enrolled_fixture_tests_are_registered() {
+    common::assert_fixture_tests_registered("record_lowering");
+}

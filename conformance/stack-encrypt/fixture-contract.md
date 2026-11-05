@@ -1,6 +1,7 @@
-# Value-kind and query-operator profiles
+# Enrolled fixture profiles
 
-`record-value-kinds-v1` and `record-query-operators-v1` enroll the existing
+`record-value-kinds-v1`, `record-query-operators-v1` and
+`record-context-fields-v1` enroll the existing
 Rust/Go fixtures in the conformance contract. They are experimental profiles
 of the cases those fixtures contain, not exhaustive type/operator certification.
 They use the plain record resolver (`NoTargets`), with public deterministic
@@ -15,7 +16,7 @@ Their [existing schema documentation](../../packages/stack-encrypt/tests/fixture
 continues to own the formats. No expected frames, ciphertexts, terms, verified
 pages or fetch limits are copied into this directory.
 
-[`v1/fixture-profiles.json`](v1/fixture-profiles.json) maps stable requirement IDs
+[`v1/fixture-enrollment.json`](v1/fixture-enrollment.json) maps stable requirement IDs
 to the existing Rust test functions and Go tests that provide their evidence.
 It is an enrollment index, not another input corpus or a runtime capability
 negotiation format. The CI wiring test checks fixture paths, source declarations,
@@ -108,3 +109,15 @@ the listed observations through their own host values and public APIs. Their
 integer/decimal/time mappings and actual backends must be specified by those
 implementations. EQL domains, JSON operations, all-type boundary matrices,
 shared query refusals and supported-release matrices remain separate work.
+
+## Context-field requirements
+
+`record-context-fields-v1` enrolls the context-field section of the existing
+`record_lowering.json` fixture. Its format and seed remain owned by that fixture.
+The [context contract](context-contract.md) adds composition and boundary cases
+without copying these existing vectors.
+
+| Requirement ID | Required observation | Fixture evidence |
+|---|---|---|
+| `contexts.frozen-open` | Typed and lowered Rust records open through the opposite path and generated Go methods, under their stored context. | `context_field.records` |
+| `contexts.expectations` | An expectation checks the stored context; a mismatch refuses it. Generated Go queries name the base context, and tampering does not open. | Fresh records and `context_field` plan |

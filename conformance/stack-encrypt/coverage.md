@@ -8,7 +8,7 @@ Paths are relative to the repository root. New profile cases run from `v1/`.
 |---|---|---|
 | Scalar value widths and lossless transport | Initial scalar cases and [value-kind requirements](fixture-contract.md#value-kind-requirements), executed by the existing Rust and generated Go runners | Complete per-kind boundary matrices, bytes and broader floats; Python/TS mappings |
 | Owned opaque ciphertext and storage envelope | `packages/stack-encrypt/tests/scalar.rs`, `frozen_bytes.rs`; initial cross-opening cases | Blob profile; encoded targets; supported version matrix |
-| Record declaration and lowering | [Declaration grammar](declaration-grammar.md); `v1/declarations.json` shared by native Rust and Go; native normalization observations; existing record lowering suites | EQL-resolver profile; SDK-to-declaration mappings; runtime source/read shapes |
+| Record declaration and lowering | [Declaration grammar](declaration-grammar.md); `v1/record-declarations-v1.cases.json` shared by native Rust and Go; native normalization observations; existing record lowering suites | EQL-resolver profile; SDK-to-declaration mappings; runtime source/read shapes |
 | Context binding and composition | `packages/stack-encrypt/tests/target.rs`, `descriptor.rs`, `record_lowering.rs`; `languages/golang/encrypt/context_field_test.go`; initial wrong-context cases | Shared composition vectors; expected-context and required-input matrix |
 | Query terms and diagnostics | [Query-operator requirements](fixture-contract.md#query-operator-requirements), existing Rust/Go runners and initial equality/query-error cases | Common rejection corpus for every operator, capability and input shape; wider kind/index combinations |
 | Missing, SQL NULL and sealed null | `packages/stack-encrypt/src/dynamic/record.rs` null tests; `languages/golang/encrypt/null_test.go` | Explicit language mappings and common missing/null fixtures |
@@ -25,7 +25,7 @@ absence is a delivery gap, not a test skip that counts toward certification.
 
 ## Runtime checkpoint
 
-`v1/runtime.json` adds shared cases for typed writes and reads, null storage,
+`v1/record-runtime-v1.cases.json` adds shared cases for typed writes and reads, null storage,
 batches, equality queries and lossless numeric conversion. See the
 [runtime contract](runtime-contract.md) for exact observations and limits.
 Native data-key counters cover zero-call preflight failures and single-call
@@ -41,7 +41,7 @@ batches; Go provider-call instrumentation remains open.
 
 ## Read checkpoint
 
-`v1/reads.json` adds cases for stored-shape validation, authenticated types
+`v1/record-reads-v1.cases.json` adds cases for stored-shape validation, authenticated types
 and context preflight. The [read contract](read-contract.md) distinguishes native
 shape/pending stages and the guest's earlier `check_record` diagnostics. Native
 data-key counters and Go's uninitialised guest verify preflight boundaries.
@@ -60,7 +60,7 @@ raw-byte profile must cover that boundary explicitly.
 ## Consolidation policy
 
 The value-kind/query-operator enrollment adds named requirements for the
-existing fixtures through [the enrollment index](v1/fixture-profiles.json).
+existing fixtures through [the enrollment index](v1/fixture-enrollment.json).
 The conformance command selects their original runners; CI guards the mapping
 and selection. Typed Rust comparisons, generated Go methods, verification and
 fetch-limit checks stay in those runners. No fixture is copied and no existing
@@ -91,3 +91,18 @@ For each removal, link the old assertion to stable case IDs, compare coverage
 and failure behavior, and run both runners in CI. Preserve unrelated assertions
 from mixed tests. Enroll Python and TypeScript against the existing corpus so
 adding a language does not create another copy of the expected behavior.
+
+## Context checkpoint
+
+The [context contract](context-contract.md) adds 18 shared composition cases and
+eleven shared read boundary cases and four query cases, plus enrollment of the
+existing record-lowering
+context-field fixture. Rust typed write/query/open chains and Go generated
+methods execute the composition cases. Required native plan-grammar tests cover
+caller-provided bases and empty-batch source validation. Existing context tests
+remain: no mixed-purpose Rust or Go test is removed.
+
+Go proves canonical AAD indirectly through its actual guest plan frame and native
+ciphertext opening; provider-call instrumentation remains a separate gap.
+Nested composite extensions remain a native API capability rather than an
+unsupported feature silently advertised by the Go/dynamic record profile.

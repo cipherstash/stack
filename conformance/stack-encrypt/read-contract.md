@@ -1,6 +1,6 @@
 # Record read profile
 
-`record-reads-v1` adds shared cases in `v1/reads.json` for stored record
+`record-reads-v1` adds shared cases in `v1/record-reads-v1.cases.json` for stored record
 shapes, authenticated type checks and context preflight. It fixes the resolver
 to `NoTargets`. It is experimental and covers native Rust and Go WASI.
 

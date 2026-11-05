@@ -47,7 +47,7 @@ func TestFixtureConformanceRequiresGuest(t *testing.T) {
 			} `json:"requirements"`
 		} `json:"profiles"`
 	}
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "fixture-profiles.json"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "fixture-enrollment.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +74,8 @@ func TestFixtureConformanceRequiresGuest(t *testing.T) {
 	}
 	// These full-suite tests also share queryFixtureClient's required-mode policy;
 	// they remain outside the shared fixture requirements and aggregate selection.
+	names["TestContextConformance"] = true
+	names["TestContextBoundaries"] = true
 	names["TestAQueryTheFieldDoesNotAnswerIsRefused"] = true
 	names["TestAMatchesQueryNeverPrintsItsText"] = true
 	tests := make([]string, 0, len(names))

@@ -1,6 +1,6 @@
 # Record runtime profile
 
-`record-runtime-v1` describes the behavior exercised by `v1/runtime.json`.
+`record-runtime-v1` describes the behavior exercised by `v1/record-runtime-v1.cases.json`.
 It is an experimental test contract for native Rust and Go WASI, with no EQL
 resolver. Python and TypeScript runners remain pending.
 

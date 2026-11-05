@@ -239,7 +239,7 @@ independent observation of normalization or add a production export for testing.
 
 ## Diagnostics and corpus format
 
-The corpus is `v1/declarations.json`. Its version, profile and resolver are
+The corpus is `v1/record-declarations-v1.cases.json`. Its version, profile and resolver are
 required. Case IDs are unique and stable. Every case contains exactly one input:
 
 - `{"json": value}` converts JSON objects in lexical key order. Nonnegative
@@ -279,7 +279,7 @@ TypeScript runners can adopt these inputs and expectations without copying the
 engine's validation rules.
 
 The Go runner checks both the release and deterministic guests. Go-specific
-`v1/go-declarations.json` supplies explicit `record.Plan` inputs for the subset
+`v1/record-declarations-v1.inputs.go.json` supplies explicit `record.Plan` inputs for the subset
 representable by that host model, keyed by the shared case ID. Those cases also
 run through production `Checker.Check` (Validate, Wire and the engine), with the
 same acceptance outcome. Raw malformed frames and shapes the Go plan cannot

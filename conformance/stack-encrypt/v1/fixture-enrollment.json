@@ -78,6 +78,29 @@
           ]
         }
       ]
+    },
+    {
+      "id": "record-context-fields-v1",
+      "fixture": "packages/stack-encrypt/tests/fixtures/record_lowering.json",
+      "rust_binary": "record_lowering",
+      "go_source": "languages/golang/encrypt/context_field_test.go",
+      "requirements": [
+        {
+          "id": "contexts.frozen-open",
+          "rust_tests": ["the_committed_context_field_case_opens_both_ways"],
+          "go_tests": ["TestGeneratedCodeOpensTheRustContextFieldFixture"]
+        },
+        {
+          "id": "contexts.expectations",
+          "rust_tests": [
+            "the_chain_and_the_lowering_agree_on_a_context_field_today"
+          ],
+          "go_tests": [
+            "TestContextFieldSealsEachRowUnderItsOwnContext",
+            "TestContextFieldQueriesNameTheContext"
+          ]
+        }
+      ]
     }
   ]
 }

@@ -5,6 +5,47 @@ This directory holds a shared test contract for Stack Encrypt bindings. The
 sets out the wider work; [coverage.md](coverage.md) maps existing evidence and
 gaps. These profiles are **experimental**, not certification of an entire SDK.
 
+## Files
+
+Each file in `v1/` is named `<profile>.<role>.json`. `<profile>` is the exact
+`profile` value in the file's header, so searching for a profile ID finds every
+file that belongs to it. `v1/` is the corpus format version, which is separate
+from each profile's own version. `<role>` is one of:
+
+- `cases`: the shared, language-neutral cases that every runner executes. When
+  an expectation is a category rather than bytes, such as an error class or a
+  retrieval count, it is written in the case itself.
+- `expected.<producer>`: frozen outputs keyed by the case IDs in `cases`,
+  produced by `<producer>`. `rust-native` is the native Rust engine. Only the
+  producer regenerates this file, deliberately; runners compare against it.
+- `inputs.<runner>`: extra inputs keyed by case ID that only `<runner>` needs,
+  such as Go host values that have no language-neutral form.
+
+Every file has a `version` and `profile` header. An `expected` file also names
+its `producer`, and an `inputs` file names its `runner`.
+`scripts/__tests__/stack-conformance-ci.test.mjs` fails on a file that breaks
+these rules.
+
+| File | Role | Rust reader | Go reader |
+|---|---|---|---|
+| `record-scalars-v1.cases.json` | cases | `tests/conformance.rs` | `conformance_test.go` |
+| `record-scalars-v1.expected.rust-native.json` | expected | `tests/conformance.rs` (writes it) | `conformance_test.go` |
+| `record-declarations-v1.cases.json` | cases | `tests/declarations.rs` | `declaration_conformance_test.go` |
+| `record-declarations-v1.inputs.go.json` | Go inputs | — | `declaration_conformance_test.go` |
+| `record-reads-v1.cases.json` | cases | `tests/read_conformance.rs` | `read_conformance_test.go` |
+| `record-runtime-v1.cases.json` | cases | `tests/runtime_conformance.rs` | `runtime_conformance_test.go` |
+| `record-contexts-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
+| `record-contexts-v1.expected.rust-native.json` | expected | `tests/context_conformance.rs` (writes it) | `context_conformance_test.go` |
+| `record-context-boundaries-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
+| `fixture-enrollment.json` | index | `tests/common/mod.rs` | `fixture_conformance_test.go` |
+
+Rust readers are under `packages/stack-encrypt/`; Go readers are under
+`languages/golang/encrypt/`. `fixture-enrollment.json` is not a profile: it maps
+requirement IDs onto existing fixtures and tests (see
+[the fixture contract](fixture-contract.md)), and
+`scripts/stack-conformance-selection.mjs` reads it to choose the Go tests that
+`mise run test:conformance` runs.
+
 ## Run
 
 From the repository root, with the pinned mise tools installed:
@@ -21,7 +62,7 @@ native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
 The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
-runtime and read cases, and enrolls the existing value-kind and query-operator
+runtime, read and context cases, and enrolls the existing value-kind, context-field and query-operator
 fixtures described below. Set no fixture-update variables when checking conformance.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
@@ -29,10 +70,19 @@ is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
 
+## Context composition and expectations
+
+The [context contract](context-contract.md) covers ordered extensions, canonical
+context encodings, typed/generated API calls, stored-context expectations,
+tampering and preflight boundaries. The required command runs the new
+`context_conformance` Rust binary and `TestContextConformance` /
+`TestContextBoundaries` Go runners, together with native `plan_grammar` and
+existing context-field fixture tests.
+
 ## Existing value-kind and query-operator fixtures
 
 The [fixture contract](fixture-contract.md) defines `record-value-kinds-v1` and
-`record-query-operators-v1`. Their [enrollment index](v1/fixture-profiles.json)
+`record-query-operators-v1`. Their [enrollment index](v1/fixture-enrollment.json)
 maps stable requirement IDs to the existing Rust and Go tests. The fixtures
 remain under `packages/stack-encrypt/tests/fixtures`; no vectors are copied.
 
@@ -48,7 +98,7 @@ operations remain separate work.
 
 ## `record-reads-v1` contract
 
-The [read contract](read-contract.md) defines cases in `v1/reads.json` for
+The [read contract](read-contract.md) defines cases in `v1/record-reads-v1.cases.json` for
 malformed stored records, authenticated read-type failures and context preflight.
 The native runner observes retrieval stages. Go exercises the same cases through
 an uninitialised guest and a configured cipher, plus the normal record adapter
@@ -58,7 +108,7 @@ crate and `encrypt/read_conformance_test.go` in the Go module.
 
 ## `record-runtime-v1` contract
 
-The [runtime contract](runtime-contract.md) defines cases in `v1/runtime.json`:
+The [runtime contract](runtime-contract.md) defines cases in `v1/record-runtime-v1.cases.json`:
 missing and explicit null values, SQL-null omission, sealed-null storage and
 equality, typed batch round trips, write validation and lossless query conversions.
 The runners are `packages/stack-encrypt/tests/runtime_conformance.rs` and
@@ -69,7 +119,7 @@ data-key call counts; Go host source validation preserves shared structured diag
 
 The [declaration grammar](declaration-grammar.md) defines the engine's current
 record-plan syntax, defaults, context rules, kind/index table and null policies.
-`v1/declarations.json` contains cases, including malformed frames and all
+`v1/record-declarations-v1.cases.json` contains cases, including malformed frames and all
 21 kinds against five scalar indexes. The resolver is explicitly `none`; EQL
 targets need their own profile.
 
@@ -80,11 +130,11 @@ frames document the different native-parser and WASI-boundary classifications.
 Native Rust also checks normalization observations. Go's checker does not expose
 the parsed plan, so it asserts acceptance and diagnostics against both release
 and deterministic guests. Representable cases also exercise `Checker.Check`
-through explicit host plan fixtures in `v1/go-declarations.json`.
+through explicit host plan fixtures in `v1/record-declarations-v1.inputs.go.json`.
 
 ## `record-scalars-v1` contract
 
-`v1/cases.json` has a corpus format `version`, a semantic `profile`, a public
+`v1/record-scalars-v1.cases.json` has a corpus format `version`, a semantic `profile`, a public
 deterministic-provider `seed`, a record `context`, a `field`, an exact list of
 `required_capabilities`, and uniquely identified `cases`. Unknown fields,
 versions, profiles, capabilities and input types fail. Every case must run.
@@ -128,7 +178,7 @@ profiles or cases. The full SQL behavior is not part of this initial profile.
 
 ## Artifacts and evolution
 
-`v1/native.json` is a frozen artifact set produced by the Rust owned scalar API.
+`v1/record-scalars-v1.expected.rust-native.json` is a frozen artifact set produced by the Rust owned scalar API.
 It records `version`, `profile`, `producer`, and a case-ID map containing hex
 `frame`, `ciphertext` and `equality` bytes. The map must contain exactly every
 positive case; missing or extra cases fail. Every key and plaintext here is

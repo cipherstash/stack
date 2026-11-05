@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: scalar, declaration, initial runtime and read slices implemented; existing value-kind and query-operator fixtures enrolled. The complete contract is not frozen.
+Date: 2026-10-31. Status: scalar, declaration, initial runtime, read and context-composition slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. The complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -154,7 +154,7 @@ Python and TypeScript consumers remain pending.
 
 Building on the read-compatibility profile, the
 [fixture contract](../../conformance/stack-encrypt/fixture-contract.md) and
-[enrollment index](../../conformance/stack-encrypt/v1/fixture-profiles.json)
+[enrollment index](../../conformance/stack-encrypt/v1/fixture-enrollment.json)
 assign stable requirement IDs to the existing `value_kinds.json` and
 `query_operators.json` evidence. The conformance task directly runs their
 existing Rust and Go tests. Typed Rust comparisons, generated Go methods,
@@ -209,3 +209,18 @@ open in native Rust, fixed native values open in Go, and malformed query inputs
 produce the specified diagnostics. Python and TypeScript remain visibly pending
 until their runners execute. The complete specification, SQL profile, and all
 language SDK mappings remain follow-up work.
+
+## Context composition checkpoint
+
+Implemented shared composition and boundary cases in
+`conformance/stack-encrypt/context-contract.md`: 18 typed extension cases,
+eleven read/preflight cases and four query cases, generated Go calls and native
+typed chains. Existing
+context-field fixture tests and the native plan-grammar suite are required by
+`test:conformance`. Repeated Rust `.extend()` now appends, aligning Rust with Go;
+the changelog documents compatibility for records written under the old behavior.
+The current shared binding/search context remains distinct from the future
+binding/search-scope split.
+
+Next: the EQL/JSON operation profile. Python and TypeScript runner delivery
+and the wider fresh artifact exchange remain separate planned work.

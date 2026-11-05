@@ -232,9 +232,10 @@ macro_rules! chain_options {
             /// each field's `<context>/<field>` becomes
             /// `(<context>/<field>)/<parts>`, as a derived record's caller
             /// context does. The same parts must be given to read it back.
-            /// A second call replaces the first.
+            /// Further calls append in order, nesting to the left. A grouped
+            /// `NonEmpty` remains one part; `.extend(())` adds nothing.
             pub fn extend(mut self, parts: impl Into<DeclaredContext>) -> Self {
-                self.common.extend = parts.into();
+                self.common.extend.append(parts.into());
                 self
             }
         }

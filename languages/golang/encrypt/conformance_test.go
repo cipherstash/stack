@@ -126,7 +126,7 @@ func conformanceValue(t *testing.T, input conformanceInput) any {
 func TestStackConformance(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1")
 	var corpus conformanceCorpus
-	readConformanceJSON(t, filepath.Join(root, "cases.json"), &corpus)
+	readConformanceJSON(t, filepath.Join(root, "record-scalars-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != conformanceProfile || len(corpus.Cases) == 0 {
 		t.Fatal("unsupported or empty conformance corpus")
 	}
@@ -145,7 +145,7 @@ func TestStackConformance(t *testing.T) {
 		}
 	}
 	var native conformanceArtifacts
-	readConformanceJSON(t, filepath.Join(root, "native.json"), &native)
+	readConformanceJSON(t, filepath.Join(root, "record-scalars-v1.expected.rust-native.json"), &native)
 	if native.Version != 1 || native.Profile != conformanceProfile || native.Producer == "" || len(native.Cases) != len(positive) || len(positive) == 0 {
 		t.Fatal("artifact profile or case set differs from the corpus")
 	}

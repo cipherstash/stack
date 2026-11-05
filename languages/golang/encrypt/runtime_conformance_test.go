@@ -48,7 +48,7 @@ func TestRuntimeConformance(t *testing.T) {
 		RequiredCapabilities []string      `json:"required_capabilities"`
 		Cases                []runtimeCase `json:"cases"`
 	}
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "runtime.json"), &corpus)
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-runtime-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "record-runtime-v1" || len(corpus.Cases) == 0 {
 		t.Fatal("unsupported or empty runtime corpus")
 	}

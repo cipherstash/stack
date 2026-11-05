@@ -1,8 +1,11 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { goSelection as selectGoTests } from '../stack-conformance-selection.mjs'
+import {
+  coreGoTests,
+  goSelection as selectGoTests,
+} from '../stack-conformance-selection.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -44,30 +47,22 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(script).toMatch(/cargo nextest run[^\n]*--test declarations/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test runtime_conformance/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test read_conformance/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test context_conformance/)
+    expect(script).toMatch(/cargo nextest run[^\n]*--test plan_grammar/)
     expect(script).toMatch(/cargo nextest run[^\n]*--test fixture_safety/)
     const selected = goSelection(script)
-    for (const test of [
-      'TestStackConformance',
-      'TestDeclarationConformance',
-      'TestRuntimeConformance',
-      'TestReadConformance',
-      'TestFixtureConformanceRequiresGuest',
-    ]) {
+    for (const test of coreGoTests) {
       expect(selected.test(test), test).toBe(true)
     }
   })
 
   it('selects exactly the core runners and indexed fixture tests', () => {
     const index = JSON.parse(
-      readRepo('conformance/stack-encrypt/v1/fixture-profiles.json'),
+      readRepo('conformance/stack-encrypt/v1/fixture-enrollment.json'),
     )
     const expected = [
       ...new Set([
-        'TestStackConformance',
-        'TestDeclarationConformance',
-        'TestRuntimeConformance',
-        'TestReadConformance',
-        'TestFixtureConformanceRequiresGuest',
+        ...coreGoTests,
         ...index.profiles.flatMap((p) =>
           p.requirements.flatMap((r) => r.go_tests),
         ),
@@ -92,11 +87,12 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
 
   it('enrolls existing fixture evidence without copying or dropping tests', () => {
     const index = JSON.parse(
-      readRepo('conformance/stack-encrypt/v1/fixture-profiles.json'),
+      readRepo('conformance/stack-encrypt/v1/fixture-enrollment.json'),
     )
     expect(Object.keys(index).sort()).toEqual(['profiles', 'version'])
     expect(index.version).toBe(1)
     expect(index.profiles.map((profile) => profile.id).sort()).toEqual([
+      'record-context-fields-v1',
       'record-query-operators-v1',
       'record-value-kinds-v1',
     ])
@@ -140,7 +136,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
           'id',
           'rust_tests',
         ])
-        expect(requirement.id).toMatch(/^(values|queries)\.[a-z-]+$/)
+        expect(requirement.id).toMatch(/^(values|queries|contexts)\.[a-z-]+$/)
         expect(requirements.has(requirement.id), requirement.id).toBe(false)
         requirements.add(requirement.id)
         expect(contract).toContain(`\`${requirement.id}\``)
@@ -160,7 +156,7 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
       }
     }
     const documented = [
-      ...contract.matchAll(/\| `((?:values|queries)\.[a-z-]+)` \|/g),
+      ...contract.matchAll(/\| `((?:values|queries|contexts)\.[a-z-]+)` \|/g),
     ].map((match) => match[1])
     expect([...requirements].sort()).toEqual(documented.sort())
   })
@@ -230,5 +226,37 @@ describe('shared Stack Encrypt conformance is required in CI', () => {
     expect(goTests).toContain('go test "$@" ./...')
     expect(steps[exchange].if).toBeUndefined()
     expect(steps[exchange]['continue-on-error']).toBeUndefined()
+  })
+})
+
+/**
+ * conformance/stack-encrypt/README.md § Files: every file in v1/ is
+ * <profile>.<role>.json, with the profile in its header, so a file's name
+ * says which profile it belongs to and whether it holds cases, one
+ * producer's frozen outputs or one runner's extra inputs.
+ */
+describe('conformance files are named after their profile and role', () => {
+  const dir = 'conformance/stack-encrypt/v1'
+  const NAME =
+    /^(?<profile>[a-z0-9-]+-v\d+)\.(?<role>cases|expected\.(?<producer>[a-z0-9-]+)|inputs\.(?<runner>[a-z0-9-]+))\.json$/
+  const files = readdirSync(join(REPO_ROOT, dir)).filter(
+    (file) => file !== 'fixture-enrollment.json',
+  )
+
+  it.each(files)('%s follows the convention', (file) => {
+    const match = file.match(NAME)
+    expect(match, `${file} is not <profile>.<role>.json`).not.toBeNull()
+    const { profile, role, producer, runner } = match.groups
+    const header = JSON.parse(readRepo(`${dir}/${file}`))
+    expect(header.version).toBe(1)
+    expect(header.profile).toBe(profile)
+    if (role !== 'cases') {
+      expect(files, `${file} has no cases file`).toContain(
+        `${profile}.cases.json`,
+      )
+      expect(Object.keys(header.cases ?? {}).length).toBeGreaterThan(0)
+    }
+    if (producer) expect(header.producer).toMatch(new RegExp(`^${producer}`))
+    if (runner) expect(header.runner).toBe(runner)
   })
 })

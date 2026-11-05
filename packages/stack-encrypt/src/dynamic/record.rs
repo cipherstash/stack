@@ -4368,6 +4368,21 @@ mod tests {
             let mut age = map(node(&mut fields, "age"));
             let stored = term_bytes(&node(&mut age, "eq"));
 
+            struct Age {
+                age: u32,
+            }
+            let mut typed = cipher
+                .encrypt(&Age { age: 34 })
+                .context("users")
+                .fields()
+                .encrypt_index(pick("age", |a: &Age| &a.age), Equality)
+                .extend(7u64)
+                .extend(nonempty!("eu"))
+                .await
+                .expect("typed chain");
+            let typed_age: Encrypted<EqualityTerm> = typed.take("age").expect("age");
+            assert_eq!(stored, typed_age.terms.to_bytes());
+
             let nested = nonempty!("users").with("age").with(7u64).with("eu");
             let probe = keyset.equality_term(34u32, nested).await.expect("probe");
             assert_eq!(stored, probe.to_bytes(), "left-nested, part by part");

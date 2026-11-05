@@ -19,7 +19,7 @@ go_tests=$(node scripts/stack-conformance-selection.mjs)
 artifacts=$(mktemp -d)
 trap 'rm -rf "$artifacts"' EXIT
 
-mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test value_kinds --test query_operators --test fixture_safety
+mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test context_conformance --test record_lowering --test plan_grammar --test value_kinds --test query_operators --test fixture_safety
 (
   cd languages/golang
   STACK_CONFORMANCE_OUTPUT="$artifacts/go.json" CGO_ENABLED=0 \
