@@ -1,5 +1,6 @@
-//! A `plaintext` owned record requires the caller's context: omitting it is
-//! refused at the call, on both sides, however `Default` the context type is.
+//! An owned record with `plaintext` requires the caller's context. A call that
+//! leaves it out is a compile error, to encrypt and to decrypt, even if the
+//! context type implements `Default`.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptSource, EncryptTarget};
 use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto};

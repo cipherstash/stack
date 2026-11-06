@@ -12,54 +12,73 @@
 //!
 //! # The owned declarations
 //!
-//! | Trait | Implemented on | Methods | Source |
+//! | Trait | Implemented on | Methods | Plaintext |
 //! |---|---|---|---|
-//! | [`EncryptTarget<S>`] | an encrypted output or term | `encryption` (borrowed `&S`), `owned_encryption` (`S` by value, defaulting to guard-and-wipe), `indexes` | `S: Zeroize` |
-//! | [`DecryptSource<P>`] | a recoverable encrypted output | `decryption(self, ContextInput)` | opens to `P: Zeroize` |
-//! | [`EncryptInto`] | every `Zeroize` plaintext | `encrypt_into`, `encrypt_into_with_context` | consumes and wipes |
-//! | [`DecryptFrom`] | every `Zeroize` plaintext | `decrypt_from`, `decrypt_from_with_context` | returns the owned value |
+//! | [`EncryptTarget<S>`] | An encrypted output or a term | `encryption` (over `&S`), `owned_encryption` (over `S` by value, which by default guards the value and wipes it), and `indexes` | `S: Zeroize` |
+//! | [`DecryptSource<P>`] | An encrypted output that can be decrypted | `decryption(self, ContextInput)` | Decrypts to `P: Zeroize` |
+//! | [`EncryptInto`] | Every `Zeroize` plaintext | `encrypt_into` and `encrypt_into_with_context` | Consumed and wiped |
+//! | [`DecryptFrom`] | Every `Zeroize` plaintext | `decrypt_from` and `decrypt_from_with_context` | Returned to the caller, who must wipe it |
 //!
-//! The core leaves implement both: [`Ciphertext`](crate::Ciphertext) takes
-//! an [`OptionalContext`] (empty is a context); [`StackCipherText`](crate::StackCipherText)
-//! and [`Encrypted<Terms>`] require an [`AeadContext`] to open and the
-//! terms ([`EqualityTerm`](crate::sem::EqualityTerm), [`MatchTerms`](crate::sem::MatchTerms),
-//! the order terms) require a [`CallerContext`] to derive, each as a
-//! [`RequiredContext`]. A term implements [`EncryptTarget`] alone.
+//! The core leaves implement both owned traits, with these context inputs:
+//!
+//! - [`Ciphertext`](crate::Ciphertext) takes an [`OptionalContext`]. The
+//!   empty context is a valid context.
+//! - [`StackCipherText`](crate::StackCipherText) and [`Encrypted<Terms>`]
+//!   require an [`AeadContext`] to decrypt.
+//! - The terms require a [`CallerContext`] to derive. The terms are
+//!   [`EqualityTerm`](crate::sem::EqualityTerm),
+//!   [`MatchTerms`](crate::sem::MatchTerms), and the order terms.
+//!
+//! Each required context is a [`RequiredContext`]. A term implements
+//! [`EncryptTarget`] alone, because a term cannot be decrypted.
 //!
 //! # Records
 //!
-//! `#[derive(EncryptTarget, DecryptSource)]` composes the field declarations.
-//! A `struct = User, context = "users"` record hands each field its pair
-//! `("users", "<field>")`, extended by the caller's [`ContextExtension`] if
-//! one is given, through [`Encryption::under`]: the field target's
-//! `ContextInput` must therefore be `From<CallerContext>`, which an
-//! [`OptionalContext`], a [`RequiredContext`] of a core context and a
-//! nested record's [`ContextExtension`] are, and a [`NoCallerContext`] or a
-//! `RequiredContext<u64>` is not — refused at that field. Its borrowed
-//! `encryption` picks each field out of a borrow ([`Encryption::project`],
-//! cloning a passthrough field); its `owned_encryption` divides the struct
-//! between the fields ([`Encryption::split`]), so a `#[stash(passthrough)]`
-//! field is moved into the record and each sealed field is guarded by its
-//! own target's owned form. Decryption opens each field under the same pair
-//! and moves the passthrough fields back.
+//! `#[derive(EncryptTarget, DecryptSource)]` composes the declarations of
+//! the fields.
 //!
-//! A `plaintext = T` record runs every field over the whole value under the
-//! one [`RequiredContext<CallerContext>`] (or `RequiredContext<AeadContext>`
-//! with `context_type = AeadContext`) the caller supplies; a
-//! `#[stash(context_field)]` record requires the `NonEmpty<T>` it stores and
-//! opens under an [`ExpectedContext`]. Both derives also emit the structural
-//! declarations ([`EncryptFrom`], [`DecryptInto`], [`DecryptField`]) as a
-//! bridge, so an owned record is a field of a structural record or a typed
-//! plan field ([`FieldsBuilder::encrypt_into`](crate::plan::FieldsBuilder::encrypt_into),
-//! or [`target`](crate::plan::FieldsBuilder::target) for an owned-only target
-//! such as a `Ciphertext`). A hand-written owned target used as a record
-//! field implements [`Decryptable`] and [`DecryptField`] beside
-//! [`DecryptSource`], as a hand-written structural one does.
+//! A `struct = User, context = "users"` record gives each field its context,
+//! `("users", "<field>")`, through [`Encryption::under`]. If the caller
+//! passes a [`ContextExtension`], it extends each field's context. So the
+//! field target's `ContextInput` must implement `From<CallerContext>`:
+//!
+//! - These inputs implement it: [`OptionalContext`], a [`RequiredContext`]
+//!   of a core context, and the [`ContextExtension`] of a nested record.
+//! - These inputs do not: [`NoCallerContext`] and `RequiredContext<u64>`. A
+//!   field whose target takes one of them is a compile error at that field.
+//!
+//! The borrowed `encryption` of a `struct` record takes each field out of a
+//! borrow ([`Encryption::project`]), and clones each passthrough field. Its
+//! `owned_encryption` divides the struct between the fields
+//! ([`Encryption::split`]). So each `#[stash(passthrough)]` field is moved
+//! into the record. Each sealed field is guarded by the owned form of its
+//! own target.
+//!
+//! Decryption opens each field under the same context, and moves the
+//! passthrough fields back. A passthrough field is not encrypted and not
+//! authenticated.
+//!
+//! A `plaintext = T` record runs every field over the whole value, under
+//! the one context the caller supplies. That context is a
+//! [`RequiredContext<CallerContext>`], or a `RequiredContext<AeadContext>`
+//! with `context_type = AeadContext`. A `#[stash(context_field)]` record
+//! requires the `NonEmpty<T>` it stores, and opens under an
+//! [`ExpectedContext`].
+//!
+//! Both derives also implement the structural traits ([`EncryptFrom`],
+//! [`DecryptInto`] and [`DecryptField`]). So an owned record can be a field
+//! of a structural record, or a typed field of a plan. A plan field uses
+//! [`FieldsBuilder::encrypt_into`](crate::plan::FieldsBuilder::encrypt_into),
+//! or [`target`](crate::plan::FieldsBuilder::target) for a target that is
+//! only owned, such as a `Ciphertext`. A hand-written owned target that will
+//! be a record field must implement [`Decryptable`] and [`DecryptField`], as
+//! well as [`DecryptSource`]. A hand-written structural target does the
+//! same.
 //!
 //! # Structural API during migration
 //!
-//! Existing structural derives, plans and dynamic targets still use the declarations
-//! below. Their borrowed convenience methods are isolated in [`legacy`].
+//! The structural derives, plans, and dynamic targets still use the
+//! declarations below. Their borrowed convenience methods are isolated in [`legacy`].
 //!
 //! [`EncryptFrom<S>`] describes ciphertext and/or term operations and has an
 //! associated context type. It does not receive plaintext or a cipher. The
@@ -196,6 +215,7 @@ pub use input::{
     OptionalContext, RequiredContext, ScalarContext,
 };
 pub use stack_encrypt_derive::{DecryptSource, EncryptTarget};
-/// The cleanup bound every owned plaintext carries, named here so the
-/// derives can spell it without a `zeroize` dependency of the caller's.
+/// The cleanup trait that every owned plaintext must implement. It is
+/// re-exported here so that the derives can name it, even when the caller's
+/// crate does not depend on `zeroize`.
 pub use zeroize::Zeroize;

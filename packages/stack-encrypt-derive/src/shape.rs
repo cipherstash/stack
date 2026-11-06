@@ -51,12 +51,13 @@ pub(crate) enum Kind {
     /// Not derived: `Default::default()` or the given expression.
     Default(Option<Expr>),
     Context,
-    /// `#[stash(passthrough)]`, with `struct = ..` on the owned derives:
-    /// the plaintext field `from` is moved into the record as it is, not
-    /// encrypted and not authenticated, and moved back on decryption.
+    /// `#[stash(passthrough)]`, on a field of a `struct = ..` record with the
+    /// owned derives. The plaintext field `from` is moved into the record as
+    /// it is, and moved back on decryption. It is not encrypted and not
+    /// authenticated.
     Passthrough {
-        /// The plaintext field carried through: its own name, or the
-        /// `#[stash(from = field)]` override.
+        /// The plaintext field that is carried through. This is the field's
+        /// own name, or the field that `#[stash(from = field)]` names.
         from: Member,
     },
 }
@@ -154,11 +155,11 @@ pub(crate) enum FieldContext<'a> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(test, derive(Debug))]
 pub(crate) enum Flavor {
-    /// `EncryptFrom` / `DecryptInto`: the structural declarations, run over
-    /// a borrowed plaintext.
+    /// `EncryptFrom` and `DecryptInto`: the structural declarations. They run
+    /// over a borrowed plaintext.
     Structural,
-    /// `EncryptTarget` / `DecryptSource`: the owned declarations, which
-    /// also emit the structural pair as a bridge.
+    /// `EncryptTarget` and `DecryptSource`: the owned declarations. These also
+    /// emit the structural pair.
     Owned,
 }
 
@@ -682,9 +683,9 @@ pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) ->
     quote!(#chain.map(move |#pattern| #result))
 }
 
-/// [`zip`] over recovered plaintext: each field opened before a later one
-/// fails is wiped rather than dropped as it is (`Decryption::zip_wiping`).
-/// What an owned record's fields open through.
+/// [`zip`] over recovered plaintext. Each field opened before a later field
+/// fails is wiped, not dropped as it is (`Decryption::zip_wiping`). An owned
+/// record's fields open through this.
 pub(crate) fn zip_wiping(
     operations: Vec<(TokenStream, Ident)>,
     result: TokenStream,

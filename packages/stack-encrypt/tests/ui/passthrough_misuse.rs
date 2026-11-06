@@ -1,6 +1,6 @@
-//! `passthrough` carries a field of the plaintext struct into an owned
-//! record in the clear. It has no form on the structural derives, on a
-//! `plaintext` record, or beside the attributes of a derived field.
+//! `passthrough` moves a field of the plaintext struct into an owned record,
+//! in the clear. The attribute is refused on the structural derives, on a
+//! `plaintext` record, and beside the attributes of a derived field.
 use stack_encrypt::target::{DecryptSource, EncryptTarget};
 use stack_encrypt::{Ciphertext, DecryptInto, EncryptFrom, StackCipherText};
 
@@ -10,7 +10,7 @@ struct User {
     email: String,
 }
 
-/// The structural derive moves nothing: it runs over a borrow.
+/// The structural derive cannot move a field, because it runs over a borrow.
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(struct = User, context = "users")]
 struct Structural {
@@ -19,7 +19,8 @@ struct Structural {
     email: StackCipherText,
 }
 
-/// A `plaintext` record derives every field from the whole value.
+/// A `plaintext` record derives every field from the whole value, so it has no
+/// field to pass through.
 #[derive(EncryptTarget)]
 #[stash(plaintext = String)]
 struct WholeValue {
@@ -28,7 +29,7 @@ struct WholeValue {
     email: Ciphertext,
 }
 
-/// A passthrough field is moved through as it is.
+/// A passthrough field is moved as it is, so it cannot also be derived.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User, context = "users")]
 struct Marked {

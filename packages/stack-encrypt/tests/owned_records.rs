@@ -1,8 +1,13 @@
-//! Owned record declarations: `#[derive(EncryptTarget, DecryptSource)]` over
-//! a plaintext struct, with passthrough fields, nested records, renamed
-//! source fields, a stored context, and one batch per collection. The
-//! public mixed-record and searchable-record programs run here against the
-//! fake key source. No service credentials are needed.
+//! Tests of owned record declarations: `#[derive(EncryptTarget,
+//! DecryptSource)]` over a plaintext struct. The tests cover passthrough
+//! fields, nested records, renamed source fields, a stored context, and one
+//! batch for each collection. The mixed-record and searchable-record programs
+//! from the public docs run here against the in-memory key source, so no
+//! service credentials are needed.
+//!
+//! The plaintext types in these tests derive `Debug`, `PartialEq`, and `Clone`
+//! so that the tests can compare results. The public examples do not, because
+//! those traits print, compare, and copy plaintext.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -29,7 +34,7 @@ struct User {
     created_at: i64,
 }
 
-/// Plaintext `id` and `created_at` carried through; `name` and `email`
+/// `id` and `created_at` are stored in the clear. `name` and `email` are each
 /// sealed on their own, under `("users", "name")` and `("users", "email")`.
 #[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
 #[stash(struct = User, context = "users")]
@@ -68,12 +73,13 @@ async fn a_mixed_record_round_trips_through_serde_with_its_passthrough_fields() 
     let encrypted: EncryptedUser = user.clone().encrypt_into(&keyset).await.unwrap();
     assert_eq!(encrypted.id, user.id);
     assert_eq!(encrypted.created_at, user.created_at);
-    // One conversion, one batched key request, one data key per sealed field.
+    // One conversion makes one batched key request, with one data key for each
+    // sealed field.
     let generated = sent.lock().unwrap().generate.clone();
     assert_eq!(generated, vec![vec!["users/name", "users/email"]]);
 
-    // Persist the typed output and read it back: plaintext fields as
-    // themselves, ciphertext fields as Base64 envelopes.
+    // Store the typed output and read it back. Plaintext fields are stored as
+    // themselves, and ciphertext fields as Base64 envelopes.
     let json = serde_json::to_value(&encrypted).unwrap();
     assert_eq!(json["id"], 42);
     assert_eq!(json["created_at"], 1_700_000_000);
@@ -104,7 +110,8 @@ async fn each_sealed_field_is_an_ordinary_ciphertext_under_its_pair() {
             .unwrap(),
         "alice@example.com"
     );
-    // The pair is the context: a field moved to the other column is refused.
+    // The field's context is part of the ciphertext's associated data, so a
+    // field moved to the other column is refused.
     assert!(matches!(
         keyset
             .decrypt_with_context::<String>(encrypted.name, ("users", "email"))
@@ -127,7 +134,8 @@ async fn a_caller_extension_binds_every_sealed_field_to_the_row() {
         sent.lock().unwrap().generated(),
         vec!["(users/name)/42u64", "(users/email)/42u64"]
     );
-    // The same extension opens it; another row's id, or none, does not.
+    // The same extension decrypts the record. Another row's id does not. No
+    // extension does not either.
     assert!(matches!(
         User::decrypt_from(
             EncryptedUser {
@@ -165,9 +173,9 @@ async fn a_caller_extension_binds_every_sealed_field_to_the_row() {
 
 // --- Ownership: sealed fields wiped, passthrough fields moved -------------
 
-/// A passthrough field type whose `Clone` fails the test: the borrowed
-/// form of the record would copy it, and the owned conversion must move it
-/// into the output and back instead.
+/// A passthrough field type whose `Clone` fails the test. The borrowed form of
+/// the record would copy it. The owned conversion must move it into the output
+/// and back instead.
 #[derive(Debug, PartialEq, Zeroize)]
 struct Handle(u64);
 impl Clone for Handle {
@@ -176,8 +184,8 @@ impl Clone for Handle {
     }
 }
 
-/// A sealed field type that records being wiped and refuses to be dropped
-/// otherwise.
+/// A sealed field type that records when it is wiped, and fails the test if it
+/// is dropped without being wiped.
 struct Secret {
     value: String,
     wiped: Arc<AtomicBool>,
@@ -211,9 +219,10 @@ impl DecryptSource<Secret> for SecretCiphertext {
         })
     }
 }
-// As a field of a record, a hand-written target says it holds recoverable
-// ciphertext and how it opens under the context the record hands it, as a
-// hand-written structural target does.
+// A hand-written target used as a record field must declare two things. It
+// must declare that it contains ciphertext that can be decrypted. It must also
+// declare how it decrypts under the context the record gives it. A
+// hand-written structural target declares the same.
 impl Decryptable for SecretCiphertext {
     const DECRYPTABLE: bool = true;
 }
@@ -263,7 +272,8 @@ async fn the_owned_record_wipes_sealed_fields_and_moves_passthrough_fields() {
     let opened = Tracked::decrypt_from(encrypted, &keyset).await.unwrap();
     assert_eq!(opened.handle, Handle(7));
     assert_eq!(opened.secret.value, "secret");
-    // The caller owns the recovered plaintext; wipe it to satisfy `Secret::drop`.
+    // The caller owns the recovered plaintext. Wipe it, or `Secret::drop`
+    // fails the test.
     let mut opened = opened;
     opened.secret.zeroize();
 }
@@ -316,9 +326,10 @@ async fn a_field_opened_before_a_later_field_is_refused_is_wiped() {
     .encrypt_into(&keyset)
     .await
     .unwrap();
-    // `second` holds the ciphertext sealed under `first`'s pair, so it is
-    // refused only once its key has arrived, after `first` has opened.
-    // `Secret::drop` fails the test if `first` is then dropped unwiped.
+    // `second` contains the ciphertext sealed under the context of `first`. So
+    // `second` is refused only once its key arrives, after `first` has been
+    // decrypted. `Secret::drop` fails the test if `first` is then dropped
+    // without being wiped.
     let moved = EncryptedPair {
         second: SecretCiphertext(encrypted.first.0.clone()),
         first: encrypted.first,
@@ -330,8 +341,8 @@ async fn a_field_opened_before_a_later_field_is_refused_is_wiped() {
 
 // --- A panic while declaring wipes what has not been handed over -----------
 
-// A sealed field type with no drop check of its own, so a value dropped
-// unwiped during an unwind is seen through the flag rather than as an abort.
+// A sealed field type with no drop check of its own. A value dropped without
+// being wiped during an unwind is detected through the flag, not as an abort.
 struct Flagged {
     value: String,
     wiped: Arc<AtomicBool>,
@@ -351,10 +362,10 @@ fn flagged(value: &str) -> (Flagged, Arc<AtomicBool>) {
     (source, wiped)
 }
 
-/// Seals a `Flagged`, and panics while declaring the one whose plaintext is
-/// `"panics"`: inside the default owned guard, as the field's description
-/// runs.
-// The ciphertext is never read: these tests only encrypt.
+/// Seals a `Flagged`, and panics while declaring the `Flagged` whose plaintext
+/// is `"panics"`. The panic happens inside the default owned guard, while the
+/// field's description runs.
+// These tests only encrypt, so the ciphertext is never read.
 struct FlaggedCiphertext(#[allow(dead_code)] Ciphertext);
 impl EncryptTarget<Flagged> for FlaggedCiphertext {
     type ContextInput = OptionalContext<ScalarContext>;
@@ -379,7 +390,8 @@ struct Trio {
     third: Flagged,
     fourth: Flagged,
 }
-// Only encrypted, and never completed: its fields are never read.
+// This record is only encrypted, and the encryption never completes, so its
+// fields are never read.
 #[allow(dead_code)]
 #[derive(EncryptTarget)]
 #[stash(struct = Trio, context = "trios")]
@@ -395,8 +407,9 @@ struct EncryptedTrio {
 async fn a_panicking_field_declaration_wipes_the_sealed_fields_after_it() {
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
-    // The outer `split` (the first field panics, the rest wait as one part)
-    // and a nested one (the third panics, the fourth waits on its own).
+    // This covers the outer `split`, where the first field panics and the
+    // other fields wait as one part. It also covers a nested `split`, where
+    // the third field panics and the fourth waits on its own.
     for panicking in ["first", "third"] {
         let value = |field: &'static str| if field == panicking { "panics" } else { field };
         let (first, first_wiped) = flagged(value("first"));
@@ -426,8 +439,8 @@ async fn a_panicking_field_declaration_wipes_the_sealed_fields_after_it() {
     }
 }
 
-/// Seals a `Flagged` through a declaration whose construction panics: what
-/// `encrypt_into` is holding then is the plaintext alone.
+/// Seals a `Flagged` through a declaration that panics while it is built. At
+/// that point, `encrypt_into` is holding only the plaintext.
 struct UnconstructedCiphertext(#[allow(dead_code)] Ciphertext);
 impl EncryptTarget<Flagged> for UnconstructedCiphertext {
     type ContextInput = OptionalContext<ScalarContext>;
@@ -473,8 +486,8 @@ async fn a_declaration_that_panics_while_constructed_wipes_the_plaintext() {
 
 // --- The public searchable-record program, as one batch --------------------
 
-/// An application-defined scalar target: the ciphertext plus an equality
-/// term, under the one context the record (or the caller) supplies.
+/// A scalar target that the application defines: the ciphertext and an
+/// equality term, under the one context the record or the caller supplies.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String)]
 struct SearchableEmail {
@@ -499,21 +512,22 @@ async fn a_searchable_column_is_one_batch_and_its_terms_match_a_query_term() {
     let keyset = cipher.default_keyset();
     let users = vec![alice(), bob()];
 
-    // One collection conversion batches key generation across both users:
-    // two name keys and two email keys in one logical call.
+    // One collection conversion makes one batched key request for both users:
+    // two keys for the names and two keys for the email addresses.
     let encrypted: Vec<SearchableUser> = users.clone().encrypt_into(&keyset).await.unwrap();
     assert_eq!(generates.load(Ordering::SeqCst), 1);
     assert_eq!(encrypted.len(), 2);
 
-    // Later: a query under the same keyset, field context and operation,
-    // from another cipher, as a query path in another process derives it.
+    // Later, another cipher builds a query under the same keyset, field
+    // context, and operation. This is how a query in another process derives
+    // it.
     let reader = common::stack_cipher().await;
     let query: EqualityTerm = "alice@example.com"
         .to_owned()
         .encrypt_into_with_context(&reader.default_keyset(), nonempty!("users").with("email"))
         .await
         .unwrap();
-    // An in-memory scan over the stored rows stands in for the index.
+    // A scan of the stored rows in memory takes the place of a database index.
     let matches: Vec<SearchableUser> = encrypted
         .into_iter()
         .filter(|row| row.email.equality == query)
@@ -521,7 +535,7 @@ async fn a_searchable_column_is_one_batch_and_its_terms_match_a_query_term() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].id, 42);
 
-    // The matched rows open in one batch.
+    // The matching rows are decrypted in one batch.
     let restored = Vec::<User>::decrypt_from(matches, &cipher).await.unwrap();
     assert_eq!(restored, &users[..1]);
     assert_eq!(retrieves.load(Ordering::SeqCst), 1);
@@ -575,7 +589,7 @@ async fn a_searchable_email_standalone_requires_its_context() {
         .encrypt_into_with_context(&keyset, nonempty!("users/email"))
         .await
         .unwrap();
-    // The record's indexes are its terms'.
+    // The record's indexes are the indexes of its terms.
     assert_eq!(
         <SearchableEmail as EncryptTarget<String>>::indexes(),
         vec![stack_encrypt::IndexSpec::Equality]
@@ -612,17 +626,18 @@ struct Account {
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Account, context = "accounts")]
 struct EncryptedAccount {
-    /// A passthrough under another name.
+    /// A passthrough field with another name.
     #[stash(passthrough, from = account_id)]
     id: u64,
-    /// A sealed field under another name, keyed under the plaintext field.
+    /// A sealed field with another name. Its context uses the name of the
+    /// plaintext field.
     #[stash(from = holder)]
     owner: Ciphertext,
-    /// A sealed field keyed under a pinned segment.
+    /// A sealed field whose context uses a fixed segment.
     #[stash(from = opened, identity = "opened_at")]
     opened: Ciphertext,
-    /// A nested record: its fields sit under their own pairs, extended by
-    /// this one.
+    /// A nested record. Its fields have their own contexts, extended by the
+    /// context of this field.
     address: EncryptedAddress,
 }
 
@@ -684,14 +699,16 @@ async fn a_stored_context_opens_as_stored_and_checks_an_expectation() {
         .unwrap();
     assert_eq!(encrypted.hm, hm);
 
-    // Omitted: opens under the stored identifier.
+    // With no expected context, the record decrypts under the stored
+    // identifier.
     let again = TextEq {
         identifier: encrypted.identifier,
         c: encrypted.c.clone(),
         hm: encrypted.hm.clone(),
     };
     assert_eq!(String::decrypt_from(again, &keyset).await.unwrap(), value);
-    // Supplied: the stored identifier must equal it, before any key I/O.
+    // With an expected context, the stored identifier must equal it. The check
+    // runs before any key request.
     let moved = TextEq {
         identifier: "users/name",
         c: encrypted.c.clone(),
@@ -713,8 +730,8 @@ async fn a_stored_context_opens_as_stored_and_checks_an_expectation() {
 
 // --- Plaintext records over the structural leaves and a fixed context -----
 
-/// The hand-written composite in `target.rs`, as an owned record: its
-/// fields are the structural leaves, which take the same required context.
+/// The hand-written composite in `target.rs`, as an owned record. Its fields
+/// are the structural leaves. They take the same required context.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = u32)]
 struct EncryptedAge {
@@ -723,8 +740,8 @@ struct EncryptedAge {
     ob: OreTerm<u32>,
 }
 
-/// A record made only of ciphertexts accepts an AEAD-only context; a term
-/// beside them would be refused at its field (`tests/ui`).
+/// A record made only of ciphertexts accepts an AEAD-only context. A term
+/// beside them would be a compile error at its field (`tests/ui`).
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String, context_type = AeadContext)]
 struct SealedName {
@@ -741,7 +758,7 @@ struct Indexed {
     email: Encrypted<(EqualityTerm, MatchTerms)>,
 }
 
-/// Generic over the plaintext: whatever every field accepts.
+/// Generic over the plaintext: any plaintext that every field accepts.
 #[derive(EncryptTarget, DecryptSource)]
 struct SearchableText {
     c: Ciphertext,
@@ -827,9 +844,9 @@ async fn plaintext_records_compose_structural_and_opaque_leaves() {
 
 // --- A field whose target declares its whole context ----------------------
 
-/// A target that supplies every context itself is a field of a `plaintext`
-/// record only through a record that likewise takes none; here it is used
-/// standalone and in a column.
+/// A target that supplies every context itself can be a field of a `plaintext`
+/// record only if that record also takes no context. Here it is used on its
+/// own, and in a column.
 struct FixedInteger(Ciphertext);
 impl EncryptTarget<i32> for FixedInteger {
     type ContextInput = NoCallerContext;
@@ -861,8 +878,8 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
         user: User,
         age: u32,
     }
-    /// A structural record holding an owned record as a field: the bridge
-    /// makes the owned record an `EncryptFrom` with a `DeclaredContext`.
+    /// A structural record with an owned record as a field. The owned derive
+    /// also implements `EncryptFrom` with a `DeclaredContext`, so this works.
     #[derive(EncryptFrom)]
     #[stash(struct = Profile, context = "profiles")]
     struct EncryptedProfile {
@@ -888,7 +905,8 @@ async fn an_owned_record_is_a_field_of_a_structural_record_and_a_plan() {
         ]
     );
 
-    // And as a typed field of a plan, through the same bridge.
+    // The owned record also works as a typed field of a plan, for the same
+    // reason.
     let plan = Plan::context("profiles")
         .fields::<Profile, _>()
         .encrypt_into::<EncryptedUser, _>(pick("user", |p: &Profile| &p.user))

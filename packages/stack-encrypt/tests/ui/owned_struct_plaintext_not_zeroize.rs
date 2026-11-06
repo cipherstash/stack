@@ -1,6 +1,6 @@
-//! The plaintext of an owned record is a `Zeroize` type: the conversion
-//! takes responsibility for wiping what it seals, and the bound is where
-//! that responsibility is declared.
+//! The plaintext of an owned record must implement `Zeroize`. The conversion
+//! is responsible for wiping what it seals, and this bound declares that
+//! responsibility.
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::Ciphertext;
 

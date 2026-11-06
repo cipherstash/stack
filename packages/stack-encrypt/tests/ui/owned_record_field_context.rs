@@ -1,7 +1,7 @@
-//! A field of a `struct = ..` owned record is handed the pair the record
-//! infers, extended by the caller's context. A target that accepts no
-//! caller context, or requires one of another type, cannot take it, and is
-//! refused at that field.
+//! A field of an owned `struct = ..` record is given the field context that
+//! the record builds, extended by the caller's context. A target that accepts
+//! no caller context, or that requires a context of another type, cannot take
+//! it. That field is a compile error.
 use stack_encrypt::target::{
     AcceptsContext, DecryptSource, Decryptable, Decryption, EncryptTarget, Encryption,
     NoCallerContext, OptionalContext, RequiredContext, ScalarContext,
@@ -30,7 +30,7 @@ impl Decryptable for Fixed {
     const DECRYPTABLE: bool = true;
 }
 
-/// Requires a row id from the caller, not a column pair.
+/// Requires a row id from the caller, not a field context.
 struct Bound(Ciphertext);
 impl Decryptable for Bound {
     const DECRYPTABLE: bool = true;

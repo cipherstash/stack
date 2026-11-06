@@ -1,11 +1,17 @@
 # Attributes
 
-All attributes live under `#[stash(...)]`. The four derives read the same
-attributes: `EncryptFrom` / `DecryptInto` emit the structural declarations,
-run over a borrowed plaintext; `EncryptTarget` / `DecryptSource` emit the
-owned declarations (and the structural ones beside them as a bridge), run
-over a plaintext handed over by value, and alone accept `passthrough`. Derive
-one pair or the other on a record, not both.
+All attributes are written inside `#[stash(...)]`. The four derives read the
+same attributes:
+
+- `EncryptTarget` and `DecryptSource` declare a record the owned way. The
+  caller passes the plaintext by value. Encrypting it consumes it and wipes
+  it.
+  Only these two derives accept `passthrough`. Each also implements the
+  structural traits, so the record works where a structural one is expected.
+- `EncryptFrom` and `DecryptInto` declare a record the structural way, over
+  a borrowed plaintext.
+
+Derive one pair on a record, not both.
 
 ## On the struct
 
@@ -38,7 +44,7 @@ literal.
 | `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. A plaintext field has one output: two fields `from` one plaintext field are refused (a ciphertext with its terms is one `Encrypted<Terms>` field). |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` / `DecryptSource` only). Needed only when the field types cannot decide it — see below. |
-| `passthrough` | With `struct` on the owned derives only: carry the plaintext field of this name (or `from = field`) into the record as it is, **not encrypted and not authenticated**, moved rather than cloned, and move it back on decryption. Keyed under nothing; excludes `identity`, `default` and `decrypt`. |
+| `passthrough` | Owned derives, with `struct` only: move the plaintext field of the same name (or the one `from = field` names) into the record as it is, and move it back on decryption. **Not encrypted and not authenticated**: see [Passthrough fields](#passthrough-fields). The field has no context. Cannot be combined with `identity`, `default` or `decrypt`. |
 
 A field takes no `context = ".."` of its own, on any derive: it is a compile
 error. A plan has exactly one context source, and every output sits under it.
@@ -72,66 +78,130 @@ an owned declaration. No context is inferred from a Rust type's name.
 
 ## Owned records
 
-`#[derive(EncryptTarget, DecryptSource)]` takes the attributes above and
-declares the record the owned way: `value.encrypt_into(&keyset)` consumes
-the plaintext, and `Plaintext::decrypt_from(record, &cipher)` returns it.
-The plaintext type is `Zeroize` (the trait bound says where the wiping
-obligation lies), and the conversion wipes every plaintext field it seals.
-What the caller may or must pass is the record's `ContextInput`:
+`#[derive(EncryptTarget, DecryptSource)]` takes the attributes above.
+`value.encrypt_into(&keyset)` consumes the plaintext and wipes each field it
+seals, and `Plaintext::decrypt_from(record, &cipher)` returns the plaintext.
+The plaintext type must implement `Zeroize`.
 
-| Record | Encrypt input | Decrypt input | A call |
+### What the caller passes
+
+The record's `ContextInput` decides which context a caller can pass, and
+which context the caller must pass:
+
+| Record | Encrypt input | Decrypt input | Example call |
 |---|---|---|---|
-| `struct = User, context = "users"` | `ContextExtension<DeclaredContext>` | the same | `user.encrypt_into(&keyset)`, or `.encrypt_into_with_context(&keyset, 7u64)` to extend every field's pair by the row id |
-| `plaintext = T` | `RequiredContext<CallerContext>` (`RequiredContext<AeadContext>` with `context_type = AeadContext`) | the same | `value.encrypt_into_with_context(&keyset, nonempty!("users/email"))` |
-| with a `context_field` of type `C` | `RequiredContext<NonEmpty<C>>` | `ExpectedContext<C>` | `T::decrypt_from(record, &cipher)` opens under the stored context; `decrypt_from_with_context(record, &cipher, nonempty!(..))` also checks it |
+| `struct = User, context = "users"` | `ContextExtension<DeclaredContext>` | The same as for encryption | `user.encrypt_into(&keyset)`, or `user.encrypt_into_with_context(&keyset, 7u64)` to extend every field's context with the row id `7` |
+| `plaintext = T` | `RequiredContext<CallerContext>`, or `RequiredContext<AeadContext>` with `context_type = AeadContext` | The same as for encryption | `value.encrypt_into_with_context(&keyset, nonempty!("users/email"))` |
+| With a `context_field` of type `C` | `RequiredContext<NonEmpty<C>>` | `ExpectedContext<C>` | `T::decrypt_from_with_context(record, &cipher, nonempty!(..))`, which checks the stored context before it decrypts |
 
-A `struct` record's field is handed its pair, extended by the caller's part
-if one was given, so the field's target must accept a caller context: a
-`Ciphertext` (`OptionalContext`), a term or an `Encrypted<Terms>`
-(`RequiredContext<CallerContext>`), a `StackCipherText`
-(`RequiredContext<AeadContext>`), a `plaintext` record, or another `struct`
-record (whose own pairs the outer pair then extends). A target that declares
-its whole context itself (`NoCallerContext`) or requires a context of another
-type (`RequiredContext<u64>`) is refused at that field. A `#[stash(passthrough)]`
-field is moved into the record by the owned conversion; its type is `Clone`
-too, since the record's borrowed form, which a plan or a structural record
-runs, copies it.
+A `context_field` record can also be opened with `T::decrypt_from(record,
+&cipher)`, with no context. That call opens the record under whatever
+context it stores, and checks only that the context is not empty. The
+stored context is not authenticated, so a ciphertext moved together with its
+stored context opens in its new place. Pass the context you expect, unless
+you have checked the record's place some other way.
 
-A `struct` record accounts for every field of its plaintext, sealing it or
-carrying it through: the owned conversion destructures the struct, and a
-field it does neither would be dropped unwiped, so it is refused at the
-`struct = ..` path ("pattern does not mention field"). For the same reason
-the plaintext struct cannot implement `Drop` (so not `ZeroizeOnDrop`
-either): a type with a destructor cannot be destructured. A field's
-declaration that panics wipes the sealed fields not yet handed to their
-own declarations, and a record's declaration that panics while it is
-constructed wipes the whole plaintext. On decryption a field opened before
-a later field is refused is wiped, not dropped as it is.
+### Fields of a `struct` record
 
-A `plaintext` record's fields are all handed the one context the record
-requires, so a term beside an `AeadContext`-only record is refused at the
-term. Omitting a required context is refused at the call
-(`AllowsNoContext`), whatever `Default` the context type has.
+Each field of a `struct` record is given its context, `("users", "<field>")`,
+extended by the caller's context if there is one. So the field's target must
+accept a context from the record. These targets accept one:
 
-Both owned derives also emit the structural declarations: `EncryptTarget`
-emits `EncryptFrom` (the record's legacy context — `DeclaredContext`,
-`CallerContext` or `NonEmpty<C>` — converted into its owned input) and
-`Decryptable`; `DecryptSource` emits `DecryptInto` and `DecryptField`. An
-owned record is therefore a field of a `#[derive(EncryptFrom)]` struct
-record and a typed field of a plan (`encrypt_into::<Record, _>`) without
-a second derive. A hand-written owned target that is to be a record field
-implements `Decryptable` and `DecryptField` beside `DecryptSource`.
+- `Ciphertext`, whose input is `OptionalContext`.
+- A term, or an `Encrypted<Terms>`, whose input is
+  `RequiredContext<CallerContext>`.
+- `StackCipherText`, whose input is `RequiredContext<AeadContext>`.
+- A `plaintext` record.
+- Another `struct` record. The outer field's context then extends the
+  inner record's own contexts.
+
+Two kinds of target are a compile error at the field. One kind builds its
+whole context itself (`NoCallerContext`). The other requires a context of
+another type, such as `RequiredContext<u64>`.
+
+The record must name every field of its plaintext, as a sealed field or a
+passthrough field. The owned conversion moves the fields out of the
+plaintext struct, and a field it did not name would be dropped without
+being wiped. So a field that is left out is a compile error at the
+`struct = ..` path ("pattern does not mention field").
+
+### Passthrough fields
+
+A `#[stash(passthrough)]` field is moved from the plaintext into the record,
+and back again on decryption. A passthrough field is **not encrypted and
+not authenticated**.
+Anyone with access to the stored record can read the value, change it or
+remove it, and every sealed field beside it still decrypts.
+
+- Use a passthrough field only for a value that is not secret.
+- Treat the value you read back as untrusted input. Never let it decide
+  authorisation, tenancy, or which record to trust.
+- Do not use a passthrough field for a value that must be readable and
+  also tamper-evident. Pass that value as the caller's context instead, as
+  the row id is passed above. A changed context makes decryption fail.
+
+The owned conversion never copies a passthrough field. The field's type
+must still implement `Clone`, because the structural form of the record
+copies it. Plans and structural records run that form.
+
+### Wiping
+
+- The conversion wipes each sealed field before the pending request is
+  returned.
+- If a field's declaration panics, the sealed fields that are still waiting
+  for their own declarations are wiped.
+- If the record's declaration panics while it is being built, the whole
+  plaintext is wiped.
+- On decryption, if a later field is refused, the fields already opened are
+  wiped before the error is returned.
+
+**A decrypted plaintext is not wiped when it is dropped.** The derive moves
+the fields out of the plaintext struct, and Rust does not allow that for a
+type that implements `Drop`. So the plaintext type cannot derive
+`ZeroizeOnDrop`. Wrap a decrypted value in `stack_encrypt::Protected` as
+soon as it is returned, or call `zeroize` on it when you no longer need it.
+Do not derive these traits on the plaintext type either:
+
+- `Debug`, because it prints the plaintext.
+- `Clone`, because each clone is another copy to wipe.
+- `PartialEq`, because a derived comparison does not run in constant time.
+
+### Fields of a `plaintext` record
+
+Every field of a `plaintext` record is given the one context the record
+requires. So a term field in a record with `context_type = AeadContext` is a
+compile error at the term, because a term needs a `CallerContext`. A call
+that leaves out a required context is a compile error at the call
+(`AllowsNoContext`), even if the context type implements `Default`.
+
+### The structural traits
+
+Each owned derive also implements the structural traits:
+
+- `EncryptTarget` also implements `EncryptFrom` and `Decryptable`.
+  `EncryptFrom` converts the record's structural context into the owned
+  input. The structural context is a `DeclaredContext`, a `CallerContext`,
+  or a `NonEmpty<C>`.
+- `DecryptSource` also implements `DecryptInto` and `DecryptField`.
+
+So an owned record can be a field of a `#[derive(EncryptFrom)]` record, or a
+typed field of a plan (`encrypt_into::<Record, _>`), with no second derive.
+A hand-written owned target that will be a record field must implement
+`Decryptable` and `DecryptField`, as well as `DecryptSource`.
+
+### Example
 
 ```rust
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptSource, EncryptTarget};
-use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
+use stack_encrypt::{Ciphertext, Controlled, DecryptFrom, EncryptInto, Protected, StackCipher};
 
-#[derive(Debug, PartialEq, zeroize::Zeroize)]
+// The plaintext derives `Zeroize` and nothing else.
+#[derive(zeroize::Zeroize)]
 struct User { id: u64, name: String, email: String }
 
-/// A searchable scalar: the ciphertext and an equality term, under the one
-/// context the field (or a caller) supplies.
+/// An email address you can search for: its ciphertext and an equality
+/// term, under the one context that the record field supplies.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String)]
 struct SearchableEmail { ciphertext: Ciphertext, equality: EqualityTerm }
@@ -139,30 +209,38 @@ struct SearchableEmail { ciphertext: Ciphertext, equality: EqualityTerm }
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User, context = "users")]
 struct SearchableUser {
+    // Not encrypted and not authenticated.
     #[stash(passthrough)]
     id: u64,
-    name: Ciphertext,        // ("users", "name")
-    email: SearchableEmail,  // ("users", "email")
+    name: Ciphertext,        // sealed under ("users", "name")
+    email: SearchableEmail,  // derived under ("users", "email")
 }
 
 # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+// With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+// the environment, or from the profile that `npx stash auth login` writes.
 let cipher = StackCipher::builder()
-    .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+#     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    .init()
+    .await?;
 let keyset = cipher.default_keyset();
 let users = vec![
     User { id: 42, name: "Alice".into(), email: "alice@example.com".into() },
     User { id: 43, name: "Bob".into(), email: "bob@example.com".into() },
 ];
-// One batched key request for both rows' four sealed fields.
+// One batched key request seals the four sealed fields of both rows.
 let rows: Vec<SearchableUser> = users.encrypt_into(&keyset).await?;
-// A query term is the same derivation under the same context.
+
+// A query term is the same derivation, under the same context.
 let wanted: EqualityTerm = String::from("alice@example.com")
     .encrypt_into_with_context(&keyset, stack_encrypt::nonempty!("users").with("email"))
     .await?;
 let matched: Vec<SearchableUser> = rows.into_iter().filter(|r| r.email.equality == wanted).collect();
-let opened = Vec::<User>::decrypt_from(matched, &cipher).await?;
-assert_eq!(opened.len(), 1);
-assert_eq!(opened[0].id, 42);
+
+// Wrap the decrypted users at once. `Protected` wipes them when it is dropped.
+let opened = Protected::new(Vec::<User>::decrypt_from(matched, &cipher).await?);
+assert_eq!(opened.risky_ref().len(), 1);
+assert_eq!(opened.risky_ref()[0].id, 42);
 # Ok::<(), stack_encrypt::Error>(())
 # }).unwrap();
 ```

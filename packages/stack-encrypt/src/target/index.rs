@@ -618,7 +618,7 @@ where
 }
 
 /// The owned declaration of the same layout: the ciphertext with its terms,
-/// under the one caller context the record field or the caller supplies.
+/// under the one caller context that the record field or the caller supplies.
 impl<S, Terms> EncryptTarget<S> for Encrypted<Terms>
 where
     S: crate::Encrypt + Clone + zeroize::Zeroize,

@@ -1,13 +1,18 @@
-//! Derive operation declarations for encrypted records. The owned pair,
-//! `EncryptTarget<P>` / `DecryptSource<P>`, declares a record the owned
-//! conversions (`value.encrypt_into(&keyset)`, `P::decrypt_from(record, &cipher)`)
-//! run, consuming and wiping the plaintext; the structural pair,
-//! `EncryptFrom<P>` / `DecryptInto<P>`, declares one run over a borrowed
-//! plaintext by `keyset.encrypt_as` and `cipher.decrypt_as`. Both take the
-//! same attributes (see [Owned records](#owned-records) for what only the
-//! owned pair adds). Stack Encrypt owns execution through Vitamin C's
-//! plaintext traits. Generated code receives context and encrypted outputs,
-//! never a cipher.
+//! Derive the declarations of encrypted records. There are two pairs of
+//! derives, and both take the same attributes:
+//!
+//! - `EncryptTarget<P>` and `DecryptSource<P>` declare a record for the owned
+//!   conversions, `value.encrypt_into(&keyset)` and
+//!   `P::decrypt_from(record, &cipher)`. Encrypting consumes the plaintext
+//!   and wipes it. [Owned records](#owned-records) lists what only this pair
+//!   adds.
+//! - `EncryptFrom<P>` and `DecryptInto<P>` declare a record for the
+//!   structural calls, `keyset.encrypt_as` and `cipher.decrypt_as`, over a
+//!   borrowed plaintext.
+//!
+//! Stack Encrypt runs every declaration, through Vitamin C's plaintext
+//! traits. The generated code is given a context and encrypted outputs. It is
+//! never given a cipher.
 //!
 //! ```
 //! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, nonempty};
@@ -238,10 +243,14 @@ pub fn derive_decrypt_into(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derive the owned `EncryptTarget` declaration for a record struct, with
-/// the structural `EncryptFrom` beside it as a bridge. Takes the same
-/// attributes as `EncryptFrom`, plus `#[stash(passthrough)]` on a field of
-/// a `struct = ..` record. See [Owned records](crate#owned-records).
+/// Derive the owned `EncryptTarget` declaration for a record struct. The
+/// derive also implements the structural `EncryptFrom`, so the record works
+/// where a structural record is expected.
+///
+/// The derive takes the same attributes as `EncryptFrom`. It also takes
+/// `#[stash(passthrough)]` on a field of a `struct = ..` record. A
+/// passthrough field is not encrypted and not authenticated. See
+/// [Owned records](crate#owned-records).
 #[doc = include_str!("../docs/attributes.md")]
 #[proc_macro_derive(EncryptTarget, attributes(stash))]
 pub fn derive_encrypt_target(input: TokenStream) -> TokenStream {
@@ -252,8 +261,12 @@ pub fn derive_encrypt_target(input: TokenStream) -> TokenStream {
 }
 
 /// Derive the owned `DecryptSource<Plaintext>` declaration for a record
-/// struct, one impl per `plaintext` type, with the structural `DecryptInto`
-/// and `DecryptField` beside it as a bridge. See
+/// struct, with one impl for each `plaintext` type. The derive also
+/// implements the structural `DecryptInto` and `DecryptField`, so the record
+/// works where a structural record is expected.
+///
+/// A decrypted plaintext is not wiped when it is dropped. Wrap it in
+/// `stack_encrypt::Protected` as soon as it is returned. See
 /// [Owned records](crate#owned-records).
 #[doc = include_str!("../docs/attributes.md")]
 #[proc_macro_derive(DecryptSource, attributes(stash))]

@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `RequiredContext<CallerContext>: AllowsNoContext` is not satisfied
-  --> tests/ui/owned_record_required_context.rs:15:47
+  --> tests/ui/owned_record_required_context.rs:16:47
    |
-15 |     let _ = String::from("alice@example.com").encrypt_into::<SearchableEmail, _>(keyset);
+16 |     let _ = String::from("alice@example.com").encrypt_into::<SearchableEmail, _>(keyset);
    |                                               ^^^^^^^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<CallerContext>`
    |
 help: the following other types implement trait `AllowsNoContext`
@@ -28,9 +28,9 @@ note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into`
    |                          ^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
 error[E0277]: the trait bound `RequiredContext<CallerContext>: AllowsNoContext` is not satisfied
-  --> tests/ui/owned_record_required_context.rs:16:34
+  --> tests/ui/owned_record_required_context.rs:17:34
    |
-16 |     let _ = String::decrypt_from(stored, keyset);
+17 |     let _ = String::decrypt_from(stored, keyset);
    |             -------------------- ^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<CallerContext>`
    |             |
    |             required by a bound introduced by this call

@@ -1,13 +1,16 @@
-//! Emit an owned `DecryptSource` declaration, with the structural
-//! `DecryptInto` and `DecryptField` beside it as a bridge.
+//! Emit an owned `DecryptSource` declaration. Also emit the structural
+//! `DecryptInto` and `DecryptField`, so the record works where a structural
+//! record is expected.
 //!
-//! The opening mirrors the owned encryption: a `struct = ..` record opens
-//! each field through the field type's `DecryptField` under the pair the
-//! record infers, extended by the caller's extension, and moves its
-//! passthrough fields back into the plaintext; a `plaintext = T` record
-//! opens its one recoverable field under the context the caller supplies,
-//! or under the context a `context_field` record stores, once that has
-//! passed the caller's expectation.
+//! Decryption follows the same layout as the owned encryption:
+//!
+//! - A `struct = ..` record opens each field through the field type's
+//!   `DecryptField`. Each field opens under its context, extended by the
+//!   caller's context if there is one. The passthrough fields are moved back
+//!   into the plaintext.
+//! - A `plaintext = T` record opens its one recoverable field under the
+//!   context the caller supplies. A `context_field` record opens it under the
+//!   context it stores, once that context has passed the caller's check.
 use crate::decrypt::check;
 use crate::owned_encrypt::{encrypt_input, spanned_predicate, threaded_input};
 use crate::shape::{trait_impl, zip_wiping, Field, Flavor, Record};
@@ -21,7 +24,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let krate = &record.krate;
     let name = &input.ident;
     let explicit = record.fields.iter().any(|f| f.decrypt);
-    // Each group recovers one plaintext (field): `None` is the whole value.
+    // Each group recovers one plaintext, or one plaintext field. `None` means
+    // the whole value.
     let groups: Vec<(Option<&Member>, Vec<&Field>)> = if explicit {
         let opened: Vec<&Field> = record.fields.iter().filter(|f| f.decrypt).collect();
         if record.by_field {
@@ -99,7 +103,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         impls.push(bridge(&input, &record, &plaintext, generic));
     }
 
-    // `DecryptField`, through the bridge, as the structural derive emits it.
+    // `DecryptField`, emitted the same way as the structural derive emits it.
     let mut generics = input.generics.clone();
     generics.params.push(parse_quote!(__P));
     generics.params.push(parse_quote!(__Ctx));
@@ -119,9 +123,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote!(#(#impls)* #field #definition_check))
 }
 
-/// The caller's input on the decrypt side: an expectation of the stored
-/// context, an extension for a `struct` record, otherwise the required
-/// caller context the encrypt side took.
+/// The caller's input on the decrypt side. A `context_field` record takes a
+/// check of the stored context. A `struct` record takes an extension. Any
+/// other record takes the caller context the encrypt side required.
 fn decrypt_input(record: &Record) -> Type {
     let krate = &record.krate;
     if let Some(field) = record.context_field() {
@@ -132,10 +136,10 @@ fn decrypt_input(record: &Record) -> Type {
     }
 }
 
-/// A `struct = ..` record: each field opened under its pair extended by the
-/// caller's extension, zipped so that a field recovered before a later one
-/// fails is wiped, and the plaintext rebuilt with the passthrough fields
-/// moved back.
+/// A `struct = ..` record. Each field opens under its context, extended by the
+/// caller's context. The fields are zipped so that a field recovered before a
+/// later field fails is wiped. The plaintext is then rebuilt, with the
+/// passthrough fields moved back.
 fn struct_body(
     record: &Record,
     plaintext: &Type,
@@ -178,8 +182,8 @@ fn struct_body(
             quote!(#from: self.#member)
         });
     let output = quote!(#literal { #(#opened,)* #(#carried),* });
-    // Wiping: a field opened before a later field is refused is wiped, not
-    // dropped as it is.
+    // A field opened before a later field is refused is wiped, not dropped as
+    // it is.
     let zipped = zip_wiping(operations, output);
     Ok(quote! {
         let __context: #krate::target::DeclaredContext = ::core::convert::Into::into(__context);
@@ -187,9 +191,9 @@ fn struct_body(
     })
 }
 
-/// A `plaintext = T` record: its one recoverable field opened under the
-/// required context, which a `context_field` record first builds from the
-/// context it stores, checked against the caller's expectation.
+/// A `plaintext = T` record. Its one recoverable field opens under the
+/// required context. A `context_field` record first builds that context from
+/// the context it stores, and checks it against the caller's expectation.
 fn value_body(
     record: &Record,
     plaintext: &Type,
@@ -209,8 +213,9 @@ fn value_body(
             };
         }
     });
-    // The where clause states per field what the body is checked against,
-    // for a generic impl; a concrete one reports at the field alone.
+    // In a generic impl, the where clause states, for each field, what the
+    // body is checked against. A concrete impl reports the error at the field
+    // alone.
     for field in fields.iter().filter(|_| generic) {
         let ty = &field.ty;
         if explicit {
@@ -243,8 +248,8 @@ fn value_body(
                 quote_spanned!(ty.span()=> <#ty as #krate::target::DecryptField<#plaintext, #threaded>>::decryption_field::<__K>(self.#member, ::core::clone::Clone::clone(&__context)))
             })
             .collect();
-        // Evaluate every inspection before chaining: a context error belongs
-        // to the whole declaration, not to an Option::or_else closure.
+        // Run every inspection before chaining them. A context error belongs
+        // to the whole declaration, not to an `Option::or_else` closure.
         let locals: Vec<_> = (0..calls.len())
             .map(|n| Ident::new(&format!("__candidate_{n}"), Span::call_site()))
             .collect();
@@ -259,8 +264,8 @@ fn value_body(
     quote!(#stored #operation)
 }
 
-/// The structural `DecryptInto` bridge: the record's legacy context,
-/// converted into its owned input.
+/// The structural `DecryptInto`. The record's structural context is converted
+/// into its owned input.
 fn bridge(input: &DeriveInput, record: &Record, plaintext: &Type, generic: bool) -> TokenStream {
     let krate = &record.krate;
     let legacy = record.context_type(true);

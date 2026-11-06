@@ -1,10 +1,15 @@
-//! One record, three authors, one engine: a hand-written `EncryptTarget`
-//! (typed), `#[derive(EncryptTarget, DecryptSource)]` (generated) and the
-//! data-plan lowering a binding sends (dynamic) each seal the same mixed,
-//! searchable record against the same fake provider. The descriptors they
-//! send to the key provider agree, their equality terms agree byte for byte,
-//! and each opens what the others sealed, which is the AAD agreeing too:
-//! ciphertext bytes are randomized and are not compared.
+//! One record, sealed three ways, by one engine. A hand-written
+//! `EncryptTarget` (typed), `#[derive(EncryptTarget, DecryptSource)]`
+//! (generated), and the data-plan lowering that a binding sends (dynamic) each
+//! seal the same mixed, searchable record. All three use the same in-memory
+//! provider. The tests check three things:
+//!
+//! - The descriptors sent to the key provider are the same.
+//! - The equality terms are the same, byte for byte.
+//! - Each way decrypts what the others sealed, so the associated data is the
+//!   same too.
+//!
+//! Ciphertext bytes are random, so the tests do not compare them.
 #![cfg(feature = "dynamic")]
 
 mod common;
@@ -133,8 +138,8 @@ fn dynamic_source(user: &User) -> ValueFrame {
     ])
 }
 
-/// The three outputs in one shape: the stored tree the dynamic path writes
-/// and reads, so one comparison and one opener serve all three.
+/// The three outputs, in one shape: the stored tree that the dynamic path
+/// writes and reads. So one comparison and one decryption serve all three.
 struct Stored {
     id: u32,
     name: SealedValue,
@@ -269,17 +274,18 @@ async fn typed_generated_and_dynamic_declarations_are_one_engine() {
     let keyset = cipher.default_keyset();
     let plan = data_plan();
 
-    // Each author seals the record. The passthrough field requests no key;
-    // the two sealed fields request one each, under the field's pair, and
-    // the equality term derives locally.
+    // Each way seals the record. The passthrough field requests no key. The
+    // two sealed fields request one key each, under the field's context. The
+    // equality term is derived locally.
     let typed: TypedUser = user.clone().encrypt_into(&keyset).await.unwrap();
     let generated: GeneratedUser = user.clone().encrypt_into(&keyset).await.unwrap();
     let dynamic = record::encrypt(&keyset, dynamic_source(&user), &plan)
         .expect("the source fits the plan")
         .await
         .unwrap();
-    // Field order within a call is the declaration's (the data plan's is
-    // the frame's key order), so each call is compared as a set.
+    // Within a call, the fields are in the declaration's order. The data plan
+    // uses the key order of the frame instead. So the test compares each call
+    // as a set.
     let sorted = |call: &Vec<String>| {
         let mut call = call.clone();
         call.sort();
@@ -299,15 +305,16 @@ async fn typed_generated_and_dynamic_declarations_are_one_engine() {
     let typed = Stored::of_typed(typed);
     let generated = Stored::of_generated(generated);
     let dynamic = Stored::of_tree(dynamic);
-    // The one-way terms are the same bytes, so a query term from any author
-    // finds the rows every author stored.
+    // The terms are the same bytes. So a query term built any of the three
+    // ways finds the rows that each way stored.
     assert_eq!(typed.email_eq, generated.email_eq);
     assert_eq!(generated.email_eq, dynamic.email_eq);
     assert_eq!(typed.id, 42);
     assert_eq!(generated.id, 42);
     assert_eq!(dynamic.id, 42);
 
-    // Every author opens every author's record: same context, same AAD.
+    // Each way decrypts the records of every way: the same context gives the
+    // same associated data.
     for stored in [&typed, &generated, &dynamic] {
         assert_eq!(
             User::decrypt_from(stored.typed(), &cipher).await.unwrap(),
@@ -321,7 +328,7 @@ async fn typed_generated_and_dynamic_declarations_are_one_engine() {
         );
         assert_eq!(open_dynamic(&cipher, stored).await, user);
     }
-    // And every open retrieved under the same descriptors.
+    // Every decryption also retrieved its keys under the same descriptors.
     let retrieved: Vec<_> = sent.lock().unwrap().retrieve.iter().map(sorted).collect();
     assert_eq!(retrieved.len(), 9);
     assert!(retrieved

@@ -528,8 +528,8 @@ fn a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it() {
 
 // --- The structural `Vec` declarations wipe what they recovered too --------
 
-/// The same column, declared the structural way (`DecryptInto`), so the
-/// legacy `Vec<T>: DecryptInto<Vec<P>>` path is the one under test.
+/// The same column, declared the structural way (`DecryptInto`). So the test
+/// covers the structural `Vec<T>: DecryptInto<Vec<P>>` path.
 impl stack_encrypt::DecryptInto<Tracked> for TrackedCiphertext {
     type Context = stack_encrypt::target::AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Tracked, K> {
@@ -549,8 +549,9 @@ async fn a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_pat
         .encrypt_with_context("recovered first".to_owned(), context)
         .await
         .unwrap();
-    // Sealed under another context: fails authentication only once its key
-    // has arrived, by which time the first element has been recovered.
+    // This element is sealed under another context. It fails
+    // authentication only once its key arrives, and by then the first
+    // element has been recovered.
     let second = keyset
         .encrypt_with_context("never recovered".to_owned(), "elsewhere")
         .await
@@ -560,8 +561,8 @@ async fn a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_pat
         TrackedCiphertext::new(second),
     ];
     let wiped: Vec<_> = column.iter().map(|t| t.wiped.clone()).collect();
-    // `Tracked::drop` fails the test if the recovered prefix is dropped
-    // unwiped, which is what the structural path did before it opened
+    // `Tracked::drop` fails the test if the recovered elements are dropped
+    // without being wiped. The structural path did that before it decrypted
     // through the wiping collection.
     let result = cipher
         .decrypt_as::<Vec<Tracked>, _>(column, stack_encrypt::target::AeadContext::from(context))
@@ -580,7 +581,8 @@ async fn a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_pat
 
 /// Seals a `Flagged`, and panics while declaring the element whose
 /// plaintext is `"panics"`.
-// The ciphertext is never read: the declaration panics before one exists.
+// The declaration panics before a ciphertext exists, so the ciphertext is
+// never read.
 struct PanickingTarget(#[allow(dead_code)] Ciphertext);
 impl EncryptTarget<Flagged> for PanickingTarget {
     type ContextInput = OptionalContext<ScalarContext>;
@@ -631,12 +633,12 @@ impl<Ctx: Into<stack_encrypt::target::AeadContext>>
 }
 
 struct Rows {
-    // Never read: the column fails, so no `Rows` is built.
+    // The column fails, so no `Rows` is built. This field is never read.
     #[allow(dead_code)]
     items: Vec<Tracked>,
 }
-/// A column as a field: the structural `Vec<T>: DecryptField<Vec<P>, _>`
-/// impl is the one that opens `items`.
+/// A column as a field. The structural `Vec<T>: DecryptField<Vec<P>, _>` impl
+/// decrypts `items`.
 #[derive(stack_encrypt::DecryptInto)]
 #[stash(struct = Rows, context = "rows")]
 struct StoredRows {
@@ -651,8 +653,9 @@ async fn a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix() {
         .encrypt_with_context("recovered first".to_owned(), ("rows", "items"))
         .await
         .unwrap();
-    // Sealed under another context: fails authentication only once its key
-    // has arrived, by which time the first element has been recovered.
+    // This element is sealed under another context. It fails
+    // authentication only once its key arrives, and by then the first
+    // element has been recovered.
     let second = keyset
         .encrypt_with_context("never recovered".to_owned(), "elsewhere")
         .await
@@ -664,8 +667,8 @@ async fn a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix() {
         ],
     };
     let wiped: Vec<_> = stored.items.iter().map(|t| t.wiped.clone()).collect();
-    // `Tracked::drop` fails the test if the recovered prefix is dropped
-    // unwiped.
+    // `Tracked::drop` fails the test if the recovered elements are dropped
+    // without being wiped.
     let result = cipher
         .decrypt_as::<Rows, _>(stored, stack_encrypt::target::DeclaredContext::default())
         .await;
