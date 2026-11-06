@@ -160,14 +160,14 @@ pub fn render_functions_file(family_name: &str, domain: &Domain) -> String {
         entries.push(extractor_entry(term));
     }
     for op in OPERATORS {
-        let extractor = Term::extractor_for_operator(domain.terms, op.symbol.as_str());
+        let term = Term::term_for_operator(domain.terms, op.symbol.as_str());
         for sig in op.signatures {
             let rendered = sig.render(&dom);
             // A `blocker_only` overload (the `@@` jsonpath predicate) always falls
             // through to the blocker, even when the domain supports the symbol.
             if is_supported(op.symbol.as_str()) && !sig.blocker_only {
-                if let Some(ex) = extractor {
-                    entries.push(wrapper_entry(&dom, op, &rendered.left, &rendered.right, ex));
+                if let Some(t) = term {
+                    entries.push(wrapper_entry(&dom, op, &rendered.left, &rendered.right, t));
                     continue;
                 }
             }
@@ -275,7 +275,7 @@ pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String
     }
     // Comparison wrappers: (storage, query) and its (query, storage) commutator,
     // for supported operators only (a query operand is never sent for a blocked
-    // operator). `is_supported(op) ⟹ extractor_for_operator is Some`.
+    // operator). `is_supported(op) ⟹ term_for_operator is Some`.
     //
     // Query twins deliberately emit NO blockers (unlike the storage surface). A
     // query operand only ever appears as the RHS of `col <op> operand`, and for
@@ -289,21 +289,21 @@ pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String
         if !supported.contains(&op.symbol.as_str()) {
             continue;
         }
-        let extractor = Term::extractor_for_operator(domain.terms, op.symbol.as_str())
-            .expect("a supported operator resolves an extractor");
+        let term = Term::term_for_operator(domain.terms, op.symbol.as_str())
+            .expect("a supported operator resolves a term");
         entries.push(wrapper_entry(
             &query_dom,
             op,
             &storage_dom,
             &query_dom,
-            extractor,
+            term,
         ));
         entries.push(wrapper_entry(
             &query_dom,
             op,
             &query_dom,
             &storage_dom,
-            extractor,
+            term,
         ));
     }
 
@@ -533,22 +533,6 @@ fn json_entry_cross_blocked_operators(spec: &DomainFamily) -> Vec<&'static str> 
         .collect()
 }
 
-/// The extractor this surface uses on BOTH operands: [`JSON_ENTRY_TERM`]'s own
-/// (`ord_term` → `ope_cllw`), asked of the `Term` rather than spelled out, so an
-/// extractor rename stays a single catalog-side change.
-///
-/// Used for every operator rather than resolving per-operator through
-/// `Term::extractor_for_operator`. That generic rule picks the first capable term
-/// in the operand's list, so on a dual-term `[Hm, Ope]` operand (text's `_ord`)
-/// it routes `=`/`<>` through `eq_term` — the per-value HMAC a SteVec scalar leaf
-/// never carries. That rule is right for a scalar column and wrong for this seam:
-/// `json_entry` serves exactly one term, so the extractor is a property of the
-/// SEAM, not of the operator. Since [`json_entry_cross_operators`] already limits
-/// the emitted set to what this term provides, the pairing is total.
-fn json_entry_extractor() -> &'static str {
-    JSON_ENTRY_TERM.extractor()
-}
-
 /// Body for a family's json_entry_<T>_functions.sql: comparison
 /// WRAPPERS binding the fixed `public.eql_v3_json_entry` leaf to the family's
 /// `_ord` / `_ord_ope` query operands, for every operator json_entry can serve
@@ -576,7 +560,17 @@ pub fn render_json_entry_cross_functions(
 
     let family_name = spec.name;
     let json_entry = json_entry_type();
-    let extractor = json_entry_extractor();
+    // The seam's own term on BOTH operands, for every operator — not resolved
+    // per operator through `Term::term_for_operator`. That generic rule picks the
+    // first capable term in the operand's list, so on a dual-term `[Hm, Ope]`
+    // operand (text's `_ord`) it would route `=`/`<>` through `eq_term`, the
+    // per-value HMAC a SteVec scalar leaf never carries. `json_entry` serves
+    // exactly one term, so the term is a property of the SEAM, not of the
+    // operator; [`json_entry_cross_operators`] already limits the emitted set to
+    // what it provides, so the pairing is total. Passing the `Term` (not an
+    // extractor name) lets `wrapper_entry` ask the catalog for both the
+    // extractor and the schema of the body's operator.
+    let term = JSON_ENTRY_TERM;
     let supported = json_entry_cross_operators(spec);
     let blocked = json_entry_cross_blocked_operators(spec);
     let mut requires = vec![
@@ -607,14 +601,14 @@ pub fn render_json_entry_cross_functions(
                     op,
                     &json_entry,
                     &query_dom,
-                    extractor,
+                    term,
                 ));
                 entries.push(wrapper_entry(
                     &json_entry,
                     op,
                     &query_dom,
                     &json_entry,
-                    extractor,
+                    term,
                 ));
             } else if blocked.contains(&symbol) {
                 // Both directions, so neither can fall through to `jsonb = jsonb`.
@@ -1152,6 +1146,94 @@ mod tests {
 
     use std::fs;
 
+    /// Every comparison-wrapper body — scalar, query-twin and json_entry
+    /// surfaces, every catalog family — names its operator schema-qualified.
+    ///
+    /// Wrappers are unpinned `LANGUAGE sql` (to stay inlinable), so their body
+    /// is parsed under the CALLER's `search_path`; a bare operator resolves to
+    /// whatever that path finds. For the ORE term, whose operators live in
+    /// `public`, a caller without `public` on the path got pg_catalog's RECORD
+    /// comparison — byte-wise ciphertext order, no error (CIP-5153). A bare
+    /// operator token anywhere in a wrapper body fails here.
+    #[test]
+    fn every_wrapper_body_schema_qualifies_its_operators() {
+        let mut bodies = 0;
+        for family in CATALOG {
+            for (path, sql) in render_type(family, std::path::Path::new("out")) {
+                for line in sql
+                    .lines()
+                    .filter(|l| l.starts_with("AS $$ SELECT eql_v3."))
+                {
+                    bodies += 1;
+                    let bare: Vec<&str> = line
+                        .split_whitespace()
+                        .filter(|tok| tok.chars().all(|c| "<>=@!~#&|-+*/%^".contains(c)))
+                        .collect();
+                    assert!(
+                        bare.is_empty(),
+                        "{}: wrapper body uses unqualified operator(s) {bare:?}: {line}",
+                        path.display()
+                    );
+                    // The schema each term's operators actually live in, spelled
+                    // out here rather than read from `Term::operator_schema`, so a
+                    // wrong mapping there fails this test for every family. The
+                    // ORE term compares a composite type whose operators are in
+                    // `public`; naming pg_catalog there reaches the built-in
+                    // RECORD comparison, the CIP-5153 byte-order bug.
+                    let want = if line.contains("eql_v3.ord_term_ore(") {
+                        " OPERATOR(public."
+                    } else {
+                        " OPERATOR(pg_catalog."
+                    };
+                    assert!(
+                        line.contains(want),
+                        "{}: wrapper body does not name its operator as{want}…: {line}",
+                        path.display()
+                    );
+                    let other = if want.contains("public") {
+                        " OPERATOR(pg_catalog."
+                    } else {
+                        " OPERATOR(public."
+                    };
+                    assert!(
+                        !line.contains(other),
+                        "{}: wrapper body names an operator in the wrong schema: {line}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        // Wrapper bodies open with an `eql_v3.<extractor>(a)` call (extractor
+        // bodies call an `eql_v3_internal` constructor and are skipped). Guards
+        // the filter itself: a template change that stopped emitting single-line
+        // `AS $$ SELECT eql_v3.` bodies would otherwise pass vacuously.
+        assert!(bodies > 500, "only {bodies} wrapper bodies inspected");
+    }
+
+    /// The `_ord_ore` wrappers compare `eql_v3_internal.ore_block_256` values,
+    /// a composite type: only `OPERATOR(public.<op>)` reaches the ORE
+    /// comparator. Pins the exact body per operator, on both the storage and
+    /// query-twin surfaces (the catalog-wide schema check is
+    /// `every_wrapper_body_schema_qualifies_its_operators`).
+    #[test]
+    fn ord_ore_wrappers_name_the_public_ore_operators() {
+        let s = spec("integer");
+        let d = domain(s, "ord_ore");
+        let storage = render_functions_file("integer", d);
+        let query = render_query_functions_file("integer", d);
+        for op in ["=", "<>", "<", "<=", ">", ">="] {
+            let body = format!(
+                "SELECT eql_v3.ord_term_ore(a) OPERATOR(public.{op}) eql_v3.ord_term_ore(b) $$;"
+            );
+            assert!(storage.contains(&body), "storage wrapper for {op}: {body}");
+            assert!(query.contains(&body), "query wrapper for {op}: {body}");
+            assert!(
+                !storage.contains(&format!("eql_v3.ord_term_ore(a) {op} ")),
+                "bare {op} on ORE terms"
+            );
+        }
+    }
+
     #[test]
     fn arg_b_name_is_selector_only_for_path_operators() {
         assert_eq!(arg_b_name("->"), "selector");
@@ -1548,8 +1630,9 @@ mod tests {
             "CREATE FUNCTION eql_v3.matches(a public.eql_v3_text_match, b public.eql_v3_text_match)"
         ));
         assert!(fns.contains(
-            "SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) \
-             AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0)"
+            "SELECT eql_v3.match_term(a) OPERATOR(pg_catalog.@>) eql_v3.match_term(b) \
+             AND (pg_catalog.cardinality(eql_v3.match_term(b)) OPERATOR(pg_catalog.>) 0 \
+             OR pg_catalog.cardinality(eql_v3.match_term(a)) OPERATOR(pg_catalog.=) 0)"
         ));
         // The guarded match wrapper is NOT STRICT: a STRICT SQL function with a
         // non-strict body (the guard's AND/OR) would stop inlining, losing the
@@ -2076,8 +2159,6 @@ mod tests {
                 "{excluded} must never reach the extract surface"
             );
         }
-        // And the extractor is the term's own, not a spelled-out literal.
-        assert_eq!(json_entry_extractor(), Term::Ope.extractor());
     }
 
     #[test]
@@ -2193,7 +2274,7 @@ mod tests {
         assert!(sql.contains(
             "CREATE FUNCTION eql_v3.lt(a public.eql_v3_json_entry, b eql_v3.query_integer_ord)"
         ));
-        assert!(sql.contains("SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b)"));
+        assert!(sql.contains("SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b)"));
         assert!(sql.contains(
             "CREATE FUNCTION eql_v3.lt(a public.eql_v3_json_entry, b eql_v3.query_integer_ord_ope)"
         ));
@@ -2212,7 +2293,7 @@ mod tests {
             "equality must not be a public wrapper on the extract surface"
         );
         assert!(
-            !sql.contains("SELECT eql_v3.ord_term(a) = eql_v3.ord_term(b)"),
+            !sql.contains("SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.=) eql_v3.ord_term(b)"),
             "op-equality is gone — equality is document containment, not an extract op"
         );
         // The dropped `_eq` operand never appears, and no hmac equality route
@@ -2299,7 +2380,7 @@ mod tests {
         assert!(sql.contains(
             "CREATE FUNCTION eql_v3.lt(a public.eql_v3_json_entry, b eql_v3.query_text_ord)"
         ));
-        assert!(sql.contains("SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b)"));
+        assert!(sql.contains("SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.<) eql_v3.ord_term(b)"));
         assert!(sql.contains(
             "CREATE FUNCTION eql_v3.gte(a public.eql_v3_json_entry, b eql_v3.query_text_ord)"
         ));
@@ -2314,7 +2395,7 @@ mod tests {
             );
         }
         assert!(
-            !sql.contains("SELECT eql_v3.ord_term(a) = eql_v3.ord_term(b)"),
+            !sql.contains("SELECT eql_v3.ord_term(a) OPERATOR(pg_catalog.=) eql_v3.ord_term(b)"),
             "op-equality on text is a FALSE POSITIVE (orderize_string collates)"
         );
 

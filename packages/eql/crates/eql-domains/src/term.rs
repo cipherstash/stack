@@ -101,6 +101,33 @@ impl Term {
         }
     }
 
+    /// The schema holding the comparison operators over this term's index-term
+    /// type — the schema a generated wrapper body names its operator in, as
+    /// `OPERATOR(<schema>.<op>)`.
+    ///
+    /// Wrapper bodies are unpinned `LANGUAGE sql` (pinning would defeat
+    /// inlining, and with it functional-index matching), so they are parsed
+    /// under the CALLER's `search_path`. A bare operator there resolves against
+    /// whatever that path finds. For `Ore` that was a silent wrong answer:
+    /// `eql_v3_internal.ore_block_256` is a composite type whose comparison
+    /// operators live in `public`, and with `public` off the path a bare `<`
+    /// resolves to pg_catalog's built-in RECORD comparison, ordering the
+    /// ciphertext bytes lexicographically with no error (CIP-5153). Naming the
+    /// schema makes resolution independent of the caller's path.
+    ///
+    /// The other terms are domains over built-in types (`text`, `smallint[]`,
+    /// `bytea`) whose operators are pg_catalog's. Qualifying them too keeps one
+    /// rule for every generated wrapper body (checked catalog-wide by
+    /// eql-codegen's tests), and stops a schema listed ahead of pg_catalog on
+    /// the caller's path from shadowing a wrapper's operator.
+    pub const fn operator_schema(self) -> &'static str {
+        match self {
+            // Created in src/v3/sem/ore_block_256/operators.sql.
+            Term::Ore => "public",
+            Term::Hm | Term::Bloom | Term::Ope => "pg_catalog",
+        }
+    }
+
     /// True when this term provides ordering operators (`<` `<=` `>` `>=`).
     /// A per-term *capability*, distinct from [`Role`] (the whole-domain file
     /// role derived from the first term). New ordering terms opt in here, so
@@ -197,10 +224,14 @@ impl Term {
     /// The extractor that supports `op` for a domain carrying `terms`, or
     /// `None`. First supporting term wins.
     pub fn extractor_for_operator(terms: &[Term], op: &str) -> Option<&'static str> {
-        terms
-            .iter()
-            .find(|t| t.operators().contains(&op))
-            .map(|t| t.extractor())
+        Self::term_for_operator(terms, op).map(Term::extractor)
+    }
+
+    /// The term that supports `op` for a domain carrying `terms`, or `None`.
+    /// First supporting term wins — the same choice as
+    /// [`Term::extractor_for_operator`], which reads its extractor.
+    pub fn term_for_operator(terms: &[Term], op: &str) -> Option<Term> {
+        terms.iter().copied().find(|t| t.operators().contains(&op))
     }
 
     /// Generated-file [`Role`] for a domain with these terms. No terms =>
@@ -223,6 +254,45 @@ impl Term {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operator_schema_maps_each_term_to_where_its_operators_live() {
+        // ORE's comparison operators are created in `public`
+        // (src/v3/sem/ore_block_256/operators.sql); every other term is a
+        // domain over a built-in type and uses pg_catalog's operators.
+        assert_eq!(Term::Ore.operator_schema(), "public");
+        assert_eq!(Term::Hm.operator_schema(), "pg_catalog");
+        assert_eq!(Term::Bloom.operator_schema(), "pg_catalog");
+        assert_eq!(Term::Ope.operator_schema(), "pg_catalog");
+    }
+
+    #[test]
+    fn term_for_operator_agrees_with_extractor_for_operator() {
+        for terms in [
+            &[Term::Hm][..],
+            &[Term::Ore],
+            &[Term::Hm, Term::Ore],
+            &[Term::Hm, Term::Ope],
+            &[Term::Bloom],
+            &[],
+        ] {
+            for op in ["=", "<>", "<", "<=", ">", ">=", "@@", "@>"] {
+                assert_eq!(
+                    Term::term_for_operator(terms, op).map(Term::extractor),
+                    Term::extractor_for_operator(terms, op),
+                    "{terms:?} {op}"
+                );
+            }
+        }
+        assert_eq!(
+            Term::term_for_operator(&[Term::Hm, Term::Ore], "="),
+            Some(Term::Hm)
+        );
+        assert_eq!(
+            Term::term_for_operator(&[Term::Hm, Term::Ore], "<"),
+            Some(Term::Ore)
+        );
+    }
 
     #[test]
     fn binding_newtype_maps_each_term() {
