@@ -23,7 +23,7 @@
 //! For the generated flat-scalar families, every payload has the shared envelope
 //! keys (required by every scalar domain CHECK, mirroring `ENVELOPE_KEYS` in
 //! `eql-domains`): `v`, `i`, `c`. Then the domain's required term keys — `hm`
-//! for `_eq`, `ob` for `_ord`/`_ord_ore`, `op` for `_ord_ope`, `bf` for
+//! for `_eq`, `op` for `_ord`/`_ord_ope`, `ob` for `_ord_ore`, `bf` for
 //! `_match`, none for
 //! storage-only. `Option` does not appear in the generated scalar structs: the
 //! capability **is** the type identity. Hold a [`integer::IntegerEq`] and `hm` is
@@ -31,14 +31,14 @@
 //! missing term key is a deserialization error — the Rust analogue of the CHECK
 //! constraint.
 //!
-//! One exception to "`ob` for `_ord`": `text`'s ordered domains carry **both**
-//! `hm` and the ordering term (`text_ord`/`text_ord_ore`/`text_search` carry
-//! `hm` + `ob`; `text_ord_ope` carries `hm` + `op`), where the non-text
+//! One exception to "the ordering term alone": `text`'s ordered domains carry **both**
+//! `hm` and the ordering term (`text_ord`/`text_ord_ope`/`text_search` carry
+//! `hm` + `op`; `text_ord_ore`/`text_search_ore` carry `hm` + `ob`), where the non-text
 //! ordered domains carry the ordering term alone. Text routes `=`/`<>`
 //! through `hm` rather than the ordering term because lexicographic ORE/OPE
 //! over text is not equality-lossless, so equality needs the HMAC. The
 //! generated struct doc surfaces this structurally — its required-keys line
-//! lists `hm` `ob` (or `hm` `op`) rather than just the ordering key.
+//! lists `hm` `op` (or `hm` `ob`) rather than just the ordering key.
 //!
 //! The generated flat-scalar types are also **strict**: every scalar struct is
 //! `#[serde(deny_unknown_fields)]`, so a payload carrying keys outside the
