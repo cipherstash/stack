@@ -1,0 +1,33 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+      "headers": [
+        [
+          "metadata-flavor",
+          "Google"
+        ]
+      ],
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "metadata-flavor",
+          "Google"
+        ]
+      ],
+      "body": {
+        "access_token": "fixture-metadata-token",
+        "expires_in": 3420,
+        "token_type": "Bearer"
+      }
+    }
+  }
+]
