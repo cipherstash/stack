@@ -69,6 +69,7 @@ mod tests {
             Error::NoKeyset => Error::NoKeyset,
             Error::NotOpened => Error::NotOpened,
             Error::Plan(_) => Error::Plan(PlanError::NoContext),
+            Error::DefaultKeysetLifetime { .. } => Error::DefaultKeysetLifetime { keyset: a },
         ]));
         errors.extend(boxed(variants![
             LeafBytesError::UnknownVersion(_) => LeafBytesError::UnknownVersion(9),
@@ -309,6 +310,40 @@ mod tests {
         assert_eq!(error.to_string(), "Unexpected error: kms");
     }
 
+    /// A key vendor backend's failure shows through the encryption error as
+    /// itself: its code, and its vendor and kind as fields. Its refusal of a
+    /// ZeroKMS-only feature does the same.
+    #[test]
+    fn a_key_backend_error_shows_through() {
+        use crate::ErrorPayload;
+        use serde_json::json;
+        let failure = Error::Kms(crate::kms::Error::Backend {
+            vendor: "test-vendor",
+            kind: crate::kms::BackendErrorKind::AccessDenied,
+            source: Box::new(std::io::Error::other("vendor detail")),
+        });
+        assert_eq!(
+            failure.code().map(|code| code.to_string()).as_deref(),
+            Some("stack_kms::backend")
+        );
+        assert_eq!(
+            serde_json::Value::Object(failure.payload()),
+            json!({ "vendor": "test-vendor", "kind": "AccessDenied" })
+        );
+        let refusal = Error::Kms(crate::kms::Error::ZeroKmsOnly {
+            vendor: "test-vendor",
+            feature: crate::kms::ZeroKmsFeature::UnverifiedContext,
+        });
+        assert_eq!(
+            refusal.code().map(|code| code.to_string()).as_deref(),
+            Some("stack_kms::zerokms_only")
+        );
+        assert_eq!(
+            serde_json::Value::Object(refusal.payload()),
+            json!({ "vendor": "test-vendor", "feature": "unverified_context" })
+        );
+    }
+
     /// Every error type's structured fields, one variant per arm. A binding
     /// hands these over as they are, so a field that goes missing or changes
     /// name is a break for every caller that reads it.
@@ -365,6 +400,10 @@ mod tests {
             (
                 Box::new(Error::KeysetMismatch { left: a, right: b }),
                 json!({ "left": a.to_string(), "right": b.to_string() }),
+            ),
+            (
+                Box::new(Error::DefaultKeysetLifetime { keyset: a }),
+                json!({ "keyset": a.to_string() }),
             ),
             (Box::new(Error::Aead), json!({})),
             (

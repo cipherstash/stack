@@ -120,7 +120,8 @@ pub use maybe_send::MaybeSend;
 
 // Errors
 pub use errors::{
-    Error, GenerateKeyError, InvalidKeyMaterialError, LoadKeysetError, RetrieveKeyError,
+    BackendErrorKind, Error, GenerateKeyError, InvalidKeyMaterialError, LoadKeysetError,
+    RetrieveKeyError,
 };
 /// The trait every error from this crate implements to hand over its
 /// structured fields, with the rule for what an error may contain, and the
@@ -136,7 +137,7 @@ pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 pub use key_source::DeterministicSource;
 #[cfg(feature = "test-support")]
 pub use key_source::FakeDataKeySource;
-pub use key_source::{DataKeySource, IndexKeySource};
+pub use key_source::{DataKeySource, IndexKeySource, KeyLifetime, LoadedIndexKey};
 
 // Key providers
 pub use key_provider::{
@@ -149,7 +150,10 @@ pub use secret_key::SecretKey;
 pub use stack_profile::ProfileStore;
 
 // Operation payloads
-pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
+pub use payload::{
+    refuse_zerokms_extensions, GenerateKeyPayload, RetrieveKeyPayload, ZeroKmsExtensions,
+    ZeroKmsFeature,
+};
 
 // Commonly needed re-exports from the protocol / crypto layers
 pub use recipher::key::{GenRandom, Iv};

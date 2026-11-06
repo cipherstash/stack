@@ -103,7 +103,7 @@ use vitaminc_aead::{
 use vitaminc_encrypt::{Aes256Cipher, AesCipherText, Key as AesKey};
 use vitaminc_protected::{Controlled, Protected};
 
-use crate::keyset::{KeysetCache, KeysetCipher, KeysetState, Lookup, DEFAULT_NAME_TTL};
+use crate::keyset::{KeysetCache, KeysetCipher, KeysetState, Lookup, Retention, DEFAULT_NAME_TTL};
 use crate::Descriptor;
 
 /// The passthrough payload type: type-erased, as for Rust-native vitaminc
@@ -129,7 +129,7 @@ pub type StackCipherText = CipherText<SealedValue, BoxedPassthrough>;
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {
-    /// A ZeroKMS data-key or keyset operation failed. Transparent: the
+    /// A key backend's data-key or keyset operation failed. Transparent: the
     /// message, code and help are the [`stack_kms::Error`]'s, so a caller
     /// across a binding sees `stack_kms::keyset_not_found` itself.
     #[error(transparent)]
@@ -148,21 +148,34 @@ pub enum Error {
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     #[diagnostic(code(stack_encrypt::key_count_mismatch))]
     KeyCountMismatch { expected: usize, received: usize },
-    /// A context rendered to a descriptor longer than ZeroKMS can bind
-    /// ([`Descriptor::MAX_LEN`]). Raised before any request is sent, so no
-    /// key is minted or retrieved for the batch.
+    /// A context rendered to a descriptor longer than a key backend can
+    /// bind ([`Descriptor::MAX_LEN`]). Raised before any request is sent, so
+    /// no key is minted or retrieved for the batch.
     #[error(
-        "context renders to a {len}-byte ZeroKMS descriptor; the limit is {} bytes",
+        "context renders to a {len}-byte key descriptor; the limit is {} bytes",
         Descriptor::MAX_LEN
     )]
     #[diagnostic(
         code(stack_encrypt::descriptor_too_long),
         help(
-            "ZeroKMS binds a descriptor of at most {} bytes. Shorten the context: fewer parts, shorter labels, or an id in place of a long name.",
+            "A key backend binds a descriptor of at most {} bytes. Shorten the context: fewer parts, shorter labels, or an id in place of a long name.",
             Descriptor::MAX_LEN
         )
     )]
     DescriptorTooLong { len: usize },
+    /// The key backend gave the default keyset's index key a lifetime
+    /// shorter than the cipher's own ([`stack_kms::KeyLifetime::Settle`] or
+    /// [`stack_kms::KeyLifetime::Ttl`]). The cipher holds the default keyset
+    /// for its whole life, so it refuses to start rather than keep a key
+    /// longer than its backend allows.
+    #[error(
+        "the key backend does not let the cipher keep the index key of the default keyset {keyset}"
+    )]
+    #[diagnostic(
+        code(stack_encrypt::default_keyset_lifetime),
+        help("Use a key backend whose default keyset the cipher may keep, and select keysets with a shorter key lifetime with `StackCipher::keyset`.")
+    )]
+    DefaultKeysetLifetime { keyset: Uuid },
     /// Building a ZeroKMS client from the environment failed: credentials or
     /// client key missing or malformed.
     ///
@@ -326,6 +339,9 @@ impl crate::ErrorPayload for Error {
                 ("left", left.to_string().into()),
                 ("right", right.to_string().into()),
             ]),
+            Self::DefaultKeysetLifetime { keyset } => {
+                payload([("keyset", keyset.to_string().into())])
+            }
             Self::ForeignKeyset { expected, found } => payload([
                 ("expected", expected.to_string().into()),
                 ("found", found.to_string().into()),
@@ -549,6 +565,14 @@ impl<K: IndexKeySource> StackCipher<K> {
     /// ([`keyset_name_ttl`](StackCipherBuilder::keyset_name_ttl)) before it
     /// is asked again — ZeroKMS allows renames, and a running process
     /// notices one within that window. Selecting by id never asks twice.
+    ///
+    /// The key backend says how long the cipher may keep a keyset's index
+    /// key ([`KeyLifetime`](crate::kms::KeyLifetime)), and the cache obeys
+    /// it. ZeroKMS keys stay until evicted. A key with a TTL is loaded again
+    /// once the TTL ends. A key for one settle only is never cached: each
+    /// selection loads it again, and the returned handle (with what is built
+    /// from it) holds the only reference to it, so it drops with them. Hold
+    /// such a handle for one unit of work, not for the life of the process.
     pub async fn keyset(
         &self,
         keyset: impl Into<IdentifiedBy>,
@@ -584,6 +608,11 @@ impl<K: IndexKeySource> StackCipher<K> {
                 return Err(error);
             }
         };
+        // An index key the cache may not keep goes to the caller alone: the
+        // handle, and what is built from it, hold the only references.
+        if state.retention == Retention::Never {
+            return Ok(KeysetCipher::new(self, state));
+        }
         let state = self.keysets().insert(state, resolution);
         Ok(KeysetCipher::new(self, state))
     }
@@ -595,14 +624,19 @@ impl<K: IndexKeySource> StackCipher<K> {
 /// costs, shared by eager loading at
 /// [`init`](StackCipherBuilder::init) and lazy loading in
 /// [`StackCipher::keyset`] so both hold a keyset in exactly the same shape.
-/// ZeroKMS answered a load with "no such keyset" — as opposed to not
-/// answering at all.
+/// The key backend answered a load with "no such keyset" — as opposed to
+/// not answering at all. ZeroKMS says so as a keyset-not-found; a key vendor
+/// backend as a [`NotFound`](stack_kms::BackendErrorKind::NotFound) failure.
 fn is_keyset_not_found(error: &Error) -> bool {
     matches!(
         error,
-        Error::Kms(stack_kms::Error::LoadKeyset(
-            stack_kms::LoadKeysetError::KeysetNotFound(_)
-        ))
+        Error::Kms(
+            stack_kms::Error::LoadKeyset(stack_kms::LoadKeysetError::KeysetNotFound(_))
+                | stack_kms::Error::Backend {
+                    kind: stack_kms::BackendErrorKind::NotFound,
+                    ..
+                }
+        )
     )
 }
 
@@ -614,25 +648,38 @@ async fn load_keyset<K: IndexKeySource>(
         IdentifiedBy::Name(name) => Some(name.to_string()),
         IdentifiedBy::Uuid(_) => None,
     };
-    let (id, index_key) = kms.load_index_key(Some(keyset)).await?;
-    Ok(Arc::new(KeysetState {
-        id,
+    let loaded = kms.load_index_key_with_lifetime(Some(keyset)).await?;
+    Ok(keyset_state(loaded, name))
+}
+
+/// The state the cipher holds for a loaded index key: its PRF, and how long
+/// the cache may keep it, from the lifetime the key backend gave it.
+fn keyset_state(loaded: stack_kms::LoadedIndexKey, name: Option<String>) -> Arc<KeysetState> {
+    Arc::new(KeysetState {
+        id: loaded.keyset_id,
         name,
-        prf: hmac_prf_from_index_key(&index_key),
-    }))
+        prf: hmac_prf_from_index_key(&loaded.key),
+        retention: Retention::of(loaded.lifetime, std::time::Instant::now()),
+    })
 }
 
 /// The client's own default keyset — the one a ZeroKMS administrator set for
 /// this client — asked for by naming nothing. Loaded once, by
 /// [`init`](StackCipherBuilder::init); it is not the caller's to choose, so
 /// there is no id or name to carry.
+///
+/// The cipher holds the default keyset for its whole life
+/// ([`StackCipher::default_keyset`] is synchronous), so a key backend that
+/// does not let the cipher keep its index key is refused here
+/// ([`Error::DefaultKeysetLifetime`]), not obeyed in part.
 async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetState>, Error> {
-    let (id, index_key) = kms.load_index_key(None).await?;
-    Ok(Arc::new(KeysetState {
-        id,
-        name: None,
-        prf: hmac_prf_from_index_key(&index_key),
-    }))
+    let loaded = kms.load_index_key_with_lifetime(None).await?;
+    if loaded.lifetime != stack_kms::KeyLifetime::UntilEvicted {
+        return Err(Error::DefaultKeysetLifetime {
+            keyset: loaded.keyset_id,
+        });
+    }
+    Ok(keyset_state(loaded, None))
 }
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key
@@ -2167,6 +2214,43 @@ mod tests {
             Err(Unspecified),
             "a sealed shape should be refused rather than surfaced unopened"
         );
+    }
+
+    /// "No such keyset" is an answer about the name from either kind of key
+    /// backend: ZeroKMS's keyset-not-found, or a key vendor backend's
+    /// `NotFound`. Every other failure is no answer.
+    #[test]
+    fn a_keyset_is_not_found_by_zerokms_or_by_a_key_vendor_backend() {
+        use stack_kms::{BackendErrorKind, LoadKeysetError};
+        use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
+        let vitur = |kind| ViturRequestError::new(kind, "stubbed", std::io::Error::other("detail"));
+        let backend = |kind| {
+            Error::Kms(stack_kms::Error::Backend {
+                vendor: "test-vendor",
+                kind,
+                source: Box::new(std::io::Error::other("detail")),
+            })
+        };
+        assert!(is_keyset_not_found(&Error::Kms(
+            stack_kms::Error::LoadKeyset(LoadKeysetError::KeysetNotFound(vitur(
+                ViturRequestErrorKind::NotFound
+            )))
+        )));
+        assert!(is_keyset_not_found(&backend(BackendErrorKind::NotFound)));
+        for kind in [
+            BackendErrorKind::AccessDenied,
+            BackendErrorKind::Throttled,
+            BackendErrorKind::Unavailable,
+            BackendErrorKind::InvalidCiphertext,
+        ] {
+            assert!(!is_keyset_not_found(&backend(kind)), "{kind:?}");
+        }
+        assert!(!is_keyset_not_found(&Error::Kms(
+            stack_kms::Error::LoadKeyset(LoadKeysetError::Forbidden(vitur(
+                ViturRequestErrorKind::Forbidden
+            )))
+        )));
+        assert!(!is_keyset_not_found(&Error::Aead));
     }
 
     /// Byte-level pin for the [`leaf_aad`] derivation. This is part of the

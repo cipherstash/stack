@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::ops::Deref;
 use uuid::Uuid;
-use vitaminc::protected::{OpaqueDebug, TimingSafeEq};
+use vitaminc::protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use zerokms_protocol::{DecryptionPolicy, ViturKeyMaterial};
 
@@ -224,6 +224,19 @@ impl IndexKey {
         hasher.zeroize();
 
         Ok(Self(key))
+    }
+
+    /// Build the index key from raw key material that a key vendor backend
+    /// unwrapped or derived.
+    ///
+    /// The bytes must be the keyset's index key exactly as every writer and
+    /// every reader of that keyset obtains it: a different key builds terms
+    /// that match nothing. A ZeroKMS keyset never needs this; use
+    /// [`from_key_material`](Self::from_key_material). The input is
+    /// [`Protected`], so the caller's copy is wiped when it drops, and the
+    /// index key wipes its own copy on drop.
+    pub fn from_key_bytes(key: Protected<Key>) -> Self {
+        Self(*key.risky_ref())
     }
 
     pub fn key(&self) -> &Key {
@@ -457,6 +470,17 @@ mod tests {
             assert_eq!(
                 base16ct::lower::encode_string(index_key.key()),
                 index_key_kat::EXPECTED_INDEX_KEY_HEX,
+            );
+        }
+
+        #[test]
+        fn from_key_bytes_keeps_the_bytes_it_is_given() {
+            let index_key =
+                IndexKey::from_key_bytes(vitaminc::protected::Protected::new([9u8; 32]));
+            assert_eq!(index_key.key(), &[9u8; 32]);
+            assert!(
+                !format!("{index_key:?}").contains("9"),
+                "the key must not print"
             );
         }
 

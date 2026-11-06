@@ -1,7 +1,18 @@
-//! An abstraction over the ZeroKMS data-key operations that higher-level
-//! encryption layers (e.g. `stack-encrypt`) depend on.
+//! An abstraction over the data-key operations of a **key backend** that
+//! higher-level encryption layers (e.g. `stack-encrypt`) depend on.
 //!
-//! [`StackKms`](crate::StackKms) is the production implementation. Downstream
+//! A key backend is ZeroKMS or one key vendor backend (AWS KMS, Azure Key
+//! Vault, HashiCorp Vault Transit, Google Cloud KMS, or a static key). The
+//! vendor-neutral part of each request is its descriptor, its iv and tag,
+//! and its keyset id. The key context, the decryption policy and the
+//! [`UnverifiedContext`] are ZeroKMS-only extensions: a key vendor backend
+//! refuses them with [`Error::ZeroKmsOnly`] (see
+//! [`refuse_zerokms_extensions`](crate::refuse_zerokms_extensions)) and
+//! never ignores them. A key vendor backend reports its own failures as
+//! [`Error::Backend`], and says how long its index key may be kept with
+//! [`IndexKeySource::load_index_key_with_lifetime`].
+//!
+//! [`StackKms`](crate::StackKms) is the ZeroKMS implementation. Downstream
 //! crates take a `K: DataKeySource` rather than a concrete client so their
 //! encrypt/decrypt logic can be unit-tested against a deterministic in-memory
 //! fake (see [`FakeDataKeySource`], enabled by the `test-support` feature)
@@ -70,6 +81,77 @@ pub trait IndexKeySource {
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + MaybeSend;
+
+    /// Load the index key as [`load_index_key`](Self::load_index_key) does,
+    /// and say how long the caller may keep it ([`KeyLifetime`]).
+    ///
+    /// The cipher calls this method, not `load_index_key`, and its
+    /// per-keyset cache obeys the lifetime: the cipher enforces key
+    /// lifetime, so each backend does not have to. The default
+    /// implementation returns [`KeyLifetime::UntilEvicted`], which is the
+    /// ZeroKMS behaviour. A key vendor backend overrides it to return
+    /// [`KeyLifetime::Settle`] (wrapped data keys) or
+    /// [`KeyLifetime::Ttl`] (derived data keys).
+    fn load_index_key_with_lifetime(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> impl Future<Output = Result<LoadedIndexKey, Error>> + MaybeSend {
+        let load = self.load_index_key(keyset_id);
+        async move {
+            let (keyset_id, key) = load.await?;
+            Ok(LoadedIndexKey {
+                keyset_id,
+                key,
+                lifetime: KeyLifetime::UntilEvicted,
+            })
+        }
+    }
+}
+
+/// How long a caller may keep an index key after its key backend returned
+/// it.
+///
+/// The unit of the shortest lifetime is the **settle**: one batched round
+/// trip of a pending's key requests to the key backend.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum KeyLifetime {
+    /// Keep the key only for the settle that needed it. The cipher never
+    /// caches it, and loads it again for the next selection of the keyset.
+    /// Under wrapped data keys the vendor sees, and can refuse, each one.
+    Settle,
+    /// Keep the key for this long after it was loaded, then load it again.
+    /// A zero duration is the same as [`Settle`](Self::Settle). Under
+    /// derived data keys the vendor sees, and can refuse, each reload.
+    Ttl(std::time::Duration),
+    /// Keep the key until the cipher's bounded cache evicts it. This is the
+    /// ZeroKMS behaviour, and the default.
+    #[default]
+    UntilEvicted,
+}
+
+/// An index key, the keyset it belongs to, and how long it may be kept:
+/// what [`IndexKeySource::load_index_key_with_lifetime`] returns.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct LoadedIndexKey {
+    /// The resolved keyset id.
+    pub keyset_id: Uuid,
+    /// The keyset's index key.
+    pub key: IndexKey,
+    /// How long the caller may keep `key`.
+    pub lifetime: KeyLifetime,
+}
+
+impl LoadedIndexKey {
+    /// An index key for `keyset_id` that may be kept for `lifetime`.
+    pub fn new(keyset_id: Uuid, key: IndexKey, lifetime: KeyLifetime) -> Self {
+        Self {
+            keyset_id,
+            key,
+            lifetime,
+        }
+    }
 }
 
 impl<C, Conn> DataKeySource for crate::StackKms<C, Conn>
@@ -720,6 +802,46 @@ mod tests {
             .unwrap()
             .remove(0);
         assert_eq!(dk.key.key(), retrieved.key());
+    }
+
+    /// The default lifetime is the ZeroKMS one, so a source that does not
+    /// say otherwise keeps today's caching.
+    #[tokio::test]
+    async fn a_source_that_names_no_lifetime_is_kept_until_evicted() {
+        let src = FakeDataKeySource::new();
+        let (id, key) = src.load_index_key(None).await.unwrap();
+        let loaded = src.load_index_key_with_lifetime(None).await.unwrap();
+        assert_eq!(loaded.keyset_id, id);
+        assert_eq!(loaded.key.key(), key.key());
+        assert_eq!(loaded.lifetime, KeyLifetime::UntilEvicted);
+        assert_eq!(KeyLifetime::default(), KeyLifetime::UntilEvicted);
+    }
+
+    #[tokio::test]
+    async fn a_source_can_name_its_own_lifetime() {
+        struct SettleOnly;
+        impl IndexKeySource for SettleOnly {
+            async fn load_index_key(
+                &self,
+                _keyset_id: Option<IdentifiedBy>,
+            ) -> Result<(Uuid, IndexKey), Error> {
+                Ok((
+                    Uuid::nil(),
+                    IndexKey::from_key_bytes(vitaminc::protected::Protected::new([1u8; 32])),
+                ))
+            }
+
+            async fn load_index_key_with_lifetime(
+                &self,
+                keyset_id: Option<IdentifiedBy>,
+            ) -> Result<LoadedIndexKey, Error> {
+                let (id, key) = self.load_index_key(keyset_id).await?;
+                Ok(LoadedIndexKey::new(id, key, KeyLifetime::Settle))
+            }
+        }
+        let loaded = SettleOnly.load_index_key_with_lifetime(None).await.unwrap();
+        assert_eq!(loaded.lifetime, KeyLifetime::Settle);
+        assert_eq!(loaded.key.key(), &[1u8; 32]);
     }
 
     #[test]
