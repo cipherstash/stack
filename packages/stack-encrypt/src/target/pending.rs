@@ -343,12 +343,16 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         Self::collect_releasing(scope, items, drop)
     }
 
-    /// [`collect`](Self::collect) for a collection of recovered plaintext.
-    /// When a later item fails at fulfilment (an authentication or type
-    /// failure after its key arrived, or a panic in its conversion), the
-    /// items recovered before it are wiped before the error is returned or
-    /// the panic unwinds, not dropped as they are. A failure before
-    /// fulfilment recovers nothing, so there is nothing to wipe.
+    /// The same as [`collect`](Self::collect), but for a collection of
+    /// recovered plaintext. `collect` drops the items recovered before a
+    /// failure. This function wipes them.
+    ///
+    /// The wipe applies when a later item fails at fulfilment, after its key
+    /// arrived. That failure can be an authentication failure, a type
+    /// failure, or a panic in the item's conversion. The items recovered
+    /// before it are wiped before the error is returned, or before the panic
+    /// unwinds. A failure before fulfilment recovers nothing, so there is
+    /// nothing to wipe.
     pub(crate) fn collect_wiping(
         scope: impl CipherScope<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
@@ -361,9 +365,9 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         })
     }
 
-    /// The one collection builder. `release` is handed the items fulfilled
-    /// before a later item failed or panicked; it is not called when every
-    /// item succeeds.
+    /// The collection builder that `collect` and `collect_wiping` both use.
+    /// When an item fails or panics, `release` receives the items fulfilled
+    /// before it. When every item succeeds, `release` is not called.
     fn collect_releasing(
         scope: impl CipherScope<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
@@ -409,16 +413,17 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     }
 }
 
-/// The items a collection has recovered so far. Dropped before
-/// [`keep`](Self::keep), by an early return or an unwind, it hands them to
-/// `release`.
+/// The items a collection has recovered so far. If this guard is dropped
+/// before [`keep`](Self::keep) is called, by an early return or an unwind, it
+/// passes the items to `release`.
 struct Recovered<T, R: FnOnce(Vec<T>)> {
     items: Vec<T>,
     release: Option<R>,
 }
 
 impl<T, R: FnOnce(Vec<T>)> Recovered<T, R> {
-    /// Every item succeeded: the collection is the output, not released.
+    /// Returns the items as the output, without releasing them. Call this
+    /// when every item has succeeded.
     fn keep(mut self) -> Vec<T> {
         self.release = None;
         std::mem::take(&mut self.items)

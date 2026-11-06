@@ -241,19 +241,32 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! # Collections
 //!
-//! A `Vec` of owned plaintexts encrypts into a `Vec` of any owned target
-//! through the same two traits, with or without a caller context, and back.
-//! Each element is sealed under its own data key and authenticated on its
-//! own: the elements are rows, so neither their order nor their number is
-//! authenticated, and any one of them opens alone through
-//! [`KeysetCipher::decrypt`]. The whole column is one logical batch: one
-//! `generate_keys` call to seal it, one `retrieve_keys` call per keyset to
-//! open it, in element order, and no call at all for an empty column. The
-//! key source may still split a logical batch across several provider
-//! requests. The column is held in one guard and wiped before the pending
-//! request is returned, as a scalar is, and a column that fails after some
-//! elements were recovered wipes those before reporting the error (or
-//! before unwinding, when an element's conversion panics).
+//! [`EncryptInto`] encrypts a `Vec` of owned plaintexts into a `Vec` of any
+//! owned target, and [`DecryptFrom`] decrypts it back. A caller context is
+//! optional, as it is for a single value. In these docs, a `Vec` of
+//! ciphertexts is called a column.
+//!
+//! Each element is encrypted under its own data key and authenticated on its
+//! own, so [`KeysetCipher::decrypt`] can decrypt any one element alone. The
+//! order and the number of elements are not authenticated, because stored
+//! values are database rows. A database can return rows in any order, or
+//! only some of them.
+//!
+//! A column makes one logical batch of key requests, with the requests in
+//! element order:
+//!
+//! - Encrypting a column makes one `generate_keys` call.
+//! - Decrypting a column makes one `retrieve_keys` call for each keyset.
+//! - An empty column makes no call.
+//!
+//! The key source can still split one logical batch into several requests to
+//! its provider.
+//!
+//! The plaintext `Vec` is wiped before the pending request is returned, as a
+//! single value is. Sometimes an element fails to decrypt after earlier
+//! elements succeeded. The earlier plaintexts are then wiped before the error
+//! is returned. If an element's conversion panics, they are wiped before the
+//! panic unwinds.
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -262,13 +275,13 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
 //! let keyset = cipher.default_keyset();
 //!
-//! // No caller context: every element seals under the empty context.
+//! // Without a caller context, each element is encrypted under the empty context.
 //! let ages: Vec<Ciphertext> = vec![29i32, 34, 41].encrypt_into(&keyset).await?;
 //! assert_eq!(Vec::<i32>::decrypt_from(ages.clone(), &keyset).await?, [29, 34, 41]);
-//! // An element is an ordinary ciphertext.
+//! // Each element is an ordinary ciphertext, which decrypts on its own.
 //! assert_eq!(keyset.decrypt::<i32>(ages[1].clone()).await?, 34);
 //!
-//! // With a caller context, bound to every element.
+//! // With a caller context, the context is bound to every element.
 //! let names: Vec<Ciphertext> = vec!["ada".to_owned(), "grace".to_owned()]
 //!     .encrypt_into_with_context(&keyset, ("users", "name"))
 //!     .await?;
@@ -279,13 +292,14 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! The column takes the element target's caller-context capability as its
-//! own, so a column of a target that requires a context cannot omit it, and
-//! a column of a target that accepts none cannot be given one. A `Vec<u8>`
-//! is not a column of scalars: Vitamin C keeps `Vec<u8>` one byte leaf and
-//! gives `u8` no source of its own, so `u8` is not an [`OpaqueEncode`] type
-//! and a `Vec<u8>` encrypts as one `Ciphertext`, never byte by byte. A
-//! `Vec<Vec<u8>>` is a column of byte strings.
+//! A column follows its element target's rules for a caller context. If the
+//! element target requires a context, the column requires one. If the
+//! element target accepts no context, the column cannot be given one.
+//!
+//! A `Vec<u8>` is one byte string, not a column of bytes. Vitamin C encrypts
+//! a `Vec<u8>` as a single value, and `u8` is not an [`OpaqueEncode`] type.
+//! So a `Vec<u8>` encrypts into one `Ciphertext`, and a `Vec<Vec<u8>>` is a
+//! column of byte strings.
 //!
 //! Existing structural plans and derives still use [`StackCipherText`], a tree
 //! of sealed leaves. Their low-level direct entry points are

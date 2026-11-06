@@ -130,10 +130,17 @@ heap observations, guest ABI cleanup, Go cancellation/memory tests and public SD
 diagnostics. New probes cover unpolled and in-flight drops, provider failure,
 cleanup after a late authenticated type failure, and chunk concurrency/drop.
 The owned `Vec<S>` to `Vec<T>` conversion is enrolled under the same
-requirements: unpolled and in-flight drops, one logical batch per column with
-none for an empty one, source wiping through its guard, and wiping of the
-recovered prefix after a late element failure. It is a native Rust surface; Go
-reaches batching through its record interface, which the runtime profile covers.
+requirements. The conversion's tests cover:
+
+- dropping a column before it is polled
+- dropping a column while its key request is running
+- one logical batch of key requests for each column, and none for an empty
+  column
+- wiping the source `Vec` through its guard
+- wiping the elements already decrypted, when a later element fails
+
+The owned conversion is a native Rust API. Go reaches batching through its
+record interface, and the runtime profile covers that interface.
 Existing runtime/read/context vectors retain their provider-call counters.
 
 This adds required execution and explicit observation limits; it removes no

@@ -1,26 +1,29 @@
-//! Owned collections: `Vec<S>` encrypts into `Vec<T>` as one logical batch,
-//! and `Vec<T>` decrypts back, through the element's own declaration.
+//! Owned collections. A `Vec<S>` encrypts into a `Vec<T>` as one logical
+//! batch, and a `Vec<T>` decrypts back. Both use the element target's own
+//! declaration.
 //!
-//! A collection declares nothing of its own. Its `ContextInput` is the
-//! element's, so whether a caller may omit or must supply a context is
-//! decided once, by the element target, and holds for the column: a
-//! `Vec<Ciphertext>` is reached with no caller context, a column of a
-//! `RequiredContext` target is not. `Default` plays no part in that.
+//! A collection declares nothing of its own. A collection's `ContextInput` is
+//! the element target's, so the element target decides once whether a caller can
+//! omit a context or must give one. The same rule then applies to the whole
+//! column. For example, a `Vec<Ciphertext>` needs no caller context, but a
+//! column of a `RequiredContext` target does. `Default` does not affect
+//! this.
 //!
-//! Each element is sealed under its own ZeroKMS data key and authenticated
-//! on its own. Neither the collection's length nor the order of its
-//! elements is authenticated: stored values are rows and columns, which
-//! come back in any order and in part. The elements' key requests are
-//! merged into one logical batch ([`Pending::collect`]), in element order,
-//! and an empty collection makes no request at all. The key source may
-//! still split one logical batch into several provider requests.
+//! Each element is encrypted under its own ZeroKMS data key and authenticated
+//! on its own. The collection's length and the order of its elements are not
+//! authenticated, because stored values are database rows and columns. A
+//! database can return them in any order, or only some of them.
 //!
-//! A `Vec<u8>` is not a collection here: Vitamin C keeps `Vec<u8>` one byte
-//! leaf and gives `u8` no source of its own, so `u8` is not an opaque scalar
-//! and `vec![1u8].encrypt_into::<Vec<Ciphertext>, _>(..)` does not compile.
-//! The byte vector is one `Ciphertext`, and a `Vec<Vec<u8>>` is a column of
-//! them. A nullable element, `Option<S>`, is not an opaque scalar in this
-//! slice.
+//! [`Pending::collect`] merges the elements' key requests into one logical
+//! batch, in element order. An empty collection makes no request. The key
+//! source can still split one logical batch into several requests to its
+//! provider.
+//!
+//! A `Vec<u8>` is not a collection. Vitamin C encrypts a `Vec<u8>` as one
+//! byte string, and `u8` is not an opaque scalar. So
+//! `vec![1u8].encrypt_into::<Vec<Ciphertext>, _>(..)` does not compile. A
+//! `Vec<u8>` encrypts into one `Ciphertext`, and a `Vec<Vec<u8>>` is a column
+//! of them. A nullable element, `Option<S>`, is not an opaque scalar either.
 use super::{DecryptSource, Decryption, EncryptTarget, Encryption, Pending};
 use stack_kms::MaybeSend;
 use zeroize::Zeroize;
@@ -29,8 +32,9 @@ impl<S: Zeroize, T: EncryptTarget<S>> EncryptTarget<Vec<S>> for Vec<T>
 where
     T::ContextInput: Clone + MaybeSend + 'static,
 {
-    /// The element's: a column may omit or must supply exactly what one
-    /// element may or must.
+    /// The element target's context input. A column can omit a context only
+    /// if one element can. A column must be given a context if one element
+    /// must.
     type ContextInput = T::ContextInput;
     fn encryption<'s, K: 'static>() -> Encryption<'s, Vec<S>, Self, K, Self::ContextInput>
     where
@@ -58,7 +62,7 @@ impl<P: Zeroize + 'static, T: DecryptSource<P>> DecryptSource<Vec<P>> for Vec<T>
 where
     T::ContextInput: Clone,
 {
-    /// The element's, as on the encrypt side.
+    /// The element target's context input, as for encryption.
     type ContextInput = T::ContextInput;
     fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<Vec<P>, K> {
         // Every element's keys are retrieved in one batch and the results

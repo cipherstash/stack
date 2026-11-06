@@ -165,10 +165,11 @@ impl<T, K> fmt::Debug for Decryption<T, K> {
 impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     Encryption<'s, S, T, K, Ctx, M>
 {
-    /// A description from its execution closure. Crate-internal: this is
-    /// the constructor that hands a closure the source and the cipher
-    /// together, which the public constructors never do. The collection
-    /// declarations use it to run an element's description once per element.
+    /// A description built from its execution closure. This constructor is
+    /// crate-internal, because it gives a closure the source and the cipher
+    /// together, and the public constructors never do that. The collection
+    /// declarations use it to run an element's description once for each
+    /// element.
     pub(crate) fn from_build<F>(build: F) -> Self
     where
         F: for<'a, 'k> FnOnce(M::Source, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K>
@@ -830,10 +831,10 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             })),
         }
     }
-    /// [`all`](Self::all) for recovered plaintext: when a later item fails
-    /// after its key arrived, the items recovered before it are wiped
-    /// rather than dropped as they are. The owned `Vec<S>` conversions
-    /// open through here.
+    /// The same as [`all`](Self::all), but for recovered plaintext. When an
+    /// item fails after its key arrived, `all` drops the items recovered
+    /// before it. This function wipes them. The owned `Vec<S>` conversions
+    /// decrypt through this function.
     pub(crate) fn all_wiping<I>(items: I) -> Decryption<Vec<T>, K>
     where
         I: IntoIterator<Item = Self>,
@@ -846,8 +847,9 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             })),
         }
     }
-    /// The openings of `items`, up to the first failed description, which
-    /// is returned instead: the descriptions after it are never built.
+    /// The openings of `items`, up to the first description that fails. If a
+    /// description fails, this returns its error, and the descriptions after
+    /// it are never built.
     fn openings<I>(items: I) -> Result<Vec<Open<T, K>>, Error>
     where
         I: IntoIterator<Item = Self>,

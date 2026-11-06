@@ -18,55 +18,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the final extension alone for both reads and queries of old data, or re-encrypt
   and re-index it under the appended context. This does not migrate stored data.
 - **stack-encrypt requires the vitaminc 0.9 crates, clww-ore 0.7 and
-  ore-rs 0.11.** A crate that names a vitaminc type
-  stack-encrypt takes or returns moves to 0.9 with it. No sealed byte, term
-  or stored format changes. Two things in this crate's surface change.
-  The re-exported frame codec, `stack_encrypt::dynamic::frame`: its
-  `serde::to_vec` and `FrameWriter` now produce and write into a
-  `vitaminc_protected::Buffer`, which wipes each allocation it outgrows,
-  rather than a `Vec<u8>`. Read the bytes with `risky_ref`, or take them
-  with `risky_unwrap`; `Buffer` is re-exported as `stack_encrypt::Buffer`
-  beside `Protected`. `ValueFrame::into_inner` still returns
-  `Protected<Vec<u8>>`. And a repeated key in a value written to a frame
-  (`ValueFrame::of`, outside a passthrough) is now refused unnamed, as a
-  `DecodeError::Source` wrapping `FrameWriteError::DuplicateKey`, rather
-  than as `DecodeError::DuplicateKey(key)`: the 0.9 writer copies no key
-  out of the frame. A record source still reports `Reason::RepeatedKey`
-  for the field.
+  ore-rs 0.11.** If your crate names a vitaminc type that stack-encrypt takes
+  or returns, move it to vitaminc 0.9 too. No sealed bytes, terms, or stored
+  formats change. Two parts of this crate's API change:
+  - The re-exported frame codec, `stack_encrypt::dynamic::frame`, now writes
+    into a `vitaminc_protected::Buffer`, not a `Vec<u8>`. A `Buffer` wipes each
+    allocation it outgrows. `serde::to_vec` returns a `Buffer`, and
+    `FrameWriter` writes into one. Read the bytes with `risky_ref`, or take
+    them with `risky_unwrap`. `Buffer` is re-exported as
+    `stack_encrypt::Buffer`. `ValueFrame::into_inner` still returns
+    `Protected<Vec<u8>>`.
+  - `ValueFrame::of` no longer names a repeated map key outside a
+    passthrough. `ValueFrame::of` returns `DecodeError::Source` in place of
+    `DecodeError::DuplicateKey(key)`, and the source error is
+    `FrameWriteError::DuplicateKey`.
+    The vitaminc 0.9 writer does not copy the key out of the frame, because
+    the key is plaintext. A record source still reports `Reason::RepeatedKey`
+    for the field.
 
 ### Added
 
-- **Owned collections: `Vec<S>` encrypts into `Vec<T>` and back through
-  `EncryptInto` and `DecryptFrom`** (#1482). `Vec<T>` implements
+- **Owned collections: `EncryptInto` encrypts a `Vec<S>` into a `Vec<T>`,
+  and `DecryptFrom` decrypts it back** (#1482). `Vec<T>` implements
   `EncryptTarget<Vec<S>>` and `DecryptSource<Vec<P>>` for any owned element
-  target, so `vec![29i32, 34].encrypt_into::<Vec<Ciphertext>, _>(&keyset)`
-  needs no caller context and `Vec::<i32>::decrypt_from(column, &keyset)`
-  opens it. The column's `ContextInput` is the element's: a column of a
-  `RequiredContext` target still cannot omit its context, a column of a
-  `NoCallerContext` target still cannot be given one, and `Default` grants
-  neither. Each element is sealed under its own data key and authenticated
-  on its own, in one logical batch per column (one `generate_keys` call,
-  one `retrieve_keys` call per keyset, element order kept, no call for an
-  empty column; the key source may still split a logical batch into several
-  provider requests). The vector is held in one guard and wiped before the
-  pending request is returned, including when the context is refused, with
-  no `Clone` bound; a column that fails after some elements were recovered
-  wipes those before returning the error, and before unwinding when an
-  element's conversion panics. `Vec<u8>` is not a column of
-  scalars: `u8` is not `OpaqueEncode`, because Vitamin C keeps `Vec<u8>` one
-  byte leaf. Direct `keyset.encrypt` still takes one scalar; `encrypt_tree`
-  remains the structural path.
-- **Byte strings are opaque scalars: `Vec<u8>` and `[u8; N]` encrypt into
-  one `Ciphertext`, and a `Vec<Vec<u8>>` into a column.** `OpaqueEncode` is
-  now every owned `Zeroize` type whose borrow is a Vitamin C
-  `plaintext::Scalar` (one leaf), and `OpaqueDecode` every `Zeroize`
-  `FromScalar` target, in place of a hand-kept list that had already left
-  out the byte leaves Vitamin C defines. So
+  target. For example, `vec![29i32, 34].encrypt_into::<Vec<Ciphertext>, _>(&keyset)`
+  needs no caller context, and `Vec::<i32>::decrypt_from(column, &keyset)`
+  decrypts the result.
+  - A column uses its element target's `ContextInput`. A column of a
+    `RequiredContext` target must be given a context, and a column of a
+    `NoCallerContext` target cannot be given one. `Default` does not change
+    either rule.
+  - Each element is encrypted under its own data key and authenticated on
+    its own.
+  - A column makes one logical batch of key requests, in element order. That
+    is one `generate_keys` call to encrypt it, and one `retrieve_keys` call
+    for each keyset to decrypt it. An empty column makes no call. The key
+    source can still split a logical batch into several requests to its
+    provider.
+  - The plaintext `Vec` is wiped before the pending request is returned, even
+    when the context is refused. The elements do not need to implement
+    `Clone`.
+  - If an element fails after earlier elements were decrypted, the earlier
+    plaintexts are wiped before the error is returned. If an element's
+    conversion panics, they are wiped before the panic unwinds.
+  - A `Vec<u8>` is not a column. A `Vec<u8>` is one byte string, as the next
+    entry describes.
+  - `keyset.encrypt` still takes a single value, and `encrypt_tree` is still
+    the structural path.
+- **Byte strings encrypt as one value: `Vec<u8>` and `[u8; N]` encrypt into
+  one `Ciphertext`, and a `Vec<Vec<u8>>` encrypts into a column.** So
   `keyset.encrypt(vec![1u8, 2, 3])` and
-  `Vec::<u8>::decrypt_from(ciphertext, &keyset)` now compile, as the
-  structural API and the Go SDK already sealed them. A type of your own
-  joins by implementing `Scalar` for its borrow and `Zeroize`. A `Vec` of
-  any other scalar, and `u8` on its own, still do not.
+  `Vec::<u8>::decrypt_from(ciphertext, &keyset)` now compile. The structural
+  API and the Go SDK already encrypted byte strings this way.
+  - `OpaqueEncode` is now implemented for every owned `Zeroize` type whose
+    borrow is a Vitamin C `plaintext::Scalar`. A `Scalar` is a type that
+    Vitamin C encrypts as a single value. `OpaqueDecode` is implemented for
+    every `Zeroize` type that implements `FromScalar`.
+  - Before this change, both traits were implemented for a list of types
+    kept by hand. That list did not include the byte strings that Vitamin C
+    treats as single values.
+  - Your own type becomes an `OpaqueEncode` type if its borrow implements
+    `Scalar` and the type implements `Zeroize`.
+  - `u8` alone, and a `Vec` of any type other than `u8`, still do not encrypt
+    into one `Ciphertext`.
 
 ## [0.3.0] - 2026-10-27
 

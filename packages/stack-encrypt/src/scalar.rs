@@ -21,28 +21,40 @@ mod sealed {
 
 /// A plaintext type that encrypts as one opaque [`Ciphertext`].
 ///
-/// Implemented for every owned type that Vitamin C walks as exactly one
-/// leaf and that can be wiped: a type `S` where `&S` is a
-/// [`Scalar`](vitaminc_aead::plaintext::Scalar) and `S` is [`Zeroize`].
-/// That is `bool`, the fixed-width signed integers, the unsigned integers
-/// from `u16` through `u128`, `f32`, `f64`, `String`, and the byte strings
-/// `Vec<u8>` and `[u8; N]`, each one byte leaf; and any type of your own
-/// whose borrow implements `Scalar` and which implements `Zeroize`. The
-/// trait is sealed: implement Vitamin C's marker, and this follows.
+/// `OpaqueEncode` is implemented for every owned type `S` that meets two
+/// conditions:
 ///
-/// A sequence is not a `Scalar`, so no `Vec` other than `Vec<u8>` encrypts
-/// into one `Ciphertext`. A `Vec` of these encrypts element by element into
-/// a `Vec<Ciphertext>` through [`EncryptInto`] instead; see the crate docs
-/// on collections. `u8` is absent, as it is from Vitamin C's sources:
-/// `Vec<u8>` is one byte leaf, not a column of bytes.
-/// Nullable `Option<T>` values are also deferred in this scalar slice. Use
-/// [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`] for them;
-/// fixed-width nullable values retain Vitamin C's padded-null representation.
+/// - `&S` implements Vitamin C's [`Scalar`] marker, so Vitamin C encrypts it
+///   as a single value.
+/// - `S` implements [`Zeroize`], so it can be wiped.
+///
+/// These built-in types meet both conditions:
+///
+/// - `bool`, `f32`, `f64`, and `String`
+/// - the fixed-width signed integers
+/// - the unsigned integers from `u16` to `u128`
+/// - the byte strings `Vec<u8>` and `[u8; N]`
+/// A type of your own
+/// meets them if its borrow implements `Scalar` and the type implements
+/// `Zeroize`. The trait is sealed, so you cannot implement it directly.
+///
+/// A sequence is not a `Scalar`, so `Vec<u8>` is the only `Vec` that encrypts
+/// into one `Ciphertext`. A `Vec` of any other `OpaqueEncode` type encrypts
+/// element by element into a `Vec<Ciphertext>`, through [`EncryptInto`]. The
+/// crate docs on collections explain how. `u8` is not an `OpaqueEncode` type,
+/// because Vitamin C encrypts a `Vec<u8>` as one byte string, not as a column
+/// of bytes.
+///
+/// A nullable `Option<T>` is not an `OpaqueEncode` type either. Use
+/// [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`] for
+/// nullable values. A fixed-width nullable value keeps Vitamin C's padded
+/// form for null.
 pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
-/// A plaintext type that one opaque [`Ciphertext`] decrypts to: every
-/// [`FromScalar`] target that can be wiped, which covers the built-in
-/// [`OpaqueEncode`] types. Sealed, like it.
+/// A plaintext type that one opaque [`Ciphertext`] decrypts to.
+///
+/// `OpaqueDecode` is implemented for every [`FromScalar`] type that also
+/// implements [`Zeroize`]. Every built-in [`OpaqueEncode`] type is one. The trait is sealed, as `OpaqueEncode` is.
 pub trait OpaqueDecode: sealed::Decode + Decrypt + Zeroize + Send + 'static {}
 
 // The bridge from an owned `S` to its borrow's walk: `OpaqueEncode`'s

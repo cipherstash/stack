@@ -90,14 +90,18 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// [`DecodeError::Expected`] for a scalar outside the model (a uuid, a
-    /// logical type this build does not know, a date, decimal or timestamp
-    /// outside vitaminc's range), [`DecodeError::DuplicateKey`] for a map in a
-    /// passthrough with a repeated key, and [`DecodeError::Source`] for a
-    /// source that fails, a value deeper or longer than a frame carries, or
-    /// a repeated key anywhere else. That last is the frame writer's
-    /// [`FrameWriteError::DuplicateKey`], which names no key: the key is
-    /// plaintext, and the writer copies none out of the frame.
+    /// - [`DecodeError::Expected`] for a scalar outside the model. That is a
+    ///   uuid, a logical type this build does not know, or a date, decimal, or
+    ///   timestamp outside vitaminc's range.
+    /// - [`DecodeError::DuplicateKey`] for a map inside a passthrough that
+    ///   repeats a key.
+    /// - [`DecodeError::Source`] for a source that fails, or for a value
+    ///   deeper or longer than a frame allows.
+    /// - [`DecodeError::Source`] for a map outside a passthrough that repeats a
+    ///   key. The error wraps the frame writer's
+    ///   [`FrameWriteError::DuplicateKey`]. That error does not name the key,
+    ///   because the key is plaintext. The writer does not copy plaintext out
+    ///   of the frame.
     pub fn of<P: Encrypt>(value: P) -> Result<Self, DecodeError> {
         write(|writer| value.visit(Modeled::new(writer)))
     }
@@ -149,9 +153,9 @@ impl ValueFrame {
         Ok(Self::from_buffer(buffer))
     }
 
-    /// A frame a writer finished writing. The bytes move out of the
-    /// [`Buffer`] they grew in, which wiped every allocation it outgrew,
-    /// into the [`Protected`] the frame holds; nothing is copied.
+    /// The frame in a [`Buffer`] that a writer has finished writing. The bytes
+    /// move into the frame's [`Protected`] without being copied. While the
+    /// writer wrote, the `Buffer` wiped each allocation it outgrew.
     fn from_buffer(buffer: Buffer) -> Self {
         Self(Protected::new(buffer.risky_unwrap()))
     }
@@ -451,18 +455,8 @@ pub(super) struct FieldFault {
     pub(super) error: DecodeError,
 }
 
-/// A frame writer's refusal as a decode error. A value the model does not
-/// hold inside a passthrough subtree reaches here wrapped as the writer's
-/// source error ([`ModelOnly`] can only return the writer's error type), and
-/// is unwrapped, so it is refused as the same `Expected` a sealed value is.
-///
-/// A repeated key stays the writer's own unnamed
-/// [`FrameWriteError::DuplicateKey`], in or out of a passthrough: the writer
-/// finds it when the map ends, among the keys already in the frame, and
-/// names none, since naming it would copy plaintext out of the frame where
-/// it would be freed unwiped. [`is_unnamed_repeated_key`] recognises it.
-/// Whether `error` is the frame writer's refusal of a repeated map key, which
-/// reaches a caller unnamed (see [`decode_error`]).
+/// Whether `error` is the frame writer's refusal of a repeated map key. That
+/// error does not name the key (see [`decode_error`]).
 pub(super) fn is_unnamed_repeated_key(error: &DecodeError) -> bool {
     matches!(
         error,
@@ -474,6 +468,21 @@ pub(super) fn is_unnamed_repeated_key(error: &DecodeError) -> bool {
     )
 }
 
+/// Converts a frame writer's refusal into a decode error.
+///
+/// Inside a passthrough subtree, [`ModelOnly`] can only return the writer's
+/// error type. So a value outside the model, or a repeated key, arrives
+/// wrapped as the writer's source error. This function unwraps it, and the
+/// caller gets the same `Expected` or `DuplicateKey` error a sealed value
+/// gives.
+///
+/// Outside a passthrough, the writer finds a repeated key when the map ends,
+/// by comparing it with the keys already in the frame. The writer then
+/// returns its own [`FrameWriteError::DuplicateKey`]. That error does not
+/// name the key.
+/// Naming the key would copy plaintext out of the frame, into memory that is
+/// freed without being wiped. [`is_unnamed_repeated_key`] recognises this
+/// error.
 fn decode_error(error: FrameWriteError) -> DecodeError {
     match error {
         FrameWriteError::Source(error) => match error.inner().downcast_ref::<DecodeError>() {
