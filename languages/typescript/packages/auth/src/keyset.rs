@@ -504,12 +504,14 @@ async fn run_vendor(vendor: KeyVendor, operation: Operation) -> Result<KeysetRec
 /// account key file (`GOOGLE_APPLICATION_CREDENTIALS`) is refused with that
 /// remedy, so it is never ignored.
 async fn run_gcp(operation: Operation) -> Result<KeysetRecord, KeysetError> {
-    use stack_kms_gcp::{AccessToken, CachedToken, GcpKms, GcpKmsConfig, MetadataServerLogin};
+    use stack_kms_gcp::{
+        AccessToken, CachedToken, GcpKms, GcpKmsConfig, MetadataServerLogin, ACCESS_TOKEN_VARIABLE,
+    };
 
     let vendor = KeyVendor::Gcp;
     let env = stack_kms_gcp::process_env();
     let transport = HttpVendorTransport::new().map_err(|error| vendor_config(vendor, error))?;
-    if let Some(token) = AccessToken::from_env_lookup(&env) {
+    if let Some(token) = env(ACCESS_TOKEN_VARIABLE).map(AccessToken::new) {
         let kms = GcpKms::new(GcpKmsConfig::new(), transport, token);
         return operation.run(&kms).await;
     }

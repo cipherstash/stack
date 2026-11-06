@@ -82,8 +82,8 @@ mod config;
 mod time;
 
 pub use auth::{
-    AppRoleLogin, AuthError, CachedToken, TokenProvider, VaultToken, DEFAULT_APPROLE_MOUNT,
-    DEFAULT_REFRESH_BEFORE_EXPIRY,
+    AppRoleLogin, AuthError, CachedToken, TokenProvider, VaultAuth, VaultToken,
+    DEFAULT_APPROLE_MOUNT, DEFAULT_REFRESH_BEFORE_EXPIRY,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use auth::{DefaultAuth, KubernetesLogin};
