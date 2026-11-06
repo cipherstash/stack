@@ -24,7 +24,7 @@ use std::future::Future;
 use uuid::Uuid;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
-use crate::backend::KeyBackend;
+use crate::backend::{KeyBackend, KeyMode};
 use crate::errors::Error;
 use crate::key::{DataKey, DataKeyWithTag, IndexKey};
 use crate::maybe_send::MaybeSend;
@@ -70,6 +70,47 @@ pub trait DataKeySource {
     /// must forward this method too.
     fn key_backend(&self) -> KeyBackend {
         KeyBackend::ZeroKms
+    }
+
+    /// The key backend that holds `keyset_id`.
+    ///
+    /// A source that routes between ZeroKMS and one key vendor backend
+    /// answers per keyset. The default is [`key_backend`](Self::key_backend),
+    /// which is correct for a source that is one backend. The cipher reads
+    /// it before any key call: it refuses a leaf that names another backend,
+    /// and it chooses the leaf format (v1 or v2) from it when it seals.
+    fn keyset_backend(&self, keyset_id: Uuid) -> KeyBackend {
+        let _ = keyset_id;
+        self.key_backend()
+    }
+
+    /// The key mode of `keyset_id`, when a key vendor backend holds it.
+    ///
+    /// `None` for a ZeroKMS keyset, which has no key mode, and for a keyset
+    /// this source does not know. The cipher writes the mode into the v2
+    /// leaf it seals, and refuses to seal under a key vendor backend that
+    /// names no mode. A wrapper that forwards to another source must
+    /// forward this method too.
+    fn key_mode(&self, keyset_id: Uuid) -> Option<KeyMode> {
+        let _ = keyset_id;
+        None
+    }
+
+    /// Load the index key of `keyset_id` for one settle only.
+    ///
+    /// The cipher calls this inside a settle for a keyset that
+    /// [`IndexKeySource::select_keyset`] reported as
+    /// [`SelectedKeyset::PerSettle`], and drops the key when the settle
+    /// ends. A source that never reports `PerSettle` never receives this
+    /// call; the default refuses it with [`Error::Unexpected`].
+    fn load_settle_index_key(
+        &self,
+        keyset_id: Uuid,
+    ) -> impl Future<Output = Result<IndexKey, Error>> + MaybeSend {
+        let _ = keyset_id;
+        std::future::ready(Err(Error::Unexpected(
+            "this key source does not load an index key for one settle".into(),
+        )))
     }
 }
 
@@ -118,6 +159,52 @@ pub trait IndexKeySource {
                 key,
                 lifetime: KeyLifetime::UntilEvicted,
             })
+        }
+    }
+
+    /// Resolve a keyset for a cipher that selects it, and say how the
+    /// cipher gets its index key.
+    ///
+    /// The default loads the index key now
+    /// ([`load_index_key_with_lifetime`](Self::load_index_key_with_lifetime))
+    /// and returns [`SelectedKeyset::Loaded`]. A key vendor backend returns
+    /// [`SelectedKeyset::PerSettle`] instead: it resolves the keyset with
+    /// no vendor call, and the cipher asks for the index key inside each
+    /// settle that needs it
+    /// ([`DataKeySource::load_settle_index_key`]), so no index key
+    /// outlives the settle that needed it.
+    fn select_keyset(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> impl Future<Output = Result<SelectedKeyset, Error>> + MaybeSend {
+        let load = self.load_index_key_with_lifetime(keyset_id);
+        async move { load.await.map(SelectedKeyset::Loaded) }
+    }
+}
+
+/// How a cipher gets the index key of a keyset it selected: what
+/// [`IndexKeySource::select_keyset`] returns.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum SelectedKeyset {
+    /// The index key, loaded now, with how long the cipher may keep it.
+    Loaded(LoadedIndexKey),
+    /// The keyset is resolved, and its index key is loaded inside each
+    /// settle that needs it, through
+    /// [`DataKeySource::load_settle_index_key`]. The cipher holds no key
+    /// for the keyset between settles.
+    PerSettle {
+        /// The resolved keyset id.
+        keyset_id: Uuid,
+    },
+}
+
+impl SelectedKeyset {
+    /// The resolved keyset id.
+    pub fn keyset_id(&self) -> Uuid {
+        match self {
+            Self::Loaded(loaded) => loaded.keyset_id,
+            Self::PerSettle { keyset_id } => *keyset_id,
         }
     }
 }
@@ -856,6 +943,42 @@ mod tests {
         let loaded = SettleOnly.load_index_key_with_lifetime(None).await.unwrap();
         assert_eq!(loaded.lifetime, KeyLifetime::Settle);
         assert_eq!(loaded.key.key(), &[1u8; 32]);
+    }
+
+    /// The defaults keep a single-backend source as it was: it is ZeroKMS
+    /// for every keyset, names no mode, loads its index key at selection,
+    /// and refuses a per-settle load it never asked for.
+    #[tokio::test]
+    async fn the_defaults_describe_one_zerokms_backend() {
+        let src = FakeDataKeySource::new();
+        let keyset = Uuid::from_u128(9);
+        assert_eq!(src.keyset_backend(keyset), KeyBackend::ZeroKms);
+        assert_eq!(src.key_mode(keyset), None);
+        match src.load_settle_index_key(keyset).await {
+            Err(Error::Unexpected(_)) => {}
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        let (id, key) = src.load_index_key(None).await.unwrap();
+        match src.select_keyset(None).await.unwrap() {
+            SelectedKeyset::Loaded(loaded) => {
+                assert_eq!(loaded.keyset_id, id);
+                assert_eq!(loaded.key.key(), key.key());
+                assert_eq!(loaded.lifetime, KeyLifetime::UntilEvicted);
+            }
+            other => panic!("expected a loaded key, got {other:?}"),
+        }
+        assert_eq!(
+            SelectedKeyset::PerSettle { keyset_id: keyset }.keyset_id(),
+            keyset
+        );
+    }
+
+    #[test]
+    fn a_retrieve_payload_carries_the_key_mode_it_is_given() {
+        let payload = RetrieveKeyPayload::new([0u8; 16], "d", b"");
+        assert_eq!(payload.key_mode, None);
+        let payload = payload.with_key_mode(KeyMode::Derived);
+        assert_eq!(payload.key_mode, Some(KeyMode::Derived));
     }
 
     #[test]

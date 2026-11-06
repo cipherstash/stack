@@ -141,7 +141,7 @@ pub use backend::{KeyBackend, KeyMode, KeyVendor};
 pub use key_source::DeterministicSource;
 #[cfg(feature = "test-support")]
 pub use key_source::FakeDataKeySource;
-pub use key_source::{DataKeySource, IndexKeySource, KeyLifetime, LoadedIndexKey};
+pub use key_source::{DataKeySource, IndexKeySource, KeyLifetime, LoadedIndexKey, SelectedKeyset};
 
 // Key providers
 pub use key_provider::{

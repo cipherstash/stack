@@ -140,6 +140,10 @@ pub struct RetrieveKeyPayload<'a> {
     pub tag: &'a [u8],
     pub context: Cow<'a, [Context]>,
     pub decryption_policy: Option<DecryptionPolicy>,
+    /// The key mode the leaf names, when a key vendor backend sealed it
+    /// (a v2 leaf). `None` for a ZeroKMS leaf. A key vendor backend
+    /// refuses a payload whose mode is not its keyset's.
+    pub key_mode: Option<crate::KeyMode>,
 }
 
 impl<'a> RetrieveKeyPayload<'a> {
@@ -151,7 +155,14 @@ impl<'a> RetrieveKeyPayload<'a> {
             tag,
             context: Default::default(),
             decryption_policy: None,
+            key_mode: None,
         }
+    }
+
+    /// Name the key mode the leaf was sealed under (a v2 leaf).
+    pub fn with_key_mode(mut self, mode: crate::KeyMode) -> Self {
+        self.key_mode = Some(mode);
+        self
     }
 
     pub fn with_context(mut self, context: Cow<'a, [Context]>) -> Self {
@@ -184,6 +195,7 @@ impl<'a> From<RetrieveKeyPayload<'a>> for RetrieveKeySpec<'a> {
             tag,
             context,
             decryption_policy,
+            ..
         }: RetrieveKeyPayload<'a>,
     ) -> Self {
         let mut spec = Self::new(iv, tag, descriptor).with_context(context);

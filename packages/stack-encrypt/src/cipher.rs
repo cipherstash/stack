@@ -685,19 +685,42 @@ async fn load_keyset<K: IndexKeySource>(
         IdentifiedBy::Name(name) => Some(name.to_string()),
         IdentifiedBy::Uuid(_) => None,
     };
-    let loaded = kms.load_index_key_with_lifetime(Some(keyset)).await?;
-    Ok(keyset_state(loaded, name))
+    let selected = kms.select_keyset(Some(keyset)).await?;
+    keyset_state(selected, name)
 }
 
-/// The state the cipher holds for a loaded index key: its PRF, and how long
-/// the cache may keep it, from the lifetime the key backend gave it.
-fn keyset_state(loaded: stack_kms::LoadedIndexKey, name: Option<String>) -> Arc<KeysetState> {
-    Arc::new(KeysetState {
-        id: loaded.keyset_id,
-        name,
-        prf: hmac_prf_from_index_key(&loaded.key),
-        retention: Retention::of(loaded.lifetime, std::time::Instant::now()),
-    })
+/// The state the cipher holds for a selected keyset.
+///
+/// A loaded index key becomes its PRF, kept as long as the lifetime the key
+/// backend gave it. A keyset whose index key is loaded inside each settle
+/// ([`SelectedKeyset::PerSettle`](stack_kms::SelectedKeyset)) holds no key
+/// material at all, so its state is kept until evicted, and every term
+/// built through it is derived inside the settle.
+fn keyset_state(
+    selected: stack_kms::SelectedKeyset,
+    name: Option<String>,
+) -> Result<Arc<KeysetState>, Error> {
+    let state = match selected {
+        stack_kms::SelectedKeyset::Loaded(loaded) => KeysetState {
+            id: loaded.keyset_id,
+            name,
+            prf: Some(hmac_prf_from_index_key(&loaded.key)),
+            retention: Retention::of(loaded.lifetime, std::time::Instant::now()),
+        },
+        stack_kms::SelectedKeyset::PerSettle { keyset_id } => KeysetState {
+            id: keyset_id,
+            name,
+            prf: None,
+            retention: Retention::UntilEvicted,
+        },
+        // A selection this build does not know: refused, never guessed at.
+        _ => {
+            return Err(Error::Other(
+                "the key backend selected the keyset in a way this build does not know".into(),
+            ))
+        }
+    };
+    Ok(Arc::new(state))
 }
 
 /// The client's own default keyset — the one a ZeroKMS administrator set for
@@ -707,16 +730,20 @@ fn keyset_state(loaded: stack_kms::LoadedIndexKey, name: Option<String>) -> Arc<
 ///
 /// The cipher holds the default keyset for its whole life
 /// ([`StackCipher::default_keyset`] is synchronous), so a key backend that
-/// does not let the cipher keep its index key is refused here
-/// ([`Error::DefaultKeysetLifetime`]), not obeyed in part.
+/// gives the cipher an index key it may not keep is refused here
+/// ([`Error::DefaultKeysetLifetime`]), not obeyed in part. A key backend
+/// that loads the index key inside each settle gives the cipher no key to
+/// keep, so its default keyset is accepted.
 async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetState>, Error> {
-    let loaded = kms.load_index_key_with_lifetime(None).await?;
-    if loaded.lifetime != stack_kms::KeyLifetime::UntilEvicted {
-        return Err(Error::DefaultKeysetLifetime {
-            keyset: loaded.keyset_id,
-        });
+    let selected = kms.select_keyset(None).await?;
+    if let stack_kms::SelectedKeyset::Loaded(loaded) = &selected {
+        if loaded.lifetime != stack_kms::KeyLifetime::UntilEvicted {
+            return Err(Error::DefaultKeysetLifetime {
+                keyset: loaded.keyset_id,
+            });
+        }
     }
-    Ok(keyset_state(loaded, None))
+    keyset_state(selected, None)
 }
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key
@@ -879,7 +906,9 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
 /// Build the local HMAC-SHA256 PRF from a per-keyset
 /// [`IndexKey`](crate::kms::IndexKey), wiping the intermediate stack copy of the
 /// raw key bytes.
-fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::HmacSha256Prf {
+pub(crate) fn hmac_prf_from_index_key(
+    index_key: &stack_kms::IndexKey,
+) -> vitaminc_hmac::HmacSha256Prf {
     use zeroize::Zeroize;
 
     // `[u8; 32]` is `Copy`: the move into `Protected` leaves this stack copy
@@ -1099,9 +1128,9 @@ pub struct SealedValue {
 /// The two v2 header bytes: the key vendor backend and the key mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(into = "[u8; 2]", try_from = "[u8; 2]")]
-struct VendorHeader {
-    vendor: KeyVendor,
-    mode: KeyMode,
+pub(crate) struct VendorHeader {
+    pub(crate) vendor: KeyVendor,
+    pub(crate) mode: KeyMode,
 }
 
 impl VendorHeader {
@@ -1630,10 +1659,12 @@ impl PendingStackCipherText {
     }
 
     /// Recursively seal under `keyset_id`, drawing one key per leaf from
-    /// `keys` in traversal order.
+    /// `keys` in traversal order. `header` is the v2 header of a key vendor
+    /// backend's keyset, or `None` for a v1 (ZeroKMS) leaf.
     pub(crate) fn seal_with(
         self,
         keyset_id: Uuid,
+        header: Option<VendorHeader>,
         keys: &mut impl Iterator<Item = DataKeyWithTag>,
     ) -> Result<StackCipherText, Unspecified> {
         // Markers seal an *empty* plaintext so the AEAD tag still binds their
@@ -1641,39 +1672,40 @@ impl PendingStackCipherText {
         fn seal_marker(
             aad: Context<'static>,
             keyset_id: Uuid,
+            header: Option<VendorHeader>,
             keys: &mut impl Iterator<Item = DataKeyWithTag>,
         ) -> Result<SealedValue, Unspecified> {
             let key = keys.next().ok_or(Unspecified)?;
-            seal_leaf(Protected::new(Vec::new()), &aad, keyset_id, key)
+            seal_leaf_as(header, Protected::new(Vec::new()), &aad, keyset_id, key)
         }
 
         match self {
             PendingStackCipherText::Single { plaintext, aad } => {
                 let key = keys.next().ok_or(Unspecified)?;
-                Ok(CipherText::Single(seal_leaf(
-                    plaintext, &aad, keyset_id, key,
+                Ok(CipherText::Single(seal_leaf_as(
+                    header, plaintext, &aad, keyset_id, key,
                 )?))
             }
             PendingStackCipherText::None { aad } => {
-                Ok(CipherText::None(seal_marker(aad, keyset_id, keys)?))
+                Ok(CipherText::None(seal_marker(aad, keyset_id, header, keys)?))
             }
             PendingStackCipherText::EmptySequence { aad } => Ok(CipherText::EmptySequence(
-                seal_marker(aad, keyset_id, keys)?,
+                seal_marker(aad, keyset_id, header, keys)?,
             )),
-            PendingStackCipherText::EmptyMap { aad } => {
-                Ok(CipherText::EmptyMap(seal_marker(aad, keyset_id, keys)?))
-            }
+            PendingStackCipherText::EmptyMap { aad } => Ok(CipherText::EmptyMap(seal_marker(
+                aad, keyset_id, header, keys,
+            )?)),
             PendingStackCipherText::Sequence(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
-                    out.push(item.seal_with(keyset_id, keys)?);
+                    out.push(item.seal_with(keyset_id, header, keys)?);
                 }
                 Ok(CipherText::Sequence(out))
             }
             PendingStackCipherText::Map(entries) => {
                 let mut out = Vec::with_capacity(entries.len());
                 for (k, v) in entries {
-                    out.push((k, v.seal_with(keyset_id, keys)?));
+                    out.push((k, v.seal_with(keyset_id, header, keys)?));
                 }
                 Ok(CipherText::Map(out))
             }
@@ -1753,15 +1785,14 @@ fn leaf_aad(
 /// The AAD is the [`leaf_aad`] derivation of the caller's (derived) AAD, the
 /// keyset the key was minted under, and the key `tag` — `tag` is always
 /// bound, so the leaf is cryptographically tied to its ZeroKMS data key.
+#[cfg(test)]
 fn seal_leaf(
     plaintext: Protected<Vec<u8>>,
     aad: &Context<'_>,
     keyset_id: Uuid,
     key: DataKeyWithTag,
 ) -> Result<SealedValue, Unspecified> {
-    // Only ZeroKMS seals in this build, and a ZeroKMS leaf is v1. The settle
-    // refuses a data key from a key vendor backend before this point
-    // (`Error::SealUnsupported`).
+    // A ZeroKMS leaf is v1.
     seal_leaf_as(None, plaintext, aad, keyset_id, key)
 }
 

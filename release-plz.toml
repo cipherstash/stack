@@ -76,3 +76,8 @@ publish = false
 name = "stack-auth-wasm"
 release = false
 publish = false
+
+[[package]]
+name = "stack-kms-vendor"
+release = false
+publish = false

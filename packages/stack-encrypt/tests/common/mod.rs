@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use stack_encrypt::StackCipher;
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
-    IndexKey, IndexKeySource, KeyBackend, RetrieveKeyPayload, UnverifiedContext,
+    IndexKey, IndexKeySource, KeyBackend, KeyMode, RetrieveKeyPayload, UnverifiedContext,
 };
 use uuid::Uuid;
 
@@ -36,6 +36,9 @@ pub struct CountingSource {
     retrieve_calls: Arc<AtomicUsize>,
     load_calls: Arc<AtomicUsize>,
     backend: KeyBackend,
+    mode: Option<KeyMode>,
+    /// The key mode of every retrieve payload, in order.
+    retrieved_modes: Arc<Mutex<Vec<Option<KeyMode>>>>,
 }
 
 impl CountingSource {
@@ -46,7 +49,22 @@ impl CountingSource {
             retrieve_calls: Arc::new(AtomicUsize::new(0)),
             load_calls: Arc::new(AtomicUsize::new(0)),
             backend: KeyBackend::ZeroKms,
+            mode: None,
+            retrieved_modes: Arc::default(),
         }
+    }
+
+    /// The same source, reporting `mode` as the key mode of every keyset.
+    pub fn with_mode(self, mode: KeyMode) -> Self {
+        Self {
+            mode: Some(mode),
+            ..self
+        }
+    }
+
+    /// The key mode of every retrieve payload the cipher sent, in order.
+    pub fn retrieved_modes(&self) -> Arc<Mutex<Vec<Option<KeyMode>>>> {
+        self.retrieved_modes.clone()
     }
 
     /// The same source, reporting `backend` as its key backend. The keys
@@ -90,6 +108,10 @@ impl DataKeySource for CountingSource {
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, stack_kms::Error> {
         self.retrieve_calls.fetch_add(1, AtomicOrdering::SeqCst);
+        self.retrieved_modes
+            .lock()
+            .unwrap()
+            .extend(payloads.iter().map(|payload| payload.key_mode));
         self.inner
             .retrieve_keys(payloads, keyset_id, unverified_context)
             .await
@@ -97,6 +119,10 @@ impl DataKeySource for CountingSource {
 
     fn key_backend(&self) -> KeyBackend {
         self.backend
+    }
+
+    fn key_mode(&self, _keyset_id: Uuid) -> Option<KeyMode> {
+        self.mode
     }
 }
 

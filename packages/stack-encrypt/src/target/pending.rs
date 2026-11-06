@@ -16,11 +16,13 @@ use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 
 use stack_kms::{
-    DataKey, DataKeySource, GenerateKeyPayload, Iv, KeyBackend, MaybeSend, RetrieveKeyPayload,
+    DataKey, DataKeySource, GenerateKeyPayload, Iv, KeyBackend, KeyMode, MaybeSend,
+    RetrieveKeyPayload,
 };
 use uuid::Uuid;
 
 use super::request::{tally, Request, RequestKind, Responses};
+use crate::cipher::VendorHeader;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
@@ -463,6 +465,7 @@ struct Retrieve {
     descriptor: Descriptor,
     keyset_id: Uuid,
     backend: KeyBackend,
+    mode: Option<KeyMode>,
 }
 
 /// Issue the batched ZeroKMS calls for `requests`: at most one
@@ -477,6 +480,7 @@ async fn dispatch<K: DataKeySource>(
 ) -> Result<Responses, Error> {
     let mut generates: Vec<Descriptor> = Vec::new();
     let mut retrieves: Vec<Retrieve> = Vec::new();
+    let mut index_keysets: Vec<Uuid> = Vec::new();
     for request in requests {
         match request.into_kind() {
             RequestKind::GenerateDataKey { descriptor } => generates.push(descriptor),
@@ -486,13 +490,20 @@ async fn dispatch<K: DataKeySource>(
                 descriptor,
                 keyset_id,
                 backend,
+                mode,
             } => retrieves.push(Retrieve {
                 iv,
                 tag,
                 descriptor,
                 keyset_id,
                 backend,
+                mode,
             }),
+            RequestKind::IndexKeyForSettle { keyset_id } => {
+                if !index_keysets.contains(&keyset_id) {
+                    index_keysets.push(keyset_id);
+                }
+            }
         }
     }
 
@@ -508,25 +519,32 @@ async fn dispatch<K: DataKeySource>(
         .try_for_each(Descriptor::check)?;
 
     // A leaf names the key backend that sealed it. One that names another
-    // backend than the cipher's is refused here, before any key call, as a
-    // foreign keyset is refused at construction: the leaf never reaches a
-    // backend that did not seal it.
-    let backend = cipher.kms().key_backend();
-    if let Some(retrieve) = retrieves
-        .iter()
-        .find(|retrieve| retrieve.backend != backend)
-    {
-        return Err(Error::ForeignBackend {
-            expected: backend,
-            found: retrieve.backend,
-        });
+    // backend than the one that holds its keyset is refused here, before any
+    // key call, as a foreign keyset is refused at construction: the leaf
+    // never reaches a backend that did not seal it.
+    if let Some((expected, found)) = retrieves.iter().find_map(|retrieve| {
+        let expected = cipher.kms().keyset_backend(retrieve.keyset_id);
+        (retrieve.backend != expected).then_some((expected, retrieve.backend))
+    }) {
+        return Err(Error::ForeignBackend { expected, found });
     }
-    // Only ZeroKMS has a seal path in this build: a v1 leaf names ZeroKMS,
-    // so a key vendor backend must not write one. CIP-5306 adds the v2 seal
-    // path, which needs the keyset's key mode.
-    if !generates.is_empty() && backend != KeyBackend::ZeroKms {
-        return Err(Error::SealUnsupported { backend });
-    }
+    // The leaves this settle seals take the format of their keyset's
+    // backend: v1 under ZeroKMS, v2 (with the key mode) under a key vendor
+    // backend. A key vendor backend that names no mode for the keyset
+    // cannot say how to seal, so it is refused before any key call.
+    let seal_header = match (generates.is_empty(), keyset) {
+        (false, Some(keyset)) => match cipher.kms().keyset_backend(keyset) {
+            KeyBackend::ZeroKms => None,
+            backend @ KeyBackend::Vendor(vendor) => {
+                let mode = cipher
+                    .kms()
+                    .key_mode(keyset)
+                    .ok_or(Error::SealUnsupported { backend })?;
+                Some(VendorHeader { vendor, mode })
+            }
+        },
+        _ => None,
+    };
 
     let generated = if generates.is_empty() {
         Vec::new()
@@ -575,7 +593,15 @@ async fn dispatch<K: DataKeySource>(
             .iter()
             .map(|&index| {
                 let retrieve = &retrieves[index];
-                RetrieveKeyPayload::new(retrieve.iv, retrieve.descriptor.as_str(), &retrieve.tag)
+                let payload = RetrieveKeyPayload::new(
+                    retrieve.iv,
+                    retrieve.descriptor.as_str(),
+                    &retrieve.tag,
+                );
+                match retrieve.mode {
+                    Some(mode) => payload.with_key_mode(mode),
+                    None => payload,
+                }
             })
             .collect();
         let expected = payloads.len();
@@ -600,7 +626,16 @@ async fn dispatch<K: DataKeySource>(
         .map(|key| key.ok_or(Error::ResponseShape))
         .collect::<Result<_, _>>()?;
 
-    Ok(Responses::new(generated, retrieved))
+    // The index keys of the keysets whose handles hold none: one load per
+    // keyset, inside this settle. The PRFs live in the responses and drop,
+    // with the keys wiped, when the settle ends.
+    let mut prfs = HashMap::with_capacity(index_keysets.len());
+    for keyset_id in index_keysets {
+        let key = cipher.kms().load_settle_index_key(keyset_id).await?;
+        let _ = prfs.insert(keyset_id, crate::cipher::hmac_prf_from_index_key(&key));
+    }
+
+    Ok(Responses::new(generated, retrieved).with_settle(prfs, seal_header))
 }
 
 #[cfg(test)]

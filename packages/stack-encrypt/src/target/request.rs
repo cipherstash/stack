@@ -14,8 +14,14 @@
 use super::context::AeadContext;
 use std::collections::VecDeque;
 
-use stack_kms::{DataKey, DataKeyWithTag, Iv, KeyBackend};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use stack_kms::{DataKey, DataKeyWithTag, Iv, KeyBackend, KeyMode};
 use uuid::Uuid;
+use vitaminc_hmac::HmacSha256Prf;
+
+use crate::cipher::VendorHeader;
 
 use crate::{Descriptor, Error};
 
@@ -41,7 +47,16 @@ pub(super) enum RequestKind {
         /// The key backend the leaf names. The settle refuses a request
         /// whose backend is not the cipher's, before any key call.
         backend: KeyBackend,
+        /// The key mode the leaf names (a v2 leaf); `None` for a v1 leaf.
+        /// Passed to the key backend, which refuses a mode that is not its
+        /// keyset's.
+        mode: Option<KeyMode>,
     },
+    /// Load the index key of `keyset_id` inside the settle, for a term
+    /// derived through a keyset whose handle holds no index key. Every such
+    /// request of one settle shares one load per keyset, and the key drops
+    /// when the settle ends.
+    IndexKeyForSettle { keyset_id: Uuid },
 }
 
 impl Request {
@@ -107,7 +122,15 @@ impl Request {
             descriptor,
             keyset_id: leaf.keyset_id(),
             backend: leaf.key_backend(),
+            mode: leaf.key_mode(),
         })
+    }
+
+    /// Ask the settle for the index key of `keyset_id`. Crate-internal: a
+    /// term derived through a keyset whose handle holds no index key pushes
+    /// it, and reads the PRF back with [`Responses::index_prf`].
+    pub(crate) fn index_key(keyset_id: Uuid) -> Self {
+        Self(RequestKind::IndexKeyForSettle { keyset_id })
     }
 
     /// [`generate_data_key`](Self::generate_data_key) over a descriptor that
@@ -137,6 +160,7 @@ impl Request {
             descriptor,
             keyset_id,
             backend: KeyBackend::ZeroKms,
+            mode: None,
         })
     }
 
@@ -145,12 +169,13 @@ impl Request {
         self.0
     }
 
-    /// The keyset a retrieve request names; `None` for a generate request,
-    /// which mints under the pending's keyset.
+    /// The keyset a retrieve or index-key request names; `None` for a
+    /// generate request, which mints under the pending's keyset.
     pub(super) fn retrieve_keyset(&self) -> Option<Uuid> {
         match &self.0 {
             RequestKind::GenerateDataKey { .. } => None,
-            RequestKind::RetrieveDataKey { keyset_id, .. } => Some(*keyset_id),
+            RequestKind::RetrieveDataKey { keyset_id, .. }
+            | RequestKind::IndexKeyForSettle { keyset_id } => Some(*keyset_id),
         }
     }
 }
@@ -163,6 +188,8 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize) {
         match request.0 {
             RequestKind::GenerateDataKey { .. } => generate += 1,
             RequestKind::RetrieveDataKey { .. } => retrieve += 1,
+            // An index key is shared by every term of the settle, not drawn.
+            RequestKind::IndexKeyForSettle { .. } => {}
         }
     }
     (generate, retrieve)
@@ -175,6 +202,14 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize) {
 pub struct Responses {
     generated: VecDeque<DataKeyWithTag>,
     retrieved: VecDeque<DataKey>,
+    /// The PRF of each keyset whose index key this settle loaded. Shared by
+    /// every fulfilment of the settle, and dropped (the key wiped) when the
+    /// last view of the responses drops, at the end of the settle.
+    prfs: Arc<HashMap<Uuid, HmacSha256Prf>>,
+    /// The v2 header the generated keys are sealed under: the key vendor
+    /// backend and the key mode of the pending's keyset. `None` seals v1
+    /// (ZeroKMS).
+    seal_header: Option<VendorHeader>,
 }
 
 impl Responses {
@@ -183,7 +218,35 @@ impl Responses {
         Self {
             generated: generated.into(),
             retrieved: retrieved.into(),
+            prfs: Arc::default(),
+            seal_header: None,
         }
+    }
+
+    /// Add what a settle loaded beside the data keys: the index-key PRFs and
+    /// the header of the leaves it seals.
+    pub(super) fn with_settle(
+        mut self,
+        prfs: HashMap<Uuid, HmacSha256Prf>,
+        seal_header: Option<VendorHeader>,
+    ) -> Self {
+        self.prfs = Arc::new(prfs);
+        self.seal_header = seal_header;
+        self
+    }
+
+    /// The PRF of `keyset`'s index key, loaded for this settle. A
+    /// fulfilment reads it only if its pending pushed
+    /// [`Request::index_key`] for that keyset; otherwise it is
+    /// [`Error::ResponseShape`].
+    pub(crate) fn index_prf(&self, keyset: Uuid) -> Result<&HmacSha256Prf, Error> {
+        self.prfs.get(&keyset).ok_or(Error::ResponseShape)
+    }
+
+    /// The v2 header to seal the generated keys' leaves under, or `None`
+    /// for a v1 leaf.
+    pub(crate) fn seal_header(&self) -> Option<VendorHeader> {
+        self.seal_header
     }
 
     /// The next generated data key, in [`Request::generate_data_key`] order.
@@ -211,6 +274,8 @@ impl Responses {
         Ok(Responses {
             generated: self.generated.drain(..generated).collect(),
             retrieved: self.retrieved.drain(..retrieved).collect(),
+            prfs: Arc::clone(&self.prfs),
+            seal_header: self.seal_header,
         })
     }
 
@@ -311,11 +376,11 @@ mod tests {
         let expected = Descriptor::of(context);
         match Request::generate_data_key(context).into_kind() {
             RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor, expected),
-            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+            _ => panic!("expected a generate request"),
         }
         match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
             RequestKind::RetrieveDataKey { descriptor, .. } => assert_eq!(descriptor, expected),
-            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+            _ => panic!("expected a retrieve request"),
         }
     }
 
@@ -343,13 +408,13 @@ mod tests {
         let context = NonEmpty::new(Tenant("acme".into())).unwrap();
         match Request::generate_data_key(context.clone()).into_kind() {
             RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor.as_str(), "acme"),
-            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+            _ => panic!("expected a generate request"),
         }
         match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
             RequestKind::RetrieveDataKey { descriptor, .. } => {
                 assert_eq!(descriptor.as_str(), "acme")
             }
-            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+            _ => panic!("expected a retrieve request"),
         }
     }
 
@@ -357,7 +422,7 @@ mod tests {
     fn a_generate_request_carries_its_descriptor() {
         match Request::generate_under(d()).into_kind() {
             RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor, d()),
-            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+            _ => panic!("expected a generate request"),
         }
     }
 
@@ -371,14 +436,16 @@ mod tests {
                 descriptor,
                 keyset_id,
                 backend,
+                mode,
             } => {
                 assert_eq!(backend, stack_kms::KeyBackend::ZeroKms);
+                assert_eq!(mode, None);
                 assert_eq!(keyset_id, ks());
                 assert_eq!(iv, Iv::default());
                 assert_eq!(tag, vec![7, 8, 9]);
                 assert_eq!(descriptor, d());
             }
-            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+            _ => panic!("expected a retrieve request"),
         }
     }
 
