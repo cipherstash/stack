@@ -973,32 +973,41 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
         )
     }
 
-    /// Lay the field `field` out as the owned target `T` does: `T`'s own
-    /// [`EncryptTarget<F>`] decides what is sealed and which terms sit
-    /// beside it, all under `<context>/<identity>`, and the record holds a
-    /// `T`. The owned sibling of [`encrypt_into`](Self::encrypt_into), for
-    /// a target that declares itself through `EncryptTarget` alone — an
-    /// opaque [`Ciphertext`](crate::Ciphertext), or a record deriving
-    /// `EncryptTarget` (which also answers through `encrypt_into`, by its
-    /// bridge). Lowers to
-    /// `<T as EncryptTarget<F>>::encryption().accepting::<CallerContext>()`,
-    /// so the field's pair reaches the target as its caller context: the
-    /// target's `ContextInput` must take a `CallerContext`, which a target
-    /// that accepts no caller context ([`NoCallerContext`](crate::target::NoCallerContext)) or requires
-    /// something else does not, and that is refused at the call.
+    /// Lay out the field `field` as the owned target `T` lays it out. `T`'s
+    /// own [`EncryptTarget<F>`] decides what is sealed and which terms are
+    /// stored beside it, all under `<context>/<identity>`. The record
+    /// contains a `T`.
     ///
-    /// The plan runs the target over a borrow of the value, as it does every
-    /// field, so the value stays the caller's and nothing is wiped here;
-    /// the owned conversions are [`EncryptInto`](crate::EncryptInto)'s.
+    /// This is the owned form of [`encrypt_into`](Self::encrypt_into), for a
+    /// target that implements only `EncryptTarget`. Examples are an opaque
+    /// [`Ciphertext`](crate::Ciphertext), or a record that derives
+    /// `EncryptTarget`. A derived record also works with `encrypt_into`,
+    /// because the derive implements the structural traits too.
+    ///
+    /// The field lowers to
+    /// `<T as EncryptTarget<F>>::encryption().accepting::<CallerContext>()`.
+    /// So the field's context reaches the target as its caller context, and
+    /// the target's `ContextInput` must take a `CallerContext`. A target
+    /// that accepts no caller context
+    /// ([`NoCallerContext`](crate::target::NoCallerContext)), or that
+    /// requires a context of another type, is a compile error at the call.
+    ///
+    /// The plan runs the target over a borrow of the value, as it does for
+    /// every field. So the value stays the caller's, and this method wipes
+    /// nothing. The owned conversions consume the value and wipe it. They are
+    /// in [`EncryptInto`](crate::EncryptInto).
     ///
     /// ```
     /// # use stack_encrypt::plan::pick;
     /// # struct User { age: u32 }
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::{Ciphertext, Plan, StackCipher};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// // With no `.kms(..)`, the cipher uses ZeroKMS.
+    /// let cipher = StackCipher::builder()
+    /// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
     /// let users_plan = Plan::context("users")
     ///     .fields()
     ///     .target::<Ciphertext, _>(pick("age", |u: &User| &u.age))
@@ -1007,7 +1016,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// let user = User { age: 34 };
     /// let mut record = cipher.encrypt(&user).using(&users_plan).await?;
     /// let age: Ciphertext = record.take("age")?;
-    /// // An ordinary opaque ciphertext under the field's pair.
+    /// // An ordinary opaque ciphertext, under the field's context.
     /// assert_eq!(cipher.default_keyset().decrypt_with_context::<u32>(age, ("users", "age")).await?, 34);
     /// # Ok(())
     /// # }

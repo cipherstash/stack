@@ -223,9 +223,9 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
-    /// `#[stash(passthrough)]`: with `struct = ..` on the owned derives,
-    /// the plaintext field is carried into the record in the clear, moved
-    /// rather than encrypted, and moved back when the record is decrypted.
+    /// `#[stash(passthrough)]`, on a field of a `struct = ..` record with the
+    /// owned derives. The plaintext field is moved into the record in the
+    /// clear, not encrypted, and moved back when the record is decrypted.
     pub(crate) passthrough: bool,
 }
 

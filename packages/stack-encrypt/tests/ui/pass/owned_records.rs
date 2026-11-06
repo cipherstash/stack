@@ -1,9 +1,14 @@
-//! The owned record forms that must compile: a `struct = ..` record with
-//! passthrough, renamed, pinned and nested fields; `plaintext` records over
-//! opaque and structural leaves, generic, and with a stored context; a column
-//! of records; and the structural bridge into a legacy record and a plan.
+//! The owned record forms that must compile:
+//!
+//! - a `struct = ..` record with passthrough, renamed, fixed-segment and
+//!   nested fields;
+//! - `plaintext` records over opaque and structural leaves, including a
+//!   generic record and a record that stores its context;
+//! - a column of records;
+//! - an owned record used as a field of a structural record, and of a plan.
+//!
 //! `tests/ui/owned_record_*.rs` and `tests/ui/passthrough_misuse.rs` pin the
-//! forms that must not.
+//! forms that must not compile.
 use stack_encrypt::plan::pick;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{legacy, AeadContext, DecryptSource, EncryptTarget};
@@ -82,7 +87,7 @@ struct TextEq {
     hm: EqualityTerm,
 }
 
-/// The structural bridge: an owned record as a field of a structural one.
+/// An owned record as a field of a structural record.
 #[derive(Clone)]
 struct Profile {
     user: User,
@@ -131,7 +136,8 @@ async fn records(
         .await?;
     let _: String = String::decrypt_from_with_context(text, keyset, nonempty!("users/name")).await?;
 
-    // A stored context: omitted opens as stored, supplied also checks it.
+    // A stored context. With no expected context, the record decrypts as
+    // stored. With an expected context, the stored context is also checked.
     let stored: TextEq = user
         .email
         .clone()
@@ -144,7 +150,7 @@ async fn records(
         .await?;
     let _: String = String::decrypt_from(stored, keyset).await?;
 
-    // The bridge: in a structural record, and as a typed plan field.
+    // An owned record in a structural record, and as a typed plan field.
     let _: EncryptedProfile = legacy::EncryptInto::encrypt_into(&profile, keyset).await?;
     let plan = Plan::context("profiles")
         .fields::<Profile, _>()

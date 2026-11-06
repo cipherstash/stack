@@ -8,39 +8,38 @@ use crate::KeysetCipher;
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
-/// Declare how to encrypt an owned plaintext into this target.
+/// A declaration has two forms of one description. The library runs the form
+/// that matches how the call passes the plaintext:
 ///
-/// A declaration has two forms of one description, and the library runs
-/// whichever the call supplies the plaintext in:
+/// - [`encryption`](Self::encryption) is given the plaintext **by reference**.
+///   A declaration composes this form when it takes a field out of a borrowed
+///   struct ([`Encryption::project`]). A collection or a plan runs it for each
+///   element.
+/// - [`owned_encryption`](Self::owned_encryption) is given the plaintext **by
+///   value**. [`EncryptInto`] runs this form. By default, it guards the value
+///   with [`Protected`], runs the borrowed description over it, and wipes it
+///   before the pending request is returned. The value is wiped even when
+///   building or running the description fails. A record overrides this form,
+///   field by field ([`Encryption::split`]). It moves the fields it stores in
+///   the clear into its output, and guards the fields it seals.
 ///
-/// - [`encryption`](Self::encryption) is handed the plaintext **by
-///   reference**. It is what a declaration composes when it picks a field
-///   out of a borrowed struct ([`Encryption::project`]), and what a
-///   collection or a plan runs per element.
-/// - [`owned_encryption`](Self::owned_encryption) is handed the plaintext
-///   **by value**: what [`EncryptInto`] runs. Its default guards the value
-///   with [`Protected`], runs the borrowed description over it and wipes it
-///   before the pending request is returned, including when description
-///   construction or execution fails. A record overrides it to move the
-///   fields it stores in the clear into its output and to guard the ones it
-///   seals, field by field ([`Encryption::split`]).
-///
-/// Neither form receives the cipher and plaintext together, and no `Clone`
-/// bound is imposed on the source.
+/// Neither form is given the cipher and the plaintext together. The source
+/// does not need to implement `Clone`.
 pub trait EncryptTarget<S: Zeroize>: Sized + 'static {
     /// What the caller must or may supply, independently of declared context.
     type ContextInput: ContextInput;
-    /// Describe the encryption over a borrowed plaintext; key I/O is deferred
-    /// to the returned pending.
+    /// Describe the encryption over a borrowed plaintext. Key requests wait
+    /// until the returned pending request runs.
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
     where
         S: 's;
-    /// Describe the encryption over the plaintext by value, taking
-    /// responsibility for wiping what it does not carry into the output.
+    /// Describe the encryption over the plaintext by value. This form is
+    /// responsible for wiping what it does not move into the output.
     ///
-    /// The default guards the whole value and runs
-    /// [`encryption`](Self::encryption) over a borrow of it, so a declaration
-    /// that only composes operations over a borrow need not implement this.
+    /// The default guards the whole value, and runs
+    /// [`encryption`](Self::encryption) over a borrow of it. So a declaration
+    /// that only composes operations over a borrow does not need to implement
+    /// this method.
     fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
     where
         S: 's,
@@ -52,10 +51,10 @@ pub trait EncryptTarget<S: Zeroize>: Sized + 'static {
             pending
         })
     }
-    /// The indexes this target's terms answer queries by, as data: what a
-    /// plan field typed with this target lets a query ask for. The default
-    /// is none, which is right for a ciphertext and for a record whose
-    /// fields sit under contexts of their own.
+    /// The indexes that this target's terms support, as data. A plan field
+    /// typed with this target lets a query use these indexes. The default is
+    /// none. That is correct for a ciphertext, and for a record whose fields
+    /// have contexts of their own.
     fn indexes() -> Vec<IndexSpec> {
         vec![]
     }
@@ -77,11 +76,11 @@ pub trait EncryptInto: Zeroize + Sized {
         T: EncryptTarget<Self>,
         T::ContextInput: AllowsNoContext,
     {
-        // Guarded while the declaration is constructed and the omitted
-        // context initialised: either may panic (a record's declaration
-        // constructs its fields' declarations here), and the plaintext must
-        // not then drop unwiped. The declaration takes over the guard once
-        // both exist.
+        // The plaintext stays guarded while the declaration is built. It also
+        // stays guarded while the omitted context is initialised. Either step
+        // can panic, because a record's declaration builds its fields'
+        // declarations here. The plaintext must not then be dropped without
+        // being wiped. The declaration takes over the guard once both exist.
         let source = Protected::new(self);
         let description = T::owned_encryption();
         let context = T::ContextInput::omitted();
@@ -98,10 +97,10 @@ pub trait EncryptInto: Zeroize + Sized {
         T: EncryptTarget<Self>,
         T::ContextInput: AcceptsContext,
     {
-        // Guarded while the caller's context converts and the declaration
-        // is constructed: either may panic, and the plaintext must not then
-        // drop unwiped. The declaration takes over the guard once both
-        // exist.
+        // The plaintext stays guarded while the caller's context is converted.
+        // It also stays guarded while the declaration is built. Either step
+        // can panic. If one does, the plaintext must not be dropped without being
+        // wiped. The declaration takes over the guard once both exist.
         let source = Protected::new(self);
         let context = T::ContextInput::supplied(context.into());
         let description = T::owned_encryption();
@@ -112,8 +111,12 @@ impl<S: Zeroize> EncryptInto for S {}
 
 /// Construct owned plaintext from a declared encrypted source.
 ///
-/// Successful return transfers cleanup responsibility to the caller: a
-/// `Zeroize` bound does not make ordinary returned values wipe themselves on drop.
+/// **The caller must wipe the returned plaintext.** A `Zeroize` bound does not
+/// make a returned value wipe itself when it is dropped. The plaintext of a
+/// derived `struct = ..` record cannot implement `ZeroizeOnDrop` at all.
+/// Wrap the value in
+/// [`Protected`] as soon as it is returned, or call `zeroize` on it when you
+/// no longer need it.
 pub trait DecryptFrom: Zeroize + Sized + 'static {
     /// Decrypt with explicitly omitted caller context.
     fn decrypt_from<'a, S, K: 'static>(

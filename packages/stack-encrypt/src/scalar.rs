@@ -296,8 +296,8 @@ impl<P: OpaqueDecode> DecryptSource<P> for Ciphertext {
         Decryption::from_open(move |cipher| P::open(self.0, cipher, context))
     }
 }
-/// A ciphertext is what a record opens: as a field of a derived record it is
-/// the recoverable one among the terms beside it.
+/// A ciphertext is what a record decrypts. As a field of a derived record, it
+/// is the field that can be decrypted, beside any terms.
 impl crate::target::Decryptable for Ciphertext {
     const DECRYPTABLE: bool = true;
 }

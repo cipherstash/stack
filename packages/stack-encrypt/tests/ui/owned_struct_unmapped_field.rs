@@ -1,7 +1,8 @@
-//! An owned `struct = ..` record accounts for every field of its plaintext:
-//! the owned conversion wipes what it seals and moves what it carries, so a
-//! field it does neither would be dropped unwiped. It is refused at the
-//! `struct = ..` path, naming the field.
+//! An owned `struct = ..` record must name every field of its plaintext. The
+//! owned conversion wipes the fields it seals, and moves the fields it passes
+//! through. A field it does neither would be dropped without being wiped. So
+//! that field is a compile error at the `struct = ..` path, and the error
+//! names the field.
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::Ciphertext;
 

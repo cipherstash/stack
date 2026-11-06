@@ -301,11 +301,13 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         self.zip_releasing(other, drop)
     }
 
-    /// [`zip`](Self::zip) for recovered plaintext: when the right side
-    /// fails at fulfilment (an authentication or type failure after its key
-    /// arrived, or a panic in its conversion), the left side's recovered
-    /// value is wiped before the error is returned or the panic unwinds,
-    /// not dropped as it is. What a record's fields open through.
+    /// [`zip`](Self::zip) for recovered plaintext. The right side can fail at
+    /// fulfilment, with an authentication or type failure after its key
+    /// arrives. It can also panic in its conversion.
+    ///
+    /// In both cases, the left side's recovered value is wiped before the
+    /// error is returned or the panic unwinds. It is not dropped as it is. A
+    /// record's fields open through this method.
     pub(crate) fn zip_wiping<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K>
     where
         T: zeroize::Zeroize,
@@ -313,9 +315,9 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         self.zip_releasing(other, |mut first: T| zeroize::Zeroize::zeroize(&mut first))
     }
 
-    /// The one pair builder. `release` is handed the left side's output
-    /// when the right side fails or panics after it; it is not called when
-    /// both succeed.
+    /// The builder behind every pair. `release` is given the left side's
+    /// output when the right side fails or panics after it. It is not called
+    /// when both sides succeed.
     fn zip_releasing<U: 'a>(
         self,
         other: Pending<'a, U, K>,
@@ -341,8 +343,9 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             fulfil: Box::new(move |responses| {
-                // Held in a guard so that a right side that fails or panics
-                // releases the left side's output, as a collection does.
+                // The left side's output is held in a guard. So if the right
+                // side fails or panics, the guard releases the left side's
+                // output, as a collection does.
                 let held = Held {
                     item: Some(first(responses)?),
                     release: Some(release),
@@ -470,16 +473,17 @@ impl<T, R: FnOnce(Vec<T>)> Drop for Recovered<T, R> {
     }
 }
 
-/// The left side of a pair, recovered before the right side fulfils.
-/// Dropped before [`keep`](Self::keep), by an early return or an unwind, it
-/// hands the value to `release`.
+/// The left side of a pair, recovered before the right side is fulfilled. If
+/// it is dropped before [`keep`](Self::keep), by an early return or an unwind,
+/// it passes the value to `release`.
 struct Held<T, R: FnOnce(T)> {
     item: Option<T>,
     release: Option<R>,
 }
 
 impl<T, R: FnOnce(T)> Held<T, R> {
-    /// The right side succeeded: the value is the output, not released.
+    /// The right side succeeded. So the value is the output. It is not
+    /// released.
     fn keep(mut self) -> T {
         self.release = None;
         self.item

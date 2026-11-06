@@ -354,79 +354,123 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! # Records
 //!
-//! A struct encrypts field by field into a record type that states its own
-//! layout: `#[derive(EncryptTarget, DecryptSource)]` with
-//! `#[stash(struct = User, context = "users")]`. A field whose type is a
-//! target (a [`Ciphertext`], a record, a term) is derived from the plaintext
-//! field of its name under the pair `("users", "<field>")`; a
-//! `#[stash(passthrough)]` field is carried into the record in the clear,
-//! **moved** rather than copied and neither encrypted nor authenticated; a
-//! `#[stash(from = ..)]` renames the plaintext field a field is taken from.
-//! The conversion wipes the plaintext fields it seals and moves the ones it
-//! passes through, so the plaintext type is `Zeroize` and nothing is cloned.
-//! A caller's context extends every field's pair
-//! ([`ContextExtension`]); omitted, the pairs stand as declared.
+//! A record is a struct that is encrypted field by field. You declare the
+//! stored form of a plaintext struct as a second struct, and derive
+//! `EncryptTarget` and `DecryptSource` on it. In
+//! `#[stash(struct = User, context = "users")]`, `User` is the plaintext
+//! type. The string `"users"` is the first part of every field's context.
+//!
+//! Each field of the record is one of these:
+//!
+//! - **A sealed field.** Its type is a target, such as a [`Ciphertext`], a
+//!   term or another record. It is derived from the plaintext field of the
+//!   same name, under the context `("users", "<field>")`. Use
+//!   `#[stash(from = ..)]` when the plaintext field has another name.
+//! - **A passthrough field,** marked `#[stash(passthrough)]`. The plaintext
+//!   field is moved into the record as it is. A passthrough field is **not
+//!   encrypted and not authenticated**. Anyone with access to the stored
+//!   record can read it, change it, or remove it, and the sealed fields
+//!   still decrypt. Use it only for values that are not secret. Treat the
+//!   value you read back as untrusted input. Never let it decide
+//!   authorisation, tenancy, or which record to trust. A value that must be
+//!   readable and also tamper-evident belongs in the context instead, as the
+//!   row id below does.
+//!
+//! The record must name every field of the plaintext, as a sealed or a
+//! passthrough field. A plaintext field it leaves out is a compile error.
+//!
+//! Encrypting a plaintext consumes it. The conversion wipes each field it
+//! seals and moves each passthrough field, so no field is copied. This is
+//! why the plaintext type must implement `Zeroize`.
+//!
+//! **A decrypted plaintext is not wiped when it is dropped.** The derive
+//! moves the fields out of the plaintext struct, and Rust does not allow
+//! that for a type that implements `Drop`. So the plaintext type cannot
+//! derive `ZeroizeOnDrop`.
+//!
+//! Wrap a decrypted value in a [`Protected`] as soon as it is returned, as
+//! the example does. Or call `zeroize` on it when you no longer need it. Do
+//! not derive these traits on the plaintext
+//! type either:
+//!
+//! - `Debug`, because it prints the plaintext.
+//! - `Clone`, because each clone is another copy to wipe.
+//! - `PartialEq`, because a derived comparison does not run in constant
+//!   time.
+//!
+//! By default, each field is sealed under its own context and nothing else.
+//! Two records of the same type can then exchange a sealed field, and both
+//! still decrypt. To prevent that, pass a context that names the row, such
+//! as its id. That context extends every field's context
+//! ([`ContextExtension`]), and the same context is needed to decrypt.
 //!
 //! ```
-//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use stack_encrypt::target::{DecryptSource, EncryptTarget};
-//! use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
+//! use stack_encrypt::{Ciphertext, Controlled, DecryptFrom, EncryptInto, Protected, StackCipher};
 //!
-//! #[derive(Debug, PartialEq, zeroize::Zeroize)]
+//! // The plaintext derives `Zeroize` and nothing else.
+//! #[derive(zeroize::Zeroize)]
 //! struct User { id: u64, name: String, email: String }
 //!
 //! #[derive(EncryptTarget, DecryptSource, serde::Serialize, serde::Deserialize)]
 //! #[stash(struct = User, context = "users")]
 //! struct EncryptedUser {
+//!     // Not encrypted and not authenticated.
 //!     #[stash(passthrough)]
 //!     id: u64,
-//!     name: Ciphertext,   // under ("users", "name")
-//!     email: Ciphertext,  // under ("users", "email")
+//!     name: Ciphertext,   // sealed under ("users", "name")
+//!     email: Ciphertext,  // sealed under ("users", "email")
 //! }
 //!
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
 //! let cipher = StackCipher::builder()
-//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
-//! let user = User { id: 42, name: "Alice".into(), email: "alice@example.com".into() };
+//! let id = 42u64;
+//! let user = User { id, name: "Alice".into(), email: "alice@example.com".into() };
 //!
-//! // One conversion, one batched key request for both sealed fields.
-//! let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
-//! assert_eq!(encrypted.id, 42);
-//! let stored = serde_json::to_vec(&encrypted).unwrap();
+//! // One call, and one batched key request for both sealed fields. The row
+//! // id extends every field's context, so the record opens only as row 42.
+//! let encrypted: EncryptedUser = user.encrypt_into_with_context(&keyset, id).await?;
+//! let stored = serde_json::to_vec(&encrypted)?;
 //!
-//! let loaded: EncryptedUser = serde_json::from_slice(&stored).unwrap();
-//! let restored = User::decrypt_from(loaded, &cipher).await?;
-//! assert_eq!(restored.email, "alice@example.com");
-//!
-//! // Bound to a row: the same extension is needed to open it.
-//! let user = User { id: 43, name: "Bob".into(), email: "bob@example.com".into() };
-//! let encrypted: EncryptedUser = user.encrypt_into_with_context(&keyset, 43u64).await?;
-//! let restored = User::decrypt_from_with_context(encrypted, &cipher, 43u64).await?;
-//! assert_eq!(restored.id, 43);
+//! let loaded: EncryptedUser = serde_json::from_slice(&stored)?;
+//! let restored = Protected::new(User::decrypt_from_with_context(loaded, &cipher, id).await?);
+//! assert_eq!(restored.risky_ref().id, id);
+//! // `restored` wipes the plaintext when it is dropped.
 //! # Ok(())
 //! # }
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! A `#[stash(plaintext = String)]` record is the other shape: every field
-//! is derived from the whole value under the one context the caller must
-//! supply ([`target::RequiredContext`]) — a [`Ciphertext`] beside an
-//! [`sem::EqualityTerm`] is a searchable scalar — and it is a field of a
-//! `struct` record like any target. A `Vec` of plaintext structs encrypts
-//! into a `Vec` of records as one batch. The derive crate's documentation
-//! lists every attribute; [`target`] describes the declaration traits a
-//! hand-written target implements, and how a record field's context is
-//! composed.
+//! A record can also be derived from one whole value, with
+//! `#[stash(plaintext = String)]`. Every field is then derived from that
+//! value, under one context that the caller must supply
+//! ([`target::RequiredContext`]). For example, a [`Ciphertext`] field and an
+//! [`sem::EqualityTerm`] field make a value you can search for. A record of
+//! this kind can be a field of a `struct` record, like any target.
 //!
-//! Existing structural plans and derives (`#[derive(EncryptFrom, DecryptInto)]`)
-//! still use [`StackCipherText`], a tree
-//! of sealed leaves, over a borrowed plaintext. Their low-level direct entry points are
-//! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their
-//! borrowed conversion helpers live in [`target::legacy`]. They are separate
-//! from the owned scalar API. An owned record is also a structural
-//! declaration (its derive emits the bridge), so it is a field of a
-//! structural record or a typed plan field too. There is no generic
-//! `Serialize` fallback.
+//! A `Vec` of plaintext structs encrypts into a `Vec` of records with one
+//! batched key request. The derive crate's documentation lists every
+//! attribute. The [`target`] module describes the traits a hand-written
+//! target implements, and how the context of a record field is built.
+//!
+//! The older structural plans and derives (`#[derive(EncryptFrom,
+//! DecryptInto)]`) encrypt a borrowed plaintext into a [`StackCipherText`].
+//! A `StackCipherText` is a tree of sealed leaves. The low-level entry
+//! points of the structural API are [`KeysetCipher::encrypt_tree`] and
+//! [`KeysetCipher::decrypt_tree`]. Its conversion helpers are in
+//! [`target::legacy`]. The structural API is separate from the owned scalar
+//! API.
+//!
+//! The owned derives also implement the
+//! structural traits. So an owned record can be a field of a structural
+//! record, or a typed field of a plan. There is no generic `Serialize`
+//! fallback.
 //!
 //! A struct sealed through the structural API, or as an owned record, is one
 //! ciphertext per field. A struct in an [`OpaqueBlob`] is one ciphertext.

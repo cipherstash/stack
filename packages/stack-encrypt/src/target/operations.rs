@@ -393,39 +393,49 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
 }
 
 impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Owned> {
-    /// [`project`](Self::project) for a plaintext handed over by value:
-    /// lift a description of a field to a description of the struct that
-    /// holds it, moving the one field out with `select`.
+    /// [`project`](Self::project) for a plaintext passed by value. It turns a
+    /// description of one field into a description of the struct that contains
+    /// the field. `select` moves that field out of the struct.
     ///
-    /// A plain function pointer, as `project`'s selector is: it captures
-    /// nothing, so it cannot reach a cipher, and it only moves. The rest of
-    /// the struct is dropped as it is; a struct with more than one field
-    /// that matters is divided with [`split`](Self::split) instead.
+    /// **The other fields of the struct are dropped without being wiped.** Use
+    /// `project_owned` only for a struct whose other fields contain nothing
+    /// secret. To encrypt a struct with more than one field, divide it with
+    /// [`split`](Self::split). `split` passes every field on to a description.
+    ///
+    /// `select` is a plain function pointer, as the selector of `project` is.
+    /// The function captures nothing, so it cannot reach a cipher. It can only
+    /// move values.
     pub fn project_owned<P: 's>(self, select: fn(P) -> S) -> Encryption<'s, P, T, K, Ctx, Owned> {
         Encryption {
             build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
         }
     }
-    /// Divide a plaintext handed over by value between two descriptions,
-    /// under the one context this description is handed, settling their key
-    /// requests in one batch: the owned sibling of [`zip`](Self::zip), for
-    /// two descriptions over two *different* parts of one value.
+    /// Divide a plaintext passed by value between two descriptions, under the
+    /// one context this description is given. The key requests of both
+    /// descriptions are made in one batch. This is the owned form of
+    /// [`zip`](Self::zip), for two descriptions over two *different* parts of
+    /// one value.
     ///
-    /// `divide` is a plain function pointer that destructures `P` into the
-    /// part `self` takes and the part `other` takes: a record's
-    /// `owned_encryption` divides the struct into its fields this way,
-    /// nesting a `split` per field, so a passthrough field is moved into
-    /// the output and never copied, and a sealed field is guarded by its own
-    /// target's description. Nothing is cloned, so `P` need not be `Clone`.
+    /// `divide` is a plain function pointer. It destructures `P` into the part
+    /// that `self` takes and the part that `other` takes. A record's
+    /// `owned_encryption` divides the struct into its fields this way, with
+    /// one `split` for each field.
     ///
-    /// `self` runs first while `other`'s part waits, and `wipe` is what
-    /// keeps that part safe meanwhile: if `self`'s description panics
-    /// before `other` has received its part, the part is handed to `wipe`
-    /// during the unwind instead of being dropped as it is. `wipe` wipes
-    /// what `other` seals and leaves what it stores in the clear, so a part
-    /// that is all passthrough takes `|_| {}`, and no `Zeroize` bound falls
-    /// on a part that is not sealed. Once `other` has its part, wiping it is
-    /// `other`'s responsibility, as it is for any owned source.
+    /// So a passthrough field is moved into the output and never copied.
+    /// Each sealed field is guarded by its own
+    /// target's description. Nothing is cloned, so `P` does not need to
+    /// implement `Clone`.
+    ///
+    /// `self` runs first, while the part for `other` waits. If the description
+    /// of `self` panics before `other` receives its part, that part is passed
+    /// to `wipe` during the unwind. Without `wipe`, the part would be dropped
+    /// as it is.
+    ///
+    /// `wipe` must wipe what `other` seals, and leave what `other` stores in
+    /// the clear. So a part with only passthrough fields takes `|_| {}`. A
+    /// part that is not sealed needs no `Zeroize` bound. Once `other` has its
+    /// part, `other` is responsible for wiping it, as it is for any owned
+    /// source.
     pub fn split<P: 's, U: 's, V: 'static>(
         self,
         other: Encryption<'s, U, V, K, Ctx, Owned>,
@@ -451,16 +461,17 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx, Ow
 }
 
 /// The part of a [`split`](Encryption::split) value that waits while the
-/// other part's description runs. Dropped before
-/// [`hand_over`](Self::hand_over), by an unwind out of that description, it
-/// hands the part to `wipe`.
+/// description of the other part runs. If it is dropped before
+/// [`hand_over`](Self::hand_over), because that description unwound, it passes
+/// the part to `wipe`.
 struct Waiting<U> {
     part: Option<U>,
     wipe: fn(&mut U),
 }
 
 impl<U> Waiting<U> {
-    /// The description before it returned: the part goes to its own.
+    /// The first description returned, so the part goes to its own
+    /// description.
     fn hand_over(mut self) -> U {
         self.part
             .take()
@@ -897,12 +908,12 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             }
         }
     }
-    /// [`zip`](Self::zip) for recovered plaintext: when the right side
-    /// fails after its key arrived, or panics in its conversion, the
-    /// plaintext the left side recovered is wiped rather than dropped as it
-    /// is. A record deriving `DecryptSource` opens its fields through here,
-    /// so a field opened before a later field is refused does not outlive
-    /// the refusal unwiped.
+    /// [`zip`](Self::zip) for recovered plaintext. The right side can fail
+    /// after its key arrives, or panic in its conversion. The plaintext that
+    /// the left side recovered is then wiped, not dropped as it is. A record
+    /// that derives `DecryptSource` opens its fields through this method. So a
+    /// field opened before a later field is refused is wiped when the refusal
+    /// is returned.
     pub fn zip_wiping<U: 'static>(self, other: Decryption<U, K>) -> Decryption<(T, U), K>
     where
         T: zeroize::Zeroize,
@@ -1309,12 +1320,14 @@ where
     }
 }
 
-// The owned declarations of the same leaves. Each requires the context its
-// operation needs, wrapped as the caller's required input: a ciphertext
-// an `AeadContext`, a term a `CallerContext`. Omission is not available —
-// a structural leaf takes no empty context — and `Default` grants nothing.
-// The borrowed form clones a consumed plaintext, as the legacy declaration
-// does; the owned form's default guards and wipes the value instead.
+// The owned declarations of the same leaves. Each one requires the context its
+// operation needs, as the caller's required input: a ciphertext needs an
+// `AeadContext`, and a term needs a `CallerContext`. A call cannot leave the
+// context out, because a structural leaf takes no empty context. `Default`
+// does not change that.
+//
+// The borrowed form clones a consumed plaintext, as the structural declaration
+// does. The owned form's default guards the value and wipes it instead.
 impl<S: crate::Encrypt + Clone + zeroize::Zeroize> EncryptTarget<S> for StackCipherText {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
@@ -1421,10 +1434,10 @@ where
         }
     }
 }
-// Opened through `all_wiping`, as the owned `Vec<T>` is: an element that
-// fails after its key arrived fails the column, and the elements recovered
-// before it are wiped rather than dropped as they are. That is what the
-// `P: Zeroize` bound buys; every plaintext the engine opens into carries it.
+// Opened through `all_wiping`, as the owned `Vec<T>` is. If an element fails
+// after its key arrives, the column fails, and the elements recovered before
+// it are wiped. That is why `P` must implement `Zeroize`. Every plaintext the
+// engine decrypts into already implements it.
 impl<P: zeroize::Zeroize + 'static, T: DecryptInto<P> + 'static> DecryptInto<Vec<P>> for Vec<T>
 where
     T::Context: Clone + 'static,

@@ -485,8 +485,8 @@ async fn a_failed_field_fails_the_derived_record_before_any_io() {
 
 // --- Structs: each field from one field of the plaintext, under its own context
 
-// `Zeroize`: a column of these opens through the wiping collection path,
-// which wipes the rows recovered before a late failure.
+// `Zeroize` is required: a column of these decrypts through the wiping
+// collection path. That path wipes the rows recovered before a late failure.
 #[derive(Debug, Clone, PartialEq, Eq, zeroize::Zeroize)]
 struct User {
     age: u32,

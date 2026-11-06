@@ -1,14 +1,18 @@
-//! Emit an owned `EncryptTarget` declaration, with the structural
-//! `EncryptFrom` beside it as a bridge, so the record is a field of a plan
-//! or of a structural record as well as an owned target.
+//! Emit an owned `EncryptTarget` declaration. Also emit the structural
+//! `EncryptFrom`. Then the record can be a field of a plan or of a structural
+//! record, as well as an owned target.
 //!
-//! The derive composes the field declarations directly: a `struct = ..`
-//! record picks each field out of the plaintext (`project`, borrowed; a
-//! chain of `split`s, owned) and runs the field's own target under the pair
-//! the record infers; a `plaintext = T` record runs every field's target
-//! over the whole value under the one context the caller supplies. Which
-//! context a field may be handed is the field target's `ContextInput`, so a
-//! target that cannot take the record's context is refused at that field.
+//! The derive composes the declarations of the fields:
+//!
+//! - A `struct = ..` record takes each field out of the plaintext and runs the
+//!   field's own target under the field's context. The borrowed form uses
+//!   `project`. The owned form uses a chain of `split` calls.
+//! - A `plaintext = T` record runs every field's target over the whole value,
+//!   under the one context the caller supplies.
+//!
+//! The field target's `ContextInput` decides which context the field can be
+//! given. So a target that cannot take the record's context is a compile error
+//! at that field.
 use crate::shape::{fresh_lifetime, trait_impl, ByField, Field, Flavor, Kind, OwnContext, Record};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
@@ -27,9 +31,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote!(#emitted #decryptable))
 }
 
-/// The caller's input on the encrypt side: an extension for a record whose
-/// fields carry their own contexts, the required `NonEmpty<T>` a record
-/// stores, otherwise the required caller context (or the `context_type`).
+/// The caller's input on the encrypt side. A record whose fields have their
+/// own contexts takes an extension. A record that stores its context requires
+/// the `NonEmpty<T>` it stores. Any other record requires the caller context,
+/// or the type `context_type` names.
 pub(crate) fn encrypt_input(record: &Record) -> Type {
     let krate = &record.krate;
     if let Some(field) = record.context_field() {
@@ -43,16 +48,17 @@ pub(crate) fn encrypt_input(record: &Record) -> Type {
     }
 }
 
-/// The context every field of a `plaintext` record is run under: what the
-/// record is handed, or the `CallerContext` built from the stored one.
+/// The context that every field of a `plaintext` record runs under. This is
+/// the context the record is given, or the `CallerContext` built from the
+/// stored context.
 pub(crate) fn threaded_input(record: &Record) -> Type {
     let krate = &record.krate;
     let caller = caller_context(record);
     parse_quote!(#krate::target::RequiredContext<#caller>)
 }
 
-/// The bare context type a `plaintext` record's fields take: the
-/// `context_type` named, or `CallerContext`.
+/// The context type that the fields of a `plaintext` record take. This is the
+/// type `context_type` names, or `CallerContext`.
 fn caller_context(record: &Record) -> Type {
     let krate = &record.krate;
     record
@@ -61,8 +67,8 @@ fn caller_context(record: &Record) -> Type {
         .unwrap_or_else(|| parse_quote!(#krate::target::CallerContext))
 }
 
-/// A where-predicate carrying the span of the field it is about, so what a
-/// field's type refuses is reported at that field.
+/// A where-predicate with the span of the field it is about. So an error about
+/// what the field's type refuses is reported at that field.
 pub(crate) fn spanned_predicate(span: Span, tokens: TokenStream) -> WherePredicate {
     let tokens = quote_spanned!(span=> #tokens);
     syn::parse2(tokens).unwrap_or_else(|error| {
@@ -71,7 +77,8 @@ pub(crate) fn spanned_predicate(span: Span, tokens: TokenStream) -> WherePredica
 }
 
 /// The fields the encryption produces, in declaration order: the derived
-/// fields and the passthrough fields. Each gets an output local.
+/// fields and the passthrough fields. Each field gets a local variable for its
+/// output.
 fn participating(record: &Record) -> Vec<&Field> {
     record
         .fields
@@ -80,7 +87,8 @@ fn participating(record: &Record) -> Vec<&Field> {
         .collect()
 }
 
-/// `a.zip(b).zip(c)` over the locals, and the pattern binding each back.
+/// `a.zip(b).zip(c)` over the local variables, and the pattern that binds each
+/// one back.
 fn zip_chain(locals: &[&Ident]) -> (TokenStream, TokenStream) {
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
@@ -96,8 +104,8 @@ fn zip_chain(locals: &[&Ident]) -> (TokenStream, TokenStream) {
     (chain, pattern)
 }
 
-/// The struct literal filling every field: participating fields from their
-/// locals, `default` fields with their defaults.
+/// The struct literal that fills every field. A participating field takes its
+/// local variable, and a `default` field takes its default.
 fn literal(record: &Record, stored: Option<TokenStream>) -> TokenStream {
     let assignments = record.fields.iter().map(|field| {
         let member = &field.member;
@@ -115,18 +123,21 @@ fn literal(record: &Record, stored: Option<TokenStream>) -> TokenStream {
     quote!(Self { #(#assignments),* })
 }
 
-/// `#[stash(struct = User, context = "users")]`: each field picked out of
-/// the plaintext and run by its own target under the pair the record
-/// infers; a passthrough field carried through. Borrowed, the fields are
-/// projected; owned, the struct is divided between them with `split`, so a
-/// passthrough field is moved and a sealed field is guarded by its target.
+/// `#[stash(struct = User, context = "users")]`. Each field is taken out of
+/// the plaintext and run by its own target, under the field's context. A
+/// passthrough field is passed through.
+///
+/// - The borrowed form projects each field.
+/// - The owned form divides the struct between the fields with `split`. A
+///   passthrough field is moved. Each sealed field is guarded by its own
+///   target.
 fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
     let krate = &record.krate;
     let source = &record.plaintexts[0];
     let fields = participating(record);
     let locals: Vec<&Ident> = fields.iter().map(|field| &field.local).collect();
 
-    // Borrowed: `project` a reference to the field.
+    // The borrowed form: `project` a reference to the field.
     let borrowed: Vec<TokenStream> = fields
         .iter()
         .map(|field| {
@@ -158,8 +169,8 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         #zipped.map(move |#zip_pattern| #value).accepting()
     };
 
-    // Owned: each field's own owned description, the struct divided
-    // between them right to left.
+    // The owned form: each field's own owned description, with the struct
+    // divided between them from right to left.
     let owned: Vec<TokenStream> = fields
         .iter()
         .map(|field| {
@@ -182,12 +193,14 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
             }
         })
         .collect();
-    // The plaintext destructured into one local per participating field,
-    // exhaustively: the owned form replaces the guard over the whole value,
-    // so a plaintext field the record neither seals nor carries would be
-    // dropped unwiped. Without `..`, such a field is refused at compile
-    // time ("pattern does not mention field"), at the `struct = ..` path, as
-    // the decrypt side already refuses a plaintext it cannot rebuild.
+    // Destructure the plaintext into one local variable for each participating
+    // field. The pattern has no `..`, so it must name every field.
+    //
+    // The owned form does not guard the whole value. So a plaintext field that the
+    // record neither seals nor moves would be dropped without being wiped.
+    // Such a field is a compile error at the `struct = ..` path ("pattern does
+    // not mention field"). The decrypt side already refuses a plaintext that
+    // it cannot rebuild.
     let bindings = fields.iter().map(|field| {
         let from = field.from().unwrap_or_else(|| unreachable!("a `from`"));
         let local = &field.local;
@@ -202,11 +215,11 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
     let split = match locals.as_slice() {
         [single] => quote!(#single.project_owned(#divide)),
         [first, rest @ ..] => {
-            // `rest` as one description over the nested tuple of its parts,
-            // divided by identity; then the struct divided into `first` and
-            // that tuple. Each `split` is told how to wipe the parts still
-            // waiting for their descriptions, should an earlier field's
-            // description panic.
+            // Build `rest` as one description over the nested tuple of its
+            // parts, divided by identity. Then divide the struct into `first`
+            // and that tuple. Each `split` is given the function that wipes
+            // the parts still waiting for their descriptions, in case an
+            // earlier field's description panics.
             let mut tail = {
                 let last = rest[rest.len() - 1];
                 quote!(#last)
@@ -256,11 +269,13 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
     quote!(#encrypt_target #bridge)
 }
 
-/// The `wipe` a `split` is handed for the parts still waiting, the nested
-/// tuple of `waiting`: every sealed field in it wiped, every passthrough
-/// field left as it is. A sealed field's plaintext is `Zeroize` already, as
-/// every `EncryptTarget` source is, so this adds no bound; a passthrough
-/// field is stored in the clear and takes none.
+/// The `wipe` function that a `split` is given for the parts still waiting.
+/// Those parts are the nested tuple `waiting`. The function wipes every sealed
+/// field in the tuple, and leaves every passthrough field as it is.
+///
+/// The plaintext of a sealed field already implements `Zeroize`, as the source
+/// of every `EncryptTarget` does, so this adds no bound. A passthrough field
+/// is stored in the clear, so it needs no bound.
 fn wipe_waiting(krate: &syn::Path, waiting: &[&Field]) -> TokenStream {
     let mut wipes = Vec::new();
     let mut base = quote!((*__parts));
@@ -287,8 +302,8 @@ fn wipe_waiting(krate: &syn::Path, waiting: &[&Field]) -> TokenStream {
     }
 }
 
-/// The nested tuple `(a, (b, (c, d)))` of the locals: how `split` divides
-/// a struct, one part per step.
+/// The nested tuple `(a, (b, (c, d)))` of the local variables. This is how
+/// `split` divides a struct, one part at each step.
 fn nested_tuple(locals: &[&Ident]) -> TokenStream {
     match locals {
         [] => quote!(()),
@@ -305,10 +320,10 @@ fn own_expr(krate: &syn::Path, context: &OwnContext) -> TokenStream {
     quote!(#krate::nonempty!(#prefix).with(#field))
 }
 
-/// `#[stash(plaintext = T)]` (or none): every field's target run over the
-/// whole value under the one required context, zipped. A record with a
-/// `context_field` requires the `NonEmpty<T>` it stores and carries it out
-/// beside the outputs.
+/// `#[stash(plaintext = T)]`, or no record attribute. Every field's target
+/// runs over the whole value, under the one required context, and the results
+/// are zipped. A record with a `context_field` requires the `NonEmpty<T>` it
+/// stores, and returns it beside the outputs.
 fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> TokenStream {
     let krate = &record.krate;
     let input_type = encrypt_input(record);
@@ -328,11 +343,12 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
         }
         let predicates = &mut generics.make_where_clause().predicates;
         predicates.push(parse_quote!(Self: 'static));
-        // Per field, spanned at the field: a target that does not accept
-        // the record's context is refused there. A generic impl states the
-        // same per field in its where clause, which the body is checked
-        // against; a concrete one lets the body report at the field alone,
-        // since a where clause's failure is reported at the derive.
+        // Check each field, with the error at the field: a target that does
+        // not accept the record's context is refused there. A generic impl
+        // states the same check for each field in its where clause, and the
+        // body is checked against it. A concrete impl lets the body report the
+        // error at the field alone. That matters because a failure in a where
+        // clause is reported at the derive.
         let descriptions: Vec<TokenStream> = fields
             .iter()
             .map(|field| {
@@ -400,10 +416,10 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
     quote!(#(#impls)*)
 }
 
-/// The structural `EncryptFrom` bridge: the record's legacy context,
-/// converted into its owned input at the root. Emitted beside every owned
-/// declaration so an owned record is a field of a plan or of a structural
-/// record without a second derive.
+/// The structural `EncryptFrom`. The record's structural context is converted
+/// into its owned input at the root. This impl is emitted beside every owned
+/// declaration. So an owned record can be a field of a plan or of a structural
+/// record, with no second derive.
 fn bridge(
     input: &DeriveInput,
     record: &Record,
