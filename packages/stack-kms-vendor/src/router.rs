@@ -12,12 +12,13 @@ use uuid::Uuid;
 use crate::source::VendorKeySource;
 use crate::vendor::KeyVendorBackend;
 
-/// ZeroKMS and one key vendor backend, as one key source that routes each
-/// request by its keyset (ADR-0009).
+/// ZeroKMS and at most one key vendor backend, as one key source that
+/// routes each request by its keyset (ADR-0009).
 ///
 /// A cipher holds ZeroKMS and **at most one** key vendor backend. The type
-/// has room for exactly one, and [`VendorKeySource::new`] refuses records
-/// that name a second vendor
+/// has room for one or none: [`new`](Self::new) gives it one, and
+/// [`zerokms_only`](Self::zerokms_only) none. [`VendorKeySource::new`]
+/// refuses records that name a second vendor
 /// ([`RecordError::SecondVendor`](crate::RecordError::SecondVendor)).
 ///
 /// Routing:
@@ -29,6 +30,7 @@ use crate::vendor::KeyVendorBackend;
 ///   other name goes to ZeroKMS.
 /// * Naming no keyset is ZeroKMS's default keyset, or the vendor's default
 ///   keyset after [`with_vendor_default`](Self::with_vendor_default).
+/// * With no vendor, every request goes to ZeroKMS.
 ///
 /// The cipher reads [`keyset_backend`](DataKeySource::keyset_backend) to
 /// refuse a leaf that names the wrong backend before any key call, and to
@@ -36,7 +38,7 @@ use crate::vendor::KeyVendorBackend;
 /// between the two backends in either direction.
 pub struct KeyRouter<Z, B> {
     zerokms: Z,
-    vendor: VendorKeySource<B>,
+    vendor: Option<VendorKeySource<B>>,
     vendor_default: bool,
 }
 
@@ -55,7 +57,17 @@ impl<Z, B: KeyVendorBackend> KeyRouter<Z, B> {
     pub fn new(zerokms: Z, vendor: VendorKeySource<B>) -> Self {
         Self {
             zerokms,
-            vendor,
+            vendor: Some(vendor),
+            vendor_default: false,
+        }
+    }
+
+    /// Send every request to `zerokms`: a client with no key vendor
+    /// backend.
+    pub fn zerokms_only(zerokms: Z) -> Self {
+        Self {
+            zerokms,
+            vendor: None,
             vendor_default: false,
         }
     }
@@ -64,7 +76,8 @@ impl<Z, B: KeyVendorBackend> KeyRouter<Z, B> {
     /// record, or the one set with
     /// [`VendorKeySource::with_default_keyset`]), not ZeroKMS's. For a
     /// client that has a key vendor backend and no ZeroKMS credentials: its
-    /// ZeroKMS side is then a source that refuses every request.
+    /// ZeroKMS side is then a source that refuses every request. A router
+    /// with no vendor ([`zerokms_only`](Self::zerokms_only)) ignores it.
     pub fn with_vendor_default(mut self) -> Self {
         self.vendor_default = true;
         self
@@ -75,23 +88,40 @@ impl<Z, B: KeyVendorBackend> KeyRouter<Z, B> {
         &self.zerokms
     }
 
-    /// The key vendor backend's key source.
-    pub fn vendor(&self) -> &VendorKeySource<B> {
-        &self.vendor
+    /// The key vendor backend's key source, or `None` when the router has
+    /// no vendor.
+    pub fn vendor(&self) -> Option<&VendorKeySource<B>> {
+        self.vendor.as_ref()
     }
 
-    fn is_vendor_id(&self, keyset: Option<Uuid>) -> bool {
+    /// The vendor, when it is the default.
+    fn default_vendor(&self) -> Option<&VendorKeySource<B>> {
+        self.vendor.as_ref().filter(|_| self.vendor_default)
+    }
+
+    /// The vendor, when one of its records names `keyset`.
+    fn vendor_with_keyset(&self, keyset: Uuid) -> Option<&VendorKeySource<B>> {
+        self.vendor
+            .as_ref()
+            .filter(|vendor| vendor.has_keyset(keyset))
+    }
+
+    /// The vendor, when `keyset` routes to it.
+    fn vendor_for_id(&self, keyset: Option<Uuid>) -> Option<&VendorKeySource<B>> {
         match keyset {
-            None => self.vendor_default,
-            Some(keyset) => self.vendor.has_keyset(keyset),
+            None => self.default_vendor(),
+            Some(keyset) => self.vendor_with_keyset(keyset),
         }
     }
 
-    fn is_vendor_selection(&self, keyset: Option<&IdentifiedBy>) -> bool {
+    /// The vendor, when the selection `keyset` routes to it.
+    fn vendor_for_selection(&self, keyset: Option<&IdentifiedBy>) -> Option<&VendorKeySource<B>> {
         match keyset {
-            None => self.vendor_default,
-            Some(IdentifiedBy::Uuid(id)) => self.vendor.has_keyset(*id),
-            Some(IdentifiedBy::Name(name)) => self.vendor.has_name(name),
+            None => self.default_vendor(),
+            Some(IdentifiedBy::Uuid(id)) => self.vendor_with_keyset(*id),
+            Some(IdentifiedBy::Name(name)) => {
+                self.vendor.as_ref().filter(|vendor| vendor.has_name(name))
+            }
         }
     }
 }
@@ -107,14 +137,17 @@ where
         keyset_id: Option<Uuid>,
         unverified_context: Option<Cow<'_, UnverifiedContext>>,
     ) -> Result<Vec<DataKeyWithTag>, Error> {
-        if self.is_vendor_id(keyset_id) {
-            self.vendor
-                .generate_keys(payloads, keyset_id, unverified_context)
-                .await
-        } else {
-            self.zerokms
-                .generate_keys(payloads, keyset_id, unverified_context)
-                .await
+        match self.vendor_for_id(keyset_id) {
+            Some(vendor) => {
+                vendor
+                    .generate_keys(payloads, keyset_id, unverified_context)
+                    .await
+            }
+            None => {
+                self.zerokms
+                    .generate_keys(payloads, keyset_id, unverified_context)
+                    .await
+            }
         }
     }
 
@@ -124,49 +157,48 @@ where
         keyset_id: Option<Uuid>,
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, Error> {
-        if self.is_vendor_id(keyset_id) {
-            self.vendor
-                .retrieve_keys(payloads, keyset_id, unverified_context)
-                .await
-        } else {
-            self.zerokms
-                .retrieve_keys(payloads, keyset_id, unverified_context)
-                .await
+        match self.vendor_for_id(keyset_id) {
+            Some(vendor) => {
+                vendor
+                    .retrieve_keys(payloads, keyset_id, unverified_context)
+                    .await
+            }
+            None => {
+                self.zerokms
+                    .retrieve_keys(payloads, keyset_id, unverified_context)
+                    .await
+            }
         }
     }
 
     /// The backend of the default keyset: ZeroKMS, or the vendor after
-    /// [`with_vendor_default`](Self::with_vendor_default). Per keyset, see
-    /// [`keyset_backend`](DataKeySource::keyset_backend).
+    /// [`with_vendor_default`](KeyRouter::with_vendor_default). Per keyset,
+    /// see [`keyset_backend`](DataKeySource::keyset_backend).
     fn key_backend(&self) -> KeyBackend {
-        if self.vendor_default {
-            self.vendor.key_backend()
-        } else {
-            self.zerokms.key_backend()
+        match self.default_vendor() {
+            Some(vendor) => vendor.key_backend(),
+            None => self.zerokms.key_backend(),
         }
     }
 
     fn keyset_backend(&self, keyset_id: Uuid) -> KeyBackend {
-        if self.vendor.has_keyset(keyset_id) {
-            self.vendor.key_backend()
-        } else {
-            self.zerokms.keyset_backend(keyset_id)
+        match self.vendor_with_keyset(keyset_id) {
+            Some(vendor) => vendor.key_backend(),
+            None => self.zerokms.keyset_backend(keyset_id),
         }
     }
 
     fn key_mode(&self, keyset_id: Uuid) -> Option<KeyMode> {
-        if self.vendor.has_keyset(keyset_id) {
-            self.vendor.key_mode(keyset_id)
-        } else {
-            self.zerokms.key_mode(keyset_id)
+        match self.vendor_with_keyset(keyset_id) {
+            Some(vendor) => vendor.key_mode(keyset_id),
+            None => self.zerokms.key_mode(keyset_id),
         }
     }
 
     async fn load_settle_index_key(&self, keyset_id: Uuid) -> Result<IndexKey, Error> {
-        if self.vendor.has_keyset(keyset_id) {
-            self.vendor.load_settle_index_key(keyset_id).await
-        } else {
-            self.zerokms.load_settle_index_key(keyset_id).await
+        match self.vendor_with_keyset(keyset_id) {
+            Some(vendor) => vendor.load_settle_index_key(keyset_id).await,
+            None => self.zerokms.load_settle_index_key(keyset_id).await,
         }
     }
 }
@@ -180,10 +212,9 @@ where
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<(Uuid, IndexKey), Error> {
-        if self.is_vendor_selection(keyset_id.as_ref()) {
-            self.vendor.load_index_key(keyset_id).await
-        } else {
-            self.zerokms.load_index_key(keyset_id).await
+        match self.vendor_for_selection(keyset_id.as_ref()) {
+            Some(vendor) => vendor.load_index_key(keyset_id).await,
+            None => self.zerokms.load_index_key(keyset_id).await,
         }
     }
 
@@ -191,10 +222,9 @@ where
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<LoadedIndexKey, Error> {
-        if self.is_vendor_selection(keyset_id.as_ref()) {
-            self.vendor.load_index_key_with_lifetime(keyset_id).await
-        } else {
-            self.zerokms.load_index_key_with_lifetime(keyset_id).await
+        match self.vendor_for_selection(keyset_id.as_ref()) {
+            Some(vendor) => vendor.load_index_key_with_lifetime(keyset_id).await,
+            None => self.zerokms.load_index_key_with_lifetime(keyset_id).await,
         }
     }
 
@@ -202,10 +232,9 @@ where
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<SelectedKeyset, Error> {
-        if self.is_vendor_selection(keyset_id.as_ref()) {
-            self.vendor.select_keyset(keyset_id).await
-        } else {
-            self.zerokms.select_keyset(keyset_id).await
+        match self.vendor_for_selection(keyset_id.as_ref()) {
+            Some(vendor) => vendor.select_keyset(keyset_id).await,
+            None => self.zerokms.select_keyset(keyset_id).await,
         }
     }
 }

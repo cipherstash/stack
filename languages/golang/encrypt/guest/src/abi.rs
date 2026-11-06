@@ -111,7 +111,8 @@ use stack_encrypt::ErrorPayload;
 /// ZeroKMS is the host-transport client with host-supplied tokens — or, in
 /// the `deterministic-kms` test build, the seeded source the record fixture
 /// was sealed under. The vendor is [`GuestVendor`], over the step loop; with
-/// none configured it holds no keyset and every request goes to ZeroKMS.
+/// none configured the router has no vendor and every request goes to
+/// ZeroKMS.
 #[cfg(not(feature = "deterministic-kms"))]
 type GuestZeroKms = crate::zerokms::MaybeZeroKms<
     stack_kms::StackKms<crate::host::HostTokenStrategy, crate::host::WasiHostConnection>,
@@ -235,15 +236,23 @@ fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
         return Err(init_out_of_order());
     }
 
-    let vendor = build_vendor(config.vendor)?;
-    let kms = match config.client_key {
+    let vendor = config.vendor.map(build_vendor).transpose()?;
+    let kms = match (config.client_key, vendor) {
         // A key vendor backend and no ZeroKMS (CIP-5311): no ZeroKMS client
         // is built, no token is asked for, and the default keyset is the
         // vendor's.
-        None => {
+        (None, Some(vendor)) => {
             stack_kms_vendor::KeyRouter::new(MaybeZeroKms::Absent, vendor).with_vendor_default()
         }
-        Some(client_key) => {
+        // `parse_config` asks for the ZeroKMS keys when there is no key
+        // vendor backend, so this config does not parse. Refuse it here
+        // too, rather than build a client with no key source.
+        (None, None) => {
+            return Err(malformed(
+                "the config has no ZeroKMS client key and no key vendor backend",
+            ))
+        }
+        (Some(client_key), vendor) => {
             // One request at a time: a step hands the host one request, and the
             // first version of the step loop keeps it that way. Raising it later
             // changes no ABI: a step's request list can hold several.
@@ -271,7 +280,7 @@ fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
                     STATUS_KMS_TRANSPORT,
                 )
             })?;
-            stack_kms_vendor::KeyRouter::new(MaybeZeroKms::Present(zerokms), vendor)
+            router(MaybeZeroKms::Present(zerokms), vendor)
         }
     };
     let mut builder = StackCipher::builder().kms(kms);
@@ -311,9 +320,9 @@ fn cipher_init(config: InitConfig) -> Result<Vec<u8>, u32> {
             "the deterministic build's default keyset is the seeded source's",
         ));
     }
-    let kms = stack_kms_vendor::KeyRouter::new(
+    let kms = router(
         crate::zerokms::MaybeZeroKms::Present(config.seed.source()),
-        build_vendor(config.vendor)?,
+        config.vendor.map(build_vendor).transpose()?,
     );
     let builder = StackCipher::builder().kms(kms);
     let initialising = Initialising::begin();
@@ -353,6 +362,18 @@ impl Drop for Initialising {
     }
 }
 
+/// The key source of a client with ZeroKMS: ZeroKMS and the key vendor
+/// backend, or ZeroKMS alone when none is configured.
+fn router(
+    zerokms: GuestZeroKms,
+    vendor: Option<stack_kms_vendor::VendorKeySource<GuestVendor>>,
+) -> GuestKms {
+    match vendor {
+        Some(vendor) => stack_kms_vendor::KeyRouter::new(zerokms, vendor),
+        None => stack_kms_vendor::KeyRouter::zerokms_only(zerokms),
+    }
+}
+
 /// Build the configured key vendor backend over the step loop: its requests,
 /// credentials and backoff waits all pause the operation for the host (no
 /// vendor call here: records are parsed and checked, keys are unwrapped on
@@ -360,7 +381,7 @@ impl Drop for Initialising {
 /// `STATUS_ENCODING` naming its config key; a refused keyset record keeps
 /// its error for `se_last_error` ([`crate::status::fail_record`]).
 fn build_vendor(
-    config: Option<crate::vendor::VendorConfig>,
+    config: crate::vendor::VendorConfig,
 ) -> Result<stack_kms_vendor::VendorKeySource<GuestVendor>, u32> {
     use crate::vendor::BuildError;
     crate::vendor::build(
