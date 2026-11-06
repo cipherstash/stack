@@ -24,6 +24,8 @@ use crate::{AuthError, AuthStrategy, ServiceToken};
 ///    to verify every issued token.
 /// 2. If a token store file exists at the default location
 ///    (`~/.cipherstash/auth.json`), a [`DeviceSessionStrategy`] is created from it.
+///    If a workspace CRN is supplied, the session of that workspace is used
+///    (not the CLI's current one) and every token is verified against it.
 /// 3. Otherwise, [`AuthError::NotAuthenticated`] is returned.
 ///
 /// # Examples
@@ -93,7 +95,8 @@ impl AutoStrategy {
     ///
     /// Resolution order:
     /// 1. `CS_CLIENT_ACCESS_KEY` env var → [`AccessKeyStrategy`]
-    /// 2. `~/.cipherstash/auth.json` → [`DeviceSessionStrategy`]
+    /// 2. `~/.cipherstash/auth.json` → [`DeviceSessionStrategy`] (the workspace
+    ///    named by `CS_WORKSPACE_CRN` if set, otherwise the current one)
     /// 3. [`AuthError::NotAuthenticated`]
     pub fn detect() -> Result<Self, AuthError> {
         Self::builder().detect()
@@ -123,16 +126,22 @@ impl AutoStrategy {
             return Ok(Self::AccessKey(strategy));
         }
 
-        // 2. OAuth token from disk (in the current workspace directory)
+        // 2. OAuth token from disk. A supplied CRN pins the workspace, so the
+        //    CLI's current workspace is irrelevant; without one, use it.
         if let Some(store) = store {
-            let has_token = store
-                .current_workspace_store()
+            let ws_store = match &crn {
+                Some(crn) => store.workspace_store(crn.workspace_id.as_str()),
+                None => store.current_workspace_store(),
+            };
+            let has_token = ws_store
                 .map(|ws| ws.exists_profile::<Token>())
                 .unwrap_or(false);
             if has_token {
-                let strategy = DeviceSessionStrategy::with_profile(store)
-                    .maybe_transport(transport)
-                    .build()?;
+                let mut builder = DeviceSessionStrategy::with_profile(store);
+                if let Some(crn) = &crn {
+                    builder = builder.workspace_crn(crn);
+                }
+                let strategy = builder.maybe_transport(transport).build()?;
                 return Ok(Self::DeviceSession(strategy));
             }
         }
@@ -363,6 +372,31 @@ mod tests {
 
             assert!(result.is_ok());
             assert!(matches!(result.unwrap(), AutoStrategy::DeviceSession(_)));
+        }
+
+        #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
+        fn crn_selects_that_workspaces_session_over_the_current_one() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = write_token_store(dir.path());
+            // The CLI user switches to another workspace with no session.
+            store.init_workspace("AAAAAAAAAAAAAAAA").unwrap();
+
+            let result = AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None);
+
+            assert!(matches!(result, Ok(AutoStrategy::DeviceSession(_))));
+        }
+
+        #[test]
+        fn crn_without_a_session_for_that_workspace_is_not_authenticated() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+            store.init_workspace("AAAAAAAAAAAAAAAA").unwrap();
+
+            // Current workspace has a token, but the CRN names another.
+            let result = AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None);
+
+            assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
 
         #[test]
