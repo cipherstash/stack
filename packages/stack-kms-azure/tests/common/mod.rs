@@ -1,10 +1,11 @@
-//! Shared test support: fixtures, a replaying transport, the test-only RSA
-//! key, an RFC 3394 key wrap, and an in-process emulation of the Key Vault
-//! and Managed HSM key API and the Entra ID token endpoint.
+//! Shared test support: the test-only RSA key, an RFC 3394 key wrap, and an
+//! in-process emulation of the Key Vault and Managed HSM key API and the
+//! Entra ID token endpoint. The fixture and replay harness is
+//! `stack_kms_vendor::replay`, shared by every vendor crate.
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -15,9 +16,13 @@ use base64ct::{Base64, Base64UrlUnpadded, Encoding};
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::sha2::Sha256;
 use rsa::{Oaep, RsaPrivateKey};
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use stack_kms_azure::{AccessToken, AzureKeyVault, AzureKeyVaultConfig, KeyId};
+use stack_kms_vendor::replay::body_json;
+// Each test binary uses a different part of the harness.
+#[allow(unused_imports)]
+pub use stack_kms_vendor::replay::{Fixture, FixtureRequest, FixtureResponse, Fixtures, Replay};
 use stack_kms_vendor::{TransportError, VendorRequest, VendorResponse, VendorTransport};
 use web_time::{SystemTime, UNIX_EPOCH};
 
@@ -123,136 +128,16 @@ pub fn kw_unwrap(vendor_key: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>> {
     (a == KW_IV).then(|| r.concat())
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct FixtureRequest {
-    pub method: String,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Value,
-}
+/// The fixtures of this crate.
+pub const FIXTURES: Fixtures =
+    Fixtures::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"));
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct FixtureResponse {
-    pub status: u16,
-    #[serde(default)]
-    pub headers: Vec<(String, String)>,
-    pub body: Value,
-}
-
-impl FixtureResponse {
-    pub fn to_response(&self) -> VendorResponse {
-        let body = match &self.body {
-            Value::String(text) => text.clone().into_bytes(),
-            Value::Null => Vec::new(),
-            other => serde_json::to_vec(other).unwrap(),
-        };
-        let mut response = VendorResponse::new(self.status, body);
-        for (name, value) in &self.headers {
-            response = response.header(name, value);
-        }
-        response
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Fixture {
-    pub request: FixtureRequest,
-    pub response: FixtureResponse,
-}
-
-pub fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {
-    let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}"))
-}
-
-fn body_json(body: &[u8]) -> Value {
-    if body.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into()))
-    }
-}
-
-/// A transport that checks each request against a fixed one and answers
-/// with the fixed response.
-#[derive(Default)]
-pub struct Replay {
-    exchanges: Mutex<VecDeque<(Option<FixtureRequest>, VendorResponse)>>,
-    sleeps: Mutex<Vec<Duration>>,
-}
-
-impl Replay {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Expect each exchange of a fixture file, in order.
-    pub fn expect_all(self, fixtures: Vec<Fixture>) -> Self {
-        for fixture in fixtures {
-            let response = fixture.response.to_response();
-            self.exchanges
-                .lock()
-                .unwrap()
-                .push_back((Some(fixture.request), response));
-        }
-        self
-    }
-
-    /// Answer the next request, whatever it is, with `response`.
-    pub fn answer(self, response: VendorResponse) -> Self {
-        self.exchanges.lock().unwrap().push_back((None, response));
-        self
-    }
-
-    pub fn is_done(&self) -> bool {
-        self.exchanges.lock().unwrap().is_empty()
-    }
-
-    pub fn sleeps(&self) -> Vec<Duration> {
-        self.sleeps.lock().unwrap().clone()
-    }
-}
-
-impl VendorTransport for Replay {
-    async fn send(&self, request: VendorRequest) -> Result<VendorResponse, TransportError> {
-        let (expected, response) = self
-            .exchanges
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("a request the fixtures do not expect");
-        if let Some(expected) = expected {
-            let actual = json!({
-                "method": request.method,
-                "url": request.url,
-                "headers": request.headers,
-                "body": body_json(&request.body),
-            });
-            let wanted = json!({
-                "method": expected.method,
-                "url": expected.url,
-                "headers": expected.headers,
-                "body": expected.body,
-            });
-            assert_eq!(
-                actual,
-                wanted,
-                "the request differs from the fixture; actual:\n{}",
-                serde_json::to_string_pretty(&actual).unwrap()
-            );
-        }
-        Ok(response)
-    }
-
-    async fn sleep(&self, duration: Duration) {
-        self.sleeps.lock().unwrap().push(duration);
-    }
+pub fn load<T: DeserializeOwned>(name: &str) -> T {
+    FIXTURES.load(name)
 }
 
 pub fn replay(name: &str) -> Replay {
-    Replay::new().expect_all(load(name))
+    FIXTURES.replay(name)
 }
 
 /// A client with the default configuration over `transport`, with the

@@ -1,20 +1,27 @@
-//! Shared test support: recorded fixtures, a replaying transport, a
-//! recording transport, and an in-process emulation of the Vault Transit
-//! API.
+//! Shared test support: the fixture address, token and keys, and an
+//! in-process emulation of the Vault Transit API. The fixture, replay and
+//! recording harness is `stack_kms_vendor::replay`, shared by every vendor
+//! crate.
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64ct::{Base64, Encoding};
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use stack_kms_vault::{VaultConfig, VaultToken, VaultTransit};
+use stack_kms_vendor::replay::body_json;
+// Each test binary uses a different part of the harness.
+#[allow(unused_imports)]
+pub use stack_kms_vendor::replay::{
+    Fixture, FixtureRequest, FixtureResponse, Fixtures, Recording, Replay,
+};
 use stack_kms_vendor::{TransportError, VendorRequest, VendorResponse, VendorTransport};
 
 /// The address of every fixture: a local `vault server -dev`.
@@ -26,185 +33,16 @@ pub const KEY: &str = "cipherstash-fixture";
 /// The derived Transit key of the fixtures.
 pub const DERIVED_KEY: &str = "cipherstash-fixture-derived";
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct FixtureRequest {
-    pub method: String,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Value,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct FixtureResponse {
-    pub status: u16,
-    #[serde(default)]
-    pub headers: Vec<(String, String)>,
-    pub body: Value,
-}
-
-impl FixtureResponse {
-    pub fn to_response(&self) -> VendorResponse {
-        let body = match &self.body {
-            Value::String(text) => text.clone().into_bytes(),
-            Value::Null => Vec::new(),
-            other => serde_json::to_vec(other).unwrap(),
-        };
-        let mut response = VendorResponse::new(self.status, body);
-        for (name, value) in &self.headers {
-            response = response.header(name, value);
-        }
-        response
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Fixture {
-    pub request: FixtureRequest,
-    pub response: FixtureResponse,
-}
+/// The fixtures of this crate.
+pub const FIXTURES: Fixtures =
+    Fixtures::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"));
 
 pub fn fixture_path(name: &str) -> String {
-    format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))
+    FIXTURES.path(name)
 }
 
-pub fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {
-    let path = fixture_path(name);
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}"))
-}
-
-fn body_json(body: &[u8]) -> Value {
-    if body.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into()))
-    }
-}
-
-/// A transport that checks each request against a recorded one and
-/// answers with the recorded response.
-#[derive(Default)]
-pub struct Replay {
-    exchanges: Mutex<VecDeque<(Option<FixtureRequest>, VendorResponse)>>,
-}
-
-impl Replay {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Expect `fixture`'s request and answer with its response.
-    pub fn expect(self, fixture: Fixture) -> Self {
-        let response = fixture.response.to_response();
-        self.exchanges
-            .lock()
-            .unwrap()
-            .push_back((Some(fixture.request), response));
-        self
-    }
-
-    /// Expect each exchange of a recorded sequence, in order.
-    pub fn expect_all(mut self, fixtures: Vec<Fixture>) -> Self {
-        for fixture in fixtures {
-            self = self.expect(fixture);
-        }
-        self
-    }
-
-    /// Answer the next request, whatever it is, with `response`.
-    pub fn answer(self, response: VendorResponse) -> Self {
-        self.exchanges.lock().unwrap().push_back((None, response));
-        self
-    }
-
-    pub fn is_done(&self) -> bool {
-        self.exchanges.lock().unwrap().is_empty()
-    }
-}
-
-impl VendorTransport for Replay {
-    async fn send(&self, request: VendorRequest) -> Result<VendorResponse, TransportError> {
-        let (expected, response) = self
-            .exchanges
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("a request the fixtures do not expect");
-        if let Some(expected) = expected {
-            let actual = json!({
-                "method": request.method,
-                "url": request.url,
-                "headers": request.headers,
-                "body": body_json(&request.body),
-            });
-            let wanted = json!({
-                "method": expected.method,
-                "url": expected.url,
-                "headers": expected.headers,
-                "body": expected.body,
-            });
-            assert_eq!(
-                actual,
-                wanted,
-                "the request differs from the fixture; actual:\n{}",
-                serde_json::to_string_pretty(&actual).unwrap()
-            );
-        }
-        Ok(response)
-    }
-
-    async fn sleep(&self, _duration: Duration) {}
-}
-
-/// A transport that sends through `inner` and keeps every exchange, to
-/// write fixtures.
-pub struct Recording<T> {
-    pub inner: T,
-    pub exchanges: Mutex<Vec<Fixture>>,
-}
-
-impl<T> Recording<T> {
-    pub fn new(inner: T) -> Self {
-        Self {
-            inner,
-            exchanges: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// The exchanges so far, and forget them.
-    pub fn take(&self) -> Vec<Fixture> {
-        std::mem::take(&mut *self.exchanges.lock().unwrap())
-    }
-}
-
-impl<T: VendorTransport + Send + Sync> VendorTransport for Recording<T> {
-    async fn send(&self, request: VendorRequest) -> Result<VendorResponse, TransportError> {
-        let recorded = FixtureRequest {
-            method: request.method.clone(),
-            url: request.url.clone(),
-            headers: request.headers.clone(),
-            body: body_json(&request.body),
-        };
-        let response = self.inner.send(request).await?;
-        let headers = response
-            .header_value("content-type")
-            .map(|value| vec![("content-type".to_owned(), value.to_owned())])
-            .unwrap_or_default();
-        self.exchanges.lock().unwrap().push(Fixture {
-            request: recorded,
-            response: FixtureResponse {
-                status: response.status,
-                headers,
-                body: body_json(&response.body),
-            },
-        });
-        Ok(response)
-    }
-
-    async fn sleep(&self, duration: Duration) {
-        self.inner.sleep(duration).await;
-    }
+pub fn load<T: DeserializeOwned>(name: &str) -> T {
+    FIXTURES.load(name)
 }
 
 /// A client over `transport` with the fixture address and token.
