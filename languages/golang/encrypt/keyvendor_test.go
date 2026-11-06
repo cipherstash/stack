@@ -9,10 +9,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -471,6 +473,21 @@ func TestVendorCredentialsDoNotPrintTheirSecrets(t *testing.T) {
 	for _, s := range []string{fmt.Sprint(c), fmt.Sprintf("%+v", c), fmt.Sprintf("%#v", c), fmt.Sprint(tok), fmt.Sprintf("%#v", tok)} {
 		if strings.Contains(s, "fixture") {
 			t.Errorf("printed a secret: %s", s)
+		}
+	}
+}
+
+func TestStaticKeyDoesNotPrintItsKey(t *testing.T) {
+	// 0xAB prints as 171 in %v and as ab in %x.
+	k := encrypt.StaticKey{KeyRef: "dev-key", Key: bytes.Repeat([]byte{0xAB}, 32)}
+	var logged bytes.Buffer
+	slog.New(slog.NewTextHandler(&logged, nil)).Info("vendor", "key", k)
+	for _, s := range []string{fmt.Sprint(k), fmt.Sprintf("%+v", k), fmt.Sprintf("%#v", k), fmt.Sprintf("%x", k), logged.String()} {
+		if strings.Contains(s, "171") || strings.Contains(strings.ToLower(s), "abab") {
+			t.Errorf("printed the key: %s", s)
+		}
+		if !strings.Contains(s, "dev-key") && !strings.Contains(s, hex.EncodeToString([]byte("dev-key"))) {
+			t.Errorf("lost the key ref: %s", s)
 		}
 	}
 }
