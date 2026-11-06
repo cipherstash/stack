@@ -802,3 +802,10 @@ the alternatives and the reason.
 - **Deferred to CIP-5312:** `stash keyset` can create Vault records with
   `VaultTransit::from_env()`.
 - **Deferred (no ticket):** `VAULT_CACERT` and mTLS; `renew-self`.
+
+## Orchestrator review of CIP-5310
+
+- **Revisit:** Vault with a private CA (`VAULT_CACERT`) and mTLS client
+  certificates is not supported. Many self-hosted Vault deployments use a
+  private CA, so this is likely the first customer request. It is a follow-up,
+  not part of CIP-5310.
