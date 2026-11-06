@@ -349,6 +349,10 @@ mod codes {
                 InvalidEndpoint::QueryOrFragment("https://x/?q".into())
             },
             InvalidEndpoint::Userinfo => InvalidEndpoint::Userinfo,
+            InvalidEndpoint::NotHosted(_) => {
+                InvalidEndpoint::NotHosted("https://evil.example/".into())
+            },
+            InvalidEndpoint::Mismatch => InvalidEndpoint::Mismatch,
         ]));
         errors.extend(boxed(variants![
             KeyProviderError::NotConfigured(_) => KeyProviderError::NotConfigured("unset".into()),
@@ -539,6 +543,7 @@ mod codes {
         for error in [
             InvalidEndpoint::NoHost("marker://user:pass@".into()),
             InvalidEndpoint::QueryOrFragment("https://x/?marker".into()),
+            InvalidEndpoint::NotHosted("https://marker.example/".into()),
         ] {
             assert!(!error.to_string().contains("marker"), "{error}");
         }

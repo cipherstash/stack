@@ -77,7 +77,10 @@ impl stack_auth::ErrorPayload for StackKmsBuilderError {
 /// 1. Explicit [`ZeroKmsEndpoint`] via [`with_base_url`](Self::with_base_url)
 /// 2. `CS_ZEROKMS_HOST` (or legacy `CS_VITUR_HOST`) environment variable —
 ///    the first one that is *set* is used, and an invalid value is an error
-/// 3. Automatically from the token's `services` claim
+/// 3. Automatically from the token's `services` claim. Only a
+///    CipherStash-hosted ZeroKMS (`https://<region>.<provider>.viturhosted.net`)
+///    is accepted there, and every later token must name the same one; any
+///    other endpoint must be configured by 1 or 2
 ///
 /// # Example
 ///
