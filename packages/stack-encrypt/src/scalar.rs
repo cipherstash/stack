@@ -42,8 +42,8 @@ mod sealed {
 /// into one `Ciphertext`. A `Vec` of any other `OpaqueEncode` type encrypts
 /// element by element into a `Vec<Ciphertext>`, through [`EncryptInto`]. The
 /// crate docs on collections explain how. `u8` is not an `OpaqueEncode` type,
-/// because Vitamin C encrypts a `Vec<u8>` as one byte string, not as a column
-/// of bytes.
+/// because Vitamin C encrypts a `Vec<u8>` as one byte string, not as a
+/// collection of bytes.
 ///
 /// A nullable `Option<T>` is not an `OpaqueEncode` type either. Use
 /// [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`] for

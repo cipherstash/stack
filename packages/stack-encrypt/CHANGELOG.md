@@ -42,17 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `DecryptFrom` decrypts it back** (#1482). `Vec<T>` implements
   `EncryptTarget<Vec<S>>` and `DecryptSource<Vec<P>>` for any owned element
   target. For example, `vec![29i32, 34].encrypt_into::<Vec<Ciphertext>, _>(&keyset)`
-  needs no caller context, and `Vec::<i32>::decrypt_from(column, &keyset)`
+  needs no caller context, and `Vec::<i32>::decrypt_from(ciphertexts, &keyset)`
   decrypts the result.
-  - A column uses its element target's `ContextInput`. A column of a
-    `RequiredContext` target must be given a context, and a column of a
+  - A collection uses its element target's `ContextInput`. A collection of a
+    `RequiredContext` target must be given a context, and a collection of a
     `NoCallerContext` target cannot be given one. `Default` does not change
     either rule.
   - Each element is encrypted under its own data key and authenticated on
-    its own.
-  - A column makes one logical batch of key requests, in element order. That
-    is one `generate_keys` call to encrypt it, and one `retrieve_keys` call
-    for each keyset to decrypt it. An empty column makes no call. The key
+    its own. An element's position and the number of elements are not
+    authenticated. That suits the common case of storing each element in its
+    own database row. A query can return rows in any order, or only some of
+    them.
+  - A collection makes one logical batch of key requests, in element order.
+    That is one `generate_keys` call to encrypt it, and one `retrieve_keys`
+    call for each keyset to decrypt it. An empty collection makes no call. The key
     source can still split a logical batch into several requests to its
     provider.
   - The plaintext `Vec` is wiped before the pending request is returned, even
@@ -61,12 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - If an element fails after earlier elements were decrypted, the earlier
     plaintexts are wiped before the error is returned. If an element's
     conversion panics, they are wiped before the panic unwinds.
-  - A `Vec<u8>` is not a column. A `Vec<u8>` is one byte string, as the next
-    entry describes.
+  - A `Vec<u8>` is not a collection of bytes. A `Vec<u8>` is one byte
+    string, as the next entry describes.
   - `keyset.encrypt` still takes a single value, and `encrypt_tree` is still
     the structural path.
 - **Byte strings encrypt as one value: `Vec<u8>` and `[u8; N]` encrypt into
-  one `Ciphertext`, and a `Vec<Vec<u8>>` encrypts into a column.** So
+  one `Ciphertext`, and a `Vec<Vec<u8>>` encrypts into a `Vec<Ciphertext>`.** So
   `keyset.encrypt(vec![1u8, 2, 3])` and
   `Vec::<u8>::decrypt_from(ciphertext, &keyset)` now compile. The structural
   API and the Go SDK already encrypted byte strings this way.

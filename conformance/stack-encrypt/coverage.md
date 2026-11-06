@@ -132,10 +132,10 @@ cleanup after a late authenticated type failure, and chunk concurrency/drop.
 The owned `Vec<S>` to `Vec<T>` conversion is enrolled under the same
 requirements. The conversion's tests cover:
 
-- dropping a column before it is polled
-- dropping a column while its key request is running
-- one logical batch of key requests for each column, and none for an empty
-  column
+- dropping a collection before it is polled
+- dropping a collection while its key request is running
+- one logical batch of key requests for each collection, and none for an
+  empty collection
 - wiping the source `Vec` through its guard
 - wiping the elements already decrypted, when a later element fails
 

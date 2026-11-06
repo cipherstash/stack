@@ -228,8 +228,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::{Ciphertext, EncryptInto, DecryptFrom, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
 //! let cipher = StackCipher::builder()
-//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let encrypted: Ciphertext = 42i32.encrypt_into(&keyset).await?;
 //! let plain = i32::decrypt_from(encrypted, &keyset).await?;
@@ -243,21 +247,25 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! [`EncryptInto`] encrypts a `Vec` of owned plaintexts into a `Vec` of any
 //! owned target, and [`DecryptFrom`] decrypts it back. A caller context is
-//! optional, as it is for a single value. In these docs, a `Vec` of
-//! ciphertexts is called a column.
+//! optional, as it is for a single value.
 //!
 //! Each element is encrypted under its own data key and authenticated on its
-//! own, so [`KeysetCipher::decrypt`] can decrypt any one element alone. The
-//! order and the number of elements are not authenticated, because stored
-//! values are database rows. A database can return rows in any order, or
-//! only some of them.
+//! own, so [`KeysetCipher::decrypt`] can decrypt any one element alone. An
+//! element's position in the `Vec`, and the number of elements, are not part
+//! of what is authenticated. So you can decrypt the elements in a different
+//! order, or decrypt only some of them.
 //!
-//! A column makes one logical batch of key requests, with the requests in
-//! element order:
+//! This suits a very common case: storing each element in its own database
+//! row. A database can return rows in any order. A query can also return only
+//! some of them. If your application needs the order or the length of a
+//! `Vec` to be authenticated, this API does not provide that.
 //!
-//! - Encrypting a column makes one `generate_keys` call.
-//! - Decrypting a column makes one `retrieve_keys` call for each keyset.
-//! - An empty column makes no call.
+//! A collection makes one logical batch of key requests, with the requests
+//! in element order:
+//!
+//! - Encrypting a collection makes one `generate_keys` call.
+//! - Decrypting a collection makes one `retrieve_keys` call for each keyset.
+//! - An empty collection makes no call.
 //!
 //! The key source can still split one logical batch into several requests to
 //! its provider.
@@ -296,14 +304,15 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
-//! A column follows its element target's rules for a caller context. If the
-//! element target requires a context, the column requires one. If the
-//! element target accepts no context, the column cannot be given one.
+//! A collection follows its element target's rules for a caller context. If
+//! the element target requires a context, the collection requires one. If
+//! the element target accepts no context, the collection cannot be given
+//! one.
 //!
-//! A `Vec<u8>` is one byte string, not a column of bytes. Vitamin C encrypts
-//! a `Vec<u8>` as a single value, and `u8` is not an [`OpaqueEncode`] type.
-//! So a `Vec<u8>` encrypts into one `Ciphertext`, and a `Vec<Vec<u8>>` is a
-//! column of byte strings.
+//! A `Vec<u8>` is one byte string, not a collection of bytes. Vitamin C
+//! encrypts a `Vec<u8>` as a single value, and `u8` is not an
+//! [`OpaqueEncode`] type. So a `Vec<u8>` encrypts into one `Ciphertext`, and
+//! a `Vec<Vec<u8>>` is a collection of byte strings.
 //!
 //! Existing structural plans and derives still use [`StackCipherText`], a tree
 //! of sealed leaves. Their low-level direct entry points are

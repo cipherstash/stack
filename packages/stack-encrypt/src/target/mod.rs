@@ -6,8 +6,8 @@
 //! determine either. [`scalar_ciphertext`] is the first owned operation.
 //!
 //! A `Vec<S>` of owned plaintexts encrypts into a `Vec<T>` of any owned
-//! target, and decrypts back the same way. The column uses the element
-//! target's `ContextInput`. The column makes one logical batch of key
+//! target, and decrypts back the same way. The collection uses the element
+//! target's `ContextInput`. The collection makes one logical batch of key
 //! requests. Each element is authenticated on its own.
 //!
 //! # Structural API during migration
