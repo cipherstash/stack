@@ -86,6 +86,9 @@ var (
 	// ErrContextMismatch is a row whose stored context field is not the
 	// context the caller named, refused before any key is retrieved.
 	ErrContextMismatch = errors.New("cipherstash: the stored context is not the one expected")
+	// ErrNoZeroKMS is a ZeroKMS keyset asked of a client that has a key
+	// vendor backend and no ZeroKMS, refused before any request.
+	ErrNoZeroKMS = errors.New("cipherstash: this client has no ZeroKMS, only a key vendor backend")
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). A constructor returns it when
 	// asked for locked memory and refused, and so does any later call under

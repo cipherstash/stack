@@ -1213,3 +1213,235 @@ the alternatives and the reason.
 - **Deferred (no ticket):** client certificate credentials (blocked on a
   constant-time RSA signer), Azure CLI and Arc credentials, re-recording the
   fixtures from real Azure once the live job has credentials.
+
+## CIP-5311: Go SDK: key vendor backends through the encrypt guest
+
+### Guest size (measured)
+
+- **Measurement** (release builds, `mise run wasm:guest:build` and
+  `wasm:guest:build:eql`, on this branch before and after):
+
+  | build | before | after | growth |
+  |---|---|---|---|
+  | `stack_encrypt_guest.wasm` (no EQL types) | 1,543,167 B | 1,915,570 B | +372,403 B (+24.1%) |
+  | `stack_encrypt_guest_eql.wasm` | 1,598,896 B | 1,973,568 B | +374,672 B (+23.4%) |
+
+  (The "after" column includes the vendor-only client below. Before it,
+  the two builds were 1,906,377 B and 1,965,401 B.)
+  | deterministic test build | n/a | 1,657,639 B | |
+  | deterministic test build, EQL | n/a | 1,726,501 B | |
+
+  **Decision:** ship one guest with all five backends, as ADR-0011 says.
+  The growth is below the 30% limit the orchestrator set. **Alternative:**
+  one guest per vendor. **Reason:** it would multiply the embedded files,
+  the test builds and the release workflow.
+
+### The credential import
+
+- **Decision (binding, from the orchestrator):** the host supplies
+  ready-to-use short-lived credentials, never a long-lived signing key: AWS
+  temporary credentials, a Google OAuth access token, an Azure access token
+  for the scope the guest asks for, a Vault client token. The guest does no
+  RSA and reads no service account key.
+- **Decision:** one import, `cipherstash_transport::vendor_credential_get(
+  vendor: u32, scope_ptr, scope_len, cred_ptr_out, cred_len_out) -> i32`,
+  the shape of `token_get`. `vendor` is the `KeyVendor` byte; `scope` is the
+  OAuth scope for Google Cloud and Azure and empty for AWS and Vault. The
+  credential is one value in the transport codec: an object of strings
+  (`access_key_id`, `secret_access_key`, optional `session_token` for AWS;
+  `token` for the others) and an optional `expires_at` (`i64`, Unix
+  seconds). **Alternative:** one import per credential kind; JSON.
+  **Reason:** one import keeps the surface small; the codec is the format
+  every other input uses, and its strings are wiped on drop.
+- **Decision:** the guest asks before **each** vendor request and keeps no
+  credential between requests. `TokenProvider::invalidate` therefore has
+  nothing to drop in the guest, and the import has no "refresh" flag. The
+  host's credential chain (the AWS SDK cache, `oauth2.ReuseTokenSource`,
+  azidentity) decides when to refresh. **Alternative:** cache in the guest
+  with `CachedToken`/`CachedCredentials` and forward `invalidate` to the
+  host. **Reason:** credentials live in guest memory only for one request,
+  and the Go chains already cache.
+- **Decision:** the guest refuses a credential whose `expires_at` has passed,
+  a credential with an unknown key, an empty or missing field, or a field
+  with a control character (`AccessDenied`, so `ErrForbidden`). A non-zero
+  import status is `Unavailable` (`ErrTransport`), the same status as a
+  failed `token_get`. The Go host attaches the source's own error to the
+  call's error, as it does for the token source, so `errors.Is` matches it.
+  **No new status codes:** the vendor failure kinds already map to the
+  ZeroKMS statuses (CIP-5304), and the `Diagnostic` code
+  `stack_kms::backend` with its `vendor` field tells them apart.
+- **Decision:** `stack-kms-gcp` gets a default feature `service-account`
+  (the RS256 JWT login and the `rsa` and `rand_core` dependencies); `http`
+  implies it. The guest builds the crate with no default features, so the
+  `rsa` crate (RUSTSEC-2023-0071) is not in the guest's `Cargo.lock` at all.
+  `CLOUD_KMS_SCOPE` moved to `auth` so it stays without the feature.
+  `wasm:wasi-check` checks the crate without default features too.
+  **Alternative:** rely on LTO to drop the unused RSA code. **Reason:** the
+  lockfile, and so OSV, would still carry the advisory.
+
+### The guest
+
+- **Decision:** the cipher's key source is always
+  `KeyRouter<MaybeZeroKms<ZeroKMS>, GuestVendor>` (see "A client with no
+  ZeroKMS" below) (in the deterministic build,
+  `KeyRouter<DeterministicSource, GuestVendor>`). `GuestVendor<T, C>` is one
+  enum over the four vendor clients and `StaticKeyVendor`, plus `None`: with
+  no backend configured it holds no keyset record, so the router sends
+  every request to ZeroKMS and the zero-value client behaves as before.
+  **Alternative:** an enum over two cipher types, or an enum key source
+  that forwards every `DataKeySource`/`IndexKeySource` method. **Reason:**
+  `KeyRouter` already forwards all the provided methods correctly; a second
+  forwarder is where one would be forgotten. `GuestVendor::None` answers
+  `vendor()` with `Static`; it is never asked (it has no keyset).
+- **Decision:** the vendor is configured in the `se_cipher_init` config
+  object: `key_vendor` (the `KeyVendor::name()`), `keyset_records` (an array
+  of record texts, required, not empty), and per vendor `aws_region`,
+  `aws_endpoint`, `vault_address`, `vault_namespace`, `vault_mount`,
+  `gcp_endpoint`, `static_key_ref`, `static_key` (32 bytes, a bytes value).
+  A key for another vendor than `key_vendor` is refused
+  (`ConfigError::NotForVendor`), as an unknown key is. No credential is in
+  the config. Azure needs no setting: the key identifier names the vault.
+  A refused record keeps its `RecordError` for `se_last_error` and is
+  `STATUS_ENCODING` (a `RecordError::Kms` keeps its key status).
+- **Decision:** NewClient makes no vendor call: records are parsed and
+  checked at `se_cipher_init`, and a record key is unwrapped on the first
+  use of its keyset. **Reason:** the ZeroKMS default keyset is the only
+  load at init today; a vendor outage then fails the vendor keyset, not the
+  whole client.
+- **Decision:** the deterministic test build keeps the vendor clients, so it
+  now imports `transport_send` and `vendor_credential_get` (not
+  `token_get`). Its config is the bare 32-byte seed, as before, or an object
+  `{"seed", key_vendor, keyset_records, ...}`. The mise import gates of all
+  four builds now require `vendor_credential_get`.
+- **Decision:** the vendor client error types (`AwsKmsError`,
+  `CredentialsError`, `VaultError`, the three `AuthError`s, `GcpKmsError`,
+  `AzureKeyVaultError`, `TransportError`, `RecordError`) are causes whose
+  text the guest vouches for in `se_last_error`. **Reason:** each vendor
+  crate builds its messages from fixed text, the operation, the HTTP status
+  and the vendor's code and message, and never from a key or a secret.
+
+### The Go host
+
+- **Decision (dependency policy):** the module imports **no vendor SDK**.
+  The module already depends on `golang.org/x/oauth2` (for
+  `auth.OAuth2TokenSource`), and nothing else of a vendor. The credential
+  seam is two small interfaces with function adapters:
+  `AWSCredentialSource` (`AWSCredentialsFunc`) and `AccessTokenSource`
+  (`AccessTokenFunc`, `OAuth2AccessTokens(oauth2.TokenSource)`,
+  `StaticAccessToken`), plus `AWSCredentialsFromEnv`. The doc comments show
+  the three-line glue for aws-sdk-go-v2, azidentity and the Vault API
+  client. **Alternatives:** the vendor SDKs in the core module (four large
+  dependency trees for every user); a sub-package or sub-module per vendor
+  (`encrypt/vendor/aws`). **Reason:** sub-packages still add the SDKs to the
+  one `go.mod` every user downloads the requirements of, and sub-modules
+  need their own tags in `release-golang.yml`. The glue is short and is the
+  user's own choice of chain. Revisit if users ask for ready-made adapters;
+  then make them separate modules.
+- **Decision:** the public surface is `WithKeyVendor(KeyVendor)`,
+  `WithKeysetRecords(...string)`, a sealed `KeyVendor` interface with five
+  struct types (`AWSKMS`, `GoogleCloudKMS`, `AzureKeyVault`, `VaultTransit`,
+  `StaticKey`), the credential types `AWSCredentials` and `AccessToken`
+  (both hide their secrets from `%v`, `%#v` and slog) and
+  `ErrNoKeyVendorCredentials`. Struct literals, not functional options,
+  because each backend has two to four settings.
+- **Decision:** the options are checked host-side before anything is
+  resolved (Go principle 1, the earliest stage): records without a vendor,
+  a vendor without records, a missing region, address or credential
+  source, and a static key that is not 32 bytes are `ErrEncoding`. The
+  guest checks the records themselves at NewClient.
+- **Decision:** `StaticKey.Key` is consumed like the client key: NewClient
+  wipes it whatever the outcome, a refused config and a replaced option
+  included.
+- **Decision:** `ErrForbidden`, `ErrNotFound`, `ErrTransport` and
+  `ErrAuthentication` keep their names and now document their key vendor
+  meaning. **Alternative:** new `ErrKeyVendor*` sentinels. **Reason:** a
+  caller branches on the kind, not the backend; the `Diagnostic` names the
+  backend.
+
+### Tests
+
+- Guest (native): config parsing of every vendor and every refusal, the
+  credential readers (expiry, missing and unknown keys, control characters,
+  no secret in a message), the token providers' vendor and scope, an AWS
+  request signed with the host credentials, and record refusals. `mise run
+  wasm:guest:test`: 76 passed; clippy clean on all four feature sets, native
+  and wasm32.
+- Go (hermetic, over the deterministic build): a static key round trip
+  (records built in the test by a second implementation of the record and
+  framing format), v2 leaves for the vendor keyset and v1 for ZeroKMS in one
+  client, `ErrForeignKeyset` across backends, a wrong static key; AWS KMS in
+  both modes through a fake `RoundTripper` that checks SigV4 with the host's
+  credentials and binds the encryption context, with exact vendor call
+  counts (derived: 1 `Decrypt`; wrapped: 1 `Decrypt` + 9
+  `GenerateDataKey` for 3 rows of 3 sealed fields); an AWS refusal
+  (`ErrForbidden`, code `stack_kms::backend`, vendor `aws-kms`); a failed
+  credential source (`ErrTransport` plus the source's error, no request
+  sent); and the option and record checks. `mise run go:test` passes;
+  `golangci-lint` clean; `go generate ./...` changes nothing.
+- **Not tested:** the Google Cloud, Azure and Vault clients through the Go
+  host (their requests are covered in their own crates; the guest test
+  checks their providers ask with the right vendor and scope). No live
+  vendor test from Go.
+
+### Deferred
+
+- **Deferred to CIP-5313:** the stack-kms side of the capability matrix.
+  The Go package docs carry a short one.
+
+### A client with no ZeroKMS (orchestrator review)
+
+- **Decision (binding, from the orchestrator):** a key vendor backend is an
+  alternative to ZeroKMS, so a Go client may have a vendor and no ZeroKMS.
+  The deferral recorded first is withdrawn.
+- **Decision:** the Go client has no ZeroKMS when `WithKeyVendor` is given
+  and `WithCredentials` is not. NewClient then neither needs nor resolves
+  ZeroKMS credentials (no environment, no profile, no `CS_ZEROKMS_HOST`).
+  To hold both, give `WithCredentials` too, for example
+  `WithCredentials(AutoCredentials())`. **Alternative:** try
+  `AutoCredentials` and fall back to vendor-only when it finds nothing.
+  **Reason:** a client whose backend changes with the developer's profile
+  or the environment is not predictable; a fallback would also hide a
+  broken ZeroKMS setup.
+- **Decision:** the guest config has no `client_id`, `client_key` or
+  `zerokms_url` for such a client (any one of them makes the others
+  required, as before). The guest key source is
+  `KeyRouter::new(MaybeZeroKms::Absent, vendor).with_vendor_default()`.
+  `MaybeZeroKms<Z>` (guest, `zerokms.rs`) forwards every `DataKeySource`
+  and `IndexKeySource` method to `Present(z)`, and `Absent` refuses every
+  request with `Error::Backend { vendor: "zerokms", kind: NotFound, source:
+  NoZeroKms }`. **Alternative:** a second cipher type, or the vendor source
+  directly. **Reason:** one cipher type for every configuration, and the
+  router already forwards every provided method.
+- **Decision (additive, stack-kms-vendor):** `KeyRouter::with_vendor_default`
+  sends "no keyset named" to the vendor and reports the vendor as
+  `key_backend()`. A router test covers it.
+- **Decision:** a new status, `STATUS_NO_ZEROKMS = 29` (`LAST_STATUS` moves),
+  and a new Go sentinel `ErrNoZeroKMS`, for any request that reaches the
+  absent ZeroKMS: a keyset no record names, or a v1 leaf. The status layer
+  finds the `NoZeroKms` cause by type. **Alternative:** `ErrNotFound`.
+  **Reason:** it is a configuration error with one fix, and a caller must be
+  able to tell it from a missing keyset.
+- **Decision:** the default keyset option is `WithDefaultKeyset(KeysetSelector)`,
+  taking a `KeysetName` or a `KeysetID`, as `Client.Keyset` does. It crosses
+  as the config key `default_keyset`, a selector object (`{"id": 16 bytes}`
+  or `{"name": …}`); the guest resolves a name from the records and calls
+  `VendorKeySource::with_default_keyset`. It is refused (`ErrEncoding`, and
+  `ConfigError::OnlyWithoutZeroKms` in the guest) on a client with ZeroKMS,
+  whose default the ZeroKMS administrator sets. With one record it is not
+  needed; with several and none, NewClient fails with `ErrNotFound`
+  (CIP-5306's rule). `nil`, `Client.DefaultKeyset`'s selector and the
+  "any" selector are refused.
+- **Decision:** `WithRootKeyTTL(time.Duration)` (config `root_key_ttl_ms`,
+  decimal milliseconds) sets `VendorKeySource::with_root_key_ttl`. Zero
+  keeps none; negative, or with no vendor, is `ErrEncoding`. **Measured:**
+  with zero, one Encrypt that derives terms unwraps the root key twice (the
+  data keys, then the index key in the settle), and each Decrypt once.
+- **Tests:** guest config tests for the vendor-only form, the default keyset
+  and the TTL; `MaybeZeroKms` tests. Go tests over the **real embedded
+  guest** through `NewClient`, with every `CS_*` variable cleared and `HOME`
+  in a temporary directory: a static key client with two records (no
+  default is `ErrNotFound`; the default by name and by id; v2 leaves;
+  `ErrNoZeroKMS` for an unknown keyset and for a ZeroKMS row), and an AWS
+  KMS client through the fake RoundTripper (no vendor call at NewClient; 4
+  `Decrypt` calls for one Encrypt and two Decrypts with `WithRootKeyTTL(0)`;
+  4 credential requests); and the option refusals.

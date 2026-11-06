@@ -16,7 +16,7 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
-// transportModule is the name of the guest's one import module. Its two
+// transportModule is the name of the guest's one import module. Its three
 // functions are the whole host surface the guest can reach.
 const transportModule = "cipherstash_transport"
 
@@ -31,8 +31,9 @@ type tokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
-// transport implements the guest's two host imports over a RoundTripper
-// and a tokenSource. One per Client; it is bound to the module at
+// transport implements the guest's three host imports over a RoundTripper,
+// a tokenSource and, when the client has a key vendor backend, that
+// backend's credential source. One per Client; it is bound to the module at
 // instantiation and reaches the guest's allocator through the module the
 // call arrives on.
 type transport struct {
@@ -47,6 +48,13 @@ type transport struct {
 	// error it returns. Only touched under the client's lock, which every
 	// guest call holds.
 	tokenErr error
+	// vendor is the client's key vendor backend, nil when it has none. Its
+	// credential source answers vendor_credential_get.
+	vendor *vendorSpec
+	// credentialErr is why the key vendor credential source last failed
+	// during the call in flight, attached to the call's error as tokenErr
+	// is. Only touched under the client's lock.
+	credentialErr error
 }
 
 // transportFailed is the return value of transport_send when the request
@@ -67,6 +75,7 @@ func (t *transport) instantiate(ctx context.Context, r wazero.Runtime) error {
 	_, err := r.NewHostModuleBuilder(transportModule).
 		NewFunctionBuilder().WithFunc(t.send).Export("transport_send").
 		NewFunctionBuilder().WithFunc(t.tokenGet).Export("token_get").
+		NewFunctionBuilder().WithFunc(t.vendorCredentialGet).Export("vendor_credential_get").
 		Instantiate(ctx)
 	if err != nil {
 		return fmt.Errorf("encrypt: instantiating host transport: %w", err)
@@ -212,6 +221,12 @@ func (b *requestBody) Close() error {
 
 // tokenGet is token_get: hand the guest the current bearer token.
 func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tokenLenOut uint32) int32 {
+	if t.token == nil {
+		// A client with a key vendor backend and no ZeroKMS has no token
+		// source; its guest builds no ZeroKMS client, so it never asks.
+		t.tokenErr = ErrNoZeroKMS
+		return hostFailed
+	}
 	token, err := t.token.Token(ctx)
 	if err != nil {
 		t.tokenErr = err
@@ -230,6 +245,44 @@ func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tok
 		// allocator, a refused allocation, an out-of-range slot). Say so,
 		// or the failure reads as the source's.
 		t.tokenErr = errors.New("encrypt: the token could not be handed to the guest")
+		return hostFailed
+	}
+	return 0
+}
+
+// maxScopeBytes bounds the scope vendor_credential_get reads from the
+// guest. A real OAuth scope is well under it.
+const maxScopeBytes = 1024
+
+// vendorCredentialGet is vendor_credential_get: hand the guest one
+// short-lived credential of the client's key vendor backend, for scope.
+// The guest asks before each vendor request and keeps nothing, so the
+// source's own cache decides when to refresh. Only the credential crosses;
+// the keys it unwraps stay in the guest.
+func (t *transport) vendorCredentialGet(ctx context.Context, m api.Module, vendor, scopePtr, scopeLen, credPtrOut, credLenOut uint32) int32 {
+	if t.vendor == nil {
+		t.credentialErr = errors.New("encrypt: the guest asked for a key vendor credential, but the client has no key vendor backend")
+		return hostFailed
+	}
+	if scopeLen > maxScopeBytes {
+		t.credentialErr = fmt.Errorf("encrypt: the guest asked for a credential with a %d-byte scope", scopeLen)
+		return hostFailed
+	}
+	scope, ok := m.Memory().Read(scopePtr, scopeLen)
+	if !ok {
+		t.credentialErr = errors.New("encrypt: the credential scope is out of range")
+		return hostFailed
+	}
+	cred, err := t.vendor.vendorCredential(ctx, vendor, string(scope))
+	if err != nil {
+		t.credentialErr = err
+		return hostFailed
+	}
+	// The credential's transport copy is wiped once it is in guest memory;
+	// the source's own strings are the source's.
+	defer wipe(cred)
+	if !place(ctx, m, credPtrOut, credLenOut, cred) {
+		t.credentialErr = errors.New("encrypt: the key vendor credential could not be handed to the guest")
 		return hostFailed
 	}
 	return 0

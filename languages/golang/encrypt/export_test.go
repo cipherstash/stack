@@ -10,6 +10,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The test-only ways to give a client a token. The public API takes tokens
@@ -128,6 +129,48 @@ func deterministicClient(ctx context.Context, wasm []byte, seed [32]byte) (*Clie
 	if len(out) != len(KeysetID{}) {
 		_ = c.Close()
 		return nil, fmt.Errorf("%w: cipher init returned %d bytes for the keyset id", ErrInternal, len(out))
+	}
+	copy(c.def[:], out)
+	return c, nil
+}
+
+// NewDeterministicVendorClient is NewDeterministicClient with a key vendor
+// backend beside the seeded ZeroKMS stand-in: the deterministic build's
+// object config, {"seed", key_vendor, keyset_records, ...}. Vendor requests
+// go to rt, and their credentials come from the backend's source through
+// the real vendor_credential_get import. The StaticKey, if any, is wiped
+// as NewClient wipes it.
+func NewDeterministicVendorClient(ctx context.Context, seed [32]byte, rt http.RoundTripper, v KeyVendor, records ...string) (*Client, error) {
+	defer wipeVendorKey(v)
+	wasm, err := os.ReadFile(deterministicGuestPath)
+	if err != nil {
+		return nil, ErrDeterministicGuestNotBuilt
+	}
+	spec, err := keyVendorConfig(v, records)
+	if err != nil {
+		return nil, err
+	}
+	fields := vcvalue.Object{{Key: "seed", Value: seed[:]}}
+	if spec != nil {
+		fields = append(fields, spec.configFields(records)...)
+	}
+	encoded, err := vcffi.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	defer wipe(encoded)
+	tr := &transport{rt: rt, token: noToken{}, vendor: spec}
+	inst, err := newInstance(ctx, wasm, tr, guest.BestEffort)
+	if err != nil {
+		return nil, err
+	}
+	c := newClient(inst, tr)
+	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.cipherInit, buf(encoded))
+	})
+	if err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("encrypt: deterministic cipher init: %w", err)
 	}
 	copy(c.def[:], out)
 	return c, nil

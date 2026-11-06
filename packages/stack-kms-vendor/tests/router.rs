@@ -293,3 +293,33 @@ async fn several_records_need_a_named_default() {
         Err(RecordError::UnknownDefault)
     ));
 }
+
+/// A client with a key vendor backend and no ZeroKMS: naming no keyset is
+/// the vendor's default keyset, and anything else goes to the ZeroKMS side.
+#[tokio::test]
+async fn a_vendor_default_router_selects_the_vendor_for_no_keyset() {
+    let vendor = FakeVendor::new(KeyVendor::Aws);
+    let record = KeysetRecord::create(&vendor, FakeVendor::KEY_REF, KeyMode::Derived, None)
+        .await
+        .unwrap();
+    let source = VendorKeySource::new(vendor, [record.clone()]).unwrap();
+    let router = KeyRouter::new(FakeDataKeySource::new(), source).with_vendor_default();
+    assert_eq!(
+        stack_encrypt::kms::DataKeySource::key_backend(&router),
+        KeyBackend::Vendor(KeyVendor::Aws)
+    );
+    let cipher = StackCipher::builder().kms(router).init().await.unwrap();
+    assert_eq!(cipher.default_keyset().keyset_id(), record.id());
+    let context = nonempty!("users").with("email");
+    let sealed = cipher
+        .default_keyset()
+        .encrypt("v".to_string(), context)
+        .await
+        .unwrap();
+    assert_eq!(
+        leaf_backend(&sealed),
+        (KeyBackend::Vendor(KeyVendor::Aws), Some(KeyMode::Derived))
+    );
+    let opened: String = cipher.decrypt(sealed, context).await.unwrap();
+    assert_eq!(opened, "v");
+}
