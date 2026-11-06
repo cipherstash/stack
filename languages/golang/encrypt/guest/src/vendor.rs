@@ -6,9 +6,10 @@
 //!
 //! * [`GuestVendor`] is one enum over the four vendor clients and the static
 //!   key backend, so the cipher has one key source type whatever the host
-//!   chose: `KeyRouter<ZeroKMS, GuestVendor>`. With no backend configured it
-//!   is [`GuestVendor::None`] with no keyset records, and the router sends
-//!   every request to ZeroKMS, as before.
+//!   chose: `KeyRouter<ZeroKMS, GuestVendor>`. With no backend configured
+//!   there is no `GuestVendor`: the router is
+//!   `KeyRouter::zerokms_only`, and sends every request to ZeroKMS, as
+//!   before.
 //! * The vendor clients send through the host's HTTP client
 //!   (`HostVendorTransport`, the `transport_send` import) and sign each
 //!   request here, in the guest.
@@ -366,9 +367,6 @@ impl<C: CredentialImport> stack_kms_azure::TokenProvider for HostCredentials<C> 
 /// One enum, not a type parameter, so that the instance's cipher has one
 /// type whatever the host chose at run time.
 pub enum GuestVendor<T, C> {
-    /// No key vendor backend. It holds no keyset records, so the router
-    /// never calls it, and every method refuses.
-    None,
     Aws(stack_kms_aws::AwsKms<T, HostCredentials<C>>),
     Vault(stack_kms_vault::VaultTransit<T, HostCredentials<C>>),
     Gcp(stack_kms_gcp::GcpKms<T, HostCredentials<C>>),
@@ -379,7 +377,6 @@ pub enum GuestVendor<T, C> {
 impl<T, C> std::fmt::Debug for GuestVendor<T, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            Self::None => "none",
             Self::Aws(_) => KeyVendor::Aws.name(),
             Self::Vault(_) => KeyVendor::Vault.name(),
             Self::Gcp(_) => KeyVendor::Gcp.name(),
@@ -390,18 +387,10 @@ impl<T, C> std::fmt::Debug for GuestVendor<T, C> {
     }
 }
 
-/// Every method of [`GuestVendor::None`]: it holds no keyset, so a call is
-/// a routing bug, refused rather than answered. It is not a backend
-/// failure, because there is no backend to name.
-fn no_vendor() -> Error {
-    Error::Unexpected("no key vendor backend is configured".into())
-}
-
 /// Dispatch one `KeyVendorBackend` method to the configured client.
 macro_rules! dispatch {
-    ($self:expr, $backend:ident => $call:expr, none => $none:expr) => {
+    ($self:expr, $backend:ident => $call:expr) => {
         match $self {
-            GuestVendor::None => $none,
             GuestVendor::Aws($backend) => $call,
             GuestVendor::Vault($backend) => $call,
             GuestVendor::Gcp($backend) => $call,
@@ -416,23 +405,20 @@ where
     T: VendorTransport + Send + Sync,
     C: CredentialImport,
 {
-    /// The configured vendor. [`GuestVendor::None`] answers `Static`: it is
-    /// never asked, because it holds no keyset (the router asks a backend
-    /// only for a keyset one of its records names).
     fn vendor(&self) -> KeyVendor {
-        dispatch!(self, b => b.vendor(), none => KeyVendor::Static)
+        dispatch!(self, b => b.vendor())
     }
 
     fn supports_mode(&self, mode: KeyMode) -> bool {
-        dispatch!(self, b => b.supports_mode(mode), none => false)
+        dispatch!(self, b => b.supports_mode(mode))
     }
 
     async fn wrap(&self, key_ref: &str, key: &KeyBytes, aad: &[u8]) -> Result<Vec<u8>, Error> {
-        dispatch!(self, b => b.wrap(key_ref, key, aad).await, none => Err(no_vendor()))
+        dispatch!(self, b => b.wrap(key_ref, key, aad).await)
     }
 
     async fn unwrap(&self, key_ref: &str, wrapped: &[u8], aad: &[u8]) -> Result<KeyBytes, Error> {
-        dispatch!(self, b => b.unwrap(key_ref, wrapped, aad).await, none => Err(no_vendor()))
+        dispatch!(self, b => b.unwrap(key_ref, wrapped, aad).await)
     }
 
     async fn generate_wrapped(
@@ -440,11 +426,11 @@ where
         key_ref: &str,
         aad: &[u8],
     ) -> Result<(KeyBytes, Vec<u8>), Error> {
-        dispatch!(self, b => b.generate_wrapped(key_ref, aad).await, none => Err(no_vendor()))
+        dispatch!(self, b => b.generate_wrapped(key_ref, aad).await)
     }
 
     fn batch_limit(&self) -> Option<NonZeroUsize> {
-        dispatch!(self, b => b.batch_limit(), none => None)
+        dispatch!(self, b => b.batch_limit())
     }
 
     async fn wrap_batch(
@@ -452,7 +438,7 @@ where
         key_ref: &str,
         items: &[WrapItem<'_>],
     ) -> Result<Vec<Vec<u8>>, Error> {
-        dispatch!(self, b => b.wrap_batch(key_ref, items).await, none => Err(no_vendor()))
+        dispatch!(self, b => b.wrap_batch(key_ref, items).await)
     }
 
     async fn unwrap_batch(
@@ -460,11 +446,11 @@ where
         key_ref: &str,
         items: &[UnwrapItem<'_>],
     ) -> Result<Vec<KeyBytes>, Error> {
-        dispatch!(self, b => b.unwrap_batch(key_ref, items).await, none => Err(no_vendor()))
+        dispatch!(self, b => b.unwrap_batch(key_ref, items).await)
     }
 
     async fn sleep(&self, duration: Duration) {
-        dispatch!(self, b => b.sleep(duration).await, none => ())
+        dispatch!(self, b => b.sleep(duration).await)
     }
 }
 
@@ -486,10 +472,11 @@ impl From<RecordError> for BuildError {
 }
 
 /// Build the key source of the configured backend: the client over
-/// `transport` and `import`, and the adapter over the keyset records. With
-/// no config, [`GuestVendor::None`] and no records.
+/// `transport` and `import`, and the adapter over the keyset records. A
+/// config with no backend has no key source to build: the caller routes
+/// every request to ZeroKMS.
 pub fn build<T, C>(
-    config: Option<VendorConfig>,
+    config: VendorConfig,
     transport: T,
     import: C,
 ) -> Result<VendorKeySource<GuestVendor<T, C>>, BuildError>
@@ -497,15 +484,12 @@ where
     T: VendorTransport + Send + Sync,
     C: CredentialImport,
 {
-    let Some(VendorConfig {
+    let VendorConfig {
         settings,
         records,
         default_keyset,
         root_key_ttl,
-    }) = config
-    else {
-        return Ok(VendorKeySource::new(GuestVendor::None, [])?);
-    };
+    } = config;
     let credentials = HostCredentials::new(import);
     let backend = match settings {
         VendorSettings::Aws { region, endpoint } => {
@@ -838,7 +822,7 @@ mod tests {
                 ("session_token", string("fixture-session-token")),
             ]))
         });
-        let source = build(Some(aws_settings()), &transport, import).unwrap();
+        let source = build(aws_settings(), &transport, import).unwrap();
         let key = block(source.backend().unwrap(
             "arn:aws:kms:us-east-1:111122223333:key/k",
             b"wrapped",
@@ -863,16 +847,6 @@ mod tests {
     }
 
     #[test]
-    fn no_config_builds_no_vendor_and_no_keyset() {
-        let transport = Recording::default();
-        let source =
-            build::<&Recording, FakeImport>(None, &transport, FakeImport::unused()).unwrap();
-        assert!(matches!(source.backend(), GuestVendor::None));
-        assert!(block(source.backend().unwrap("k", b"w", b"a")).is_err());
-        assert!(!source.backend().supports_mode(KeyMode::Derived));
-    }
-
-    #[test]
     fn a_bad_setting_names_its_config_key() {
         let config = VendorConfig {
             settings: VendorSettings::Aws {
@@ -883,7 +857,7 @@ mod tests {
             default_keyset: None,
             root_key_ttl: None,
         };
-        let error = build(Some(config), &Recording::default(), FakeImport::unused()).unwrap_err();
+        let error = build(config, &Recording::default(), FakeImport::unused()).unwrap_err();
         assert!(matches!(error, BuildError::Setting("aws_region")));
 
         let config = VendorConfig {
@@ -896,7 +870,7 @@ mod tests {
             default_keyset: None,
             root_key_ttl: None,
         };
-        let error = build(Some(config), &Recording::default(), FakeImport::unused()).unwrap_err();
+        let error = build(config, &Recording::default(), FakeImport::unused()).unwrap_err();
         assert!(matches!(error, BuildError::Setting("vault_address")));
     }
 
@@ -913,7 +887,7 @@ mod tests {
             default_keyset: None,
             root_key_ttl: None,
         };
-        let error = build(Some(config), &Recording::default(), FakeImport::unused()).unwrap_err();
+        let error = build(config, &Recording::default(), FakeImport::unused()).unwrap_err();
         assert!(matches!(
             error,
             BuildError::Record(RecordError::ForeignVendor { .. })
@@ -924,7 +898,7 @@ mod tests {
             ..aws_settings()
         };
         assert!(matches!(
-            build(Some(config), &Recording::default(), FakeImport::unused(),),
+            build(config, &Recording::default(), FakeImport::unused(),),
             Err(BuildError::Record(_))
         ));
     }

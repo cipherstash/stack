@@ -378,3 +378,26 @@ async fn a_vendor_default_router_selects_the_vendor_for_no_keyset() {
     let opened: String = cipher.decrypt(sealed, context).await.unwrap();
     assert_eq!(opened, "v");
 }
+
+/// A router with no vendor sends every request to ZeroKMS, the default
+/// keyset included, even when it is told to prefer the vendor.
+#[tokio::test]
+async fn a_router_with_no_vendor_sends_everything_to_zerokms() {
+    let router =
+        KeyRouter::<_, FakeVendor>::zerokms_only(FakeDataKeySource::new()).with_vendor_default();
+    assert!(router.vendor().is_none());
+    assert_eq!(
+        stack_encrypt::kms::DataKeySource::key_backend(&router),
+        KeyBackend::ZeroKms
+    );
+    let cipher = StackCipher::builder().kms(router).init().await.unwrap();
+    let context = nonempty!("users").with("email");
+    let sealed = cipher
+        .default_keyset()
+        .encrypt("z".to_string(), context)
+        .await
+        .unwrap();
+    assert_eq!(leaf_backend(&sealed), (KeyBackend::ZeroKms, None));
+    let opened: String = cipher.decrypt(sealed, context).await.unwrap();
+    assert_eq!(opened, "z");
+}
