@@ -112,7 +112,7 @@ impl Term {
     /// `eql_v3_internal.ore_block_256` is a composite type whose comparison
     /// operators live in `public`, and with `public` off the path a bare `<`
     /// resolves to pg_catalog's built-in RECORD comparison, ordering the
-    /// ciphertext bytes lexicographically with no error (CIP-5153). Naming the
+    /// ciphertext bytes lexicographically with no error. Naming the
     /// schema makes resolution independent of the caller's path.
     ///
     /// The other terms are domains over built-in types (`text`, `smallint[]`,

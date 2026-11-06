@@ -1,5 +1,5 @@
 //! The `eql_v3` comparison wrappers give the same answer whatever the caller's
-//! `search_path` is (CIP-5153).
+//! `search_path` is.
 //!
 //! The wrappers (`eql_v3.lt`, `eql_v3.eq`, …) are unpinned `LANGUAGE sql`
 //! functions — pinning a `search_path` would stop them inlining, and with it

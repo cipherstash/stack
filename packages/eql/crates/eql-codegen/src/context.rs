@@ -291,7 +291,7 @@ pub fn wrapper_entry(dom: &str, op: &Operator, arg_a: &str, arg_b: &str, term: T
 /// unpinned `LANGUAGE sql` so it can inline, which means its body is parsed
 /// under the caller's `search_path` — a bare operator would resolve to whatever
 /// that path finds. See [`Term::operator_schema`] for the ORE failure this
-/// closes (CIP-5153). Qualifying keeps the wrapper inlinable: the inlined
+/// closes. Qualifying keeps the wrapper inlinable: the inlined
 /// expression carries the same operator OID either way.
 pub fn qualified_body_operator(op: &Operator, term: Term) -> String {
     format!(

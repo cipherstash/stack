@@ -1153,7 +1153,7 @@ mod tests {
     /// is parsed under the CALLER's `search_path`; a bare operator resolves to
     /// whatever that path finds. For the ORE term, whose operators live in
     /// `public`, a caller without `public` on the path got pg_catalog's RECORD
-    /// comparison — byte-wise ciphertext order, no error (CIP-5153). A bare
+    /// comparison — byte-wise ciphertext order, no error. A bare
     /// operator token anywhere in a wrapper body fails here.
     #[test]
     fn every_wrapper_body_schema_qualifies_its_operators() {
@@ -1179,7 +1179,7 @@ mod tests {
                     // wrong mapping there fails this test for every family. The
                     // ORE term compares a composite type whose operators are in
                     // `public`; naming pg_catalog there reaches the built-in
-                    // RECORD comparison, the CIP-5153 byte-order bug.
+                    // RECORD comparison, the byte-order bug this guards.
                     let want = if line.contains("eql_v3.ord_term_ore(") {
                         " OPERATOR(public."
                     } else {
