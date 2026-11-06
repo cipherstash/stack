@@ -3402,18 +3402,27 @@ dependencies = [
 name = "stack-auth-node"
 version = "0.35.0"
 dependencies = [
+ "base64 0.22.1",
  "cts-common",
  "jsonwebtoken",
+ "miette",
  "mocktail",
  "napi",
  "napi-build",
  "napi-derive",
  "serde_json",
  "stack-auth",
+ "stack-kms",
+ "stack-kms-aws",
+ "stack-kms-azure",
+ "stack-kms-gcp",
+ "stack-kms-vault",
+ "stack-kms-vendor",
  "stack-profile",
  "tempfile",
  "tokio",
  "url",
+ "vitaminc",
  "vitaminc-protected",
  "zeroize",
 ]

@@ -16,6 +16,21 @@ napi = { version = "2", features = ["async", "tokio_rt"] }
 napi-derive = "2"
 serde_json = "1"
 zeroize = { workspace = true }
+# `stash keyset create` / `rewrap` (src/keyset.rs, CIP-5312): keyset records
+# for the key vendor backends. These crates are compiled into this binary from
+# the tree, by path, so their crates.io release state does not matter here.
+# stack-kms-gcp has no default features: without `service-account` it has no
+# `rsa` code (RUSTSEC-2023-0071), and the binding builds its own credentials
+# from an access token or the metadata server.
+stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
+stack-kms-vendor = { path = "../../../../packages/stack-kms-vendor", features = ["http"] }
+stack-kms-aws = { path = "../../../../packages/stack-kms-aws" }
+stack-kms-vault = { path = "../../../../packages/stack-kms-vault" }
+stack-kms-gcp = { path = "../../../../packages/stack-kms-gcp", default-features = false }
+stack-kms-azure = { path = "../../../../packages/stack-kms-azure" }
+vitaminc = { workspace = true }
+base64 = { workspace = true }
+miette = { workspace = true }
 
 [dev-dependencies]
 # `stack-auth/test-utils` gives the Rust #[cfg(test)] unit tests the no-timeout

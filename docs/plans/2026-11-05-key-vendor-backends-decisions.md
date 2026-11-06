@@ -1445,3 +1445,153 @@ the alternatives and the reason.
   KMS client through the fake RoundTripper (no vendor call at NewClient; 4
   `Decrypt` calls for one Encrypt and two Decrypts with `WithRootKeyTTL(0)`;
   4 credential requests); and the option refusals.
+
+## CIP-5312: `stash keyset create` / `rewrap`
+
+### How the TypeScript CLI calls Rust
+
+- **Decision:** the vendor calls go through two new napi functions,
+  `keysetCreate` and `keysetRewrap`, in the **existing `@cipherstash/auth`
+  binding** (`stack-auth-node`, module `src/keyset.rs`). The binding now
+  depends on `stack-kms`, `stack-kms-vendor` (feature `http`) and the four
+  vendor crates **by path**. `index.js` wraps both in the `Result` envelope,
+  and `index.d.ts` declares them with a new `KeysetFailure` type.
+  **Alternatives:** (b) a new napi package: six more platform packages, a
+  second trusted publishing setup and a second release path in
+  `release.yml`, for two functions. (c) a WASM build of the vendor crates
+  loaded by the CLI: the vendor crates send through `VendorTransport`, so a
+  JS `fetch` transport is possible, but the credential chains (IMDS, ECS,
+  web identity, metadata server, files) are native only, and it is a new
+  build and package too. (a′) `@cipherstash/protect-ffi`: it has its own
+  Cargo workspace, which pins its own vitaminc and does not hold the vendor
+  crates, and the CLI has it only as a devDependency. **Reason:**
+  `stack-auth-node` is in the root Cargo workspace with the vendor crates,
+  and `stash` already depends on `@cipherstash/auth` and its six platform
+  packages at the exact workspace version. No new package, platform or
+  release step.
+- **Decision:** the vendor crates are compiled into the binary from the
+  tree. Their crates.io state (`release = false`, `publish = false`) does
+  not matter: napi builds the binding with cargo in this repository, and
+  the binding crate is `publish = false`. Confirmed: `pnpm run build:debug`
+  and `cargo build --release -p stack-auth-node` build with no registry
+  version of them.
+- **Decision:** `stack-kms-gcp` is built **without default features**, so
+  the binary has no `rsa` code (RUSTSEC-2023-0071, see the orchestrator
+  review of CIP-5308). The binding makes its own Google credentials:
+  `GOOGLE_OAUTH_ACCESS_TOKEN` (for example `gcloud auth
+  print-access-token`), else the metadata server. A set
+  `GOOGLE_APPLICATION_CREDENTIALS` is refused with that remedy, not ignored.
+  **Alternative:** `GcpKms::from_env` (feature `http`, which implies
+  `service-account`). **Reason:** `@cipherstash/auth` is a published
+  package that every `@cipherstash/stack` user installs; it must not ship
+  the advisory before a security review signs it off. A person at a
+  terminal can run `gcloud auth print-access-token`.
+- **Decision:** AWS, Vault and Azure use `DefaultAwsKms::from_env`,
+  `DefaultVaultTransit::from_env` and `DefaultAzureKeyVault::from_env`
+  unchanged. Azure does no RSA signing in the crate, so it adds no
+  advisory. Node's `process.env` writes reach the process environment, so
+  the variables from the CLI's `.env` files reach these chains too.
+- **Measured:** the darwin-arm64 release binary grows from 6,144,944 B to
+  6,823,632 B (+678,688 B, +11.0%).
+- **Decision:** the `require-auth-npm-changeset.yml` rule now also watches
+  `Cargo.toml` and `src/` of the five vendor crates, and the three
+  integration workflows that load the auth binding filter on the same paths
+  (`auth-binding-step-order.test.mjs` derives that list from the rule).
+  **Reason:** a change to a vendor crate now changes the npm binary, and
+  nothing else would release it. `stack-kms` is not added, as
+  `stack-profile` is not: the rule lists the crates whose behaviour the
+  binding exposes.
+- **Decision:** failures cross with the existing `__CS_FAIL__` sentinel and
+  a separate code set: `INVALID_OPTIONS`, `STATIC_KEY`, `VENDOR_CONFIG`,
+  `INVALID_RECORD` (with `diagnostic`, the `stack_kms_vendor::*` miette
+  code, and `help`) and `VENDOR_ERROR` (with `vendor` and `kind`, the
+  `BackendErrorKind`). **Alternative:** add them to `AuthFailure`.
+  **Reason:** they are not auth errors; the `AuthFailure` union is pinned
+  to `AuthError::ERROR_CODES` by a drift test. A new Rust test pins the
+  `KeysetFailure` codes in `index.d.ts` the same way.
+
+### The commands
+
+- **Decision:** `stash keyset create --backend <aws|gcp|azure|vault|static>
+  --vendor-key <ref> --mode <wrapped|derived> [--name] [--key-env]
+  [--out] [--force] [--json]` and `stash keyset rewrap <record> | --in
+  <file> [--vendor-key] [--key-env] [--new-key-env] [--out] [--force]
+  [--json]`. Both are flags only, with no prompts. The CLI checks the flags
+  before it loads the native binding, so a usage error needs no binary.
+  `--mode` is required for every backend, the static backend too (ADR-0009:
+  the mode is chosen per keyset).
+- **Decision (env names introduced):** the record prints as
+  `CS_KEYSET_RECORD`, or `CS_KEYSET_RECORD_<NAME>` with `--name` (upper
+  case, other characters to `_`). A generated static key prints as
+  `CS_STATIC_KEY`. **No SDK reads either name today:** Go takes records
+  through `WithKeysetRecords(...string)` and Rust through
+  `KeysetRecord::parse`; neither reads an environment variable. The CLI
+  says so on stderr and in the help. **Alternative:** print the bare
+  record. **Reason:** a dotenv block can go straight into a secret store or
+  `--env-file`, and a name per keyset lets several records live in one
+  file. The TypeScript follow-up can read these names.
+- **Decision (static key):** `--key-env <VAR>` names the variable that
+  holds the key (32 bytes as base64, base64url or 64 hex characters); the
+  CLI refuses a value that is not a variable name, so a key is never typed
+  into argv. Rust reads and decodes the variable, so the key never becomes
+  a JS string. Without `--key-env`, Rust generates a key with the CSPRNG and
+  returns it once, as padded standard base64 (Go: `base64.StdEncoding`).
+  Rewrap of a static record needs `--key-env` (the current key) and, when
+  `--vendor-key` names another reference, `--new-key-env` or a generated
+  key. **Alternative:** refuse to generate. **Reason:** a developer's first
+  static keyset should be one command.
+- **Decision (rewrap):** every backend uses `KeysetRecord::rewrap` (unwrap,
+  then wrap), with the record's own key reference when `--vendor-key` is
+  not given. The wrap uses the vendor key's current version (AWS, Vault,
+  GCP primary version, Azure current version), so this also moves a record
+  after a rotation. **Alternative:** Vault's native `rewrap`, which keeps
+  the key inside Vault. **Reason:** one path for every vendor; the CLI
+  holds the unwrapped key only for one wrap. Revisit if a Vault user's
+  policy allows `rewrap` but not `decrypt`.
+- **Decision (output):** as `stash env`: stdout carries only the dotenv
+  block or one NDJSON event, and every other line goes to stderr. Comment
+  values (name, vendor key) are JSON-quoted, so a name in an edited record
+  cannot inject a line. `--out` writes with mode 0600 and the `wx` flag
+  (an existing file is refused atomically), and `--force` overwrites, so
+  `rewrap --in f --out f --force` updates a file in place. `--json` with
+  `--out` gives `{ status: "written", … }`, which never holds the static
+  key. `--in` reads the one `stack-keyset:` record in a file and refuses a
+  file with none or with two.
+- **Decision:** the help of both commands and the group summaries say that
+  ZeroKMS users never need them, and an unknown `keyset` subcommand prints
+  the same note. The help lists each backend's environment variables.
+- **Tests:** Rust (`stack-auth-node`, 15 new): static create with a
+  generated key and with a key from the environment, rewrap to another key,
+  a wrong key (`VENDOR_ERROR` / `InvalidCiphertext`), the static
+  wrapped-mode refusal, option refusals, key decoding, and that no message
+  or `Debug` shows a key. JS (`@cipherstash/auth`, 6 new): both `Result`
+  arms through `index.js` with the real binding. CLI unit (19 new, binding
+  faked at the import): flag checks, the block and JSON shapes, `--out`
+  mode and overwrite, `--in`, failure mapping. CLI pty e2e (5 new): help,
+  unknown subcommand, a JSON usage error, and a static create, rewrap and
+  wrong-key round trip through the real binding. The vendor paths are not
+  run from TypeScript; their crates' fixtures and emulators cover them.
+- **Note:** `pnpm run test:scripts` passes in full here (80 files) once
+  `pnpm install` has run; the two failures noted since CIP-5306 were
+  missing `node_modules` content.
+- **Not done:** the CLI README has no `env` or `keyset` section; user docs
+  are CIP-5313.
+- **Deferred to CIP-5313:** document `stash keyset` and the
+  `CS_KEYSET_RECORD*` names in the user docs.
+- **Revisit:** if the TypeScript SDK gets key vendor backends, it should
+  read `CS_KEYSET_RECORD*` by itself, and then the CLI's "no SDK reads it"
+  line changes.
+
+## Orchestrator review of CIP-5312
+
+- **Revisit:** the CLI suggests the env names `CS_KEYSET_RECORD[_<NAME>]` and
+  `CS_STATIC_KEY`, but no SDK reads them. The Go SDK takes records through
+  `WithKeysetRecords`, and Rust through its API. Accepted as a naming
+  convention that the CLI states plainly. A later change can make the Go and
+  Rust SDKs read them by default, or the CLI can stop suggesting them.
+- **Note:** the GCP path in the CLI refuses `GOOGLE_APPLICATION_CREDENTIALS`,
+  because the binary has no RSA code. A user runs
+  `GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token)` instead.
+- **Checked:** `pnpm run code:check` reports errors only in the ignored local
+  `.turbo/` cache and a `biome.json` schema-version notice from a newer local
+  Biome. There are no errors in tracked source.
