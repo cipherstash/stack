@@ -271,8 +271,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
 //! let cipher = StackCipher::builder()
-//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //!
 //! // Without a caller context, each element is encrypted under the empty context.
