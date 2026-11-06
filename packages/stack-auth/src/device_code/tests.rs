@@ -514,6 +514,103 @@ async fn test_poll_for_token_slow_down_increases_interval() {
     assert!(matches!(err, AuthError::TokenExpired(_)));
 }
 
+fn device_code_json_expiring_in(expires_in: u64) -> serde_json::Value {
+    let mut json = device_code_json();
+    json["expires_in"] = expires_in.into();
+    json
+}
+
+/// A server-supplied device-code lifetime past the cap is clamped, so the
+/// poll deadline (`Instant::now() + expires_in`) cannot overflow and panic.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_clamps_an_oversized_device_code_lifetime() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(u64::MAX));
+    });
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.json(token_json());
+    });
+    let server = start_server(mocks).await;
+
+    let pending = begin_pending(&server, &dir).await;
+    assert_eq!(
+        pending.expires_in(),
+        3_600,
+        "an oversized device-code lifetime must be clamped to one hour"
+    );
+
+    let token = pending
+        .poll_for_token()
+        .await
+        .expect("polling must not panic on an oversized device-code lifetime");
+    assert!(!token.is_expired());
+}
+
+/// The clamped deadline is still enforced: once it passes, polling stops
+/// with `TokenExpired` rather than running for as long as the server said.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_expires_at_the_clamped_deadline() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/code");
+        then.json(device_code_json_expiring_in(u64::MAX));
+    });
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.bad_request().json(error_json("authorization_pending"));
+    });
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+    let started = tokio::time::Instant::now();
+
+    let err = pending.poll_for_token().await.unwrap_err();
+
+    assert!(matches!(err, AuthError::TokenExpired(_)));
+    let elapsed = started.elapsed().as_secs();
+    assert!(
+        (MAX_DEVICE_CODE_LIFETIME_SECS..MAX_DEVICE_CODE_LIFETIME_SECS + 10).contains(&elapsed),
+        "polling should stop at the one-hour cap; stopped after {elapsed}s"
+    );
+}
+
+/// A server-supplied token lifetime past the cap is clamped on the
+/// device-code path too, rather than wrapping `now + expires_in` to a
+/// timestamp in the past.
+#[tokio::test(start_paused = true)]
+async fn test_poll_for_token_clamps_an_oversized_token_lifetime() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_code_endpoint(&mut mocks);
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.json(serde_json::json!({
+            "access_token": test_access_token(),
+            "token_type": "Bearer",
+            "expires_in": u64::MAX
+        }));
+    });
+    let server = start_server(mocks).await;
+
+    let token = begin_pending(&server, &dir)
+        .await
+        .poll_for_token()
+        .await
+        .unwrap();
+
+    let max = crate::token::MAX_TOKEN_LIFETIME_SECS;
+    assert!(!token.is_expired(), "the token must not wrap to expired");
+    assert!(
+        (max - 2..=max).contains(&token.expires_in()),
+        "token lifetime should be clamped; got {}",
+        token.expires_in()
+    );
+}
+
 // ---- ensure_trailing_slash / URL join tests ----
 
 #[test]

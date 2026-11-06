@@ -17,6 +17,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+# auth.json and secretkey.json hold bearer tokens and keys: the JSON buffers
+# that carry them to and from disk are wiped (see `secret_buf`).
+zeroize = { workspace = true }
 
 # The default device name is the hostname, which only the creating half of
 # `DeviceIdentity` needs — and that half is native-only: the crate builds for

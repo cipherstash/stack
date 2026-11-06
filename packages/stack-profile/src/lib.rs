@@ -66,6 +66,7 @@ mod device_identity;
 pub mod diagnostic;
 mod error;
 mod profile_store;
+mod secret_buf;
 
 pub use device_identity::DeviceIdentity;
 pub use diagnostic::ErrorPayload;

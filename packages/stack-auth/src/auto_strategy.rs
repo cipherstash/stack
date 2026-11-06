@@ -10,6 +10,7 @@ use crate::HttpTransport;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::Token;
 use crate::{AuthError, AuthStrategy, ServiceToken};
+use zeroize::Zeroizing;
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -106,7 +107,7 @@ impl AutoStrategy {
     /// unreachable (no filesystem) — callers must supply an access key.
     #[cfg(not(target_arch = "wasm32"))]
     fn detect_inner(
-        access_key: Option<String>,
+        access_key: Option<&str>,
         crn: Option<Crn>,
         store: Option<ProfileStore>,
         transport: Option<SharedTransport>,
@@ -143,7 +144,7 @@ impl AutoStrategy {
 
     #[cfg(target_arch = "wasm32")]
     fn detect_inner(
-        access_key: Option<String>,
+        access_key: Option<&str>,
         crn: Option<Crn>,
         transport: Option<SharedTransport>,
     ) -> Result<Self, AuthError> {
@@ -180,7 +181,8 @@ impl AutoStrategy {
 /// # }
 /// ```
 pub struct AutoStrategyBuilder {
-    access_key: Option<String>,
+    /// Wiped on drop: the access key is a long-lived credential.
+    access_key: Option<Zeroizing<String>>,
     crn: Option<Crn>,
     transport: Option<SharedTransport>,
 }
@@ -195,7 +197,7 @@ impl AutoStrategyBuilder {
 
     /// Provide an explicit access key. Takes precedence over env vars.
     pub fn with_access_key(mut self, access_key: impl Into<String>) -> Self {
-        self.access_key = Some(access_key.into());
+        self.access_key = Some(Zeroizing::new(access_key.into()));
         self
     }
 
@@ -214,9 +216,13 @@ impl AutoStrategyBuilder {
     /// 4. [`AuthError::NotAuthenticated`]
     pub fn detect(self) -> Result<AutoStrategy, AuthError> {
         // Merge explicit values with env vars (explicit wins)
-        let access_key = self
-            .access_key
-            .or_else(|| std::env::var("CS_CLIENT_ACCESS_KEY").ok());
+        // Wrapped as soon as it is read, so this copy is wiped on drop. The
+        // process environment keeps its own copy, which is beyond our reach.
+        let access_key = self.access_key.or_else(|| {
+            std::env::var("CS_CLIENT_ACCESS_KEY")
+                .ok()
+                .map(Zeroizing::new)
+        });
 
         let crn = match self.crn {
             Some(crn) => Some(crn),
@@ -238,11 +244,20 @@ impl AutoStrategyBuilder {
                     None
                 }
             };
-            AutoStrategy::detect_inner(access_key, crn, store, self.transport)
+            AutoStrategy::detect_inner(
+                access_key.as_ref().map(|key| key.as_str()),
+                crn,
+                store,
+                self.transport,
+            )
         }
         #[cfg(target_arch = "wasm32")]
         {
-            AutoStrategy::detect_inner(access_key, crn, self.transport)
+            AutoStrategy::detect_inner(
+                access_key.as_ref().map(|key| key.as_str()),
+                crn,
+                self.transport,
+            )
         }
     }
 }
@@ -319,7 +334,7 @@ mod tests {
         #[cfg(feature = "http")] // builds a strategy with no transport of its own
         fn access_key_with_valid_crn() {
             let result = AutoStrategy::detect_inner(
-                Some("CSAKtestKeyId.testKeySecret".into()),
+                Some("CSAKtestKeyId.testKeySecret"),
                 Some(valid_crn()),
                 None,
                 None,
@@ -331,24 +346,16 @@ mod tests {
 
         #[test]
         fn access_key_without_crn_returns_missing_workspace_crn() {
-            let result = AutoStrategy::detect_inner(
-                Some("CSAKtestKeyId.testKeySecret".into()),
-                None,
-                None,
-                None,
-            );
+            let result =
+                AutoStrategy::detect_inner(Some("CSAKtestKeyId.testKeySecret"), None, None, None);
 
             assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn(_))));
         }
 
         #[test]
         fn invalid_access_key_format_returns_invalid_access_key() {
-            let result = AutoStrategy::detect_inner(
-                Some("not-a-valid-key".into()),
-                Some(valid_crn()),
-                None,
-                None,
-            );
+            let result =
+                AutoStrategy::detect_inner(Some("not-a-valid-key"), Some(valid_crn()), None, None);
 
             assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
         }
@@ -389,7 +396,7 @@ mod tests {
             let store = write_token_store(dir.path());
 
             let result = AutoStrategy::detect_inner(
-                Some("CSAKtestKeyId.testKeySecret".into()),
+                Some("CSAKtestKeyId.testKeySecret"),
                 Some(valid_crn()),
                 Some(store),
                 None,

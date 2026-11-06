@@ -18,6 +18,16 @@ use protocol::{
 #[cfg(test)]
 mod tests;
 
+/// The longest device-code lifetime this crate polls for, in seconds (one
+/// hour).
+///
+/// `expires_in` is server-supplied, and [`PendingDeviceCode::poll_for_token`]
+/// adds it to an [`Instant`](tokio::time::Instant), which panics on overflow
+/// in every build profile. RFC 8628 device codes live for minutes, so a
+/// larger value is clamped rather than trusted: at worst the user restarts
+/// sign-in after an hour.
+const MAX_DEVICE_CODE_LIFETIME_SECS: u64 = 60 * 60;
+
 // Keep the browser boundary visible to callers of `open_in_browser`.
 fn launch_browser(uri: &str) -> std::io::Result<()> {
     #[cfg(test)]
@@ -156,7 +166,7 @@ impl DeviceCodeStrategy {
             user_code: code.user_code,
             verification_uri: code.verification_uri,
             verification_uri_complete: code.verification_uri_complete,
-            expires_in: code.expires_in,
+            expires_in: code.expires_in.min(MAX_DEVICE_CODE_LIFETIME_SECS),
             profile_dir: self.profile_dir.clone(),
             device_identity: self.device_identity.clone(),
         })
@@ -265,7 +275,8 @@ pub struct PendingDeviceCode {
     verification_uri: String,
     /// The full verification URI with the user code pre-filled.
     verification_uri_complete: String,
-    /// How many seconds the device code remains valid.
+    /// How many seconds the device code remains valid, clamped to
+    /// [`MAX_DEVICE_CODE_LIFETIME_SECS`].
     expires_in: u64,
     /// Profile directory override. Falls back to `~/.cipherstash`.
     profile_dir: Option<PathBuf>,
@@ -290,6 +301,9 @@ impl PendingDeviceCode {
     }
 
     /// How many seconds the device code remains valid.
+    ///
+    /// This is the server's `expires_in`, capped at one hour: polling stops
+    /// at that point even if the server claimed a longer lifetime.
     pub fn expires_in(&self) -> u64 {
         self.expires_in
     }
@@ -352,7 +366,7 @@ impl PendingDeviceCode {
                 let mut token = Token {
                     access_token: token_resp.access_token,
                     token_type: token_resp.token_type,
-                    expires_at: now + token_resp.expires_in,
+                    expires_at: crate::token::expires_at_after(now, token_resp.expires_in),
                     refresh_token: token_resp.refresh_token,
                     region: None,
                     client_id: None,
