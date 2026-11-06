@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::secret_buf::ZeroizingWriter;
+use crate::secret_buf::SecretBuf;
 use crate::{ProfileData, ProfileError};
 
 const CS_CONFIG_PATH_ENV: &str = "CS_CONFIG_PATH";
@@ -295,7 +295,7 @@ impl ProfileStore {
         // The serialised form of a profile can carry secrets (`auth.json`'s
         // tokens, `secretkey.json`'s key), so it is built in a buffer that is
         // wiped on drop and on every reallocation, never in a plain `String`.
-        let mut json = ZeroizingWriter::new();
+        let mut json = SecretBuf::new();
         serde_json::to_writer_pretty(&mut json, value)?;
         Self::write_to_path(&path, json.as_bytes(), _mode)
     }
@@ -456,13 +456,18 @@ impl ProfileStore {
     pub fn load<T: DeserializeOwned>(&self, filename: &str) -> Result<T, ProfileError> {
         Self::validate_filename(filename)?;
         let path = self.dir.join(filename);
-        // Read into a buffer wiped on drop: the file may hold secrets (see
-        // `write`). `fs::read` sizes the buffer from the file's metadata, so
-        // it is allocated once and never reallocated, which would otherwise
-        // free an un-wiped copy of the contents.
-        match std::fs::read(&path).map(zeroize::Zeroizing::new) {
+        // Read into a buffer wiped on drop and on growth: the file may hold
+        // secrets (see `write`). `fs::read` would not do: it reallocates, and
+        // frees an unwiped copy, whenever the file's metadata under-reports
+        // its length.
+        //
+        // serde_json still decodes a string containing escape sequences
+        // through a scratch buffer of its own, which it does not wipe. Tokens
+        // and keys are base64 or JWTs, which need no escaping, so that path
+        // is not taken for them.
+        match std::fs::File::open(&path).and_then(SecretBuf::read_from) {
             Ok(contents) => {
-                let value: T = serde_json::from_slice(&contents)?;
+                let value: T = serde_json::from_slice(contents.as_bytes())?;
                 Ok(value)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

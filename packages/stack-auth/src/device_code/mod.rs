@@ -152,9 +152,11 @@ impl DeviceCodeStrategy {
 
         let token_url = self.base_url.join("oauth/device/token")?;
 
+        let expires_in = code.expires_in.min(MAX_DEVICE_CODE_LIFETIME_SECS);
         tracing::debug!(
             user_code = %code.user_code,
-            expires_in = code.expires_in,
+            expires_in,
+            server_expires_in = code.expires_in,
             "device code received"
         );
 
@@ -166,7 +168,7 @@ impl DeviceCodeStrategy {
             user_code: code.user_code,
             verification_uri: code.verification_uri,
             verification_uri_complete: code.verification_uri_complete,
-            expires_in: code.expires_in.min(MAX_DEVICE_CODE_LIFETIME_SECS),
+            expires_in,
             profile_dir: self.profile_dir.clone(),
             device_identity: self.device_identity.clone(),
         })

@@ -9,8 +9,7 @@ use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::Token;
-use crate::{AuthError, AuthStrategy, ServiceToken};
-use zeroize::Zeroizing;
+use crate::{AuthError, AuthStrategy, SecretToken, ServiceToken};
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -181,8 +180,8 @@ impl AutoStrategy {
 /// # }
 /// ```
 pub struct AutoStrategyBuilder {
-    /// Wiped on drop: the access key is a long-lived credential.
-    access_key: Option<Zeroizing<String>>,
+    /// A [`SecretToken`] so the key is wiped on drop and masked in `Debug`.
+    access_key: Option<SecretToken>,
     crn: Option<Crn>,
     transport: Option<SharedTransport>,
 }
@@ -197,7 +196,7 @@ impl AutoStrategyBuilder {
 
     /// Provide an explicit access key. Takes precedence over env vars.
     pub fn with_access_key(mut self, access_key: impl Into<String>) -> Self {
-        self.access_key = Some(Zeroizing::new(access_key.into()));
+        self.access_key = Some(SecretToken::new(access_key));
         self
     }
 
@@ -221,7 +220,7 @@ impl AutoStrategyBuilder {
         let access_key = self.access_key.or_else(|| {
             std::env::var("CS_CLIENT_ACCESS_KEY")
                 .ok()
-                .map(Zeroizing::new)
+                .map(SecretToken::new)
         });
 
         let crn = match self.crn {
@@ -245,7 +244,7 @@ impl AutoStrategyBuilder {
                 }
             };
             AutoStrategy::detect_inner(
-                access_key.as_ref().map(|key| key.as_str()),
+                access_key.as_ref().map(SecretToken::as_str),
                 crn,
                 store,
                 self.transport,
@@ -254,7 +253,7 @@ impl AutoStrategyBuilder {
         #[cfg(target_arch = "wasm32")]
         {
             AutoStrategy::detect_inner(
-                access_key.as_ref().map(|key| key.as_str()),
+                access_key.as_ref().map(SecretToken::as_str),
                 crn,
                 self.transport,
             )
