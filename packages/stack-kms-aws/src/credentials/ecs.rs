@@ -10,7 +10,9 @@ use super::{Credentials, CredentialsError, CredentialsProvider, EnvLookup};
 const ECS_HOST: &str = "http://169.254.170.2";
 
 /// Where the authorization token of the container endpoint comes from.
-#[derive(Clone, Debug)]
+///
+/// No `Debug`: the `Debug` of `Zeroizing` prints the token.
+#[derive(Clone)]
 enum AuthToken {
     None,
     /// `AWS_CONTAINER_AUTHORIZATION_TOKEN`.
