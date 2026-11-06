@@ -111,6 +111,31 @@ pub enum RecordError {
         second: KeyVendor,
     },
 
+    /// A rewrap would move a record in the wrapped data key mode to another
+    /// vendor key. Each stored value's data key stays wrapped under the key
+    /// that sealed it, so the values sealed before the move would not open.
+    /// A new version of the same key is allowed, and so is any key in the
+    /// derived data key mode.
+    #[error(
+        "The keyset {keyset} uses wrapped data keys, so its record cannot move to another vendor key"
+    )]
+    #[diagnostic(
+        code(stack_kms_vendor::rewrap_another_key),
+        help(
+            "Each stored value's data key stays wrapped under the vendor key that sealed it. \
+             Rewrap under a new version of the same key, or create a new keyset under the other key \
+             and re-encrypt the data into it."
+        )
+    )]
+    RewrapToAnotherKey {
+        /// The keyset.
+        keyset: Uuid,
+        /// The record's key reference.
+        from: String,
+        /// The key reference the rewrap named.
+        to: String,
+    },
+
     /// The default keyset is not one of the loaded records.
     #[error("The default keyset is not one of the loaded keyset records")]
     #[diagnostic(code(stack_kms_vendor::unknown_default))]
@@ -143,6 +168,11 @@ impl ErrorPayload for RecordError {
                 ("found", found.name().into()),
             ]),
             Self::DuplicateKeyset(keyset) => payload([("keyset", keyset.to_string().into())]),
+            Self::RewrapToAnotherKey { keyset, from, to } => payload([
+                ("keyset", keyset.to_string().into()),
+                ("from", from.as_str().into()),
+                ("to", to.as_str().into()),
+            ]),
             Self::SecondVendor { first, second } => payload([
                 ("first", first.name().into()),
                 ("second", second.name().into()),

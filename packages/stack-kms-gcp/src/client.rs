@@ -409,6 +409,16 @@ impl<T: VendorTransport + Send + Sync, A: TokenProvider> KeyVendorBackend for Gc
         KeyVendor::Gcp
     }
 
+    /// The same crypto key, whatever `…/cryptoKeyVersions/{n}` either
+    /// reference names. A reference that is not a crypto key name is
+    /// compared as text.
+    fn same_key(&self, a: &str, b: &str) -> bool {
+        match (parse_key_name(a), parse_key_name(b)) {
+            (Some((a, _)), Some((b, _))) => a == b,
+            _ => a == b,
+        }
+    }
+
     async fn wrap(&self, key_ref: &str, key: &KeyBytes, aad: &[u8]) -> Result<Vec<u8>, Error> {
         let (crypto_key, _) = key_name(key_ref)?;
         let body = to_json(

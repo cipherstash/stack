@@ -9,10 +9,12 @@
 mod common;
 
 use common::{fixture_client, test_only_service_account, KmsEmulator, KEY};
+use stack_encrypt::StackCipher;
+use stack_kms::KeyMode;
 use stack_kms::{BackendErrorKind, Error};
 use stack_kms_gcp::{wrapped_key_version, CachedToken, GcpKms, GcpKmsConfig, ServiceAccountLogin};
 use stack_kms_vendor::derive::wrapped_data_key_aad;
-use stack_kms_vendor::{contract, KeyVendorBackend};
+use stack_kms_vendor::{contract, KeyVendorBackend, KeysetRecord, RecordError, VendorKeySource};
 use uuid::Uuid;
 use vitaminc::protected::{Controlled, Protected};
 
@@ -115,4 +117,86 @@ async fn a_missing_key_is_not_found() {
         .await
         .unwrap_err();
     assert_eq!(kind_of(error), BackendErrorKind::NotFound);
+}
+
+/// Seal a value under `record`, then rewrap the record to `new_ref` and
+/// open the value through the rewrapped record.
+async fn rewrap_and_open(emulator: &KmsEmulator, record: KeysetRecord, new_ref: &str) {
+    let old = StackCipher::builder()
+        .kms(VendorKeySource::new(fixture_client(emulator.clone()), [record.clone()]).unwrap())
+        .init()
+        .await
+        .unwrap();
+    let sealed = old
+        .default_keyset()
+        .encrypt("v".to_string(), b"ctx")
+        .await
+        .unwrap();
+    emulator.rotate(KEY);
+    let rewrapped = record
+        .rewrap(&fixture_client(emulator.clone()), new_ref)
+        .await
+        .unwrap();
+    assert_eq!(wrapped_key_version(rewrapped.wrapped_key()), Some(2));
+    let new = StackCipher::builder()
+        .kms(VendorKeySource::new(fixture_client(emulator.clone()), [rewrapped]).unwrap())
+        .init()
+        .await
+        .unwrap();
+    let opened: String = new.decrypt(sealed, b"ctx").await.unwrap();
+    assert_eq!(opened, "v");
+}
+
+#[test]
+fn the_same_crypto_key_ignores_the_version() {
+    let kms = fixture_client(KmsEmulator::new());
+    let v2 = format!("{KEY}/cryptoKeyVersions/2");
+    let v7 = format!("{KEY}/cryptoKeyVersions/7");
+    assert!(kms.same_key(KEY, KEY));
+    assert!(kms.same_key(KEY, &v2));
+    assert!(kms.same_key(&v2, &v7));
+    let other = KEY.replace("fixture-key", "other-key");
+    assert!(!kms.same_key(KEY, &other));
+    assert!(!kms.same_key(&v2, &format!("{other}/cryptoKeyVersions/2")));
+    assert!(!kms.same_key(KEY, "not a key name"));
+}
+
+#[tokio::test]
+async fn a_wrapped_record_rewraps_to_a_new_version_and_keeps_old_values() {
+    for new_ref in [KEY.to_owned(), format!("{KEY}/cryptoKeyVersions/2")] {
+        let emulator = KmsEmulator::new();
+        let record = KeysetRecord::create(
+            &fixture_client(emulator.clone()),
+            KEY,
+            KeyMode::Wrapped,
+            None,
+        )
+        .await
+        .unwrap();
+        rewrap_and_open(&emulator, record, &new_ref).await;
+    }
+}
+
+#[tokio::test]
+async fn a_wrapped_record_does_not_rewrap_to_another_crypto_key() {
+    let emulator = KmsEmulator::new();
+    let other = KEY.replace("fixture-key", "other-key");
+    emulator.add_key(&other);
+    let kms = fixture_client(emulator.clone());
+    let record = KeysetRecord::create(&kms, KEY, KeyMode::Wrapped, None)
+        .await
+        .unwrap();
+    let before = emulator.requests().len();
+    assert!(matches!(
+        record.rewrap(&kms, other.as_str()).await,
+        Err(RecordError::RewrapToAnotherKey { .. })
+    ));
+    assert_eq!(emulator.requests().len(), before, "no vendor call");
+
+    // A derived record may move to another crypto key.
+    let record = KeysetRecord::create(&kms, KEY, KeyMode::Derived, None)
+        .await
+        .unwrap();
+    let moved = record.rewrap(&kms, other.as_str()).await.unwrap();
+    assert_eq!(moved.key_ref(), other);
 }

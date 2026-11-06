@@ -26,9 +26,10 @@ pub type KeyBytes = Protected<[u8; 32]>;
 ///
 /// * **Bind the associated data.** `unwrap` must fail unless `aad` is the
 ///   `aad` given to `wrap`. A vendor with native associated data (AWS KMS
-///   encryption context, Vault Transit `associated_data`, Google Cloud KMS
-///   `additionalAuthenticatedData`) passes it through. A vendor without it
-///   must bind it some other way: wrap the bound key of
+///   encryption context, Google Cloud KMS `additionalAuthenticatedData`)
+///   passes it through. A vendor without it (Azure Key Vault), or with it
+///   on some keys or versions only (Vault Transit), must bind it some other
+///   way: wrap the bound key of
 ///   [`bound::bind_key`](crate::bound::bind_key) in place of the key, and
 ///   open it with [`bound::open_bound_key`](crate::bound::open_bound_key).
 /// * **Report failures as [`Error::Backend`]**, with
@@ -51,6 +52,24 @@ pub trait KeyVendorBackend: Send + Sync {
     fn supports_mode(&self, mode: KeyMode) -> bool {
         let _ = mode;
         true
+    }
+
+    /// Whether the key references `a` and `b` name the same vendor key,
+    /// perhaps at different versions of it.
+    ///
+    /// [`KeysetRecord::rewrap`](crate::KeysetRecord::rewrap) asks this for a
+    /// record in the wrapped data key mode. Such a record may move to a new
+    /// version of its key, but not to another key: each stored value's data
+    /// key stays wrapped under the key that sealed it, and the adapter
+    /// unwraps it with the record's current key reference.
+    ///
+    /// The default is string equality. A vendor whose key references can
+    /// name a version (Google Cloud KMS `…/cryptoKeyVersions/{n}`, an Azure
+    /// key identifier with `/{version}`) overrides it to ignore the version.
+    /// Answer `false` when unsure: a false `true` lets a rewrap make stored
+    /// values unreadable, and a false `false` only refuses a rewrap.
+    fn same_key(&self, a: &str, b: &str) -> bool {
+        a == b
     }
 
     /// Wrap `key` under the vendor key `key_ref`, binding `aad`.

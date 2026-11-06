@@ -342,6 +342,19 @@ npx stash decrypt status
 
 The backfill loads your encryption client exactly as `encrypt backfill` does (client file or Prisma Next contract), so export the `CS_*` credentials of the environment that wrote the data.
 
+### `npx stash keyset` — keysets in a key vendor backend
+
+**ZeroKMS users never need these commands.** They are for a keyset kept in a key vendor backend instead of ZeroKMS: AWS KMS, Google Cloud KMS, Azure Key Vault, HashiCorp Vault Transit, or a static key. Only the Rust crates and the Go SDK can use such a keyset today; `@cipherstash/stack` cannot yet.
+
+```bash
+npx stash keyset create --backend aws --vendor-key arn:aws:kms:us-east-1:111122223333:key/<id> --mode wrapped --name users
+npx stash keyset rewrap --in keyset.env --out keyset.env --force
+```
+
+`keyset create` makes a **keyset record** and prints it as a dotenv line, `CS_KEYSET_RECORD_<NAME>=stack-keyset:…` (or `CS_KEYSET_RECORD` with no `--name`). The record is not secret. No SDK reads that variable by itself: pass its value to `encrypt.WithKeysetRecords` (Go) or `KeysetRecord::parse` (Rust). `--mode wrapped` gives each value its own vendor-wrapped data key; `--mode derived` derives the data keys from one root key, which the SDK caches for a TTL. The static backend offers `derived` only, and prints a generated key as `CS_STATIC_KEY` unless `--key-env` names the variable that holds one. Credentials come from each vendor's environment chain; `npx stash keyset create --help` lists the variables.
+
+`keyset rewrap` wraps the record's key again, under the same vendor key after a rotation or under another one. It does not re-key stored data, so a `derived` record may move to any key, but **a `wrapped` record may move only to a new version of its own vendor key**: another key is refused (`rewrap_refused`) before any vendor call. The `stash-cli` agent skill has the full flag reference.
+
 ---
 
 ## Migration mode

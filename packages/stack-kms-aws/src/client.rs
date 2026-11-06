@@ -216,6 +216,11 @@ struct KeyResponse {
 ///   key id, or an alias ARN. AWS KMS keys rotate behind one ARN, so the
 ///   ARN is the versioned reference. Prefer the key ARN: an alias can be
 ///   repointed.
+/// * [`same_key`](KeyVendorBackend::same_key) is string equality. A key
+///   ARN, a key id and an alias of one key count as **different** keys: the
+///   client cannot tell, offline, where an alias points. So a record in the
+///   wrapped data key mode rewraps only to the exact reference it holds,
+///   which is enough because AWS KMS rotation keeps the ARN.
 /// * The associated data is bound as the encryption context
 ///   ([`encryption_context`]). AWS KMS refuses a `Decrypt` whose context is
 ///   not the one the key was encrypted under.

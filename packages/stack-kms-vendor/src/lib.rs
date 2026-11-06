@@ -20,7 +20,8 @@
 //! * [`StaticKeyVendor`]: the static key backend, for development or for
 //!   customers who manage the key themselves. Derived data keys only.
 //! * [`bound`]: associated data bound by us, for a vendor key that has
-//!   none of its own (a non-derived Vault Transit key, an Azure RSA key).
+//!   none of its own. The Vault Transit and Azure Key Vault clients use it
+//!   for every key.
 //! * [`run_batch`]: N vendor calls with a concurrency limit, backoff on
 //!   [`Throttled`](stack_kms::BackendErrorKind::Throttled), and
 //!   fail-whole-batch.
@@ -44,6 +45,179 @@
 //!   the index key is derived from the root key under a separate label.
 //!
 //! See [`derive`](mod@derive) for the exact derivations and associated data.
+//!
+//! # Capability matrix
+//!
+//! A key vendor backend works at less than ZeroKMS parity. This section
+//! states each difference. It describes the code of this crate, of the
+//! vendor crates (`stack-kms-aws`, `stack-kms-gcp`, `stack-kms-azure`,
+//! `stack-kms-vault`) and of the Go module, whose WASI guest runs the same
+//! vendor code.
+//!
+//! **The trade-off.** In wrapped data key mode, no key outlives the settle
+//! that needed it. In derived data key mode, the root key is cached for the
+//! TTL. In both modes, Postgres holds no usable key material.
+//!
+//! **Latency.** Under wrapped data keys, each separate settle costs vendor
+//! round trips: one call for each value it seals or opens, and one more for
+//! the index key when it derives a search term. Two queries in two settles
+//! cost two index key unwraps. To pay once, compose the terms and values
+//! into one settle: `stack_encrypt::all`, `Pending::zip` or `Pending::all`
+//! in Rust, or one `Seal` or `Open` call for many rows in Go.
+//!
+//! ## Key modes
+//!
+//! | | ZeroKMS | Wrapped data key | Derived data key |
+//! |---|---|---|---|
+//! | Keys in application memory | The index key of a keyset, until the cipher's bounded cache evicts it ([`KeyLifetime::UntilEvicted`](stack_kms::KeyLifetime::UntilEvicted)). Each data key, for one settle. | The index key, for one settle ([`KeyLifetime::Settle`](stack_kms::KeyLifetime::Settle)): the cipher loads it inside the settle and drops it at the end. Each data key, for one settle. | The root key of a keyset, for the root key TTL ([`DEFAULT_ROOT_KEY_TTL`], 5 minutes; set it with [`VendorKeySource::with_root_key_ttl`]). The index key and the data keys are derived from it in each settle and dropped at its end. |
+//! | Key backend calls for a settle of N values in one keyset | One request for each 500 keys (`stack_kms::DEFAULT_KEYS_PER_REQ`). The index key loads once, then stays in the cache. | N to seal and N to open (one per value), or one per chunk on a vendor with batch calls. Plus 1 index key unwrap when the settle derives a search term. | 0 while the root key is cached, else 1 root key unwrap. With a TTL of zero: 1 for the data keys, and 1 more when the settle derives a search term. |
+//! | What the key backend can refuse | Each request. ZeroKMS also checks the key context (lock context) and the decryption policy of each data key. | Every value it seals or opens, and each settle that derives a search term. | The root key unwrap only. A running process sees a refusal when its cached root key expires: at most one TTL later. |
+//!
+//! The vendor calls of one settle run through [`run_batch`]: at most 16 at
+//! once on native Rust ([`BatchOptions`]), up to 5 attempts with backoff on
+//! [`Throttled`](stack_kms::BackendErrorKind::Throttled), and the first
+//! other failure fails the whole settle. The Go guest sends its vendor calls
+//! one at a time. Every keyset record key (the index key of a wrapped
+//! record, the root key of a derived one) is one `unwrap` call, never a
+//! batch call.
+//!
+//! ## Backends
+//!
+//! | Backend ([`KeyVendor::name`](stack_kms::KeyVendor::name)) | Key modes | Wrapped data keys: calls to seal or open N values | How the associated data is bound |
+//! |---|---|---|---|
+//! | ZeroKMS (`zerokms`, v1 leaves) | n/a | n/a | n/a |
+//! | AWS KMS (`aws-kms`) | both | N `GenerateDataKey` to seal, N `Decrypt` to open | Natively, as the encryption context: `cipherstash:aad` is all of the associated data; `cipherstash:purpose`, `cipherstash:keyset-id` and `cipherstash:descriptor` are readable copies. |
+//! | Google Cloud KMS (`gcp-kms`) | both | N `encrypt` to seal, N `decrypt` to open | Natively, as `additionalAuthenticatedData`, with CRC32C checks on every field. |
+//! | Azure Key Vault, RSA key (`azure-key-vault`) | both | N `wrapkey` (RSA-OAEP-256) to seal, N `unwrapkey` to open | By us ([`bound`]): Azure wraps the key with a digest of the associated data, and the client checks the digest after the unwrap. |
+//! | Azure Managed HSM, `oct-HSM` key (`azure-key-vault`) | both | N `wrapkey` (A256KW) to seal, N `unwrapkey` to open | By us ([`bound`]), as for an RSA key. |
+//! | Vault Transit, derived key (`vault-transit`) | both | ⌈N / 250⌉ batch `encrypt` to seal, ⌈N / 250⌉ batch `decrypt` to open (`VaultConfig::batch_size`) | By us ([`bound`]), and also natively: the client sends all of the associated data as the key derivation `context`. |
+//! | Vault Transit, non-derived key (`vault-transit`) | both | as for a derived key | By us ([`bound`]) only. Vault ignores `context` on a non-derived key. |
+//! | Static key (`static`) | derived only | n/a | Natively, as the AES-256-GCM associated data. |
+//!
+//! First use of a key costs one more call: with the default
+//! `KeyDerivation::Detect`, the Vault client reads each Transit key once
+//! per process; the Azure client reads each key once per client to learn
+//! its current version and type, unless the key reference names a version
+//! and `AzureKeyVaultConfig::with_algorithm` is set.
+//!
+//! **What the vendor sees.** A vendor sees each key it wraps or unwraps.
+//! It holds the vendor key, so it could unwrap that key anyway. On AWS KMS,
+//! `GenerateDataKey` makes the data key. No vendor ever sees a plaintext
+//! value or a search term. Of the associated data, AWS KMS gets all of it,
+//! with the keyset id, the purpose and the descriptor in readable form for
+//! CloudTrail and for `kms:EncryptionContext:` key policy conditions. Google
+//! Cloud KMS gets all of it. Vault gets all of it as `context` for a derived
+//! key, and only its digest inside the wrapped plaintext for a non-derived
+//! key. Azure gets only its digest inside the wrapped plaintext: Azure does
+//! not see or log the binding, so a wrapped key moved to another value
+//! unwraps at Azure and is then refused by the client as
+//! [`InvalidCiphertext`](stack_kms::BackendErrorKind::InvalidCiphertext).
+//! The static key backend runs in the process: nothing outside it can see,
+//! refuse or audit a use of the key.
+//!
+//! ## ZeroKMS-only features
+//!
+//! A key vendor backend refuses these with
+//! [`Error::ZeroKmsOnly`](stack_kms::Error::ZeroKmsOnly). It never ignores
+//! them ([`ZeroKmsFeature`](stack_kms::ZeroKmsFeature)):
+//!
+//! * a non-empty key context: a lock context, or tags and identity claims
+//!   bound into the data key;
+//! * a decryption policy;
+//! * a non-empty unverified context.
+//!
+//! A cipher holds ZeroKMS and at most one key vendor backend ([`KeyRouter`]).
+//! A value sealed under one backend never opens under another, and there is
+//! no migration between backends.
+//!
+//! ## Credentials
+//!
+//! | Backend | Native Rust (`from_env`) | Go (the host supplies short-lived credentials before each request) |
+//! |---|---|---|
+//! | AWS KMS | Static keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`), then web identity (IRSA), then the ECS or EKS container endpoint, then IMDSv2. Not read: `~/.aws` config and credentials files, profiles, SSO, `credential_process`. | `AWSCredentialSource`: `AWSCredentialsFunc` over the AWS SDK's chain, or `AWSCredentialsFromEnv`. |
+//! | Google Cloud KMS | `GOOGLE_OAUTH_ACCESS_TOKEN`, then a service account key file (`GOOGLE_APPLICATION_CREDENTIALS`, feature `service-account`), then the metadata server. Not supported: `authorized_user` and `external_account` files, impersonation. | `AccessTokenSource` for the Cloud KMS scope: `OAuth2AccessTokens` or `AccessTokenFunc`. |
+//! | Azure Key Vault and Managed HSM | `AZURE_KEY_VAULT_ACCESS_TOKEN`, then a client secret, then workload identity (`AZURE_FEDERATED_TOKEN_FILE`), then managed identity (App Service, else IMDS). Not supported: client certificates, Azure CLI, Azure Arc, Service Fabric. | `AccessTokenSource` for the scope the client names (Key Vault or Managed HSM): `AccessTokenFunc` over azidentity. |
+//! | Vault Transit | `VAULT_TOKEN`, then AppRole (`VAULT_APPROLE_ROLE_ID` and `VAULT_APPROLE_SECRET_ID`), then Kubernetes auth (`VAULT_KUBERNETES_ROLE`). | `AccessTokenSource` with an empty scope: `AccessTokenFunc` over the Vault API client. |
+//! | Static key | [`StaticKeyVendor::new`] takes the key. | `StaticKey.Key`, which `NewClient` wipes. |
+//!
+//! The web identity, container, IMDS, metadata server, workload identity,
+//! managed identity and Kubernetes sources read files or reach instance
+//! metadata, so they are native only. The Go guest holds no credential
+//! between requests and never signs with a long-lived key: it does no RSA
+//! and reads no service account key. `stash keyset` uses the native chains,
+//! except for Google Cloud, where it reads `GOOGLE_OAUTH_ACCESS_TOKEN` or the
+//! metadata server and refuses a service account key file.
+//!
+//! ## Rotation
+//!
+//! * **AWS KMS.** AWS rotates the key material behind one key ARN. A stored
+//!   wrapped key names the material that made it, so nothing changes in the
+//!   records or the data.
+//! * **Google Cloud KMS.** `encrypt` uses the primary version, or the
+//!   version a `…/cryptoKeyVersions/{n}` key reference names. Each stored
+//!   wrapped key holds its version (`stack_kms_gcp::wrapped_key_version`).
+//!   Keep a version enabled while stored keys use it.
+//! * **Azure.** Each stored wrapped key holds its version and algorithm
+//!   (`stack_kms_azure::wrapped_key_version`). A client reads the current
+//!   version of an unversioned key reference once and wraps under it for
+//!   its life, so it sees a new version after a restart, or after a wrap
+//!   fails and it reads the key again. Keep a version enabled while stored
+//!   keys use it.
+//! * **Vault Transit.** `encrypt` uses the latest key version. Each stored
+//!   wrapped key holds its version. `VaultTransit::rewrap` moves one wrapped
+//!   key to the latest version inside Vault. Do not raise the key's minimum
+//!   decryption version past a version that stored keys still use.
+//! * **Static key.** Hold the old and the new key
+//!   ([`StaticKeyVendor::with_key`]), rewrap every record under the new
+//!   key reference, then drop the old key.
+//!
+//! [`KeysetRecord::rewrap`] (and `stash keyset rewrap`) wraps the record
+//! key again. It does not re-key stored values, so the rule depends on the
+//! key mode. Under derived data keys a record may move to any key of its
+//! backend: every data key comes from the root key. Under wrapped data keys
+//! each stored value's data key stays wrapped under the vendor key that
+//! sealed it, and the adapter unwraps it with the record's current key
+//! reference. So a record may move only to a new version of its own vendor
+//! key ([`KeyVendorBackend::same_key`]); another key is refused with
+//! [`RecordError::RewrapToAnotherKey`], before any vendor call. Google
+//! Cloud KMS and Azure ignore the version a key reference names. AWS KMS
+//! and Vault Transit compare the references as text, so an AWS alias and
+//! the key ARN it points to count as different keys.
+//!
+//! ## Known limits
+//!
+//! * **All vendors.** TypeScript (`@cipherstash/stack`) cannot use a key
+//!   vendor backend yet; only Rust and Go can. No SDK reads the
+//!   `CS_KEYSET_RECORD*` variables that `stash keyset` prints: pass the
+//!   record to [`KeysetRecord::parse`] or Go's `WithKeysetRecords`.
+//! * **AWS KMS.** An AWS error code with no fixed mapping on a 4xx status is
+//!   [`AccessDenied`](stack_kms::BackendErrorKind::AccessDenied), so a
+//!   malformed request reads as a refusal. `LimitExceededException` is a
+//!   quota, not a throttle, and is not retried.
+//! * **Google Cloud KMS.** The service account login (feature
+//!   `service-account`, a default feature) signs a JWT with the `rsa` crate,
+//!   which has the open advisory RUSTSEC-2023-0071 (the Marvin timing
+//!   attack). A build without default features has no RSA code; the Go
+//!   guest and `@cipherstash/auth` build it that way. Cloud KMS answers
+//!   `PERMISSION_DENIED` for a key the caller may not see, so a missing key
+//!   often reads as `AccessDenied`, not `NotFound`. The fixtures are
+//!   written by hand, and the live test has not run yet.
+//! * **Azure.** A 400 `BadParameter` on an `unwrapkey` is
+//!   [`InvalidCiphertext`](stack_kms::BackendErrorKind::InvalidCiphertext),
+//!   because Azure gives no finer code; a `BadParameter` for another reason
+//!   reads the same. A key reference must be on one of the six Azure Key
+//!   Vault and Managed HSM DNS suffixes. A 429 waits for `Retry-After`, at
+//!   most 30 seconds, before the retry. The fixtures are written by hand,
+//!   and the live test has not run yet.
+//! * **Vault Transit.** The native transport trusts the operating system's
+//!   certificate store only. It does not read `VAULT_CACERT` and sends no
+//!   mTLS client certificate, so a Vault with a private CA works only when
+//!   that CA is in the system store (or with your own [`VendorTransport`];
+//!   in Go, the client's `WithTransport` round tripper). A 400 maps to a
+//!   kind by Vault's error text. Do not give the token `create` on
+//!   `<mount>/encrypt/<key>`: Transit then creates a missing key.
+//! * **Static key.** Derived data keys only
+//!   ([`RecordError::ModeUnsupported`]). The key is always in memory.
 
 #![deny(unsafe_code)]
 #![warn(clippy::unwrap_used)]

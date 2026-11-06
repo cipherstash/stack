@@ -1595,3 +1595,223 @@ the alternatives and the reason.
 - **Checked:** `pnpm run code:check` reports errors only in the ignored local
   `.turbo/` cache and a `biome.json` schema-version notice from a newer local
   Biome. There are no errors in tracked source.
+
+## CIP-5313: Document key vendor backend trade-offs (capability matrix)
+
+### Where the matrix lives
+
+- **Decision:** the capability matrix is a `# Capability matrix` section in
+  the crate-level rustdoc of `stack-kms-vendor`, with the subsections Key
+  modes, Backends, ZeroKMS-only features, Credentials, Rotation and Known
+  limits. It opens with the plain trade-off statement and the latency note.
+  **Alternative:** one table with every backend as a row and every fact as a
+  column. **Reason:** a table of eight columns does not read in rustdoc. The
+  facts split into three short tables and three bullet lists.
+- **Decision:** each vendor crate links it with the intra-doc link
+  `stack_kms_vendor#capability-matrix` in a new section "Capabilities and
+  limits". `stack-kms` names the crate and the matrix in text.
+  **Alternative:** a docs.rs URL in `stack-kms`. **Reason:** `stack-kms` does
+  not depend on `stack-kms-vendor`, so an intra-doc link cannot resolve, and
+  docs.rs has no page for a crate that is not published yet.
+- **Decision:** the Go package docs keep their short matrix, corrected (see
+  below), and point to the crate docs for credentials, rotation and limits.
+
+### Facts checked against the code (the code wins)
+
+- **Found (FIXED, see "The rewrap fix" below):** `KeysetRecord::rewrap` to **another** vendor
+  key makes every value sealed before it under **wrapped data keys** fail to
+  open (`InvalidCiphertext`). Each value's wrapped data key stays wrapped
+  under the old vendor key, and `VendorKeySource::retrieve_keys` unwraps it
+  with the record's current `key_ref`. A scratch test (not committed)
+  proved it with `FakeVendor`: derived mode opened, wrapped mode failed.
+  A rewrap to a new version of the same key is safe (every vendor keeps the
+  version in the wrapped key, or AWS behind the ARN). Derived mode is safe.
+  The rustdoc of `KeysetRecord::rewrap`, the `stash keyset rewrap` help and
+  note, the `stash-cli` skill and the unreleased CIP-5312 changeset all said
+  "stored values stay readable". **Decision:** correct all five texts in this
+  ticket; change no behaviour. **Alternative:** refuse the rewrap (code,
+  out of scope for a docs ticket). The orchestrator then chose the refusal,
+  made in this layer (below).
+- **Drift fixed (ADR-0009):** "a settle of N values costs about 1 + N vendor
+  calls". The code makes the 1 (the index key unwrap) only when the settle
+  derives a search term, and a vendor with batch calls (Vault) makes ⌈N /
+  250⌉. The matrix says so.
+- **Drift noted (ADR-0009):** "the cipher unwraps [the root key] once and
+  caches it". The adapter (`VendorKeySource`) holds the root key, not the
+  cipher (a CIP-5306 decision). The matrix says "the adapter".
+- **Drift noted (ADR-0011):** "the guest signs each vendor request itself
+  (SigV4, the Google OAuth JWT, the Azure AD token, the Vault token)". The
+  guest signs SigV4 only. The host supplies ready Google, Azure and Vault
+  tokens (CIP-5311 binding decision), and the guest has no RSA code.
+- **Drift fixed (stack-kms-vendor):** the `KeyVendorBackend` docs named Vault
+  Transit `associated_data` as native associated data. The Vault client never
+  sends it (CIP-5310); it always wraps a bound key. The crate docs said
+  `bound` is for "a non-derived Vault key, an Azure RSA key"; the Vault and
+  Azure clients use it for every key.
+- **Drift fixed (Go `doc.go`):** the matrix said every Encrypt or Decrypt
+  costs "1 +" one call per value under wrapped data keys; the 1 is only for
+  a call that derives search terms. It now also says that the guest sends
+  vendor calls one at a time, that the first use of a Vault or Azure key
+  costs one key read, that a separate `Equality` call costs one index key
+  unwrap, that a record key's associated data has no IV or descriptor, and
+  the rewrap limit above.
+- **Checked, no change:** key lifetimes (`KeyLifetime::Settle` for wrapped,
+  `Ttl(root ttl)` for derived, `PerSettle` selection for both), the 5 minute
+  default TTL, `run_batch` defaults (16 at once, 5 attempts, 50 ms to 2 s),
+  ZeroKMS's 500 keys per request, each vendor's AAD binding and error
+  mappings, the credential chains and their environment variables, the six
+  Azure DNS suffixes, the `service-account` feature, and that the five vendor
+  crates carry the same licence file as `stack-kms`.
+
+### Other changes
+
+- **Decision:** `skills/stash-zerokms/SKILL.md` gets a section "Key vendor
+  backends (keysets outside ZeroKMS)". It names no ticket: no GitHub issue
+  exists for the TypeScript follow-up, and skills must not carry Linear IDs.
+- **Decision:** the CLI README gets a short `stash keyset` section. This
+  closes CIP-5312's "Not done" item for the repository. The docs site
+  (cipherstash.com/docs) is maintained elsewhere and is not changed here.
+- **Decision:** one `stash` patch changeset
+  (`stash-key-vendor-rewrap-docs.md`) for the skills, the CLI text and the
+  README.
+- **Decision:** the rustdoc edits under `packages/stack-kms-*/src` trigger
+  `require-auth-npm-changeset.yml`, because the auth binding compiles those
+  crates in. The unreleased `auth-keyset-records.md` gets one true sentence
+  (a wrapped record's rewrap to another key) and so counts as modified.
+  **Alternative:** a separate `@cipherstash/auth` changeset that says
+  "documentation only". **Reason:** no empty changelog entry; the rule is
+  satisfied by a real fact. Checked locally with
+  `check-auth-npm-changeset.mjs`.
+- **Decision:** `AGENTS.md`: the root workspace has eleven stack-* crates,
+  not six; the `stack-kms-gcp` entry names the `service-account` feature and
+  the advisory; the vendor crates entry points to the matrix and says that
+  the auth binding compiles them in and that TypeScript cannot use them; the
+  `@cipherstash/auth` entry names the vendor crates in its changeset rule.
+  `SECURITY.md` already listed the five crates; its `@cipherstash/auth` row
+  now says the binding compiles them in.
+### The rewrap fix (orchestrator decision)
+
+- **Decision (binding, from the orchestrator):** **refuse** a rewrap that
+  would make stored values unreadable. Under wrapped data keys,
+  `KeysetRecord::rewrap` refuses a key reference that names another vendor
+  key with the new `RecordError::RewrapToAnotherKey { keyset, from, to }`
+  (`stack_kms_vendor::rewrap_another_key`), before any vendor call. A new
+  version of the same key is allowed. Under derived data keys any key is
+  allowed, because only the root key is rewrapped. **Alternatives:** keep a
+  history of old key references in the record; re-key stored data.
+  **Reason:** re-keying is out of scope (ADR-0009), and a key history would
+  grow the record with no limit.
+- **Decision:** "same key" is a new provided method,
+  `KeyVendorBackend::same_key(a, b)`, default string equality. Google Cloud
+  KMS ignores a `/cryptoKeyVersions/{n}` suffix (through `parse_key_name`).
+  Azure compares the vault origin (lower case) and the key name, and ignores
+  the version (through `KeyId::parse`). A reference that does not parse is
+  compared as text. AWS KMS keeps the default: a key ARN, a key id and an
+  alias of the same key count as different keys, because the client cannot
+  tell offline where an alias points, and AWS rotation keeps the ARN. Vault
+  keeps the default: the key reference is the key name and holds no version.
+  The trait docs say to answer `false` when unsure (a false `false` only
+  refuses a rewrap). `Observed` forwards it. **Not forwarded:** the Go
+  guest's `GuestVendor` keeps the default, because the guest never rewraps a
+  record; it still compiles.
+- **Decision:** the fix is on the CIP-5313 layer, in its own commit, not in
+  the CIP-5306 layer that introduced `rewrap`. **Reason (orchestrator):**
+  rebasing eight reviewed layers risks conflicts.
+- **Decision:** the auth binding maps the error to a new `KeysetFailure`
+  code, `REWRAP_REFUSED` (`index.d.ts` and its drift test updated). The CLI
+  maps it to the code `rewrap_refused` with its own message and hint
+  (`messages.keyset.rewrapRefused`, `rewrapRefusedHint`). The help, the
+  rewrap note, the README, both skills, the crate matrix, the
+  `KeysetRecord::rewrap` docs, the Go `doc.go` and the three changesets now
+  state the rule.
+- **Tests:** stack-kms-vendor: a wrapped rewrap to another key is refused
+  with no vendor call; a wrapped rewrap under its own key and a derived
+  rewrap to another key (static and fake vendors) open a value sealed
+  before it and derive the same term. stack-kms-gcp and stack-kms-azure
+  (their emulators): a wrapped record rewraps to a new version, unversioned
+  and pinned (Azure: RSA and `oct-HSM` keys), and the old value opens; a
+  wrapped rewrap to another key is refused with no request; a derived one
+  moves; `same_key` unit tests. stack-auth-node: the envelope of the new code.
+  CLI: the `--json` error of a refused rewrap.
+- **Revisit:** an Azure client resolves an unversioned key's current version
+  once for its life. After a rotation it keeps wrapping under the old version
+  until a restart or a failed wrap. Documented; a TTL on the cached version
+  would close it.
+
+## Summary for review
+
+Open items first, then items that a later layer closed. Each line names the
+ticket that recorded it.
+
+**Open**
+
+- **CIP-5313 (OPEN):** the docs site (cipherstash.com/docs) has nothing on
+  key vendor backends or `stash keyset`.
+- **CIP-5313 (Revisit):** Azure caches a key's current version for the life
+  of the client, so a rotation reaches a running process late.
+- **CIP-5314 (open ticket):** TypeScript (`@cipherstash/stack`) cannot use a
+  key vendor backend.
+- **CIP-5304 (Revisit):** the trait payloads keep their ZeroKMS fields;
+  revisit when TypeScript moves onto stack-encrypt.
+- **CIP-5306 (Revisit):** a term type outside stack-encrypt cannot defer its
+  PRF to the settle (`Responses::index_prf` is crate-private).
+- **CIP-5307 (Revisit):** an unknown AWS 4xx error code maps to
+  `AccessDenied`, so a malformed request reads as a refusal.
+- **CIP-5307 (deferred, no ticket):** AWS shared config and credentials
+  files, profiles, SSO and `credential_process` are not read.
+- **CIP-5307/5310/5308/5309 (manual step):** the five vendor crates are
+  staged (`release = false`); the first publish and Trusted Publishing are a
+  person's job after stack-kms and stack-encrypt reach crates.io.
+- **CIP-5310 (Revisit):** Vault with a private CA (`VAULT_CACERT`) or mTLS is
+  not supported natively; `renew-self` is not used.
+- **CIP-5308 (Revisit, security):** the GCP service account login uses the
+  `rsa` crate (RUSTSEC-2023-0071); a security reviewer must sign it off
+  before the crate is armed; revisit when `rsa` 0.10 is stable.
+- **CIP-5308 (Not verified):** the GCP fixtures are hand-written and the
+  live job has never run (needs `STACK_KMS_GCP_LIVE_KEY` and its secret).
+- **CIP-5308 (deferred, no ticket):** `authorized_user` and
+  `external_account` credentials, impersonation, a quota project header,
+  re-recording the fixtures from Cloud KMS.
+- **CIP-5309 (known limit):** an Azure `BadParameter` on `unwrapkey` always
+  reads as `InvalidCiphertext`.
+- **CIP-5309 (Not verified):** the Azure fixtures are hand-written and the
+  live job has never run (needs `STACK_KMS_AZURE_LIVE_KEY` and its secrets).
+- **CIP-5309 (deferred, security):** Azure client certificate credentials
+  (need a constant-time RSA signer); Azure CLI, Arc and Service Fabric
+  credentials; re-recording the fixtures from Azure.
+- **CIP-5311 (Revisit):** ready-made Go adapters for the vendor SDKs, as
+  separate modules, if users ask.
+- **CIP-5311 (Not tested):** the Google Cloud, Azure and Vault clients
+  through the Go host; no live vendor test from Go.
+- **CIP-5312 (Revisit):** `stash keyset rewrap` uses unwrap and wrap for
+  Vault, not Transit's own `rewrap`; revisit if a policy allows `rewrap` but
+  not `decrypt`.
+- **CIP-5312 (Revisit, orchestrator):** the CLI prints
+  `CS_KEYSET_RECORD[_<NAME>]` and `CS_STATIC_KEY`, but no SDK reads them.
+- **CIP-5304 (note):** `stack-encrypt::ui derive_diagnostics` (trybuild)
+  fails on a developer machine whose paths print as `<HOME>`; not caused by
+  this stack.
+
+**Closed by a later layer**
+
+- CIP-5304 → CIP-5306: one vendor per cipher (`KeyRouter`,
+  `RecordError::SecondVendor`); the vendor default keyset; a `Settle` index
+  key bound to one settle (`SelectedKeyset::PerSettle`).
+- CIP-5304/5305 → CIP-5311: the Go status mapping of the new errors (no new
+  codes except `STATUS_NO_ZEROKMS`).
+- CIP-5305 → CIP-5306: the v2 seal path and the key mode on retrieve; routing
+  between ZeroKMS and one vendor.
+- CIP-5306 → CIP-5307: the release group (`stack-kms-vendor`, staged) and the
+  native and guest transports.
+- CIP-5306/5310 → CIP-5309: Azure binds its associated data with `bound`.
+- CIP-5307/5310/5308/5309 → CIP-5311: the guest wiring of every vendor.
+- CIP-5306/5307/5310/5308/5309 → CIP-5312: `stash keyset` through a napi
+  helper in `@cipherstash/auth` (GCP without the service account login).
+- CIP-5311 → CIP-5313: the capability matrix on the Rust side.
+- CIP-5312 → CIP-5313: the CLI README section for `stash keyset` (the docs
+  site is still open, above).
+- **CIP-5313 (FIXED, defect):** a rewrap of a wrapped-data-key record to
+  another vendor key made its stored values unreadable. `KeysetRecord::rewrap`
+  now refuses it (`RecordError::RewrapToAnotherKey`; `REWRAP_REFUSED` in
+  `@cipherstash/auth`; `rewrap_refused` in `stash keyset rewrap`), and allows
+  a new version of the same key (`KeyVendorBackend::same_key`).

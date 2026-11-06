@@ -209,6 +209,10 @@ export declare function bindClientDevice(): Promise<Result<void, AuthFailure>>;
  *   names the `stack_kms_vendor::*` code).
  * - `VENDOR_ERROR`: the vendor call failed; `kind` is `NotFound`,
  *   `AccessDenied`, `Throttled`, `Unavailable` or `InvalidCiphertext`.
+ * - `REWRAP_REFUSED`: {@link keysetRewrap} named another vendor key for a
+ *   record in the wrapped key mode. Each stored value's data key stays
+ *   wrapped under the key that sealed it, so such a record may move only to
+ *   a new version of its own key. No vendor call was made.
  */
 export type KeysetFailure = FailureBase & {
   type:
@@ -216,7 +220,8 @@ export type KeysetFailure = FailureBase & {
     | "STATIC_KEY"
     | "VENDOR_CONFIG"
     | "INVALID_RECORD"
-    | "VENDOR_ERROR";
+    | "VENDOR_ERROR"
+    | "REWRAP_REFUSED";
   /** The key backend, as the SDKs name it (`aws-kms`, …), when known. */
   vendor?: string;
   /** The vendor failure kind, for `VENDOR_ERROR`. */
@@ -238,7 +243,9 @@ export declare function keysetCreate(
 /**
  * Wrap a keyset record's key under a vendor key again, for example after a
  * key rotation in the vendor. The keyset id, name and mode stay the same.
- * Stored data is not re-keyed. Node only.
+ * Stored data is not re-keyed: a record in the wrapped key mode may move only
+ * to a new version of its own vendor key (else `REWRAP_REFUSED`); a record
+ * in the derived key mode may move to any key of its backend. Node only.
  */
 export declare function keysetRewrap(
   options: KeysetRewrapOptions,
