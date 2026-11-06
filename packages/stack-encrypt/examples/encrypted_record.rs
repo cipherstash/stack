@@ -1,85 +1,109 @@
-//! A searchable encrypted struct, end to end.
+//! Encrypt a table of users, query it by equality and by order, and decrypt
+//! only the rows that match.
 //!
-//! The point of target-directed encryption: define the encrypted *shape* of
-//! a value — "the ciphertext plus the index terms this field needs" — derive
-//! `EncryptFrom` / `DecryptInto` for it, and every insert is one
-//! `encrypt_into(..).await`. A tiny in-memory "table" then answers equality
-//! and range queries purely by comparing terms, decrypting only the rows
-//! that match.
+//! Each user is encrypted into an `EncryptedUser`. That type's fields say what
+//! is stored for each plaintext field:
 //!
-//! The async shape is the other half of the point: nothing here does I/O
-//! until the `.await`. Terms derive locally; each ciphertext queues its
-//! data-key request; the derive combines the field pendings with `zip` /
-//! `map` — so a whole `Vec` of structs, encrypted through the `Vec`
-//! implementation, settles in **one** batched ZeroKMS call, and the matching
-//! rows decrypt in one more.
+//! - The `age` field stores a ciphertext, an equality term, and an order term.
+//! - The `email` field stores a ciphertext.
 //!
-//! Run with:
+//! One `encrypt_into(..).await` call encrypts the whole table. Queries compare
+//! terms only, so they need no decryption and no ZeroKMS call.
+//!
+//! Nothing calls ZeroKMS until an `.await`. Encrypting the table makes one
+//! batched `generate_keys` call. Decrypting the matching rows makes one
+//! batched `retrieve_keys` call.
+//!
+//! The plaintext type, `User`, follows the rules for a type that contains
+//! secrets. `User` derives `Zeroize` and nothing else:
+//!
+//! - No `Debug`, so the plaintext cannot be printed.
+//! - No `Clone`, so there are no copies to wipe.
+//! - No `PartialEq`, because a derived comparison does not run in constant
+//!   time.
+//!
+//! Encrypting a `User` consumes it and wipes it. A decrypted `User` goes
+//! straight into a `Protected`. The `Protected` wipes it when it is dropped.
+//!
+//! Run it with:
 //!
 //! ```sh
 //! cargo run -p stack-encrypt --example encrypted_record
 //! ```
 //!
-//! Talks to real ZeroKMS. On a developer machine, `npx stash auth login` is
-//! sufficient: the cipher finds both the access token and the client key in
-//! the CLI's profile directory. In CI, set `CS_CLIENT_ACCESS_KEY` /
-//! `CS_WORKSPACE_CRN` and `CS_CLIENT_ID` / `CS_CLIENT_KEY` instead (see the
-//! `zerokms_auth` example for the lookup order).
+//! The example calls the real ZeroKMS service. On a developer machine, run
+//! `npx stash auth login` first: the cipher reads the access token and the
+//! client key from the profile that command writes. In CI, set
+//! `CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, and
+//! `CS_CLIENT_KEY` instead. The `zerokms_auth` example shows the order in
+//! which the cipher looks for credentials.
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
-use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
-use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, Error, StackCipher, StackCipherText};
+use stack_encrypt::target::{DecryptSource, EncryptTarget};
+use stack_encrypt::{
+    nonempty, Ciphertext, Controlled, DecryptFrom, EncryptInto, Error, Protected, StackCipher,
+};
+use zeroize::Zeroize;
 
-// --- The shapes ----------------------------------------------------------------
+// --- The types -----------------------------------------------------------------
 
-/// "An encrypted `u32`, stored as its ciphertext plus an equality term and an
-/// ORE term." The same shape as an EQL `integer_ord_ore` payload, minus the
-/// EQL wire encoding. Every field is derived from the one `u32`, under one
-/// context: the context authenticates the ciphertext (AAD) and
-/// domain-separates both terms (PRF context). `DecryptInto` opens the
-/// ciphertext field and passes over the terms — the field types say which is
-/// which, so no attribute is needed.
-#[derive(EncryptFrom, DecryptInto)]
+/// An encrypted `u32`, stored as a ciphertext, an equality term, and an
+/// order term. This is the layout of an EQL `integer_ord_ore` payload, without the
+/// EQL encoding.
+///
+/// All three fields are derived from the one `u32`, under one context. The
+/// context is the associated data of the ciphertext, and it keeps each term
+/// separate from terms derived for other fields. Decryption opens the
+/// ciphertext and ignores the terms.
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = u32)]
 struct EncryptedAge {
-    c: StackCipherText,
+    c: Ciphertext,
     eq: EqualityTerm,
     ord: OreTerm<u32>,
 }
 
-/// The plaintext.
-// `Zeroize`: a column of users opens through the wiping collection path,
-// which wipes the rows recovered before a late failure.
-#[derive(Debug, Clone, PartialEq, zeroize::Zeroize)]
+/// The plaintext. `Zeroize` is the only trait it derives. The module
+/// documentation explains why.
+#[derive(Zeroize)]
 struct User {
     age: u32,
     email: String,
 }
 
-/// `User`, encrypted field by field: `age` from `user.age` under
-/// `("users", "age")`, `email` from `user.email` under `("users", "email")`. The prefix
-/// is named once, explicitly — it is part of the stored data's identity, so
-/// it is never inferred from a Rust type name — and the field half follows
-/// the plaintext field.
-#[derive(EncryptFrom, DecryptInto)]
+/// A `User`, encrypted field by field.
+///
+/// The `age` field is derived from `user.age` under the context
+/// `("users", "age")`, and the `email` field from `user.email` under
+/// `("users", "email")`. The first part of each context, `"users"`, is
+/// written here once. It is part of what identifies the stored data, so the
+/// derive never takes it from the name of a Rust type.
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User, context = "users")]
 struct EncryptedUser {
     age: EncryptedAge,
-    email: StackCipherText,
+    email: Ciphertext,
+}
+
+/// A user for the row-binding section. A function, not a cloned value, so
+/// that each call builds its own plaintext.
+fn alice() -> User {
+    User {
+        age: 34,
+        email: "alice@example.com".to_owned(),
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // One cipher does everything the shapes need: ZeroKMS-backed AEAD (every
-    // leaf sealed under its own data key) and SEM term derivation under the
-    // keyset's index key, which `init` loads. Data keys and terms are bound to
-    // the same keyset by construction — there is no way to mix them up.
+    // The cipher seals each value under its own ZeroKMS data key. `new` also
+    // loads the keyset's index key. The index key derives the terms. Data keys
+    // and terms always come from the same keyset.
     let cipher = StackCipher::new().await?;
-    // Sealing and term derivation bind to a keyset; this is the client's
-    // default one.
+    // The client's default keyset.
     let keyset = cipher.default_keyset();
 
-    // --- Write side: encrypt a table of users ---------------------------------
+    // --- Encrypt a table of users -------------------------------------------
 
     let users: Vec<User> = [
         (29, "ada"),
@@ -95,18 +119,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .collect();
 
-    // Every field carries its own context, so nothing is needed from the
-    // caller — and one await seals the whole table: the `Vec` implementation
-    // merges every struct's pending, so five users (two ciphertexts and two
-    // terms each) settle in a single batched generate_keys call.
+    // Each field has its own context, so the call needs no context from the
+    // caller. The `Vec` conversion combines every user's key requests, so
+    // five users make one batched `generate_keys` call. The call consumes
+    // `users` and wipes each plaintext.
     let table: Vec<EncryptedUser> = users.encrypt_into(&keyset).await?;
     println!("stored {} encrypted users in one ZeroKMS call", table.len());
 
-    // --- Query side: terms only, no plaintext, no decryption ------------------
+    // --- Query the table with terms -----------------------------------------
 
-    // Term probes derive under the index key the cipher already holds, under
-    // the same context the field was stored under: building a query never
-    // calls ZeroKMS at all.
+    // A query term is derived under the index key that the cipher already
+    // loaded, and under the context the field was stored under. Building one
+    // never calls ZeroKMS.
 
     // WHERE age = 34: compare equality terms.
     let probe: EqualityTerm = 34u32
@@ -117,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     println!("WHERE age = 34  => rows {equal:?}");
 
-    // WHERE age > 40: compare ORE terms.
+    // WHERE age > 40: compare order terms.
     let bound: OreTerm<u32> = 40u32
         .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
@@ -126,77 +150,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     println!("WHERE age > 40  => rows {over_40:?}");
 
-    // ORDER BY age: sort by ORE term.
+    // ORDER BY age: sort by order term.
     let mut by_age: Vec<usize> = (0..table.len()).collect();
     by_age.sort_by(|&a, &b| table[a].age.ord.cmp(&table[b].age.ord));
     println!("ORDER BY age    => rows {by_age:?}");
 
-    // --- Read side: decrypt only the rows a query matched ---------------------
+    // --- Decrypt only the rows a query matched ------------------------------
 
-    // A separate client: any process holding the same ZeroKMS credentials and
+    // A second client. Any process with the same ZeroKMS credentials and
     // keyset can decrypt what this one wrote.
     let decryptor = StackCipher::new().await?;
 
-    // Collect the matching rows and decrypt them together: one batched
-    // retrieve_keys call, however many rows matched. Each field opens under
-    // the context it was sealed under — it is bound into the AAD, so a
-    // ciphertext cannot be replayed against a different field.
+    // Decrypting the matching rows together makes one batched
+    // `retrieve_keys` call, however many rows match. Each field opens under
+    // the context it was sealed under. That context is the ciphertext's
+    // associated data, so a ciphertext copied into another field does not
+    // open.
     let mut table = table;
     let mut matches: Vec<EncryptedUser> = Vec::new();
-    // Descending index order keeps earlier indices valid across swap_remove.
+    // Take the rows in descending order, so that `swap_remove` does not move
+    // a row that is still to be taken.
     for i in over_40.into_iter().rev() {
         matches.push(table.swap_remove(i));
     }
-    let matched: Vec<User> = Vec::<User>::decrypt_from(matches, &decryptor).await?;
-    for user in &matched {
-        println!("decrypted matching row: {user:?}");
-    }
+    // The decrypted users are wrapped as soon as they arrive. The
+    // `Protected` wipes them when it is dropped, and `risky_ref` marks the
+    // one place the plaintext is read.
+    let matched = Protected::new(Vec::<User>::decrypt_from(matches, &decryptor).await?);
+    println!("decrypted {} matching rows", matched.risky_ref().len());
 
-    // --- Binding a value to its record ----------------------------------------
+    // --- Bind a value to its row --------------------------------------------
 
-    // A context the caller passes *extends* every field's own: under the
-    // record's id, `age` is sealed under `(("users", "age"), id)` and opens only
-    // there — a ciphertext can no longer be moved between records of the
-    // same table. The price is that its terms are scoped to that record too:
-    // a probe built under `("users", "age")` alone never matches them, so extend
-    // where a value is read by id, not where it is searched across rows.
+    // A context that the caller passes extends the context of every field.
+    // Under the row id 42, `age` is sealed under `(("users", "age"), 42)`. It
+    // opens only under that context. So a ciphertext cannot be moved to
+    // another row of the table.
+    //
+    // The terms are bound to the row too. A probe built under `("users",
+    // "age")` alone does not match them. So extend the context for a value you
+    // read by its row id, not for a value you search for across rows.
     let id = 42u64;
-    let alice = User {
-        age: 34,
-        email: "alice@example.com".into(),
-    };
-    let record: EncryptedUser = alice.clone().encrypt_into_with_context(&keyset, id).await?;
-    let unscoped: Vec<usize> = std::iter::once(&record)
-        .enumerate()
-        .filter(|(_, r)| r.age.eq == probe)
-        .map(|(i, _)| i)
-        .collect();
+    let record: EncryptedUser = alice().encrypt_into_with_context(&keyset, id).await?;
     println!(
-        "record-scoped terms match the table probe: {}",
-        !unscoped.is_empty()
+        "row-bound terms match the table probe: {}",
+        record.age.eq == probe
     );
     let scoped: EqualityTerm = 34u32
         .encrypt_into_with_context(&keyset, nonempty!("users").with("age").with(id))
         .await?;
     println!(
-        "  ...and a probe built under the same id: {}",
+        "row-bound terms match a probe built under the same id: {}",
         record.age.eq == scoped
     );
 
-    let opened = User::decrypt_from_with_context(record, &decryptor, id).await?;
-    assert_eq!(opened, alice);
-    // The record id is in every field's context, and the context is the
-    // ZeroKMS descriptor of every data key: opening under another id fails
-    // at ZeroKMS, before any key material moves. (Against a source that
-    // does not enforce descriptors — the fake — the AEAD refuses instead.)
-    let record: EncryptedUser = alice.encrypt_into_with_context(&keyset, id).await?;
+    let opened = Protected::new(User::decrypt_from_with_context(record, &decryptor, id).await?);
+    println!("opened the row under its own id");
+    drop(opened);
+
+    // The row id is part of every field's context. The context is also the
+    // ZeroKMS descriptor of every data key. So opening the row under another
+    // id fails at ZeroKMS, before any key material is sent.
+    //
+    // Some key sources do not check descriptors, such as the in-memory source
+    // the tests use. Such a source lets the request through, and the AEAD
+    // refuses the ciphertext instead.
+    let record: EncryptedUser = alice().encrypt_into_with_context(&keyset, id).await?;
     let wrong_id = User::decrypt_from_with_context(record, &decryptor, 43u64).await;
     println!(
         "opening under another id: {}",
         match wrong_id {
             Err(Error::Kms(e)) => format!("refused by ZeroKMS ({e})"),
-            Err(Error::Aead) => "refused (AEAD)".to_owned(),
-            _ => "unexpected".to_owned(),
+            Err(Error::Aead) => "refused by the AEAD".to_owned(),
+            Ok(mut user) => {
+                user.zeroize();
+                "opened, which is a bug".to_owned()
+            }
+            Err(_) => "refused with an unexpected error".to_owned(),
         }
     );
 
