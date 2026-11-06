@@ -244,9 +244,11 @@ func (op *operation) end() {
 
 // performStep performs every request of a step, in order, and encodes the
 // responses for se_resume: `[{"status": i32, "headers": bytes, "body":
-// bytes}, ...]`. The responses can carry wrapped keys or a credential: the
-// caller wipes the encoding once the guest has it, and every other copy is
-// wiped here.
+// bytes}, ...]`. The responses can carry key material (a ZeroKMS response,
+// or from a key vendor backend an unwrapped key in plaintext) or a
+// credential: the caller wipes the encoding once the guest has it, and
+// every other copy this side holds is wiped here. The copies in net/http,
+// TLS and the RoundTripper are not.
 func (t *transport) performStep(ctx context.Context, step *ioStep, op *operation) ([]byte, error) {
 	defer step.wipe()
 	responses := make([]any, 0, len(step.requests))

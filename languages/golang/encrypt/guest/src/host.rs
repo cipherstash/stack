@@ -37,16 +37,25 @@
 //! bytes. Key material derived from a response never crosses back — the
 //! derivation runs inside the guest ([`stack_kms`]'s client, unmodified).
 //!
-//! The same holds for a key vendor backend. A vendor request crosses as
-//! the signed HTTP request the vendor would receive over TLS: a wrapped key
-//! out, and, in the response, a key the vendor unwrapped. That response is
-//! read only inside the guest, and the host wipes its own copy once it is
-//! in guest memory (as for a ZeroKMS response). Root keys, index keys and
-//! data keys are derived or unwrapped in the guest and never cross back to
-//! the host. What crosses *in* for a credential step is a short-lived
-//! credential (temporary AWS credentials, an access token, a Vault token),
-//! never a long-lived signing key, which the guest uses to sign and then
-//! drops.
+//! A key vendor backend does **not** keep that property. A vendor request
+//! crosses as the signed HTTP request the vendor would receive over TLS,
+//! and the host does the TLS. So the host, and any RoundTripper the Go
+//! caller gives it, see the vendor traffic in plaintext: the key a wrap
+//! request sends, and the key that an unwrap or generate response returns
+//! (AWS `Decrypt` and `GenerateDataKey`, Google Cloud KMS and Vault
+//! `decrypt`, Azure `unwrapkey`). That is a root key under derived data
+//! keys, or a data key under wrapped data keys. Unlike a ZeroKMS response,
+//! it is usable alone. The host wipes the request and response bodies it
+//! holds once they are in guest memory, but not the buffers of net/http,
+//! TLS or the RoundTripper. Keys the guest derives from it (index keys,
+//! derived data keys) never cross back.
+//!
+//! What crosses *in* for a credential step is the credential the host's
+//! source returns, which the guest uses to sign and then drops. It is
+//! short-lived when the source is a role or token chain, and long-lived
+//! when the source returns fixed keys (Go's `AWSCredentialsFromEnv` with no
+//! session token, a fixed Vault token). A `StaticKey` backend's key crosses
+//! once, in the guest config.
 //!
 //! Request bodies and response bodies can carry key-material contexts and
 //! wrapped keys, so both are wiped on drop here; the buffers the host wrote

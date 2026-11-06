@@ -1744,6 +1744,68 @@ the alternatives and the reason.
   until a restart or a failed wrap. Documented; a TTL on the cached version
   would close it.
 
+## Review after CIP-5313
+
+A review of the whole stack found three claims that the code does not hold,
+and work that no ticket asked for. This section records them.
+
+### Claims that were not true
+
+- **Key material crosses to the Go host (CIP-5203, CIP-5311, ADR-0011).**
+  The guest sends each vendor request through `transport_send`, and the host
+  does the TLS. So the host, and a `WithTransport` RoundTripper, see in
+  plaintext the key a wrap request sends and the key that an unwrap or
+  generate response returns: AWS `Decrypt` and `GenerateDataKey`, Google
+  Cloud KMS and Vault `decrypt`, Azure `unwrapkey`. That is a root key under
+  derived data keys and a data key under wrapped data keys, and it is usable
+  alone. With ZeroKMS the property held, because a response alone is not
+  usable. `transport.go` wipes the bodies it holds, and its comment said
+  "wrapped key material", which was wrong for a vendor. The buffers of
+  net/http, TLS and the RoundTripper are not wiped. CIP-5311 reworded
+  `guest/src/host.rs` to a narrower claim without saying so.
+  **Decision:** keep the design and record the fact. ADR-0011 is amended,
+  and the Go package docs (`doc.go`, `KeyVendor`, `WithTransport`),
+  `host.rs` and `transport.go` now say what the host sees. **Alternative:**
+  TLS inside the guest. **Reason:** it is a large change (a TLS stack and a
+  socket import in the guest) and is not planned.
+- **Long-lived credentials can cross to the guest (CIP-5311).** The
+  credential import carries what the Go source returns.
+  `AWSCredentialsFromEnv` passes an IAM user's long-lived keys on each
+  request when no session token is set, and a Vault token can be
+  long-lived. `StaticKey.Key` crosses from the host to the guest once, in
+  the guest config. **Decision:** record it. `AWSCredentialsFromEnv` and
+  `StaticKey` say so in their docs, and the package docs no longer say
+  that only short-lived credentials cross.
+- **"The type holds exactly one vendor" (CIP-5304, CIP-5306).** Not true when
+  written: `KeyRouter<Z, B>` took any `DataKeySource` as `Z`, so a router
+  could hold a second router. **Fixed:** the ZeroKMS side must now implement
+  the marker `stack_kms::ZeroKmsKeySource`, which no router implements. See
+  the CIP-5306 entry.
+
+### Work beyond what the tickets asked
+
+Each item below is recorded where it was decided. This list puts them in one
+place for review.
+
+- **New public napi exports** `keysetCreate` and `keysetRewrap` on
+  `@cipherstash/auth` (CIP-5312). Every `@cipherstash/stack` install now
+  ships the vendor crates in that binary (about 11% larger). This settles the
+  CIP-5306 open item, but it is a public npm surface next to the TypeScript
+  work that CIP-5314 holds out of scope.
+- **A Go client with no ZeroKMS** (`STATUS_NO_ZEROKMS`, `ErrNoZeroKMS`,
+  `WithDefaultKeyset`, `WithRootKeyTTL`), an orchestrator decision in
+  CIP-5311. The goal of the stack supports it.
+- **A behaviour change in a docs ticket:** `RecordError::RewrapToAnotherKey`
+  and `REWRAP_REFUSED` (CIP-5313). It fixes a data-loss defect, so it stays.
+- **CLI flags and variable names that no ticket named** (CIP-5312):
+  `--key-env`, `--new-key-env`, `--in`, `--out`, `--force` and `--json` on
+  `stash keyset`, and the variable names it prints
+  (`CS_KEYSET_RECORD[_<NAME>]`, `CS_STATIC_KEY`).
+- **Azure workload identity** (CIP-5309), beside the client secret and
+  managed identity credentials.
+- **A local record name wins over a ZeroKMS keyset of the same name**
+  (`KeyRouter`, CIP-5306).
+
 ## Summary for review
 
 Open items first, then items that a later layer closed. Each line names the
@@ -1751,6 +1813,12 @@ ticket that recorded it.
 
 **Open**
 
+- **Review after CIP-5313 (recorded, by design):** with a key vendor
+  backend, the Go host and its RoundTripper see unwrapped vendor keys in
+  plaintext. ADR-0011 is amended.
+- **Review after CIP-5313 (recorded):** long-lived credentials can cross to
+  the Go guest (`AWSCredentialsFromEnv` with no session token, a fixed Vault
+  token, `StaticKey`).
 - **CIP-5313 (OPEN):** the docs site (cipherstash.com/docs) has nothing on
   key vendor backends or `stash keyset`.
 - **CIP-5313 (Revisit):** Azure caches a key's current version for the life
