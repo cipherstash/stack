@@ -8,17 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.9.1] - 2026-11-06
 
-### Documentation
+### Wire format
 
-- state the ProtectedRef wipe contract, not the open hole
+- Sealed leaves and frames are the same as in 0.9.0.
+  Version 0.9.1 decrypts data that version 0.9.0 encrypted, and the other way round.
 
 ### Features
 
-- ProtectedRef::as_deref narrows a protected borrow, and Cow<[u8]> lends its bytes
-
-### Fixes
-
-- a plain Vec<u8> or [u8] does not lend a ProtectedRef
+- You can now encrypt the bytes in a `vitaminc_protected::Buffer` without reading them first.
+  A `Buffer` lends a `ProtectedRef<[u8]>`. That borrow seals as a byte leaf.
+  A `Protected<Vec<u8>>` or `Protected<[u8; N]>` reaches the same leaf through the new `ProtectedRef::as_deref` and `ProtectedRef::as_ref_of` methods.
+  The 0.9.1 changelog for `vitaminc-protected` has the details.
 
 ## [0.9.0] - 2026-11-04
 
