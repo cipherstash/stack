@@ -19,6 +19,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::path::PathBuf;
 
 use common::frames::{frame as value_of, object, payload};
@@ -33,6 +34,7 @@ use stack_encrypt::{CipherText, KeysetCipher, SealedValue, StackCipher, StackCip
 use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
 use vitaminc_aead::plaintext::{MapSink, Sink};
 use vitaminc_aead::{Encrypt, FrameWriter};
+use vitaminc_protected::Controlled as _;
 
 const SEED: [u8; 32] = *b"stack-encrypt value kinds v1    ";
 
@@ -185,13 +187,13 @@ fn data_plan() -> DataPlan {
             )
         })
         .collect();
-    record::plan(object(fields).risky_ref()).expect("the data plan parses")
+    record::plan(object(fields).as_protected_ref()).expect("the data plan parses")
 }
 
 /// The source as a binding hands it over: one frame, a map of the fields in
 /// plan order.
 fn source() -> ValueFrame {
-    let mut bytes = Vec::new();
+    let mut bytes = vitaminc_protected::Buffer::new();
     {
         let kinds = kinds();
         let mut map = FrameWriter::new(&mut bytes)
@@ -204,7 +206,7 @@ fn source() -> ValueFrame {
         }
         map.end().expect("ended");
     }
-    ValueFrame::from_bytes(&bytes).expect("in the value model")
+    ValueFrame::from_bytes(bytes.as_protected_ref()).expect("in the value model")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -366,7 +368,9 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             kind.field
         );
         let ctx = context(
-            &vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field)).expect("frames"),
+            vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field))
+                .expect("frames")
+                .as_protected_ref(),
         )
         .expect("context");
         let typed_eq = keyset
@@ -416,7 +420,7 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
     let cipher = deterministic_cipher(SEED).await;
     let plan = data_plan();
     // The source with the `int8` field's value sent at 32 bits.
-    let mut bytes = Vec::new();
+    let mut bytes = vitaminc_protected::Buffer::new();
     {
         let kinds = kinds();
         let mut map = FrameWriter::new(&mut bytes)
@@ -433,7 +437,7 @@ async fn a_value_of_another_width_is_refused_when_sealed() {
         map.end().expect("ended");
     }
     let keyset = cipher.default_keyset();
-    let source = vitaminc_aead::Frame::parse(&bytes).expect("a frame");
+    let source = vitaminc_aead::Frame::parse(bytes.risky_ref()).expect("a frame");
     let refused = record::encrypt(&keyset, source, &plan);
     assert!(
         matches!(&refused, Err(error) if error.field() == Some("i8") && error.reason() == Some(Reason::FieldType)),

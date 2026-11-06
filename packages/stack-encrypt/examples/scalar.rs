@@ -29,5 +29,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let value = i32::decrypt_from_with_context(encrypted, &keyset, ("users", "age")).await?;
     assert_eq!(value, 42);
+
+    // A column of scalars: one logical batch, each element its own ciphertext.
+    let ages: Vec<Ciphertext> = vec![29i32, 34, 41].encrypt_into(&keyset).await?;
+    let one: i32 = keyset.decrypt(ages[1].clone()).await?;
+    assert_eq!(one, 34);
+    let values = Vec::<i32>::decrypt_from(ages, &keyset).await?;
+    assert_eq!(values, [29, 34, 41]);
+
+    let names: Vec<Ciphertext> = vec!["ada".to_owned(), "grace".to_owned()]
+        .encrypt_into_with_context(&keyset, ("users", "name"))
+        .await?;
+    let names = Vec::<String>::decrypt_from_with_context(names, &keyset, ("users", "name")).await?;
+    assert_eq!(names, ["ada", "grace"]);
     Ok(())
 }

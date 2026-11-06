@@ -165,6 +165,21 @@ impl<T, K> fmt::Debug for Decryption<T, K> {
 impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     Encryption<'s, S, T, K, Ctx, M>
 {
+    /// A description built from its execution closure. This constructor is
+    /// crate-internal, because it gives a closure the source and the cipher
+    /// together, and the public constructors never do that. The collection
+    /// declarations use it to run an element's description once for each
+    /// element.
+    pub(crate) fn from_build<F>(build: F) -> Self
+    where
+        F: for<'a, 'k> FnOnce(M::Source, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K>
+            + MaybeSend
+            + 's,
+    {
+        Self {
+            build: Box::new(build),
+        }
+    }
     /// A description whose output is already known — metadata a record
     /// carries, or a declaration rejected before any key request.
     pub fn ready(result: Result<T, Error>) -> Self
@@ -396,9 +411,7 @@ where
         + MaybeSend
         + 's,
 {
-    Encryption {
-        build: Box::new(choose),
-    }
+    Encryption::from_build(choose)
 }
 
 /// A description that only checks the borrowed source, yielding `()` or the
@@ -811,16 +824,44 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     where
         I: IntoIterator<Item = Self>,
     {
+        match Self::openings(items) {
+            Err(error) => Decryption::failed(error),
+            Ok(opens) => Decryption::open(Box::new(move |cipher| {
+                Pending::collect(cipher, opens.into_iter().map(|open| open(cipher)))
+            })),
+        }
+    }
+    /// The same as [`all`](Self::all), but for recovered plaintext. When an
+    /// item fails after its key arrived, `all` drops the items recovered
+    /// before it. This function wipes them. The owned `Vec<S>` conversions
+    /// decrypt through this function.
+    pub(crate) fn all_wiping<I>(items: I) -> Decryption<Vec<T>, K>
+    where
+        I: IntoIterator<Item = Self>,
+        T: zeroize::Zeroize,
+    {
+        match Self::openings(items) {
+            Err(error) => Decryption::failed(error),
+            Ok(opens) => Decryption::open(Box::new(move |cipher| {
+                Pending::collect_wiping(cipher, opens.into_iter().map(|open| open(cipher)))
+            })),
+        }
+    }
+    /// The openings of `items`, up to the first description that fails. If a
+    /// description fails, this returns its error, and the descriptions after
+    /// it are never built.
+    fn openings<I>(items: I) -> Result<Vec<Open<T, K>>, Error>
+    where
+        I: IntoIterator<Item = Self>,
+    {
         let mut opens = Vec::new();
         for item in items {
             match item.inner {
-                Opening::Failed(error) => return Decryption::failed(error),
+                Opening::Failed(error) => return Err(error),
                 Opening::Open(open) => opens.push(open),
             }
         }
-        Decryption::open(Box::new(move |cipher| {
-            Pending::collect(cipher, opens.into_iter().map(|open| open(cipher)))
-        }))
+        Ok(opens)
     }
     /// An absent item recovers as `None` without I/O.
     fn optional(item: Option<Self>) -> Decryption<Option<T>, K>

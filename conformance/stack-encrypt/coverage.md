@@ -129,6 +129,18 @@ The [lifecycle contract](lifecycle-contract.md) enrolls native pending/KMS tests
 heap observations, guest ABI cleanup, Go cancellation/memory tests and public SDK
 diagnostics. New probes cover unpolled and in-flight drops, provider failure,
 cleanup after a late authenticated type failure, and chunk concurrency/drop.
+The owned `Vec<S>` to `Vec<T>` conversion is enrolled under the same
+requirements. The conversion's tests cover:
+
+- dropping a collection before it is polled
+- dropping a collection while its key request is running
+- one logical batch of key requests for each collection, and none for an
+  empty collection
+- wiping the source `Vec` through its guard
+- wiping the elements already decrypted, when a later element fails
+
+The owned conversion is a native Rust API. Go reaches batching through its
+record interface, and the runtime profile covers that interface.
 Existing runtime/read/context vectors retain their provider-call counters.
 
 This adds required execution and explicit observation limits; it removes no

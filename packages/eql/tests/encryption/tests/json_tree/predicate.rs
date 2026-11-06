@@ -8,6 +8,7 @@
 
 use super::elements::{derive, eql_text, frame_of, Eql};
 use super::*;
+use stack_encrypt::AsProtectedRef as _;
 
 use stack_encrypt::dynamic::{self, record, OpSpec, Operand};
 use stack_encrypt::KeysetCipher;
@@ -35,7 +36,13 @@ fn people_plan() -> record::Plan {
             "target": {"name": "JsonSearch", "options": {"ordered": ORDERED}}
         }
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Eql).unwrap()
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Eql,
+    )
+    .unwrap()
 }
 
 /// Documents with every field absent, `null` or a value of the one type its

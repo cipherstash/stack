@@ -29,6 +29,7 @@
 
 use serde::{Deserialize, Serialize, Serializer};
 use stack_encrypt::dynamic::frame::serde::{from_slice, to_vec};
+use stack_encrypt::{Buffer, Controlled as _};
 use stack_guest_abi::last_error::malformed;
 use stack_guest_abi::step::{Request, Response};
 use zeroize::Zeroizing;
@@ -63,14 +64,24 @@ pub fn encode_step(handle: u64, requests: &[Request]) -> Result<Vec<u8>, u32> {
             })
             .collect(),
     };
-    let frame = Zeroizing::new(to_vec(&wire).map_err(|_| STATUS_ENCODING)?);
-    // Sized exactly, as every output is: the registry would otherwise
-    // reallocate a buffer with spare capacity and leave the old one unwiped.
+    // A `Buffer`, which wipes on drop and as it grows.
+    let frame = to_vec(&wire).map_err(|_| STATUS_ENCODING)?;
+    to_host(&frame)
+        .ok_or_else(|| stack_guest_abi::last_error::internal("no memory for a step's requests"))
+}
+
+/// A finished frame, copied into the output buffer the host reads.
+///
+/// This is where a frame's bytes leave the guest, so this is the one place
+/// the guest reads a `Buffer` through `risky_ref`. The `Buffer` is still
+/// wiped when it drops. The copy is sized exactly, as every output is: the
+/// registry would otherwise reallocate a buffer with spare capacity, and
+/// leave the old one unwiped. `None` means the copy could not be allocated.
+pub(crate) fn to_host(frame: &Buffer) -> Option<Vec<u8>> {
     let mut out = Vec::new();
-    out.try_reserve_exact(frame.len())
-        .map_err(|_| stack_guest_abi::last_error::internal("no memory for a step's requests"))?;
-    out.extend_from_slice(&frame);
-    Ok(out)
+    out.try_reserve_exact(frame.len()).ok()?;
+    out.extend_from_slice(frame.risky_ref());
+    Some(out)
 }
 
 /// The responses the host handed `se_resume`, copied out of its buffer into

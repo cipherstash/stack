@@ -13,6 +13,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
 use base64ct::{Base64, Encoding};
@@ -116,7 +117,13 @@ fn plan_of(target: Value) -> record::Plan {
     let wire = json!({
         "profile": {"context": ["users", "profile"], "type": "json", "null": "sql", "target": target}
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Documents).unwrap()
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Documents,
+    )
+    .unwrap()
 }
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -125,7 +132,12 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 
 /// A JSON value as a frame: what a binding sends as an input or a request.
 fn json_frame(value: &Value) -> ValueFrame {
-    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
+    ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(value)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 async fn term<K: Source>(
@@ -737,13 +749,14 @@ async fn rows_that_are_not_the_reads_are_refused() {
     // selector is derived under this field's column, so it is not the
     // one asked for.
     let two = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
                         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}},
             "prefs": {"context": ["users", "prefs"], "type": "json", "null": "sql",
                       "target": "JsonSearch"}
         }))
-        .unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Documents,
     )
     .unwrap();
@@ -912,8 +925,13 @@ fn a_malformed_read_is_refused_before_any_key() {
     // A field that does not store a document has no reads.
     let wire =
         json!({"email": {"context": ["users", "email"], "type": "string", "outputs": ["c"]}});
-    let scalar =
-        record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Documents).unwrap();
+    let scalar = record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Documents,
+    )
+    .unwrap();
     let error = dynamic::check_json_open(
         &scalar,
         "email",
@@ -1581,8 +1599,13 @@ mod element_match {
                 "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
                             "target": {"name": "JsonSearch", "options": {"ordered": ["$.a[*].b"]}}}
             });
-            let plan = record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Unnamed)
-                .unwrap();
+            let plan = record::plan_with(
+                dynamic::frame::serde::to_vec(&wire)
+                    .unwrap()
+                    .as_protected_ref(),
+                &Unnamed,
+            )
+            .unwrap();
             let names = names(&plan, &Unnamed);
             assert!(names.contains(&"lt_at"), "the orderings still: {names:?}");
             assert!(!names.contains(&"element_match"), "{names:?}");
@@ -2373,8 +2396,13 @@ mod compiled_match {
                 "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
                             "target": "JsonSearch"}
             });
-            let plan = record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Unnamed)
-                .unwrap();
+            let plan = record::plan_with(
+                dynamic::frame::serde::to_vec(&wire)
+                    .unwrap()
+                    .as_protected_ref(),
+                &Unnamed,
+            )
+            .unwrap();
             let names = names(&plan, &Unnamed);
             assert!(names.contains(&"eq_at"), "the others still: {names:?}");
             assert!(!names.contains(&"match"), "{names:?}");

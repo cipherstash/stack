@@ -3,6 +3,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -77,7 +78,12 @@ fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
     let declaration = json!({corpus.field.clone(): {
         "context": context, "outputs": ["c", "eq"], "type": case.kind,
     }});
-    record::plan(&vitaminc_aead_frame::serde::to_vec(&declaration).unwrap()).unwrap()
+    record::plan(
+        vitaminc_aead_frame::serde::to_vec(&declaration)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 fn stored(corpus: &Corpus, artifact: &Artifact) -> StackCipherText {

@@ -3,6 +3,7 @@
 
 mod common;
 use common::{hex, unhex};
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -12,6 +13,7 @@ use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use stack_encrypt::dynamic::record::{self, NullMode, Output};
 use stack_encrypt::{ContextPiece, ErrorPayload};
+use vitaminc_protected::Controlled as _;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,12 +118,16 @@ fn shared_declaration_grammar() {
             Input::Json(value) => {
                 vitaminc_aead_frame::serde::to_vec(&projection(&value).unwrap()).unwrap()
             }
-            Input::FrameHex(text) => unhex(&text),
+            Input::FrameHex(text) => {
+                let mut frame = vitaminc_protected::Buffer::new();
+                frame.extend_from_slice(&unhex(&text));
+                frame
+            }
         };
         if let Some(boundary) = case.boundary_error {
             assert!(!case.accepted);
             assert!(
-                vitaminc_aead::Frame::parse(&frame).is_err(),
+                vitaminc_aead::Frame::parse(frame.risky_ref()).is_err(),
                 "{}: boundary refusal requires a malformed frame",
                 case.id
             );
@@ -129,7 +135,7 @@ fn shared_declaration_grammar() {
             assert!(boundary.fields.is_empty());
         }
         // No cipher/key source exists: declaration checking cannot do key I/O.
-        match (record::plan(&frame), case.expected_error) {
+        match (record::plan(frame.as_protected_ref()), case.expected_error) {
             (Ok(plan), None) => {
                 if let Some(expected) = case.normalized {
                     let actual = normalized(&plan);
@@ -211,11 +217,15 @@ fn projection(raw: &RawValue) -> Result<Projection, Box<dyn std::error::Error>> 
 fn json_projection_is_lexical_and_lossless() {
     fn encoded(text: &str) -> Vec<u8> {
         let raw = serde_json::from_str::<Box<RawValue>>(text).unwrap();
-        vitaminc_aead_frame::serde::to_vec(&projection(&raw).unwrap()).unwrap()
+        vitaminc_aead_frame::serde::to_vec(&projection(&raw).unwrap())
+            .unwrap()
+            .risky_unwrap()
     }
     assert_eq!(
         encoded("-0"),
-        vitaminc_aead_frame::serde::to_vec(&0i64).unwrap()
+        vitaminc_aead_frame::serde::to_vec(&0i64)
+            .unwrap()
+            .risky_unwrap()
     );
     assert_eq!(encoded(r#"{"z":1,"a":2}"#), encoded(r#"{"a":2,"z":1}"#));
     for invalid in ["18446744073709551616", "-9223372036854775809", "1e400"] {

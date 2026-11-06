@@ -18,6 +18,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
 use eql_bindings::encryption::targets::{self as eql_targets, Target};
@@ -122,7 +123,13 @@ fn plan() -> record::Plan {
             }
         }
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Eql).unwrap()
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Eql,
+    )
+    .unwrap()
 }
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -400,7 +407,7 @@ async fn a_document_does_not_open_under_another_column() {
     .await
     .unwrap();
     let other = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {
                 "context": ["users", "other"],
                 "type": "json",
@@ -411,7 +418,8 @@ async fn a_document_does_not_open_under_another_column() {
                 }
             }
         }))
-        .unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Eql,
     )
     .unwrap();
@@ -488,7 +496,12 @@ fn input(entries: &[(&str, Value)]) -> ValueFrame {
         .iter()
         .map(|(k, v)| ((*k).to_owned(), v.clone()))
         .collect();
-    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(&object).unwrap()).unwrap()
+    ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(&object)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 /// The data path's term for one operator and input on `profile`.
@@ -557,10 +570,11 @@ fn a_document_field_answers_the_json_operators() {
         ]
     );
     let unordered = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {"context": ["users", "profile"], "target": "JsonSearch"}
         }))
-        .unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Eql,
     )
     .unwrap();
@@ -904,8 +918,12 @@ async fn open(
     request: Value,
     groups: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
-    let request =
-        ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(&request).unwrap()).unwrap();
+    let request = ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(&request)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap();
     let rows = frame(&groups);
     let opened = dynamic::json_open(keyset, plan, "profile", request, rows, &Eql)
         .unwrap()

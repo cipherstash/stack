@@ -90,7 +90,7 @@ use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
-use stack_encrypt::StackCipher;
+use stack_encrypt::{Controlled as _, StackCipher};
 use stack_guest_abi::abi::{export, input, take_plaintext, wipe_input};
 use stack_guest_abi::buffers;
 use stack_guest_abi::call;
@@ -99,7 +99,7 @@ use stack_guest_abi::status::STATUS_NEEDS_IO;
 use stack_guest_abi::step::{self, Operation, Step};
 
 use crate::io;
-use crate::ops;
+use crate::ops::{self, Bytes};
 use crate::options::{parse_options, parse_selector, scope_for, KeysetSelector, Side};
 #[cfg(not(feature = "deterministic-kms"))]
 use crate::status::STATUS_INTERNAL;
@@ -418,7 +418,7 @@ pub unsafe extern "C" fn se_term(
         let value = unsafe { take_plaintext(val_ptr, val_len)? };
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
-        let context = unsafe { input(ctx_ptr, ctx_len)? }.to_vec();
+        let context = Bytes::new(unsafe { input(ctx_ptr, ctx_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::term(&value, &context, kind)?;
         let options = parse_options(opts, Side::Mint)?;
@@ -453,7 +453,7 @@ pub unsafe extern "C" fn se_encrypt_record(
         let source = unsafe { take_plaintext(src_ptr, src_len)? };
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
-        let plan = unsafe { input(plan_ptr, plan_len)? }.to_vec();
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::record(&source, &plan)?;
         let options = parse_options(opts, Side::Mint)?;
@@ -494,7 +494,7 @@ pub unsafe extern "C" fn se_decrypt_record(
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
         let record = unsafe { input(rec_ptr, rec_len)? }.to_vec();
-        let plan = unsafe { input(plan_ptr, plan_len)? }.to_vec();
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         let options = parse_options(opts, Side::Open)?;
         ops::validate::record_tree(&record, &plan, options.context.as_ref())?;
@@ -520,8 +520,8 @@ pub unsafe extern "C" fn se_plan_check(plan_ptr: *const u8, plan_len: u32) -> u6
     export(|| {
         // SAFETY: a host-owned range the export was handed; the borrow ends
         // before it returns.
-        let plan = unsafe { input(plan_ptr, plan_len)? };
-        ops::plan_check(plan).map(|()| Vec::new())
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
+        ops::plan_check(&plan).map(|()| Vec::new())
     })
 }
 
@@ -557,7 +557,7 @@ pub unsafe extern "C" fn se_query_term(
         let value = unsafe { take_plaintext(val_ptr, val_len)? };
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
-        let plan = unsafe { input(plan_ptr, plan_len)? }.to_vec();
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let field = unsafe { input(field_ptr, field_len)? }.to_vec();
         let operator = unsafe { input(op_ptr, op_len)? }.to_vec();
         let opts = unsafe { input(opt_ptr, opt_len)? };
@@ -599,10 +599,10 @@ pub unsafe extern "C" fn se_json_open(
     export(|| {
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns.
-        let rows = unsafe { input(rows_ptr, rows_len)? }.to_vec();
-        let plan = unsafe { input(plan_ptr, plan_len)? }.to_vec();
+        let rows = Bytes::new(unsafe { input(rows_ptr, rows_len)? }.to_vec());
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let field = unsafe { input(field_ptr, field_len)? }.to_vec();
-        let request = unsafe { input(req_ptr, req_len)? }.to_vec();
+        let request = Bytes::new(unsafe { input(req_ptr, req_len)? }.to_vec());
         let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::json_open(&rows, &plan, &field, &request)?;
         let options = parse_options(opts, Side::Mint)?;
@@ -647,10 +647,10 @@ pub unsafe extern "C" fn se_verify(
         let (query, values) = (query?, values?);
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns.
-        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let field = unsafe { input(field_ptr, field_len)? };
         let operator = unsafe { input(op_ptr, op_len)? };
-        ops::verify(query.as_slice(), values.as_slice(), plan, field, operator)
+        ops::verify(&query, &values, &plan, field, operator)
     })
 }
 
@@ -682,11 +682,11 @@ pub unsafe extern "C" fn se_target_limit(
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns.
         let term = unsafe { input(term_ptr, term_len)? };
-        let stats = unsafe { input(stats_ptr, stats_len)? };
-        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let stats = Bytes::new(unsafe { input(stats_ptr, stats_len)? }.to_vec());
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let field = unsafe { input(field_ptr, field_len)? };
         let operator = unsafe { input(op_ptr, op_len)? };
-        ops::target_limit(term, stats, plan, field, operator, want)
+        ops::target_limit(term, &stats, &plan, field, operator, want)
     })
 }
 
@@ -717,9 +717,9 @@ pub unsafe extern "C" fn se_operators(
     export(|| {
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before they return.
-        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let plan = Bytes::new(unsafe { input(plan_ptr, plan_len)? }.to_vec());
         let field = unsafe { input(field_ptr, field_len)? };
-        ops::operators(plan, field)
+        ops::operators(&plan, field)
     })
 }
 
@@ -753,7 +753,7 @@ pub extern "C" fn se_io() -> u64 {
 pub unsafe extern "C" fn se_resume(handle: u64, resp_ptr: *mut u8, resp_len: u32) -> u64 {
     export(|| {
         let bytes = unsafe { take_plaintext(resp_ptr, resp_len) };
-        let responses = bytes.and_then(|bytes| io::decode_responses(&bytes));
+        let responses = bytes.and_then(|bytes| io::decode_responses(bytes.risky_ref()));
         let responses = responses.inspect_err(|_| {
             let _ = step::abort(handle);
         })?;

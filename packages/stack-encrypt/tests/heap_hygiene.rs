@@ -40,6 +40,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -240,7 +241,7 @@ fn plan() -> record::Plan {
             spec("doc", &["c"], None),
             spec("id", &["passthrough"], None),
         ])
-        .risky_ref(),
+        .as_protected_ref(),
     )
     .unwrap()
 }
@@ -345,9 +346,11 @@ fn a_late_read_type_failure_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();
     let cipher = rt.block_on(common::stack_cipher());
     let keyset = cipher.default_keyset();
-    let writer = record::plan(object(vec![spec("value", &["c"], None)]).risky_ref()).unwrap();
+    let writer =
+        record::plan(object(vec![spec("value", &["c"], None)]).as_protected_ref()).unwrap();
     let reader =
-        record::plan(object(vec![spec("value", &["c"], Some("string"))]).risky_ref()).unwrap();
+        record::plan(object(vec![spec("value", &["c"], Some("string"))]).as_protected_ref())
+            .unwrap();
     let source = frame(vec![
         object(vec![("value", frame(marked("first-row")))]),
         object(vec![("value", frame(true))]),
@@ -367,6 +370,52 @@ fn a_late_read_type_failure_leaves_no_plaintext_on_the_heap() {
             ))
         ));
     });
+}
+
+/// The owned collection conversion: a column of owned strings is held by
+/// the conversion's guard, handed to each element's declaration by
+/// reference, and wiped before the pending is returned. Nothing it frees
+/// may still hold a value.
+#[test]
+fn an_owned_column_encrypted_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::{Ciphertext, EncryptInto};
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = vec![marked("first"), marked("second"), marked("third")];
+    watched("Vec<String> -> Vec<Ciphertext>", || {
+        let sealed: Vec<Ciphertext> = rt
+            .block_on(async { column.encrypt_into(&keyset).await })
+            .unwrap();
+        assert_eq!(sealed.len(), 3);
+    });
+}
+
+/// A column whose later element fails after its key arrived, here with a
+/// type the destination does not accept: the element recovered before it is
+/// wiped rather than dropped as it is.
+#[test]
+fn a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::DecryptFrom;
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = rt.block_on(async {
+        vec![
+            keyset.encrypt(marked("first-row")).await.unwrap(),
+            keyset.encrypt(true).await.unwrap(),
+        ]
+    });
+    watched(
+        "late type failure in Vec<Ciphertext> -> Vec<String>",
+        || {
+            let result = rt.block_on(async { Vec::<String>::decrypt_from(column, &keyset).await });
+            assert!(matches!(
+                result,
+                Err(stack_encrypt::Error::OpenedType { .. })
+            ));
+        },
+    );
 }
 
 #[test]
@@ -502,7 +551,9 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
                     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
     });
     let plan = record::plan_with(
-        &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+        stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
         &Documents,
     )
     .unwrap();
@@ -870,7 +921,9 @@ mod json_index {
                         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age", "$.visits[*].at"]}}}
         });
         let plan = record::plan_with(
-            &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+            stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+                .unwrap()
+                .as_protected_ref(),
             &Documents,
         )
         .unwrap();

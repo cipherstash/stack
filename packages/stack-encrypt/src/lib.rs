@@ -228,8 +228,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::{Ciphertext, EncryptInto, DecryptFrom, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
 //! let cipher = StackCipher::builder()
-//!     .kms(stack_encrypt::kms::FakeDataKeySource::new()).init().await?;
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let encrypted: Ciphertext = 42i32.encrypt_into(&keyset).await?;
 //! let plain = i32::decrypt_from(encrypted, &keyset).await?;
@@ -239,12 +243,82 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 //! ```
 //!
+//! # Collections
+//!
+//! [`EncryptInto`] encrypts a `Vec` of owned plaintexts into a `Vec` of any
+//! owned target, and [`DecryptFrom`] decrypts it back. A caller context is
+//! optional, as it is for a single value.
+//!
+//! Each element is encrypted under its own data key and authenticated on its
+//! own, so [`KeysetCipher::decrypt`] can decrypt any one element alone. An
+//! element's position in the `Vec`, and the number of elements, are not part
+//! of what is authenticated. So you can decrypt the elements in a different
+//! order, or decrypt only some of them.
+//!
+//! This suits a very common case: storing each element in its own database
+//! row. A database can return rows in any order. A query can also return only
+//! some of them. If your application needs the order or the length of a
+//! `Vec` to be authenticated, this API does not provide that.
+//!
+//! A collection makes one logical batch of key requests, with the requests
+//! in element order:
+//!
+//! - Encrypting a collection makes one `generate_keys` call.
+//! - Decrypting a collection makes one `retrieve_keys` call for each keyset.
+//! - An empty collection makes no call.
+//!
+//! The key source can still split one logical batch into several requests to
+//! its provider.
+//!
+//! The plaintext `Vec` is wiped before the pending request is returned, as a
+//! single value is. Sometimes an element fails to decrypt after earlier
+//! elements succeeded. The earlier plaintexts are then wiped before the error
+//! is returned. If an element's conversion panics, they are wiped before the
+//! panic unwinds.
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::{Ciphertext, DecryptFrom, EncryptInto, StackCipher};
+//! // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+//! // the environment, or from the profile that `npx stash auth login` writes.
+//! let cipher = StackCipher::builder()
+//! #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
+//! let keyset = cipher.default_keyset();
+//!
+//! // Without a caller context, each element is encrypted under the empty context.
+//! let ages: Vec<Ciphertext> = vec![29i32, 34, 41].encrypt_into(&keyset).await?;
+//! assert_eq!(Vec::<i32>::decrypt_from(ages.clone(), &keyset).await?, [29, 34, 41]);
+//! // Each element is an ordinary ciphertext, which decrypts on its own.
+//! assert_eq!(keyset.decrypt::<i32>(ages[1].clone()).await?, 34);
+//!
+//! // With a caller context, the context is bound to every element.
+//! let names: Vec<Ciphertext> = vec!["ada".to_owned(), "grace".to_owned()]
+//!     .encrypt_into_with_context(&keyset, ("users", "name"))
+//!     .await?;
+//! let names = Vec::<String>::decrypt_from_with_context(names, &keyset, ("users", "name")).await?;
+//! assert_eq!(names, ["ada", "grace"]);
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
+//! A collection follows its element target's rules for a caller context. If
+//! the element target requires a context, the collection requires one. If
+//! the element target accepts no context, the collection cannot be given
+//! one.
+//!
+//! A `Vec<u8>` is one byte string, not a collection of bytes. Vitamin C
+//! encrypts a `Vec<u8>` as a single value, and `u8` is not an
+//! [`OpaqueEncode`] type. So a `Vec<u8>` encrypts into one `Ciphertext`, and
+//! a `Vec<Vec<u8>>` is a collection of byte strings.
+//!
 //! Existing structural plans and derives still use [`StackCipherText`], a tree
 //! of sealed leaves. Their low-level direct entry points are
 //! [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`]; their
 //! borrowed conversion helpers live in [`target::legacy`]. They are separate
-//! from the owned scalar API. There is no generic `Serialize` fallback and
-//! no implicit `Vec<u8>` blob.
+//! from the owned scalar API. There is no generic `Serialize` fallback.
 //!
 //! # What is authenticated
 //!
@@ -362,5 +436,8 @@ pub use vitaminc_prf::PrfContext;
 pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};
 
 // And the wrapper plaintext comes back in (`ValueFrame::into_inner`, a
-// decrypted `Protected<T>`), with the trait that reads it.
-pub use vitaminc_protected::{Controlled, Protected};
+// decrypted `Protected<T>`), with the trait that reads it, and the wiping
+// buffer the re-exported frame writer writes into (`dynamic::frame`). The
+// frame readers take a `ProtectedRef` of bytes, which that buffer lends
+// through `AsProtectedRef`.
+pub use vitaminc_protected::{AsProtectedRef, Buffer, Controlled, Protected, ProtectedRef};

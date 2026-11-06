@@ -5,7 +5,8 @@ use crate::target::{
     OptionalContext, Pending, ScalarContext,
 };
 use crate::{CipherText, Decrypt, Error, KeysetCipher, LeafBytesError, SealedValue};
-use vitaminc_aead::plaintext::{Encrypt, Sink};
+use vitaminc_aead::plaintext::{Encrypt, Scalar, Sink};
+use vitaminc_aead::FromScalar;
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroize;
 
@@ -20,41 +21,103 @@ mod sealed {
 
 /// A plaintext type that encrypts as one opaque [`Ciphertext`].
 ///
-/// Implemented for `bool`, the fixed-width signed integers, the unsigned
-/// integers from `u16` through `u128`, `f32`, `f64` and `String`. The trait is
-/// sealed: collections and borrowed values deliberately do not implement it.
-/// `u8` waits on separating Vitamin C's byte-buffer and element
-/// representations, and must not make `Vec<u8>` an implicit single
-/// ciphertext.
-/// Nullable `Option<T>` values are also deferred in this scalar slice. Use
-/// [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`] for them;
-/// fixed-width nullable values retain Vitamin C's padded-null representation.
+/// `OpaqueEncode` is implemented for every owned type `S` that meets two
+/// conditions:
+///
+/// - `&S` implements Vitamin C's [`Scalar`] marker, so Vitamin C encrypts it
+///   as a single value.
+/// - `S` implements [`Zeroize`], so it can be wiped.
+///
+/// These built-in types meet both conditions:
+///
+/// - `bool`, `f32`, `f64`, and `String`
+/// - the fixed-width signed integers
+/// - the unsigned integers from `u16` to `u128`
+/// - the byte strings `Vec<u8>` and `[u8; N]`
+///
+/// A type of your own meets them if its borrow implements `Scalar` and the
+/// type implements `Zeroize`. The trait is sealed, so you cannot implement it
+/// directly.
+///
+/// A sequence is not a `Scalar`, so `Vec<u8>` is the only `Vec` that encrypts
+/// into one `Ciphertext`. A `Vec` of any other `OpaqueEncode` type encrypts
+/// element by element into a `Vec<Ciphertext>`, through [`EncryptInto`]. The
+/// [crate docs on collections](crate#collections) explain how. `u8` is not an `OpaqueEncode` type,
+/// because Vitamin C encrypts a `Vec<u8>` as one byte string, not as a
+/// collection of bytes.
+///
+/// # Nullable values
+///
+/// A nullable `Option<T>` is not an `OpaqueEncode` type either, so
+/// `keyset.encrypt(Some(34i64))` does not compile. Encrypt a nullable value
+/// with [`KeysetCipher::encrypt_tree`], which returns a [`StackCipherText`](crate::StackCipherText).
+/// Decrypt it with [`KeysetCipher::decrypt_tree`].
+///
+/// A `None` of a fixed-width type, such as `Option<i64>`, is encrypted as a
+/// null that is padded to the type's width. So its ciphertext is as long as
+/// the ciphertext of a `Some`, and the length does not show whether a value
+/// was present. Text has no fixed width, so the ciphertext of an
+/// `Option<String>` that is `None` is shorter than one that is `Some`.
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::StackCipher;
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+///
+/// // A value that is present.
+/// let stored = keyset.encrypt_tree(Some(34i64), ("users", "age")).await?;
+/// let age: Option<i64> = keyset.decrypt_tree(stored, ("users", "age")).await?;
+/// assert_eq!(age, Some(34));
+///
+/// // A value that is absent. Its ciphertext is as long as a present one's.
+/// let stored = keyset.encrypt_tree(None::<i64>, ("users", "age")).await?;
+/// let age: Option<i64> = keyset.decrypt_tree(stored, ("users", "age")).await?;
+/// assert_eq!(age, None);
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
 pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
-/// A plaintext type that one opaque [`Ciphertext`] decrypts to: the types
-/// that implement [`OpaqueEncode`]. Sealed, like it.
+/// A plaintext type that one opaque [`Ciphertext`] decrypts to.
+///
+/// `OpaqueDecode` is implemented for every [`FromScalar`] type that also
+/// implements [`Zeroize`]. Every built-in [`OpaqueEncode`] type is one. The
+/// trait is sealed, as `OpaqueEncode` is.
 pub trait OpaqueDecode: sealed::Decode + Decrypt + Zeroize + Send + 'static {}
 
-macro_rules! opaque {
-    ($($ty:ty),* $(,)?) => {$(
-        impl sealed::Encode for $ty {
-            const DEPTH: Option<usize> = <&$ty as Encrypt>::DEPTH;
-            const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <&$ty as Encrypt>::FIXED;
-            fn visit<S: Sink>(&self, sink: S) -> Result<S::Ok, S::Error> {
-                Encrypt::visit(self, sink)
-            }
-        }
-        impl sealed::Decode for $ty {}
-        impl OpaqueEncode for $ty {}
-        impl OpaqueDecode for $ty {}
-    )*};
+// The bridge from an owned `S` to its borrow's walk: `OpaqueEncode`'s
+// callers hold `&S`, and only this impl's where clause knows `&S` encrypts.
+impl<S> sealed::Encode for S
+where
+    S: Zeroize + Send + 'static,
+    for<'a> &'a S: Scalar,
+{
+    const DEPTH: Option<usize> = <&S as Encrypt>::DEPTH;
+    const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <&S as Encrypt>::FIXED;
+    fn visit<V: Sink>(&self, sink: V) -> Result<V::Ok, V::Error> {
+        Encrypt::visit(self, sink)
+    }
 }
-opaque!(bool, i8, i16, i32, i64, i128, u16, u32, u64, u128, f32, f64, String);
+impl<S> OpaqueEncode for S
+where
+    S: Zeroize + Send + 'static,
+    for<'a> &'a S: Scalar,
+{
+}
+impl<P: FromScalar + Zeroize + Send + 'static> sealed::Decode for P {}
+impl<P: FromScalar + Zeroize + Send + 'static> OpaqueDecode for P {}
 
 pub(crate) struct ScalarRef<'a, S>(pub &'a S);
-// Vitamin C 0.8 implements Encrypt for &Protected<T>, but not ProtectedRef<T>.
-// This bridge preserves its encoding metadata while the owned conversion keeps
-// the source in Protected. Replace it when the encoder accepts protected borrows.
+// The owned conversion keeps the source in Protected and hands this a borrow.
+// It carries the scalar's encoding metadata through `sealed::Encode`, whose
+// supertrait bound is what lets a generic caller walk `&S` at all.
 impl<S: OpaqueEncode> Encrypt for ScalarRef<'_, S> {
     const DEPTH: Option<usize> = <S as sealed::Encode>::DEPTH;
     const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <S as sealed::Encode>::FIXED;

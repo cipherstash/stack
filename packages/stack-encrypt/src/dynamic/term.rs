@@ -125,8 +125,8 @@ impl IndexSpec {
     /// unknown, mistyped or out of bounds, and for bytes that are not one
     /// frame (an option given twice is refused by the frame). It names no
     /// field: the plan parser names it.
-    pub fn from_frame(frame: &[u8]) -> Result<Self, Error> {
-        vitaminc_aead_frame::serde::from_slice::<IndexWire>(frame)
+    pub fn from_frame(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Self, Error> {
+        vitaminc_aead_frame::serde::from_slice::<IndexWire>(frame.risky_ref())
             .map(IndexSpec::from)
             .map_err(|_| Error::bad_plan(Reason::UnknownOutput))
     }
@@ -415,7 +415,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// ```
 /// use stack_encrypt::dynamic::{context, term};
 /// use stack_encrypt::target::IndexSpec;
-/// use stack_encrypt::StackCipher;
+/// use stack_encrypt::{AsProtectedRef, StackCipher};
 /// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -426,7 +426,7 @@ impl TryFrom<MatchOptionsWire> for MatchWire {
 /// let keyset = cipher.default_keyset();
 ///
 /// // `["users", "age"]`, as a binding writes it.
-/// let ctx = context(&vitaminc_aead_frame::serde::to_vec(&("users", "age"))?)?;
+/// let ctx = context(vitaminc_aead_frame::serde::to_vec(&("users", "age"))?.as_protected_ref())?;
 /// let probe = term(&keyset, &34u32, &IndexSpec::Equality, ctx.clone()).await?;
 /// let typed = keyset.equality_term(34u32, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());
@@ -878,6 +878,7 @@ mod tests {
     use crate::{nonempty, StackCipher};
     use stack_kms::FakeDataKeySource;
     use vitaminc_aead::plaintext::Raw;
+    use vitaminc_protected::AsProtectedRef as _;
     use vitaminc_protected::Controlled;
 
     async fn cipher() -> StackCipher<FakeDataKeySource> {
@@ -1086,12 +1087,21 @@ mod tests {
 
     /// An index read from the frame of its wire form, as a plan carries it.
     fn index_of(value: &Tree) -> Result<IndexSpec, Error> {
-        IndexSpec::from_frame(&crate::dynamic::test_frame::frame_of(value))
+        IndexSpec::from_frame(
+            crate::dynamic::test_frame::frame_of(value)
+                .as_protected_ref()
+                .as_deref(),
+        )
     }
 
     /// A one-part context, read from its frame as a binding sends it.
     fn ctx(label: &str) -> NonEmpty<crate::ContextPiece<'static>> {
-        context(&vitaminc_aead_frame::serde::to_vec(&label).expect("frames")).expect("context")
+        context(
+            vitaminc_aead_frame::serde::to_vec(&label)
+                .expect("frames")
+                .as_protected_ref(),
+        )
+        .expect("context")
     }
 
     fn s(value: &str) -> Tree {
@@ -2042,9 +2052,14 @@ mod tests {
 mod wire_form {
     use super::*;
     use crate::dynamic::test_frame::Tree;
+    use vitaminc_protected::AsProtectedRef as _;
 
     fn index_of(value: &Tree) -> Result<IndexSpec, Error> {
-        IndexSpec::from_frame(&crate::dynamic::test_frame::frame_of(value))
+        IndexSpec::from_frame(
+            crate::dynamic::test_frame::frame_of(value)
+                .as_protected_ref()
+                .as_deref(),
+        )
     }
     use crate::sem::{MatchConfig, Tokenizer};
     use crate::target::{Equality, Index, Match, Ope, Ore};

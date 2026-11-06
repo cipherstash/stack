@@ -24,6 +24,7 @@
 //!   included.
 
 use super::*;
+use stack_encrypt::AsProtectedRef as _;
 
 use eql_bindings::encryption::targets::{self as eql_targets, Target};
 use stack_encrypt::dynamic::{
@@ -122,11 +123,22 @@ fn contact_plan() -> record::Plan {
             "target": {"name": "JsonSearch", "options": {"ordered": [RELATIONSHIP, CALLS]}}
         }
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Eql).unwrap()
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Eql,
+    )
+    .unwrap()
 }
 
 pub(super) fn frame_of(value: &Value) -> ValueFrame {
-    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
+    ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(value)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 /// The operand of `operator` on `profile` for `input`, as the SQL binds
@@ -189,7 +201,13 @@ fn layout_plan(sealed: bool) -> record::Plan {
             }}
         }
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Eql).unwrap()
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Eql,
+    )
+    .unwrap()
 }
 
 /// A contact with each field present when given.
