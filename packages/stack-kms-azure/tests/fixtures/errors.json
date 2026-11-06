@@ -1,0 +1,167 @@
+[
+  {
+    "name": "an access policy without unwrapKey",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 403,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": {
+        "error": {
+          "code": "Forbidden",
+          "message": "The user, group or application 'appid=test-only-client-id;oid=00000000-0000-0000-0000-000000000000;iss=https://sts.windows.net/test-only-tenant/' does not have keys unwrapKey permission on key vault 'cipherstash-fixture;location=eastus'. For help resolving this issue, please see https://go.microsoft.com/fwlink/?linkid=2125287",
+          "innererror": { "code": "AccessDenied" }
+        }
+      }
+    }
+  },
+  {
+    "name": "an RBAC role without unwrapKey",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 403,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": {
+        "error": {
+          "code": "Forbidden",
+          "message": "Caller is not authorized to perform action on resource. Action: 'Microsoft.KeyVault/vaults/keys/unwrap/action'",
+          "innererror": { "code": "ForbiddenByRbac" }
+        }
+      }
+    }
+  },
+  {
+    "name": "a disabled key version",
+    "kind": "Unavailable",
+    "response": {
+      "status": 403,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": {
+        "error": {
+          "code": "Forbidden",
+          "message": "Operation \"unwrapKey\" is not allowed on a disabled key.",
+          "innererror": { "code": "KeyDisabled" }
+        }
+      }
+    }
+  },
+  {
+    "name": "a token for the wrong audience",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 401,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": {
+        "error": {
+          "code": "Unauthorized",
+          "message": "AKV10022: Invalid audience. Expected https://vault.azure.net, found: https://managedhsm.azure.net."
+        }
+      }
+    }
+  },
+  {
+    "name": "a 401 challenge with no body",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 401,
+      "headers": [["www-authenticate", "Bearer authorization=\"https://login.microsoftonline.com/test-only-tenant\", resource=\"https://vault.azure.net\""]],
+      "body": null
+    }
+  },
+  {
+    "name": "a key that does not exist",
+    "kind": "NotFound",
+    "response": {
+      "status": 404,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": {
+        "error": {
+          "code": "KeyNotFound",
+          "message": "A key with (name/id) fixture-rsa-key/1a2b3c4d5e6f708192a3b4c5d6e7f801 was not found in this key vault. If you recently deleted this key you may be able to recover it using the correct recovery command. For help resolving this issue, please see https://go.microsoft.com/fwlink/?linkid=2125182"
+        }
+      }
+    }
+  },
+  {
+    "name": "a Managed HSM resource that does not exist",
+    "kind": "NotFound",
+    "response": {
+      "status": 404,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": { "error": { "code": "NotFound", "message": "The requested resource was not found." } }
+    }
+  },
+  {
+    "name": "throttled",
+    "kind": "Throttled",
+    "response": {
+      "status": 429,
+      "headers": [["content-type", "application/json; charset=utf-8"], ["retry-after", "1"]],
+      "body": {
+        "error": {
+          "code": "Throttled",
+          "message": "Request was not processed because too many requests were received. Reason: A generic reason for the throttling"
+        }
+      }
+    }
+  },
+  {
+    "name": "a ciphertext that does not unwrap",
+    "kind": "InvalidCiphertext",
+    "response": {
+      "status": 400,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": { "error": { "code": "BadParameter", "message": "Error occurred while decrypting the value." } }
+    }
+  },
+  {
+    "name": "an expired key",
+    "kind": "Unavailable",
+    "response": {
+      "status": 403,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": {
+        "error": {
+          "code": "Forbidden",
+          "message": "Operation \"unwrapKey\" is not allowed on an expired key.",
+          "innererror": { "code": "KeyExpired" }
+        }
+      }
+    }
+  },
+  {
+    "name": "another refused request",
+    "kind": "AccessDenied",
+    "response": {
+      "status": 400,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": { "error": { "code": "BadRequest", "message": "The request is not valid." } }
+    }
+  },
+  {
+    "name": "an internal error",
+    "kind": "Unavailable",
+    "response": {
+      "status": 500,
+      "headers": [["content-type", "application/json; charset=utf-8"]],
+      "body": { "error": { "code": "InternalServerError", "message": "An unexpected error occurred." } }
+    }
+  },
+  {
+    "name": "service unavailable",
+    "kind": "Unavailable",
+    "response": {
+      "status": 503,
+      "headers": [["content-type", "application/json; charset=utf-8"], ["retry-after", "5"]],
+      "body": { "error": { "code": "ServiceUnavailable", "message": "The service is unavailable." } }
+    }
+  },
+  {
+    "name": "a gateway error page",
+    "kind": "Unavailable",
+    "response": {
+      "status": 502,
+      "headers": [["content-type", "text/html"]],
+      "body": "<html><body>502 Bad Gateway</body></html>"
+    }
+  }
+]

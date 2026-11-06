@@ -71,6 +71,8 @@ const EXPECTED_DISPATCHABLE = [
   // Opt-in by the STACK_KMS_GCP_LIVE_KEY repository variable; dispatch runs it
   // against a branch the path filter does not select.
   '.github/workflows/integration-gcp-kms.yml',
+  // Opt-in by the STACK_KMS_AZURE_LIVE_KEY repository variable, as above.
+  '.github/workflows/integration-azure-key-vault.yml',
   // Path-filtered to the release machinery, so dispatch is how it gets run
   // against a branch that changed something the filter does not name.
   '.github/workflows/lint-release.yml',
@@ -123,6 +125,8 @@ const EXPECTED_FORK_GUARDED_JOBS = [
   '.github/workflows/claude-review.yml / review',
   // The routine token is a repository secret, which forks are not given.
   '.github/workflows/code-review.yml / request',
+  // A repository secret (the Azure service principal's client secret).
+  '.github/workflows/integration-azure-key-vault.yml / live',
   '.github/workflows/integration-drizzle.yml / integration',
   // A repository secret (the Cloud KMS service account key).
   '.github/workflows/integration-gcp-kms.yml / live',
@@ -228,6 +232,9 @@ const PERMISSIVE_VARS = {
   // integration-gcp-kms.yml's opt-in: the crypto key name of the live test.
   STACK_KMS_GCP_LIVE_KEY:
     'projects/p/locations/global/keyRings/r/cryptoKeys/stack-kms-gcp-live',
+  // integration-azure-key-vault.yml's opt-in: the key identifier of the live test.
+  STACK_KMS_AZURE_LIVE_KEY:
+    'https://stack-kms-live.vault.azure.net/keys/stack-kms-azure-live',
 }
 
 /**

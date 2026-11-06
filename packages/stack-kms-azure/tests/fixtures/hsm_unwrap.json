@@ -1,0 +1,35 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://cipherstash-fixture.managedhsm.azure.net/keys/fixture-oct-key/5c6d7e8f90a1b2c3d4e5f60718293a4b/unwrapkey?api-version=7.4",
+      "headers": [
+        [
+          "authorization",
+          "Bearer fixture-access-token"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "alg": "A256KW",
+        "value": "vfEFCXGY0Avo7uIbmTLXPwgesyrn3PCZTXKIku-sZ2F6SRDA-PMGPsu7P_obZk6xWi8PM8gxTYBuVuKW-hMp_GMe3f_CYmLRcVRPb5-DYTE"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=utf-8"
+        ]
+      ],
+      "body": {
+        "kid": "https://cipherstash-fixture.managedhsm.azure.net/keys/fixture-oct-key/5c6d7e8f90a1b2c3d4e5f60718293a4b",
+        "value": "AZNt220tYX6khetAWOuhDwYVOlXKerI-xWj6h4juOyYOREREREREREREREREREREREREREREREREREREREREREQAAAAAAAAA"
+      }
+    }
+  }
+]
