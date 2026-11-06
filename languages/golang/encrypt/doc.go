@@ -373,24 +373,43 @@
 //
 // Each keyset record fixes one key mode. Wrapped data keys give each value
 // its own vendor-wrapped data key. Derived data keys derive each data key
-// from one root key per keyset (HKDF-SHA256).
+// from one root key per keyset (HKDF-SHA256). In wrapped data key mode, no
+// key outlives the call that needed it. In derived data key mode, the root
+// key is cached for the TTL. In both modes, the database holds no usable
+// key material.
 //
 //	                    wrapped data keys            derived data keys
-//	key lifetime        index key: one settle;       root key: cached in the guest
-//	                    data key: one value          for 5 minutes (WithRootKeyTTL);
-//	                                                 the rest derived
-//	vendor calls per    1 + one per sealed value     0, or 1 when the root key is
-//	  Encrypt or Decrypt  (Vault: 1 + 1 per 250)     not cached
-//	the vendor can      every call and every value   the root key unwrap, at most
-//	  refuse                                         once per 5 minutes
+//	key lifetime        index key: one call;         root key: cached in the guest
+//	                    data key: one call           for 5 minutes (WithRootKeyTTL);
+//	                                                 the rest derived per call
+//	vendor calls per    one per sealed or opened     0, or 1 per keyset when the
+//	  call, per keyset  value (Vault: 1 per 250),    root key is not cached
+//	                    plus 1 when the call
+//	                    derives search terms
+//	the vendor can      every value it seals or      the root key unwrap: a refusal
+//	  refuse            opens, and every call that   takes effect when the cached
+//	                    derives search terms         root key expires
 //
-// The associated data (keyset id, IV and field descriptor) is bound to every
-// wrapped key. AWS KMS binds it as the encryption context, which CloudTrail
-// logs and key policies can test. Google Cloud KMS binds it as additional
-// authenticated data. Vault Transit and Azure Key Vault wrap a key with a
-// digest of it; Azure does not see the binding, so the guest checks it after
-// the unwrap. [StaticKey] offers derived data keys only, and nothing outside
-// the process can refuse or audit its use.
+// The guest sends vendor calls one at a time. Under wrapped data keys each
+// separate call that derives a search term, such as a field's Equality,
+// costs one vendor round trip for the index key: encrypt many rows in one
+// Encrypt call, not one call per row. The first use of a Vault Transit key
+// or an Azure key costs one more call, a key read.
+//
+// The associated data (the keyset id and, for a value's data key, the IV and
+// field descriptor) is bound to every wrapped key. AWS KMS binds it as the
+// encryption context, which CloudTrail logs and key policies can test.
+// Google Cloud KMS binds it as additional authenticated data. Vault Transit
+// and Azure Key Vault wrap a key with a digest of it, which the guest checks
+// after the unwrap; a derived Transit key also gets it as its derivation
+// context. Azure does not see the binding. [StaticKey] offers derived data
+// keys only, and nothing outside the process can refuse or audit its use.
+//
+// A rewrap of a keyset record (stash keyset rewrap) does not re-key stored
+// values. Under wrapped data keys, a rewrap to another vendor key makes the
+// values sealed before it fail to open; a new version of the same key is
+// safe. The stack-kms-vendor crate documentation has the full capability
+// matrix: credentials, rotation and known limits of each backend.
 //
 // A vendor keyset refuses ZeroKMS-only features (a lock context, a
 // decryption policy) with an error; it never ignores one. A vendor failure
