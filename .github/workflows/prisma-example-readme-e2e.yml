@@ -83,6 +83,7 @@ jobs:
   walkthrough:
     name: Run README walkthrough
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
 
     # Skip cleanly on fork PRs where secrets aren't available. The
     # test's `describe.skipIf(!authConfigured)` would also skip, but
