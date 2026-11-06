@@ -24,8 +24,9 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  *
  * So each cached step sets `cache_key_prefix: mise-v1-<image>`, where `<image>`
  * is the `ubuntu-NNNN` its job's `runs-on` names (`ubuntu-24.04` counts as
- * `ubuntu-2404`). A job whose `runs-on` names no image (a matrix,
- * `ubuntu-latest`) must turn the cache off. No step sets `cache_key`, which
+ * `ubuntu-2404`, and so does a RunsOn label's `image=ubuntu24-full-x64`). A job
+ * whose `runs-on` names no image (a matrix, `ubuntu-latest`, a RunsOn label with
+ * no `image=`) must turn the cache off. No step sets `cache_key`, which
  * mise-action prefers over the prefix and so would bring the shared key back.
  * A step with the cache off sets no prefix: it would read as a cache in use,
  * on paths `scripts/lint-no-workflow-caching.mjs` keeps cache-free.
@@ -63,7 +64,14 @@ const IMAGE_INDEPENDENT_TOOLS = new Set(['aqua:wasm-bindgen/wasm-pack'])
 
 /** The `ubuntu-NNNN` a runs-on label names, or undefined. */
 function imageOf(runsOn) {
-  const m = /ubuntu-(\d{2})\.?(\d{2})/.exec(String(runsOn))
+  const label = String(runsOn)
+  // RunsOn takes its image from an `image=` segment, and ships only LTS ones.
+  // With no segment it uses the stack's default, which the label cannot show.
+  if (label.startsWith('runs-on=')) {
+    const m = /\/image=ubuntu(\d{2})-/.exec(label)
+    return m ? `ubuntu-${m[1]}04` : undefined
+  }
+  const m = /ubuntu-(\d{2})\.?(\d{2})/.exec(label)
   return m ? `ubuntu-${m[1]}${m[2]}` : undefined
 }
 
@@ -147,6 +155,22 @@ describe('mise-action cache keys', () => {
     expect(imageOf('ubuntu-24.04-arm')).toBe('ubuntu-2404')
     expect(imageOf('ubuntu-latest')).toBeUndefined()
     expect(imageOf(undefined)).toBeUndefined()
+  })
+
+  it('reads the image of a RunsOn label', () => {
+    expect(
+      imageOf(
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, the literal `runs-on` value under test.
+        'runs-on=${{ github.run_id }}/family=c8a+m8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache',
+      ),
+    ).toBe('ubuntu-2204')
+    expect(imageOf('runs-on=1/family=c8a/cpu=4/image=ubuntu24-full-x64')).toBe(
+      'ubuntu-2404',
+    )
+    // No `image=`: RunsOn uses the stack's default image, which the label
+    // does not name, so the cache must be off.
+    expect(imageOf('runs-on=1/family=c8a+m8a/cpu=8')).toBeUndefined()
+    expect(imageOf('runs-on=1/runner=4cpu-linux-x64')).toBeUndefined()
   })
 
   it('lets a composite action cache only image-independent tools', () => {
