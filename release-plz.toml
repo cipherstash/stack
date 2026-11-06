@@ -19,8 +19,8 @@
 #   feature), so a crates.io release of `eql-bindings` needs the matching
 #   `stack-encrypt` published first.
 #
-# Four more crates are publishable but STAGED: `stack-kms-vendor`,
-# `stack-kms-aws`, `stack-kms-vault` and `stack-kms-gcp`, the `stack-kms-vendor` version group (the key vendor seam
+# Five more crates are publishable but STAGED: `stack-kms-vendor`,
+# `stack-kms-aws`, `stack-kms-vault`, `stack-kms-gcp` and `stack-kms-azure`, the `stack-kms-vendor` version group (the key vendor seam
 # and every vendor crate that implements it: a change to the seam moves every
 # vendor). crates.io Trusted Publishing can only be configured on a crate that
 # exists, so each crate's first version is published by hand, after the
@@ -112,6 +112,13 @@ publish = false
 # Staged: see the header.
 [[package]]
 name = "stack-kms-gcp"
+version_group = "stack-kms-vendor"
+release = false
+publish = false
+
+# Staged: see the header.
+[[package]]
+name = "stack-kms-azure"
 version_group = "stack-kms-vendor"
 release = false
 publish = false
