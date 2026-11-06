@@ -19,8 +19,13 @@
  */
 
 // Model → encrypted-PG-composite helpers used by the v2 Supabase mutation path.
+// The predicate model decryption uses to find ciphertext in a row. Adapters that
+// pass a row through WITHOUT decrypting it use the same one to refuse a row that
+// still carries ciphertext, so "what counts as an encrypted value" has one
+// spelling.
 export {
   bulkModelsToEncryptedPgComposites,
+  isEncryptedPayload,
   modelToEncryptedPgComposites,
 } from './encryption/helpers/index.js'
 

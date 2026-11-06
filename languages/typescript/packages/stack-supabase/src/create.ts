@@ -1,6 +1,7 @@
 import { hasBuildColumnKeyMap, logger } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
+import { tableHasEncryptedColumns } from './column-map'
 import type { IntrospectionData, UnmodelledColumn } from './introspect'
 import { EncryptedQueryBuilderImpl } from './query-builder'
 import type { SynthesizedSchema } from './schema-builder'
@@ -421,13 +422,15 @@ async function construct(
   }
 
   // 5. Build the raw (eqlVersion 3) encryption client from the merged tables.
-  //    NB: the query builder consumes the raw chainable `EncryptionClient`, and
-  //    calls `decryptModel(row)` with no table — the typed client degrades to
-  //    nominal (passthrough) behaviour for that arity, so either shape works.
-  //    Pass only tables that carry at least one encrypted column (`Encryption`
-  //    requires a non-empty schema list).
+  //    Pass only tables that carry at least one encrypted column: `Encryption`
+  //    requires a non-empty schema list, and a plaintext table gives it nothing
+  //    to do. The query builder passes the table to every model operation
+  //    (`decryptModel(row, table)` and friends), and both engines refuse a table
+  //    they were not initialized with — so the builder must never hand them a
+  //    plaintext table. It doesn't: `ColumnMap.hasEncryptedColumns` reads the
+  //    same predicate and short-circuits the encrypt and decrypt steps for it.
   const encryptionSchemas = [...synth.tables.values()].filter(
-    (t) => Object.keys(t.columnBuilders).length > 0,
+    tableHasEncryptedColumns,
   )
 
   // A database with no modelled EQL v3 columns anywhere would hand `Encryption`

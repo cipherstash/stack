@@ -35,6 +35,11 @@ export async function encryptMutationData(
 ): Promise<Record<string, unknown> | Record<string, unknown>[] | null> {
   if (!mutation) return null
   if (mutation.kind === 'delete') return null
+  // A plaintext table has no column to encrypt, and is not registered with the
+  // encryption client — the WASM engine refuses a model operation on it (see
+  // `tableHasEncryptedColumns`). Send the row data as written: with no
+  // encrypted column there is no property → DB name rename to apply either.
+  if (!ctx.columns.hasEncryptedColumns) return mutation.data
 
   const data = mutation.data
   const client = dynamicEncryptionClient(ctx.encryptionClient)
