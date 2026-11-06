@@ -809,3 +809,197 @@ the alternatives and the reason.
   certificates is not supported. Many self-hosted Vault deployments use a
   private CA, so this is likely the first customer request. It is a follow-up,
   not part of CIP-5310.
+
+## CIP-5308: Google Cloud KMS key vendor backend (stack-kms-gcp)
+
+### The Cloud KMS client
+
+- **Decision:** `stack-kms-gcp` is a new root workspace member with
+  `GcpKms<T: VendorTransport, A: TokenProvider>`, on the `stack-kms-vault`
+  template. `wrap` is `cryptoKeys.encrypt`, `unwrap` is `cryptoKeys.decrypt`
+  (REST v1, JSON, standard base64). `generate_wrapped`, `batch_limit`,
+  `wrap_batch` and `unwrap_batch` are the trait defaults: Cloud KMS has no
+  data key generation and no batch operation, so each wrapped data key is a
+  key from the CSPRNG and one `encrypt`, and the adapter runs the calls
+  through `run_batch` (concurrency 16). Both key modes. `send_json(method,
+  path, body)` is public, as for the other vendors.
+- **Decision:** `key_ref` is the crypto key name
+  (`projects/{p}/locations/{l}/keyRings/{r}/cryptoKeys/{k}`). A
+  `…/cryptoKeyVersions/{n}` name is accepted too and pins `encrypt` to that
+  version; `decrypt` always names the crypto key (Cloud KMS requires that).
+  `parse_key_name` checks the shape: each id is `[A-Za-z0-9._-]`, not `.` or
+  `..`; only the project id may hold `:` (a domain-scoped project). Anything
+  else is `NotFound` before any call, so a key reference cannot add a method
+  (`:decrypt`) or change the path. **Alternative:** a version path as the
+  only form (the trait docs said so). **Reason:** the crypto key name keeps
+  rotation transparent; the trait docs now say "crypto key name".
+- **Decision:** the stored wrapped key is `1 ‖ key version (u32 BE) ‖ Cloud
+  KMS ciphertext`, the same layout as Vault's. The version comes from the
+  `encrypt` response `name`, which must be a version of the requested key,
+  else the response is refused (`Unavailable`). `wrapped_key_version` reads
+  it. **Alternative:** store the ciphertext alone (Cloud KMS finds the
+  version from the ciphertext). **Reason:** the ticket asks to record the
+  version; 5 bytes per value lets an operator find which versions stored
+  keys still need before a version is disabled or destroyed, which makes
+  its ciphertexts unrecoverable.
+- **Decision:** the associated data is sent whole as
+  `additionalAuthenticatedData`: it holds the keyset id and, for a wrapped
+  data key, the iv and the descriptor, as the AWS crate binds all of `aad`.
+  No `stack_kms_vendor::bound`: Cloud KMS AAD is native and authenticated.
+  There are no readable fields, because Cloud KMS does not show the AAD in
+  audit logs or IAM conditions.
+- **Decision:** CRC32C is used on every call (in-crate, table-driven,
+  `stack_kms_gcp::crc32c`, RFC 3720 vectors pinned). Encrypt sends
+  `plaintextCrc32c` and `additionalAuthenticatedDataCrc32c` and requires
+  `verifiedPlaintextCrc32c`, `verifiedAdditionalAuthenticatedDataCrc32c`
+  and a matching `ciphertextCrc32c`. Decrypt sends `ciphertextCrc32c` and
+  `additionalAuthenticatedDataCrc32c` and requires a matching
+  `plaintextCrc32c`. A missing or wrong check is `Unavailable`. The int64
+  fields are sent as strings and read as a string or a number.
+  **Reason:** about 40 lines, no new dependency, and it is Google's
+  recommended practice. No CRC32C crate was in the lockfile (`crc32fast` is
+  CRC-32/IEEE).
+- **Decision:** error mapping (`error_kind(http status, google.rpc code,
+  message)`), by `error.status` first: `PERMISSION_DENIED`, `UNAUTHENTICATED`
+  to `AccessDenied`; `NOT_FOUND` to `NotFound`; `RESOURCE_EXHAUSTED` to
+  `Throttled`; `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, `UNKNOWN`,
+  `ABORTED`, `CANCELLED` and `FAILED_PRECONDITION` (a disabled or destroyed
+  version, as AWS `DisabledException`) to `Unavailable`. `INVALID_ARGUMENT`
+  maps by its message, lower case: `CHECKSUM_MARKERS` (`checksum`,
+  `crc32c`) first to `Unavailable` (damaged in transit), then
+  `INVALID_CIPHERTEXT_MARKERS` (`decryption failed`, `ciphertext is
+  invalid`) to `InvalidCiphertext`, else `AccessDenied`. No code: the HTTP
+  status, with any other 4xx `AccessDenied` (the CIP-5307 rule). The
+  markers apply to any operation, not only `decrypt`: an `encrypt` never
+  says "Decryption failed", so the extra check bought nothing. A 401 calls
+  `TokenProvider::invalidate`. A plaintext that is not 32 bytes is
+  `InvalidCiphertext`.
+- **Note:** Cloud KMS answers `PERMISSION_DENIED`, not `NOT_FOUND`, for a key
+  the caller may not see. So a missing key is often `AccessDenied`. The live
+  test accepts either.
+- **Decision:** the endpoint is `GcpKmsConfig::with_endpoint` (default
+  `https://cloudkms.googleapis.com`; any HTTP or HTTPS origin with no path),
+  for regional endpoints and tests. No environment variable: the Google SDKs
+  have no common name for it. No `x-goog-user-project` (quota project)
+  header: a service account key does not need one. Add it if a customer
+  asks.
+
+### Credentials
+
+- **Decision:** the seam is `TokenProvider` (future bounded by `MaybeSend`,
+  plus `invalidate`), with `AccessToken` (wiped, never printed) as the
+  static provider, `CachedToken` (5 minutes before expiry, or a third of the
+  life when shorter; one fetch at a time; a failed fetch keeps an unexpired
+  token), all on the Vault template.
+- **Decision:** `ServiceAccountKey::from_json(bytes)` (everywhere) and
+  `from_file(path)` (native) read a key file. It refuses any `type` but
+  `service_account` (so `authorized_user` and `external_account` files fail
+  with a clear message), a key that is not RSA PKCS #8 PEM, and a
+  `token_uri` that is not HTTPS (default `https://oauth2.googleapis.com/token`).
+  `ServiceAccountLogin` signs `{"alg":"RS256","kid":…,"typ":"JWT"}` and
+  `{"iss","scope","aud":token_uri,"iat","exp":iat+3600}` and posts the RFC
+  7523 form to `token_uri`. The scope is `https://www.googleapis.com/auth/cloudkms`
+  (`with_scope` changes it). **Alternative:** a self-signed JWT sent
+  directly as the bearer token (no exchange). **Reason:** the ticket names
+  the exchange, and it works for every key the token endpoint accepts.
+- **Decision (RSA crate):** RS256 uses the `rsa` crate 0.9.10 (RustCrypto,
+  pure Rust; already in `packages/eql/Cargo.lock`), with `rand_core` 0.6
+  `OsRng` (getrandom 0.2, already in the root lockfile) as the blinding RNG.
+  It builds for wasm32-wasip1 (checked by `wasm:wasi-check`). **Alternatives:**
+  `ring` (in the root lockfile through jsonwebtoken, but it needs a C
+  toolchain with a wasm32 target, and stack-auth keeps it off wasm32 for
+  that reason); `aws-lc-rs` (does not build for wasm32); `jsonwebtoken`
+  (pulls ring or aws-lc-rs). **Known issue:** RUSTSEC-2023-0071 (the Marvin
+  timing attack: the private key operation is not constant time) has no
+  fixed `rsa` release. The risk here is low: the key signs one JWT per hour
+  on the client, the signature uses blinding (`try_sign_with_rng`), and an
+  attacker must time those signatures over the network. OSV-Scanner
+  (`fail-on-vuln: false`) will report it as an alert, as it already does
+  for the EQL lockfile. Revisit when `rsa` 0.10 is stable.
+- **Decision:** `MetadataServerLogin` (native only, `cfg(not(target_arch =
+  "wasm32"))`) gets `http://{host}/computeMetadata/v1/instance/service-accounts/default/token`
+  with `Metadata-Flavor: Google`. The host is `metadata.google.internal`, or
+  `GCE_METADATA_HOST` (the Google SDK name), checked as `host[:port]` so it
+  cannot change the path. A 404 from it (no service account) is
+  `AccessDenied`.
+- **Decision:** `DefaultCredentials::from_env` (native) picks, in order:
+  `GOOGLE_OAUTH_ACCESS_TOKEN` (a static token, the name Terraform's Google
+  provider uses; handy with `gcloud auth print-access-token`);
+  `GOOGLE_APPLICATION_CREDENTIALS` (a service account key file); else the
+  metadata server. `GcpKms::from_env` (`DefaultGcpKms`, feature `http`,
+  native) builds it, with a 1 s connect limit on the credentials transport
+  so the metadata probe fails fast off Google Cloud. **Not supported:**
+  `authorized_user` files (`gcloud auth application-default login`),
+  `external_account` files (workload identity federation) and service
+  account impersonation. No ticket asks for them.
+
+### Tests and CI
+
+- **Decision:** no fixture was recorded from Google Cloud (no emulator and
+  no credentials here). The responses are written by hand in the documented
+  Cloud KMS and OAuth shapes. The request sides were computed by a separate
+  Python script, not by the client (base64, CRC32C, the AAD frame, the form
+  body), and the client produced the same bytes on the first run. Fixtures:
+  encrypt, decrypt, an encrypt pinned to a version, a decrypt under an old
+  version, the service account token exchange, the metadata server token,
+  and 13 error responses.
+- **Decision:** the JWT known-answer test signs with a TEST-ONLY 2048-bit RSA
+  key generated for these tests (`openssl genpkey`). The expected JWT
+  (`tests/fixtures/test_only_jwt_assertion.txt`) was signed by `openssl dgst
+  -sha256 -sign`, a second implementation, and the crate's output matches it
+  byte for byte. The key is stored as base64 PKCS #8 DER
+  (`test_only_rsa_key.pkcs8.b64`), and the service account JSON is built at
+  run time, so no file holds a PEM block or a key file that push protection
+  could take for a leaked Google key. The fixture tokens are
+  `fixture-*-token`, not `ya29.`.
+- **Decision:** the contract suite runs over an in-process emulator
+  (`tests/common::KmsEmulator`: AES-256-GCM with the AAD bound, versions and
+  rotation, the CRC32C checks, Google's error shapes, a token endpoint that
+  verifies the JWT signature with the test key, and the metadata server),
+  with a static token and with service account credentials.
+- **Decision:** `tests/live.rs` runs when `STACK_KMS_GCP_LIVE_KEY` is set
+  (credentials from `DefaultCredentials`): the whole contract suite, and
+  wrong AAD, a damaged ciphertext and a missing key. **It has not run**:
+  there are no Google Cloud credentials here. The new mise task
+  `test:live:stack-kms-gcp` refuses to run without the key and credentials.
+- **Decision:** CI: a new workflow, `integration-gcp-kms.yml` (push to main
+  and pull requests on the crate paths, plus `workflow_dispatch`), with one
+  job, `live`. Its condition is `vars.STACK_KMS_GCP_LIVE_KEY != '' &&` the
+  canonical fork-PR clause, so it is **inert until the variable is set** and
+  then fails loudly if the secret is empty (a shell pre-flight first, as
+  `require-cs-secrets` does; that action and `ffi-binding-step-order.test.mjs`
+  are for `CS_*` credentials and do not apply). **Alternative:** a job in
+  `tests-crates.yml`, or a fork-guarded job with no variable. **Reason:**
+  without the variable, every PR on the crate would go red until someone
+  sets up Google Cloud. `workflow-dispatch-job-conditions.test.mjs` now
+  lists the workflow and the job and holds the variable open;
+  `crates-ci.test.mjs` names it as the sole caller of the live task.
+- **To turn the live job on (a person):** create a symmetric
+  `ENCRYPT_DECRYPT` crypto key for the test only; a service account with
+  `roles/cloudkms.cryptoKeyEncrypterDecrypter` on that key only, and a JSON
+  key for it. Then set:
+  - repository **variable** `STACK_KMS_GCP_LIVE_KEY` = the crypto key name;
+  - repository **secret** `STACK_KMS_GCP_SERVICE_ACCOUNT_KEY` = the JSON key.
+- **Decision:** `tests-crates.yml` and `udeps.yml` include the new path,
+  `cargo publish --dry-run` packages the crate (passed locally),
+  `wasm:wasi-check` checks it (passed), and `doc:stack-kms-gcp` joins `mise
+  run doc`. `crates-ci.test.mjs` now expects nine crate task files.
+- **Decision:** `stack-kms-gcp` joins the `stack-kms-vendor` release group,
+  staged (`release = false`, `publish = false`). Arming it follows the
+  CIP-5307 steps, with `cargo publish -p stack-kms-gcp` after
+  `stack-kms-vendor`. No changeset: Rust only.
+- **Note:** `scripts` vitest still has the two failures noted in CIP-5306
+  (`bench-index-expressions`, `check-auth-npm-changeset`); every other file
+  passes.
+
+### Deferred
+
+- **Deferred to CIP-5311:** the guest wiring: `GcpKms::new(GcpKmsConfig::new(),
+  HostVendorTransport, <a TokenProvider over the host import>)`, and the
+  status mapping. `ServiceAccountLogin` also works in the guest if the host
+  passes key bytes, but ADR-0011 says the host supplies the token.
+- **Deferred to CIP-5312:** `stash keyset` can create Cloud KMS records with
+  `GcpKms::from_env()`.
+- **Deferred (no ticket):** `authorized_user` and `external_account`
+  credentials, impersonation, a quota project header, and re-recording the
+  fixtures from real Cloud KMS once the live job has credentials.
