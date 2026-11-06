@@ -233,3 +233,29 @@ func TestModelFlagsRepeat(t *testing.T) {
 		t.Fatalf("String = %q", got)
 	}
 }
+
+// closingEngine is a fake engine that records Close, as the embedded one
+// holds a runtime that must be released.
+type closingEngine struct {
+	enginetest.Static
+	closed int
+}
+
+func (e *closingEngine) Close() error { e.closed++; return nil }
+
+// run closes the engine it was given on every path out of it: a refused
+// declaration, a missing type, and a written file alike.
+func TestRunClosesTheEngine(t *testing.T) {
+	dir := writeModule(t, map[string]string{"model.go": userSource})
+	for name, args := range map[string][]string{
+		"success": {"-type", "User"},
+		"refused": {"-type", "Nobody"},
+	} {
+		engine := &closingEngine{}
+		var stdout, stderr bytes.Buffer
+		run(args, dir, &stdout, &stderr, func(context.Context) (stashgen.Engine, error) { return engine, nil })
+		if engine.closed != 1 {
+			t.Errorf("%s: engine closed %d times, want 1\n%s", name, engine.closed, stderr.String())
+		}
+	}
+}

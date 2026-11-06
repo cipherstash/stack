@@ -52,7 +52,8 @@ func (m *modelFlags) Set(s string) error {
 
 // run is main without the process: dir is the package directory ("" for the
 // working directory, which is where go generate runs), and newEngine gives
-// the engine that checks the declaration.
+// the engine that checks the declaration. run owns that engine and closes it
+// (if it is an io.Closer) before it returns.
 func run(args []string, dir string, stdout, stderr io.Writer, newEngine func(context.Context) (stashgen.Engine, error)) int {
 	fs := flag.NewFlagSet("stashgen", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -91,6 +92,12 @@ func run(args []string, dir string, stdout, stderr io.Writer, newEngine func(con
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	// The embedded engine holds a wazero runtime and a reserved address-space
+	// mapping; release them on every path out, since tests and embedders
+	// call run repeatedly.
+	if closer, ok := engine.(io.Closer); ok {
+		defer func() { _ = closer.Close() }()
 	}
 	file, err := stashgen.FromTags(ctx, engine, req)
 	if err != nil {
