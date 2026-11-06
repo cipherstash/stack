@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { logger } from '../../../utils/logger'
+import type { GetCtsTokenResponse } from '../index'
 import {
-  CS_COOKIE_NAME,
   type CtsToken,
-  type GetCtsTokenResponse,
-} from '../index'
+  clearCtsSession,
+  subjectOfJwt,
+  writeCtsSession,
+} from '../session'
 
 /**
  * How much of an error body to quote back. A refusal is one sentence; a gateway
@@ -222,8 +224,20 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
   }
 }
 
-// Used in the Next.js middleware
-export const setCtsToken = async (oidcToken: string, res?: NextResponse) => {
+/**
+ * Mint a session for `oidcToken` and write it to the response, labelled with
+ * the token's subject. Used by the Next.js middleware.
+ *
+ * `clearOnFailure` says the request carries a session cookie that must not
+ * outlive this call (malformed, expired, or minted for someone else): if CTS
+ * refuses, that cookie is deleted rather than left for the next request to read
+ * as this user's session. Without it, a failed mint leaves the response alone.
+ */
+export const setCtsToken = async (
+  oidcToken: string,
+  res?: NextResponse,
+  { clearOnFailure = false }: { clearOnFailure?: boolean } = {},
+) => {
   const ctsResponse = await fetchCtsToken(oidcToken)
   const cts_token = ctsResponse.ctsToken
 
@@ -241,18 +255,13 @@ export const setCtsToken = async (oidcToken: string, res?: NextResponse) => {
       `There was an issue fetching the CipherStash session, the CipherStash session was not set. ${reason}`,
     )
 
-    return res ?? NextResponse.next()
+    const response = res ?? NextResponse.next()
+    return clearOnFailure ? clearCtsSession(response) : response
   }
 
-  // Setting cookies on the request and response using the `ResponseCookies` API
-  const response = res ?? NextResponse.next()
-  response.cookies.set({
-    name: CS_COOKIE_NAME,
-    value: JSON.stringify(cts_token),
-    expires: new Date(cts_token.expiry * 1000),
-    sameSite: 'lax',
-    path: '/',
-  })
-
-  return response
+  return writeCtsSession(
+    res ?? NextResponse.next(),
+    cts_token,
+    subjectOfJwt(oidcToken),
+  )
 }
