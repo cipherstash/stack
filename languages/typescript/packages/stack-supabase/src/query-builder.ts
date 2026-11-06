@@ -1,5 +1,6 @@
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
 import {
+  describeFailure,
   logger,
   parseSelectorSegments,
   reconstructSelectorDocument,
@@ -48,19 +49,6 @@ import type {
 } from './types'
 
 export { EncryptionFailedError } from './query-encrypt'
-
-/**
- * A log-safe description of a query failure: the error's class, plus the
- * encryption error's `type` and `code` when there is one. These are fixed
- * identifiers chosen by the library and the FFI, never caller data, so unlike
- * the message they cannot carry a plaintext value.
- */
-function describeFailure(err: unknown): string {
-  if (!(err instanceof Error)) return typeof err
-  if (!(err instanceof EncryptionFailedError)) return err.name
-  const { type, code } = err.encryptionError
-  return [err.name, type, code].filter(Boolean).join(': ')
-}
 
 /** Warn once per (op, column) that a `like`/`ilike` was delegated to `matches`. */
 const warnedLikeDelegation = new Set<string>()
@@ -913,7 +901,7 @@ export class EncryptedQueryBuilderImpl<
       throw new Error(
         // The pattern is the caller's plaintext search term: name its length,
         // never its content (CIP-5161).
-        `[supabase v3]: "${op}" ${[...pattern].length}-character pattern on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an unescaped internal "%" or any unescaped "_"). Use matches("${column}", term) with a literal search term.`,
+        `[supabase v3]: "${op}" pattern (${[...pattern].length} characters) on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an unescaped internal "%" or any unescaped "_"). Use matches("${column}", term) with a literal search term.`,
       )
     }
     const key = `${op}:${column}`
