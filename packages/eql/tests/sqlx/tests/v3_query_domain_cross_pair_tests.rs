@@ -1,4 +1,4 @@
-//! CIP-5155: a storage domain compared with ANOTHER domain's query twin must
+//! A storage domain compared with ANOTHER domain's query twin must
 //! raise, never fall through to native `jsonb <op> jsonb`.
 //!
 //! Every `public.eql_v3_<T>_<d>` and `eql_v3.query_<T>_<d>` is a domain over

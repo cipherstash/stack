@@ -263,7 +263,7 @@ fn cross_pair_domains(spec: &DomainFamily, domain: &Domain) -> Vec<&'static Doma
 /// `(sibling storage domain, this domain's query twin)` pair: those BOTH domains
 /// advertise. A query twin of a different domain is a DIFFERENT index family, so
 /// there is no sound comparison to offer — the pair raises rather than flatten to
-/// native `jsonb <op> jsonb` (CIP-5155).
+/// native `jsonb <op> jsonb`.
 ///
 /// The intersection, not the union, is deliberate. Each blocked pair costs a
 /// function and an operator, and the uninstaller takes a lock per object against
@@ -1222,7 +1222,7 @@ pub fn clean_all(out_root: &Path) -> Result<Vec<PathBuf>, WriteError> {
 
 #[cfg(test)]
 mod tests {
-    /// CIP-5155: a query twin carries blockers for every OTHER term-bearing
+    /// A query twin carries blockers for every OTHER term-bearing
     /// domain of its family (both directions, only operators both sides
     /// advertise) and none for the family's own storage domain or storage-only
     /// domains, so a mismatched pair raises instead of flattening to `jsonb`.
