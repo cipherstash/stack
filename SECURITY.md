@@ -38,9 +38,10 @@ from the stack-* crates), released by `.github/workflows/release-golang.yml`
 as `languages/golang/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
-Three more Rust crates, **`stack-kms-vendor`**, **`stack-kms-aws`** and
-**`stack-kms-vault`** (`packages/stack-kms-vendor`, `packages/stack-kms-aws`,
-`packages/stack-kms-vault`), are prepared for
+Four more Rust crates, **`stack-kms-vendor`**, **`stack-kms-aws`**,
+**`stack-kms-vault`** and **`stack-kms-gcp`** (`packages/stack-kms-vendor`,
+`packages/stack-kms-aws`, `packages/stack-kms-vault`, `packages/stack-kms-gcp`),
+are prepared for
 crates.io but not yet published. They are in scope on the same terms, and
 under the same licence as the stack-* crates below.
 
