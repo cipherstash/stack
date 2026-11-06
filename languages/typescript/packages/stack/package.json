@@ -206,7 +206,7 @@
 	"devDependencies": {
 		"@cipherstash/eql": "workspace:^",
 		"@clack/prompts": "^1.8.1",
-		"@clerk/backend": "3.26.0",
+		"@clerk/backend": "3.26.2",
 		"@supabase/postgrest-js": "2.118.0",
 		"@supabase/supabase-js": "^2.118.0",
 		"@types/pg": "^8.23.1",
