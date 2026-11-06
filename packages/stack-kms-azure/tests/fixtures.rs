@@ -23,7 +23,7 @@ use base64ct::{Base64UrlUnpadded, Encoding};
 use common::{
     fixture_client, issued_at, kw_unwrap, kw_wrap, load, replay, test_only_rsa_key, Fixture,
     FixtureResponse, KeyVaultEmulator, Replay, CLIENT_ID, CLIENT_SECRET, OCT_KEY, OCT_VERSION,
-    RSA_KEY, RSA_OLD_VERSION, RSA_VERSION, TENANT, TEST_ONLY_KEK, TOKEN,
+    RSA_KEY, RSA_OLD_VERSION, RSA_VERSION, TENANT, TEST_ONLY_VENDOR_KEY, TOKEN,
 };
 use rsa::sha2::Sha256;
 use rsa::Oaep;
@@ -186,10 +186,13 @@ fn the_fixture_ciphertexts_open_under_the_test_only_keys() {
     let fixtures: Vec<Fixture> = load("hsm_wrap.json");
     let plaintext = b64(&fixtures[1].request.body["value"]);
     let ciphertext = b64(&fixtures[1].response.body["value"]);
-    assert_eq!(kw_unwrap(&TEST_ONLY_KEK, &ciphertext).unwrap(), plaintext);
-    assert_eq!(kw_wrap(&TEST_ONLY_KEK, &plaintext), ciphertext);
+    assert_eq!(
+        kw_unwrap(&TEST_ONLY_VENDOR_KEY, &ciphertext).unwrap(),
+        plaintext
+    );
+    assert_eq!(kw_wrap(&TEST_ONLY_VENDOR_KEY, &plaintext), ciphertext);
 
-    // RFC 3394, 4.6: 256 bits of key data with a 256-bit KEK.
+    // RFC 3394, 4.6: 256 bits of key data with a 256-bit key (the vendor key).
     let key_data: Vec<u8> = (0..16u8)
         .map(|i| i * 0x11)
         .chain(0..16u8)
@@ -199,8 +202,11 @@ fn the_fixture_ciphertexts_open_under_the_test_only_keys() {
         0x26, 0x3F, 0x57, 0x86, 0xE2, 0xD8, 0x0E, 0xD3, 0x26, 0xCB, 0xC7, 0xF0, 0xE7, 0x1A, 0x99,
         0xF4, 0x3B, 0xFB, 0x98, 0x8B, 0x9B, 0x7A, 0x02, 0xDD, 0x21,
     ];
-    assert_eq!(kw_wrap(&TEST_ONLY_KEK, &key_data), expected);
-    assert_eq!(kw_unwrap(&TEST_ONLY_KEK, &expected).unwrap(), key_data);
+    assert_eq!(kw_wrap(&TEST_ONLY_VENDOR_KEY, &key_data), expected);
+    assert_eq!(
+        kw_unwrap(&TEST_ONLY_VENDOR_KEY, &expected).unwrap(),
+        key_data
+    );
 }
 
 fn fixed_clock() -> stack_kms_azure::Clock {
