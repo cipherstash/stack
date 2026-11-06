@@ -1,0 +1,289 @@
+[
+  {
+    "kind": "InvalidCiphertext",
+    "name": "decrypt under another context",
+    "response": {
+      "body": {
+        "auth": null,
+        "data": {
+          "batch_results": [
+            {
+              "error": "cipher: message authentication failed",
+              "plaintext": "",
+              "reference": ""
+            }
+          ]
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "",
+        "renewable": false,
+        "request_id": "3d7b1d8d-57af-8910-f284-1242fd2df87c",
+        "warnings": null,
+        "wrap_info": null
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 400
+    }
+  },
+  {
+    "kind": "InvalidCiphertext",
+    "name": "a key version that is too new",
+    "response": {
+      "body": {
+        "auth": null,
+        "data": {
+          "batch_results": [
+            {
+              "error": "invalid ciphertext: version is too new",
+              "plaintext": "",
+              "reference": ""
+            }
+          ]
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "",
+        "renewable": false,
+        "request_id": "7d99e008-a905-abce-1fd5-c6409d737251",
+        "warnings": null,
+        "wrap_info": null
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 400
+    }
+  },
+  {
+    "kind": "InvalidCiphertext",
+    "name": "a ciphertext that is too short",
+    "response": {
+      "body": {
+        "auth": null,
+        "data": {
+          "batch_results": [
+            {
+              "error": "invalid ciphertext length",
+              "plaintext": "",
+              "reference": ""
+            }
+          ]
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "",
+        "renewable": false,
+        "request_id": "4350d912-0652-624f-b30d-84d70962295c",
+        "warnings": null,
+        "wrap_info": null
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 400
+    }
+  },
+  {
+    "kind": "NotFound",
+    "name": "decrypt with a key that does not exist",
+    "response": {
+      "body": {
+        "errors": [
+          "encryption key not found"
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 400
+    }
+  },
+  {
+    "kind": "NotFound",
+    "name": "read a key that does not exist",
+    "response": {
+      "body": {
+        "errors": []
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 404
+    }
+  },
+  {
+    "kind": "AccessDenied",
+    "name": "a derived key with no context",
+    "response": {
+      "body": {
+        "auth": null,
+        "data": {
+          "batch_results": [
+            {
+              "error": "missing 'context' for key derivation; the key was created using a derived key, which means additional, per-request information must be included in order to perform operations with the key",
+              "reference": ""
+            }
+          ]
+        },
+        "lease_duration": 0,
+        "lease_id": "",
+        "mount_type": "",
+        "renewable": false,
+        "request_id": "f0c099e7-45ad-988d-2fd1-e75a6baa6f2c",
+        "warnings": null,
+        "wrap_info": null
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 400
+    }
+  },
+  {
+    "kind": "AccessDenied",
+    "name": "a bad token",
+    "response": {
+      "body": {
+        "errors": [
+          "2 errors occurred:\n\t* permission denied\n\t* invalid token\n\n"
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 403
+    }
+  },
+  {
+    "kind": "NotFound",
+    "name": "a mount that does not exist",
+    "response": {
+      "body": {
+        "errors": [
+          "no handler for route \"no-such-mount/decrypt/cipherstash-fixture\". route entry not found."
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 404
+    }
+  },
+  {
+    "kind": "Throttled",
+    "name": "a rate limit quota (written by hand)",
+    "response": {
+      "body": {
+        "errors": [
+          "request path \"transit/decrypt/cipherstash-fixture\": rate limit quota exceeded"
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 429
+    }
+  },
+  {
+    "kind": "Unavailable",
+    "name": "a sealed Vault (written by hand)",
+    "response": {
+      "body": {
+        "errors": [
+          "Vault is sealed"
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 503
+    }
+  },
+  {
+    "kind": "Unavailable",
+    "name": "an internal error (written by hand)",
+    "response": {
+      "body": {
+        "errors": [
+          "internal error"
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 500
+    }
+  },
+  {
+    "kind": "AccessDenied",
+    "name": "a policy that denies (written by hand)",
+    "response": {
+      "body": {
+        "errors": [
+          "1 error occurred:\n\t* permission denied\n\n"
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 403
+    }
+  },
+  {
+    "kind": "InvalidCiphertext",
+    "name": "a retired key version (written by hand)",
+    "response": {
+      "body": {
+        "errors": [
+          "ciphertext version is disallowed by policy (too old)"
+        ]
+      },
+      "headers": [
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "status": 400
+    }
+  }
+]

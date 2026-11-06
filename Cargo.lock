@@ -3433,6 +3433,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "stack-kms-vault"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64ct",
+ "futures",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "stack-encrypt",
+ "stack-kms",
+ "stack-kms-vendor",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "uuid",
+ "vitaminc",
+ "web-time",
+ "zeroize",
+]
+
+[[package]]
 name = "stack-kms-vendor"
 version = "0.1.0"
 dependencies = [
@@ -3447,6 +3469,7 @@ dependencies = [
  "stack-auth",
  "stack-encrypt",
  "stack-kms",
+ "subtle",
  "thiserror 1.0.69",
  "tokio",
  "uuid",

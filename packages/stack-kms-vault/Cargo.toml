@@ -1,0 +1,46 @@
+[package]
+name = "stack-kms-vault"
+description = "The HashiCorp Vault Transit key vendor backend for Stack Encrypt: a hand-written Transit client with batch operations, for native Rust and the WASI guest"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Publishable, in the `stack-kms-vendor` version group with the vendor seam it
+# implements. release-plz.toml keeps `release = false` until the first version
+# is on crates.io (published by hand; see stack-kms-vendor's Cargo.toml).
+
+[features]
+default = ["http"]
+# `VaultTransit::from_env`: the native transport (`HttpVendorTransport`) and
+# the default auth method over it. Native only; on wasm32 it adds nothing.
+http = ["stack-kms-vendor/http"]
+
+[dependencies]
+stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false }
+stack-kms-vendor = { path = "../stack-kms-vendor", version = "0.1.0" }
+
+vitaminc = { workspace = true, features = ["protected"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+futures = "0.3.25"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+web-time = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+stack-kms-vendor = { path = "../stack-kms-vendor", features = ["test-support", "http"] }
+stack-encrypt = { path = "../stack-encrypt", default-features = false }
+aes-gcm = { version = "0.10.3", features = ["zeroize"] }
+sha2 = "0.11"
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+uuid = { workspace = true }
+vitaminc = { workspace = true, features = ["protected", "random"] }
+
+[package.metadata.docs.rs]
+all-features = true

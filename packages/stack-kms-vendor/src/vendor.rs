@@ -1,6 +1,7 @@
 //! The vendor seam: what a key vendor backend must provide.
 
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use stack_kms::{Error, KeyMode, KeyVendor, MaybeSend};
@@ -27,8 +28,9 @@ pub type KeyBytes = Protected<[u8; 32]>;
 ///   `aad` given to `wrap`. A vendor with native associated data (AWS KMS
 ///   encryption context, Vault Transit `associated_data`, Google Cloud KMS
 ///   `additionalAuthenticatedData`) passes it through. A vendor without it
-///   must bind it some other way, for example by wrapping
-///   `SHA-256(aad) ‖ key` and checking the prefix on unwrap.
+///   must bind it some other way: wrap the bound key of
+///   [`bound::bind_key`](crate::bound::bind_key) in place of the key, and
+///   open it with [`bound::open_bound_key`](crate::bound::open_bound_key).
 /// * **Report failures as [`Error::Backend`]**, with
 ///   [`KeyVendor::name`] as `vendor` and the nearest
 ///   [`BackendErrorKind`](stack_kms::BackendErrorKind). A wrong key, a wrong
@@ -84,6 +86,64 @@ pub trait KeyVendorBackend: Send + Sync {
         }
     }
 
+    /// The most keys one [`wrap_batch`](Self::wrap_batch) or
+    /// [`unwrap_batch`](Self::unwrap_batch) call takes, or `None` (the
+    /// default) when the vendor has no batch operation.
+    ///
+    /// When it is `Some(n)`, the adapter wraps and unwraps the wrapped data
+    /// keys of a batch in chunks of at most `n` keys, one batch call per
+    /// chunk, and generates each data key locally with the CSPRNG. When it
+    /// is `None`, the adapter makes one call per key
+    /// ([`generate_wrapped`](Self::generate_wrapped) or
+    /// [`unwrap`](Self::unwrap)). The keyset record key is always one
+    /// [`unwrap`](Self::unwrap) call.
+    fn batch_limit(&self) -> Option<NonZeroUsize> {
+        None
+    }
+
+    /// Wrap each key under `key_ref`, binding its associated data, in one
+    /// vendor call. Returns the wrapped keys in the order of `items`.
+    ///
+    /// The adapter calls it only when [`batch_limit`](Self::batch_limit) is
+    /// `Some(n)`, with at most `n` items. The rules of
+    /// [`wrap`](Self::wrap) apply to each item. A batch fails whole: return
+    /// the first failure. The default wraps the items one at a time.
+    fn wrap_batch(
+        &self,
+        key_ref: &str,
+        items: &[WrapItem<'_>],
+    ) -> impl Future<Output = Result<Vec<Vec<u8>>, Error>> + MaybeSend {
+        async move {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(self.wrap(key_ref, item.key, item.aad).await?);
+            }
+            Ok(out)
+        }
+    }
+
+    /// Unwrap each wrapped key under `key_ref`, in one vendor call. Returns
+    /// the keys in the order of `items`.
+    ///
+    /// The adapter calls it only when [`batch_limit`](Self::batch_limit) is
+    /// `Some(n)`, with at most `n` items. The rules of
+    /// [`unwrap`](Self::unwrap) apply to each item. A batch fails whole:
+    /// return the first failure. The default unwraps the items one at a
+    /// time.
+    fn unwrap_batch(
+        &self,
+        key_ref: &str,
+        items: &[UnwrapItem<'_>],
+    ) -> impl Future<Output = Result<Vec<KeyBytes>, Error>> + MaybeSend {
+        async move {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(self.unwrap(key_ref, item.wrapped, item.aad).await?);
+            }
+            Ok(out)
+        }
+    }
+
     /// Wait for `duration` before a retry.
     ///
     /// The adapter calls this to back off after a `Throttled` failure. The
@@ -95,6 +155,32 @@ pub trait KeyVendorBackend: Send + Sync {
         let _ = duration;
         std::future::ready(())
     }
+}
+
+/// One key of a [`KeyVendorBackend::wrap_batch`] call.
+#[derive(Clone, Copy)]
+pub struct WrapItem<'a> {
+    /// The key to wrap.
+    pub key: &'a KeyBytes,
+    /// The associated data to bind.
+    pub aad: &'a [u8],
+}
+
+impl std::fmt::Debug for WrapItem<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WrapItem")
+            .field("aad_len", &self.aad.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// One wrapped key of a [`KeyVendorBackend::unwrap_batch`] call.
+#[derive(Clone, Copy, Debug)]
+pub struct UnwrapItem<'a> {
+    /// The wrapped key.
+    pub wrapped: &'a [u8],
+    /// The associated data it was wrapped with.
+    pub aad: &'a [u8],
 }
 
 /// A fresh random 256-bit key, from the CSPRNG.
