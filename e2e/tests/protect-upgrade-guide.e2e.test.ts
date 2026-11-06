@@ -72,4 +72,17 @@ describe('protect-dynamodb upgrade guide', () => {
       expect(guide).toContain(`\`${pkg}@${version}\``)
     }
   })
+
+  // `pnpm remove` refuses a name the app's package.json does not declare
+  // (ERR_PNPM_CANNOT_REMOVE_MISSING_DEPS) and then removes nothing, so a
+  // transitive Protect dependency in the same command fails the whole step for
+  // an app that only declared the two direct packages.
+  it('removes only the packages an app declares directly', () => {
+    const removes = [...guide.matchAll(/^pnpm remove (.+)$/gm)].map(
+      ([, args]) => args.trim().split(/\s+/),
+    )
+    expect(removes).toEqual([
+      ['@cipherstash/protect', '@cipherstash/protect-dynamodb'],
+    ])
+  })
 })

@@ -45,9 +45,11 @@ Done when every column has a row in the mapping table in step 3, and every colum
 ### 2. Swap the packages
 
 ```bash
-pnpm remove @cipherstash/protect @cipherstash/protect-dynamodb @cipherstash/schema
+pnpm remove @cipherstash/protect @cipherstash/protect-dynamodb
 pnpm add '@cipherstash/stack@^1.2.1'
 ```
+
+If the app's `package.json` also declares `@cipherstash/schema` or `@cipherstash/protect-ffi` directly, remove those in a separate `pnpm remove`. Do not add them to the command above when they are only transitive: `pnpm remove` refuses a package the manifest does not declare and then removes nothing.
 
 Stack needs Node.js 22 or later. It reads the same four `CS_*` variables from the environment, so retain the same workspace and key access used to write the data. If the app passed credentials explicitly to Protect, populate these environment variables or configure the equivalent Stack credentials. If the app passed a `keyset` to `protect()`, pass the same keyset to `Encryption` as `config.keyset`. A client bound to a different keyset either fails to decrypt or, if it was granted the old keyset, decrypts but mints terms that match no existing `__hmac`. Keysets are untested by these suites.
 
