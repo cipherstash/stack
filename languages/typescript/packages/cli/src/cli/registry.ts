@@ -881,7 +881,8 @@ export const registry: CommandGroup[] = [
           {
             name: '--backend',
             value: '<aws|gcp|azure|vault|static>',
-            description: 'The key vendor backend. Required.',
+            description:
+              'The key vendor backend. The full names that the output gives (aws-kms, gcp-kms, azure-key-vault, vault-transit) also work. Required.',
           },
           {
             name: '--vendor-key',

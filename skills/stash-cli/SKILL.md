@@ -835,6 +835,9 @@ CS_KEYSET_RECORD_USERS=stack-keyset:…
 - `--backend <aws|gcp|azure|vault|static>`, `--vendor-key <ref>` and
   `--mode <wrapped|derived>` are required. `--name <name>` labels the keyset and
   names the variable (`CS_KEYSET_RECORD_<NAME>`, else `CS_KEYSET_RECORD`).
+  The output names the backend in full (`aws-kms`, `gcp-kms`,
+  `azure-key-vault`, `vault-transit`, `static`), and `--backend` takes those
+  full names too.
 - **The record is not secret.** Only the vendor key can unwrap its key. Keep it
   in config or an env var. **No SDK reads `CS_KEYSET_RECORD*` by itself**: the
   app passes the value to `encrypt.WithKeysetRecords` (Go) or

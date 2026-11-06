@@ -5,7 +5,11 @@
 
 /** The options of [`keyset_create`]. */
 export interface KeysetCreateOptions {
-  /** The key backend: `aws`, `gcp`, `azure`, `vault` or `static`. */
+  /**
+   * The key backend: `aws`, `gcp`, `azure`, `vault` or `static`, or the
+   * full name that [`KeysetResult::backend`] gives (`aws-kms`,
+   * `gcp-kms`, `azure-key-vault`, `vault-transit`).
+   */
   backend: string
   /**
    * The vendor key that wraps the keyset's key: an AWS KMS key ARN, a

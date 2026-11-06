@@ -135,8 +135,23 @@ describe('stash keyset create', () => {
       1,
     )
     expect(errors()).toContain(messages.keyset.unknownBackend)
+    expect(errors()).toContain(
+      'Use one of: aws, gcp, azure, vault, static. The full names aws-kms, gcp-kms, azure-key-vault, vault-transit also work.',
+    )
     const hints = clack.log.info.mock.calls.map((call) => String(call[0]))
     expect(hints).toContain(messages.keyset.zeroKmsNote)
+  })
+
+  it('takes the backend name that its own output gives', async () => {
+    authMock.keysetCreate.mockResolvedValue({ data: result() })
+    await keysetCreateCommand({
+      backend: 'aws-kms',
+      vendorKey: 'arn:aws:kms:us-east-1:111122223333:key/k',
+      mode: 'wrapped',
+    })
+    expect(authMock.keysetCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ backend: 'aws-kms' }),
+    )
   })
 
   it('refuses wrapped data keys on the static backend', async () => {
