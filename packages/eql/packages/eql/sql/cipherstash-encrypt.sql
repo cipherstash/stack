@@ -48285,18 +48285,34 @@ $$ LANGUAGE plpgsql;
 --!   is itself `IMMUTABLE STRICT PARALLEL SAFE` — so `IMMUTABLE` lets the
 --!   planner fold/cache these in ordering and index contexts. NOT `STRICT`:
 --!   the NULL-handling branches below are load-bearing for the array overload.
+--! @note Constant operation count. Past the NULL and length checks (public
+--!   properties), every comparison executes the same statements whatever the
+--!   operands: one statement per block, which evaluates both of the block's
+--!   comparisons (integer `|`, which unlike `OR` does not short-circuit) and
+--!   latches the first differing block with arithmetic rather than an `IF`;
+--!   then one `encrypt()`, two `get_bit()` and one `get_byte()`, on every
+--!   path including for equal terms. An earlier form ran extra statements on
+--!   every block after the first difference and skipped a comparison on each
+--!   of them, so its time depended on where the operands first differ, which
+--!   is the information the constant-time comparator in ore.rs keeps from
+--!   anyone timing a query. Measured on PostgreSQL 17 (aarch64) through
+--!   `compare_ore_block_256_terms`, 200 k samples of 16 comparisons, operands
+--!   differing in the first block against operands differing only in the
+--!   last: the old form gave t = +4.9 and +13.9 (its extra statements and its
+--!   skipped comparisons mostly cancel on that machine, which no platform
+--!   guarantees; with the short-circuit removed it gave t = +388, about
+--!   0.7 µs per comparison). See `tests/timing/ore_block_256/` for this
+--!   form's figures. PL/pgSQL is not a constant-time environment, so C-level
+--!   effects remain (`memcmp` within 16 bytes, the offset `substr` reads at),
+--!   orders of magnitude below one statement.
 CREATE FUNCTION eql_v3_internal.compare_ore_block_256_term(a eql_v3_internal.ore_block_256_term, b eql_v3_internal.ore_block_256_term)
   RETURNS integer
   IMMUTABLE
   SET search_path = pg_catalog, extensions, public
 AS $$
   DECLARE
-    eq boolean := true;
-    unequal_block smallint := 0;
-    hash_key bytea;
-    data_block bytea;
-    encrypt_block bytea;
-    target_block bytea;
+    ab bytea;
+    bb bytea;
 
     left_block_size CONSTANT smallint := 16;
     right_block_size CONSTANT smallint := 32;
@@ -48311,7 +48327,9 @@ AS $$
     left_offset  integer;  -- ordinal offset of the first left block (1 + N PRP bytes)
     right_offset integer;  -- ordinal start of the right CT (= total left CT length = 17*N)
 
-    indicator smallint := 0;
+    latch      integer := 0; -- 1 + the first differing block, 0 while none differs
+    first_diff integer;      -- first differing block (0 if the terms are equal)
+    indicator  integer;
   BEGIN
     IF a IS NULL AND b IS NULL THEN
       RETURN 0;
@@ -48337,64 +48355,77 @@ AS $$
       RAISE EXCEPTION 'Malformed ORE term: % bytes', octet_length(a.bytes);
     END IF;
 
-    n := (octet_length(a.bytes) - 16) / 49;
+    ab := a.bytes;
+    bb := b.bytes;
+    n := (octet_length(ab) - 16) / 49;
     left_offset := 1 + n;     -- left blocks begin right after the N PRP bytes
     right_offset := 17 * n;   -- right CT begins right after the 17*N-byte left CT
 
+    -- One statement per block, the same for every block: both comparisons
+    -- always evaluated, and the first differing block latched as block + 1
+    -- while the latch is still 0.
     FOR block IN 0..n-1 LOOP
-      -- Compare each PRP byte (the first N bytes) and its 16-byte left block.
-      IF
-        substr(a.bytes, 1 + block, 1) != substr(b.bytes, 1 + block, 1)
-        OR substr(a.bytes, left_offset + left_block_size * block, left_block_size) != substr(b.bytes, left_offset + left_block_size * block, left_block_size)
-      THEN
-        IF eq THEN
-          unequal_block := block;
-        END IF;
-        eq = false;
-      END IF;
+      latch := latch + (latch = 0)::int * (block + 1) * (
+          (substr(ab, 1 + block, 1) <> substr(bb, 1 + block, 1))::int
+        | (substr(ab, left_offset + left_block_size * block, left_block_size)
+           <> substr(bb, left_offset + left_block_size * block, left_block_size))::int);
     END LOOP;
 
-    IF eq THEN
-      RETURN 0::integer;
-    END IF;
+    -- Equal terms read block 0.
+    first_diff := greatest(latch - 1, 0);
 
-    -- Hash key is the IV from the right CT of b.
-    hash_key := substr(b.bytes, right_offset + 1, 16);
-
-    -- First right block is at right_offset + nonce_size (ordinally indexed).
-    target_block := substr(b.bytes, right_offset + 17 + (unequal_block * right_block_size), right_block_size);
-
-    data_block := substr(a.bytes, left_offset + (left_block_size * unequal_block), left_block_size);
-
-    encrypt_block := encrypt(data_block::bytea, hash_key::bytea, 'aes-ecb');
-
+    -- One hash and one bit read on every path. For equal terms this reads
+    -- block 0 and the result is discarded below. The hash key is the IV at
+    -- the start of b's right CT; the right blocks follow it.
     indicator := (
       get_bit(
-        encrypt_block,
-        0
-      ) + get_bit(target_block, get_byte(a.bytes, unequal_block))) % 2;
+        encrypt(
+          substr(ab, left_offset + left_block_size * first_diff, left_block_size),
+          substr(bb, right_offset + 1, 16),
+          'aes-ecb'),
+        0)
+      + get_bit(
+          substr(bb, right_offset + 17 + right_block_size * first_diff, right_block_size),
+          get_byte(ab, first_diff))) % 2;
 
-    IF indicator = 1 THEN
-      RETURN 1::integer;
-    ELSE
-      RETURN -1::integer;
-    END IF;
+    -- 0 when equal, otherwise +1 / -1 from the indicator; no branch on the data.
+    RETURN sign(latch) * (2 * indicator - 1);
   END;
 $$ LANGUAGE plpgsql;
 
 
---! @brief Compare arrays of ORE block terms recursively
+--! @brief Compare arrays of ORE block terms lexicographically
 --! @internal
 --! @param a eql_v3_internal.ore_block_256_term[] First array
 --! @param b eql_v3_internal.ore_block_256_term[] Second array
 --! @return integer -1/0/1, or NULL if either array is NULL
+--! @throws Exception if paired terms are different lengths, or any paired
+--!   term is malformed
+--! @note Single-term values (every type but text) go straight to
+--!   `compare_ore_block_256_term`. Multi-term values (text, up to six terms)
+--!   are compared with a constant operation count across the terms. A
+--!   term-by-term comparison that stops at the first unequal term takes time
+--!   proportional to how many leading terms are equal, which reveals the
+--!   length of the shared prefix: measured on PostgreSQL 17, six-term values
+--!   took about 11 µs when the first terms differ and 47 µs when only the
+--!   sixth does (t below -1500). Instead, every paired term is compared whole
+--!   in one statement (its PRP bytes and left blocks, which are deterministic)
+--!   and the first unequal one is latched with arithmetic. Then exactly one
+--!   call to `compare_ore_block_256_term` runs on every path: on the latched
+--!   pair, or, when every paired term is equal or the latched pair has a NULL
+--!   element, on a pair whose result is discarded. The result is selected
+--!   with arithmetic, so neither a shared prefix of different-length arrays
+--!   nor a NULL element after equal terms skips the hash. Term counts and the
+--!   positions of NULL elements are public structure and may branch. If every
+--!   paired term is equal, the shorter array sorts first. C-level effects
+--!   remain: the whole-term `memcmp` stops at the first differing byte, a
+--!   few nanoseconds over at most a few hundred bytes. See
+--!   `tests/timing/ore_block_256/`.
 CREATE FUNCTION eql_v3_internal.compare_ore_block_256_terms(a eql_v3_internal.ore_block_256_term[], b eql_v3_internal.ore_block_256_term[])
 RETURNS integer
   IMMUTABLE
   SET search_path = pg_catalog, extensions, public
 AS $$
-  DECLARE
-    cmp_result integer;
   BEGIN
     IF a IS NULL OR b IS NULL THEN
       RETURN NULL;
@@ -48412,13 +48443,73 @@ AS $$
       RETURN 1;
     END IF;
 
-    cmp_result := eql_v3_internal.compare_ore_block_256_term(a[1], b[1]);
-
-    IF cmp_result = 0 THEN
-      RETURN eql_v3_internal.compare_ore_block_256_terms(a[2:array_length(a,1)], b[2:array_length(b,1)]);
+    IF cardinality(a) = 1 AND cardinality(b) = 1 THEN
+      RETURN eql_v3_internal.compare_ore_block_256_term(a[1], b[1]);
     END IF;
 
-    RETURN cmp_result;
+    -- Multi-term path. Its variables are declared in this inner block, not at
+    -- the top: PL/pgSQL evaluates every initialised declaration on each call,
+    -- and the single-term path above is the operator-class hot path.
+    DECLARE
+      ab bytea;
+      bb bytea;
+      differs integer;         -- 1 if the current pair differs
+      null_order integer;      -- the current pair's order if it has a NULL element, else 0
+
+      latch integer := 0;      -- the first unequal pair's index, 0 while every pair is equal
+      first_null integer := 0; -- the latched pair's NULL ordering, 0 if it has none
+      spare integer := 0;      -- the first pair with no NULL element (structure), 0 if none
+      h integer;               -- the pair compare_ore_block_256_term runs on
+      r integer;
+    BEGIN
+      FOR t IN 1..least(cardinality(a), cardinality(b)) LOOP
+        ab := a[t].bytes;
+        bb := b[t].bytes;
+
+        -- The length check comes first, as in compare_ore_block_256_term, so
+        -- both paths report the same error for the same pair.
+        IF octet_length(ab) != octet_length(bb) THEN
+          RAISE EXCEPTION 'Ciphertexts are different lengths';
+        END IF;
+        IF ab IS NOT NULL AND (octet_length(ab) <= 16 OR (octet_length(ab) - 16) % 49 != 0) THEN
+          RAISE EXCEPTION 'Malformed ORE term: % bytes', octet_length(ab);
+        END IF;
+        IF bb IS NOT NULL AND (octet_length(bb) <= 16 OR (octet_length(bb) - 16) % 49 != 0) THEN
+          RAISE EXCEPTION 'Malformed ORE term: % bytes', octet_length(bb);
+        END IF;
+
+        -- NULL elements are structure, not data: they may branch.
+        IF ab IS NULL OR bb IS NULL THEN
+          differs := ((ab IS NULL) <> (bb IS NULL))::int;
+          null_order := (bb IS NULL)::int - (ab IS NULL)::int;
+        ELSE
+          -- The PRP bytes and left blocks: the first 17*N bytes.
+          differs := (substr(ab, 1, 17 * ((octet_length(ab) - 16) / 49))
+                      <> substr(bb, 1, 17 * ((octet_length(ab) - 16) / 49)))::int;
+          null_order := 0;
+          IF spare = 0 THEN
+            spare := t;
+          END IF;
+        END IF;
+
+        -- Latch the first unequal pair without a branch.
+        first_null := first_null + (latch = 0)::int * differs * null_order;
+        latch := latch + (latch = 0)::int * differs * t;
+      END LOOP;
+
+      -- One term comparison on every path. It runs on the latched pair, or on
+      -- pair 1 when every pair is equal; if that pair has a NULL element, on
+      -- the first pair with none. Only when no pair is free of NULLs (which
+      -- is structure) does it take its NULL branch.
+      h := greatest(latch, 1);
+      h := h + ((a[h] IS NULL)::int | (b[h] IS NULL)::int) * (spare - h);
+      r := eql_v3_internal.compare_ore_block_256_term(a[h], b[h]);
+
+      -- Every pair equal: the shorter array sorts first. Otherwise the
+      -- latched pair's NULL ordering, or the term comparison.
+      RETURN (latch = 0)::int * sign(cardinality(a) - cardinality(b))::integer
+           + (latch > 0)::int * (first_null + (first_null = 0)::int * r);
+    END;
   END
 $$ LANGUAGE plpgsql;
 
@@ -59469,7 +59560,7 @@ DROP FUNCTION IF EXISTS eql_v3.version();
 --! @brief EQL version reporting (self-contained eql_v3 surface)
 --!
 --! This file is auto-generated from src/v3/version.template during build.
---! The 3.0.6 placeholder is replaced with the actual release
+--! The 3.1.0 placeholder is replaced with the actual release
 --! version (bare semver, e.g. "3.0.0") supplied via `mise run build --version`,
 --! or "DEV" for development builds.
 
@@ -59488,14 +59579,14 @@ CREATE FUNCTION eql_v3.version()
   RETURNS text
   IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT '3.0.6';
+  SELECT '3.1.0';
 $$ LANGUAGE SQL;
 
 --! @brief Schema-level version marker for obj_description() discoverability
 --!
 --! Mirrors eql_v3.version() as a comment on the schema so the installed
 --! version can also be read via obj_description('eql_v3'::regnamespace).
-COMMENT ON SCHEMA eql_v3 IS '3.0.6';
+COMMENT ON SCHEMA eql_v3 IS '3.1.0';
 --! @file pin_search_path_v3.sql
 --! @brief Post-install: pin search_path on every eql_v3.* function.
 --!
