@@ -135,6 +135,9 @@ Commands:
 
   env                  Mint deployment credentials and print them as env vars
 
+  keyset create        Create a keyset record for a key vendor backend (not needed with ZeroKMS)
+  keyset rewrap        Rewrap a keyset record under the current or another vendor key (not needed with ZeroKMS)
+
 Options:
   --help, -h           Show help
   --version, -v        Show version
@@ -590,6 +593,70 @@ async function runSchemaCommand(
   }
 }
 
+/**
+ * `stash keyset create|rewrap`. The module loads `@cipherstash/auth` only
+ * after its own argv checks, so a usage error never needs the native binary.
+ */
+async function runKeysetCommand(
+  sub: string | undefined,
+  commandArgs: string[],
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  const keyset = await import('../commands/keyset/index.js')
+  // parseArgs booleanises a value flag with no value (`--out --force`).
+  const missing = (names: string[]) =>
+    names.filter((name) => flags[name] === true)
+  const output = {
+    out: values.out,
+    force: flags.force,
+    json: flags.json,
+  }
+  switch (sub) {
+    case 'create':
+      if (commandArgs.length > 0) {
+        p.log.error(
+          `Unexpected argument '${commandArgs[0]}'. stash keyset create takes flags only.`,
+          { output: process.stderr },
+        )
+        throw new CliExit(1)
+      }
+      await keyset.keysetCreateCommand(
+        {
+          ...output,
+          backend: values.backend,
+          vendorKey: values['vendor-key'],
+          mode: values.mode,
+          name: values.name,
+          keyEnv: values['key-env'],
+        },
+        missing(['backend', 'vendor-key', 'mode', 'name', 'key-env', 'out']),
+      )
+      break
+    case 'rewrap':
+      if (commandArgs.length > 1) {
+        p.log.error('stash keyset rewrap takes one keyset record.', {
+          output: process.stderr,
+        })
+        throw new CliExit(1)
+      }
+      await keyset.keysetRewrapCommand(
+        {
+          ...output,
+          record: commandArgs[0],
+          in: values.in,
+          vendorKey: values['vendor-key'],
+          keyEnv: values['key-env'],
+          newKeyEnv: values['new-key-env'],
+        },
+        missing(['in', 'vendor-key', 'key-env', 'new-key-env', 'out']),
+      )
+      break
+    default:
+      keyset.keysetUnknownSubcommand(sub)
+  }
+}
+
 // The CLI body. Loaded by the thin launcher in stash.ts via dynamic import so
 // that a missing native binary (evaluated when this module's command graph
 // loads) surfaces as friendly guidance rather than a raw stack trace.
@@ -721,6 +788,9 @@ async function dispatch(
         // `stash env my-app` would otherwise vanish into `subcommand`.
         unexpectedArg: subcommand ?? commandArgs[0],
       })
+      break
+    case 'keyset':
+      await runKeysetCommand(subcommand, commandArgs, flags, values)
       break
     case 'manifest':
       // Pure metadata (no native code) — safe to run anywhere, including when
