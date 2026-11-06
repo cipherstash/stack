@@ -22,14 +22,37 @@ import { emitJsonError, emitJsonEvent } from '../auth/events.js'
  */
 const CHROME = { output: process.stderr } as const
 
-/** The `--backend` values. The Rust side holds the same list. */
-export const KEYSET_BACKENDS = [
-  'aws',
-  'gcp',
-  'azure',
-  'vault',
-  'static',
-] as const
+/**
+ * The `--backend` values: each short name, and the full name that the output
+ * (`# backend: …`, the `backend` of `--json`) and the SDKs use. `--backend`
+ * takes either, so a value the output gives is a valid input. The Rust side
+ * (`BACKENDS` in `@cipherstash/auth`) holds the same table.
+ */
+export const KEYSET_BACKEND_NAMES = {
+  aws: 'aws-kms',
+  gcp: 'gcp-kms',
+  azure: 'azure-key-vault',
+  vault: 'vault-transit',
+  static: 'static',
+} as const
+
+/** The short `--backend` names, in the order the help text lists them. */
+export const KEYSET_BACKENDS = Object.keys(KEYSET_BACKEND_NAMES) as Array<
+  keyof typeof KEYSET_BACKEND_NAMES
+>
+
+/** The full names that are not also a short name. */
+const KEYSET_FULL_BACKENDS = Object.values(KEYSET_BACKEND_NAMES).filter(
+  (name) => !(KEYSET_BACKENDS as readonly string[]).includes(name),
+)
+
+/** Whether `--backend` takes `value`. */
+export function isKeysetBackend(value: string): boolean {
+  return (
+    (KEYSET_BACKENDS as readonly string[]).includes(value) ||
+    (KEYSET_FULL_BACKENDS as readonly string[]).includes(value)
+  )
+}
 
 /** The `--mode` values. */
 export const KEYSET_MODES = ['wrapped', 'derived'] as const
@@ -296,10 +319,10 @@ function validateCreate(options: KeysetCreateOptions) {
     )
   }
   const backend = options.backend as string
-  if (!(KEYSET_BACKENDS as readonly string[]).includes(backend)) {
+  if (!isKeysetBackend(backend)) {
     throw new KeysetError(
       'invalid_backend',
-      `${messages.keyset.unknownBackend} '${backend}'. Use one of: ${KEYSET_BACKENDS.join(', ')}.`,
+      `${messages.keyset.unknownBackend} '${backend}'. Use one of: ${KEYSET_BACKENDS.join(', ')}. The full names ${KEYSET_FULL_BACKENDS.join(', ')} also work.`,
       messages.keyset.zeroKmsNote,
     )
   }

@@ -40,7 +40,9 @@ const STATIC_KEY_LEN: usize = 32;
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct KeysetCreateOptions {
-    /// The key backend: `aws`, `gcp`, `azure`, `vault` or `static`.
+    /// The key backend: `aws`, `gcp`, `azure`, `vault` or `static`, or the
+    /// full name that [`KeysetResult::backend`] gives (`aws-kms`,
+    /// `gcp-kms`, `azure-key-vault`, `vault-transit`).
     pub backend: String,
     /// The vendor key that wraps the keyset's key: an AWS KMS key ARN, a
     /// Cloud KMS crypto key name, an Azure Key Vault key identifier, a Vault
@@ -230,7 +232,11 @@ fn vendor_config(vendor: KeyVendor, error: impl std::error::Error + 'static) -> 
 // Parsing the options
 // ---------------------------------------------------------------------------
 
-/// The `--backend` values, in the order the help text lists them.
+/// The backends `stash keyset` can use, in the order the help text lists
+/// them, each with its short name (the `--backend` value). The output
+/// names a backend with [`KeyVendor::name`] (`aws-kms`, …), and the input
+/// takes that name too, so a value the output gives is a valid input.
+/// This table is the only list of the short names.
 pub(crate) const BACKENDS: [(&str, KeyVendor); 5] = [
     ("aws", KeyVendor::Aws),
     ("gcp", KeyVendor::Gcp),
@@ -239,16 +245,34 @@ pub(crate) const BACKENDS: [(&str, KeyVendor); 5] = [
     ("static", KeyVendor::Static),
 ];
 
+/// The backend that `text` names: a short name of [`BACKENDS`] or the
+/// [`KeyVendor::name`] of one of its vendors.
 fn parse_backend(text: &str) -> Result<KeyVendor, KeysetError> {
     BACKENDS
         .iter()
-        .find(|(name, _)| *name == text)
+        .find(|(short, vendor)| *short == text || vendor.name() == text)
         .map(|(_, vendor)| *vendor)
         .ok_or_else(|| {
             KeysetError::Options(format!(
-                "Unknown key backend {text:?}. Use one of: aws, gcp, azure, vault, static."
+                "Unknown key backend {text:?}. {}",
+                backend_choices()
             ))
         })
+}
+
+/// The accepted backend names, for an error message, from [`BACKENDS`].
+fn backend_choices() -> String {
+    let short: Vec<&str> = BACKENDS.iter().map(|(short, _)| *short).collect();
+    let full: Vec<&str> = BACKENDS
+        .iter()
+        .map(|(_, vendor)| vendor.name())
+        .filter(|name| !short.contains(name))
+        .collect();
+    format!(
+        "Use one of: {}. The full names {} also work.",
+        short.join(", "),
+        full.join(", ")
+    )
 }
 
 fn parse_mode(text: &str) -> Result<KeyMode, KeysetError> {
@@ -869,6 +893,24 @@ mod tests {
         for (name, vendor) in BACKENDS {
             assert_eq!(parse_backend(name).unwrap(), vendor);
         }
+    }
+
+    /// The input takes every name the output gives, and the table has every
+    /// vendor.
+    #[test]
+    fn the_backend_input_takes_the_output_names() {
+        for vendor in KeyVendor::ALL {
+            assert_eq!(parse_backend(vendor.name()).unwrap(), vendor);
+            assert!(BACKENDS.iter().any(|(_, v)| *v == vendor), "{vendor}");
+        }
+        let Err(KeysetError::Options(message)) = parse_backend("zerokms") else {
+            panic!("zerokms is not a key vendor backend");
+        };
+        assert_eq!(
+            message,
+            "Unknown key backend \"zerokms\". Use one of: aws, gcp, azure, vault, static. \
+             The full names aws-kms, gcp-kms, azure-key-vault, vault-transit also work."
+        );
     }
 
     #[test]
