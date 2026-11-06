@@ -109,6 +109,21 @@ impl Term {
         matches!(self, Term::Ore | Term::Ope)
     }
 
+    /// The suffix of the range query domain that carries a `Between` over
+    /// this term, or `None` for a term with no ordering: `range_ore` for
+    /// block ORE, `range_ope` for CLLW OPE. A family has one range domain
+    /// per ordering term it stores (ADR-0009 decisions 7 and 8), named
+    /// `query_<family>_<suffix>` by
+    /// [`DomainFamily::range_query_name`](crate::DomainFamily::range_query_name).
+    /// `Some` exactly when [`Term::provides_ordering`] is true.
+    pub const fn range_suffix(self) -> Option<&'static str> {
+        match self {
+            Term::Ore => Some("range_ore"),
+            Term::Ope => Some("range_ope"),
+            Term::Hm | Term::Bloom => None,
+        }
+    }
+
     /// JSON key whose payload must be a NON-EMPTY array for this term to be
     /// well-formed, or `None` if the term imposes no such structural rule. The
     /// ORE term (`ob`) is an array of block terms; an empty array (`ob: []`) is
@@ -121,6 +136,78 @@ impl Term {
             Term::Ore => Some(self.json_key()),
             // `op` is a single hex string, not an array.
             Term::Hm | Term::Bloom | Term::Ope => None,
+        }
+    }
+}
+
+/// How EQL v4 stores an order term: as the lowercase hex of a Stack Encrypt
+/// term, one JSON string, where EQL v3 stores cipherstash-client's terms.
+///
+/// One entry per term, read by both halves of the generated surface: the
+/// bindings type the field with [`rust_type`](Self::rust_type) over the
+/// family's plaintext and describe it to TypeScript and JSON Schema as
+/// [`json_shape`](Self::json_shape), and the domain CHECKs refuse a value
+/// that is not a string starting with one of [`prefixes`](Self::prefixes).
+/// The same prefixes and [`unit_digits`](Self::unit_digits) make the JSON
+/// Schema pattern, so the schema and the CHECK cannot disagree about which
+/// strings are terms.
+///
+/// The CHECK reads only the prefix and the type of the JSON value: cheap,
+/// and enough to refuse an EQL v3 array or a term of another scheme. The
+/// full structure (block count, length, padding) is checked where the term
+/// is read: by `from_bytes` in Rust and by the comparator in SQL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V4TermFormat {
+    /// The Stack Encrypt type of the field, under `stack_encrypt::sem`,
+    /// generic over the plaintext it orders: `OreBlockTerm`, `OpeTerm`.
+    pub rust_type: &'static str,
+    /// The schema-only type naming the field's JSON in TypeScript and JSON
+    /// Schema: `OreBlockHex`, `OpeHex`.
+    pub json_shape: &'static str,
+    /// What the term is, for the schema's description.
+    pub description: &'static str,
+    /// The hex every term starts with, one of these: block ORE's wire
+    /// version and engine (`0202` fixed width, `0203` chained), OPE's carry
+    /// byte (`00`, `01`).
+    pub prefixes: &'static [&'static str],
+    /// The hex digits of the unit the rest of a term repeats: a byte for
+    /// block ORE, whose length the comparator checks, an 8-byte block for
+    /// OPE, one byte per bit of the value.
+    pub unit_digits: usize,
+}
+
+impl V4TermFormat {
+    /// The JSON Schema pattern of a term: a prefix, then whole units of
+    /// lowercase hex, at least one.
+    pub fn pattern(&self) -> String {
+        format!(
+            "^({})([0-9a-f]{{{}}})+$",
+            self.prefixes.join("|"),
+            self.unit_digits
+        )
+    }
+}
+
+impl Term {
+    /// How EQL v4 stores this term, or `None` for a term v4 stores as v3
+    /// does (`hm`, `bf`). See [`V4TermFormat`].
+    pub const fn v4_format(self) -> Option<V4TermFormat> {
+        match self {
+            Term::Ore => Some(V4TermFormat {
+                rust_type: "OreBlockTerm",
+                json_shape: "OreBlockHex",
+                description: "An ore-rs 6-bit block ORE ciphertext (wire version 2), as lowercase hex.",
+                prefixes: &["0202", "0203"],
+                unit_digits: 2,
+            }),
+            Term::Ope => Some(V4TermFormat {
+                rust_type: "OpeTerm",
+                json_shape: "OpeHex",
+                description: "A clww-ore CLWW OPE ciphertext, as lowercase hex: a carry byte, then 8 bytes per byte of the value.",
+                prefixes: &["00", "01"],
+                unit_digits: 16,
+            }),
+            Term::Hm | Term::Bloom => None,
         }
     }
 }
@@ -230,6 +317,17 @@ mod tests {
         assert_eq!(Term::Ore.binding_newtype(), "OreBlock256");
         assert_eq!(Term::Bloom.binding_newtype(), "BloomFilter");
         assert_eq!(Term::Ope.binding_newtype(), "OpeCllw");
+    }
+
+    #[test]
+    fn range_suffix_names_each_ordering_term_and_nothing_else() {
+        assert_eq!(Term::Ore.range_suffix(), Some("range_ore"));
+        assert_eq!(Term::Ope.range_suffix(), Some("range_ope"));
+        assert_eq!(Term::Hm.range_suffix(), None);
+        assert_eq!(Term::Bloom.range_suffix(), None);
+        for t in [Term::Hm, Term::Ore, Term::Bloom, Term::Ope] {
+            assert_eq!(t.range_suffix().is_some(), t.provides_ordering(), "{t:?}");
+        }
     }
 
     #[test]

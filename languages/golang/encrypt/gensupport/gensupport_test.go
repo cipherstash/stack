@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRedactedHidesSealedFieldsAndSortsShown(t *testing.T) {
@@ -64,12 +65,40 @@ func TestNoticesPrintOnceForEachType(t *testing.T) {
 }
 
 func TestVersionConstantIsTyped(t *testing.T) {
-	// A generated file holds `const _ = gensupport.GeneratedVersion1`. The
+	// A generated file holds `const _ = gensupport.GeneratedVersion2`. The
 	// constant's type is unexported, so no other package can declare a value
 	// that satisfies the same reference.
 	accepts := func(generatedVersion) {}
-	accepts(GeneratedVersion1)
-	if GeneratedVersion1 != 1 {
-		t.Fatalf("GeneratedVersion1 = %d", GeneratedVersion1)
+	accepts(GeneratedVersion2)
+	if GeneratedVersion2 != 2 {
+		t.Fatalf("GeneratedVersion2 = %d", GeneratedVersion2)
+	}
+}
+
+// Deref is how generated code passes a field declared over a pointer, and
+// it is why a nil pointer never reaches the codec typed: the untyped nil it
+// gives is == nil, so Seal leaves a null=sql field out and the engine sees a
+// plain null elsewhere, while the typed nil itself is not == nil and would be
+// sent as a typed null of the pointer's type (see encrypt's typed_nil_test).
+func TestDerefGivesAnUntypedNilForANilPointer(t *testing.T) {
+	// The contrast Deref exists for: the same pointer, as an interface
+	// value, is not == nil. (Through a call, so the checker does not fold
+	// the comparison away.)
+	asAny := func(v any) any { return v }
+	if asAny((*int64)(nil)) == nil {
+		t.Fatal("a typed nil pointer is == nil as an interface; this test pins the opposite")
+	}
+	if v := Deref((*int64)(nil)); v != nil {
+		t.Fatalf("Deref((*int64)(nil)) = %#v, want an untyped nil", v)
+	}
+	if v := Deref((*time.Time)(nil)); v != nil {
+		t.Fatalf("Deref((*time.Time)(nil)) = %#v, want an untyped nil", v)
+	}
+	n, when := int64(7), time.Unix(1_700_000_000, 0).UTC()
+	if v := Deref(&n); v != int64(7) {
+		t.Fatalf("Deref(&7) = %#v, want the int64 7", v)
+	}
+	if v := Deref(&when); v != when {
+		t.Fatalf("Deref(&when) = %#v, want the time", v)
 	}
 }

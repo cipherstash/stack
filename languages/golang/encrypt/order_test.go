@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"math"
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
 	"testing/quick"
 
@@ -13,8 +15,11 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
 )
 
-// Property tests of term ordering: random plaintexts, terms derived by the
-// guest through the generated Probe fields, comparison in Go. ORE is
+// Property tests of term ordering: random plaintexts, the terms the guest
+// stores for them through the generated Probe fields' Encrypt, comparison
+// in Go. A query method derives the same bytes, but only for the index
+// that answers its operator (ORE, where a field declares both), and only
+// over integers, floats and text, so the stored terms reach every index and kind. ORE is
 // probabilistic — a wrong comparator or a wrong derivation still agrees
 // with plaintext order on many pairs — so a fixed vector set says little;
 // hundreds of random pairs per type say more. The index key is the
@@ -23,12 +28,19 @@ import (
 // termOf derives one ORE or OPE term for v.
 type termOf[T any] func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error)
 
-func oreOf[T any](f func(context.Context, *encrypt.Cipher, T) (encrypt.OreTerm, error)) termOf[T] {
-	return func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error) { return f(ctx, c, v) }
-}
-
-func opeOf[T any](f func(context.Context, *encrypt.Cipher, T) (encrypt.OpeTerm, error)) termOf[T] {
-	return func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error) { return f(ctx, c, v) }
+// storedTerm is the ORE or OPE term a field's Encrypt stores for v, read
+// from its output E.
+func storedTerm[T, E any](seal func(context.Context, *encrypt.Cipher, T) (E, error), ope bool, ore, opeTerm func(E) []byte) termOf[T] {
+	return func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error) {
+		out, err := seal(ctx, c, v)
+		if err != nil {
+			return nil, err
+		}
+		if ope {
+			return opeTerm(out), nil
+		}
+		return ore(out), nil
+	}
 }
 
 func compareTerms(ope bool, a, b []byte) int {
@@ -111,22 +123,55 @@ func adjacentProperty[T any](t *testing.T, cipher *encrypt.Cipher, ope bool, der
 	}
 }
 
-// collatedAlphabet holds characters that the ORE and OPE string encodings
-// keep as they are. Before deriving a term, cllw-ore's orderize_string
-// decomposes each character canonically and drops anything that is not
-// alphanumeric, whitespace or ASCII punctuation. So two strings order by
-// their UTF-8 bytes only when that collation leaves both unchanged: a
-// private-use character is dropped, and a precomposed Hangul syllable or
-// an accented letter decomposes. The non-ASCII letters here have no
-// canonical decomposition, so multi-byte UTF-8 ordering is still covered.
-var collatedAlphabet = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ßжω中")
+// foldedAlphabet holds characters that text's order key keeps as they are.
+// Text orders by its fold (ADR-0002): NFD, full case folding, NFD again,
+// accents dropped, NFC. So two strings order by their UTF-8 bytes when the
+// fold leaves both unchanged: lower-case letters with no accent, digits,
+// space and ASCII punctuation. The non-ASCII letters here are already
+// folded and have no decomposition, so multi-byte UTF-8 ordering is still
+// covered. Upper case, accents and the sharp s are checked as ties below.
+var foldedAlphabet = []rune("abcdefghijklmnopqrstuvwxyz0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\u0436\u03c9\u4e2d")
 
-func collatedString(r *rand.Rand) string {
+func foldedString(r *rand.Rand) string {
 	out := make([]rune, r.Intn(24))
 	for i := range out {
-		out[i] = collatedAlphabet[r.Intn(len(collatedAlphabet))]
+		out[i] = foldedAlphabet[r.Intn(len(foldedAlphabet))]
 	}
 	return string(out)
+}
+
+// floatOrder is ADR-0002's order of floats, which is Postgres's float8
+// order: -0.0 is 0.0, and every NaN is one value, above +Inf.
+func floatOrder[F float32 | float64](a, b F) int {
+	an, bn := a != a, b != b
+	switch {
+	case an && bn:
+		return 0
+	case an:
+		return 1
+	case bn:
+		return -1
+	}
+	return cmp.Compare(a, b)
+}
+
+// floatValues are the edges of a float's order: both infinities, the
+// largest and smallest magnitudes, both zeros, and NaNs of several signs
+// and payloads, which are one value.
+func floatValues() []float64 {
+	return []float64{
+		math.Inf(-1), -math.MaxFloat64, -1.5, -math.SmallestNonzeroFloat64,
+		math.Copysign(0, -1), 0, math.SmallestNonzeroFloat64, 1.5, math.MaxFloat64, math.Inf(1),
+		math.NaN(), math.Float64frombits(0xfff8_0000_0000_0000), math.Float64frombits(0x7ff8_0000_0000_beef),
+	}
+}
+
+// inOrder orders strings by their place in values, for a list written in
+// the order the fold gives it.
+func inOrder(values []string) func(a, b string) int {
+	return func(a, b string) int {
+		return cmp.Compare(slices.Index(values, a), slices.Index(values, b))
+	}
 }
 
 func TestTermOrderIsPlaintextOrder(t *testing.T) {
@@ -142,53 +187,123 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Run("uint32", func(t *testing.T) {
-				d := oreOf(f.U32.Ore)
-				if ope {
-					d = opeOf(f.U32.Ope)
-				}
+				d := storedTerm(f.U32.Encrypt, ope,
+					func(e testusers.EncryptedProbeU32) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeU32) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, cmp.Compare[uint32])
 				adjacentProperty(t, cipher, ope, d, []uint32{0, 1, 2, 255, 256, 257, 65535, 65536, 1<<31 - 1, 1 << 31, 1<<32 - 2, 1<<32 - 1}, cmp.Compare[uint32])
 			})
 			t.Run("uint64", func(t *testing.T) {
-				d := oreOf(f.U64.Ore)
-				if ope {
-					d = opeOf(f.U64.Ope)
-				}
+				d := storedTerm(f.U64.Encrypt, ope,
+					func(e testusers.EncryptedProbeU64) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeU64) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, cmp.Compare[uint64])
 				adjacentProperty(t, cipher, ope, d, []uint64{0, 1, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, 1<<64 - 1}, cmp.Compare[uint64])
 			})
 			t.Run("int64", func(t *testing.T) {
-				d := oreOf(f.I64.Ore)
-				if ope {
-					d = opeOf(f.I64.Ope)
-				}
+				d := storedTerm(f.I64.Encrypt, ope,
+					func(e testusers.EncryptedProbeI64) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeI64) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, cmp.Compare[int64])
 				adjacentProperty(t, cipher, ope, d, []int64{-1 << 63, -1<<63 + 1, -2, -1, 0, 1, 2, 1<<63 - 1}, cmp.Compare[int64])
 			})
 			t.Run("string", func(t *testing.T) {
-				d := oreOf(f.S.Ore)
-				if ope {
-					d = opeOf(f.S.Ope)
+				d := storedTerm(f.S.Encrypt, ope,
+					func(e testusers.EncryptedProbeS) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeS) []byte { return e.Ope })
+				// Strings order by the UTF-8 bytes of their folded form; a
+				// prefix orders before its extensions. See foldedAlphabet.
+				orderProperty(t, cipher, ope, d, byteOrder, foldedString)
+				adjacentProperty(t, cipher, ope, d, []string{"", "a", "aa", "ab", "b", "ba", "ж", "ω", "中"}, byteOrder)
+				// The fold drops case and accents and expands ß, so the terms
+				// cannot tell these apart.
+				adjacentProperty(t, cipher, ope, d, []string{"a", "A"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"e", "\u00e9", "\u00c9", "e\u0301"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"ss", "\u00df", "SS"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"caf\u00e9", "CAFE", "Cafe\u0301"}, same)
+				// Mixed case and accents order by the fold: Zoe after alice,
+				// and an accented letter beside its base letter.
+				names := []string{"alice", "Bob", "eclair", "\u00c9lan", "emu", "Zoe"}
+				adjacentProperty(t, cipher, ope, d, names, inOrder(names))
+			})
+			t.Run("float64", func(t *testing.T) {
+				d := storedTerm(f.F64.Encrypt, ope,
+					func(e testusers.EncryptedProbeF64) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeF64) []byte { return e.Ope })
+				// Every bit pattern, so every exponent is drawn: testing/quick's
+				// default scales by MaxFloat64 and draws only huge values.
+				orderProperty(t, cipher, ope, d, floatOrder[float64], func(r *rand.Rand) float64 {
+					return math.Float64frombits(r.Uint64())
+				})
+				adjacentProperty(t, cipher, ope, d, floatValues(), floatOrder[float64])
+			})
+			t.Run("float32", func(t *testing.T) {
+				d := storedTerm(f.F32.Encrypt, ope,
+					func(e testusers.EncryptedProbeF32) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeF32) []byte { return e.Ope })
+				orderProperty(t, cipher, ope, d, floatOrder[float32], func(r *rand.Rand) float32 {
+					return math.Float32frombits(r.Uint32())
+				})
+				var values []float32
+				for _, v := range floatValues() {
+					values = append(values, float32(v))
 				}
-				// Strings order by the UTF-8 bytes of their collated form; a
-				// prefix orders before its extensions. See collatedAlphabet.
-				orderProperty(t, cipher, ope, d, byteOrder, collatedString)
-				adjacentProperty(t, cipher, ope, d, []string{"", "a", "aa", "ab", "b", "ba", "ß", "ßa", "中"}, byteOrder)
-				// Collation drops a control or private-use character, and
-				// strips the accent from a decomposed letter, so the terms
-				// cannot tell these pairs apart.
-				adjacentProperty(t, cipher, ope, d, []string{"", "\x7f"}, same)
-				adjacentProperty(t, cipher, ope, d, []string{"ab", "ab"}, same)
-				adjacentProperty(t, cipher, ope, d, []string{"e", "é"}, same)
+				values = append(values, math.SmallestNonzeroFloat32, -math.SmallestNonzeroFloat32, math.MaxFloat32)
+				adjacentProperty(t, cipher, ope, d, values, floatOrder[float32])
 			})
 			t.Run("bytes", func(t *testing.T) {
-				d := oreOf(f.B.Ore)
-				if ope {
-					d = opeOf(f.B.Ope)
-				}
+				d := storedTerm(f.B.Encrypt, ope,
+					func(e testusers.EncryptedProbeB) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeB) []byte { return e.Ope })
 				orderProperty(t, cipher, ope, d, bytes.Compare)
 				adjacentProperty(t, cipher, ope, d, [][]byte{{}, {0}, {0, 0}, {0, 1}, {1}, {255}, {255, 0}}, bytes.Compare)
 			})
 		})
+	}
+}
+
+// The generated ordering methods on a text field derive the term its
+// Encrypt stores for the folded value, and Between orders its bounds by
+// their folds.
+func TestTextOrderingMethodsFoldTheValue(t *testing.T) {
+	c := deterministicClient(t)
+	cipher := c.DefaultKeyset()
+	ctx := context.Background()
+	f := testusers.ProbeFields
+	stored, err := f.S.Encrypt(ctx, cipher, "cafe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"cafe", "Caf\u00e9", "CAFE", "cafe\u0301"} {
+		lt, err := f.S.Lt(ctx, cipher, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(lt, stored.Ore) {
+			t.Errorf("Lt(%q) is not the stored term of cafe", v)
+		}
+	}
+	r, err := f.S.Between(ctx, cipher, "a", "Zoe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Low.Compare(r.High) >= 0 {
+		t.Errorf("a should order below Zoe")
+	}
+	// A range inverted once folded is not refused, as SQL's BETWEEN is
+	// not: it matches nothing.
+	inverted, err := f.S.Between(ctx, cipher, "b", "A")
+	if err != nil {
+		t.Fatalf("Between(b, A): %v", err)
+	}
+	if inverted.Low.Compare(inverted.High) <= 0 {
+		t.Errorf("Between(b, A): A folds to a, below b")
+	}
+	tie, err := f.S.Between(ctx, cipher, "A", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tie.Low.Compare(tie.High) != 0 {
+		t.Errorf("Between(A, a) is one folded value")
 	}
 }

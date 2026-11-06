@@ -1,0 +1,21 @@
+error[E0277]: `EqualityTerm` cannot answer `AtPath<stack_encrypt::op::Matches>`
+ --> tests/ui/op_at_path_inherits_fidelity.rs:9:40
+  |
+9 |     answers::<op::AtPath<op::Matches>, EqualityTerm>();
+  |                                        ^^^^^^^^^^^^ this query term does not meet the operator's requirement
+  |
+  = help: the trait `stack_encrypt::op::Probabilistic` is not implemented for `EqualityTerm`
+  = note: a term that answers `op::Matches` must implement `op::Probabilistic`
+help: the trait `stack_encrypt::op::Probabilistic` is implemented for `MatchQuery<O>`
+ --> src/sem/mod.rs
+  |
+  | impl<O: MatchConfig> crate::op::Probabilistic for MatchQuery<O> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `EqualityTerm` to implement `TermFor<stack_encrypt::op::Matches>`
+  = note: 1 redundant requirement hidden
+  = note: required for `EqualityTerm` to implement `TermFor<AtPath<stack_encrypt::op::Matches>>`
+note: required by a bound in `answers`
+ --> tests/ui/op_at_path_inherits_fidelity.rs:6:33
+  |
+6 | fn answers<Op: op::Operator, T: TermFor<Op>>() {}
+  |                                 ^^^^^^^^^^^ required by this bound in `answers`

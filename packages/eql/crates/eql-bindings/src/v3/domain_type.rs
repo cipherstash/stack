@@ -70,6 +70,19 @@ pub trait DomainType {
         format!("{SCHEMA_ID_BASE}{}.json", self.domain())
     }
 
+    /// The base [`Self::schema_id`] is built on: [`SCHEMA_ID_BASE`] for v3,
+    /// overridden by the generated v4 types. The type-level form, so the
+    /// `PhantomData` handles [`all`](super::all) boxes can reach a type's own
+    /// base; without it they fell back to the v3 default.
+    ///
+    /// `where Self: Sized` keeps the trait object-safe.
+    fn schema_id_base_static() -> &'static str
+    where
+        Self: Sized,
+    {
+        SCHEMA_ID_BASE
+    }
+
     /// Required term JSON keys of this domain beyond the envelope
     /// (`hm`/`ob`/`bf`/`op`), in catalog (wire) order. `Some(&[])` for a
     /// storage-only scalar; `None` for the SteVec (jsonb) shapes, whose index
@@ -130,6 +143,14 @@ where
 
     fn term_json_keys(&self) -> Option<&'static [&'static str]> {
         T::term_json_keys_static()
+    }
+
+    fn schema_id_base_static() -> &'static str {
+        T::schema_id_base_static()
+    }
+
+    fn schema_id(&self) -> String {
+        format!("{}{}.json", T::schema_id_base_static(), self.domain())
     }
 
     fn parse_value(&self, value: &serde_json::Value) -> Result<(), serde_json::Error> {

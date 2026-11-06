@@ -39,12 +39,26 @@ on:
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets
-      # rebuilt — correctly. Without these two entries the miss never happens,
+      # rebuilt — correctly. Without these entries the miss never happens,
       # because the workflow does not trigger at all: a payload-encoding change
       # under packages/eql/crates merges with this walkthrough green by absence.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/eql/crates/**'
+      # Only the eql-bindings files cargo compiles into the binding, as
+      # the cache key lists them: not its tests, docs or generated
+      # bindings, not the `v4` / `encryption` modules behind a feature
+      # protect-ffi never enables, and not the other EQL crates.
+      # ffi-binding-action.test.mjs derives the list from the manifests.
+      - 'packages/eql/crates/eql-bindings/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/lib.rs'
+      - 'packages/eql/crates/eql-bindings/src/sql.rs'
+      - 'packages/eql/crates/eql-bindings/src/from_v2/**'
+      - 'packages/eql/crates/eql-bindings/src/v3/**'
+      - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      # The SQL this suite installs. `stash eql install` and the Prisma
+      # Next baseline migration read the bundle from `@cipherstash/eql`, a
+      # workspace package, so an EQL release bump edits only this directory.
+      - 'packages/eql/packages/eql/**'
   pull_request:
     branches:
       - '**'
@@ -72,12 +86,26 @@ on:
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets
-      # rebuilt — correctly. Without these two entries the miss never happens,
+      # rebuilt — correctly. Without these entries the miss never happens,
       # because the workflow does not trigger at all: a payload-encoding change
       # under packages/eql/crates merges with this walkthrough green by absence.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/eql/crates/**'
+      # Only the eql-bindings files cargo compiles into the binding, as
+      # the cache key lists them: not its tests, docs or generated
+      # bindings, not the `v4` / `encryption` modules behind a feature
+      # protect-ffi never enables, and not the other EQL crates.
+      # ffi-binding-action.test.mjs derives the list from the manifests.
+      - 'packages/eql/crates/eql-bindings/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/lib.rs'
+      - 'packages/eql/crates/eql-bindings/src/sql.rs'
+      - 'packages/eql/crates/eql-bindings/src/from_v2/**'
+      - 'packages/eql/crates/eql-bindings/src/v3/**'
+      - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
+      # The SQL this suite installs. `stash eql install` and the Prisma
+      # Next baseline migration read the bundle from `@cipherstash/eql`, a
+      # workspace package, so an EQL release bump edits only this directory.
+      - 'packages/eql/packages/eql/**'
 
 jobs:
   walkthrough:

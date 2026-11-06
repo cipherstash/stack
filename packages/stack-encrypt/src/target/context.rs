@@ -172,11 +172,21 @@ impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for DeclaredContext {
     }
 }
 impl DeclaredContext {
+    /// Whether any part extends the field's own context.
+    pub(crate) fn is_extended(&self) -> bool {
+        !self.0.is_empty()
+    }
+
     /// Extend by one more part, after any already given: the field's own
     /// context, extended by every part so far, is extended by `part`.
     pub fn with(mut self, part: impl Into<CallerContext>) -> Self {
         self.0.push(part.into());
         self
+    }
+
+    /// Append the caller's parts, preserving each part's grouping.
+    pub(crate) fn append(&mut self, other: Self) {
+        self.0.extend(other.0);
     }
 
     /// The context one field is derived under: its own `own`, extended by

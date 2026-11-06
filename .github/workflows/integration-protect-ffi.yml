@@ -85,7 +85,17 @@ on:
       # cache and rebuilds the binding — without these entries it would be
       # rebuilt and no suite that loads it would start. Pinned by
       # scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/eql/crates/**'
+      # Only the eql-bindings files cargo compiles into the binding, as
+      # the cache key lists them: not its tests, docs or generated
+      # bindings, not the `v4` / `encryption` modules behind a feature
+      # protect-ffi never enables, and not the other EQL crates.
+      # ffi-binding-action.test.mjs derives the list from the manifests.
+      - 'packages/eql/crates/eql-bindings/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/lib.rs'
+      - 'packages/eql/crates/eql-bindings/src/sql.rs'
+      - 'packages/eql/crates/eql-bindings/src/from_v2/**'
+      - 'packages/eql/crates/eql-bindings/src/v3/**'
+      - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
@@ -124,7 +134,17 @@ on:
       # cache and rebuilds the binding — without these entries it would be
       # rebuilt and no suite that loads it would start. Pinned by
       # scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/eql/crates/**'
+      # Only the eql-bindings files cargo compiles into the binding, as
+      # the cache key lists them: not its tests, docs or generated
+      # bindings, not the `v4` / `encryption` modules behind a feature
+      # protect-ffi never enables, and not the other EQL crates.
+      # ffi-binding-action.test.mjs derives the list from the manifests.
+      - 'packages/eql/crates/eql-bindings/Cargo.toml'
+      - 'packages/eql/crates/eql-bindings/src/lib.rs'
+      - 'packages/eql/crates/eql-bindings/src/sql.rs'
+      - 'packages/eql/crates/eql-bindings/src/from_v2/**'
+      - 'packages/eql/crates/eql-bindings/src/v3/**'
+      - 'packages/eql/crates/eql-bindings/sql/**'
       - 'packages/eql/Cargo.toml'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'

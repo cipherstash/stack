@@ -129,6 +129,9 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // retrieved, like a foreign keyset and unlike a wrong-context open.
         stack_encrypt::Error::ContextMismatch { .. } => STATUS_CONTEXT_MISMATCH,
         stack_encrypt::Error::Kms(kms) => status_for_kms(kms),
+        // A keyset a JSON document needed could not be loaded: the load's
+        // own error says what the host can act on.
+        stack_encrypt::Error::KeysetLoad { source, .. } => status_for_error(source),
         // A context that renders past ZeroKMS's descriptor limit is the
         // caller's input, refused before any request is sent.
         stack_encrypt::Error::DescriptorTooLong { .. } => STATUS_ENCODING,
@@ -137,6 +140,21 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // statement about the caller's input, raised by the engine the
         // record exports run their plans through.
         stack_encrypt::Error::Plan(_) => STATUS_ENCODING,
+        // A ciphertext that authenticated but holds another type than the
+        // one it was opened as: sealed as that type, not tampered with, so
+        // the caller's input and not STATUS_AUTH.
+        stack_encrypt::Error::OpenedType { .. } => STATUS_ENCODING,
+        // A JSON read's rows that are not the ones its request asked for,
+        // or a wildcard read of an array longer than its bound: statements
+        // about the rows the host handed over, decided before any key is
+        // retrieved, which the host acts on (asks again, raises the bound).
+        // The diagnostic's code tells the two apart.
+        stack_encrypt::Error::JsonWrongEntry { .. }
+        | stack_encrypt::Error::JsonWildcardTruncated { .. } => STATUS_ENCODING,
+        // The entry `->` returned did not open alone: a container with
+        // children asked for as a scalar, or an altered entry. The client
+        // cannot tell which, so neither STATUS_AUTH nor a claim of either.
+        stack_encrypt::Error::JsonNotALeaf => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
@@ -144,8 +162,9 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 /// A dynamic-path error as a status code.
 ///
 /// The split the library draws is the one the ABI needs: `Context`, `Term`,
-/// `Plan`, `UntypedIndex`, `Source` and `Record` are each a statement about
-/// the caller's input, decided before any key is minted or retrieved, so they are
+/// `Plan`, `UntypedIndex`, `Source`, `Record` and `Predicate` are each a
+/// statement about the caller's input, decided before any key is minted or
+/// retrieved, so they are
 /// [`STATUS_ENCODING`] — named one by one, because that verdict is the
 /// host's to act on and must be given deliberately. `Cipher` defers to
 /// [`status_for_error`]; `Internal` is the library's own invariant failing
@@ -166,7 +185,11 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
         | Error::Plan { .. }
         | Error::UntypedIndex { .. }
         | Error::Source { .. }
-        | Error::Record { .. } => STATUS_ENCODING,
+        | Error::Record { .. }
+        // A `match` predicate refused at an offset in its text: a construct
+        // the grammar does not read or the index cannot answer, a variable
+        // its vars do not hold, a value its comparison cannot take.
+        | Error::Predicate { .. } => STATUS_ENCODING,
         Error::Cipher(e) => status_for_error(e),
         // A target refusal is a statement about the plan, the label or the
         // value (an unknown or unproducible type, an extended plan, a value
@@ -280,8 +303,29 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_keyset_load_maps_as_its_cause() {
+        let load = stack_encrypt::Error::KeysetLoad {
+            keyset_id: uuid::Uuid::from_u128(1),
+            source: std::sync::Arc::new(stack_encrypt::Error::Kms(stack_kms::Error::LoadKeyset(
+                stack_kms::LoadKeysetError::Unauthorized(vitur(
+                    ViturRequestErrorKind::Unauthorized,
+                )),
+            ))),
+        };
+        assert_eq!(status_for_error(&load), STATUS_KMS_UNAUTHORIZED);
+    }
+
+    #[test]
     fn aead_and_composition_errors_map_to_the_vitaminc_codes() {
         assert_eq!(status_for_error(&stack_encrypt::Error::Aead), STATUS_AUTH);
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::OpenedType { expected: "i32" }),
+            STATUS_ENCODING
+        );
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::JsonNotALeaf),
+            STATUS_ENCODING
+        );
         assert_eq!(
             status_for_error(&stack_encrypt::Error::DescriptorTooLong { len: 513 }),
             STATUS_ENCODING
@@ -414,8 +458,8 @@ mod tests {
     /// such. Swapping the arms, or dropping the `Other` one, fails here.
     #[test]
     fn target_refusals_are_encoding_and_a_resolver_failure_is_internal() {
+        use stack_encrypt::dynamic::ValueKind;
         use stack_encrypt::dynamic::{Error, TargetError};
-        use vitaminc_aead_value::ValueKind;
         let refusals = [
             TargetError::NoTargets {
                 name: "TextEq".into(),
@@ -424,8 +468,8 @@ mod tests {
                 name: "Nope".into(),
             },
             TargetError::Unproducible {
-                name: "TextOrdOre".into(),
-                reason: "block ORE".into(),
+                name: "DateOrdOre".into(),
+                reason: "no kind for this family".into(),
             },
             TargetError::Extended {
                 name: "email".into(),
@@ -522,6 +566,15 @@ mod tests {
                 Error::Record {
                     field: age(),
                     reason: Reason::NoCiphertextNode,
+                },
+            ),
+            (
+                "a refused predicate",
+                Error::Predicate {
+                    field: age(),
+                    reason: Reason::JsonPredicateUnsupported,
+                    construct: "`like_regex`",
+                    at: 4,
                 },
             ),
         ] {

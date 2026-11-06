@@ -27,7 +27,7 @@
 //! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+use stack_encrypt::target::legacy::{DecryptFrom, EncryptInto};
 use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, Error, StackCipher, StackCipherText};
 
 // --- The shapes ----------------------------------------------------------------

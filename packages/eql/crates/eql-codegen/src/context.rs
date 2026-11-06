@@ -2,6 +2,7 @@
 
 use crate::consts::*;
 use crate::operator_surface::Operator;
+use crate::render::{block_close, block_open, EqlVersion};
 use eql_domains::{Domain, Term};
 
 /// Build the minijinja environment with the embedded templates: one whole-file
@@ -55,13 +56,86 @@ pub fn environment() -> minijinja::Environment<'static> {
     )
     .expect("aggregates.sql template");
     env.add_template(
+        "range_types.sql",
+        include_str!("../templates/range_types.sql.j2"),
+    )
+    .expect("range_types.sql template");
+    env.add_template(
+        "range_functions.sql",
+        include_str!("../templates/range_functions.sql.j2"),
+    )
+    .expect("range_functions.sql template");
+    env.add_template(
         "ore_fallback.sql",
         include_str!("../templates/ore_fallback.sql.j2"),
     )
     .expect("ore_fallback.sql template");
     env.add_global("schema", SCHEMA);
     env.add_global("internal_schema", INTERNAL_SCHEMA);
+    env.add_global("eql_version", EQL_VERSION);
+    env.add_global("ore_block", ORE_BLOCK);
+    // The renderer's version-block directives, for SQL that differs between
+    // `eql_v3` and `eql_v4` (`crate::render`, "Version blocks").
+    env.add_global("v3_only", block_open(EqlVersion::V3));
+    env.add_global("v3_end", block_close(EqlVersion::V3));
+    env.add_global("v4_only", block_open(EqlVersion::V4));
+    env.add_global("v4_end", block_close(EqlVersion::V4));
     env
+}
+
+/// Whether an EQL v4 query of `domain` carries only the terms its operator
+/// reads (ADR-0002, amended 2026-10-19): a domain whose terms include the
+/// match term beside others, `text_search` and `text_search_ore`. Text
+/// shorter than one 3-gram has no match term, so a query that had to carry
+/// every term could not express `=` or `<` on it.
+///
+/// EQL v4 only. The v4 query domain then requires at least one of its terms,
+/// and each extractor over it raises when the term it reads is absent
+/// ([`required_term`]); the `eql_v3` domain is cipherstash-client's format and
+/// keeps requiring every term. The v4 binding's query struct holds each term
+/// as an `Option`.
+pub fn v4_optional_query_terms(domain: &Domain) -> bool {
+    domain.terms.contains(&Term::Bloom) && Term::payload_terms(domain.terms).len() > 1
+}
+
+/// The term an extractor over a query operand reads, for an operand whose
+/// terms are optional in EQL v4 ([`v4_optional_query_terms`]): the extractor
+/// raises, naming the term and the operators that read it, when the operand
+/// carries none, rather than answer `NULL` and match no row.
+#[derive(serde::Serialize)]
+pub struct RequiredTerm {
+    /// sql_str-escaped JSON key, e.g. `hm`.
+    pub key: String,
+    /// sql_str-escaped schema-qualified query domain, for the message.
+    pub domain: String,
+    /// sql_str-escaped operators the term answers on this domain, as prose:
+    /// `= and <>`, `<, <=, > and >=`, `@@`.
+    pub operators: String,
+}
+
+/// The [`RequiredTerm`] for `term`'s extractor over `domain`'s query operand
+/// `query_dom`, or `None` when the operand's terms are not optional.
+pub fn required_term(domain: &Domain, term: Term, query_dom: &str) -> Option<RequiredTerm> {
+    if !v4_optional_query_terms(domain) {
+        return None;
+    }
+    // The operators this extractor answers on this domain: an operator two
+    // terms support is read through the first (`=` on `text_search` reads
+    // `hm`, not `op`).
+    let ops: Vec<&str> = Term::operators_for_terms(domain.terms)
+        .into_iter()
+        .filter(|op| Term::extractor_for_operator(domain.terms, op) == Some(term.extractor()))
+        .collect();
+    let operators = match ops.as_slice() {
+        [] => "no operator".to_string(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    Some(RequiredTerm {
+        key: sql_str(term.json_key()),
+        domain: sql_str(query_dom),
+        operators: sql_str(&operators),
+    })
 }
 
 /// One idempotent CREATE DOMAIN block, with SQL-required values precomputed.
@@ -80,12 +154,60 @@ pub struct DomainBlock {
     // query operand is index-terms-only). The template renders a
     // `NOT (VALUE ? k)` clause per key.
     pub forbidden_keys: Vec<String>,
+    // sql_str-escaped term keys of a query twin whose terms are optional in
+    // EQL v4 (`v4_optional_query_terms`); empty otherwise. When set, `keys`
+    // holds the envelope keys alone, and the template renders the term keys
+    // as required for `eql_v3` and as "at least one" for `eql_v4`, each in
+    // its own version block, with a present `nonempty_array_keys` key still
+    // a non-empty array.
+    pub optional_term_keys: Vec<String>,
+    // The terms EQL v4 stores as hex strings (`Term::v4_format`), each with
+    // the prefixes its CHECK requires. Rendered in a v4 block; the v3 block
+    // keeps `nonempty_array_keys`.
+    pub v4_hex_terms: Vec<HexTermCheck>,
     // sql_str-escaped one-line human description rendered as `COMMENT ON DOMAIN`.
     // Capability text is derived from the domain's terms (via
     // `Term::operators_for_terms`), so it can't drift from the generated CHECK /
     // operators. Surfaced by `\dD`, `obj_description`, and tooling that reads
     // pg_type comments (e.g. Supabase's `types` introspection).
     pub comment: String,
+}
+
+/// The CHECK of one term EQL v4 stores as a hex string: the value is a JSON
+/// string whose first `prefix_len` characters are one of `prefixes`. Two
+/// constant-time string operations on top of the key lookup, so the cost of
+/// a write does not grow with the term; the comparator checks the rest.
+#[derive(serde::Serialize)]
+pub struct HexTermCheck {
+    pub key: String, // sql_str-escaped JSON key: `ob`, `op`
+    pub prefix_len: usize,
+    pub prefixes: String, // SQL list of literals: `'0202', '0203'`
+}
+
+/// The [`HexTermCheck`]s of `terms`, in key order.
+pub fn v4_hex_terms(terms: &[Term]) -> Vec<HexTermCheck> {
+    Term::payload_terms(terms)
+        .into_iter()
+        .filter_map(|term| term.v4_format().map(|format| (term, format)))
+        .map(|(term, format)| {
+            let prefix_len = format.prefixes[0].len();
+            assert!(
+                format.prefixes.iter().all(|p| p.len() == prefix_len),
+                "the prefixes of `{}` have one length",
+                term.json_key()
+            );
+            HexTermCheck {
+                key: sql_str(term.json_key()),
+                prefix_len,
+                prefixes: format
+                    .prefixes
+                    .iter()
+                    .map(|p| format!("'{}'", sql_str(p)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }
+        })
+        .collect()
 }
 
 /// Concise capability phrase from a domain's operator set — `equality`,
@@ -160,6 +282,9 @@ pub fn domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
             .collect(),
         // Storage domains forbid nothing; the query twin forbids `c`.
         forbidden_keys: vec![],
+        // A stored value carries every term in both versions.
+        optional_term_keys: vec![],
+        v4_hex_terms: v4_hex_terms(domain.terms),
         comment: scalar_domain_comment(family_name, domain),
     }
 }
@@ -177,9 +302,13 @@ pub fn query_domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
         .filter(|&&k| k != "c")
         .map(|k| sql_str(k))
         .collect();
-    for k in Term::term_json_keys(domain.terms) {
-        keys.push(sql_str(k));
-    }
+    let term_keys = Term::term_json_keys(domain.terms).into_iter().map(sql_str);
+    let optional_term_keys = if v4_optional_query_terms(domain) {
+        term_keys.collect()
+    } else {
+        keys.extend(term_keys);
+        vec![]
+    };
 
     DomainBlock {
         typname: sql_str(&name),
@@ -190,6 +319,8 @@ pub fn query_domain_block(family_name: &str, domain: &Domain) -> DomainBlock {
             .map(sql_str)
             .collect(),
         forbidden_keys: vec![sql_str("c")],
+        optional_term_keys,
+        v4_hex_terms: v4_hex_terms(domain.terms),
         comment: query_domain_comment(family_name, domain),
     }
 }
@@ -212,6 +343,9 @@ pub enum FnEntry {
         ret: String,       // e.g. eql_v3_internal.hmac_256 (selection STAYS in Rust)
         extractor: String, // e.g. eq_term
         ctor: String,      // e.g. hmac_256 (called as {{ internal_schema }}.{{ ctor }})
+        // Set on an extractor over a query operand whose terms are optional
+        // in EQL v4: the v4 body raises when the term is absent.
+        required: Option<RequiredTerm>,
     },
     Wrapper {
         op: String,            // SQL operator used in the body, e.g. =
@@ -245,14 +379,26 @@ pub struct FunctionsContext {
 /// Build the inlinable index-extractor entry for a domain term.
 ///
 /// The `RETURNS` type name equals the constructor name (`hmac_256`,
-/// `ore_block_256`); qualify it with `INTERNAL_SCHEMA` — the same schema as
+/// `{{ore_block}}`, [`sql_ctor`]); qualify it with `INTERNAL_SCHEMA` — the same schema as
 /// the body's constructor call — so the declared return type and the call
 /// stay in lockstep. `Term::returns()` is intentionally not used.
 pub fn extractor_entry(term: Term) -> FnEntry {
+    extractor_entry_requiring(term, None)
+}
+
+/// [`extractor_entry`] over a query operand: in EQL v4 it raises when the
+/// operand lacks the term, if the operand's terms are optional there
+/// ([`required_term`]).
+pub fn query_extractor_entry(domain: &Domain, term: Term, query_dom: &str) -> FnEntry {
+    extractor_entry_requiring(term, required_term(domain, term, query_dom))
+}
+
+fn extractor_entry_requiring(term: Term, required: Option<RequiredTerm>) -> FnEntry {
     FnEntry::Extractor {
-        ret: format!("{INTERNAL_SCHEMA}.{}", term.ctor()),
+        ret: format!("{INTERNAL_SCHEMA}.{}", sql_ctor(term)),
         extractor: term.extractor().to_string(),
-        ctor: term.ctor().to_string(),
+        ctor: sql_ctor(term).to_string(),
+        required,
     }
 }
 
@@ -390,15 +536,15 @@ pub struct OreFallbackEntry {
 }
 
 /// The bare pg_type typname of a public-schema encrypted domain: the catalog
-/// name carrying the [`eql_domains::PUBLIC_TYPNAME_PREFIX`] version prefix,
-/// e.g. `eql_v3_integer_eq`. The prefix keeps EQL domains from
+/// name carrying the [`PUBLIC_TYPNAME_PREFIX`] version prefix,
+/// e.g. `{{prefix}}_integer_eq` (`eql_v3_integer_eq` once rendered). The prefix keeps EQL domains from
 /// shadowing PostgreSQL built-in type names (`integer`, `text`, `json`, …)
 /// and gives each EQL version a distinct column-type namespace so multiple
 /// versions can coexist in one database. Catalog names stay bare — the prefix
 /// is applied only at SQL-name construction (file names, REQUIRE paths,
 /// struct idents, and test names all keep the bare name).
 pub fn public_typname(name: &str) -> String {
-    format!("{}{name}", eql_domains::PUBLIC_TYPNAME_PREFIX)
+    format!("{PUBLIC_TYPNAME_PREFIX}{name}")
 }
 
 /// The schema-qualified SQL domain type name, e.g. `public.eql_v3_integer_eq`.
@@ -463,13 +609,13 @@ mod tests {
 
     #[test]
     fn domain_name_qualifies_user_domains_with_public_schema() {
-        assert_eq!(domain_name("integer_eq"), "public.eql_v3_integer_eq");
+        assert_eq!(domain_name("integer_eq"), "public.{{prefix}}_integer_eq");
     }
 
     #[test]
     fn public_typname_carries_version_prefix() {
-        assert_eq!(public_typname("integer"), "eql_v3_integer");
-        assert_eq!(public_typname("text_match"), "eql_v3_text_match");
+        assert_eq!(public_typname("integer"), "{{prefix}}_integer");
+        assert_eq!(public_typname("text_match"), "{{prefix}}_text_match");
     }
 
     #[test]

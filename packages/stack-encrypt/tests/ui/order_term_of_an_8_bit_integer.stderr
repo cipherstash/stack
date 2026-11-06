@@ -1,0 +1,84 @@
+error[E0277]: the trait bound `u8: Orderable` is not satisfied
+  --> tests/ui/order_term_of_an_8_bit_integer.rs:10:15
+   |
+10 | fn terms(ore: OreTerm<u8>, ope: OpeTerm<i8>) {
+   |               ^^^^^^^^^^^ the trait `Orderable` is not implemented for `u8`
+   |
+   = help: the following other types implement trait `Orderable`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             u128
+             u16
+           and $N others
+note: required by a bound in `OreTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OreTerm<T: Orderable>(OreClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OreTerm`
+
+error[E0277]: the trait bound `i8: Orderable` is not satisfied
+  --> tests/ui/order_term_of_an_8_bit_integer.rs:10:33
+   |
+10 | fn terms(ore: OreTerm<u8>, ope: OpeTerm<i8>) {
+   |                                 ^^^^^^^^^^^ the trait `Orderable` is not implemented for `i8`
+   |
+   = help: the following other types implement trait `Orderable`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             u128
+             u16
+           and $N others
+note: required by a bound in `OpeTerm`
+  --> src/sem/mod.rs
+   |
+   | pub struct OpeTerm<T: Orderable>(OpeClww8VariableV1, PhantomData<fn() -> T>);
+   |                       ^^^^^^^^^ required by this bound in `OpeTerm`
+
+error[E0277]: the trait bound `i8: Orderable` is not satisfied
+  --> tests/ui/order_term_of_an_8_bit_integer.rs:15:60
+   |
+15 |     let rank_plan = Plan::context("users/rank").with::<i8, _>(Ore).build().unwrap();
+   |                                                 ----       ^ the trait `Orderable` is not implemented for `i8`
+   |                                                 |
+   |                                                 required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `Orderable`:
+             f32
+             f64
+             i128
+             i16
+             i32
+             i64
+             u128
+             u16
+           and $N others
+   = note: required for `stack_encrypt::Ore` to implement `stack_encrypt::Index<i8>`
+   = note: required for `stack_encrypt::Ore` to implement `Indexes<i8>`
+note: required by a bound in `plan::value::<impl PlanContext>::with`
+  --> src/plan/value.rs
+   |
+   |     pub fn with<S, X: Indexes<S>>(self, indexes: X) -> ValuePlanBuilder<S, Indexed<X>> {
+   |                       ^^^^^^^^^^ required by this bound in `plan::value::<impl PlanContext>::with`
+
+error[E0599]: the method `build` exists for struct `ValuePlanBuilder<i8, Indexed<stack_encrypt::Ore>>`, but its trait bounds were not satisfied
+  --> tests/ui/order_term_of_an_8_bit_integer.rs:15:68
+   |
+15 |     let rank_plan = Plan::context("users/rank").with::<i8, _>(Ore).build().unwrap();
+   |                                                                    ^^^^^ method cannot be called on `ValuePlanBuilder<i8, Indexed<stack_encrypt::Ore>>` due to unsatisfied trait bounds
+   |
+  ::: src/plan/value.rs
+   |
+   | pub struct Indexed<X>(X);
+   | --------------------- doesn't satisfy `Indexed<stack_encrypt::Ore>: ValueLayout<i8>`
+   |
+   = note: the following trait bounds were not satisfied:
+           `i8: Orderable`
+           which is required by `Indexed<stack_encrypt::Ore>: ValueLayout<i8>`

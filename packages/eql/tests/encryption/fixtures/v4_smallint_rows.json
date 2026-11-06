@@ -1,0 +1,115 @@
+{
+  "_comment": "Tally rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and queries them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4SmallintRows, do not edit.",
+  "seed": "encrypt round-trip tests seed v1",
+  "table": "profiles",
+  "rows": [
+    {
+      "id": 1,
+      "plaintext": {
+        "small": -32768,
+        "tally": -12,
+        "wide": -32768
+      },
+      "stored": {
+        "small": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "small"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAD4LCrufuRD/FQY4TZFe6AfIACHiUuB0CJjJr+LbNxAwTa6nFzZsohMvYKuG0eEpQBCbgKf9AiLZjYMlO0juGQzOeX6KmJJlGAIEDEAdoDnsA72"
+        },
+        "tally": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "tally"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADvGG8yu5085HD9Jm4QqutRIABdpCObhZDRQkCMnI2LxRF5VXligtVWiYIKNuwkApKOhgKuPx0Xh4na+BtvDwsTOE3PUvpIH16sh6KGbP67mou4",
+          "hm": "7aeb7ba10d7f88d1c6ec1e4d819e20aa0460e2467eaf1c5829437126ecc72db3"
+        },
+        "wide": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "wide"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACG2/FDPiPfbcgt2KR0n9s0IACH7cDAisfp79UHd5R5MnIYNc9nJHmEe9GA03PUrox54AKI8b2I7Oopv7wKeCbETVPc8n0KoR/eNqNGepjAv0fR",
+          "hm": "9f5bd412c1ec1d9e4f15369c64ce122ec845647246ca07955d7203fc96555624"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "plaintext": {
+        "small": 32767,
+        "tally": 7,
+        "wide": 32767
+      },
+      "stored": {
+        "small": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "small"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABY92Lf6tGcgnCxPlh/N7fAIABg4YLpuiC4kQ3TFpot377ZfERfsdbGLyE3T8AOdj5eywIpGUbElbuwIdq+vZDbLOtnOSgRN1qzJYNZ97ZPnO0s"
+        },
+        "tally": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "tally"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADJrvFsTc/RhAG3RKXlEdLZIADuWnjVDRcyIKSqfa1PHPcHJ5XGatPoW/q7+Bp+5kS53gIpPvaJ0mvH0fzO9cI0UQ/fCUAX4eVmBQGZFKyyZbG5",
+          "hm": "047ab2a408d78f27bcc929f822c158467c53876cde604a483c2b5cb7f2e39aab"
+        },
+        "wide": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "wide"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACMOoUNfVb6x7EVb4wzgrTKIADuyS3Tll1IIW6pgUv4Cu2iDViH88RHa/FjC5gzNC5jYwJ790dlZc8MjWj1aN3o4Uo0LA0JAnxXgIckJoJGNPSN",
+          "hm": "8b20978328a93915cf589e8c74fb9028c80b58e461c51314df8d51fe9a36c077"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "plaintext": {
+        "small": 0,
+        "tally": -12,
+        "wide": -1
+      },
+      "stored": {
+        "small": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "small"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABYn3RZE90JwspcrV/psve/IACtxdWMfY3cnahhwVmZ+IPpuLhGNVGQnLoU7NkXgJlQlwItsLZHfwkaJ2TywKUBlwsCRmQow0ldmAvx6BDhKpgw"
+        },
+        "tally": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "tally"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAA1m/PV0eKPMIRerBIYOsnNIABDbUnDV8SPoZNssOuZHnrbBGKhHmWWtLI7MMqCzLZPrQK5dHwUPznYOntuuLR4pnGbLPuPJK4y/0iieiRNHtfv",
+          "hm": "7aeb7ba10d7f88d1c6ec1e4d819e20aa0460e2467eaf1c5829437126ecc72db3"
+        },
+        "wide": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "wide"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAApfEecjt2IZoP2fHX11pmUIABuRiSfGGi7UIxZHX7tMXh1g5Wzr6lMP48A3l7vIgRwwQI8A1k4j6jffo1R1lwun47UMgH9i4hpRwFfA51gNg2W",
+          "hm": "ffbbb89c5fc4e850a711ab9547c6eaca24b68f408346591d8032a60488130f87"
+        }
+      }
+    }
+  ]
+}

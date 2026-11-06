@@ -1,7 +1,16 @@
-//! The host imports and the types built over them: [`WasiHostConnection`]
-//! (a [`ZeroKMSConnection`] whose transport is the host's HTTP client) and
-//! [`HostTokenStrategy`] (an [`AuthStrategy`] that asks the host for the
-//! bearer token). wasm32-only — everything here calls an imported function.
+//! The guest's two connections to its host: [`WasiHostConnection`] (a
+//! [`ZeroKMSConnection`] whose requests the host performs, through the step
+//! loop) and [`HostTokenStrategy`] (an [`AuthStrategy`] that asks the host
+//! for the bearer token). wasm32-only — the token is an imported function.
+//!
+//! # Requests
+//!
+//! The guest never waits on the network. A ZeroKMS request is recorded for
+//! the step being run (`stack_guest_abi::step::request`) and the export
+//! returns to the host with it, paused; the host performs it and resumes the
+//! operation with the response ([`crate::io`] has the wire form). So a host
+//! whose HTTP client cannot block — `fetch` on the edge — can run the guest,
+//! and the guest is never running while a request is in flight.
 //!
 //! # Import contract (module `cipherstash_transport`)
 //!
@@ -9,11 +18,9 @@
 //! guest buffers with `se_alloc` and the guest reclaims them through the
 //! shared registry (`stack_guest_abi::buffers`).
 //!
-//! - `transport_send(..)` — perform one HTTP request. The import and its
-//!   contract are `stack_guest_abi::transport`'s, shared with every guest;
-//!   this module only builds ZeroKMS requests over it.
 //! - `token_get(token_out) -> status` — hand over the current bearer token
-//!   (Phase-1 auth: minting and refresh stay on the host). `token_out` is a
+//!   (Phase-1 auth: minting and refresh stay on the host, which holds a
+//!   fresh token before each step, so this never waits). `token_out` is a
 //!   `(ptr_out, len_out)` slot pair filled with an `se_alloc`'d buffer;
 //!   status `0` is success, anything else a host-side failure. This
 //!   guest's own: the credential guest supplies tokens rather than asking
@@ -34,7 +41,7 @@ use std::sync::Mutex;
 use stack_auth::{AuthError, AuthStrategy, CustomError, SecretToken, ServiceToken};
 use stack_guest_abi::buffers;
 use stack_guest_abi::headers::header_value;
-use stack_guest_abi::transport;
+use stack_guest_abi::step;
 use stack_kms::{BaseUrlUnresolved, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint};
 use zeroize::Zeroizing;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
@@ -47,9 +54,9 @@ extern "C" {
     fn token_get(token_ptr_out: *mut u32, token_len_out: *mut u32) -> i32;
 }
 
-/// A [`ZeroKMSConnection`] whose transport is the `transport_send` host
-/// import. The host call is synchronous from the guest's perspective, so
-/// `send` resolves immediately — `block_on` in the ABI layer never parks.
+/// A [`ZeroKMSConnection`] whose requests the host performs: `send` records
+/// its request for the step being run and resolves when the host resumes the
+/// operation with the response (see the [module docs](self)).
 ///
 /// The endpoint is pinned at init when the cipher config named one;
 /// otherwise it is discovered by `StackKms` from the access token's
@@ -126,11 +133,12 @@ impl ZeroKMSConnection for WasiHostConnection {
         let auth = Zeroizing::new(format!("Bearer {access_token}"));
         let headers = Zeroizing::new(request_headers(auth.as_str()));
 
-        // The shared import reclaims both response slots before judging
-        // either, and the body it hands back wipes on drop (it carries
-        // wrapped key material).
-        let response = transport::send("POST", url.as_str(), &headers, &body)
-            .map_err(|e| ViturRequestError::parse("Host response buffer failed validation", e))?;
+        // The request's headers and body wipe on drop, and so does the
+        // response's body: it carries wrapped key material.
+        let request = step::Request::new("POST", url.to_string(), headers, body);
+        let response = step::request(request)
+            .await
+            .map_err(|e| ViturRequestError::prepare("The host was not asked for the request", e))?;
 
         let content_type = header_value(&response.headers, "content-type");
         map_response(response.status, content_type, &response.body)

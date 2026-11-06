@@ -20,6 +20,9 @@ on:
       - 'languages/typescript/packages/stack-drizzle/**'
       - 'languages/typescript/packages/test-kit/**'
       - 'languages/typescript/packages/cli/src/installer/**'
+      # The SQL the installer applies comes from `@cipherstash/eql`, a
+      # workspace package; an EQL release bump edits only this directory.
+      - 'packages/eql/packages/eql/**'
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
       - '.github/actions/integration-setup/**'
@@ -38,6 +41,9 @@ on:
       - 'languages/typescript/packages/stack-drizzle/**'
       - 'languages/typescript/packages/test-kit/**'
       - 'languages/typescript/packages/cli/src/installer/**'
+      # The SQL the installer applies comes from `@cipherstash/eql`, a
+      # workspace package; an EQL release bump edits only this directory.
+      - 'packages/eql/packages/eql/**'
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
       - '.github/actions/integration-setup/**'

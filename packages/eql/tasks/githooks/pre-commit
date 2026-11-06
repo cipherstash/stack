@@ -13,9 +13,26 @@
 # Unrelated commits skip the gate entirely, so this is a no-op for most commits.
 set -euo pipefail
 
-staged=$(git diff --cached --name-only --diff-filter=ACMRD)
+# Git runs a hook from the root of the working tree. In cipherstash/stack that
+# is the monorepo root, not this package, so the staged paths carry a
+# `packages/eql/` prefix the patterns below would never match, and `mise run`
+# would not find this package's tasks. List only the staged paths under this
+# package, relative to it, then work from the package root.
+#
+# The prefix is worked out from paths, not with `cd` and `git diff --relative`:
+# git exports GIT_DIR to a hook, and with GIT_DIR set and no GIT_WORK_TREE, git
+# takes the current directory as the top of the working tree, so after a `cd`
+# `--relative` strips nothing.
+package=$(cd "$(dirname "$0")/../.." && pwd -P)
+top=$(cd "$(git rev-parse --show-toplevel)" && pwd -P)
+relative=()
+if [ "$package" != "$top" ]; then
+  relative=("--relative=${package#"$top"/}/")
+fi
+staged=$(git diff --cached --name-only "${relative[@]}" --diff-filter=ACMRD)
+cd "$package"
 
-if echo "$staged" | grep -Eq '^(crates/eql-domains/|crates/eql-codegen/|src/v3/scalars/|crates/eql-bindings/src/v3/|crates/eql-bindings/bindings/|crates/eql-bindings/schema/)'; then
+if echo "$staged" | grep -Eq '^(crates/eql-domains/|crates/eql-codegen/|src/v3/scalars/|crates/eql-bindings/src/v3/|crates/eql-bindings/src/v4/|crates/eql-bindings/bindings/|crates/eql-bindings/schema/)'; then
   echo "pre-commit: catalog/generator/generated surface touched — verifying freshness…"
   mise run codegen:parity
   mise run types:check

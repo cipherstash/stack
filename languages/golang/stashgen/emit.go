@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/format"
 	"strings"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // emit writes the generated file from the model. It writes gofmt-ready Go and
@@ -20,6 +22,14 @@ func emit(f *genFile) ([]byte, error) {
 			}
 		}
 	}
+	if err := planQueries(f); err != nil {
+		return nil, err
+	}
+	// Planning adds imports (encoding/json for a document field): a clash
+	// it makes is refused here, before anything is written.
+	if f.imports.err != nil {
+		return nil, f.imports.err
+	}
 	w := &writer{}
 	w.header(f)
 	w.encryptedType(f)
@@ -30,6 +40,7 @@ func emit(f *genFile) ([]byte, error) {
 	w.codec(f)
 	w.functions(f)
 	w.fieldEntries(f)
+	w.paths(f)
 	for i := range f.models {
 		w.model(f, &f.models[i])
 	}
@@ -61,7 +72,7 @@ func (w *writer) header(f *genFile) {
 	w.b.WriteString(f.imports.block())
 	w.nl()
 	w.p("// Stops compiling when the library does not accept this version of generated file.")
-	w.p("const _ = gensupport.GeneratedVersion1")
+	w.p("const _ = gensupport.GeneratedVersion2")
 	for _, n := range f.notices {
 		w.nl()
 		w.b.WriteString(wrapComment(n, 80))
@@ -162,17 +173,20 @@ func (w *writer) printMethods(f *genFile) {
 }
 
 // opaqueShape writes the struct an opaque value crosses the binding as: the
-// struct's fields by their declared names, as one JSON document.
+// struct's fields by their declared names, written as one storage blob and
+// read from a blob or from the JSON document an earlier release wrote.
 func (w *writer) opaqueShape(f *genFile) {
 	if !f.decl.Opaque {
 		return
 	}
 	w.nl()
-	w.p("// The opaque value as it crosses the binding: one JSON document of the")
-	w.p("// struct's fields, by their declared names.")
+	w.p("// The opaque value as it crosses the binding: one storage blob of the")
+	w.p("// struct's fields, by their declared names. A field a blob lacks (one")
+	w.p("// added since it was sealed) reads as its zero value. The json names read")
+	w.p("// a value an earlier release sealed as a JSON document.")
 	w.p("type %s struct {", f.opaqueShape)
 	for _, g := range f.opaque {
-		w.p("\t%s %s `json:%q`", g.GoName, g.typeExpr, g.Name)
+		w.p("\t%s %s `vc:%q json:%q`", g.GoName, g.typeExpr, g.Name+",default", g.Name)
 	}
 	w.p("}")
 }
@@ -208,36 +222,58 @@ func (w *writer) shapeStruct(name string, fields []shapeField) {
 }
 
 // kindExpr is the gensupport kind of a Go type: the wire type the field
-// seals as. The mapping is vcffi's: int8, int16 and int32 travel as int32,
-// int and int64 as int64, the unsigned ones likewise, []byte as bytes. A
-// composite is untyped and seals as one self-describing value.
+// seals as. Each integer type has the kind of its own width (int8 is Int8,
+// int and int64 are Int64, uint8 and byte Uint8, uint, uint64 and uintptr
+// Uint64), []byte is Bytes, time.Time is Timestamp, and encrypt's Date,
+// Int128, Uint128 and Decimal have their own kinds. A composite is untyped
+// and seals as one self-describing value.
 func kindExpr(t GoType) string {
-	switch t.Kind {
-	case KindString:
-		return "gensupport.String"
-	case KindBool:
-		return "gensupport.Bool"
-	case KindBytes:
-		return "gensupport.Bytes"
-	case KindInt:
-		switch t.Basic {
-		case "int8", "int16", "int32":
-			return "gensupport.Int32"
-		}
-		return "gensupport.Int64"
-	case KindUint:
-		switch t.Basic {
-		case "uint8", "uint16", "uint32", "byte":
-			return "gensupport.Uint32"
-		}
-		return "gensupport.Uint64"
-	case KindFloat:
-		if t.Basic == "float32" {
-			return "gensupport.Float32"
-		}
-		return "gensupport.Float64"
+	return "gensupport." + kindConst(wireKind(t))
+}
+
+// kindConst is the name of a wire kind's constant in gensupport.
+func kindConst(k record.Kind) string {
+	switch k {
+	case record.Bool:
+		return "Bool"
+	case record.Int8:
+		return "Int8"
+	case record.Int16:
+		return "Int16"
+	case record.Int32:
+		return "Int32"
+	case record.Int64:
+		return "Int64"
+	case record.Int128:
+		return "Int128"
+	case record.Uint8:
+		return "Uint8"
+	case record.Uint16:
+		return "Uint16"
+	case record.Uint32:
+		return "Uint32"
+	case record.Uint64:
+		return "Uint64"
+	case record.Uint128:
+		return "Uint128"
+	case record.Float32:
+		return "Float32"
+	case record.Float64:
+		return "Float64"
+	case record.Decimal:
+		return "Decimal"
+	case record.Date:
+		return "Date"
+	case record.Timestamp:
+		return "Timestamp"
+	case record.String:
+		return "String"
+	case record.Bytes:
+		return "Bytes"
+	case record.JSON:
+		return "JSON"
 	}
-	return "gensupport.Untyped"
+	return "Untyped"
 }
 
 func indexExpr(idx Index) string {
@@ -268,8 +304,9 @@ func (w *writer) declaration(f *genFile) {
 		}
 	}
 	for i, fld := range fields {
+		last := i == len(fields)-1
 		end := "."
-		if i == len(fields)-1 && fld.Identity == "" {
+		if last && fld.Identity == "" && fld.Null == NotNull && fld.TargetOptions == nil {
 			end = ""
 		}
 		switch fld.Verb {
@@ -280,7 +317,18 @@ func (w *writer) declaration(f *genFile) {
 		case VerbEncrypt:
 			w.p("\tEncrypt(%q, %s)%s", fld.Name, kindExpr(fld.GoType), end)
 		case VerbEncryptInto:
-			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kindExpr(fld.GoType), fld.EQLType, end)
+			kind := kindExpr(fld.GoType)
+			if wire, ok := f.intoKinds[fld.Name]; ok {
+				kind = "gensupport." + kindConst(wire)
+			}
+			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kind, fld.EQLType, end)
+			if fld.TargetOptions != nil {
+				end = "."
+				if last && fld.Identity == "" && fld.Null == NotNull {
+					end = ""
+				}
+				w.p("\tOptions(%q, %s)%s", fld.Name, targetOptionsExpr(fld.TargetOptions), end)
+			}
 		case VerbEncryptIndex, VerbIndex:
 			call := "EncryptIndex"
 			if fld.Verb == VerbIndex {
@@ -294,12 +342,44 @@ func (w *writer) declaration(f *genFile) {
 		}
 		if fld.Identity != "" {
 			end = "."
-			if i == len(fields)-1 {
+			if i == len(fields)-1 && fld.Null == NotNull {
 				end = ""
 			}
 			w.p("\tIdentity(%q, %q)%s", fld.Name, fld.Identity, end)
 		}
+		if fld.Null != NotNull {
+			end = "."
+			if i == len(fields)-1 {
+				end = ""
+			}
+			w.p("\tNull(%q, %s)%s", fld.Name, nullExpr(fld.Null), end)
+		}
 	}
+}
+
+// targetOptionsExpr is an EQL type's options as a gensupport.TargetOptions
+// literal.
+func targetOptionsExpr(o *record.TargetOptions) string {
+	var parts []string
+	if o.SealedRoot != nil {
+		parts = append(parts, fmt.Sprintf("SealedRoot: gensupport.Ptr(%t)", *o.SealedRoot))
+	}
+	if o.Ordered != nil {
+		quoted := make([]string, len(o.Ordered))
+		for i, p := range o.Ordered {
+			quoted[i] = fmt.Sprintf("%q", p)
+		}
+		parts = append(parts, "Ordered: []string{"+strings.Join(quoted, ", ")+"}")
+	}
+	return "gensupport.TargetOptions{" + strings.Join(parts, ", ") + "}"
+}
+
+// nullExpr is a null mode's constant in gensupport.
+func nullExpr(n Null) string {
+	if n == NullSQL {
+		return "gensupport.NullSQL"
+	}
+	return "gensupport.NullSealed"
 }
 
 // literal writes a composite literal: one line with one entry, one entry per
@@ -355,6 +435,11 @@ func (w *writer) source(f *genFile) {
 	} else {
 		entries := make([]string, len(f.fields))
 		for i, g := range f.fields {
+			if g.nullable() {
+				// nil crosses as nil, not as a nil pointer.
+				entries[i] = fmt.Sprintf("%q: gensupport.Deref(v.%s)", g.Name, g.GoName)
+				continue
+			}
 			entries[i] = fmt.Sprintf("%q: v.%s", g.Name, g.GoName)
 		}
 		w.literal("\t\t", "return gensupport.Values{", entries, "}")
@@ -390,17 +475,35 @@ func (w *writer) seal(f *genFile) {
 		w.p("\t\t}")
 	}
 	for _, g := range f.fields {
-		switch g.Verb {
-		case VerbPassthrough, VerbContextField:
-		case VerbEncryptInto:
-			w.p("\t\te.%s = %s(rec[%q].EQL)", g.GoName, g.outputType, g.Name)
-		default:
-			entries := make([]string, len(g.outputs))
-			for i, o := range g.outputs {
-				entries[i] = fmt.Sprintf("%s: rec[%q].%s", o.name, g.Name, o.name)
-			}
-			w.literal("\t\t", fmt.Sprintf("e.%s = %s{", g.GoName, g.outputType), entries, "}")
+		if g.Stored() {
+			continue
 		}
+		if g.Null == NullSQL {
+			// A nil stores nothing: the record has no entry, and the
+			// member stays nil, so its columns hold SQL NULL.
+			w.p("\t\tif o, ok := rec[%q]; ok {", g.Name)
+			if g.Verb == VerbEncryptInto {
+				w.p("\t\t\tv := %s(o.EQL)", g.outputType)
+			} else {
+				entries := make([]string, len(g.outputs))
+				for i, o := range g.outputs {
+					entries[i] = fmt.Sprintf("%s: o.%s", o.name, o.name)
+				}
+				w.literal("\t\t\t", fmt.Sprintf("v := %s{", g.outputType), entries, "}")
+			}
+			w.p("\t\t\te.%s = &v", g.GoName)
+			w.p("\t\t}")
+			continue
+		}
+		if g.Verb == VerbEncryptInto {
+			w.p("\t\te.%s = %s(rec[%q].EQL)", g.GoName, g.outputType, g.Name)
+			continue
+		}
+		entries := make([]string, len(g.outputs))
+		for i, o := range g.outputs {
+			entries[i] = fmt.Sprintf("%s: rec[%q].%s", o.name, g.Name, o.name)
+		}
+		w.literal("\t\t", fmt.Sprintf("e.%s = %s{", g.GoName, g.outputType), entries, "}")
 	}
 	w.p("\t\treturn e, nil")
 	w.p("\t},")
@@ -413,22 +516,48 @@ func (w *writer) open(f *genFile) {
 		w.p("\t},")
 		return
 	}
-	entries := make([]string, len(f.fields))
-	for i, g := range f.fields {
+	output := func(g genField, e string) string {
 		switch g.Verb {
 		case VerbPassthrough, VerbContextField:
-			entries[i] = fmt.Sprintf("%q: {Value: e.%s}", g.Name, g.GoName)
+			return fmt.Sprintf("{Value: %s}", e)
 		case VerbEncryptInto:
-			entries[i] = fmt.Sprintf("%q: {EQL: e.%s}", g.Name, g.GoName)
-		default:
-			parts := make([]string, len(g.outputs))
-			for n, o := range g.outputs {
-				parts[n] = fmt.Sprintf("%s: e.%s.%s", o.name, g.GoName, o.name)
-			}
-			entries[i] = fmt.Sprintf("%q: {%s}", g.Name, strings.Join(parts, ", "))
+			return fmt.Sprintf("{EQL: %s}", e)
 		}
+		parts := make([]string, len(g.outputs))
+		for n, o := range g.outputs {
+			parts[n] = fmt.Sprintf("%s: %s.%s", o.name, e, o.name)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	}
-	w.literal("\t\t", "return gensupport.Record{", entries, "}")
+	var entries []string
+	var absent []genField
+	for _, g := range f.fields {
+		if g.Null == NullSQL {
+			absent = append(absent, g)
+			continue
+		}
+		entries = append(entries, fmt.Sprintf("%q: %s", g.Name, output(g, "e."+g.GoName)))
+	}
+	if len(absent) == 0 {
+		w.literal("\t\t", "return gensupport.Record{", entries, "}")
+		w.p("\t},")
+		return
+	}
+	w.literal("\t\t", "rec := gensupport.Record{", entries, "}")
+	for _, g := range absent {
+		// A nil member stored nothing: the record leaves it out, and it
+		// opens as nil.
+		w.p("\t\tif e.%s != nil {", g.GoName)
+		// An EQL value is a slice and is dereferenced; an output struct's
+		// fields are read through the pointer.
+		member := "e." + g.GoName
+		if g.Verb == VerbEncryptInto {
+			member = "*" + member
+		}
+		w.p("\t\t\trec[%q] = gensupport.Output%s", g.Name, output(g, member))
+		w.p("\t\t}")
+	}
+	w.p("\t\treturn rec")
 	w.p("\t},")
 }
 
@@ -460,6 +589,37 @@ func (w *writer) value(f *genFile) {
 			if g.Verb == VerbIndex {
 				// An index-only field stores no ciphertext, so nothing opens
 				// for it: the struct gets the field's zero value.
+				continue
+			}
+			if g.GoType.Kind == KindJSONValue {
+				// A document of a Go type is read back with encoding/json,
+				// explicitly, into the type the struct declares.
+				call := "GetDocument"
+				if g.nullable() {
+					call = "GetDocumentPtr"
+				}
+				w.p("\t\tif v.%s, err = gensupport.%s[%s](vals, %q); err != nil {", g.GoName, call, g.valueExpr, g.Name)
+				fail()
+				w.p("\t\t}")
+				continue
+			}
+			if g.nullable() && g.definedScalar() {
+				// The engine returns the underlying type, or nil; the
+				// conversion to the defined type is the struct's own.
+				w.p("\t\traw%s, err := gensupport.GetPtr[%s](vals, %q)", g.GoName, g.GoType.Basic, g.Name)
+				w.p("\t\tif err != nil {")
+				fail()
+				w.p("\t\t}")
+				w.p("\t\tif raw%s != nil {", g.GoName)
+				w.p("\t\t\tv%s := %s(*raw%s)", g.GoName, g.valueExpr, g.GoName)
+				w.p("\t\t\tv.%s = &v%s", g.GoName, g.GoName)
+				w.p("\t\t}")
+				continue
+			}
+			if g.nullable() {
+				w.p("\t\tif v.%s, err = gensupport.GetPtr[%s](vals, %q); err != nil {", g.GoName, g.valueExpr, g.Name)
+				fail()
+				w.p("\t\t}")
 				continue
 			}
 			if g.Sealed() && g.definedScalar() {
@@ -518,58 +678,257 @@ func (w *writer) fieldEntries(f *genFile) {
 		return
 	}
 	w.nl()
+	for _, g := range sealed {
+		if g.isJSON() {
+			w.b.WriteString(wrapComment(fmt.Sprintf("%s provides operations for the sealed fields of %s. Each entry binds queries and encrypts updates using its field's declaration.", f.fieldsVar, f.typeName), 80))
+			break
+		}
+	}
 	w.p("var %s = struct {", f.fieldsVar)
 	for _, g := range sealed {
 		w.p("\t%s %s", g.GoName, g.fieldType)
 	}
 	w.p("}{")
 	for _, g := range sealed {
-		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.typeExpr, f.declVar, g.Name)
+		if g.isJSON() {
+			constructor := "NewField"
+			if g.holdsStruct {
+				constructor = "NewDocumentField"
+			}
+			w.p("\t%s: new%s(gensupport.%s[%s](%s, %q)),", g.GoName, g.fieldType, constructor, g.valueExpr, f.declVar, g.Name)
+			continue
+		}
+		w.p("\t%s: %s{gensupport.NewField[%s](%s, %q)},", g.GoName, g.fieldType, g.valueExpr, f.declVar, g.Name)
 	}
 	w.p("}")
 	for _, g := range sealed {
 		w.nl()
+		if g.isJSON() {
+			w.jsonEntry(g, f.pathsVar)
+			continue
+		}
 		w.p("type %s struct {", g.fieldType)
-		w.p("\tfield gensupport.Field[%s]", g.typeExpr)
+		w.p("\tfield gensupport.Field[%s]", g.valueExpr)
 		w.p("}")
 		w.nl()
-		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.typeExpr, g.outputType)
-		switch {
-		case g.Verb == VerbEncryptInto:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\treturn %s(out.EQL), err", g.outputType)
-		case len(g.outputs) == 1:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\treturn %s{%s: out.%s}, err", g.outputType, g.outputs[0].name, g.outputs[0].name)
-		default:
-			w.p("\tout, err := f.field.Encrypt(ctx, c, v)")
-			w.p("\tif err != nil {")
-			w.p("\t\treturn %s{}, err", g.outputType)
-			w.p("\t}")
-			parts := make([]string, len(g.outputs))
-			for i, o := range g.outputs {
-				parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
-			}
-			w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
-		}
+		w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
+		w.sealedOutput(g, "f.field.Encrypt(ctx, c, v)")
 		w.p("}")
-		if g.queryType != "" {
+		if g.Null == NullSealed {
+			// The update of one column to nil: a sealed null is a value,
+			// so writing SQL NULL would not store it.
 			w.nl()
-			w.p("func (f %s) Query(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.typeExpr, g.queryType)
-			w.p("\tout, err := f.field.Query(ctx, c, v)")
-			w.p("\treturn %s(out.EQL), err", g.queryType)
+			w.b.WriteString(wrapComment(fmt.Sprintf("EncryptNull seals nil for %s, as long as a value, for an update that sets the column to nil. Write what it returns, not SQL NULL: the field stores nil as a sealed null.", g.GoName), 80))
+			w.p("func (f %s) EncryptNull(ctx context.Context, c *encrypt.Cipher) (%s, error) {", g.fieldType, g.outputType)
+			w.sealedOutput(g, "f.field.EncryptNull(ctx, c)")
 			w.p("}")
 		}
-		for _, o := range g.outputs {
-			if o.index == "" {
-				continue
-			}
+		for _, q := range g.queries {
 			w.nl()
-			w.p("func (f %s) %s(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, o.name, g.typeExpr, o.typeExpr)
-			w.p("\treturn f.field.%s(ctx, c, v)", o.name)
-			w.p("}")
+			w.query(g, q)
+			if g.Null == NullSealed && q.operator.Name == "eq" && !q.operator.Pair && !q.operator.Probabilistic {
+				// A sealed nil stores the term every nil of the field
+				// shares, so eq answers for nil too.
+				w.nl()
+				w.b.WriteString(wrapComment(fmt.Sprintf("%sNull derives the %s query for nil: the term every stored nil of the field shares, so it finds the rows whose value is absent.", q.method, q.operator.Name), 80))
+				w.p("func (f %s) %sNull(ctx context.Context, c *encrypt.Cipher) (%s, error) {", g.fieldType, q.method, q.resultType)
+				w.p("\tterm, err := f.field.NullTerm(ctx, c, %q)", q.operator.Name)
+				w.p("\treturn %s(term), err", q.resultType)
+				w.p("}")
+			}
 		}
 	}
+}
+
+// sealedOutput writes the body of a method that seals through call, a
+// gensupport.Field method returning an Output, and converts the Output to
+// the field's output type.
+func (w *writer) sealedOutput(g genField, call string) {
+	w.p("\tout, err := %s", call)
+	switch {
+	case g.Verb == VerbEncryptInto:
+		w.p("\treturn %s(out.EQL), err", g.outputType)
+	case len(g.outputs) == 1:
+		w.p("\treturn %s{%s: out.%s}, err", g.outputType, g.outputs[0].name, g.outputs[0].name)
+	default:
+		w.p("\tif err != nil {")
+		w.p("\t\treturn %s{}, err", g.outputType)
+		w.p("\t}")
+		parts := make([]string, len(g.outputs))
+		for i, o := range g.outputs {
+			parts[i] = fmt.Sprintf("%s: out.%s", o.name, o.name)
+		}
+		w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
+	}
+}
+
+// queryMethod is one generated method for an operator the engine answers on
+// a field.
+type queryMethod struct {
+	method     string // "Eq", "Between", "Matches"
+	operator   Operator
+	resultType string // "encrypt.EqualityTerm", "encrypt.Range[encrypt.OreTerm]", "encrypt.MatchQuery[string]"
+	termType   string // for a range, the bound's type: "encrypt.OreTerm"; for an EQL matches query, the query type: "eql.TextMatchQuery"
+}
+
+// planQueries picks each sealed field's query methods from the operators the
+// engine answers on it: one method for each, named for the operator, whose
+// result is the Go type of what the operator's term is. An operator the SDK
+// has no Go type for stops the generator, naming the field, rather than
+// leaving the field without a query the engine answers.
+func planQueries(f *genFile) error {
+	for i := range f.fields {
+		g := &f.fields[i]
+		g.queries = nil
+		if g.isJSON() {
+			// A document's operators have methods of their own: see
+			// jsonEntry.
+			if err := planJSON(f, g); err != nil {
+				return err
+			}
+			continue
+		}
+		for _, op := range g.operators {
+			q, err := queryFor(g, op)
+			if err != nil {
+				return fieldErr(f.typeName, g.GoName, "%v", err)
+			}
+			g.queries = append(g.queries, q)
+		}
+		unqueried, err := indexesAnswer(g)
+		if err != nil {
+			return fieldErr(f.typeName, g.GoName, "%v", err)
+		}
+		for _, n := range unqueried {
+			f.notices = append(f.notices, g.GoName+": "+n)
+			f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
+		}
+	}
+	return nil
+}
+
+// indexesAnswer checks a field's indexes against the operators the engine
+// answers on it.
+//
+// It refuses a probabilistic query on an index-only field: the query's rows
+// are checked by decrypting them with Verify, and an index-only field
+// stores no ciphertext, so Verify could never pass and every real match
+// would be thrown away.
+//
+// It returns a notice for each index the engine answers no operator
+// through on the field: the index stores a term no generated method can
+// query. That is an ore or ope index on bytes (the engine stores it and
+// answers the orderings over integers, floats, text, decimals, dates and
+// timestamps only), or a second
+// order index beside the one the engine already answers the orderings
+// with. Storing it is allowed, since a program may compare the stored terms
+// itself, but an order term tells anyone who reads the column how its
+// values order, so the generator says so.
+func indexesAnswer(g *genField) ([]string, error) {
+	if g.Verb != VerbEncryptIndex && g.Verb != VerbIndex {
+		return nil, nil
+	}
+	answers := map[IndexName]string{}
+	for _, op := range g.operators {
+		if op.Probabilistic && g.Verb == VerbIndex {
+			return nil, fmt.Errorf("the %s index answers %s, whose rows are checked by decrypting them with Verify, and an index-only field stores no ciphertext to decrypt; seal it as well (encrypt,index=%s)", op.Index, op.Name, op.Index)
+		}
+		if _, ok := answers[op.Index]; !ok {
+			answers[op.Index] = op.Name
+		}
+	}
+	var notices []string
+	for _, ix := range g.Indexes {
+		if _, ok := answers[ix.Name]; ok {
+			continue
+		}
+		why := ""
+		if ix.Name == IndexOre || ix.Name == IndexOpe {
+			why = ": the orderings are answered over integers, floats, text, decimals, dates and timestamps only"
+			for _, other := range []IndexName{IndexOre, IndexOpe} {
+				if op, ok := answers[other]; ok && other != ix.Name {
+					why = fmt.Sprintf(": the %s index already answers %s and the other orderings", other, op)
+				}
+			}
+		}
+		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.valueExpr, why))
+	}
+	return notices, nil
+}
+
+func queryFor(g *genField, op Operator) (queryMethod, error) {
+	q := queryMethod{method: operatorMethod(op.Name), operator: op}
+	if !isIdent(q.method) || q.method == "Encrypt" {
+		return q, fmt.Errorf("the engine answers the operator %q, which has no Go method name", op.Name)
+	}
+	if g.Verb == VerbEncryptInto {
+		// The term of every operator on an EQL type is the type's query
+		// value.
+		switch {
+		case g.queryType == "":
+			return q, fmt.Errorf("the engine answers %s on %s, which has no query type", op.Name, g.EQLType)
+		case op.Pair:
+			return q, fmt.Errorf("the engine answers %s on %s with two values, and an EQL query value is one", op.Name, g.EQLType)
+		case op.Probabilistic && (op.Index != IndexMatch || g.GoType.Kind != KindString):
+			return q, fmt.Errorf("the engine answers %s on %s with a probabilistic term through the %s index, and the SDK verifies only a match index over a string", op.Name, g.EQLType, op.Index)
+		case op.Probabilistic:
+			// The query value is the type's, and the query keeps what Verify
+			// and TargetLimit need, as a MatchQuery does.
+			q.resultType = "encrypt.EQLMatchQuery[" + g.queryType + ", " + g.valueExpr + "]"
+			q.termType = g.queryType
+			return q, nil
+		}
+		q.resultType = g.queryType
+		return q, nil
+	}
+	termType := map[IndexName]string{IndexEquality: "encrypt.EqualityTerm", IndexOre: "encrypt.OreTerm", IndexOpe: "encrypt.OpeTerm"}[op.Index]
+	switch {
+	case op.Probabilistic && op.Index == IndexMatch && !op.Pair && g.GoType.Kind == KindString:
+		q.resultType = "encrypt.MatchQuery[" + g.valueExpr + "]"
+	case op.Probabilistic || termType == "":
+		return q, fmt.Errorf("the engine answers %s through the %s index, and the SDK has no Go type for that query", op.Name, op.Index)
+	case op.Pair && op.Index != IndexEquality:
+		q.resultType = "encrypt.Range[" + termType + "]"
+		q.termType = termType
+	case op.Pair:
+		return q, fmt.Errorf("the engine answers %s with two values through the %s index, and the SDK has no Go type for that range", op.Name, op.Index)
+	default:
+		q.resultType = termType
+	}
+	return q, nil
+}
+
+// operatorMethod is the Go method for an operator: its name with the first
+// letter upper case, eq -> Eq, between -> Between.
+func operatorMethod(name string) string {
+	if name == "" {
+		return ""
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// query writes one operator's method on a field's entry.
+func (w *writer) query(g genField, q queryMethod) {
+	recv := fmt.Sprintf("func (f %s) %s(ctx context.Context, c *encrypt.Cipher, ", g.fieldType, q.method)
+	switch {
+	case q.operator.Probabilistic:
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the %s query for v. Its answer can hold rows that do not match: decrypt the rows it fetches and keep those Verify reports true.", q.method, q.operator.Name), 80))
+		w.p("%sv %s) (%s, error) {", recv, g.valueExpr, q.resultType)
+		if g.Verb == VerbEncryptInto {
+			w.p("	return gensupport.EQLMatches[%s](ctx, f.field, c, v)", q.termType)
+		} else {
+			w.p("	return gensupport.Matches(ctx, f.field, c, v)")
+		}
+	case q.operator.Pair:
+		w.p("%slo, hi %s) (%s, error) {", recv, g.valueExpr, q.resultType)
+		w.p("	low, high, err := f.field.Range(ctx, c, %q, lo, hi)", q.operator.Name)
+		w.p("	return %s{Low: low, High: high}, err", q.resultType)
+	default:
+		w.p("%sv %s) (%s, error) {", recv, g.valueExpr, q.resultType)
+		w.p("	term, err := f.field.Term(ctx, c, %q, v)", q.operator.Name)
+		w.p("	return %s(term), err", q.resultType)
+	}
+	w.p("}")
 }
 
 func (w *writer) model(f *genFile, m *genModel) {
@@ -639,4 +998,623 @@ func joinNames(names []string) string {
 		return names[0]
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// isJSON reports whether the field is stored as a JSONSearch document:
+// a json.RawMessage, or a struct, map or slice type, sealed into an EQL type.
+func (g genField) isJSON() bool {
+	return g.Verb == VerbEncryptInto && (g.GoType.Kind == KindJSON || g.GoType.Kind == KindJSONValue)
+}
+
+// jsonOperators are the operators a document field answers, and what each
+// is a method of.
+var jsonOperators = map[string]bool{
+	"contains": true, "contained_by": true, "eq_at": true, "selector": true,
+	"subtree": true, "children": true, "child_count": true,
+	"lt_at": true, "lte_at": true, "gt_at": true, "gte_at": true, "between_at": true,
+	"element_match": true, "match": true,
+}
+
+// planJSON checks a document field's operators against the methods the
+// generator writes for them, and names each ordered path's accessor.
+func planJSON(f *genFile, g *genField) error {
+	document := false
+	for _, op := range g.operators {
+		if !jsonOperators[op.Name] {
+			return fieldErr(f.typeName, g.GoName, "the engine answers %s on %s, which the generator has no method for", op.Name, g.EQLType)
+		}
+		document = document || op.Name == "selector"
+	}
+	// The engine answers selector for a field whose type stores a json_tree
+	// document; the leaf and entry types below are that family's.
+	if !document {
+		return fieldErr(f.typeName, g.GoName, "the engine answers no document operator on %s, and the generator writes document fields of JsonSearch only", g.EQLType)
+	}
+	// The engine answers match on every document field: what a predicate
+	// may use is decided when it is compiled, not by the tag. A document
+	// field with none is the engine and the generator disagreeing. This is
+	// the one rule: jsonEntry writes Match on every field it passes.
+	if !answers(g, "match") {
+		return fieldErr(f.typeName, g.GoName, "the engine answers no match on %s: the generator and its engine disagree, which is a bug in this stashgen", g.EQLType)
+	}
+	g.jsonPaths = nil
+	seen := map[string]string{}
+	given := map[string]bool{}
+	if g.TargetOptions != nil {
+		for _, path := range g.TargetOptions.Ordered {
+			if given[path] {
+				return fieldErr(f.typeName, g.GoName, "the ordered path %s is given twice", path)
+			}
+			given[path] = true
+			name, err := jsonPathName(path)
+			if err != nil {
+				return fieldErr(f.typeName, g.GoName, "%v", err)
+			}
+			if prior, ok := seen[name]; ok {
+				return fieldErr(f.typeName, g.GoName, "the ordered paths %s and %s both name the accessor At.%s; order one of them only", prior, path, name)
+			}
+			seen[name] = path
+			g.jsonPaths = append(g.jsonPaths, jsonPath{name: name, path: path})
+		}
+	}
+	// The engine answers the orderings on a field that orders a path. A
+	// tag that orders one and gets none is the engine and the generator
+	// disagreeing: refused, rather than written as a field with no At.
+	if len(g.jsonPaths) > 0 && !answers(g, "lt_at") {
+		return fieldErr(f.typeName, g.GoName, "the tag orders %d paths, and the engine answers no ordering (lt_at) on %s: the generator and its engine disagree, which is a bug in this stashgen", len(g.jsonPaths), g.EQLType)
+	}
+	// An array whose elements have an ordered member gets an accessor
+	// under Elements, named as At names a path, whose Match tests members
+	// of one element together. An array with no ordered member gets none:
+	// Match there could test nothing. A root array ($[*]) is Root. An
+	// array whose keys give no name, or whose name another array's keys
+	// give too, gets no accessor and a notice naming its ordered paths:
+	// the tag stays valid, and At is written as it is for any other field.
+	//
+	// Each accessor's members are named under Paths too, nested as the
+	// JSON nests them: Paths.<Field>.Visits.At for $.visits[*].at. A key
+	// that gives no Go name there, or a name that would stand for two
+	// paths (two keys that give one name, or a member that is also the
+	// object or array above another member), is the same case: the arrays
+	// it touches get no accessor and a notice.
+	g.jsonArrays = nil
+	arrays := g.TargetOptions.ElementArrays()
+	names := make([]string, len(arrays))
+	count := map[string]int{}
+	for i, a := range arrays {
+		names[i] = jsonArrayName(a.Path)
+		if names[i] != "" {
+			count[names[i]]++
+		}
+	}
+	why := make([]string, len(arrays))
+	leaves := make([][]jsonLeaf, len(arrays))
+	for i, a := range arrays {
+		switch {
+		case names[i] == "":
+			why[i] = "its keys give no Go accessor name"
+		case count[names[i]] > 1:
+			why[i] = "another array's keys give the same accessor name, Elements." + names[i]
+		default:
+			leaves[i], why[i] = arrayLeaves(a)
+		}
+	}
+	pathsWhy(f.pathsVar+"."+g.GoName, leaves, why)
+	for i, a := range arrays {
+		if why[i] == "" {
+			ja := jsonArray{name: names[i], path: a.Path, members: a.Members, marker: g.fieldType + "Elements" + names[i], leaves: leaves[i]}
+			for j := range ja.leaves {
+				ja.leaves[j].typeExpr = "any"
+				if g.orderedType != nil {
+					ja.leaves[j].typeExpr = g.orderedType(ja.leaves[j].path)
+				}
+			}
+			g.jsonArrays = append(g.jsonArrays, ja)
+			continue
+		}
+		paths := make([]string, len(a.Members))
+		for j, m := range a.Members {
+			paths[j] = a.Path + "." + m
+		}
+		n := fmt.Sprintf("no Elements accessor for the elements of %s (ordered %s): %s. Their orderings under At are written, and Match on them is not.", a.Path, strings.Join(paths, ", "), why[i])
+		f.notices = append(f.notices, g.GoName+": "+n)
+		f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
+	}
+	if len(g.jsonArrays) > 0 && !answers(g, "element_match") {
+		return fieldErr(f.typeName, g.GoName, "the tag orders members of %d arrays' elements, and the engine answers no element_match on %s: the generator and its engine disagree, which is a bug in this stashgen", len(g.jsonArrays), g.EQLType)
+	}
+	return nil
+}
+
+// answers reports whether the engine answers op on the field.
+func answers(g *genField, op string) bool {
+	for _, o := range g.operators {
+		if o.Name == op {
+			return true
+		}
+	}
+	return false
+}
+
+// jsonPathName is an ordered path's accessor name: its keys in Go case,
+// wildcard steps dropped. $.age is Age, $.visits[*].at is VisitsAt, $.a.1
+// is A1, and $ is Root. An ordered path names no position (the engine
+// refuses one), so a step of digits is an object key.
+func jsonPathName(path string) (string, error) {
+	if path == "$" {
+		return "Root", nil
+	}
+	var b strings.Builder
+	for _, step := range strings.FieldsFunc(strings.TrimPrefix(path, "$"), func(r rune) bool { return r == '.' || r == '[' || r == ']' }) {
+		if step == "*" {
+			continue
+		}
+		for _, word := range strings.Split(step, "_") {
+			if word != "" {
+				b.WriteString(strings.ToUpper(word[:1]) + word[1:])
+			}
+		}
+	}
+	name := b.String()
+	if name == "" || !isIdent(name) || name[0] < 'A' || name[0] > 'Z' {
+		return "", fmt.Errorf("the ordered path %s has no Go accessor name: its keys give no name that starts with a letter", path)
+	}
+	return name, nil
+}
+
+// jsonArrayName is an array's accessor name under Elements, named as
+// jsonPathName names a path: $.visits[*] is Visits, and a root array, $[*]
+// or $[*][*], is Root. "" for an array whose keys give no name.
+func jsonArrayName(path string) string {
+	if strings.Trim(strings.TrimPrefix(path, "$"), "[*]") == "" {
+		return "Root"
+	}
+	name, err := jsonPathName(path)
+	if err != nil {
+		return ""
+	}
+	return name
+}
+
+// jsonKeyName is one key's name in Paths, named as jsonPathName names a
+// path: emergency_contacts is EmergencyContacts. "" for a key that gives
+// no name starting with a letter.
+func jsonKeyName(key string) string {
+	var b strings.Builder
+	for _, word := range strings.Split(key, "_") {
+		if word != "" {
+			b.WriteString(strings.ToUpper(word[:1]) + word[1:])
+		}
+	}
+	name := b.String()
+	if !isIdent(name) || name[0] < 'A' || name[0] > 'Z' {
+		return ""
+	}
+	return name
+}
+
+// jsonSteps are a tag-spelled path's keys, each with the wildcards that
+// follow it: $.extra.contacts[*] is extra and contacts[*]. Wildcards
+// before the first key, as in $[*].name, belong to no key and are dropped.
+func jsonSteps(path string) []string {
+	rest := strings.TrimPrefix(path, "$")
+	for strings.HasPrefix(rest, "[") {
+		end := strings.IndexByte(rest, ']')
+		if end < 0 {
+			break
+		}
+		rest = rest[end+1:]
+	}
+	var steps []string
+	for _, step := range strings.Split(strings.TrimPrefix(rest, "."), ".") {
+		if step != "" {
+			steps = append(steps, step)
+		}
+	}
+	return steps
+}
+
+// arrayLeaves are an array's members as Paths names them: each the array's
+// keys, then the member's. Or why the array's members have no names there:
+// a key that gives no Go name.
+func arrayLeaves(a record.ElementArray) ([]jsonLeaf, string) {
+	leaves := make([]jsonLeaf, 0, len(a.Members))
+	for _, m := range a.Members {
+		leaf := jsonLeaf{path: a.Path + "." + m, array: a.Path, member: m}
+		leaf.keys = append(jsonSteps(a.Path), strings.Split(m, ".")...)
+		for _, step := range leaf.keys {
+			key, _, _ := strings.Cut(step, "[")
+			name := jsonKeyName(key)
+			if name == "" {
+				return nil, fmt.Sprintf("the key %q of %s gives no Go name under Paths that starts with a letter", key, leaf.path)
+			}
+			leaf.names = append(leaf.names, name)
+		}
+		leaves = append(leaves, leaf)
+	}
+	return leaves, ""
+}
+
+// pathsWhy finds the names under prefix (Paths.Profile) that would stand
+// for two paths, and gives each array with such a path its reason in why.
+// Two paths meet where their names agree and their keys do not (a_b and
+// aB are both AB), or where one path's names run out along the other's (a
+// member $.a[*].b, and $.a[*].b.c below it): Paths could name one of them
+// only. An array that already has a reason is left out.
+func pathsWhy(prefix string, leaves [][]jsonLeaf, why []string) {
+	type at struct{ array, leaf int }
+	var all []at
+	for i := range leaves {
+		if why[i] != "" {
+			continue
+		}
+		for j := range leaves[i] {
+			all = append(all, at{i, j})
+		}
+	}
+	reasons := make([]string, len(leaves))
+	for x := range all {
+		for y := x + 1; y < len(all); y++ {
+			p, q := leaves[all[x].array][all[x].leaf], leaves[all[y].array][all[y].leaf]
+			n := min(len(p.names), len(q.names))
+			meet := -1
+			for k := range n {
+				if p.names[k] != q.names[k] {
+					break
+				}
+				if p.keys[k] != q.keys[k] || k == n-1 {
+					meet = k
+					break
+				}
+			}
+			if meet < 0 {
+				continue
+			}
+			reason := fmt.Sprintf("%s.%s would name both %s and %s, and can name one of them only", prefix, strings.Join(p.names[:meet+1], "."), p.path, q.path)
+			for _, i := range []int{all[x].array, all[y].array} {
+				if reasons[i] == "" {
+					reasons[i] = reason
+				}
+			}
+		}
+	}
+	for i, r := range reasons {
+		if r != "" {
+			why[i] = r
+		}
+	}
+}
+
+// jsonPath is one ordered path's accessor on a document field's entry.
+type jsonPath struct {
+	name string // "Age"
+	path string // "$.age"
+}
+
+// jsonArray is one array's accessor under a document field's Elements.
+type jsonArray struct {
+	name    string     // "ExtraContacts"
+	path    string     // "$.extra.contacts[*]"
+	members []string   // "relationship", "calls"
+	marker  string     // the array's type, which its predicates carry: "ProfileFieldElementsExtraContacts"
+	leaves  []jsonLeaf // its members as Paths names them
+}
+
+// jsonLeaf is one member of an array's elements, as Paths names it.
+type jsonLeaf struct {
+	path     string   // "$.extra.contacts[*].relationship"
+	array    string   // "$.extra.contacts[*]"
+	member   string   // "relationship"
+	keys     []string // "extra", "contacts[*]", "relationship"
+	names    []string // "Extra", "Contacts", "Relationship"
+	typeExpr string   // the member's Go type: "string", or "any"
+}
+
+// jsonEntry writes a document field's Fields entry: its query methods, a
+// method for each read, and an accessor under At for each ordered path,
+// whose methods are the orderings there.
+func (w *writer) jsonEntry(g genField, pathsVar string) {
+	answered := map[string]bool{}
+	for _, op := range g.operators {
+		answered[op.Name] = true
+	}
+	needle := g.queryType
+	// The document's companion types carry the names EQL v3 gives its own
+	// (eql_domains::JSON_TREE): the leaf operand puts Leaf before the
+	// needle's Query (JSONSearchQuery, JSONSearchLeafQuery), and the entry
+	// is named for the plaintext it holds one node of (JSONEntry, over
+	// public.eql_v4_json_entry), not for the stored type.
+	leaf := strings.TrimSuffix(needle, "Query") + "LeafQuery"
+	entry := "eql." + EQLGoName("JsonEntry")
+	elementsQuery := strings.TrimSuffix(needle, "Query") + "ElementsQuery"
+	predicateQuery := strings.TrimSuffix(needle, "Query") + "PredicateQuery"
+	// planJSON refuses ordered paths the engine answers no ordering on,
+	// and arrays it answers no element_match on.
+	ordered := len(g.jsonPaths) > 0
+	arrays := len(g.jsonArrays) > 0
+	field := "gensupport.Field[" + g.valueExpr + "]"
+
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s provides document queries and reads for the %s field.", g.fieldType, g.GoName), 80))
+	w.p("type %s struct {", g.fieldType)
+	w.p("\tfield %s", field)
+	if ordered {
+		w.p("\t// At has one accessor per path the field orders, whose methods")
+		w.p("\t// are the orderings there.")
+		w.p("\tAt %sAt", g.fieldType)
+	}
+	if arrays {
+		w.p("\t// Elements has one accessor per array whose elements have ordered")
+		w.p("\t// members, whose Match tests the members of one element together.")
+		w.p("\tElements %sElements", g.fieldType)
+	}
+	w.p("}")
+	w.nl()
+	w.p("func new%s(f %s) %s {", g.fieldType, field, g.fieldType)
+	if !ordered {
+		// planJSON writes an array's accessor only beneath an ordered path.
+		w.p("\treturn %s{field: f}", g.fieldType)
+	} else {
+		w.p("\treturn %s{", g.fieldType)
+		w.p("\t\tfield: f,")
+		w.p("\t\tAt: %sAt{", g.fieldType)
+		for _, p := range g.jsonPaths {
+			w.p("\t\t\t%s: %sPath{field: f, path: %q},", p.name, g.fieldType, p.path)
+		}
+		w.p("\t\t},")
+		if arrays {
+			w.p("\t\tElements: %sElements{", g.fieldType)
+			for _, a := range g.jsonArrays {
+				w.p("\t\t\t%s: %sArray[%s]{field: f, path: %q},", a.name, g.fieldType, a.marker, a.path)
+			}
+			w.p("\t\t},")
+		}
+		w.p("\t}")
+	}
+	w.p("}")
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("Encrypt seals one %s document for an update of its stored column.", g.GoName), 80))
+	w.p("func (f %s) Encrypt(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.valueExpr, g.outputType)
+	w.sealedOutput(g, "f.field.Encrypt(ctx, c, v)")
+	w.p("}")
+	recv := "func (f " + g.fieldType + ") "
+	if answered["contains"] {
+		w.nl()
+		doc := "Contains derives the query for documents that contain needle: col @> query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes; a Go string or a pointer to one is refused, as one JSON string is not JSON text, and so is a needle that writes JSON null (nil, or a nil pointer, map or slice). Each member it writes must be in the document, so a zero-valued struct field narrows the query to documents holding that zero: give a needle struct pointer fields, or omitempty, or use a map. Each array element of the needle must sit inside one element of the document's array."
+		switch {
+		case g.structElems:
+			doc += " A needle of the field's own type, " + g.valueExpr + ", is refused for that reason, and so is a pointer to it: each struct it holds writes its zero fields too. Write a needle type whose fields are pointers with omitempty, and pass a slice or map of it in place of " + g.valueExpr + " (a []VisitNeedle for a []Visit)."
+		case g.holdsStruct:
+			doc += " A needle of the field's own type, " + g.valueExpr + ", is refused for that reason, and so is a pointer to it: write a needle type whose fields are pointers with omitempty, or use a map."
+		}
+		w.b.WriteString(wrapComment(doc, 80))
+		w.p("%sContains(ctx context.Context, c *encrypt.Cipher, needle any) (%s, error) {", recv, needle)
+		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contains\", needle)", needle)
+		w.p("}")
+	}
+	if answered["contained_by"] {
+		w.nl()
+		w.b.WriteString(wrapComment("ContainedBy derives the query for documents contained by needle: col <@ query. needle is a json.RawMessage of JSON text, or a map, struct or slice that encoding/json writes (not a Go string or a pointer to one, nor a needle that writes JSON null); here a zero-valued field widens the query, admitting documents that hold that zero.", 80))
+		w.p("%sContainedBy(ctx context.Context, c *encrypt.Cipher, needle any) (%s, error) {", recv, needle)
+		w.p("\treturn gensupport.JSONQuery[%s](ctx, f.field, c, \"contained_by\", needle)", needle)
+		w.p("}")
+	}
+	if answered["eq_at"] {
+		w.nl()
+		w.b.WriteString(wrapComment("EqAt derives the query for documents holding the scalar v at path: col @> query. v is a Go string, number or bool, nil for JSON null, or a json.RawMessage of JSON text; a Go string is the JSON string it holds, never parsed as JSON. A wildcard step matches when any element holds it; a position ([2]) is refused, since the stored selector reads every position as the wildcard.", 80))
+		w.p("%sEqAt(ctx context.Context, c *encrypt.Cipher, path string, v any) (%s, error) {", recv, needle)
+		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, f.field, c, \"eq_at\", path, v)", needle)
+		w.p("}")
+	}
+	if answered["selector"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Selector prepares `->` at path: bind Selector() as col -> $1::text, and open the entries it returns with Open; encrypt.DecodeJSON reads each value into a Go type. A position ([2]) is refused; read one with Subtree.", 80))
+		w.p("%sSelector(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONSelection[%s], error) {", recv, entry)
+		w.p("\treturn gensupport.JSONSelect[%s](ctx, f.field, c, path)", entry)
+		w.p("}")
+	}
+	if answered["subtree"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Subtree prepares a read of the value at path: bind Tokens() as eql_v4.json_tree_subtree(col, $1::text[], budget), and open the rows it returns with Open or OpenOne; encrypt.DecodeJSON reads each value into a Go type.", 80))
+		w.p("%sSubtree(ctx context.Context, c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions) (encrypt.JSONRead[%s], error) {", recv, entry)
+		w.p("\treturn gensupport.JSONSubtree[%s](ctx, f.field, c, path, opts)", entry)
+		w.p("}")
+	}
+	if answered["children"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Children derives the token of the node at path, a path with no wildcard, which eql_v4.json_tree_children(col, $1::text) takes. Its rows are encrypted entries one level down.", 80))
+		w.p("%sChildren(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {", recv)
+		w.p("\treturn gensupport.JSONNodeToken(ctx, f.field, c, \"children\", path)")
+		w.p("}")
+	}
+	if answered["child_count"] {
+		w.nl()
+		w.b.WriteString(wrapComment("ChildCount derives the token of the node at path, which eql_v4.json_tree_child_count(col, $1::text) takes: zero for a scalar or an empty container, NULL where the row has no node there or for the sealed root.", 80))
+		w.p("%sChildCount(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {", recv)
+		w.p("\treturn gensupport.JSONNodeToken(ctx, f.field, c, \"child_count\", path)")
+		w.p("}")
+	}
+	// planJSON refuses a document field the engine answers no match on.
+	w.jsonMatch(recv, predicateQuery)
+	if arrays {
+		w.jsonElements(g, field, elementsQuery, pathsVar)
+	}
+	if !ordered {
+		return
+	}
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sAt names the declared ordered paths of %s. Use an accessor's Selector with its ordering query.", g.fieldType, g.GoName), 80))
+	w.p("type %sAt struct {", g.fieldType)
+	for _, p := range g.jsonPaths {
+		w.p("\t%s %sPath // %s", p.name, g.fieldType, p.path)
+	}
+	w.p("}")
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sPath is one ordered path of %s. Its orderings derive the leaf operand (eql_v4.query_json_leaf) a stored leaf's ordering term is compared with, and Selector the path's selector. At a path with no array step, compare col -> Selector() with the operand, and order by eql_v4.ord_term(col -> Selector()). At a wildcard path ([*]) col -> Selector() is an unspecified element of each row, so write the comparison over every match, EXISTS (SELECT 1 FROM eql_v4.json_tree_path_query(col, $sel) e WHERE e < $1::eql_v4.query_json_leaf), and order by the least or greatest match's term: (SELECT eql_v4.ord_term(e) FROM eql_v4.json_tree_path_query(col, $sel) e ORDER BY 1 LIMIT 1). Each operand is a Go number or string, or a json.RawMessage of JSON text. Numbers order as float64, so integers past 2^53 can tie; text orders case- and accent-folded.", g.fieldType, g.GoName), 80))
+	w.p("type %sPath struct {", g.fieldType)
+	w.p("\tfield %s", field)
+	w.p("\tpath  string")
+	w.p("}")
+	for _, op := range []struct{ name, method, sign, words string }{{"lt_at", "Lt", "<", "less than"}, {"lte_at", "Lte", "<=", "at most"}, {"gt_at", "Gt", ">", "greater than"}, {"gte_at", "Gte", ">=", "at least"}} {
+		if !answered[op.name] {
+			continue
+		}
+		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the operand that finds a leaf at this path %s v: (col -> $sel) %s $1::eql_v4.query_json_leaf, or at a wildcard path the same comparison over every match (see %sPath).", op.method, op.words, op.sign, g.fieldType), 80))
+		w.p("func (p %sPath) %s(ctx context.Context, c *encrypt.Cipher, v any) (%s, error) {", g.fieldType, op.method, leaf)
+		w.p("\treturn gensupport.JSONQueryAt[%s](ctx, p.field, c, %q, p.path, v)", leaf, op.name)
+		w.p("}")
+	}
+	if answered["between_at"] {
+		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("Between derives the two operands that find a leaf at this path from lo to hi, inclusive: (col -> $sel) >= Low AND (col -> $sel) <= High, or at a wildcard path the same over every match, with both bounds on one element (see %sPath).", g.fieldType), 80))
+		w.p("func (p %sPath) Between(ctx context.Context, c *encrypt.Cipher, lo, hi any) (encrypt.JSONRange[%s], error) {", g.fieldType, leaf)
+		w.p("\treturn gensupport.JSONBetweenAt[%s](ctx, p.field, c, p.path, lo, hi)", leaf)
+		w.p("}")
+	}
+	if answered["selector"] {
+		w.nl()
+		w.b.WriteString(wrapComment("Selector prepares `->` at this path: bind Selector() beside the ordering's operand, from the same path, as col -> $sel, or at a wildcard path as eql_v4.json_tree_path_query(col, $sel), whose matches are every element.", 80))
+		w.p("func (p %sPath) Selector(ctx context.Context, c *encrypt.Cipher) (encrypt.JSONSelection[%s], error) {", g.fieldType, entry)
+		w.p("\treturn gensupport.JSONSelect[%s](ctx, p.field, c, p.path)", entry)
+		w.p("}")
+	}
+}
+
+// jsonElements writes a document field's Elements: one accessor per array
+// whose elements have ordered members, each with Match, which derives the
+// operand eql_v4.json_tree_element_match takes.
+func (w *writer) jsonElements(g genField, field, query, pathsVar string) {
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sElements names the arrays of %s whose elements have ordered members. Each accessor's Match tests the members of one element together.", g.fieldType, g.GoName), 80))
+	w.p("type %sElements struct {", g.fieldType)
+	for _, a := range g.jsonArrays {
+		w.p("\t%s %sArray[%s] // %s: %s", a.name, g.fieldType, a.marker, a.path, strings.Join(a.members, ", "))
+	}
+	w.p("}")
+	for _, a := range g.jsonArrays {
+		under := append([]string{pathsVar, g.GoName}, a.leaves[0].names[:len(jsonSteps(a.path))]...)
+		w.nl()
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s is the array %s of %s, as a type: Elements.%s.Match takes an encrypt.ElementPredicate[%s], which encrypt.AtPath makes from a member under %s.", a.marker, a.path, g.GoName, a.name, a.marker, strings.Join(under, ".")), 80))
+		w.p("type %s struct{}", a.marker)
+	}
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%sArray is one array of %s whose elements have ordered members. E is the array's own type, which the predicates its Match takes carry.", g.fieldType, g.GoName), 80))
+	w.p("type %sArray[E any] struct {", g.fieldType)
+	w.p("\tfield %s", field)
+	w.p("\tpath  string")
+	w.p("}")
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("Match derives the operand that finds a row where one element of this array passes every predicate: eql_v4.json_tree_element_match(col, $1::eql_v4.query_json_elements). An EqAt and an ordering at the array's paths can each be answered by a different element; Match is answered by one. Make each predicate with encrypt.AtPath and a member of this array under %s, so a member of another array, or a value of another type, does not compile; or with Member, for a member named at run time. No predicates, and a zero ElementPredicate, are refused before the engine is asked.", pathsVar), 80))
+	w.p("//")
+	w.b.WriteString(wrapComment("Each comparison is of the member's ordering term, so Eq is an equality of folded values: text compares case- and accent-folded (\"sibling\" equals \"Sibling\"), and integers past 2^53 can tie. EqAt at a member's full path is exact, of any element.", 80))
+	w.p("//")
+	w.b.WriteString(wrapComment("The operand reads each array to opts.WildcardBound elements, 64 when it is 0. A row whose array is longer fails the query with SQLSTATE 22023 (invalid_parameter_value) rather than answer over part of it: raise the bound past the longest array. The function filters the rows a scan gives it, so narrow them with an indexed predicate first, such as @> on the same values.", 80))
+	w.p("func (a %sArray[E]) Match(ctx context.Context, c *encrypt.Cipher, opts encrypt.JSONReadOptions, predicates ...encrypt.ElementPredicate[E]) (%s, error) {", g.fieldType, query)
+	w.p("\treturn gensupport.JSONElementMatch[%s](ctx, a.field, c, a.path, opts, predicates)", query)
+	w.p("}")
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("Member is the comparisons of the member of this array's elements that member names, for a filter whose members are known only at run time: relationship, or address.city, written as the member is written below the array in the field's ordered paths. Its values are not checked by the compiler, and Match refuses a member the field does not order beneath this array, naming it, the array and the members the field orders there, before the engine is asked. Where the member is known when the program is written, use encrypt.AtPath and %s.", pathsVar), 80))
+	w.p("func (a %sArray[E]) Member(member string) encrypt.MemberTest[E, any] {", g.fieldType)
+	w.p("\treturn encrypt.AtPath(encrypt.NewPath[E, any](a.path, member))")
+	w.p("}")
+}
+
+// paths writes the file's Paths: for each document field with an Elements
+// accessor, the ordered members of its arrays, nested as the JSON nests
+// them. Paths has fields and no methods, so no JSON key is reserved: the
+// operations are on the types it holds and on Fields.
+func (w *writer) paths(f *genFile) {
+	var fields []genField
+	for _, g := range f.fields {
+		if g.isJSON() && len(g.jsonArrays) > 0 {
+			fields = append(fields, g)
+		}
+	}
+	if len(fields) == 0 {
+		return
+	}
+	// One tree per field; a node's children keep the order the tag gives.
+	type node struct {
+		name     string
+		children []*node
+		leaf     *jsonLeaf
+		marker   string
+	}
+	child := func(n *node, name string) *node {
+		for _, c := range n.children {
+			if c.name == name {
+				return c
+			}
+		}
+		c := &node{name: name}
+		n.children = append(n.children, c)
+		return c
+	}
+	// The function's result is named apart from every import, which a
+	// member's type may name in the body.
+	local := "paths"
+	for f.imports.paths[local] != "" {
+		local += "_"
+	}
+	root := &node{}
+	var assigns []string
+	for _, g := range fields {
+		top := child(root, g.GoName)
+		for _, a := range g.jsonArrays {
+			for i := range a.leaves {
+				leaf := &a.leaves[i]
+				n := top
+				for _, name := range leaf.names {
+					n = child(n, name)
+				}
+				n.leaf, n.marker = leaf, a.marker
+				assigns = append(assigns, fmt.Sprintf("\t%s.%s.%s = encrypt.NewPath[%s, %s](%q, %q)", local, g.GoName, strings.Join(leaf.names, "."), a.marker, leaf.typeExpr, leaf.array, leaf.member))
+			}
+		}
+	}
+	var tree func(n *node, indent string)
+	tree = func(n *node, indent string) {
+		for _, c := range n.children {
+			if c.leaf != nil {
+				w.p("%s%s encrypt.Path[%s, %s] // %s", indent, c.name, c.marker, c.leaf.typeExpr, c.leaf.path)
+				continue
+			}
+			w.p("%s%s struct {", indent, c.name)
+			tree(c, indent+"\t")
+			w.p("%s}", indent)
+		}
+	}
+	first := fields[0]
+	example := first.jsonArrays[0].leaves[0]
+	w.nl()
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s names the ordered members of the arrays of %s's documents, nested as the JSON nests them, for the element match: encrypt.AtPath(%s.%s.%s) makes the predicates %s.%s.Elements.%s.Match takes. Each path's type names its array and the member's Go type, so a predicate on another array's member, or with a value of another type, does not compile.", f.pathsVar, f.typeName, f.pathsVar, first.GoName, strings.Join(example.names, "."), f.fieldsVar, first.GoName, first.jsonArrays[0].name), 80))
+	w.p("var %s = func() (%s struct {", f.pathsVar, local)
+	tree(root, "\t")
+	w.p("}) {")
+	for _, a := range assigns {
+		w.p("%s", a)
+	}
+	w.p("\treturn %s", local)
+	w.p("}()")
+}
+
+// jsonMatch writes a document field's Match, which compiles a jsonpath
+// predicate into the operand eql_v4.json_tree_match and `@@` evaluate.
+func (w *writer) jsonMatch(recv, query string) {
+	w.nl()
+	for i, para := range []string{
+		"Match derives the operand for a jsonpath predicate over the document, as plaintext jsonb_path_match(col, predicate, vars) takes one: bind it as col @@ $1::eql_v4.query_json_predicate, or eql_v4.json_tree_match(col, $1::eql_v4.query_json_predicate). vars are the predicate's variables ($name): a map, a struct or a json.RawMessage that writes a JSON object, and an empty map when there are none. A nil vars is SQL NULL, as pgx and database/sql bind it over plaintext: the operand is empty, binds as NULL, and matches no row, as jsonb_path_match does with NULL vars.",
+		"The engine reads the predicate, and nothing in Go does: paths of .key, .\"quoted key\" and [*] steps; ==, !=, <, <=, > and >= between a path and a variable or a JSON literal; exists(path), and exists(path ? (@.m == $v && @.n > $w)) for several members of one array element; &&, || and !(…). Anything else is refused, before any term is derived, as an *encrypt.Diagnostic wrapping encrypt.ErrEncoding whose Reason, Construct and At name the refusal and the byte offset in predicate where it starts. An ordering at a path the tag does not order, or a member of a filter of more than one condition that it does not order, is refused wrapping encrypt.ErrTerm.",
+		"The tree is evaluated inside eql_v4.json_tree_match, which engages no index: every row the scan gives it is opened and tested. The per-operator methods engage the GIN index for @> (EqAt, Contains) and a btree on an ordered path's term (At.<Path>), so a query that needs an index writes those leaves with them, or narrows the rows with one beside Match.",
+		"A query returns jsonb_path_match's rows over the plaintext, and each row answers as it does, true, false or NULL, save five cases. Lax mode's unwrapping of an array the path names no [*] for is not applied: write [*]. Nor is its wrapping of a value that is not an array under [*]. A string compared with a number is false under == and true under !=, where jsonpath says unknown. Orderings, and filters of more than one condition, compare folded ordering terms: text case- and accent-folded, numbers as float64, so such a filter's == is of folded values; == elsewhere is exact. An ordering of a JSON null is NULL where jsonpath says false, except under an odd number of !, which returns the same rows; there the operand also asks that the node is not null, which tells the database which rows hold null at the path.",
+		"A filter of more than one condition reads each array to opts.WildcardBound elements, 64 when it is 0. A row whose array is longer fails the query with SQLSTATE 22023 (invalid_parameter_value) rather than answer over part of it: raise the bound past the longest array.",
+	} {
+		if i > 0 {
+			w.p("//")
+		}
+		w.b.WriteString(wrapComment(para, 80))
+	}
+	w.p("%sMatch(ctx context.Context, c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (%s, error) {", recv, query)
+	w.p("\treturn gensupport.JSONMatch[%s](ctx, f.field, c, predicate, vars, opts)", query)
+	w.p("}")
 }

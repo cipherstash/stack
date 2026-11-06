@@ -5,11 +5,12 @@ use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{MapReader, Reader, SequenceReader, Transcode, Visitor};
 use stack_encrypt::target::{self, CallerContext, ExpectedContext};
 use stack_encrypt::{
-    nonempty, Cipher, CipherText, ContextPiece, DecryptField, DecryptInto, Decryptable, Decryption,
-    Encrypt, EncryptFrom, Encryption, Error, IntoAad, IntoContext, MaybeEmpty, NonEmpty,
+    nonempty, CipherText, ContextPiece, DecryptField, DecryptInto, Decryptable, Decryption,
+    Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, PassthroughFrame,
     SealedValue, StackCipherText,
 };
 use std::sync::atomic::Ordering;
+use vitaminc_aead::plaintext::Sink;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Identifier {
@@ -59,7 +60,7 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for StoredLeaf {
         target::ciphertext().accepting().transcode()
     }
 }
-impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for StoredLeaf {
+impl<P: stack_encrypt::Decrypt + Send + 'static> DecryptInto<P> for StoredLeaf {
     type Context = CallerContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
         match SealedValue::from_bytes(&self.0) {
@@ -148,7 +149,7 @@ async fn canonical_ciphertext_opens_through_the_record() {
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
     let canonical = keyset
-        .encrypt(email.clone(), Identifier::email())
+        .encrypt_tree(email.clone(), Identifier::email())
         .await
         .unwrap();
     let probe = keyset
@@ -223,12 +224,13 @@ async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
 #[derive(Clone)]
 struct WithoutSerde(String);
 impl Encrypt for WithoutSerde {
-    fn encrypt_with_aad<'a, C: Cipher, A: IntoAad<'a>>(
-        self,
-        cipher: C,
-        aad: A,
-    ) -> Result<C::Ok, C::Error> {
-        self.0.encrypt_with_aad(cipher, aad)
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.0.visit(sink)
+    }
+}
+impl Encrypt for &WithoutSerde {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (&self.0).visit(sink)
     }
 }
 #[tokio::test]
@@ -248,7 +250,7 @@ async fn ciphertext_uses_plaintexts_native_contract_without_serde() {
         .unwrap();
     assert_eq!(
         opened, "native",
-        "a plaintext without Serde seals through its own Encrypt impl and opens canonically"
+        "a plaintext without Serde seals through its own Plaintext impl and opens canonically"
     );
     let text = String::from("borrowed");
     let result: StoredLeaf = keyset
@@ -298,7 +300,7 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
             .accepting()
     }
 }
-impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for FixedLeaf {
+impl<P: stack_encrypt::Decrypt + Send + 'static> DecryptInto<P> for FixedLeaf {
     type Context = ();
     fn decryption<K: 'static>(self, (): ()) -> Decryption<P, K> {
         self.0.decryption(nonempty!("fixed/leaf").into())
@@ -307,7 +309,7 @@ impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for FixedLeaf 
 
 #[tokio::test]
 async fn unit_context_target_supplies_its_own_context() {
-    use stack_encrypt::EncryptInto;
+    use stack_encrypt::target::legacy::EncryptInto;
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
     let text = String::from("fixed");
@@ -337,10 +339,9 @@ enum Stored {
     Value(SealedValue),
     List(Vec<Stored>),
     Object(Vec<(String, Stored)>),
-    Absent(SealedValue),
     EmptyList(SealedValue),
     EmptyObject(SealedValue),
-    Metadata(stack_encrypt::BoxedPassthrough),
+    Metadata(PassthroughFrame),
 }
 struct TreeVisitor;
 impl Visitor for TreeVisitor {
@@ -362,16 +363,13 @@ impl Visitor for TreeVisitor {
         }
         Ok(Stored::Object(output))
     }
-    fn absent(self, marker: SealedValue) -> Result<Stored, Error> {
-        Ok(Stored::Absent(marker))
-    }
     fn empty_sequence(self, marker: SealedValue) -> Result<Stored, Error> {
         Ok(Stored::EmptyList(marker))
     }
     fn empty_map(self, marker: SealedValue) -> Result<Stored, Error> {
         Ok(Stored::EmptyObject(marker))
     }
-    fn passthrough(self, value: stack_encrypt::BoxedPassthrough) -> Result<Stored, Error> {
+    fn passthrough(self, value: PassthroughFrame) -> Result<Stored, Error> {
         Ok(Stored::Metadata(value))
     }
 }
@@ -383,7 +381,6 @@ impl Stored {
             Self::Object(v) => {
                 CipherText::Map(v.into_iter().map(|(k, v)| (k, v.native())).collect())
             }
-            Self::Absent(v) => CipherText::None(v),
             Self::EmptyList(v) => CipherText::EmptySequence(v),
             Self::EmptyObject(v) => CipherText::EmptyMap(v),
             Self::Metadata(v) => CipherText::Passthrough(v),
@@ -441,7 +438,7 @@ fn native_readers_report_the_number_of_remaining_entries() {
         }
     }
 
-    let value = || CipherText::Passthrough(Box::new(7_u32) as stack_encrypt::BoxedPassthrough);
+    let value = || CipherText::Passthrough(common::passthrough(7_u32));
     let sequence: StackCipherText = CipherText::Sequence(vec![value(), value(), value()]);
     assert_eq!(
         sequence.read(LengthVisitor).unwrap(),
@@ -471,7 +468,7 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         ("empty".into(), vec![]),
     ]);
     let tree = keyset
-        .encrypt(value.clone(), nonempty!("document"))
+        .encrypt_tree(value.clone(), nonempty!("document"))
         .await
         .unwrap();
     let stored = tree.read(TreeVisitor).unwrap();
@@ -494,7 +491,10 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         "and opened with one retrieval"
     );
     // Transcoding keeps the authentication: changing a cryptographic map key fails.
-    let tree = keyset.encrypt(value, nonempty!("document")).await.unwrap();
+    let tree = keyset
+        .encrypt_tree(value, nonempty!("document"))
+        .await
+        .unwrap();
     let Stored::Object(mut entries) = tree.read(TreeVisitor).unwrap() else {
         panic!("object")
     };
@@ -507,7 +507,7 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         "a map key is part of its entry's authenticated context: renaming it fails to open"
     );
     let tree = keyset
-        .encrypt(HashMap::<String, String>::new(), nonempty!("document"))
+        .encrypt_tree(HashMap::<String, String>::new(), nonempty!("document"))
         .await
         .unwrap();
     let Stored::EmptyObject(marker) = tree.read(TreeVisitor).unwrap() else {
@@ -521,14 +521,14 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         opened.is_err(),
         "an empty-map marker is sealed under its context, not an unauthenticated empty container"
     );
-    let stored = CipherText::Passthrough(Box::new(17u32) as stack_encrypt::BoxedPassthrough)
+    let stored = CipherText::Passthrough(common::passthrough(17u32))
         .read(TreeVisitor)
         .unwrap();
     let Stored::Metadata(value) = stored else {
         panic!("metadata")
     };
     assert_eq!(
-        *value.downcast::<u32>().unwrap(),
+        common::passthrough_u32(&value),
         17,
         "passthrough metadata reaches the destination as it was given"
     );

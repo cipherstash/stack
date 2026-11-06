@@ -48,6 +48,12 @@ mod tests {
         errors.extend(boxed(variants![
             Error::Kms(_) => Error::Kms(crate::kms::Error::Unexpected("kms".into())),
             Error::Aead => Error::Aead,
+            Error::OpenedType { .. } => Error::OpenedType { expected: "i32" },
+            Error::JsonWrongEntry { .. } => Error::JsonWrongEntry {
+                expected: "the entry at the path asked for",
+            },
+            Error::JsonWildcardTruncated { .. } => Error::JsonWildcardTruncated { bound: 64 },
+            Error::JsonNotALeaf => Error::JsonNotALeaf,
             Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
@@ -62,6 +68,10 @@ mod tests {
             },
             Error::ResponseShape => Error::ResponseShape,
             Error::KeysetMismatch { .. } => Error::KeysetMismatch { left: a, right: b },
+            Error::KeysetLoad { .. } => Error::KeysetLoad {
+                keyset_id: a,
+                source: std::sync::Arc::new(Error::KeysetMismatch { left: a, right: b }),
+            },
             Error::ForeignKeyset { .. } => Error::ForeignKeyset {
                 expected: a,
                 found: b,
@@ -77,10 +87,28 @@ mod tests {
         ]));
         errors.extend(boxed(variants![
             TermError::Prf(_) => TermError::Prf(cause()),
-            TermError::Ore(_) => TermError::Ore(cllw_ore::Error),
+            TermError::Ore(_) => TermError::Ore(clww_ore::Error),
+            TermError::OreBlockTooLong => TermError::OreBlockTooLong,
+            TermError::OreBlockTrailingNul => TermError::OreBlockTrailingNul,
+            TermError::OreBlock(_) => TermError::OreBlock(cause()),
             TermError::InvalidOptions(_) => TermError::InvalidOptions("k out of range"),
             TermError::EmptyTermText => TermError::EmptyTermText,
+            TermError::NoEqualityTerm => TermError::NoEqualityTerm,
+            TermError::Normalize(_) => {
+                TermError::Normalize(vitaminc_normalize::NormalizeError::UnassignedCodePoint)
+            },
             TermError::Bytes(_) => TermError::Bytes(TermBytesError::OddMatchTermsLength(3)),
+            TermError::JsonPath(_) => TermError::JsonPath(crate::json::JsonPathError {
+                reason: "expected `$`",
+                at: 0,
+            }),
+            TermError::JsonTooDeep => TermError::JsonTooDeep,
+            TermError::JsonTooWide => TermError::JsonTooWide,
+            TermError::JsonWildcardTooWide => TermError::JsonWildcardTooWide,
+            TermError::JsonLeafNotOrdered => TermError::JsonLeafNotOrdered,
+            TermError::JsonPathNotOrdered => TermError::JsonPathNotOrdered,
+            TermError::JsonOrderingAtPosition => TermError::JsonOrderingAtPosition,
+            TermError::JsonValueNotScalar => TermError::JsonValueNotScalar,
         ]));
         errors.extend(boxed(variants![
             TermBytesError::WrongEqualityTermLength(_) => {
@@ -95,6 +123,9 @@ mod tests {
             },
             TermBytesError::MalformedCllwCiphertext(_) => {
                 TermBytesError::MalformedCllwCiphertext(3)
+            },
+            TermBytesError::MalformedOreBlockCiphertext(_) => {
+                TermBytesError::MalformedOreBlockCiphertext(3)
             },
         ]));
         errors.extend(boxed(variants![
@@ -149,6 +180,10 @@ mod tests {
                     ..MatchOptions::default()
                 }),
             },
+            PlanError::MatchCase { .. } => PlanError::MatchCase {
+                declared: "CaseInsensitive",
+                folds: false,
+            },
             PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {
                 first: "the plan",
                 second: "the call",
@@ -177,6 +212,12 @@ mod tests {
             Error::UntypedIndex { .. } => Error::UntypedIndex { field: name() },
             Error::Source { .. } => Error::bad_source(Reason::FieldMissing),
             Error::Record { .. } => Error::bad_record(Reason::NoCiphertextNode),
+            Error::Predicate { .. } => Error::Predicate {
+                field: Some(name()),
+                reason: Reason::JsonPredicateUnsupported,
+                construct: "`like_regex`",
+                at: 4,
+            },
             Error::Internal => Error::Internal,
             Error::Target(_) => Error::Target(TargetError::NoTargets { name: target() }),
             Error::Cipher(_) => Error::Cipher(crate::Error::Aead),
@@ -218,6 +259,11 @@ mod tests {
                 name: name(),
                 target: target(),
                 reason: "not JSON".into(),
+            },
+            TargetError::Json { .. } => TargetError::Json {
+                name: name(),
+                target: target(),
+                reason: "json_duplicate_key",
             },
             TargetError::Other(_) => TargetError::Other(Box::new(std::io::Error::other("boom"))),
         ]));
@@ -368,6 +414,20 @@ mod tests {
             ),
             (Box::new(Error::Aead), json!({})),
             (
+                Box::new(Error::OpenedType { expected: "i32" }),
+                json!({ "expected": "i32" }),
+            ),
+            (
+                Box::new(Error::JsonWrongEntry {
+                    expected: "the entry at the path asked for",
+                }),
+                json!({ "expected": "the entry at the path asked for" }),
+            ),
+            (
+                Box::new(Error::JsonWildcardTruncated { bound: 64 }),
+                json!({ "bound": 64 }),
+            ),
+            (
                 Box::new(LeafBytesError::UnknownVersion(9)),
                 json!({ "version": 9 }),
             ),
@@ -381,10 +441,23 @@ mod tests {
                 json!({ "len": 3 }),
             ),
             (Box::new(TermError::EmptyTermText), json!({})),
+            (Box::new(TermError::NoEqualityTerm), json!({})),
+            (
+                Box::new(TermError::Normalize(
+                    vitaminc_normalize::NormalizeError::UnassignedCodePoint,
+                )),
+                json!({}),
+            ),
             (
                 Box::new(TermBytesError::MalformedCllwCiphertext(5)),
                 json!({ "len": 5 }),
             ),
+            (
+                Box::new(TermBytesError::MalformedOreBlockCiphertext(7)),
+                json!({ "len": 7 }),
+            ),
+            (Box::new(TermError::OreBlockTooLong), json!({})),
+            (Box::new(TermError::OreBlockTrailingNul), json!({})),
             (
                 Box::new(TermBytesError::MatchPositionOutOfRange {
                     position: 900,
@@ -528,6 +601,23 @@ mod tests {
             (
                 Box::new(Error::UntypedIndex { field: name() }),
                 json!({ "field": "email" }),
+            ),
+            (
+                Box::new(
+                    Error::Predicate {
+                        field: None,
+                        reason: Reason::JsonPredicateUnsupported,
+                        construct: "`like_regex`",
+                        at: 4,
+                    }
+                    .in_field("email"),
+                ),
+                json!({
+                    "field": "email",
+                    "reason": "json_predicate_unsupported",
+                    "construct": "`like_regex`",
+                    "at": 4
+                }),
             ),
             (Box::new(Error::Internal), json!({})),
             (

@@ -37,8 +37,8 @@ fn tempdir(tag: &str) -> TempDir {
     TempDir(p)
 }
 
-/// Relative path (from repo root / generator out-root) of the v3 bindings dir.
-const V3_BINDINGS_DIR: &str = "crates/eql-bindings/src/v3";
+/// Relative paths (from repo root / generator out-root) of the bindings dirs.
+const BINDINGS_DIRS: [&str; 2] = ["crates/eql-bindings/src/v3", "crates/eql-bindings/src/v4"];
 
 /// Generate the bindings into `out`, then assert each written file is
 /// byte-for-byte identical to the committed copy under `repo_root()`.
@@ -72,7 +72,7 @@ fn rust_bindings_match_committed_files() {
 }
 
 /// The committed marker-bearing (`// @generated`) `.rs` file SET under
-/// `crates/eql-bindings/src/v3` must equal the set the generator emits. The
+/// `crates/eql-bindings/src/v3` and `src/v4` must equal the set the generator emits. The
 /// per-file parity test above only iterates the freshly-generated `written`
 /// set, so an ORPHANED committed generated file — a `<family>.rs` left behind
 /// after a catalog family rename/removal — is never visited and passes `cargo
@@ -91,16 +91,23 @@ fn committed_binding_set_has_no_orphans() {
 
     let generated: BTreeSet<String> = written
         .iter()
-        .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+        .map(|p| {
+            let rel = p.strip_prefix(out.path()).expect("written under out-root");
+            rel.to_str().unwrap().to_string()
+        })
         .collect();
 
-    let dir = root.join(V3_BINDINGS_DIR);
-    let committed: BTreeSet<String> = fs::read_dir(&dir)
-        .unwrap()
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rs"))
-        .filter(|p| is_generated(p, GeneratedKind::Rust).expect("read committed binding"))
-        .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+    let committed: BTreeSet<String> = BINDINGS_DIRS
+        .iter()
+        .flat_map(|dir| {
+            fs::read_dir(root.join(dir))
+                .unwrap()
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rs"))
+                .filter(|p| is_generated(p, GeneratedKind::Rust).expect("read committed binding"))
+                .map(|p| p.strip_prefix(&root).unwrap().to_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        })
         .collect();
 
     assert_eq!(
@@ -124,14 +131,18 @@ fn generate_bindings_is_deterministic_across_runs() {
     eql_codegen::bindings::generate_bindings(b.path()).expect("generate bindings b");
 
     let collect = |root: &Path| -> Vec<(String, String)> {
-        let base = root.join(V3_BINDINGS_DIR);
-        let mut files: Vec<(String, String)> = fs::read_dir(&base)
-            .unwrap()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rs"))
-            .map(|p| {
-                let name = p.file_name().unwrap().to_str().unwrap().to_string();
-                (name, fs::read_to_string(&p).unwrap())
+        let mut files: Vec<(String, String)> = BINDINGS_DIRS
+            .iter()
+            .flat_map(|dir| {
+                fs::read_dir(root.join(dir))
+                    .unwrap()
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("rs"))
+                    .map(|p| {
+                        let name = p.strip_prefix(root).unwrap().to_str().unwrap().to_string();
+                        (name, fs::read_to_string(&p).unwrap())
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
         files.sort();

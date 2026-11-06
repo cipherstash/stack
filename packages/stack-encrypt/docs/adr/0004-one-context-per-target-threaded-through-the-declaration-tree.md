@@ -3,6 +3,7 @@ status: accepted
 date: 2026-09-13
 revised: 2026-10-04
 extends: ADR-0003
+superseded-in-part-by: ADR-0009 (decision 5)
 ---
 
 # One context per target, threaded through the declaration tree
@@ -196,6 +197,13 @@ No code moves and nothing enforces this. It is the "convention and
 documentation" option below, applied to the one place the type system cannot
 reach: a probe and a stored term are the same bytes, and the term methods
 cannot tell which they are producing.
+
+> **Superseded by [ADR-0009](0009-operators-select-the-index-and-a-query-term-is-not-the-stored-term.md)
+> (2026-10-13).** The rule stands; the justification does not. A query term
+> and a stored term are the same bytes for HMAC equality, and for OPE only
+> when its order encoding is lossless; for every other index the query term
+> differs from the stored term, and ADR-0009 makes the operator, not the
+> index, the thing a caller names.
 
 ### 6. Targets declare their sources; `FfiValue` is not one
 

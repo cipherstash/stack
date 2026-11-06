@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "profile": "eql-json-v1",
+  "documents": [
+    "{\"name\":\"Alice\",\"age\":34,\"visits\":[{\"at\":3},{\"at\":1}]}",
+    "{\"name\":\"Alice\",\"age\":34,\"visits\":[{\"at\":3,\"where\":\"x\"},{\"at\":1}],\"tags\":[\"a\",\"b\"]}",
+    "{\"name\":\"Bob\",\"age\":7.5,\"nested\":{\"deep\":[[1,2],{}]},\"none\":null}",
+    "[1,\"two\",{\"three\":3}]",
+    "\"a scalar root\"",
+    "18446744073709551615",
+    "-9223372036854775808",
+    "-926809.5051008083",
+    "null",
+    "{}",
+    "[]"
+  ],
+  "invalid_documents": [
+    {
+      "text": "{\"secret\":1,\"secret\":2}",
+      "reason": "json_duplicate_key"
+    },
+    {
+      "text": "99999999999999999999",
+      "reason": "json_integer_range"
+    },
+    {
+      "text": "{\"secret\":",
+      "reason": "json_syntax"
+    },
+    {
+      "text": "",
+      "reason": "json_syntax"
+    }
+  ],
+  "predicate_refusals": [
+    {
+      "id": "text-the-grammar-does-not-read",
+      "predicate": "$.extra.country = $v",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_syntax",
+      "construct": "text the grammar does not read",
+      "at": 16,
+      "at_text": "= $v"
+    },
+    {
+      "id": "like-regex",
+      "predicate": "$.extra.country like_regex \"secret\"",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_unsupported",
+      "construct": "`like_regex`",
+      "at": 16,
+      "at_text": "like_regex \"secret\""
+    },
+    {
+      "id": "arithmetic",
+      "predicate": "$.weight + 1 == 2",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_unsupported",
+      "construct": "arithmetic (`+`, `-`, `*`, `/`, `%`)",
+      "at": 9,
+      "at_text": "+ 1 == 2"
+    },
+    {
+      "id": "a-method",
+      "predicate": "$.weight.size() == 1",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_unsupported",
+      "construct": "a method (`.name()`)",
+      "at": 8,
+      "at_text": ".size() == 1"
+    },
+    {
+      "id": "a-filter-outside-exists",
+      "predicate": "$.extra.preferred_languages[*] ? (@ == $v) == 1",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_unsupported",
+      "construct": "a filter outside `exists`",
+      "at": 31,
+      "at_text": "? (@ == $v) == 1"
+    },
+    {
+      "id": "in-a-filter",
+      "predicate": "exists($.extra.emergency_contacts[*] ? (@.relationship == $v || @.age > 1))",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_unsupported",
+      "construct": "`||` in a filter",
+      "at": 61,
+      "at_text": "|| @.age > 1))"
+    },
+    {
+      "id": "an-unknown-variable",
+      "predicate": "$.extra.country == $missing",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_unknown_variable",
+      "construct": "a variable",
+      "at": 19,
+      "at_text": "$missing"
+    },
+    {
+      "id": "a-value-an-ordering-cannot-take",
+      "predicate": "$.weight < $flag",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_value_type",
+      "construct": "a value",
+      "at": 11,
+      "at_text": "$flag"
+    },
+    {
+      "id": "an-object",
+      "predicate": "$.extra.country == $obj",
+      "vars": {
+        "obj": {
+          "secret-nz": 1
+        }
+      },
+      "reason": "json_predicate_value_type",
+      "construct": "a value",
+      "at": 19,
+      "at_text": "$obj"
+    },
+    {
+      "id": "at-a-wildcard",
+      "predicate": "$.extra.preferred_languages[*] != $v",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_predicate_not_equal_at_wildcard",
+      "construct": "`!=` at a path with a wildcard",
+      "at": 31,
+      "at_text": "!= $v"
+    },
+    {
+      "id": "a-position",
+      "predicate": "$.extra.preferred_languages[2] == $v",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_path_position",
+      "construct": "a position (`[2]`)",
+      "at": 27,
+      "at_text": "[2] == $v"
+    },
+    {
+      "id": "a-filter-with-no-wildcard",
+      "predicate": "exists($.address ? (@.postcode == $v))",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_path_no_wildcard",
+      "construct": "a filter on a path with no wildcard",
+      "at": 7,
+      "at_text": "$.address ? (@.postcode == $v))"
+    },
+    {
+      "id": "a-wildcard-in-a-member",
+      "predicate": "exists($.extra.emergency_contacts[*] ? (@.calls[*] == $v))",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_path_wildcard",
+      "construct": "a wildcard in a filter's member",
+      "at": 40,
+      "at_text": "@.calls[*] == $v))"
+    },
+    {
+      "id": "a-number-json-cannot-hold",
+      "predicate": "$.weight == 1e999",
+      "vars": {
+        "v": "secret-nz",
+        "flag": true
+      },
+      "reason": "json_syntax",
+      "construct": "a value",
+      "at": 12,
+      "at_text": "1e999"
+    },
+    {
+      "id": "too-deep",
+      "predicate": "((((((((((((((((((((((((((((((((($.a == 1)))))))))))))))))))))))))))))))))",
+      "reason": "json_predicate_too_deep",
+      "construct": "nesting",
+      "at": 33,
+      "at_text": "$.a == 1)))))))))))))))))))))))))))))))))"
+    }
+  ]
+}

@@ -4,5 +4,5 @@ use stack_encrypt::target::{indexed, Borrowed, Match};
 use stack_kms::FakeDataKeySource;
 
 fn main() {
-    let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(Match::default());
+    let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(Match);
 }

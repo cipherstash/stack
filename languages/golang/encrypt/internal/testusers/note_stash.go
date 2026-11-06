@@ -11,7 +11,7 @@ import (
 )
 
 // Stops compiling when the library does not accept this version of generated file.
-const _ = gensupport.GeneratedVersion1
+const _ = gensupport.GeneratedVersion2
 
 // Note prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
@@ -128,6 +128,7 @@ func (f NoteTextField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string)
 	return EncryptedNoteText{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
-func (f NoteTextField) Equality(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
-	return f.field.Equality(ctx, c, v)
+func (f NoteTextField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
 }

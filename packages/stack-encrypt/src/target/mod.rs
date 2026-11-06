@@ -1,5 +1,20 @@
 //! Targets declare operations; the cipher executes them through Vitamin C.
 //!
+//! The owned API uses [`EncryptTarget`] and [`DecryptSource`] declarations,
+//! executed by [`EncryptInto`] and [`DecryptFrom`]. Their `ContextInput`
+//! capabilities explicitly allow omission or supply; `Default` does not
+//! determine either. [`scalar_ciphertext`] is the first owned operation.
+//!
+//! A `Vec<S>` of owned plaintexts encrypts into a `Vec<T>` of any owned
+//! target, and decrypts back the same way. The collection uses the element
+//! target's `ContextInput`. The collection makes one logical batch of key
+//! requests. Each element is authenticated on its own.
+//!
+//! # Structural API during migration
+//!
+//! Existing derives, plans and dynamic targets still use the declarations
+//! below. Their borrowed convenience methods are isolated in [`legacy`].
+//!
 //! [`EncryptFrom<S>`] describes ciphertext and/or term operations and has an
 //! associated context type. It does not receive plaintext or a cipher. The
 //! cipher's `encrypt_as` executes that description, returning the existing
@@ -69,10 +84,12 @@
 //!
 //! # Collections and authentication
 //!
-//! `Vec<Target>` describes independently encrypted rows under the same context.
-//! Encrypting a plaintext `Vec<T>` into `StackCipherText` instead follows Vitamin
-//! C's native sequence model, including its authenticated empty marker. The same
-//! distinction applies to `Option<Target>` versus a native encrypted option.
+//! `Vec<Target>` describes rows that are each encrypted on their own, under
+//! the same context. That rule applies on the owned path, where a `Vec<S>` encrypts
+//! into a `Vec` of [`EncryptTarget`]s, and on the structural path. Encrypting a plaintext `Vec<T>` into `StackCipherText` instead
+//! follows Vitamin C's native sequence model, including its authenticated empty
+//! marker. The same distinction applies to `Option<Target>` versus a native
+//! encrypted option.
 //! Readers preserve marker ciphertext and map keys; changing a key changes the
 //! authenticated context when opening. Passthrough metadata and query terms are
 //! not presented as AEAD-authenticated values.
@@ -82,12 +99,15 @@
 //! Implement `encryption`/`decryption`, returning core-owned descriptions, in place
 //! of `encrypt_from`/`decrypt_into` methods that took a cipher. The derives do this
 //! automatically. Call `keyset.encrypt_as(&value, context)` and
-//! `cipher.decrypt_as(record, context)`, or import the blanket [`EncryptInto`] and
-//! [`DecryptFrom`] convenience traits for the existing source-side call syntax.
-//! `EncryptTarget` and `DecryptTarget` are no longer extension points.
+//! `cipher.decrypt_as(record, context)`, or import [`legacy::EncryptInto`] and
+//! [`legacy::DecryptFrom`] while migrating these declarations. New scalar
+//! targets implement [`EncryptTarget`] and [`DecryptSource`].
+mod collections;
 mod context;
+mod conversion;
 pub(crate) mod core;
 mod index;
+mod input;
 mod operations;
 mod pending;
 mod request;
@@ -95,21 +115,37 @@ mod source;
 pub mod transcode;
 mod tuples;
 
-pub(crate) use self::core::{decipher_pending, seal_pending};
+pub(crate) use self::core::{bind_pending, seal_pending};
 pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
 pub use index::{
-    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, TermSet,
-    Whole,
+    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Json, Match, Ope, Ore, OreBlock,
+    Select, TermSet, Whole,
 };
 #[cfg(feature = "dynamic")]
 pub(crate) use operations::chosen;
 pub(crate) use operations::inspect;
 pub use operations::{
-    ciphertext, equality, matching, ope, open, ore, passthrough, DecryptField, DecryptFrom,
-    DecryptInto, Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
+    ciphertext, equality, json_document, json_terms, matching, ope, open, ore, ore_block,
+    passthrough, scalar_ciphertext, DecryptField, DecryptInto, Decryptable, Decryption,
+    EncryptFrom, Encryption, Layout,
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 pub use tuples::JoinContext;
+
+// The old borrowed declarations remain for plans, derives and the dynamic
+// engine during the staged migration. New applications use the traits above.
+/// Borrowed conversion helpers for declarations not yet migrated to the owned API.
+/// Do not import these alongside the new conversion traits.
+pub mod legacy {
+    pub use super::operations::{
+        LegacyDecryptFrom as DecryptFrom, LegacyEncryptInto as EncryptInto,
+    };
+}
+pub use conversion::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget};
+pub use input::{
+    AcceptsContext, AllowsNoContext, ContextInput, NoCallerContext, OptionalContext,
+    RequiredContext, ScalarContext,
+};

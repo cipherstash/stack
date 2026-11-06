@@ -1,0 +1,83 @@
+error[E0277]: the trait bound `u32: AsRef<str>` is not satisfied
+ --> tests/ui/op_matches_on_integer.rs:8:47
+  |
+8 |     let _ = cipher.query(op::Matches, &34u32).on(&age_plan);
+  |                                               ^^ the trait `AsRef<str>` is not implemented for `u32`
+  |
+help: the following other types implement trait `Chooses<Op, In, At>`
+ --> src/plan/chain.rs
+  |
+  | / impl<Op, S, In, X, At> Chooses<Op, In, At> for ValuePlan<S, Indexed<X>>
+  | | where
+  | |     Op: DefaultIndex<In>,
+  | |     Op::Via: Clone,
+  | |     In: Input<Op::Arity, Plaintext = S>,
+  | |     S: 'static,
+  | |     X: Indexes<S> + Select<Op::Via, At>,
+  | |________________________________________^ `ValuePlan<S, Indexed<X>>` implements `Chooses<Op, In, At>`
+...
+  | / impl<Op, S, In, T> Chooses<Op, In, Whole> for ValuePlan<S, Typed<T>>
+  | | where
+  | |     Op: Operator,
+  | |     In: Input<Op::Arity, Plaintext = S>,
+  | |     S: 'static,
+  | |     T: Answers<Op, In> + LabelledTarget,
+  | |     Typed<T>: ValueLayout<S>,
+  | |_____________________________^ `ValuePlan<S, Typed<T>>` implements `Chooses<Op, In, Whole>`
+...
+  | / impl<Op, S, In, X, T> Chooses<Op, In, Whole> for ValuePlan<S, Laid<X, T>>
+  | | where
+  | |     Op: Operator,
+  | |     In: Input<Op::Arity, Plaintext = S>,
+... |
+  | |     X::Index: Supports<Op, In> + Default,
+  | |     Laid<X, T>: ValueShape<S>,
+  | |______________________________^ `ValuePlan<S, Laid<X, T>>` implements `Chooses<Op, In, Whole>`
+  = note: required for `stack_encrypt::op::Matches` to implement `DefaultIndex<u32>`
+  = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Equality>>` to implement `Chooses<stack_encrypt::op::Matches, u32, _>`
+
+error[E0277]: the trait bound `stack_encrypt::Equality: Select<stack_encrypt::Match, _>` is not satisfied
+ --> tests/ui/op_matches_on_integer.rs:8:47
+  |
+8 |     let _ = cipher.query(op::Matches, &34u32).on(&age_plan);
+  |                                               ^^ the trait `Select<stack_encrypt::Match, _>` is not implemented for `stack_encrypt::Equality`
+  |
+  = help: the following other types implement trait `Select<I, Position>`:
+            `(A, B)` implements `Select<A, At<0>>`
+            `(A, B)` implements `Select<B, At<1>>`
+            `(A, B, C)` implements `Select<A, At<0>>`
+            `(A, B, C)` implements `Select<B, At<1>>`
+            `(A, B, C)` implements `Select<C, At<2>>`
+            `(A, B, C, D)` implements `Select<A, At<0>>`
+            `(A, B, C, D)` implements `Select<B, At<1>>`
+            `(A, B, C, D)` implements `Select<C, At<2>>`
+          and $N others
+  = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Equality>>` to implement `Chooses<stack_encrypt::op::Matches, u32, _>`
+
+error[E0277]: the trait bound `stack_encrypt::Equality: Select<stack_encrypt::Match, _>` is not satisfied
+ --> tests/ui/op_matches_on_integer.rs:8:50
+  |
+8 |     let _ = cipher.query(op::Matches, &34u32).on(&age_plan);
+  |                                               -- ^^^^^^^^^ the trait `Select<stack_encrypt::Match, _>` is not implemented for `stack_encrypt::Equality`
+  |                                               |
+  |                                               required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `Select<I, Position>`:
+            `(A, B)` implements `Select<A, At<0>>`
+            `(A, B)` implements `Select<B, At<1>>`
+            `(A, B, C)` implements `Select<A, At<0>>`
+            `(A, B, C)` implements `Select<B, At<1>>`
+            `(A, B, C)` implements `Select<C, At<2>>`
+            `(A, B, C, D)` implements `Select<A, At<0>>`
+            `(A, B, C, D)` implements `Select<B, At<1>>`
+            `(A, B, C, D)` implements `Select<C, At<2>>`
+          and $N others
+  = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Equality>>` to implement `Chooses<stack_encrypt::op::Matches, u32, _>`
+note: required by a bound in `QueryBuilder::<'a, Op, F, K>::on`
+ --> src/plan/chain.rs
+  |
+  |     pub fn on<P, At>(self, plan: &P) -> QueryOp<'a, F, Op, P::Via, K>
+  |            -- required by a bound in this associated function
+  |     where
+  |         P: Chooses<Op, F, At>,
+  |            ^^^^^^^^^^^^^^^^^^ required by this bound in `QueryBuilder::<'a, Op, F, K>::on`

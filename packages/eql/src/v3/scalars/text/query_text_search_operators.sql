@@ -4,88 +4,88 @@
 -- REQUIRE: src/v3/scalars/text/query_text_search_functions.sql
 
 --! @file encrypted_domain/text/query_text_search_operators.sql
---! @brief Operators for eql_v3.query_text_search.
+--! @brief Operators for {{prefix}}.query_text_search.
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = eql_v3.query_text_search, RIGHTARG = public.eql_v3_text_search,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = {{prefix}}.query_text_search, RIGHTARG = public.{{prefix}}_text_search,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = eql_v3.query_text_search, RIGHTARG = public.eql_v3_text_search,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = {{prefix}}.query_text_search, RIGHTARG = public.{{prefix}}_text_search,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3.lt,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search,
+  FUNCTION = {{prefix}}.lt,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search,
   COMMUTATOR = >, NEGATOR = >=, RESTRICT = scalarltsel, JOIN = scalarltjoinsel
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3.lt,
-  LEFTARG = eql_v3.query_text_search, RIGHTARG = public.eql_v3_text_search,
+  FUNCTION = {{prefix}}.lt,
+  LEFTARG = {{prefix}}.query_text_search, RIGHTARG = public.{{prefix}}_text_search,
   COMMUTATOR = >, NEGATOR = >=, RESTRICT = scalarltsel, JOIN = scalarltjoinsel
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3.lte,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search,
+  FUNCTION = {{prefix}}.lte,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search,
   COMMUTATOR = >=, NEGATOR = >, RESTRICT = scalarlesel, JOIN = scalarlejoinsel
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3.lte,
-  LEFTARG = eql_v3.query_text_search, RIGHTARG = public.eql_v3_text_search,
+  FUNCTION = {{prefix}}.lte,
+  LEFTARG = {{prefix}}.query_text_search, RIGHTARG = public.{{prefix}}_text_search,
   COMMUTATOR = >=, NEGATOR = >, RESTRICT = scalarlesel, JOIN = scalarlejoinsel
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3.gt,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search,
+  FUNCTION = {{prefix}}.gt,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search,
   COMMUTATOR = <, NEGATOR = <=, RESTRICT = scalargtsel, JOIN = scalargtjoinsel
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3.gt,
-  LEFTARG = eql_v3.query_text_search, RIGHTARG = public.eql_v3_text_search,
+  FUNCTION = {{prefix}}.gt,
+  LEFTARG = {{prefix}}.query_text_search, RIGHTARG = public.{{prefix}}_text_search,
   COMMUTATOR = <, NEGATOR = <=, RESTRICT = scalargtsel, JOIN = scalargtjoinsel
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3.gte,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search,
+  FUNCTION = {{prefix}}.gte,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search,
   COMMUTATOR = <=, NEGATOR = <, RESTRICT = scalargesel, JOIN = scalargejoinsel
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3.gte,
-  LEFTARG = eql_v3.query_text_search, RIGHTARG = public.eql_v3_text_search,
+  FUNCTION = {{prefix}}.gte,
+  LEFTARG = {{prefix}}.query_text_search, RIGHTARG = public.{{prefix}}_text_search,
   COMMUTATOR = <=, NEGATOR = <, RESTRICT = scalargesel, JOIN = scalargejoinsel
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3.matches,
-  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_search,
+  FUNCTION = {{prefix}}.matches,
+  LEFTARG = public.{{prefix}}_text_search, RIGHTARG = {{prefix}}.query_text_search,
   RESTRICT = contsel, JOIN = contjoinsel
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3.matches,
-  LEFTARG = eql_v3.query_text_search, RIGHTARG = public.eql_v3_text_search,
+  FUNCTION = {{prefix}}.matches,
+  LEFTARG = {{prefix}}.query_text_search, RIGHTARG = public.{{prefix}}_text_search,
   RESTRICT = contsel, JOIN = contjoinsel
 );

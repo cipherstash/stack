@@ -27,7 +27,7 @@ var notes = []testusers.Note{
 }
 
 func TestContextFieldSealsEachRowUnderItsOwnContext(t *testing.T) {
-	c := deterministicClient(t)
+	c := contextFixtureClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
 
@@ -101,7 +101,7 @@ func TestContextFieldSealsEachRowUnderItsOwnContext(t *testing.T) {
 }
 
 func TestContextFieldQueriesNameTheContext(t *testing.T) {
-	c := deterministicClient(t)
+	c := contextFixtureClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
 	encrypted, err := testusers.EncryptNote(ctx, cipher, notes)
@@ -109,19 +109,19 @@ func TestContextFieldQueriesNameTheContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A query through a cipher with no context has nothing to derive under.
-	if _, err := testusers.NoteFields.Text.Equality(ctx, cipher, "hello"); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Cipher.Context") {
+	if _, err := testusers.NoteFields.Text.Eq(ctx, cipher, "hello"); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Cipher.Context") {
 		t.Fatalf("a query with no context: %v, want ErrEncoding naming Cipher.Context", err)
 	}
 	// Under the tenant it singles out that tenant's row.
 	acme := cipher.Context("tenants/acme")
-	probe, err := testusers.NoteFields.Text.Equality(ctx, acme, "hello")
+	probe, err := testusers.NoteFields.Text.Eq(ctx, acme, "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !probe.Equal(encrypted[0].Text.Equality) || probe.Equal(encrypted[1].Text.Equality) || probe.Equal(encrypted[2].Text.Equality) {
 		t.Error("the probe under tenants/acme does not single out acme's hello")
 	}
-	globex, err := testusers.NoteFields.Text.Equality(ctx, cipher.Context("tenants/globex"), "hello")
+	globex, err := testusers.NoteFields.Text.Eq(ctx, cipher.Context("tenants/globex"), "hello")
 	if err != nil || !globex.Equal(encrypted[1].Text.Equality) {
 		t.Fatalf("the probe under tenants/globex: %v", err)
 	}
@@ -185,9 +185,7 @@ func TestGeneratedCodeOpensTheRustContextFieldFixture(t *testing.T) {
 		t.Fatalf("seed: %v (%d bytes)", err, len(seedBytes))
 	}
 	c, err := encrypt.NewDeterministicClient(context.Background(), [32]byte(seedBytes))
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +221,7 @@ func TestGeneratedCodeOpensTheRustContextFieldFixture(t *testing.T) {
 				t.Fatalf("through the globex cipher: %v, want ErrContextMismatch", err)
 			}
 			// The term Go derives under the tenant is the bytes Rust stored.
-			eq, err := testusers.NoteFields.Text.Equality(ctx, cipher.Context(want.Tenant), want.Text)
+			eq, err := testusers.NoteFields.Text.Eq(ctx, cipher.Context(want.Tenant), want.Text)
 			if err != nil || !eq.Equal(stored.Text.Equality) {
 				t.Errorf("text equality: %v, equal=%v", err, eq.Equal(stored.Text.Equality))
 			}
@@ -233,4 +231,16 @@ func TestGeneratedCodeOpensTheRustContextFieldFixture(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A missing guest skips optional runs and fails required conformance.
+func contextFixtureClient(t *testing.T) *encrypt.Client {
+	t.Helper()
+	c, err := encrypt.NewDeterministicClient(context.Background(), testSeed)
+	skipMissingConformanceGuest(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
 }
