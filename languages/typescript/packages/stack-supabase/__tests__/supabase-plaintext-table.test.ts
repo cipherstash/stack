@@ -38,7 +38,7 @@ const notInitialized = (method: string, tableName: string) =>
     ? '[eql/v3]: decryptModel received a table this client was not initialized with — pass one of the tables given to Encryption({ schemas })'
     : `[eql/v3]: table "${tableName}" is not one this client was initialized with — pass a table given to Encryption({ schemas })`
 
-function failed(message: string) {
+function failed(type: 'EncryptionError' | 'DecryptionError', message: string) {
   const op = {
     withLockContext: () => op,
     audit: () => op,
@@ -47,7 +47,7 @@ function failed(message: string) {
       onrejected?: ((reason: unknown) => unknown) | null,
     ) =>
       Promise.resolve({
-        failure: { type: 'DecryptionError', message },
+        failure: { type, message },
       }).then(onfulfilled, onrejected),
   }
   return op
@@ -73,7 +73,12 @@ function registryEnforcingFactory() {
       (input: unknown, table: AnyV3Table | undefined, ...rest: unknown[]) => {
         calls.push(`${method}:${table?.tableName ?? '<none>'}`)
         if (table && !registered.includes(table.tableName)) {
-          return failed(notInitialized(method, table.tableName))
+          return failed(
+            method.toLowerCase().includes('decrypt')
+              ? 'DecryptionError'
+              : 'EncryptionError',
+            notInitialized(method, table.tableName),
+          )
         }
         return inner[method](input, table, ...rest)
       }
@@ -232,5 +237,71 @@ describe.each([
       'encryptModel:users',
       'bulkDecryptModels:users',
     ])
+  })
+})
+
+/**
+ * Passing a plaintext table's rows through must not become a way to hand the
+ * caller ciphertext typed as data. A row from a table with no encrypted columns
+ * can still carry an EQL payload — from an embedded relation to an encrypted
+ * table (`select('id, users(email)')`), or from a declared-mode table declared
+ * with `{}` whose real columns are `eql_v3_*` domains. Before the passthrough
+ * those reads failed; they must still fail, and say why, rather than succeed
+ * with an envelope where the caller expects a value.
+ */
+describe('plaintext table rows that carry ciphertext', () => {
+  const envelope = {
+    v: 3,
+    i: { t: 'users', c: 'email' },
+    c: 'mBbKmsMMkbKBSN',
+    hm: 'hm',
+  }
+
+  it.each([
+    [
+      'an embedded relation',
+      [{ id: 1, users: { email: envelope } }],
+      'users.email',
+    ],
+    [
+      'an embedded to-many relation',
+      [{ id: 1, users: [{ email: 'x' }, { email: envelope }] }],
+      'users[1].email',
+    ],
+    ['an undeclared encrypted column', [{ id: 1, action: envelope }], 'action'],
+  ])('refuses %s', async (_case, rows, path) => {
+    const { es } = await declaredClient(rows)
+    const { data, error } = await es
+      .from('audit_log')
+      .select('id, users(email)')
+
+    expect(data).toBeNull()
+    expect(error?.message).toContain(
+      'table "audit_log" has no encrypted columns',
+    )
+    expect(error?.message).toContain(`"${path}"`)
+    // Never the ciphertext itself.
+    expect(error?.message).not.toContain(envelope.c)
+    expect(error?.encryptionError?.type).toBe('DecryptionError')
+  })
+
+  it('refuses a single row the same way', async () => {
+    const { es } = await introspectedClient({ id: 1, action: envelope })
+    const { data, error } = await es
+      .from('audit_log')
+      .select('id, action')
+      .single()
+
+    expect(data).toBeNull()
+    expect(error?.message).toContain('"action"')
+  })
+
+  it('leaves a plaintext jsonb value that is not an envelope alone', async () => {
+    const rows = [{ id: 1, meta: { v: 3, note: 'not ciphertext' } }]
+    const { es } = await introspectedClient(rows)
+    const { data, error } = await es.from('audit_log').select('id, meta')
+
+    expect(error).toBeNull()
+    expect(data).toEqual(rows)
   })
 })

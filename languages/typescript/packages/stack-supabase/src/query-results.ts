@@ -1,9 +1,11 @@
 import {
   DATE_LIKE_CASTS,
+  isEncryptedPayload,
   logger,
   reconstructDatePaths,
   reconstructDateValue,
 } from '@cipherstash/stack/adapter-kit'
+import { EncryptionErrorTypes } from '@cipherstash/stack/errors'
 import { selectKeyToDbV3 } from './helpers'
 import {
   type EncryptionContext,
@@ -84,6 +86,56 @@ function postprocessDecryptedRow(
 }
 
 /**
+ * The path of the first EQL payload anywhere in `value`, or `null` if there is
+ * none. Paths read the way a caller wrote the select: `users.email`, or
+ * `users[1].email` inside an embedded to-many relation.
+ */
+function findEncryptedPayload(value: unknown, path: string): string | null {
+  if (isEncryptedPayload(value)) return path
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const found = findEncryptedPayload(value[i], `${path}[${i}]`)
+      if (found !== null) return found
+    }
+    return null
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value)) {
+      const found = findEncryptedPayload(child, path ? `${path}.${key}` : key)
+      if (found !== null) return found
+    }
+  }
+  return null
+}
+
+/**
+ * Refuse a plaintext table's rows if any of them carries ciphertext.
+ *
+ * A table with no encrypted columns skips decryption, but its rows can still
+ * hold an EQL payload: from an embedded relation to an encrypted table
+ * (`select('id, users(email)')`), or from a table declared with `{}` in declared
+ * mode whose real columns are `eql_v3_*` domains. Passing those through would
+ * hand the caller ciphertext typed as data — the hazard `assertTableIsModelled`
+ * exists to prevent — so fail instead. The message names the path, never the
+ * value.
+ */
+function assertNoCiphertext(rows: unknown, ctx: DecryptContext): void {
+  const path = Array.isArray(rows)
+    ? rows.reduce<string | null>(
+        (found, row) => found ?? findEncryptedPayload(row, ''),
+        null,
+      )
+    : findEncryptedPayload(rows, '')
+  if (path === null) return
+
+  const message = `[supabase v3]: table "${ctx.tableName}" has no encrypted columns, but the result holds an encrypted value at "${path}". It is not decrypted here: an embedded relation to an encrypted table is not supported (query that table directly), and in declared mode every encrypted column must be declared with a \`types.*\` factory.`
+  throw new EncryptionFailedError(message, {
+    type: EncryptionErrorTypes.DecryptionError,
+    message,
+  })
+}
+
+/**
  * Decrypt a PostgREST response into the caller's row type.
  *
  * Reads EQL v3 only. A column carrying legacy EQL v2 ciphertext is never in
@@ -127,17 +179,25 @@ export async function decryptResults<T extends object, TData = T[]>(
   const hasSelect = ctx.selectColumns !== null
   const hasMutationWithReturning = ctx.hasMutation && hasSelect
 
-  if (
-    (!hasSelect && !hasMutationWithReturning) ||
-    !ctx.columns.hasEncryptedColumns
-  ) {
-    // Nothing to decrypt, so the rows are returned as PostgREST sent them:
-    //  - no select (e.g. an insert without `.select()`) returns no row data;
-    //  - a plaintext table (no encrypted columns) has no ciphertext to decrypt,
-    //    and is not registered with the encryption client either — both engines
-    //    would refuse it as "a table this client was not initialized with"
-    //    (see `tableHasEncryptedColumns`). Nor is there a `Date` to rebuild:
-    //    `postprocessDecryptedRow` only touches encrypted columns.
+  if (hasSelect && !ctx.columns.hasEncryptedColumns) {
+    // A plaintext table (no encrypted columns) has nothing to decrypt, and is
+    // not registered with the encryption client either — both engines would
+    // refuse it as "a table this client was not initialized with" (see
+    // `tableHasEncryptedColumns`). Nor is there a `Date` to rebuild:
+    // `postprocessDecryptedRow` only touches encrypted columns. Return the rows
+    // as PostgREST sent them, once they are shown to hold no ciphertext.
+    assertNoCiphertext(result.data, ctx)
+    return {
+      data: result.data as TData,
+      error: null,
+      count: result.count ?? null,
+      status: result.status,
+      statusText: result.statusText,
+    }
+  }
+
+  if (!hasSelect && !hasMutationWithReturning) {
+    // No select means no data to decrypt (e.g., insert without .select())
     return {
       data: result.data as TData,
       error: null,
