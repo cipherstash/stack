@@ -28,9 +28,21 @@ describe('matchNeedleError', () => {
     expect(matchNeedleError('lovelace', ngram)).toBeUndefined()
   })
 
-  it('rejects a needle below the floor, naming the floor and the term', () => {
+  it('rejects a needle below the floor, naming the floor and the length', () => {
     expect(matchNeedleError('ad', ngram)).toMatch(/at least 3 characters/)
-    expect(matchNeedleError('ad', ngram)).toMatch(/"ad"/)
+    expect(matchNeedleError('ad', ngram)).toMatch(/has 2\b/)
+  })
+
+  // The search term is plaintext: a caller searching an encrypted column is
+  // searching for something sensitive. Adapters throw this reason to the caller
+  // and some log it, so it must never carry the term itself — only its length.
+  it('never echoes the search term in the message', () => {
+    for (const needle of ['Qz', 'Q', '\u{1F512}X', '"z']) {
+      const reason = matchNeedleError(needle, ngram)
+      expect(reason, needle).toBeTypeOf('string')
+      expect(reason, needle).not.toContain(needle)
+      expect(reason, needle).not.toContain(JSON.stringify(needle))
+    }
   })
 
   // The tokenizer counts Unicode CODEPOINTS. `'👍👍'` is 2 codepoints but 4

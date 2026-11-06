@@ -49,6 +49,19 @@ import type {
 
 export { EncryptionFailedError } from './query-encrypt'
 
+/**
+ * A log-safe description of a query failure: the error's class, plus the
+ * encryption error's `type` and `code` when there is one. These are fixed
+ * identifiers chosen by the library and the FFI, never caller data, so unlike
+ * the message they cannot carry a plaintext value.
+ */
+function describeFailure(err: unknown): string {
+  if (!(err instanceof Error)) return typeof err
+  if (!(err instanceof EncryptionFailedError)) return err.name
+  const { type, code } = err.encryptionError
+  return [err.name, type, code].filter(Boolean).join(': ')
+}
+
 /** Warn once per (op, column) that a `like`/`ilike` was delegated to `matches`. */
 const warnedLikeDelegation = new Set<string>()
 
@@ -598,8 +611,12 @@ export class EncryptedQueryBuilderImpl<
       } satisfies DecryptContext)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      // Log the failure's kind, never its message: this catch sees errors from
+      // every layer (query-term validation, encryption, PostgREST), and their
+      // messages may quote a plaintext value. The full message still reaches
+      // the caller in the returned `error`.
       logger.error(
-        `Supabase encrypted query failed on table "${this.tableName}": ${message}`,
+        `Supabase encrypted query failed on table "${this.tableName}" (${describeFailure(err)}).`,
       )
 
       // A failure inside any of the encrypt/decrypt steps above is thrown as an
@@ -894,7 +911,9 @@ export class EncryptedQueryBuilderImpl<
     const { needle, hasUnsupportedWildcard } = parseLikeNeedle(pattern)
     if (hasUnsupportedWildcard) {
       throw new Error(
-        `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an unescaped internal "%" or any unescaped "_"). Use matches("${column}", term) with a literal search term.`,
+        // The pattern is the caller's plaintext search term: name its length,
+        // never its content (CIP-5161).
+        `[supabase v3]: "${op}" ${[...pattern].length}-character pattern on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an unescaped internal "%" or any unescaped "_"). Use matches("${column}", term) with a literal search term.`,
       )
     }
     const key = `${op}:${column}`

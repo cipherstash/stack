@@ -537,7 +537,9 @@ function normalizeMatchNeedle(
     throw operatorError(
       ctx,
       method,
-      `cipherstash ${method}: pattern ${JSON.stringify(value)} on column "${ctx.columnName ?? 'unknown'}" has wildcards fuzzy free-text matching cannot honor (an interior "%" or any "_"). Pass a literal search term.`,
+      // The pattern is the caller's plaintext search term: name its length,
+      // never its content (CIP-5161).
+      `cipherstash ${method}: the ${[...value].length}-character pattern on column "${ctx.columnName ?? 'unknown'}" has wildcards fuzzy free-text matching cannot honor (an interior "%" or any "_"). Pass a literal search term.`,
     )
   }
   const match = ctx.meta.indexes.match
