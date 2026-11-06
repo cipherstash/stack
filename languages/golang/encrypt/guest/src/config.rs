@@ -694,16 +694,25 @@ mod tests {
             }
         ));
 
-        for (name, expected) in [
-            ("gcp-kms", KeyVendor::Gcp),
-            ("azure-key-vault", KeyVendor::Azure),
-        ] {
-            let vendor = with_vendor(vec![("key_vendor", s(name)), ("keyset_records", records())])
-                .unwrap()
-                .vendor
-                .unwrap();
-            assert_eq!(vendor.settings.vendor(), expected);
-        }
+        let gcp = with_vendor(vec![
+            ("key_vendor", s("gcp-kms")),
+            ("keyset_records", records()),
+        ])
+        .unwrap()
+        .vendor
+        .unwrap();
+        assert!(matches!(
+            gcp.settings,
+            VendorSettings::Gcp { endpoint: None }
+        ));
+        let azure = with_vendor(vec![
+            ("key_vendor", s("azure-key-vault")),
+            ("keyset_records", records()),
+        ])
+        .unwrap()
+        .vendor
+        .unwrap();
+        assert!(matches!(azure.settings, VendorSettings::Azure));
 
         let static_key = with_vendor(vec![
             ("key_vendor", s("static")),
@@ -714,7 +723,7 @@ mod tests {
         .unwrap()
         .vendor
         .unwrap();
-        assert_eq!(static_key.settings.vendor(), KeyVendor::Static);
+        assert!(matches!(static_key.settings, VendorSettings::Static { .. }));
         // The static key never prints.
         assert!(!format!("{static_key:?}").contains('7'));
     }

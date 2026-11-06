@@ -80,25 +80,11 @@ pub enum VendorSettings {
     Static { key_ref: String, key: KeyBytes },
 }
 
-impl VendorSettings {
-    /// The backend these settings build.
-    pub fn vendor(&self) -> KeyVendor {
-        match self {
-            Self::Aws { .. } => KeyVendor::Aws,
-            Self::Vault { .. } => KeyVendor::Vault,
-            Self::Gcp { .. } => KeyVendor::Gcp,
-            Self::Azure => KeyVendor::Azure,
-            Self::Static { .. } => KeyVendor::Static,
-        }
-    }
-}
-
 impl std::fmt::Debug for VendorSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The static key never prints.
-        f.debug_tuple("VendorSettings")
-            .field(&self.vendor().name())
-            .finish()
+        // No setting prints: the static key is one of them. The vendor
+        // prints once it is built ([`GuestVendor`]'s `Debug`).
+        f.debug_struct("VendorSettings").finish_non_exhaustive()
     }
 }
 
@@ -396,11 +382,92 @@ impl<C: CredentialImport> stack_kms_azure::TokenProvider for HostCredentials<C> 
     }
 }
 
-/// The guest's one key vendor backend: whichever the host configured.
-///
-/// One enum, not a type parameter, so that the instance's cipher has one
-/// type whatever the host chose at run time.
-pub enum GuestVendor<T, C> {
+/// Declare [`GuestVendor`] from one list of its vendor clients, and forward
+/// every [`KeyVendorBackend`] method to the configured one. The list is the
+/// only place the variants are named, so a new vendor client is one line
+/// here (plus its config keys in [`crate::config`] and its constructor in
+/// [`build`]).
+macro_rules! guest_vendors {
+    ($($variant:ident($client:ty),)+) => {
+        /// The guest's one key vendor backend: whichever the host configured.
+        ///
+        /// One enum, not a type parameter, so that the instance's cipher has
+        /// one type whatever the host chose at run time.
+        pub enum GuestVendor<T, C> {
+            $($variant($client),)+
+        }
+
+        impl<T, C> KeyVendorBackend for GuestVendor<T, C>
+        where
+            T: VendorTransport + Send + Sync,
+            C: CredentialImport,
+        {
+            fn vendor(&self) -> KeyVendor {
+                match self { $(Self::$variant(b) => b.vendor(),)+ }
+            }
+
+            fn supports_mode(&self, mode: KeyMode) -> bool {
+                match self { $(Self::$variant(b) => b.supports_mode(mode),)+ }
+            }
+
+            fn same_key(&self, a: &str, b: &str) -> bool {
+                match self { $(Self::$variant(v) => v.same_key(a, b),)+ }
+            }
+
+            async fn wrap(
+                &self,
+                key_ref: &str,
+                key: &KeyBytes,
+                aad: &[u8],
+            ) -> Result<Vec<u8>, Error> {
+                match self { $(Self::$variant(b) => b.wrap(key_ref, key, aad).await,)+ }
+            }
+
+            async fn unwrap(
+                &self,
+                key_ref: &str,
+                wrapped: &[u8],
+                aad: &[u8],
+            ) -> Result<KeyBytes, Error> {
+                match self { $(Self::$variant(b) => b.unwrap(key_ref, wrapped, aad).await,)+ }
+            }
+
+            async fn generate_wrapped(
+                &self,
+                key_ref: &str,
+                aad: &[u8],
+            ) -> Result<(KeyBytes, Vec<u8>), Error> {
+                match self { $(Self::$variant(b) => b.generate_wrapped(key_ref, aad).await,)+ }
+            }
+
+            fn batch_limit(&self) -> Option<NonZeroUsize> {
+                match self { $(Self::$variant(b) => b.batch_limit(),)+ }
+            }
+
+            async fn wrap_batch(
+                &self,
+                key_ref: &str,
+                items: &[WrapItem<'_>],
+            ) -> Result<Vec<Vec<u8>>, Error> {
+                match self { $(Self::$variant(b) => b.wrap_batch(key_ref, items).await,)+ }
+            }
+
+            async fn unwrap_batch(
+                &self,
+                key_ref: &str,
+                items: &[UnwrapItem<'_>],
+            ) -> Result<Vec<KeyBytes>, Error> {
+                match self { $(Self::$variant(b) => b.unwrap_batch(key_ref, items).await,)+ }
+            }
+
+            async fn sleep(&self, duration: Duration) {
+                match self { $(Self::$variant(b) => b.sleep(duration).await,)+ }
+            }
+        }
+    };
+}
+
+guest_vendors! {
     Aws(stack_kms_aws::AwsKms<T, HostCredentials<C>>),
     Vault(stack_kms_vault::VaultTransit<T, HostCredentials<C>>),
     Gcp(stack_kms_gcp::GcpKms<T, HostCredentials<C>>),
@@ -408,83 +475,16 @@ pub enum GuestVendor<T, C> {
     Static(StaticKeyVendor),
 }
 
-impl<T, C> std::fmt::Debug for GuestVendor<T, C> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            Self::Aws(_) => KeyVendor::Aws.name(),
-            Self::Vault(_) => KeyVendor::Vault.name(),
-            Self::Gcp(_) => KeyVendor::Gcp.name(),
-            Self::Azure(_) => KeyVendor::Azure.name(),
-            Self::Static(_) => KeyVendor::Static.name(),
-        };
-        f.debug_tuple("GuestVendor").field(&name).finish()
-    }
-}
-
-/// Dispatch one `KeyVendorBackend` method to the configured client.
-macro_rules! dispatch {
-    ($self:expr, $backend:ident => $call:expr) => {
-        match $self {
-            GuestVendor::Aws($backend) => $call,
-            GuestVendor::Vault($backend) => $call,
-            GuestVendor::Gcp($backend) => $call,
-            GuestVendor::Azure($backend) => $call,
-            GuestVendor::Static($backend) => $call,
-        }
-    };
-}
-
-impl<T, C> KeyVendorBackend for GuestVendor<T, C>
+/// Prints the vendor's name only: a client holds credentials or a key.
+impl<T, C> std::fmt::Debug for GuestVendor<T, C>
 where
     T: VendorTransport + Send + Sync,
     C: CredentialImport,
 {
-    fn vendor(&self) -> KeyVendor {
-        dispatch!(self, b => b.vendor())
-    }
-
-    fn supports_mode(&self, mode: KeyMode) -> bool {
-        dispatch!(self, b => b.supports_mode(mode))
-    }
-
-    async fn wrap(&self, key_ref: &str, key: &KeyBytes, aad: &[u8]) -> Result<Vec<u8>, Error> {
-        dispatch!(self, b => b.wrap(key_ref, key, aad).await)
-    }
-
-    async fn unwrap(&self, key_ref: &str, wrapped: &[u8], aad: &[u8]) -> Result<KeyBytes, Error> {
-        dispatch!(self, b => b.unwrap(key_ref, wrapped, aad).await)
-    }
-
-    async fn generate_wrapped(
-        &self,
-        key_ref: &str,
-        aad: &[u8],
-    ) -> Result<(KeyBytes, Vec<u8>), Error> {
-        dispatch!(self, b => b.generate_wrapped(key_ref, aad).await)
-    }
-
-    fn batch_limit(&self) -> Option<NonZeroUsize> {
-        dispatch!(self, b => b.batch_limit())
-    }
-
-    async fn wrap_batch(
-        &self,
-        key_ref: &str,
-        items: &[WrapItem<'_>],
-    ) -> Result<Vec<Vec<u8>>, Error> {
-        dispatch!(self, b => b.wrap_batch(key_ref, items).await)
-    }
-
-    async fn unwrap_batch(
-        &self,
-        key_ref: &str,
-        items: &[UnwrapItem<'_>],
-    ) -> Result<Vec<KeyBytes>, Error> {
-        dispatch!(self, b => b.unwrap_batch(key_ref, items).await)
-    }
-
-    async fn sleep(&self, duration: Duration) {
-        dispatch!(self, b => b.sleep(duration).await)
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("GuestVendor")
+            .field(&self.vendor().name())
+            .finish()
     }
 }
 
@@ -876,6 +876,27 @@ mod tests {
             request.header_value("x-amz-target"),
             Some("TrentService.Decrypt")
         );
+    }
+
+    /// Every method reaches the vendor client, `same_key` included: Google
+    /// Cloud KMS ignores the key version, where the trait's default would
+    /// compare the text.
+    #[test]
+    fn the_guest_vendor_forwards_to_its_client() {
+        let config = VendorConfig {
+            settings: VendorSettings::Gcp { endpoint: None },
+            records: Vec::new(),
+            default_keyset: None,
+            root_key_ttl: None,
+        };
+        let transport = Recording::default();
+        let source = build(config, &transport, FakeImport::unused()).unwrap();
+        let backend = source.backend();
+        assert_eq!(backend.vendor(), KeyVendor::Gcp);
+        assert_eq!(format!("{backend:?}"), "GuestVendor(\"gcp-kms\")");
+        let key = "projects/p/locations/l/keyRings/r/cryptoKeys/k";
+        assert!(backend.same_key(&format!("{key}/cryptoKeyVersions/1"), key));
+        assert!(!backend.same_key(key, "projects/p/locations/l/keyRings/r/cryptoKeys/other"));
     }
 
     #[test]

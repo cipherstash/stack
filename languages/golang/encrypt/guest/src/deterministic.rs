@@ -146,10 +146,10 @@ mod tests {
             ("static_key", V::Bytes(vec![9; 32])),
         ])))
         .unwrap();
-        assert_eq!(
-            with.vendor.map(|v| v.settings.vendor()),
-            Some(stack_kms::KeyVendor::Static)
-        );
+        assert!(matches!(
+            with.vendor.map(|v| v.settings),
+            Some(crate::vendor::VendorSettings::Static { .. })
+        ));
         assert!(SeedConfig::parse(&frame(&obj(vec![("seed", V::Bytes(vec![7; 31]))]))).is_err());
         assert!(SeedConfig::parse(&frame(&obj(vec![
             ("seed", V::Bytes(vec![7; 32])),
