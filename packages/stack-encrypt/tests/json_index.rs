@@ -30,7 +30,6 @@ use stack_encrypt::sem::TermError;
 use stack_encrypt::target::{
     AeadContext, CallerContext, DecryptField, Decryption, IndexSpec, Json,
 };
-use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{nonempty, Error, Plan, PlanError, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -2933,6 +2932,7 @@ mod given_a_laid_out_plan {
 #[cfg(feature = "dynamic")]
 mod given_the_json_index_spec {
     use super::*;
+    use stack_encrypt::AsProtectedRef as _;
 
     /// The spec's wire form is a fixed contract with stored data and the Go
     /// guest, so its strings are pinned literally.
