@@ -1003,3 +1003,17 @@ the alternatives and the reason.
 - **Deferred (no ticket):** `authorized_user` and `external_account`
   credentials, impersonation, a quota project header, and re-recording the
   fixtures from real Cloud KMS once the live job has credentials.
+
+## Orchestrator review of CIP-5308
+
+- **Revisit (security):** `stack-kms-gcp` signs its OAuth JWT with the `rsa`
+  crate, which has the open advisory RUSTSEC-2023-0071 (Marvin, a timing side
+  channel). The key it uses is the customer's service account key. Accepted
+  for now with the agent's reasoning, but a security reviewer must sign it off
+  before the crate is armed for release. One option: in the Go guest, ask the
+  host for an access token, not for the service account key, so that the guest
+  never signs (CIP-5311).
+- **Not verified:** the GCP fixtures are hand-written from the documented
+  shapes, not recorded from Cloud KMS. The opt-in live job is the only real
+  check. It needs the variable `STACK_KMS_GCP_LIVE_KEY` and the secret
+  `STACK_KMS_GCP_SERVICE_ACCOUNT_KEY`.
