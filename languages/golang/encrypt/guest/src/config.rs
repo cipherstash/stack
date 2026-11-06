@@ -662,16 +662,23 @@ mod tests {
             }
         ));
 
-        for (name, expected) in [
-            ("gcp-kms", KeyVendor::Gcp),
-            ("azure-key-vault", KeyVendor::Azure),
-        ] {
-            let config =
-                vendor_config(vec![("key_vendor", s(name)), ("keyset_records", records())])
-                    .unwrap()
-                    .unwrap();
-            assert_eq!(config.settings.vendor(), expected);
-        }
+        let gcp = vendor_config(vec![
+            ("key_vendor", s("gcp-kms")),
+            ("keyset_records", records()),
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            gcp.settings,
+            VendorSettings::Gcp { endpoint: None }
+        ));
+        let azure = vendor_config(vec![
+            ("key_vendor", s("azure-key-vault")),
+            ("keyset_records", records()),
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(matches!(azure.settings, VendorSettings::Azure));
 
         let static_key = vendor_config(vec![
             ("key_vendor", s("static")),
@@ -684,7 +691,7 @@ mod tests {
         ])
         .unwrap()
         .unwrap();
-        assert_eq!(static_key.settings.vendor(), KeyVendor::Static);
+        assert!(matches!(static_key.settings, VendorSettings::Static { .. }));
         // The static key never prints.
         assert!(!format!("{static_key:?}").contains('7'));
     }
@@ -774,10 +781,10 @@ mod tests {
         entries.push(("key_vendor".into(), s("gcp-kms")));
         entries.push(("keyset_records".into(), records()));
         let cfg = parse_config(FfiValue::Object(entries)).expect("config parses");
-        assert_eq!(
-            cfg.vendor.map(|v| v.settings.vendor()),
-            Some(KeyVendor::Gcp)
-        );
+        assert!(matches!(
+            cfg.vendor.map(|v| v.settings),
+            Some(VendorSettings::Gcp { .. })
+        ));
     }
 
     #[test]
