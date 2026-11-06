@@ -255,6 +255,18 @@ impl LoadedIndexKey {
     }
 }
 
+/// A key source that stands for ZeroKMS: the ZeroKMS side of a router that
+/// adds a key vendor backend (`stack_kms_vendor::KeyRouter`).
+///
+/// It is a marker. The router asks for it so that its ZeroKMS side cannot be
+/// another router, which would put two key vendor backends in one cipher
+/// (ADR-0009: ZeroKMS and at most one vendor). Implement it only for a
+/// source that talks to ZeroKMS, or that takes its place in a test. Never
+/// implement it for a source that routes to a key vendor backend.
+pub trait ZeroKmsKeySource {}
+
+impl<C, Conn> ZeroKmsKeySource for crate::StackKms<C, Conn> {}
+
 impl<C, Conn> DataKeySource for crate::StackKms<C, Conn>
 where
     C: stack_auth::AuthStrategyBounds,
@@ -403,6 +415,8 @@ mod fake {
         }
     }
 
+    impl super::ZeroKmsKeySource for FakeDataKeySource {}
+
     impl DataKeySource for FakeDataKeySource {
         async fn generate_keys(
             &self,
@@ -528,6 +542,8 @@ mod deterministic {
             hasher.finalize().into()
         }
     }
+
+    impl super::ZeroKmsKeySource for DeterministicSource {}
 
     impl DataKeySource for DeterministicSource {
         async fn generate_keys(
