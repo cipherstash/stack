@@ -353,7 +353,7 @@ npx stash keyset rewrap --in keyset.env --out keyset.env --force
 
 `keyset create` makes a **keyset record** and prints it as a dotenv line, `CS_KEYSET_RECORD_<NAME>=stack-keyset:…` (or `CS_KEYSET_RECORD` with no `--name`). The record is not secret. No SDK reads that variable by itself: pass its value to `encrypt.WithKeysetRecords` (Go) or `KeysetRecord::parse` (Rust). `--mode wrapped` gives each value its own vendor-wrapped data key; `--mode derived` derives the data keys from one root key, which the SDK caches for a TTL. The static backend offers `derived` only, and prints a generated key as `CS_STATIC_KEY` unless `--key-env` names the variable that holds one. Credentials come from each vendor's environment chain; `npx stash keyset create --help` lists the variables.
 
-`keyset rewrap` wraps the record's key again, under the same vendor key after a rotation or under another one. It does not re-key stored data. **For a `wrapped` record, a rewrap to another vendor key makes the values sealed before it fail to open.** The `stash-cli` agent skill has the full flag reference.
+`keyset rewrap` wraps the record's key again, under the same vendor key after a rotation or under another one. It does not re-key stored data, so a `derived` record may move to any key, but **a `wrapped` record may move only to a new version of its own vendor key**: another key is refused (`rewrap_refused`) before any vendor call. The `stash-cli` agent skill has the full flag reference.
 
 ---
 

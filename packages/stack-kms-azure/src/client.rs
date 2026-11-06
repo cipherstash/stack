@@ -598,6 +598,16 @@ impl<T: VendorTransport + Send + Sync, A: TokenProvider> KeyVendorBackend for Az
         KeyVendor::Azure
     }
 
+    /// The same key in the same vault or HSM, whatever version either key
+    /// identifier names. An identifier that does not parse is compared as
+    /// text.
+    fn same_key(&self, a: &str, b: &str) -> bool {
+        match (KeyId::parse(a), KeyId::parse(b)) {
+            (Some(a), Some(b)) => a.vault() == b.vault() && a.name() == b.name(),
+            _ => a == b,
+        }
+    }
+
     async fn wrap(&self, key_ref: &str, key: &KeyBytes, aad: &[u8]) -> Result<Vec<u8>, Error> {
         let id = key_id(key_ref)?;
         let resolved = self.resolve(key_ref, &id).await?;

@@ -278,7 +278,9 @@ pub fn expand_ciphertext(wrapped: &[u8]) -> Option<String> {
 /// * `key_ref` (from the keyset record) is the Transit key name. Vault
 ///   ciphertexts name the key version (`vault:v3:`), so rotation needs no
 ///   change to the record; [`rewrap`](Self::rewrap) moves a wrapped key to
-///   the latest version.
+///   the latest version. The key reference names no version, so
+///   [`same_key`](KeyVendorBackend::same_key) is string equality: a record
+///   in the wrapped data key mode rewraps only under its own key name.
 /// * **Batches.** Under wrapped data keys the adapter sends the keys of a
 ///   batch in chunks of at most [`VaultConfig::batch_size`]: N values cost
 ///   one HTTP call per chunk.

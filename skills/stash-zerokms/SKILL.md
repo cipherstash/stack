@@ -226,7 +226,8 @@ it refuses a lock context with an error. Only the Rust crates and the Go SDK
 support key vendor backends today. `@cipherstash/stack` (TypeScript) does not
 support them yet, so a TypeScript app keeps its keysets in ZeroKMS. `stash
 keyset create` makes a keyset record and `stash keyset rewrap` moves one to
-another vendor key; see `stash-cli` before you rewrap a `wrapped`-mode record.
+another vendor key (see `stash-cli`: a `wrapped`-mode record moves only to a
+new version of its own key).
 
 ## Two gates, two very different failures
 

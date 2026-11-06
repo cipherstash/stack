@@ -172,14 +172,17 @@
 //!   key reference, then drop the old key.
 //!
 //! [`KeysetRecord::rewrap`] (and `stash keyset rewrap`) wraps the record
-//! key again. It does not re-key stored values. Under derived data keys
-//! that is enough: every data key comes from the root key. Under wrapped
-//! data keys, each stored value's data key stays wrapped under the vendor
-//! key that sealed it, and the adapter unwraps it with the record's current
-//! key reference. A rewrap under a new version of the same vendor key is
-//! safe. **A rewrap of a wrapped-data-key record to another vendor key
-//! makes the values sealed before it fail to open**
-//! ([`InvalidCiphertext`](stack_kms::BackendErrorKind::InvalidCiphertext)).
+//! key again. It does not re-key stored values, so the rule depends on the
+//! key mode. Under derived data keys a record may move to any key of its
+//! backend: every data key comes from the root key. Under wrapped data keys
+//! each stored value's data key stays wrapped under the vendor key that
+//! sealed it, and the adapter unwraps it with the record's current key
+//! reference. So a record may move only to a new version of its own vendor
+//! key ([`KeyVendorBackend::same_key`]); another key is refused with
+//! [`RecordError::RewrapToAnotherKey`], before any vendor call. Google
+//! Cloud KMS and Azure ignore the version a key reference names. AWS KMS
+//! and Vault Transit compare the references as text, so an AWS alias and
+//! the key ARN it points to count as different keys.
 //!
 //! ## Known limits
 //!

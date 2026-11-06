@@ -115,19 +115,19 @@ impl KeysetRecord {
         })
     }
 
-    /// Wrap this record's key under a vendor key of the same backend: the
-    /// record's own key after a rotation in the vendor (its newest version),
-    /// or another key. The keyset id, name and mode stay the same. Stored
-    /// values are not re-keyed.
+    /// Wrap this record's key under a vendor key of the same backend. The
+    /// keyset id, name and mode stay the same. Stored values are not
+    /// re-keyed.
     ///
-    /// Under derived data keys every value sealed under the keyset still
-    /// opens, because each data key comes from the root key. Under wrapped
-    /// data keys each value's data key stays wrapped under the vendor key
-    /// that sealed it, and the adapter unwraps it with the record's current
-    /// `key_ref`. A rewrap to a new version of the same vendor key is safe;
-    /// **a rewrap to another vendor key makes the values sealed before it
-    /// fail to open** (`InvalidCiphertext`). See the
-    /// [capability matrix](crate#rotation).
+    /// * **Derived data keys:** `key_ref` may name any key of the backend.
+    ///   Every data key comes from the root key, so every value sealed under
+    ///   the keyset still opens.
+    /// * **Wrapped data keys:** `key_ref` must name the record's own vendor
+    ///   key ([`KeyVendorBackend::same_key`]), for example its newest version
+    ///   after a rotation. Each stored value's data key stays wrapped under
+    ///   the key that sealed it, so a move to another key is refused with
+    ///   [`RecordError::RewrapToAnotherKey`], before any vendor call. See the
+    ///   [capability matrix](crate#rotation).
     ///
     /// Two vendor calls: unwrap under the old key, wrap under the new one.
     pub async fn rewrap<B: KeyVendorBackend>(
@@ -138,6 +138,13 @@ impl KeysetRecord {
         self.check_vendor(backend.vendor())?;
         let key_ref = key_ref.into();
         check_key_ref(&key_ref)?;
+        if self.mode == KeyMode::Wrapped && !backend.same_key(&self.key_ref, &key_ref) {
+            return Err(RecordError::RewrapToAnotherKey {
+                keyset: self.id,
+                from: self.key_ref.clone(),
+                to: key_ref,
+            });
+        }
         let aad = self.key_aad();
         let key = self.unwrap_key(backend).await?;
         let wrapped_key = backend.wrap(&key_ref, &key, &aad).await?;

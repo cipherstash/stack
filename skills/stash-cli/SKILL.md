@@ -870,12 +870,13 @@ Unwraps the record's key and wraps it again (two vendor calls). With no
 `--vendor-key` it uses the record's own key, which moves the record to that
 key's current version after a rotation; with `--vendor-key` it moves to another
 key of the same backend. The keyset id, name and mode do not change, and
-**stored data is not re-keyed**. In `derived` mode stored values stay readable.
-In `wrapped` mode each value's data key stays wrapped under the vendor key that
-sealed it: a rewrap to a new version of the same key keeps them readable, but
-**a rewrap to another `--vendor-key` makes the values sealed before it fail to
-open**. Do not move a `wrapped` record to another vendor key while it has
-stored values. Replace the old record in every app afterwards. The record is the argument or `--in <file>` (one
+**stored data is not re-keyed**, so stored values stay readable. The rule
+depends on the mode. A `derived` record may move to any key of its backend. A
+`wrapped` record may move only to a new version of its own vendor key, because
+each stored value keeps its data key wrapped under the key that sealed it: a
+`--vendor-key` that names another key is refused (`rewrap_refused`) before any
+vendor call. To move `wrapped` data to another key, create a new keyset under
+it and re-encrypt the data. Replace the old record in every app afterwards. The record is the argument or `--in <file>` (one
 record per file). A static record needs `--key-env` for its current key, and
 `--new-key-env` (or a generated key) when `--vendor-key` names another key.
 

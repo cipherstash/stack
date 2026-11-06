@@ -345,6 +345,27 @@ describe('stash keyset rewrap', () => {
     expect(hints).toContain(messages.keyset.rewrapNote)
   })
 
+  it('maps a refused rewrap to its own code, message and hint', async () => {
+    authMock.keysetRewrap.mockResolvedValue({
+      failure: {
+        type: 'REWRAP_REFUSED',
+        error: new Error('native text'),
+        help: 'native help',
+      },
+    })
+    await expectExit(
+      keysetRewrapCommand({ record: RECORD, vendorKey: 'other', json: true }),
+      1,
+    )
+    const event = JSON.parse(printed())
+    expect(event).toMatchObject({
+      status: 'error',
+      code: 'rewrap_refused',
+      message: messages.keyset.rewrapRefused,
+      hint: messages.keyset.rewrapRefusedHint,
+    })
+  })
+
   it('takes the record as an argument, trimmed', async () => {
     authMock.keysetRewrap.mockResolvedValue({ data: result() })
     await keysetRewrapCommand({ record: `  ${RECORD}\n`, json: true })

@@ -205,9 +205,9 @@
 // keys only, and nothing outside the process can refuse or audit its use.
 //
 // A rewrap of a keyset record (stash keyset rewrap) does not re-key stored
-// values. Under wrapped data keys, a rewrap to another vendor key makes the
-// values sealed before it fail to open; a new version of the same key is
-// safe. The stack-kms-vendor crate documentation has the full capability
+// values. A record under wrapped data keys may therefore move only to a new
+// version of its own vendor key; a move to another key is refused. A record
+// under derived data keys may move to any key. The stack-kms-vendor crate documentation has the full capability
 // matrix: credentials, rotation and known limits of each backend.
 //
 // A vendor keyset refuses ZeroKMS-only features (a lock context, a

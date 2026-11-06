@@ -109,7 +109,10 @@ pub async fn keyset_create(options: KeysetCreateOptions) -> napi::Result<KeysetR
 
 /// Wrap a keyset record's key under a vendor key again (after a rotation in
 /// the vendor, or to move it to another vendor key of the same backend). The
-/// keyset id, name and mode stay the same. Stored data is not re-keyed.
+/// keyset id, name and mode stay the same. Stored data is not re-keyed, so a
+/// record in the wrapped key mode may move only to a new version of its own
+/// vendor key; a move to another key fails with `REWRAP_REFUSED`, before any
+/// vendor call.
 ///
 /// Two vendor calls: an unwrap and a wrap.
 #[napi]
@@ -145,6 +148,7 @@ impl KeysetError {
             Self::StaticKey(_) => "STATIC_KEY",
             Self::VendorConfig { .. } => "VENDOR_CONFIG",
             Self::Record(RecordError::Kms(_)) => "VENDOR_ERROR",
+            Self::Record(RecordError::RewrapToAnotherKey { .. }) => "REWRAP_REFUSED",
             Self::Record(_) => "INVALID_RECORD",
         }
     }
@@ -820,6 +824,11 @@ mod tests {
                 message: String::new(),
             },
             KeysetError::Record(RecordError::NotARecord),
+            KeysetError::Record(RecordError::RewrapToAnotherKey {
+                keyset: Default::default(),
+                from: "a".into(),
+                to: "b".into(),
+            }),
             KeysetError::Record(RecordError::Kms(stack_kms::Error::Backend {
                 vendor: "static",
                 kind: stack_kms::BackendErrorKind::NotFound,
@@ -834,6 +843,21 @@ mod tests {
             );
         }
         assert!(dts.contains("export type KeysetFailure"));
+    }
+
+    #[test]
+    fn a_rewrap_to_another_key_has_its_own_code() {
+        let error = KeysetError::Record(RecordError::RewrapToAnotherKey {
+            keyset: Default::default(),
+            from: "arn:aws:kms:us-east-1:111122223333:key/a".into(),
+            to: "arn:aws:kms:us-east-1:111122223333:key/b".into(),
+        });
+        let value = error.envelope();
+        assert_eq!(value["type"], "REWRAP_REFUSED");
+        assert_eq!(value["diagnostic"], "stack_kms_vendor::rewrap_another_key");
+        assert!(value["help"]
+            .as_str()
+            .is_some_and(|help| help.contains("new version of the same key")));
     }
 
     #[test]
