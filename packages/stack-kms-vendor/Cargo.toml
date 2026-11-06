@@ -9,15 +9,22 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
-# Not published yet. The first vendor crate (CIP-5307) decides the release
-# group; release-plz.toml lists it with `release = false` until then.
-publish = false
+# Publishable, in the `stack-kms-vendor` version group with every vendor crate
+# (stack-kms-aws, ...). release-plz.toml keeps `release = false` until the
+# first version is on crates.io: crates.io Trusted Publishing needs an
+# existing crate, so the first version is published by hand (see
+# docs/plans/2026-11-05-key-vendor-backends-decisions.md, CIP-5307).
 
 [features]
 # `stack_kms_vendor::contract` (the shared contract suite every key vendor
 # backend runs) and `FakeVendor` (an in-memory key vendor backend). The
 # contract suite drives a real `StackCipher`, so this pulls stack-encrypt in.
 test-support = ["dep:stack-encrypt", "stack-kms/test-support"]
+# `HttpVendorTransport`: the native `VendorTransport`, over the reqwest client
+# and the TLS configuration stack-kms uses for ZeroKMS. Native only: on wasm32
+# the dependencies are not in the graph and the type does not exist, because
+# the WASI guest sends through its `transport_send` host import instead.
+http = ["dep:reqwest", "dep:stack-auth", "dep:tokio"]
 
 [dependencies]
 stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false }
@@ -37,10 +44,20 @@ uuid = { workspace = true }
 web-time = { workspace = true }
 zeroize = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, optional = true }
+# Only for `stack_auth::tls::client_config`: the platform verifier with the
+# compromised-CA blocklist that every bundled reqwest client in the stack
+# crates uses.
+stack-auth = { workspace = true, optional = true, features = ["http"] }
+# The backoff timer of `HttpVendorTransport::sleep`. reqwest already runs on
+# tokio, so this adds no runtime.
+tokio = { version = "1.47.1", optional = true, default-features = false, features = ["time"] }
+
 [dev-dependencies]
 stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
 stack-encrypt = { path = "../stack-encrypt", default-features = false }
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "time", "net", "io-util"] }
 
 [package.metadata.docs.rs]
 all-features = true

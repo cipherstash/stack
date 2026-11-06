@@ -404,3 +404,214 @@ the alternatives and the reason.
 - **Note:** `scripts` vitest: `bench-index-expressions` and
   `check-auth-npm-changeset` fail on this machine for missing
   `node_modules` content, with or without this change.
+
+## CIP-5307: AWS KMS key vendor backend (stack-kms-aws)
+
+### Transports
+
+- **Decision:** the native `VendorTransport` is `HttpVendorTransport` in
+  `stack-kms-vendor`, behind a new feature `http`, with its dependencies
+  (reqwest, stack-auth with `http`, tokio `time`) gated to non-wasm32
+  targets. It uses the workspace reqwest and `stack_auth::tls::client_config`,
+  the same HTTP client and TLS verifier as stack-kms's `HttpConnection`.
+  `sleep` is `tokio::time::sleep`. A transport failure text leaves out
+  reqwest's own message, which names the URL.
+  **Alternative:** put it in `stack-kms-aws`, or in `stack-kms`.
+  **Reason:** every vendor crate needs the same transport, so it belongs
+  beside the seam. The target gate keeps `stack-kms-vendor --features http`
+  clean on WASI (the `wasm:wasi-check` task now checks that).
+- **Decision:** the guest `VendorTransport` is `HostVendorTransport` in
+  `stack-guest-abi`, module `vendor_transport`, behind a new feature
+  `vendor`. The type exists on wasm32 only; the conversions (headers to the
+  `transport_send` line format, a negative status to `TransportError`) are
+  pure functions with native unit tests. A header with a line break, or a
+  name with a colon, is refused (header injection). `sleep` is
+  `std::thread::sleep`, which wasm32-wasip1 implements with a `poll_oneoff`
+  clock subscription; the guest runs one call at a time, so blocking is
+  correct. **Alternative:** in `stack-kms-vendor` (a published crate cannot
+  depend on the unpublished `stack-guest-abi`), or in the Go guest crate (a
+  detached workspace with no native tests, and that wiring is CIP-5311).
+  **Reason:** `stack-guest-abi` already owns the import.
+- **Decision (changes a CIP-5306 type):** `VendorRequest::body` and
+  `VendorResponse::body` are now `Zeroizing<Vec<u8>>`, and their `Debug`
+  shows the method, URL, status and header names only. Both types gain small
+  builders (`new`, `header`, `body`, `header_value`). **Reason:** an AWS
+  `Encrypt` request and a `Decrypt` response carry a key in the clear, and a
+  session token travels in a header. The crate is unpublished, so the break
+  costs nothing. reqwest takes the body by value, so its copy is not wiped
+  (as for ZeroKMS).
+
+### The AWS KMS client
+
+- **Decision:** `stack-kms-aws` is a new root workspace member with
+  `AwsKms<T: VendorTransport, C: CredentialsProvider>`, which implements
+  `KeyVendorBackend` only: `wrap` is `Encrypt`, `unwrap` is `Decrypt` (with
+  `KeyId`, so AWS KMS also checks the key), `generate_wrapped` is one
+  `GenerateDataKey` (`AES_256`), and `sleep` is the transport's. Both key
+  modes. `key_ref` is a key ARN (a key id or alias ARN also works; the docs
+  recommend the key ARN, because an alias can be repointed). `send_json` is
+  public, so a test (and later `stash keyset`) can send another operation,
+  for example `CreateKey`.
+- **Decision:** SigV4 is written in the crate (`stack_kms_aws::sigv4`) with
+  `hmac` 0.13 and `sha2` 0.11, both already in the lockfile (through `hkdf`).
+  No `aws-sigv4` and no AWS SDK crate. **Alternative:** the `aws-sigv4`
+  crate. **Reason:** it pulls the smithy runtime crates; the algorithm is
+  about 150 lines and is pinned by test vectors. Its build for
+  wasm32-wasip1 was not tried. `sign` signs every header the request has,
+  and adds `host`, `x-amz-date`, `x-amz-security-token` and
+  `authorization`. It does not add `x-amz-content-sha256` (AWS KMS does not
+  need it).
+- **Decision:** the SigV4 vectors are, from the AWS SigV4 test suite
+  (`aws-sig-v4-test-suite`): `get-vanilla`, `post-vanilla`,
+  `get-vanilla-query-order-key-case` and `post-x-www-form-urlencoded` (a POST
+  with a body); and the worked IAM `ListUsers` example of the AWS SigV4
+  documentation (canonical request hash and signature). All were written
+  from memory, and all passed on the first run, which checks the memory and
+  the code against each other. AWS publishes no KMS signing example that I
+  could reproduce reliably; the KMS request shape is pinned by the recorded
+  fixtures instead.
+- **Decision:** the associated data is bound as the AWS KMS encryption
+  context: `cipherstash:aad` = unpadded base64url of all of `aad` (this is
+  the binding), plus, when `aad` is a keyset record key or a wrapped data
+  key, `cipherstash:purpose` (`root-key`, `index-key`, `data-key`),
+  `cipherstash:keyset-id` and `cipherstash:descriptor` (left out when
+  empty). New in `stack-kms-vendor::derive`: `unframe` and `describe_aad`
+  (`AadDescription`), so the shared crate owns the parse of its own format.
+  **Alternative:** the readable fields only (they leave out the iv, vendor
+  and mode, so they do not bind the whole aad), or `cipherstash:aad` only
+  (nothing readable in CloudTrail or for `kms:EncryptionContext:` policy
+  conditions). **Reason:** both properties.
+- **Decision:** error mapping. The code comes from the body's `__type`
+  (namespace before `#` removed), else the `x-amzn-ErrorType` header (text
+  after `:` removed). The ticket's list, plus: `IncorrectKeyException` and
+  `InvalidKeyUsageException` to `InvalidCiphertext`; the signature and
+  token codes (`UnrecognizedClientException`, `InvalidSignatureException`,
+  `ExpiredTokenException`, ...) to `AccessDenied`; `DisabledException`,
+  `KMSInvalidStateException`, `KeyUnavailableException` to `Unavailable`.
+  A code with no fixed kind falls back to `classify_status`, but an unknown
+  4xx code is `AccessDenied`, not `InvalidCiphertext` (for example a
+  `ValidationException` is a refused request, not a damaged value).
+  `LimitExceededException` is not `Throttled`: it is a resource quota, and a
+  retry does not help. A success that cannot be read is `Unavailable`; a
+  plaintext that is not 32 bytes is `InvalidCiphertext`. No transport,
+  credential or response failure carries key material or a secret.
+- **Decision:** region from the config, else `AWS_REGION`, else
+  `AWS_DEFAULT_REGION`; endpoint from `with_endpoint`, else
+  `AWS_ENDPOINT_URL_KMS`, else `AWS_ENDPOINT_URL` (the AWS SDK names), else
+  `https://kms.<region>.amazonaws.com/` (`.com.cn` for `cn-` regions). A
+  region must be `[a-z0-9-]`, so it cannot change the endpoint host.
+- **Decision:** `Clock` (`Arc<dyn Fn() -> SystemTime>`) is a seam on
+  `AwsKms` and `CachedCredentials`, for fixtures with a fixed signing time.
+
+### Credentials
+
+- **Decision:** the seam is the trait `CredentialsProvider` (future bounded
+  by `MaybeSend`); `Credentials` (secret and token wiped, never printed) is
+  the static provider, from `Credentials::new` or `Credentials::from_env`.
+  The guest implements the trait over a host import (CIP-5311).
+- **Decision:** `CachedCredentials<P>` refreshes 5 minutes before expiry
+  (`DEFAULT_REFRESH_BEFORE_EXPIRY`), one fetch at a time (an async mutex),
+  and returns the cached credentials when a refresh fails but they have not
+  yet expired. Credentials with no expiry are kept.
+- **Decision:** workload identity is native only (`cfg(not(target_arch =
+  "wasm32"))`): `WebIdentityCredentials` (STS `AssumeRoleWithWebIdentity`,
+  unsigned, form POST, the token file read on each fetch, the regional STS
+  endpoint, XML read by tag), `EcsCredentials` (relative or full URI; a full
+  URI must be HTTPS or HTTP to a loopback or the ECS/EKS link-local hosts,
+  as the AWS SDKs require; the token from
+  `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, read on each fetch, or
+  `AWS_CONTAINER_AUTHORIZATION_TOKEN`), and `ImdsCredentials` (IMDSv2 only;
+  `AWS_EC2_METADATA_DISABLED`, `AWS_EC2_METADATA_SERVICE_ENDPOINT`). They
+  send through `VendorTransport` too, so the fixtures test them.
+- **Decision:** `DefaultCredentialsSource` picks one source from the
+  environment, in the AWS SDK order (static, IRSA, container, IMDS), by
+  which variables are set, not by trying each. `AwsKms::from_env`
+  (`DefaultAwsKms`, feature `http`, native) caches it, and gives the
+  credential sources their own transport with a 1 s connect limit so that
+  the IMDS probe fails fast off EC2. **Not supported:** the shared config
+  and credentials files (`~/.aws/config`), profiles, SSO and
+  `credential_process`. No ticket asks for them.
+
+### Tests
+
+- **Decision:** recorded fixtures (`tests/fixtures/*.json`) for
+  `GenerateDataKey`, `Encrypt`, `Decrypt` and `Decrypt` with a session
+  token, and eleven error responses. The responses are written in the AWS
+  response shapes; each request side (body, headers, signature) was taken
+  from the client once and is now pinned. Every fixture is signed at
+  2026-11-05T12:00:00Z with the AWS documentation example key.
+- **Decision:** the contract suite runs against `AwsKms` over an in-process
+  emulation of the AWS KMS JSON API (`tests/common::KmsEmulator`: AES-GCM
+  with the encryption context bound, the AWS error shapes, a check that each
+  request is signed for `kms`). **Reason:** the suite uses random keys and
+  ids, so recorded bytes cannot answer it.
+- **Decision:** the LocalStack test (`tests/localstack.rs`) runs when
+  `STACK_KMS_AWS_LOCALSTACK_ENDPOINT` is set and skips itself otherwise. It
+  creates a key with `CreateKey`, runs the whole contract suite, and checks
+  three error mappings. It ran locally against `localstack/localstack:4.4`
+  and passed. LocalStack answers bytes that are not its blob format with
+  HTTP 500 (`InternalError`), not `InvalidCiphertextException`, so the test
+  damages a real blob instead.
+- **Decision:** CI: a new `localstack` job in `tests-crates.yml` runs
+  LocalStack 4.4 as a service, pinned by digest, and calls the new mise task
+  `test:localstack:stack-kms-aws`, which refuses to run without the
+  endpoint (a skip must not read as a pass). New `doc:stack-kms-aws` and
+  `doc:stack-kms-vendor` tasks join `mise run doc`. `wasm:wasi-check` now
+  also checks `stack-kms-vendor --features http`, `stack-kms-aws` (default
+  features) and `stack-guest-abi --features vendor`. `tests-crates.yml` and
+  `udeps.yml` include the new path. `crates-ci.test.mjs` now expects seven
+  crate task files.
+
+### Publishing
+
+- **Decision:** `stack-kms-vendor` and `stack-kms-aws` are one release
+  group, `stack-kms-vendor`, which every later vendor crate joins.
+  **Alternative:** a group for each crate. **Reason:** a vendor crate
+  implements the seam, so a change to the seam moves every vendor.
+- **Decision:** both Cargo.toml files are publishable (no `publish =
+  false`) and `tests-crates.yml`'s `cargo publish --dry-run` packages both
+  (it passed locally with all seven crates). In `release-plz.toml` both are
+  **staged**: `version_group = "stack-kms-vendor"`, `release = false`,
+  `publish = false`. `release-plz-root-config.test.mjs` and
+  `cargo-publish-opt-out.test.mjs` know the staged state.
+  **Alternative:** arm them now. **Reason:** crates.io Trusted Publishing can
+  only be set up on a crate that exists, so the first version is published
+  by hand, as it was for stack-kms. And that first publish needs the
+  stack-kms and stack-encrypt of this stack on crates.io first (the vendor
+  crates use their new API). Armed now, the first `release-crates` run after
+  this stack merges would fail on the vendor crates.
+- **To arm them (a person, after this stack's stack-kms and stack-encrypt
+  are on crates.io):** `cargo publish -p stack-kms-vendor` then
+  `cargo publish -p stack-kms-aws`; set up Trusted Publishing for both on
+  crates.io (repository `cipherstash/stack`, workflow `release-plz.yml`);
+  then a PR that removes `release = false` and `publish = false` from both
+  in `release-plz.toml`, adds both to the preflight loop in
+  `release-plz.yml`, and moves them from `STAGED` to `GROUPS` in
+  `release-plz-root-config.test.mjs`. Update the publishing note in
+  `SECURITY.md` in the same PR.
+- **Decision:** no changeset. Both crates are Rust-only and released by
+  release-plz.
+
+### Deferred
+
+- **Deferred to CIP-5311:** the guest wiring: enable `stack-guest-abi`'s
+  `vendor` feature in the guest, build `AwsKms::new(config,
+  HostVendorTransport, <a CredentialsProvider over the host credential
+  import>)`, and map the new errors to statuses.
+- **Deferred to CIP-5312:** `stash keyset` creates records through a napi
+  helper; it can call `KeysetRecord::create` with `AwsKms::from_env()`.
+- **Deferred (no ticket):** the AWS shared config files, profiles and SSO
+  (see above).
+- **Note:** `scripts` vitest still has the two failures noted in CIP-5306
+  (`bench-index-expressions`, `check-auth-npm-changeset`, missing
+  `node_modules` content); every other file passes.
+
+## Orchestrator review of CIP-5307
+
+- **Revisit:** an unknown AWS 4xx error code maps to `AccessDenied`. That
+  makes a malformed request look like a permission problem. Accepted for now,
+  because `AccessDenied` is never retried, so the failure is loud. A later
+  change can add a `Rejected` kind if real cases appear.
+- **Note:** the vendor crates are staged (`release = false`). Arming them is
+  a manual step after stack-kms and stack-encrypt from this stack are on
+  crates.io (see the CIP-5307 section).
