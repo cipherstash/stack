@@ -50,7 +50,7 @@ tempfile = "3"
 # Native stack-auth refreshes run in a Tokio task, including with a mock transport.
 tokio = { version = "1.47.1", default-features = false, features = ["macros", "rt"] }
 # `Controlled::risky_ref`, to read a codec value back in the tests.
-vitaminc-protected = "0.8.0"
+vitaminc-protected = "0.9.1"
 
 [profile.release]
 # Smaller .wasm; the guest is IO-bound on the FFI copy and the file reads,
