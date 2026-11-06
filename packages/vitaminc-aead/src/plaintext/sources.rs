@@ -387,9 +387,7 @@ impl<'a, T: Zeroize> Scalar for &'a Protected<T> where &'a T: Scalar {}
 /// still a typed null. Nothing is cloned or copied out, and the walk wipes
 /// nothing, whether it finishes or not. Wiping is up to whatever owns the
 /// borrowed value: a `Protected`, `Equatable`, `Exportable` or `Locked`
-/// owner wipes it when it drops, and so does a `Buffer`. But a
-/// `ProtectedRef` lent by a bare `[u8; N]`, `str` or `Cow<str>` has nothing
-/// behind it that ever wipes.
+/// owner wipes it when it drops, and so does a `Buffer`.
 ///
 /// Which owners lend one is up to `vitaminc-protected`. A `Usage` does not,
 /// so a scoped value is never encrypted without a `risky_ref` call. A
