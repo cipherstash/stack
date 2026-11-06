@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -161,7 +160,7 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 func (t *authTransport) placeResponse(ctx context.Context, m api.Module,
 	hp, hl, bp, bl uint32, status int32, headers, body []byte,
 ) int32 {
-	if !placeAuth(ctx, m, hp, hl, headers) || !placeAuth(ctx, m, bp, bl, body) {
+	if !guest.Place(ctx, m, hp, hl, headers) || !guest.Place(ctx, m, bp, bl, body) {
 		return -1
 	}
 	return status
@@ -180,29 +179,10 @@ func (t *authTransport) oidcTokenGet(ctx context.Context, m api.Module, provider
 	}
 	bytes := []byte(token)
 	defer guest.Wipe(bytes)
-	if !placeAuth(ctx, m, ptrOut, lenOut, bytes) {
+	if !guest.Place(ctx, m, ptrOut, lenOut, bytes) {
 		return 1
 	}
 	return 0
-}
-
-// The only guest re-entry allowed during a host import is its allocator.
-func placeAuth(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte) bool {
-	alloc := m.ExportedFunction("se_alloc")
-	if alloc == nil {
-		return false
-	}
-	if uint64(len(data)) > math.MaxUint32 {
-		return false
-	}
-	res, err := alloc.Call(ctx, uint64(len(data)))
-	if err != nil || len(res) == 0 || res[0] == 0 {
-		return false
-	}
-	ptr := api.DecodeU32(res[0])
-	mem := m.Memory()
-	return (len(data) == 0 || mem.Write(ptr, data)) &&
-		mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data))) //nolint:gosec // bounded above
 }
 
 func parseAuthHeaders(buf []byte) http.Header {

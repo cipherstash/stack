@@ -82,6 +82,50 @@ func (e Exports) Free(ctx context.Context, b Buf) {
 	}
 }
 
+// Place hands data to the guest from inside a host import: it allocates a
+// guest buffer through the module's own se_alloc, writes data into it and
+// stores the buffer's (ptr, len) into the guest's out-slots, which is how
+// the guest comes to own and reclaim it. se_alloc is the one export the ABI
+// lets a host import re-enter.
+//
+// It reports whether the guest took the data. When it did not, the guest
+// never learns of the buffer it allocated, so Place zeroes the bytes it
+// wrote in place and clears the pointer slot: the data (a bearer token, a
+// ZeroKMS response) must not outlive the failure. It cannot release the
+// buffer, because se_dealloc is not callable from an import; the guest's
+// registry frees the zeroed bytes at shutdown.
+func Place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte) bool {
+	alloc := m.ExportedFunction("se_alloc")
+	if alloc == nil {
+		return false
+	}
+	if uint64(len(data)) > math.MaxUint32 {
+		return false
+	}
+	res, err := alloc.Call(ctx, uint64(len(data)))
+	if err != nil || len(res) == 0 {
+		return false
+	}
+	ptr := api.DecodeU32(res[0])
+	if ptr == 0 {
+		return false
+	}
+	length := uint32(len(data)) //nolint:gosec // bounded above
+	mem := m.Memory()
+	if len(data) > 0 && !mem.Write(ptr, data) {
+		return false
+	}
+	if mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, length) {
+		return true
+	}
+	// A failed write can still have landed the first slot.
+	_ = mem.WriteUint32Le(ptrOut, 0)
+	if length > 0 {
+		mem.Write(ptr, make([]byte, length))
+	}
+	return false
+}
+
 // Call stages every buffer argument, calls fn with the arguments in
 // order, and copies the output out before every buffer — inputs and
 // output — is wiped and freed. mem is the module's allocator, held
