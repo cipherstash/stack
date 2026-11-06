@@ -113,7 +113,7 @@ mod tests {
 
     fn throttled() -> Error {
         Error::Backend {
-            vendor: "test-vendor",
+            backend: stack_kms::KeyVendor::Static.into(),
             kind: BackendErrorKind::Throttled,
             source: "slow down".into(),
         }
@@ -229,7 +229,7 @@ mod tests {
                 async move {
                     if index == 2 {
                         Err(Error::Backend {
-                            vendor: "test-vendor",
+                            backend: stack_kms::KeyVendor::Static.into(),
                             kind: BackendErrorKind::AccessDenied,
                             source: "no".into(),
                         })

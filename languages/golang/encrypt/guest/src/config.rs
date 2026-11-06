@@ -307,10 +307,7 @@ impl VendorWire<'_> {
         let missing = |key: &str| format!("missing field `{key}`");
         let invalid = |key: &str| format!("{key}: a value its type does not accept");
         let name = self.key_vendor.ok_or_else(|| missing("key_vendor"))?;
-        let vendor = KeyVendor::ALL
-            .into_iter()
-            .find(|v| v.name() == name)
-            .ok_or_else(|| invalid("key_vendor"))?;
+        let vendor = KeyVendor::from_name(name).ok_or_else(|| invalid("key_vendor"))?;
         let records = self
             .keyset_records
             .ok_or_else(|| missing("keyset_records"))?;

@@ -27,8 +27,8 @@ fn record_aad() -> Vec<u8> {
 
 fn kind_of(error: Error) -> BackendErrorKind {
     match error {
-        Error::Backend { vendor, kind, .. } => {
-            assert_eq!(vendor, "aws-kms");
+        Error::Backend { backend, kind, .. } => {
+            assert_eq!(backend.name(), "aws-kms");
             kind
         }
         other => panic!("not a backend error: {other:?}"),

@@ -114,7 +114,7 @@ impl FakeVendor {
         if pending.is_ok() {
             let _ = self.throttled.fetch_add(1, Ordering::SeqCst);
             return Err(Error::Backend {
-                vendor: self.vendor.name(),
+                backend: self.vendor.into(),
                 kind: BackendErrorKind::Throttled,
                 source: "the fake vendor is throttling".into(),
             });
@@ -126,7 +126,7 @@ impl FakeVendor {
     fn rename(&self, error: Error) -> Error {
         match error {
             Error::Backend { kind, source, .. } => Error::Backend {
-                vendor: self.vendor.name(),
+                backend: self.vendor.into(),
                 kind,
                 source,
             },

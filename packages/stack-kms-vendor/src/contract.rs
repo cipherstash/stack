@@ -148,7 +148,7 @@ impl<B: KeyVendorBackend> Observed<B> {
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
         match pending {
             Ok(_) => Err(KmsError::Backend {
-                vendor: self.inner.vendor().name(),
+                backend: self.inner.vendor().into(),
                 kind: BackendErrorKind::Throttled,
                 source: "throttled by the contract suite".into(),
             }),

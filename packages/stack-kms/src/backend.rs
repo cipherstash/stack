@@ -55,6 +55,12 @@ impl KeyBackend {
     }
 }
 
+impl From<KeyVendor> for KeyBackend {
+    fn from(vendor: KeyVendor) -> Self {
+        Self::Vendor(vendor)
+    }
+}
+
 impl fmt::Display for KeyBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
@@ -103,9 +109,11 @@ impl KeyVendor {
         }
     }
 
-    /// A stable, lower-case name. A key vendor backend uses it as the
-    /// `vendor` of its [`Error::Backend`](crate::Error::Backend) and
-    /// [`Error::ZeroKmsOnly`](crate::Error::ZeroKmsOnly).
+    /// A stable, lower-case name. It is the one spelling of the vendor: the
+    /// `vendor` field of [`Error::Backend`](crate::Error::Backend) and
+    /// [`Error::ZeroKmsOnly`](crate::Error::ZeroKmsOnly) payloads, the
+    /// `key_vendor` value of the Go guest's config, and the `backend` that
+    /// `stash keyset` reports.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Aws => "aws-kms",
@@ -114,6 +122,12 @@ impl KeyVendor {
             Self::Vault => "vault-transit",
             Self::Static => "static",
         }
+    }
+
+    /// The vendor that [`name`](Self::name) spells `name`, or `None` for a
+    /// name that is not one of them. The match is exact.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|vendor| vendor.name() == name)
     }
 }
 
@@ -194,6 +208,12 @@ mod tests {
                 (5, "static"),
             ]
         );
+        for vendor in KeyVendor::ALL {
+            assert_eq!(KeyVendor::from_name(vendor.name()), Some(vendor));
+        }
+        for name in ["aws", "AWS-KMS", "zerokms", ""] {
+            assert_eq!(KeyVendor::from_name(name), None, "{name:?}");
+        }
         let modes: Vec<(u8, &str)> = KeyMode::ALL
             .iter()
             .map(|mode| (mode.byte(), mode.name()))

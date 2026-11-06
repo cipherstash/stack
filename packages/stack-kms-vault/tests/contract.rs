@@ -35,8 +35,8 @@ fn client_with(
 
 fn kind_of(error: Error) -> BackendErrorKind {
     match error {
-        Error::Backend { vendor, kind, .. } => {
-            assert_eq!(vendor, "vault-transit");
+        Error::Backend { backend, kind, .. } => {
+            assert_eq!(backend.name(), "vault-transit");
             kind
         }
         other => panic!("not a backend error: {other:?}"),
