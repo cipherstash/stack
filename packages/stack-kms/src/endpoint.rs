@@ -9,8 +9,10 @@ use url::Url;
 /// No message repeats the URL it refused: [`NoHost`](Self::NoHost) and
 /// [`QueryOrFragment`](Self::QueryOrFragment) are checked before
 /// [`Userinfo`](Self::Userinfo), so the URL they hold can still carry
-/// credentials, and a query string can carry anything. The URL stays in the
-/// variant for a caller in this process.
+/// credentials, and a query string can carry anything. A
+/// [`NotHosted`](Self::NotHosted) URL came from an unverified token claim, so
+/// it can carry whatever its author chose. The URL stays in the variant for a
+/// caller in this process.
 #[derive(Debug, Error, PartialEq, Eq, miette::Diagnostic)]
 pub enum InvalidEndpoint {
     /// The value did not parse as a URL at all.
@@ -42,6 +44,31 @@ pub enum InvalidEndpoint {
         help("Remove the user and password from the URL: ZeroKMS takes the credential as a bearer token.")
     )]
     Userinfo,
+
+    /// A token's `services` claim named an endpoint that is not a
+    /// CipherStash-hosted ZeroKMS. The claim is read from a token whose
+    /// signature this client does not verify, so it may only choose between
+    /// CipherStash's own regional endpoints; anything else must be configured
+    /// explicitly by the operator.
+    #[error(
+        "the token's services claim may only name a CipherStash-hosted ZeroKMS endpoint (`https://<region>.<provider>.viturhosted.net/`)"
+    )]
+    #[diagnostic(
+        code(stack_kms::endpoint_not_hosted),
+        help("To use any other ZeroKMS endpoint, configure it explicitly (`CS_ZEROKMS_HOST` or `with_base_url`).")
+    )]
+    NotHosted(String),
+
+    /// A token's `services` claim named a different ZeroKMS endpoint from the
+    /// one this client resolved from an earlier token. The client refuses to
+    /// send the token anywhere but the endpoint it already uses, and refuses
+    /// to move to the new one.
+    #[error("the token names a different ZeroKMS endpoint from the one this client already uses")]
+    #[diagnostic(
+        code(stack_kms::endpoint_mismatch),
+        help("A client resolves its ZeroKMS endpoint from the first token it holds. Use a separate client for each region's credentials, or configure the endpoint explicitly (`CS_ZEROKMS_HOST`).")
+    )]
+    Mismatch,
 }
 
 impl stack_auth::ErrorPayload for InvalidEndpoint {
@@ -50,9 +77,12 @@ impl stack_auth::ErrorPayload for InvalidEndpoint {
             Self::Scheme(scheme) => {
                 stack_auth::diagnostic::payload([("scheme", scheme.as_str().into())])
             }
-            Self::Parse(_) | Self::NoHost(_) | Self::QueryOrFragment(_) | Self::Userinfo => {
-                serde_json::Map::new()
-            }
+            Self::Parse(_)
+            | Self::NoHost(_)
+            | Self::QueryOrFragment(_)
+            | Self::Userinfo
+            | Self::NotHosted(_)
+            | Self::Mismatch => serde_json::Map::new(),
         }
     }
 }
@@ -106,6 +136,43 @@ impl ZeroKmsEndpoint {
             url.set_path(&path);
         }
         Ok(Self(url))
+    }
+
+    /// Validate an endpoint named by an access token's `services` claim.
+    ///
+    /// The claim comes from a token whose signature this crate never checks,
+    /// and a [`TokenStore`](stack_auth::TokenStore) can hand back a token
+    /// someone else wrote. So on top of [`new`](Self::new)'s hygiene, a
+    /// claimed endpoint must be a CipherStash-hosted ZeroKMS:
+    ///
+    /// * scheme `https`, on the default port, at the root path
+    /// * host `<region>.<provider>.viturhosted.net`, for a region CipherStash
+    ///   runs (`cts_common::Region`) — the form CTS issues. A region newer
+    ///   than this build's `cts-common` is refused, as its workspace CRN
+    ///   already is by stack-auth.
+    ///
+    /// Any other endpoint (a gateway, a local ZeroKMS, plain `http`) is
+    /// accepted only from explicit configuration: `CS_ZEROKMS_HOST` or the
+    /// builder's `with_base_url`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`new`](Self::new) refuses, and
+    /// [`InvalidEndpoint::NotHosted`] for a usable URL on any other host.
+    pub(crate) fn from_services_claim(url: Url) -> Result<Self, InvalidEndpoint> {
+        let endpoint = Self::new(url)?;
+        let url = endpoint.as_url();
+        let hosted = url.scheme() == "https"
+            && url.port().is_none()
+            && url.path() == "/"
+            && url.host_str().is_some_and(|host| {
+                cts_common::ZeroKmsServiceDiscovery::region_from_host_fqdn(host).is_ok()
+            });
+        if hosted {
+            Ok(endpoint)
+        } else {
+            Err(InvalidEndpoint::NotHosted(endpoint.0.into()))
+        }
     }
 
     /// The URL for a request path (a `ViturRequest::ENDPOINT`), appended to
@@ -293,6 +360,125 @@ mod tests {
             assert!(matches!(
                 "not a url".parse::<ZeroKmsEndpoint>(),
                 Err(InvalidEndpoint::Parse(_))
+            ));
+        }
+
+        #[test]
+        fn nothing_with_a_message_that_repeats_a_claimed_url() {
+            let err = claimed("https://marker.example/").unwrap_err();
+            assert!(!err.to_string().contains("marker"), "{err}");
+        }
+    }
+
+    fn claimed(s: &str) -> Result<ZeroKmsEndpoint, InvalidEndpoint> {
+        ZeroKmsEndpoint::from_services_claim(Url::parse(s).unwrap())
+    }
+
+    /// The endpoint a token's `services` claim may name: only CipherStash's
+    /// own regional ZeroKMS, whatever the explicit-config path accepts.
+    mod from_services_claim {
+        use super::*;
+
+        #[test]
+        fn accepts_every_region_cipherstash_runs() {
+            for region in cts_common::Region::all() {
+                let s = format!("https://{}.viturhosted.net/", region.identifier());
+                assert_eq!(claimed(&s).map(|e| e.to_string()), Ok(s.clone()), "{s}");
+            }
+        }
+
+        #[test]
+        fn accepts_a_hosted_endpoint_without_a_trailing_slash() {
+            assert_eq!(
+                claimed("https://ap-southeast-2.aws.viturhosted.net")
+                    .unwrap()
+                    .as_str(),
+                "https://ap-southeast-2.aws.viturhosted.net/"
+            );
+        }
+
+        #[test]
+        fn accepts_an_explicit_default_port() {
+            // `Url` drops `:443` on https, so it is the same endpoint.
+            assert!(claimed("https://us-east-1.aws.viturhosted.net:443/").is_ok());
+        }
+
+        #[test]
+        fn rejects_hosts_outside_cipherstash() {
+            for s in [
+                "https://evil.example/",
+                "https://zerokms.example.com/",
+                "https://localhost:3002/",
+                "https://127.0.0.1/",
+                "https://viturhosted.net/",
+                "https://aws.viturhosted.net/",
+                "https://us-east-1.aws.viturhosted.net.evil.example/",
+                "https://evil.us-east-1.aws.viturhosted.net/",
+                "https://us-east-1.aws.viturhosted.net.",
+                "https://us-east-1-aws.viturhosted.net/",
+                "https://xviturhosted.net/",
+            ] {
+                assert!(
+                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
+                    "{s}: {:?}",
+                    claimed(s)
+                );
+            }
+        }
+
+        #[test]
+        fn rejects_a_region_cipherstash_does_not_run() {
+            assert!(matches!(
+                claimed("https://mars-north-1.aws.viturhosted.net/"),
+                Err(InvalidEndpoint::NotHosted(_))
+            ));
+            assert!(matches!(
+                claimed("https://us-east-1.gcp.viturhosted.net/"),
+                Err(InvalidEndpoint::NotHosted(_))
+            ));
+        }
+
+        #[test]
+        fn rejects_plain_http_to_a_hosted_name() {
+            assert!(matches!(
+                claimed("http://us-east-1.aws.viturhosted.net/"),
+                Err(InvalidEndpoint::NotHosted(_))
+            ));
+        }
+
+        #[test]
+        fn rejects_a_path_on_a_hosted_name() {
+            // The claim chooses the host's ZeroKMS, not some other service
+            // under a path prefix on it.
+            for s in [
+                "https://us-east-1.aws.viturhosted.net/other/service",
+                "https://us-east-1.aws.viturhosted.net/other/service/",
+            ] {
+                assert!(
+                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
+                    "{s}: {:?}",
+                    claimed(s)
+                );
+            }
+        }
+
+        #[test]
+        fn rejects_a_non_default_port() {
+            assert!(matches!(
+                claimed("https://us-east-1.aws.viturhosted.net:8443/"),
+                Err(InvalidEndpoint::NotHosted(_))
+            ));
+        }
+
+        #[test]
+        fn still_applies_the_hygiene_rules_first() {
+            assert!(matches!(
+                claimed("https://user:pw@us-east-1.aws.viturhosted.net/"),
+                Err(InvalidEndpoint::Userinfo)
+            ));
+            assert!(matches!(
+                claimed("https://us-east-1.aws.viturhosted.net/?q=1"),
+                Err(InvalidEndpoint::QueryOrFragment(_))
             ));
         }
     }

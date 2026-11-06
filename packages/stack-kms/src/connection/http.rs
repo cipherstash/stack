@@ -51,9 +51,10 @@ pub struct HttpConnectionOpts {
 }
 
 impl HttpConnectionOpts {
-    /// Options for a connection to `base_url`, or — when `None` — to whatever
-    /// endpoint the access token's `services` claim names (resolved on first
-    /// use via [`HttpConnection::ensure_base_url`]).
+    /// Options for a connection to `base_url`, or — when `None` — to the
+    /// CipherStash-hosted endpoint the access token's `services` claim names
+    /// (resolved on first use via [`HttpConnection::ensure_base_url`]). An
+    /// explicit `base_url` may be any usable endpoint; a claimed one may not.
     pub fn new(base_url: Option<ZeroKmsEndpoint>) -> Self {
         Self {
             base_url,

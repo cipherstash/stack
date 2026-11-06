@@ -2026,6 +2026,7 @@ dependencies = [
  "base16ct",
  "base64ct",
  "blake3",
+ "cts-common",
  "futures",
  "miette",
  "opaque-debug",

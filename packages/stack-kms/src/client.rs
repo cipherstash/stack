@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::OnceLock;
 use uuid::Uuid;
 use zerokms_protocol::{
     GenerateKeyRequest, GenerateKeySpec, GeneratedKey, IdentifiedBy, Keyset, LoadKeysetRequest,
@@ -13,6 +14,7 @@ use vitaminc::random::{Generatable, SafeRand};
 #[cfg(feature = "http")]
 use crate::connection::HttpConnection;
 use crate::connection::ZeroKMSConnection;
+use crate::endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 use crate::errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use crate::futures::map_async_chunked;
 use crate::key::{ClientKey, DataKey, DataKeyWithTag, IndexKey};
@@ -410,6 +412,9 @@ pub struct StackKms<C, Conn = HttpConnection> {
     client: Client<Conn>,
     credentials: C,
     client_key: ClientKey,
+    /// `None` when the connection was given its endpoint at init; otherwise
+    /// the endpoint the first token's `services` claim named, once known.
+    discovered: Option<OnceLock<ZeroKmsEndpoint>>,
 }
 
 /// `StackKms` owns the transport [`Client`], a [`stack_auth`] credential
@@ -421,6 +426,9 @@ pub struct StackKms<C, Conn> {
     client: Client<Conn>,
     credentials: C,
     client_key: ClientKey,
+    /// `None` when the connection was given its endpoint at init; otherwise
+    /// the endpoint the first token's `services` claim named, once known.
+    discovered: Option<OnceLock<ZeroKmsEndpoint>>,
 }
 
 impl<C, Conn> StackKms<C, Conn>
@@ -442,33 +450,60 @@ where
     ///
     /// The connection is initialised from `opts`'s connection options; the
     /// ZeroKMS endpoint is taken from the access token's `services` claim on
-    /// first use unless the connection already knows one.
+    /// first use unless the connection already knows one. A claimed endpoint
+    /// must be CipherStash-hosted, and every later token must name the same
+    /// one; whether the connection already knows one is decided here, once.
     pub fn connect(
         opts: ClientOpts<Conn::ConnectionOpts>,
         credentials: C,
         client_key: ClientKey,
     ) -> Result<Self, Error> {
-        let client = Client::init_opts(opts).map_err(|e| Error::ConnectionInit(Box::new(e)))?;
+        let client: Client<Conn> =
+            Client::init_opts(opts).map_err(|e| Error::ConnectionInit(Box::new(e)))?;
+        // Decided once, here: asking the connection on every call would race a
+        // concurrent first caller that has just pinned it from a claim.
+        let discovered = (!client.connection().has_base_url()).then(OnceLock::new);
         Ok(Self {
             client,
             credentials,
             client_key,
+            discovered,
         })
     }
 
-    /// Fetch a token from the credentials provider and ensure the ZeroKMS base
-    /// URL has been resolved on the connection (from the token's `services`
-    /// claim). The URL is only resolved once; subsequent calls skip resolution.
+    /// Fetch a token from the credentials provider and make sure the
+    /// connection sends it to the ZeroKMS endpoint the token is meant for.
+    ///
+    /// An endpoint configured on the connection (`with_base_url`,
+    /// `CS_ZEROKMS_HOST`, or a transport that needs none) is the operator's
+    /// choice and is used as it is. Otherwise the endpoint comes from the
+    /// token's `services` claim, which nothing here verifies — a
+    /// [`TokenStore`](stack_auth::TokenStore) can return a token anyone wrote
+    /// — so:
+    ///
+    /// * the claim may only name a CipherStash-hosted ZeroKMS
+    ///   ([`ZeroKmsEndpoint::from_services_claim`]), and
+    /// * every later token must name the endpoint the first one did. A token
+    ///   naming another is refused rather than sent to the pinned endpoint,
+    ///   and it cannot move the pin.
     async fn get_token(&self) -> Result<stack_auth::ServiceToken, Error> {
         let token = (&self.credentials).get_token().await?;
-        if !self.client.connection().has_base_url() {
-            let endpoint = crate::endpoint::ZeroKmsEndpoint::try_from(token.zerokms_url()?)?;
+        // Configured explicitly: the claim is not consulted.
+        let Some(discovered) = &self.discovered else {
+            return Ok(token);
+        };
+        let claimed = ZeroKmsEndpoint::from_services_claim(token.zerokms_url()?)?;
+        let pinned = discovered.get_or_init(|| {
             tracing::debug!(
                 target: "stack_kms",
-                %endpoint,
+                endpoint = %claimed,
                 "resolved ZeroKMS endpoint from the token's services claim"
             );
-            self.client.connection().ensure_base_url(endpoint);
+            self.client.connection().ensure_base_url(claimed.clone());
+            claimed.clone()
+        });
+        if *pinned != claimed {
+            return Err(InvalidEndpoint::Mismatch.into());
         }
         Ok(token)
     }
@@ -705,6 +740,229 @@ mod tests {
             assert_eq!(keys.len(), 2);
             assert_eq!(keys[0].tag, vec![1]);
             assert_eq!(keys[1].tag, vec![2]);
+        }
+    }
+
+    /// Where a token's `services` claim may send key operations (CIP-5152).
+    /// The claim is unverified, so it may only name a CipherStash-hosted
+    /// ZeroKMS, and it cannot move an endpoint already in use.
+    mod endpoint_from_the_services_claim {
+        use super::*;
+        use base64ct::{Base64UrlUnpadded, Encoding};
+        use std::collections::VecDeque;
+        use std::sync::Mutex;
+
+        const SYDNEY: &str = "https://ap-southeast-2.aws.viturhosted.net/";
+        const VIRGINIA: &str = "https://us-east-1.aws.viturhosted.net/";
+
+        /// An unsigned JWT naming `zerokms` — the shape a poisoned
+        /// `TokenStore` can hand back, since nothing verifies the signature.
+        fn jwt(zerokms: Option<&str>) -> String {
+            let mut claims = serde_json::json!({
+                "iss": "https://ap-southeast-2.aws.cts.cipherstashmanaged.net/",
+                "sub": "CS|test-user",
+                "workspace": "ZVATKW3VHMFG27DY",
+            });
+            if let Some(url) = zerokms {
+                claims["services"] = serde_json::json!({ "zerokms": url });
+            }
+            let part =
+                |v: serde_json::Value| Base64UrlUnpadded::encode_string(v.to_string().as_bytes());
+            format!(
+                "{}.{}.c2ln",
+                part(serde_json::json!({ "alg": "HS256", "typ": "JWT" })),
+                part(claims)
+            )
+        }
+
+        /// Hands out the given tokens in order.
+        struct Tokens(Mutex<VecDeque<String>>);
+
+        impl Tokens {
+            fn new<const N: usize>(tokens: [String; N]) -> Self {
+                Self(Mutex::new(tokens.into()))
+            }
+        }
+
+        impl AuthStrategy for &Tokens {
+            async fn get_token(self) -> Result<stack_auth::ServiceToken, stack_auth::AuthError> {
+                let token = self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("a token per call");
+                Ok(stack_auth::ServiceToken::new(stack_auth::SecretToken::new(
+                    token,
+                )))
+            }
+        }
+
+        /// A transport that, like `HttpConnection`, discovers its endpoint
+        /// and records what it was told. It never sends anything:
+        /// `get_token` is the code under test.
+        #[derive(Default)]
+        struct Discovering {
+            pinned: Mutex<Option<ZeroKmsEndpoint>>,
+            calls: Mutex<usize>,
+        }
+
+        impl crate::connection::ZeroKMSConnectionInit for Discovering {
+            type ConnectionOpts = Option<ZeroKmsEndpoint>;
+            type Error = std::convert::Infallible;
+
+            fn init(pinned: Self::ConnectionOpts) -> Result<Self, Self::Error> {
+                Ok(Self {
+                    pinned: Mutex::new(pinned),
+                    calls: Mutex::new(0),
+                })
+            }
+        }
+
+        impl ZeroKMSConnection for Discovering {
+            fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
+                *self.calls.lock().unwrap() += 1;
+                self.pinned.lock().unwrap().get_or_insert(url);
+            }
+
+            fn has_base_url(&self) -> bool {
+                self.pinned.lock().unwrap().is_some()
+            }
+
+            async fn send<Request: ViturRequest>(
+                &self,
+                _request: Request,
+                _access_token: &str,
+            ) -> Result<Request::Response, ViturRequestError> {
+                unreachable!("these tests stop at get_token")
+            }
+        }
+
+        fn kms(configured: Option<&str>, tokens: Tokens) -> StackKms<Tokens, Discovering> {
+            let configured = configured.map(|s| s.parse().unwrap());
+            StackKms::connect(ClientOpts::new(configured), tokens, random_client_key())
+                .expect("connect")
+        }
+
+        fn pinned(kms: &StackKms<Tokens, Discovering>) -> Option<String> {
+            let pinned = kms.client.connection().pinned.lock().unwrap();
+            pinned.as_ref().map(ToString::to_string)
+        }
+
+        #[tokio::test]
+        async fn a_hosted_endpoint_is_used() {
+            let kms = kms(None, Tokens::new([jwt(Some(SYDNEY))]));
+            kms.get_token()
+                .await
+                .expect("a hosted endpoint is accepted");
+            assert_eq!(pinned(&kms).as_deref(), Some(SYDNEY));
+        }
+
+        #[tokio::test]
+        async fn a_host_outside_cipherstash_is_refused_and_not_pinned() {
+            let kms = kms(None, Tokens::new([jwt(Some("https://evil.example/"))]));
+            let err = kms.get_token().await.expect_err("an attacker's host");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::NotHosted(_))),
+                "{err:?}"
+            );
+            assert_eq!(pinned(&kms), None);
+        }
+
+        #[tokio::test]
+        async fn plain_http_is_refused() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some("http://ap-southeast-2.aws.viturhosted.net/"))]),
+            );
+            let err = kms.get_token().await.expect_err("http");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::NotHosted(_))),
+                "{err:?}"
+            );
+            assert_eq!(pinned(&kms), None);
+        }
+
+        #[tokio::test]
+        async fn a_refused_first_token_does_not_stop_a_good_one() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some("https://evil.example/")), jwt(Some(SYDNEY))]),
+            );
+            kms.get_token().await.expect_err("an attacker's host");
+            kms.get_token().await.expect("the next caller's token");
+            assert_eq!(pinned(&kms).as_deref(), Some(SYDNEY));
+        }
+
+        #[tokio::test]
+        async fn a_later_token_naming_another_endpoint_is_refused() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(SYDNEY)), jwt(Some(VIRGINIA)), jwt(Some(SYDNEY))]),
+            );
+            kms.get_token().await.expect("first token pins Sydney");
+            let err = kms
+                .get_token()
+                .await
+                .expect_err("a token for another region must not go to Sydney");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::Mismatch)),
+                "{err:?}"
+            );
+            kms.get_token().await.expect("Sydney tokens still work");
+            assert_eq!(pinned(&kms).as_deref(), Some(SYDNEY));
+            assert_eq!(
+                *kms.client.connection().calls.lock().unwrap(),
+                1,
+                "the endpoint is handed to the connection once"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_later_token_naming_a_foreign_host_is_refused() {
+            let kms = kms(
+                None,
+                Tokens::new([jwt(Some(SYDNEY)), jwt(Some("https://evil.example/"))]),
+            );
+            kms.get_token().await.expect("first token pins Sydney");
+            let err = kms.get_token().await.expect_err("foreign host");
+            assert!(
+                matches!(err, Error::InvalidEndpoint(InvalidEndpoint::NotHosted(_))),
+                "{err:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_later_token_without_the_claim_is_refused() {
+            let kms = kms(None, Tokens::new([jwt(Some(SYDNEY)), jwt(None)]));
+            kms.get_token().await.expect("first token pins Sydney");
+            let err = kms.get_token().await.expect_err("no services claim");
+            assert!(matches!(err, Error::Auth(_)), "{err:?}");
+        }
+
+        #[tokio::test]
+        async fn a_configured_endpoint_ignores_the_claim() {
+            // `CS_ZEROKMS_HOST` / `with_base_url` is the operator's choice:
+            // any host, `http` included, and the claim is never consulted.
+            let kms = kms(
+                Some("http://localhost:3002"),
+                Tokens::new([jwt(Some("https://evil.example/")), jwt(None)]),
+            );
+            kms.get_token().await.expect("claim ignored");
+            kms.get_token().await.expect("claim ignored");
+            assert_eq!(pinned(&kms).as_deref(), Some("http://localhost:3002/"));
+            assert_eq!(*kms.client.connection().calls.lock().unwrap(), 0);
+        }
+
+        #[tokio::test]
+        async fn a_transport_that_needs_no_endpoint_ignores_the_claim() {
+            let kms = StackKms::<_, TestConnection>::connect(
+                ClientOpts::new(TestConnectionBuilder::new()),
+                stack_auth::StaticTokenStrategy::new(jwt(Some("https://evil.example/"))),
+                random_client_key(),
+            )
+            .expect("connect");
+            kms.get_token().await.expect("claim ignored");
         }
     }
 
