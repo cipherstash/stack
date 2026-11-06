@@ -34,27 +34,62 @@ mod sealed {
 /// - the fixed-width signed integers
 /// - the unsigned integers from `u16` to `u128`
 /// - the byte strings `Vec<u8>` and `[u8; N]`
-/// A type of your own
-/// meets them if its borrow implements `Scalar` and the type implements
-/// `Zeroize`. The trait is sealed, so you cannot implement it directly.
+///
+/// A type of your own meets them if its borrow implements `Scalar` and the
+/// type implements `Zeroize`. The trait is sealed, so you cannot implement it
+/// directly.
 ///
 /// A sequence is not a `Scalar`, so `Vec<u8>` is the only `Vec` that encrypts
 /// into one `Ciphertext`. A `Vec` of any other `OpaqueEncode` type encrypts
 /// element by element into a `Vec<Ciphertext>`, through [`EncryptInto`]. The
-/// crate docs on collections explain how. `u8` is not an `OpaqueEncode` type,
+/// [crate docs on collections](crate#collections) explain how. `u8` is not an `OpaqueEncode` type,
 /// because Vitamin C encrypts a `Vec<u8>` as one byte string, not as a
 /// collection of bytes.
 ///
-/// A nullable `Option<T>` is not an `OpaqueEncode` type either. Use
-/// [`KeysetCipher::encrypt_tree`] and [`KeysetCipher::decrypt_tree`] for
-/// nullable values. A fixed-width nullable value keeps Vitamin C's padded
-/// form for null.
+/// # Nullable values
+///
+/// A nullable `Option<T>` is not an `OpaqueEncode` type either, so
+/// `keyset.encrypt(Some(34i64))` does not compile. Encrypt a nullable value
+/// with [`KeysetCipher::encrypt_tree`], which returns a [`StackCipherText`](crate::StackCipherText).
+/// Decrypt it with [`KeysetCipher::decrypt_tree`].
+///
+/// A `None` of a fixed-width type, such as `Option<i64>`, is encrypted as a
+/// null that is padded to the type's width. So its ciphertext is as long as
+/// the ciphertext of a `Some`, and the length does not show whether a value
+/// was present. Text has no fixed width, so the ciphertext of an
+/// `Option<String>` that is `None` is shorter than one that is `Some`.
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::StackCipher;
+/// // With no `.kms(..)`, the cipher uses ZeroKMS. It reads credentials from
+/// // the environment, or from the profile that `npx stash auth login` writes.
+/// let cipher = StackCipher::builder()
+/// #     .kms(stack_encrypt::kms::FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+///
+/// // A value that is present.
+/// let stored = keyset.encrypt_tree(Some(34i64), ("users", "age")).await?;
+/// let age: Option<i64> = keyset.decrypt_tree(stored, ("users", "age")).await?;
+/// assert_eq!(age, Some(34));
+///
+/// // A value that is absent. Its ciphertext is as long as a present one's.
+/// let stored = keyset.encrypt_tree(None::<i64>, ("users", "age")).await?;
+/// let age: Option<i64> = keyset.decrypt_tree(stored, ("users", "age")).await?;
+/// assert_eq!(age, None);
+/// # Ok(())
+/// # }
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+/// ```
 pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to.
 ///
 /// `OpaqueDecode` is implemented for every [`FromScalar`] type that also
-/// implements [`Zeroize`]. Every built-in [`OpaqueEncode`] type is one. The trait is sealed, as `OpaqueEncode` is.
+/// implements [`Zeroize`]. Every built-in [`OpaqueEncode`] type is one. The
+/// trait is sealed, as `OpaqueEncode` is.
 pub trait OpaqueDecode: sealed::Decode + Decrypt + Zeroize + Send + 'static {}
 
 // The bridge from an owned `S` to its borrow's walk: `OpaqueEncode`'s
