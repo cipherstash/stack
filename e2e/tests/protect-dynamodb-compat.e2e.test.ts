@@ -355,6 +355,8 @@ describe('protect-dynamodb 6.0.1 items under Stack 1.x', () => {
           await legacy.encryptModel({ pk: 'fraction', age }, legacyUsers),
           'legacy fractional write',
         )
+        // Without this, the comparisons below pass on undefined === undefined.
+        expect(old.age__hmac).toEqual(expect.any(String))
         expect(
           ok(await stack.decryptModel(old, alternates), 'fractional read').age,
         ).toBe(age)
