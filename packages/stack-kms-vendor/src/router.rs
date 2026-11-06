@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, Error, GenerateKeyPayload, IdentifiedBy, IndexKey,
     IndexKeySource, KeyBackend, KeyMode, LoadedIndexKey, RetrieveKeyPayload, SelectedKeyset,
-    UnverifiedContext,
+    UnverifiedContext, ZeroKmsKeySource,
 };
 use uuid::Uuid;
 
@@ -17,8 +17,24 @@ use crate::vendor::KeyVendorBackend;
 ///
 /// A cipher holds ZeroKMS and **at most one** key vendor backend. The type
 /// has room for one or none: [`new`](Self::new) gives it one, and
-/// [`zerokms_only`](Self::zerokms_only) none. [`VendorKeySource::new`]
-/// refuses records that name a second vendor
+/// [`zerokms_only`](Self::zerokms_only) none. The ZeroKMS side must be a
+/// [`ZeroKmsKeySource`], which a router is not, so a router cannot hold a
+/// second router and its vendor:
+///
+/// ```compile_fail
+/// use stack_kms::FakeDataKeySource;
+/// use stack_kms_vendor::{FakeVendor, KeyRouter, VendorKeySource};
+///
+/// fn nested(
+///     inner: KeyRouter<FakeDataKeySource, FakeVendor>,
+///     vendor: VendorKeySource<FakeVendor>,
+/// ) {
+///     // A router is not a ZeroKmsKeySource.
+///     let _ = KeyRouter::new(inner, vendor);
+/// }
+/// ```
+///
+/// [`VendorKeySource::new`] refuses records that name a second vendor
 /// ([`RecordError::SecondVendor`](crate::RecordError::SecondVendor)).
 ///
 /// Routing:
@@ -52,7 +68,7 @@ impl<Z, B> std::fmt::Debug for KeyRouter<Z, B> {
     }
 }
 
-impl<Z, B: KeyVendorBackend> KeyRouter<Z, B> {
+impl<Z: ZeroKmsKeySource, B: KeyVendorBackend> KeyRouter<Z, B> {
     /// Route between `zerokms` and `vendor`.
     pub fn new(zerokms: Z, vendor: VendorKeySource<B>) -> Self {
         Self {
@@ -71,7 +87,9 @@ impl<Z, B: KeyVendorBackend> KeyRouter<Z, B> {
             vendor_default: false,
         }
     }
+}
 
+impl<Z, B: KeyVendorBackend> KeyRouter<Z, B> {
     /// Make naming no keyset select the vendor's default keyset (its only
     /// record, or the one set with
     /// [`VendorKeySource::with_default_keyset`]), not ZeroKMS's. For a

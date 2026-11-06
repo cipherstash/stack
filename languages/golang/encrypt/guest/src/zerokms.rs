@@ -27,6 +27,9 @@ pub enum MaybeZeroKms<Z> {
     Absent,
 }
 
+// MaybeZeroKms stands for ZeroKMS (present or not), never for a router.
+impl<Z: stack_kms::ZeroKmsKeySource> stack_kms::ZeroKmsKeySource for MaybeZeroKms<Z> {}
+
 /// The cause of [`no_zerokms`]: its type is what the status layer finds to
 /// report `STATUS_NO_ZEROKMS`.
 #[derive(Debug, Clone, Copy)]
