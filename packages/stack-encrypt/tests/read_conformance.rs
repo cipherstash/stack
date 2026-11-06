@@ -9,12 +9,12 @@ use common::{
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use stack_encrypt::dynamic::{record, Scope, ValueFrame};
+use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{CipherText, ErrorPayload, Label, StackCipherText};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::Ordering,
 };
-use vitaminc_protected::Controlled as _;
 
 type Row = BTreeMap<String, Input>;
 #[derive(Deserialize)]
@@ -109,9 +109,9 @@ fn plan(decl: &Declaration, context_field: bool, context_name: &str) -> record::
     // serde_json map backend or the context field's lexical position.
     let framed = |v: &Value| {
         ValueFrame::from_bytes(
-            &vitaminc_aead_frame::serde::to_vec(v)
+            vitaminc_aead_frame::serde::to_vec(v)
                 .unwrap()
-                .risky_unwrap(),
+                .as_protected_ref(),
         )
         .unwrap()
     };
@@ -124,7 +124,7 @@ fn plan(decl: &Declaration, context_field: bool, context_name: &str) -> record::
         ));
     }
     fields.push(("value", framed(&spec)));
-    record::plan(object(fields).risky_ref()).unwrap()
+    record::plan(object(fields).as_protected_ref()).unwrap()
 }
 fn rows(input: &[Row], context_name: Option<&str>) -> ValueFrame {
     frame(

@@ -30,6 +30,7 @@ use stack_encrypt::sem::TermError;
 use stack_encrypt::target::{
     AeadContext, CallerContext, DecryptField, Decryption, IndexSpec, Json,
 };
+use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{nonempty, Error, Plan, PlanError, StackCipher};
 use stack_kms::FakeDataKeySource;
 
@@ -2932,7 +2933,6 @@ mod given_a_laid_out_plan {
 #[cfg(feature = "dynamic")]
 mod given_the_json_index_spec {
     use super::*;
-    use vitaminc_protected::Controlled as _;
 
     /// The spec's wire form is a fixed contract with stored data and the Go
     /// guest, so its strings are pinned literally.
@@ -2959,19 +2959,16 @@ mod given_the_json_index_spec {
             json!({"json": {"sealed_root": false, "ordered": []}}),
             "every option is written when any is not the default"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"sealed_root": false}}))
-            .unwrap()
-            .risky_unwrap();
+        let frame =
+            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"sealed_root": false}})).unwrap();
         assert_eq!(
-            IndexSpec::from_frame(&frame).unwrap(),
+            IndexSpec::from_frame(frame.as_protected_ref()).unwrap(),
             IndexSpec::Json(open_root()),
             "an option read from a frame"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"nope": true}}))
-            .unwrap()
-            .risky_unwrap();
+        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"nope": true}})).unwrap();
         assert!(
-            IndexSpec::from_frame(&frame).is_err(),
+            IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "an unknown option refuses the index"
         );
         // The ordered paths ride in `ordered`, written in their canonical
@@ -2986,28 +2983,25 @@ mod given_the_json_index_spec {
         let frame = vitaminc_aead_frame::serde::to_vec(
             &json!({"json": {"ordered": ["$.age", "$.orders[*].total"]}}),
         )
-        .unwrap()
-        .risky_unwrap();
+        .unwrap();
         assert_eq!(
-            IndexSpec::from_frame(&frame).unwrap(),
+            IndexSpec::from_frame(frame.as_protected_ref()).unwrap(),
             ordered,
             "ordered paths read back parsed"
         );
-        let frame = vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}}))
-            .unwrap()
-            .risky_unwrap();
+        let frame =
+            vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["age"]}})).unwrap();
         assert!(
-            IndexSpec::from_frame(&frame).is_err(),
+            IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "a text that is not a path refuses the index"
         );
         // A position in an ordered path refuses the index too: no ordering
         // can reach the leaf it names.
         let frame =
             vitaminc_aead_frame::serde::to_vec(&json!({"json": {"ordered": ["$.scores[2]"]}}))
-                .unwrap()
-                .risky_unwrap();
+                .unwrap();
         assert!(
-            IndexSpec::from_frame(&frame).is_err(),
+            IndexSpec::from_frame(frame.as_protected_ref()).is_err(),
             "a position in an ordered path refuses the index"
         );
         assert_eq!(

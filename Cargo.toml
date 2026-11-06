@@ -153,4 +153,4 @@ vitaminc-normalize = "0.9.0"
 # which text ORE and OPE terms are derived over (ADR-0009).
 vitaminc-ore = "0.9.0"
 vitaminc-prf = { version = "0.9.0", features = ["normalize"] }
-vitaminc-protected = "0.9.0"
+vitaminc-protected = "0.9.1"

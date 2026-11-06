@@ -742,8 +742,14 @@ impl<S: Plaintext> Plaintext for Option<S> {
     fn into_frame(self) -> Result<ValueFrame, Error> {
         match self {
             Some(value) => value.into_frame(),
-            None => ValueFrame::from_bytes(&[stack_encrypt::dynamic::frame::tags::NULL])
-                .map_err(|error| Error::Other(Box::new(error))),
+            None => {
+                let null =
+                    stack_encrypt::Protected::new([stack_encrypt::dynamic::frame::tags::NULL]);
+                ValueFrame::from_bytes(
+                    stack_encrypt::AsProtectedRef::as_protected_ref(&null).as_ref_of(),
+                )
+                .map_err(|error| Error::Other(Box::new(error)))
+            }
         }
     }
 }

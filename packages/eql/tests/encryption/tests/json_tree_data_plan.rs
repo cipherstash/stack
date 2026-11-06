@@ -18,6 +18,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
 use eql_bindings::encryption::targets::{self as eql_targets, Target};
@@ -29,7 +30,6 @@ use stack_encrypt::dynamic::{
 };
 use stack_encrypt::json::{JsonDocument, JsonOptions, JsonQuery};
 use stack_encrypt::target::{ExpectedContext, Layout};
-use stack_encrypt::Controlled as _;
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 
 /// eql-bindings' table as the engine's resolver, as the Go guest installs
@@ -124,7 +124,9 @@ fn plan() -> record::Plan {
         }
     });
     record::plan_with(
-        &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
         &Eql,
     )
     .unwrap()
@@ -405,7 +407,7 @@ async fn a_document_does_not_open_under_another_column() {
     .await
     .unwrap();
     let other = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {
                 "context": ["users", "other"],
                 "type": "json",
@@ -416,8 +418,8 @@ async fn a_document_does_not_open_under_another_column() {
                 }
             }
         }))
-        .unwrap()
-        .risky_unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Eql,
     )
     .unwrap();
@@ -495,9 +497,9 @@ fn input(entries: &[(&str, Value)]) -> ValueFrame {
         .map(|(k, v)| ((*k).to_owned(), v.clone()))
         .collect();
     ValueFrame::from_bytes(
-        &dynamic::frame::serde::to_vec(&object)
+        dynamic::frame::serde::to_vec(&object)
             .unwrap()
-            .risky_unwrap(),
+            .as_protected_ref(),
     )
     .unwrap()
 }
@@ -568,11 +570,11 @@ fn a_document_field_answers_the_json_operators() {
         ]
     );
     let unordered = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {"context": ["users", "profile"], "target": "JsonSearch"}
         }))
-        .unwrap()
-        .risky_unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Eql,
     )
     .unwrap();
@@ -917,9 +919,9 @@ async fn open(
     groups: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
     let request = ValueFrame::from_bytes(
-        &dynamic::frame::serde::to_vec(&request)
+        dynamic::frame::serde::to_vec(&request)
             .unwrap()
-            .risky_unwrap(),
+            .as_protected_ref(),
     )
     .unwrap();
     let rows = frame(&groups);

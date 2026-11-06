@@ -74,11 +74,11 @@ use crate::{ContextPiece, NonEmpty};
 ///
 /// ```
 /// use stack_encrypt::dynamic::context;
-/// use stack_encrypt::{nonempty, Controlled, IntoAad};
+/// use stack_encrypt::{nonempty, AsProtectedRef, IntoAad};
 ///
 /// // `[["users", "age"], 7u64]`, as a binding writes it.
 /// let frame = vitaminc_aead_frame::serde::to_vec(&(("users", "age"), 7u64))?;
-/// let parsed = context(frame.risky_ref())?;
+/// let parsed = context(frame.as_protected_ref())?;
 /// let typed = nonempty!("users").with("age").with(7u64);
 /// assert_eq!(
 ///     parsed.into_inner().into_aad().as_bytes(),
@@ -93,8 +93,10 @@ use crate::{ContextPiece, NonEmpty};
 /// ([`Reason::ContextKind`]), including bytes that are not one frame, and
 /// for a context that renders empty ([`Reason::EmptyContext`]). It names no
 /// field: the caller that knows the field names it ([`Error::in_field`]).
-pub fn context(frame: &[u8]) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
-    let Context(piece) = vitaminc_aead_frame::serde::from_slice(frame)
+pub fn context(
+    frame: vitaminc_protected::ProtectedRef<'_, [u8]>,
+) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
+    let Context(piece) = vitaminc_aead_frame::serde::from_slice(frame.risky_ref())
         .map_err(|_| Error::bad_context(Reason::ContextKind))?;
     non_empty(piece)
 }
@@ -228,6 +230,8 @@ mod tests {
     use crate::dynamic::test_frame::Tree;
     use crate::{nonempty, Descriptor, IntoAad, IntoPrfContext};
     use vitaminc_aead_frame::serde::to_vec;
+    use vitaminc_protected::AsProtectedRef as _;
+    use vitaminc_protected::Protected;
 
     fn s(value: &str) -> Tree {
         Tree::String(value.into())
@@ -235,7 +239,7 @@ mod tests {
 
     /// The context `value` spells, read from its frame.
     fn ctx(value: Tree) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
-        context(&frame_of(&value))
+        context(frame_of(&value).as_protected_ref().as_deref())
     }
 
     /// `borrowed` is a view, so it must be the same context for every
@@ -547,7 +551,7 @@ mod tests {
     #[test]
     fn an_integer_is_read_at_its_own_width() {
         let read = |frame: vitaminc_protected::Buffer| {
-            context(vitaminc_protected::Controlled::risky_ref(&frame)).map(NonEmpty::into_inner)
+            context(frame.as_protected_ref()).map(NonEmpty::into_inner)
         };
         assert_eq!(read(to_vec(&7i32).unwrap()).unwrap(), ContextPiece::I32(7));
         assert_eq!(read(to_vec(&7i64).unwrap()).unwrap(), ContextPiece::I64(7));
@@ -593,7 +597,7 @@ mod tests {
         let mut bytes = vec![vitaminc_aead::frame::ARRAY];
         bytes.extend_from_slice(&u32::MAX.to_le_bytes());
         assert!(matches!(
-            context(&bytes),
+            context(Protected::new(bytes.to_vec()).as_protected_ref().as_deref()),
             Err(Error::Context {
                 reason: Reason::ContextKind,
                 ..
@@ -607,10 +611,10 @@ mod tests {
         for bytes in [
             &[][..],
             &[0xff, 1, 2],
-            &vitaminc_protected::Controlled::risky_ref(&to_vec(&"a").unwrap())[..2],
+            &crate::Controlled::risky_ref(&to_vec(&"a").unwrap())[..2],
         ] {
             assert!(matches!(
-                context(bytes),
+                context(Protected::new(bytes.to_vec()).as_protected_ref().as_deref()),
                 Err(Error::Context {
                     reason: Reason::ContextKind,
                     ..

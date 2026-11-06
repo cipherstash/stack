@@ -375,7 +375,7 @@ dependencies = [
  "subtle",
  "thiserror 1.0.69",
  "vitaminc-ore",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "zeroize",
 ]
 
@@ -1491,7 +1491,7 @@ dependencies = [
  "vitaminc-hmac",
  "vitaminc-ore",
  "vitaminc-prf",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "vitaminc-random 0.9.0",
  "zeroize",
 ]
@@ -2067,7 +2067,7 @@ dependencies = [
  "url",
  "uuid",
  "vitaminc 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "web-time",
  "zeroize",
  "zerokms-protocol",
@@ -2100,7 +2100,7 @@ dependencies = [
  "vitaminc-normalize",
  "vitaminc-ore",
  "vitaminc-prf",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "zeroize",
 ]
 
@@ -2123,7 +2123,7 @@ dependencies = [
  "stack-encrypt",
  "uuid",
  "vitaminc-aead 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
 ]
 
 [[package]]
@@ -2149,7 +2149,7 @@ dependencies = [
  "url",
  "uuid",
  "vitaminc 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "zeroize",
  "zerokms-protocol",
 ]
@@ -2601,7 +2601,7 @@ dependencies = [
  "vitaminc-aead 0.9.0",
  "vitaminc-context 0.9.0",
  "vitaminc-encrypt 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "vitaminc-random 0.9.0",
  "vitaminc-traits 0.9.0",
 ]
@@ -2633,7 +2633,7 @@ dependencies = [
  "thiserror 2.0.18",
  "vitaminc-aead-derive 0.9.0",
  "vitaminc-context 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "vitaminc-random 0.9.0",
  "zeroize",
 ]
@@ -2668,7 +2668,7 @@ checksum = "ba4a3e8a2057ce32724b0d42f71e87ee348d13c818fc54a16c443b86c4fe8d9a"
 dependencies = [
  "serde",
  "vitaminc-aead 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
 ]
 
 [[package]]
@@ -2688,7 +2688,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b407b3127be198a8da7d4d914c11215e1eae1b467cdf89eca8a7a296055e863"
 dependencies = [
  "mutants",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
 ]
 
 [[package]]
@@ -2714,7 +2714,7 @@ dependencies = [
  "aes-gcm",
  "aws-lc-rs",
  "vitaminc-aead 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "vitaminc-random 0.9.0",
  "zeroize",
 ]
@@ -2728,7 +2728,7 @@ dependencies = [
  "hmac",
  "sha2 0.11.0",
  "vitaminc-prf",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "zeroize",
 ]
 
@@ -2742,7 +2742,7 @@ dependencies = [
  "unicode-general-category",
  "unicode-normalization",
  "vitaminc-aead 0.9.0",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
 ]
 
 [[package]]
@@ -2757,7 +2757,7 @@ dependencies = [
  "vitaminc-aead 0.9.0",
  "vitaminc-context 0.9.0",
  "vitaminc-normalize",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "zeroize",
 ]
 
@@ -2772,7 +2772,7 @@ dependencies = [
  "vitaminc-aead 0.9.0",
  "vitaminc-context 0.9.0",
  "vitaminc-normalize",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
 ]
 
 [[package]]
@@ -2794,9 +2794,9 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-protected"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44e61d6e58132793aace6898403ffa949bc06e388c1fc89c08d48ad0303133c3"
+checksum = "67a44502e43de42fbd95c12a35efbaea903eedcc7a3922fceacea93054f44485"
 dependencies = [
  "bitvec",
  "digest 0.11.3",
@@ -2805,7 +2805,7 @@ dependencies = [
  "serde_bytes",
  "subtle",
  "thiserror 2.0.18",
- "vitaminc-protected-derive 0.9.0",
+ "vitaminc-protected-derive 0.9.1",
  "zeroize",
 ]
 
@@ -2822,9 +2822,9 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-protected-derive"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a60e915eb16c115882ea4754cecc99d7bcd3d8a1bfb9b8e512af4b6f7dd14801"
+checksum = "f4315341c559af17bd773e8b4e32125a2025d7fbe3e31cbae49120ee1dcab02e"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2857,7 +2857,7 @@ dependencies = [
  "getrandom 0.4.2",
  "rand 0.10.1",
  "thiserror 2.0.18",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "vitaminc-random-derives 0.9.0",
  "zeroize",
 ]
@@ -2911,7 +2911,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "thiserror 2.0.18",
- "vitaminc-protected 0.9.0",
+ "vitaminc-protected 0.9.1",
  "vitaminc-random 0.9.0",
  "zeroize",
 ]

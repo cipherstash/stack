@@ -16,6 +16,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::path::PathBuf;
 
 use common::frames::{frame, object};
@@ -76,10 +77,8 @@ fn stats_cases() -> Vec<(Json, Stats)> {
 }
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
-fn frame_of_json(value: &Json) -> Vec<u8> {
-    vitaminc_protected::Controlled::risky_unwrap(
-        vitaminc_aead_frame::serde::to_vec(value).expect("frames"),
-    )
+fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
+    vitaminc_aead_frame::serde::to_vec(value).expect("frames")
 }
 
 /// A JSON value as the frame a binding sends: a number is a `u64` when it
@@ -269,7 +268,8 @@ async fn data_term(
 async fn derived() -> Json {
     let cipher = deterministic_cipher(SEED).await;
     let keyset = cipher.default_keyset();
-    let plan = record::plan(&frame_of_json(&plan_json())).expect("the plan parses");
+    let plan =
+        record::plan(frame_of_json(&plan_json()).as_protected_ref()).expect("the plan parses");
 
     let mut terms = Vec::new();
     for (field, operator, input) in queries() {
@@ -319,8 +319,8 @@ async fn derived() -> Json {
         };
         let typed = typed_match(&cipher, input).await;
         for (stats_json, stats) in stats_cases() {
-            let read =
-                Stats::from_frame(frame_of_value(&stats_json).risky_ref()).expect("stats read");
+            let read = Stats::from_frame(frame_of_value(&stats_json).as_protected_ref())
+                .expect("stats read");
             assert_eq!(read, stats, "the wire form reads as the typed stats");
             let limit =
                 dynamic::target_limit(&plan, "name", OpSpec::Matches, bytes, 10, &read, &NoTargets)

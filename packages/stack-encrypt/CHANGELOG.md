@@ -17,17 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different terms and silently miss those old rows: they return no error. Keep
   the final extension alone for both reads and queries of old data, or re-encrypt
   and re-index it under the appended context. This does not migrate stored data.
-- **stack-encrypt requires the vitaminc 0.9 crates, clww-ore 0.7 and
-  ore-rs 0.11.** If your crate names a vitaminc type that stack-encrypt takes
+- **stack-encrypt requires the vitaminc 0.9 crates (vitaminc-protected
+  0.9.1), clww-ore 0.7 and ore-rs 0.11.** If your crate names a vitaminc type that stack-encrypt takes
   or returns, move it to vitaminc 0.9 too. No sealed bytes, terms, or stored
   formats change. Two parts of this crate's API change:
   - The re-exported frame codec, `stack_encrypt::dynamic::frame`, now writes
     into a `vitaminc_protected::Buffer`, not a `Vec<u8>`. A `Buffer` wipes each
     allocation it outgrows. `serde::to_vec` returns a `Buffer`, and
-    `FrameWriter` writes into one. Read the bytes with `risky_ref`, or take
-    them with `risky_unwrap`. `Buffer` is re-exported as
+    `FrameWriter` writes into one. `Buffer` is re-exported as
     `stack_encrypt::Buffer`. `ValueFrame::into_inner` still returns
     `Protected<Vec<u8>>`.
+  - The frame readers take a `ProtectedRef<'_, [u8]>` in place of a
+    `&[u8]`: `dynamic::context`, `record::plan`, `record::plan_with`,
+    `ValueFrame::from_bytes`, `ValueFrame::check`, `IndexSpec::from_frame`,
+    and `op::Stats::from_frame`. Pass a `Buffer` or a `ValueFrame` with
+    `.as_protected_ref()`, and a `Protected<Vec<u8>>` with
+    `.as_protected_ref().as_deref()`. Bytes that arrive as a plain `Vec<u8>`
+    or `&[u8]` go into a `Protected` first. The `Protected` wipes them. So a caller
+    never reads the bytes with `risky_ref` to pass them to a reader. This
+    needs vitaminc-protected 0.9.1. `AsProtectedRef` and `ProtectedRef` are
+    re-exported from the crate root, and `ValueFrame` now implements
+    `AsProtectedRef<'_, [u8]>`.
   - `ValueFrame::of` no longer names a repeated map key outside a
     passthrough. `ValueFrame::of` returns `DecodeError::Source` in place of
     `DecodeError::DuplicateKey(key)`, and the source error is

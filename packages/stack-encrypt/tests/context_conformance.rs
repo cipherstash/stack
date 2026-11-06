@@ -11,6 +11,7 @@ use stack_encrypt::dynamic::{self, record, Scope, ValueFrame};
 use stack_encrypt::plan::pick;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DeclaredContext, Encrypted};
+use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::{
     CipherText, Descriptor, Equality, IntoAad, IntoPrfContext, Label, NonEmpty, Plan, SealedValue,
     StackCipherText,
@@ -111,7 +112,7 @@ fn plan(case: &Case) -> record::Plan {
             ("type", frame("string")),
         ]),
     ));
-    record::plan(object(fields).risky_ref()).unwrap()
+    record::plan(object(fields).as_protected_ref()).unwrap()
 }
 fn source(case: &Case) -> ValueFrame {
     let mut fields = vec![];
@@ -205,7 +206,7 @@ async fn shared_context_composition() {
         Label::parse(&case.label).unwrap();
         eprintln!("context conformance: {}", case.id);
         let context_frame = context(&case, false);
-        let ctx = dynamic::context(context_frame.risky_ref()).unwrap();
+        let ctx = dynamic::context(context_frame.as_protected_ref()).unwrap();
         let descriptor = Descriptor::of(ctx.clone()).as_str().to_owned();
         let aad = hex(ctx.clone().into_aad().as_bytes());
         let prf = hex(ctx.clone().into_prf_context().as_bytes());
@@ -242,7 +243,7 @@ async fn shared_context_composition() {
                     ("type", frame("string")),
                 ]),
             )])
-            .risky_ref(),
+            .as_protected_ref(),
         )
         .unwrap();
         let query = dynamic::query_term(
@@ -681,7 +682,7 @@ async fn a_grouped_extension_remains_one_part_when_appended() {
             ("outputs", frame(vec!["c"])),
         ]),
     )]);
-    assert!(record::plan(declaration.risky_ref()).is_err());
+    assert!(record::plan(declaration.as_protected_ref()).is_err());
 }
 
 #[tokio::test]

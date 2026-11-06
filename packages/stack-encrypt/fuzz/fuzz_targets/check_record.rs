@@ -41,7 +41,7 @@ use stack_encrypt::{
 };
 use uuid::Uuid;
 use vitaminc_aead::plaintext::{visit_map, Physical, Raw, Sink};
-use vitaminc_protected::Controlled;
+use vitaminc_protected::{AsProtectedRef as _, Controlled};
 
 /// A value as a binding sends it: its frame. `None` for a value no frame
 /// carries (an object with a key given twice, or one nested too deep),
@@ -428,7 +428,7 @@ fuzz_target!(|case: Case| {
     let Some(frame) = spec.into_value() else {
         return;
     };
-    let Ok(plan) = plan_with(frame.risky_ref(), &Fixed) else {
+    let Ok(plan) = plan_with(frame.as_protected_ref(), &Fixed) else {
         if trace {
             eprintln!("verdict: plan refused");
         }

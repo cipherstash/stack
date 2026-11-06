@@ -19,6 +19,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::path::PathBuf;
 
 use common::frames::{frame as value_of, object, payload};
@@ -186,7 +187,7 @@ fn data_plan() -> DataPlan {
             )
         })
         .collect();
-    record::plan(object(fields).risky_ref()).expect("the data plan parses")
+    record::plan(object(fields).as_protected_ref()).expect("the data plan parses")
 }
 
 /// The source as a binding hands it over: one frame, a map of the fields in
@@ -205,7 +206,7 @@ fn source() -> ValueFrame {
         }
         map.end().expect("ended");
     }
-    ValueFrame::from_bytes(bytes.risky_ref()).expect("in the value model")
+    ValueFrame::from_bytes(bytes.as_protected_ref()).expect("in the value model")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -367,9 +368,9 @@ async fn every_new_kind_seals_opens_and_queries_as_the_typed_path() {
             kind.field
         );
         let ctx = context(
-            &vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field))
+            vitaminc_aead_frame::serde::to_vec(&("value_kinds", kind.field))
                 .expect("frames")
-                .risky_unwrap(),
+                .as_protected_ref(),
         )
         .expect("context");
         let typed_eq = keyset

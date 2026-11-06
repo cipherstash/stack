@@ -14,13 +14,14 @@
 //!
 //! ```
 //! use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+//! use stack_encrypt::AsProtectedRef;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let frame = ValueFrame::of("alice")?;
 //! assert_eq!(frame.kind(), Some(ValueKind::String));
 //!
 //! // The same value, as a binding would hand it over.
-//! let from_host = ValueFrame::from_bytes(frame.risky_ref())?;
+//! let from_host = ValueFrame::from_bytes(frame.as_protected_ref())?;
 //! assert_eq!(from_host.risky_ref(), frame.risky_ref());
 //! # Ok(())
 //! # }
@@ -37,7 +38,9 @@ use vitaminc_aead::plaintext::{
     TimeUnit, Width,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
-use vitaminc_protected::{Buffer, Controlled, OpaqueDebug, Protected};
+use vitaminc_protected::{
+    AsProtectedRef, Buffer, Controlled, OpaqueDebug, Protected, ProtectedRef,
+};
 
 use super::ValueKind;
 use crate::plan::IntoLabel;
@@ -121,7 +124,15 @@ impl ValueFrame {
     /// bytes are not exactly one frame, and
     /// [`FromFrameError::Value`] as
     /// [`of`](Self::of) refuses a value.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, FromFrameError> {
+    pub fn from_bytes(
+        bytes: vitaminc_protected::ProtectedRef<'_, [u8]>,
+    ) -> Result<Self, FromFrameError> {
+        Self::from_clear(bytes.risky_ref())
+    }
+
+    /// [`from_bytes`](Self::from_bytes) over bytes held in the clear, such as
+    /// a passthrough field's frame, which is not secret by contract.
+    pub(super) fn from_clear(bytes: &[u8]) -> Result<Self, FromFrameError> {
         let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
         Self::of(frame).map_err(FromFrameError::Value)
     }
@@ -140,8 +151,10 @@ impl ValueFrame {
     /// # Errors
     ///
     /// As [`from_bytes`](Self::from_bytes).
-    pub fn check(bytes: &[u8]) -> Result<Frame<'_>, FromFrameError> {
-        let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
+    pub fn check(
+        bytes: vitaminc_protected::ProtectedRef<'_, [u8]>,
+    ) -> Result<Frame<'_>, FromFrameError> {
+        let frame = Frame::parse(bytes.risky_ref()).map_err(FromFrameError::Frame)?;
         frame.visit(Check).map_err(FromFrameError::Value)?;
         Ok(frame)
     }
@@ -157,7 +170,7 @@ impl ValueFrame {
     /// move into the frame's [`Protected`] without being copied. While the
     /// writer wrote, the `Buffer` wiped each allocation it outgrew.
     fn from_buffer(buffer: Buffer) -> Self {
-        Self(Protected::new(buffer.risky_unwrap()))
+        Self(buffer.into())
     }
 
     /// The null, as a frame: what an absent value opens to.
@@ -318,6 +331,16 @@ impl Encrypt for &ValueFrame {
 }
 
 /// Walks the frame, then drops it, which wipes it.
+/// A frame lends its bytes, so it can be passed to a frame reader, such as
+/// [`record::plan`](super::record::plan), without reading it through
+/// [`risky_ref`](ValueFrame::risky_ref). The frame still wipes its bytes
+/// when it drops.
+impl<'a> AsProtectedRef<'a, [u8]> for ValueFrame {
+    fn as_protected_ref(&'a self) -> ProtectedRef<'a, [u8]> {
+        self.0.as_protected_ref().as_deref()
+    }
+}
+
 impl Encrypt for ValueFrame {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (&self).visit(sink)
@@ -1354,8 +1377,15 @@ mod tests {
             let written = ValueFrame::of(TypedNull(ty)).expect("in the model");
             assert_eq!(written.risky_ref(), null.risky_ref(), "{ty:?} written");
             let bytes = typed_null_frame(ty);
-            assert!(ValueFrame::check(&bytes).is_ok(), "{ty:?} checks");
-            let read = ValueFrame::from_bytes(&bytes).expect("reads");
+            assert!(
+                ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                    .is_ok(),
+                "{ty:?} checks"
+            );
+            let read = ValueFrame::from_bytes(
+                Protected::new(bytes.to_vec()).as_protected_ref().as_deref(),
+            )
+            .expect("reads");
             assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
             let opened = TypedNull(ty).visit(Opening).expect("opens");
             assert_eq!(opened.risky_ref(), null.risky_ref(), "{ty:?} opened");
@@ -1374,8 +1404,10 @@ mod tests {
         ));
         let bytes = typed_null_frame(uuid);
         for refused in [
-            ValueFrame::check(&bytes).map(drop),
-            ValueFrame::from_bytes(&bytes).map(drop),
+            ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
+            ValueFrame::from_bytes(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
         ] {
             assert!(
                 matches!(
@@ -1408,8 +1440,15 @@ mod tests {
             let written = ValueFrame::of(Hidden(TypedNull(ty))).expect("in the model");
             assert_eq!(written.risky_ref(), null.risky_ref(), "{ty:?} written");
             let bytes = hidden_typed_null_frame(ty);
-            assert!(ValueFrame::check(&bytes).is_ok(), "{ty:?} checks");
-            let read = ValueFrame::from_bytes(&bytes).expect("reads");
+            assert!(
+                ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                    .is_ok(),
+                "{ty:?} checks"
+            );
+            let read = ValueFrame::from_bytes(
+                Protected::new(bytes.to_vec()).as_protected_ref().as_deref(),
+            )
+            .expect("reads");
             assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
         }
         assert!(matches!(
@@ -1418,8 +1457,10 @@ mod tests {
         ));
         let bytes = hidden_typed_null_frame(uuid_null());
         for refused in [
-            ValueFrame::check(&bytes).map(drop),
-            ValueFrame::from_bytes(&bytes).map(drop),
+            ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
+            ValueFrame::from_bytes(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
         ] {
             assert!(
                 matches!(
@@ -1488,7 +1529,7 @@ mod tests {
         ] {
             let frame = ValueFrame::of(Raw(None, Physical::Int(int))).expect("in the model");
             assert_eq!(frame.risky_ref()[0], tag);
-            let back = ValueFrame::from_bytes(frame.risky_ref()).expect("in the model");
+            let back = ValueFrame::from_bytes(frame.as_protected_ref()).expect("in the model");
             assert_eq!(
                 back.risky_ref(),
                 frame.risky_ref(),
@@ -1554,7 +1595,7 @@ mod tests {
     fn check_refuses_what_from_bytes_refuses_without_a_copy() {
         let good = every_variant();
         let bytes = ValueFrame::of(&good).expect("frames");
-        let checked = ValueFrame::check(bytes.risky_ref()).expect("checks");
+        let checked = ValueFrame::check(bytes.as_protected_ref()).expect("checks");
         assert_eq!(checked.as_bytes().as_ptr(), bytes.risky_ref().as_ptr());
         assert_eq!(checked.as_bytes(), bytes.risky_ref());
         let hidden = vitaminc_aead::to_frame(Hidden(vitaminc_aead::plaintext::Raw(
@@ -1569,16 +1610,24 @@ mod tests {
         .expect("frames");
         for refused in [hidden.risky_ref(), uuid.risky_ref()] {
             assert!(matches!(
-                ValueFrame::check(refused),
+                ValueFrame::check(
+                    Protected::new(refused.to_vec())
+                        .as_protected_ref()
+                        .as_deref()
+                ),
                 Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
             assert!(matches!(
-                ValueFrame::from_bytes(refused),
+                ValueFrame::from_bytes(
+                    Protected::new(refused.to_vec())
+                        .as_protected_ref()
+                        .as_deref()
+                ),
                 Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
         }
         assert!(matches!(
-            ValueFrame::check(&[]),
+            ValueFrame::check(Protected::new(Vec::new()).as_protected_ref().as_deref()),
             Err(super::FromFrameError::Frame(_))
         ));
     }
@@ -1646,13 +1695,13 @@ mod tests {
             Err(ref error) if super::is_unnamed_repeated_key(error)
         ));
         assert!(matches!(
-            ValueFrame::from_bytes(&[]),
+            ValueFrame::from_bytes(Protected::new(Vec::new()).as_protected_ref().as_deref()),
             Err(super::FromFrameError::Frame(_))
         ));
         let uuid = vitaminc_aead::to_frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])))
             .expect("frames");
         assert!(matches!(
-            ValueFrame::from_bytes(uuid.risky_ref()),
+            ValueFrame::from_bytes(uuid.as_protected_ref()),
             Err(super::FromFrameError::Value(DecodeError::Expected(_)))
         ));
     }

@@ -15,6 +15,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::str::FromStr;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -939,7 +940,8 @@ async fn a_storage_only_type_stores_a_none_as_long_as_a_value() {
         "and an Option opens a value"
     );
 
-    let null = ValueFrame::from_bytes(&[0x00]).unwrap();
+    let null = stack_encrypt::Protected::new([0x00u8]);
+    let null = ValueFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
     let named: date::Date = by_name(&keyset, "Date", null.clone()).await;
     assert_eq!(leaf_len(&named.c), leaf_len(&absent.c), "by name too");
     let opened = targets::decrypt(
@@ -989,7 +991,8 @@ fn refused_null(
     keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
     name: &str,
 ) -> TargetError {
-    let null = ValueFrame::from_bytes(&[0x00]).unwrap();
+    let null = stack_encrypt::Protected::new([0x00u8]);
+    let null = ValueFrame::from_bytes(null.as_protected_ref().as_ref_of()).unwrap();
     refused(targets::encrypt(name, keyset, &label(), null))
 }
 

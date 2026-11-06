@@ -1075,7 +1075,7 @@ fn declare<K: 'static>(
 /// # Errors
 ///
 /// As [`plan_with`].
-pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
+pub fn plan(frame: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Plan, Error> {
     plan_with(frame, &NoTargets)
 }
 
@@ -1186,7 +1186,7 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 /// ```
 /// use stack_encrypt::dynamic::{record, NoTargets, Output};
 /// use stack_encrypt::target::IndexSpec;
-/// use stack_encrypt::Controlled;
+/// use stack_encrypt::AsProtectedRef;
 ///
 /// // As a binding sends it: seal `age` under the label users/age and index
 /// // it for equality.
@@ -1197,7 +1197,7 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 ///         "type": "uint32",
 ///     },
 /// }))?;
-/// let plan = record::plan_with(frame.risky_ref(), &NoTargets)?;
+/// let plan = record::plan_with(frame.as_protected_ref(), &NoTargets)?;
 ///
 /// assert_eq!(plan.fields().len(), 1);
 /// assert_eq!(plan.fields()[0].name(), "age");
@@ -1231,7 +1231,11 @@ pub fn plan(frame: &[u8]) -> Result<Plan, Error> {
 /// and no `"type"`. [`Error::Context`] for a `"context"` that is present but
 /// is not a context at all, or renders empty. [`Error::Target`] for a
 /// target the resolver refuses ([`Plan::new_with`]).
-pub fn plan_with(frame: &[u8], resolver: &(impl TargetResolver + ?Sized)) -> Result<Plan, Error> {
+pub fn plan_with(
+    frame: vitaminc_protected::ProtectedRef<'_, [u8]>,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<Plan, Error> {
+    let frame = frame.risky_ref();
     let wire: PlanWire =
         vitaminc_aead_frame::serde::from_slice(frame).map_err(|e| plan_refusal(&e, frame))?;
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(wire.fields.len());
@@ -1588,7 +1592,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 ///
 /// ```
 /// use stack_encrypt::dynamic::{record, Scope, ValueFrame};
-/// use stack_encrypt::{Controlled, StackCipher};
+/// use stack_encrypt::{AsProtectedRef, StackCipher};
 /// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -1599,9 +1603,10 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// let keyset = cipher.default_keyset();
 ///
 /// // Seal `age` under users/age with an equality term beside it.
-/// let plan = record::plan(vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq"], "type": "uint32" },
-/// }))?.risky_ref())?;
+/// }))?;
+/// let plan = record::plan(declaration.as_protected_ref())?;
 ///
 /// // The row as a binding hands it over: one transport frame. Here a Rust
 /// // map writes it; a binding's codec writes the same bytes.
@@ -2490,7 +2495,7 @@ fn passthrough_frame(value: &ValueFrame) -> StackCipherText {
 /// The one value a passthrough node carries, in the value model, or `None`
 /// if its frame holds something the model does not.
 fn passthrough_value(payload: &PassthroughFrame) -> Option<ValueFrame> {
-    ValueFrame::from_bytes(&payload.0).ok()
+    ValueFrame::from_clear(&payload.0).ok()
 }
 
 /// The bytes a passthrough node carries, if it carries bytes: what a stored
@@ -2752,6 +2757,7 @@ mod tests {
     use crate::dynamic::test_frame::Tree;
     use std::borrow::Cow;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use vitaminc_protected::AsProtectedRef as _;
 
     use stack_kms::{
         DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload,
@@ -2841,17 +2847,30 @@ mod tests {
 
     /// The context `value` spells, read from its frame as a binding sends it.
     fn context(value: Tree) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
-        crate::dynamic::context(&crate::dynamic::test_frame::frame_of(&value))
+        crate::dynamic::context(
+            crate::dynamic::test_frame::frame_of(&value)
+                .as_protected_ref()
+                .as_deref(),
+        )
     }
 
     /// The plan `value` spells, read from its frame as a binding sends it.
     fn plan(value: Tree) -> Result<Plan, Error> {
-        super::plan(&crate::dynamic::test_frame::frame_of(&value))
+        super::plan(
+            crate::dynamic::test_frame::frame_of(&value)
+                .as_protected_ref()
+                .as_deref(),
+        )
     }
 
     /// [`plan`], under `resolver`.
     fn plan_with(value: Tree, resolver: &(impl TargetResolver + ?Sized)) -> Result<Plan, Error> {
-        super::plan_with(&crate::dynamic::test_frame::frame_of(&value), resolver)
+        super::plan_with(
+            crate::dynamic::test_frame::frame_of(&value)
+                .as_protected_ref()
+                .as_deref(),
+            resolver,
+        )
     }
 
     fn obj(entries: Vec<(&str, Tree)>) -> Tree {
@@ -3096,7 +3115,10 @@ mod tests {
         fn a_plan_that_declares_more_fields_than_it_holds_is_refused() {
             let mut bytes = vec![vitaminc_aead::frame::OBJECT];
             bytes.extend_from_slice(&u32::MAX.to_le_bytes());
-            assert!(crate::dynamic::record::plan(&bytes).is_err());
+            assert!(crate::dynamic::record::plan(
+                Protected::new(bytes.to_vec()).as_protected_ref().as_deref()
+            )
+            .is_err());
         }
 
         #[test]
@@ -7915,7 +7937,10 @@ mod tests {
         #[test]
         fn bytes_that_are_not_a_frame_are_not_a_plan() {
             for bytes in [&[][..], &[0xff, 1, 2]] {
-                let error = super::super::plan(bytes).expect_err("refused");
+                let error = super::super::plan(
+                    Protected::new(bytes.to_vec()).as_protected_ref().as_deref(),
+                )
+                .expect_err("refused");
                 expect(&error, "Plan", None, Reason::NotAnObject);
             }
         }
@@ -8204,7 +8229,8 @@ mod tests {
                     .expect("written");
                 map.end().expect("ended");
             }
-            let source = vitaminc_aead::Frame::parse(frame.risky_ref()).expect("a frame");
+            let source =
+                vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame)).expect("a frame");
             let error = check_source(source, &plan).expect_err("a uuid field");
             expect(&error, "Source", Some("email"), FieldType);
             // The same inside a passthrough subtree: the field is named, and
@@ -8220,7 +8246,8 @@ mod tests {
                     .expect("written");
                 map.end().expect("ended");
             }
-            let source = vitaminc_aead::Frame::parse(frame.risky_ref()).expect("a frame");
+            let source =
+                vitaminc_aead::Frame::parse(crate::Controlled::risky_ref(&frame)).expect("a frame");
             let error = check_source(source, &plan).expect_err("a uuid in a passthrough");
             expect(&error, "Source", Some("id"), FieldType);
             // Each row of a batch is split the same way, and the first fault

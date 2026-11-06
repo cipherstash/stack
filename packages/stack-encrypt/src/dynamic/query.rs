@@ -184,7 +184,7 @@ pub enum OpSpec {
     /// ```
     /// use serde_json::json;
     /// use stack_encrypt::dynamic::{check_query, frame, record, OpSpec, Reason, ValueFrame};
-    /// use stack_encrypt::Controlled;
+    /// use stack_encrypt::AsProtectedRef;
     /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
     /// # use stack_encrypt::target::IndexSpec;
     /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
@@ -209,19 +209,16 @@ pub enum OpSpec {
     /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
     /// # }
     /// // A document field that orders `$.age`.
-    /// let plan = record::plan_with(
-    ///     frame::serde::to_vec(&json!({"profile": {
-    ///         "context": ["users", "profile"], "type": "json", "null": "sql",
-    ///         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}
-    ///     }}))?
-    ///     .risky_ref(),
-    ///     &Documents,
-    /// )?;
+    /// let declaration = frame::serde::to_vec(&json!({"profile": {
+    ///     "context": ["users", "profile"], "type": "json", "null": "sql",
+    ///     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}
+    /// }}))?;
+    /// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
     /// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
     /// // variables as the JSON text of one object.
     /// let input = |predicate: &str| -> ValueFrame {
     ///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
-    ///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().risky_ref()).unwrap()
+    ///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
     /// };
     /// let check = |predicate: &str| {
     ///     check_query(&plan, "profile", OpSpec::Match, input(predicate), &Documents)
@@ -789,11 +786,12 @@ fn answers(
 /// ```
 /// use stack_encrypt::dynamic::{field_operators, record, NoTargets, OpSpec};
 /// use stack_encrypt::target::IndexSpec;
-/// use stack_encrypt::Controlled;
+/// use stack_encrypt::AsProtectedRef;
 ///
-/// let plan = record::plan(vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
-/// }))?.risky_ref())?;
+/// }))?;
+/// let plan = record::plan(declaration.as_protected_ref())?;
 ///
 /// let operators = field_operators(&plan, "age", &NoTargets)?;
 /// assert_eq!(operators[0], (OpSpec::Eq, IndexSpec::Equality));
@@ -1194,14 +1192,15 @@ where
 /// ```
 /// use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand};
 /// use stack_encrypt::kms::FakeDataKeySource;
-/// use stack_encrypt::{op, Controlled, Ore, Plan, StackCipher};
+/// use stack_encrypt::{op, AsProtectedRef, Ore, Plan, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let keyset = cipher.default_keyset();
-/// let plan = record::plan(vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
-/// }))?.risky_ref())?;
+/// }))?;
+/// let plan = record::plan(declaration.as_protected_ref())?;
 ///
 /// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, 40u32, &NoTargets)?.await?;
 ///
@@ -1473,8 +1472,8 @@ impl Stats {
     /// [`Error::Source`] with [`Reason::NotStats`] for anything else: not a
     /// frame, not an object, no `rows`, a key given twice or not one of the
     /// three, or a value of another type.
-    pub fn from_frame(bytes: &[u8]) -> Result<Self, Error> {
-        let wire: StatsWire = vitaminc_aead_frame::serde::from_slice(bytes)
+    pub fn from_frame(bytes: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Self, Error> {
+        let wire: StatsWire = vitaminc_aead_frame::serde::from_slice(bytes.risky_ref())
             .map_err(|_| Error::bad_source(Reason::NotStats))?;
         let stats = match wire.histogram {
             Some(histogram) => Stats::measured(wire.rows, histogram),
@@ -1526,6 +1525,7 @@ mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
     use crate::dynamic::test_frame::{frame_of, value_of};
+    use vitaminc_protected::AsProtectedRef as _;
 
     fn operator_value(operator: OpSpec, index: &IndexSpec) -> Tree {
         value_of(&OperatorEntry::new(operator, index))
@@ -1533,7 +1533,11 @@ mod tests {
 
     /// Statistics as a binding sends them.
     fn stats_frame(value: &Tree) -> Result<Stats, Error> {
-        Stats::from_frame(&crate::dynamic::test_frame::frame_of(value))
+        Stats::from_frame(
+            crate::dynamic::test_frame::frame_of(value)
+                .as_protected_ref()
+                .as_deref(),
+        )
     }
     use crate::dynamic::{record, NoTargets, TargetError};
     use crate::op::{self, Probabilistic as _};
@@ -1580,16 +1584,20 @@ mod tests {
             "match".into(),
             Tree::Object(vec![("downcase".into(), Tree::Bool(false))]),
         )]);
-        record::plan(&frame_of(&Tree::Object(vec![
-            field("email", "string", vec![text("c"), text("eq")]),
-            field("name", "string", vec![text("c"), text("match")]),
-            field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
-            field("score", "int64", vec![text("ope")]),
-            field("nickname", "string", vec![text("c"), text("ore")]),
-            field("handle", "string", vec![text("c"), case_sensitive]),
-            field("ratio", "float32", vec![text("c"), text("ore")]),
-            field("rating", "float64", vec![text("c"), text("ope")]),
-        ])))
+        record::plan(
+            frame_of(&Tree::Object(vec![
+                field("email", "string", vec![text("c"), text("eq")]),
+                field("name", "string", vec![text("c"), text("match")]),
+                field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
+                field("score", "int64", vec![text("ope")]),
+                field("nickname", "string", vec![text("c"), text("ore")]),
+                field("handle", "string", vec![text("c"), case_sensitive]),
+                field("ratio", "float32", vec![text("c"), text("ore")]),
+                field("rating", "float64", vec![text("c"), text("ope")]),
+            ]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .expect("the plan parses")
     }
 
@@ -1987,11 +1995,15 @@ mod tests {
     async fn block_ore_refuses_text_it_has_no_term_for_before_any_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = record::plan(&frame_of(&Tree::Object(vec![field(
-            "title",
-            "string",
-            vec![text("c"), text("ore_block")],
-        )])))
+        let plan = record::plan(
+            frame_of(&Tree::Object(vec![field(
+                "title",
+                "string",
+                vec![text("c"), text("ore_block")],
+            )]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .expect("the plan parses");
         let one = |text: &str| ValueFrame::of(text).expect("a value");
         let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
@@ -2050,11 +2062,15 @@ mod tests {
                 ]),
             )
         };
-        let plan = record::plan(&frame_of(&Tree::Object(vec![
-            ("context_field".into(), text("tenant")),
-            one("tenant", "string", "passthrough"),
-            one("email", "string", "eq"),
-        ])))
+        let plan = record::plan(
+            frame_of(&Tree::Object(vec![
+                ("context_field".into(), text("tenant")),
+                one("tenant", "string", "passthrough"),
+                one("email", "string", "eq"),
+            ]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .unwrap();
         let error = query_term(&keyset, &plan, "email", OpSpec::Eq, text("a"), &NoTargets)
             .map(drop)
@@ -2205,9 +2221,11 @@ mod tests {
             tokenizer: crate::sem::Tokenizer::Ngram { length: 0 },
             ..MatchOptions::default()
         };
-        let context = crate::dynamic::context(vitaminc_protected::Controlled::risky_ref(
-            &vitaminc_aead_frame::serde::to_vec(&("users", "name")).expect("frames"),
-        ))
+        let context = crate::dynamic::context(
+            vitaminc_aead_frame::serde::to_vec(&("users", "name"))
+                .expect("frames")
+                .as_protected_ref(),
+        )
         .expect("context");
         let field = FieldPlan::new(
             "name",
@@ -2435,13 +2453,17 @@ mod tests {
         use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = record::plan(&frame_of(&Tree::Object(vec![
-            field("tiny", "int16", vec![text("c"), text("ore")]),
-            field("huge", "int128", vec![text("c"), text("ope")]),
-            field("day", "date", vec![text("c"), text("eq")]),
-            field("at", "timestamp", vec![text("c"), text("eq")]),
-            field("price", "decimal", vec![text("c"), text("eq")]),
-        ])))
+        let plan = record::plan(
+            frame_of(&Tree::Object(vec![
+                field("tiny", "int16", vec![text("c"), text("ore")]),
+                field("huge", "int128", vec![text("c"), text("ope")]),
+                field("day", "date", vec![text("c"), text("eq")]),
+                field("at", "timestamp", vec![text("c"), text("eq")]),
+                field("price", "decimal", vec![text("c"), text("eq")]),
+            ]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .expect("the plan parses");
         let frame = |ty: Option<Logical>, value: Physical<'_>| {
             ValueFrame::of(Raw(ty, value)).expect("a value")
@@ -2511,9 +2533,11 @@ mod tests {
 
         let stored = |value: &ValueFrame, name: &'static str| {
             let keyset = &keyset;
-            let ctx = super::super::context(vitaminc_protected::Controlled::risky_ref(
-                &vitaminc_aead_frame::serde::to_vec(&("users", name)).expect("frames"),
-            ))
+            let ctx = super::super::context(
+                vitaminc_aead_frame::serde::to_vec(&("users", name))
+                    .expect("frames")
+                    .as_protected_ref(),
+            )
             .expect("context");
             let value = value.clone();
             async move {
@@ -2934,7 +2958,7 @@ mod tests {
 
     fn match_type_plan() -> Plan {
         record::plan_with(
-            &frame_of(&Tree::Object(vec![(
+            frame_of(&Tree::Object(vec![(
                 "name".into(),
                 Tree::Object(vec![
                     (
@@ -2943,7 +2967,9 @@ mod tests {
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )])),
+            )]))
+            .as_protected_ref()
+            .as_deref(),
             &MatchType,
         )
         .unwrap()
@@ -3115,7 +3141,7 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = record::plan_with(
-            &frame_of(&Tree::Object(vec![(
+            frame_of(&Tree::Object(vec![(
                 "email".into(),
                 Tree::Object(vec![
                     (
@@ -3124,7 +3150,9 @@ mod tests {
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )])),
+            )]))
+            .as_protected_ref()
+            .as_deref(),
             &OneType,
         )
         .unwrap();
@@ -3176,7 +3204,7 @@ mod wire_bytes {
     use vitaminc_aead_frame::serde::to_vec;
 
     fn hex<T: Serialize>(value: &T) -> String {
-        vitaminc_protected::Controlled::risky_ref(&to_vec(value).expect("frames"))
+        crate::Controlled::risky_ref(&to_vec(value).expect("frames"))
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect()

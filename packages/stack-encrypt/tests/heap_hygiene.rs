@@ -40,6 +40,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -50,7 +51,6 @@ use stack_encrypt::dynamic::{query_term, record, verify, NoTargets, OpSpec, Scop
 use stack_encrypt::nonempty;
 use vitaminc_aead::plaintext::{Physical, Raw};
 use vitaminc_aead::Frame;
-use vitaminc_protected::Controlled as _;
 
 /// What every plaintext under test carries.
 const MARK: &[u8] = b"zq-heap-marker-7f3a9c";
@@ -241,7 +241,7 @@ fn plan() -> record::Plan {
             spec("doc", &["c"], None),
             spec("id", &["passthrough"], None),
         ])
-        .risky_ref(),
+        .as_protected_ref(),
     )
     .unwrap()
 }
@@ -346,9 +346,11 @@ fn a_late_read_type_failure_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();
     let cipher = rt.block_on(common::stack_cipher());
     let keyset = cipher.default_keyset();
-    let writer = record::plan(object(vec![spec("value", &["c"], None)]).risky_ref()).unwrap();
+    let writer =
+        record::plan(object(vec![spec("value", &["c"], None)]).as_protected_ref()).unwrap();
     let reader =
-        record::plan(object(vec![spec("value", &["c"], Some("string"))]).risky_ref()).unwrap();
+        record::plan(object(vec![spec("value", &["c"], Some("string"))]).as_protected_ref())
+            .unwrap();
     let source = frame(vec![
         object(vec![("value", frame(marked("first-row")))]),
         object(vec![("value", frame(true))]),
@@ -549,9 +551,9 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
                     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
     });
     let plan = record::plan_with(
-        &stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+        stack_encrypt::dynamic::frame::serde::to_vec(&wire)
             .unwrap()
-            .risky_unwrap(),
+            .as_protected_ref(),
         &Documents,
     )
     .unwrap();
@@ -919,9 +921,9 @@ mod json_index {
                         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age", "$.visits[*].at"]}}}
         });
         let plan = record::plan_with(
-            &stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+            stack_encrypt::dynamic::frame::serde::to_vec(&wire)
                 .unwrap()
-                .risky_unwrap(),
+                .as_protected_ref(),
             &Documents,
         )
         .unwrap();

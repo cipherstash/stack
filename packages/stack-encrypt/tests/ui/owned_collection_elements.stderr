@@ -28,12 +28,12 @@ error[E0277]: the trait bound `for<'a> &'a Option<i32>: Scalar` is not satisfied
    = help: the following other types implement trait `Scalar`:
              &&'b T
              &'a Protected<T>
+             &ProtectedRef<'a, T>
              &Raw<'_>
              &Vec<u8>
              &[u8; N]
              &[u8]
              &bool
-             &chrono::datetime::DateTime<chrono::offset::utc::Utc>
            and $N others
    = note: required for `Option<i32>` to implement `OpaqueEncode`
    = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<Option<i32>>`

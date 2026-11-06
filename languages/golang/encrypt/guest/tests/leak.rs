@@ -36,7 +36,7 @@ use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyError,
     GenerateKeyPayload, IndexKeySource, LoadKeysetError, RetrieveKeyError, RetrieveKeyPayload,
 };
-use support::Tree;
+use support::{protect, Tree};
 use uuid::Uuid;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext, ViturRequestError};
 
@@ -193,8 +193,8 @@ fn row(email: &str) -> Tree {
 fn sealed(cipher: &StackCipher<FakeDataKeySource>, plan: &[u8]) -> Vec<u8> {
     block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &encode(row(PLAINTEXT)),
-        plan,
+        &protect(&encode(row(PLAINTEXT))),
+        &protect(plan),
     ))
     .expect("seal")
 }
@@ -310,8 +310,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 let context = [&[0xff][..], CONTEXT.as_bytes()].concat();
                 block_on(ops::term(
                     &keyset,
-                    &encode(s(PLAINTEXT)),
-                    &context,
+                    &protect(&encode(s(PLAINTEXT))),
+                    &protect(&context),
                     ops::TERM_EQUALITY,
                 ))
             }),
@@ -321,8 +321,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("context kind", &["stack_encrypt::dynamic_context"], || {
                 block_on(ops::term(
                     &keyset,
-                    &encode(s(PLAINTEXT)),
-                    &encode(Tree::Bool(true)),
+                    &protect(&encode(s(PLAINTEXT))),
+                    &protect(&encode(Tree::Bool(true))),
                     ops::TERM_EQUALITY,
                 ))
             }),
@@ -335,8 +335,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 || {
                     block_on(ops::term(
                         &keyset,
-                        &encode(Tree::Bool(true)),
-                        &encode(s(CONTEXT)),
+                        &protect(&encode(Tree::Bool(true))),
+                        &protect(&encode(s(CONTEXT))),
                         ops::TERM_EQUALITY,
                     ))
                 },
@@ -347,8 +347,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("kind", &["stack_guest_abi::malformed_input"], || {
                 block_on(ops::term(
                     &keyset,
-                    &encode(s(PLAINTEXT)),
-                    &encode(s(CONTEXT)),
+                    &protect(&encode(s(PLAINTEXT))),
+                    &protect(&encode(s(CONTEXT))),
                     99,
                 ))
             }),
@@ -358,8 +358,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("empty match", &["stack_encrypt::empty_term_text"], || {
                 block_on(ops::term(
                     &keyset,
-                    &encode(s("  ")),
-                    &encode(s(CONTEXT)),
+                    &protect(&encode(s("  "))),
+                    &protect(&encode(s(CONTEXT))),
                     ops::TERM_MATCH,
                 ))
             }),
@@ -368,34 +368,34 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
         (
             "a plan that is not codec bytes",
             failure("plan bytes", &["stack_guest_abi::malformed_input"], || {
-                ops::plan_check(CONTEXT.as_bytes())
+                ops::plan_check(&protect(CONTEXT.as_bytes()))
             }),
         ),
         (
             "a plan field context of a kind no context has",
             failure("plan context", &["stack_encrypt::dynamic_context"], || {
-                ops::plan_check(&encode(obj(vec![(
+                ops::plan_check(&protect(&encode(obj(vec![(
                     "email",
                     field(Tree::Bool(true), &["c"], None),
-                )])))
+                )]))))
             }),
         ),
         (
             "an indexed field with no type",
             failure("untyped", &["stack_encrypt::dynamic_untyped_index"], || {
-                ops::plan_check(&encode(obj(vec![(
+                ops::plan_check(&protect(&encode(obj(vec![(
                     "email",
                     field(label("email"), &["eq"], None),
-                )])))
+                )]))))
             }),
         ),
         (
             "an output that is not one",
             failure("output", &["stack_encrypt::dynamic_plan"], || {
-                ops::plan_check(&encode(obj(vec![(
+                ops::plan_check(&protect(&encode(obj(vec![(
                     "email",
                     field(extended("email", CONTEXT), &["zz"], None),
-                )])))
+                )]))))
             }),
         ),
         (
@@ -408,10 +408,10 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     &["stack_encrypt::target_none"]
                 },
                 || {
-                    ops::plan_check(&encode(obj(vec![(
+                    ops::plan_check(&protect(&encode(obj(vec![(
                         "email",
                         obj(vec![("context", label("email")), ("target", s("Nope"))]),
-                    )])))
+                    )]))))
                 },
             ),
         ),
@@ -425,8 +425,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 )]));
                 block_on(ops::encrypt_record(
                     &keyset,
-                    &encode(obj(vec![("age", s(PLAINTEXT))])),
-                    &plan,
+                    &protect(&encode(obj(vec![("age", s(PLAINTEXT))]))),
+                    &protect(&plan),
                 ))
             }),
         ),
@@ -439,8 +439,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     let source = obj(vec![("email", Tree::Passthrough(Box::new(s(PLAINTEXT))))]);
                     block_on(ops::encrypt_record(
                         &keyset,
-                        &encode(source),
-                        &plan_under(label("email")),
+                        &protect(&encode(source)),
+                        &protect(&plan_under(label("email"))),
                     ))
                 },
             ),
@@ -453,8 +453,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 || {
                     block_on(ops::encrypt_record(
                         &keyset,
-                        &encode(row(PLAINTEXT)),
-                        &plan_under(extended("email", &long_context)),
+                        &protect(&encode(row(PLAINTEXT))),
+                        &protect(&plan_under(extended("email", &long_context))),
                     ))
                 },
             ),
@@ -468,7 +468,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     block_on(ops::decrypt_record(
                         Scope::Client(&cipher),
                         CIPHERTEXT,
-                        &plan_under(label("email")),
+                        &protect(&plan_under(label("email"))),
                         None,
                     ))
                 },
@@ -481,7 +481,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 block_on(ops::decrypt_record(
                     Scope::Client(&cipher),
                     &record,
-                    &plan_under(label("email")),
+                    &protect(&plan_under(label("email"))),
                     None,
                 ))
             }),
@@ -496,7 +496,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                     block_on(ops::decrypt_record(
                         Scope::Client(&cipher),
                         &record,
-                        &plan_under(label("email")),
+                        &protect(&plan_under(label("email"))),
                         None,
                     ))
                 },
@@ -513,7 +513,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 block_on(ops::decrypt_record(
                     Scope::Client(&cipher),
                     &record,
-                    &plan,
+                    &protect(&plan),
                     None,
                 ))
             }),
@@ -525,7 +525,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 block_on(ops::decrypt_record(
                     Scope::Client(&cipher),
                     &record,
-                    &plan_under(extended("email", CONTEXT)),
+                    &protect(&plan_under(extended("email", CONTEXT))),
                     None,
                 ))
             }),
@@ -540,7 +540,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 block_on(ops::decrypt_record(
                     Scope::Keyset(globex),
                     &record,
-                    &plan_under(label("email")),
+                    &protect(&plan_under(label("email"))),
                     None,
                 ))
             }),
@@ -558,8 +558,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("generate", &["stack_kms::generate_key_failed"], || {
                 block_on(ops::encrypt_record(
                     &failing.default_keyset(),
-                    &encode(row(PLAINTEXT)),
-                    &plan_under(label("email")),
+                    &protect(&encode(row(PLAINTEXT))),
+                    &protect(&plan_under(label("email"))),
                 ))
             }),
         ),
@@ -570,7 +570,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
                 block_on(ops::decrypt_record(
                     Scope::Client(&failing),
                     &record,
-                    &plan_under(label("email")),
+                    &protect(&plan_under(label("email"))),
                     None,
                 ))
             }),
@@ -654,8 +654,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("not answered", source, || {
                 block_on(ops::query_term(
                     &keyset,
-                    &encode(s(PLAINTEXT)),
-                    &plan_under(label("email")),
+                    &protect(&encode(s(PLAINTEXT))),
+                    &protect(&plan_under(label("email"))),
                     b"email",
                     b"lt",
                 ))
@@ -666,8 +666,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("query input", source, || {
                 block_on(ops::query_term(
                     &keyset,
-                    &encode(marker()),
-                    &plan_under(label("email")),
+                    &protect(&encode(marker())),
+                    &protect(&plan_under(label("email"))),
                     b"email",
                     b"eq",
                 ))
@@ -678,8 +678,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("unknown operator", source, || {
                 block_on(ops::query_term(
                     &keyset,
-                    &encode(s(PLAINTEXT)),
-                    &plan_under(label("email")),
+                    &protect(&encode(s(PLAINTEXT))),
+                    &protect(&plan_under(label("email"))),
                     b"email",
                     PLAINTEXT.as_bytes(),
                 ))
@@ -689,9 +689,9 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             "verifying an exact operator",
             failure("verify exact", source, || {
                 ops::verify(
-                    &encode(s(PLAINTEXT)),
-                    &encode(Tree::Array(vec![s(PLAINTEXT)])),
-                    &plan_under(label("email")),
+                    &protect(&encode(s(PLAINTEXT))),
+                    &protect(&encode(Tree::Array(vec![s(PLAINTEXT)]))),
+                    &protect(&plan_under(label("email"))),
                     b"email",
                     b"eq",
                 )
@@ -701,9 +701,9 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             "verifying a value of another type",
             failure("verify value", source, || {
                 ops::verify(
-                    &encode(s(PLAINTEXT)),
-                    &encode(Tree::Array(vec![marker()])),
-                    &match_plan(),
+                    &protect(&encode(s(PLAINTEXT))),
+                    &protect(&encode(Tree::Array(vec![marker()]))),
+                    &protect(&match_plan()),
                     b"name",
                     b"matches",
                 )
@@ -714,8 +714,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("limit term", source, || {
                 ops::target_limit(
                     PLAINTEXT.as_bytes(),
-                    &encode(obj(vec![("rows", Tree::UInt64(1))])),
-                    &match_plan(),
+                    &protect(&encode(obj(vec![("rows", Tree::UInt64(1))]))),
+                    &protect(&match_plan()),
                     b"name",
                     b"matches",
                     10,
@@ -727,8 +727,8 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             failure("limit stats", source, || {
                 ops::target_limit(
                     &[1, 0],
-                    &encode(obj(vec![("rows", s(PLAINTEXT))])),
-                    &match_plan(),
+                    &protect(&encode(obj(vec![("rows", s(PLAINTEXT))]))),
+                    &protect(&match_plan()),
                     b"name",
                     b"matches",
                     10,
@@ -758,7 +758,7 @@ fn scenarios() -> Vec<(&'static str, Tree)> {
             block_on(ops::decrypt_record(
                 Scope::Client(&cipher),
                 &record,
-                &plan,
+                &protect(&plan),
                 None,
             ))
         }),
@@ -873,7 +873,7 @@ fn a_foreign_keyset_carries_both_keyset_ids() {
         block_on(ops::decrypt_record(
             Scope::Keyset(globex),
             &record,
-            &plan_under(label("email")),
+            &protect(&plan_under(label("email"))),
             None,
         ))
     });

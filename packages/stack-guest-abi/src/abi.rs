@@ -51,7 +51,8 @@
 //! this crate exports them, so every guest gets `se_alloc` and `se_dealloc`
 //! by depending on it and defines only the exports that are its own.
 
-use zeroize::{Zeroize, Zeroizing};
+use vitaminc_protected::Protected;
+use zeroize::Zeroize;
 
 use crate::buffers;
 use crate::call;
@@ -190,7 +191,7 @@ pub unsafe fn wipe_input(ptr: *mut u8, len: u32) {
 ///
 /// An export that holds its decoded value across a host round trip would
 /// otherwise keep the borrow of the host buffer alive for the whole call.
-/// Copying into a `Zeroizing` first lets the original be wiped immediately:
+/// Copying into a `Protected` first lets the original be wiped immediately:
 /// the plaintext then exists for the duration of the call and no longer,
 /// instead of sitting in linear memory until the host gets round to
 /// `se_dealloc`.
@@ -204,10 +205,10 @@ pub unsafe fn wipe_input(ptr: *mut u8, len: u32) {
 ///
 /// `ptr`/`len` must name a host buffer the caller is done with; it is zeroed
 /// before this returns.
-pub unsafe fn take_plaintext(ptr: *mut u8, len: u32) -> Result<Zeroizing<Vec<u8>>, u32> {
+pub unsafe fn take_plaintext(ptr: *mut u8, len: u32) -> Result<Protected<Vec<u8>>, u32> {
     // SAFETY: the borrow lives only for the copy on this line, inside the
     // call, over a buffer the caller has promised is the host's and live.
-    let taken = Zeroizing::new(unsafe { input(ptr, len)? }.to_vec());
+    let taken = Protected::new(unsafe { input(ptr, len)? }.to_vec());
     unsafe { wipe_input(ptr, len) };
     Ok(taken)
 }

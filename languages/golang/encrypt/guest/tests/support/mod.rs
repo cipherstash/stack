@@ -18,6 +18,11 @@ use stack_encrypt::dynamic::plaintext::{
 use stack_encrypt::Controlled;
 use stack_encrypt::{DecodeError, Decrypt, Encrypt};
 
+/// Bytes a test sends, held as an export holds an input it took.
+pub(crate) fn protect(bytes: &[u8]) -> stack_encrypt::Protected<Vec<u8>> {
+    stack_encrypt::Protected::new(bytes.to_vec())
+}
+
 /// A value as a test spells it: each scalar at its own width, a logical
 /// scalar under its type. Equality is structural and variable-time, which
 /// is why this is test code; floats compare by bit pattern, so `-0.0` and a
@@ -141,7 +146,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
 /// read back.
 pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> Tree {
     let frame = stack_encrypt::dynamic::frame::serde::to_vec(answer).expect("frames");
-    Tree::from_frame(frame.risky_ref()).expect("a value")
+    Tree::from_frame(stack_encrypt::Controlled::risky_ref(&frame)).expect("a value")
 }
 
 fn scalar<S: Sink>(sink: S, ty: Option<Logical>, value: &Tree) -> Result<S::Ok, S::Error> {

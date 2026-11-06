@@ -9,12 +9,12 @@ use common::{
 use serde::Deserialize;
 use serde_json::json;
 use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, Scope, ValueFrame};
+use stack_encrypt::AsProtectedRef as _;
 use stack_encrypt::CipherText;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::Ordering,
 };
-use vitaminc_protected::Controlled as _;
 
 type Row = BTreeMap<String, Input>;
 
@@ -104,9 +104,9 @@ async fn shared_record_runtime_profile() {
             spec["null"] = json!(case.null);
         }
         let plan = record::plan(
-            &vitaminc_aead_frame::serde::to_vec(&json!({"value":spec}))
+            vitaminc_aead_frame::serde::to_vec(&json!({"value":spec}))
                 .unwrap()
-                .risky_unwrap(),
+                .as_protected_ref(),
         )
         .unwrap();
         let keyset = cipher.default_keyset();

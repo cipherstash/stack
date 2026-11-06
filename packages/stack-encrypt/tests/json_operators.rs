@@ -13,6 +13,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
 use base64ct::{Base64, Encoding};
@@ -25,7 +26,6 @@ use stack_encrypt::json::{JsonDocument, Tag};
 use stack_encrypt::target::{Borrowed, CallerContext, IndexSpec};
 use stack_encrypt::{CipherText, Encrypt, KeysetCipher, Label, NonEmpty, Pending, StackCipher};
 use stack_kms::{DataKeySource, IndexKeySource};
-use vitaminc_protected::Controlled as _;
 
 /// What the helpers below run over: any key source a test builds its
 /// cipher on.
@@ -118,7 +118,9 @@ fn plan_of(target: Value) -> record::Plan {
         "profile": {"context": ["users", "profile"], "type": "json", "null": "sql", "target": target}
     });
     record::plan_with(
-        &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
         &Documents,
     )
     .unwrap()
@@ -130,7 +132,12 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 
 /// A JSON value as a frame: what a binding sends as an input or a request.
 fn json_frame(value: &Value) -> ValueFrame {
-    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap().risky_unwrap()).unwrap()
+    ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(value)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 async fn term<K: Source>(
@@ -742,14 +749,14 @@ async fn rows_that_are_not_the_reads_are_refused() {
     // selector is derived under this field's column, so it is not the
     // one asked for.
     let two = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
                         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}},
             "prefs": {"context": ["users", "prefs"], "type": "json", "null": "sql",
                       "target": "JsonSearch"}
         }))
-        .unwrap()
-        .risky_unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Documents,
     )
     .unwrap();
@@ -919,7 +926,9 @@ fn a_malformed_read_is_refused_before_any_key() {
     let wire =
         json!({"email": {"context": ["users", "email"], "type": "string", "outputs": ["c"]}});
     let scalar = record::plan_with(
-        &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
         &Documents,
     )
     .unwrap();
@@ -1591,7 +1600,9 @@ mod element_match {
                             "target": {"name": "JsonSearch", "options": {"ordered": ["$.a[*].b"]}}}
             });
             let plan = record::plan_with(
-                &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+                dynamic::frame::serde::to_vec(&wire)
+                    .unwrap()
+                    .as_protected_ref(),
                 &Unnamed,
             )
             .unwrap();
@@ -2386,7 +2397,9 @@ mod compiled_match {
                             "target": "JsonSearch"}
             });
             let plan = record::plan_with(
-                &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+                dynamic::frame::serde::to_vec(&wire)
+                    .unwrap()
+                    .as_protected_ref(),
                 &Unnamed,
             )
             .unwrap();

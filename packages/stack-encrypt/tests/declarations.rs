@@ -3,6 +3,7 @@
 
 mod common;
 use common::{hex, unhex};
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -114,15 +115,19 @@ fn shared_declaration_grammar() {
             case.id
         );
         let frame = match case.input {
-            Input::Json(value) => vitaminc_aead_frame::serde::to_vec(&projection(&value).unwrap())
-                .unwrap()
-                .risky_unwrap(),
-            Input::FrameHex(text) => unhex(&text),
+            Input::Json(value) => {
+                vitaminc_aead_frame::serde::to_vec(&projection(&value).unwrap()).unwrap()
+            }
+            Input::FrameHex(text) => {
+                let mut frame = vitaminc_protected::Buffer::new();
+                frame.extend_from_slice(&unhex(&text));
+                frame
+            }
         };
         if let Some(boundary) = case.boundary_error {
             assert!(!case.accepted);
             assert!(
-                vitaminc_aead::Frame::parse(&frame).is_err(),
+                vitaminc_aead::Frame::parse(frame.risky_ref()).is_err(),
                 "{}: boundary refusal requires a malformed frame",
                 case.id
             );
@@ -130,7 +135,7 @@ fn shared_declaration_grammar() {
             assert!(boundary.fields.is_empty());
         }
         // No cipher/key source exists: declaration checking cannot do key I/O.
-        match (record::plan(&frame), case.expected_error) {
+        match (record::plan(frame.as_protected_ref()), case.expected_error) {
             (Ok(plan), None) => {
                 if let Some(expected) = case.normalized {
                     let actual = normalized(&plan);

@@ -3,6 +3,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -19,7 +20,6 @@ use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
     CipherText, Ciphertext, Error, KeysetCipher, Label, SealedValue, StackCipherText,
 };
-use vitaminc_protected::Controlled as _;
 
 const PROFILE: &str = "record-scalars-v1";
 
@@ -79,9 +79,9 @@ fn plan(corpus: &Corpus, case: &Case) -> record::Plan {
         "context": context, "outputs": ["c", "eq"], "type": case.kind,
     }});
     record::plan(
-        &vitaminc_aead_frame::serde::to_vec(&declaration)
+        vitaminc_aead_frame::serde::to_vec(&declaration)
             .unwrap()
-            .risky_unwrap(),
+            .as_protected_ref(),
     )
     .unwrap()
 }

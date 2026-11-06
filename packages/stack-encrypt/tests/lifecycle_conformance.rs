@@ -4,6 +4,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::future::IntoFuture;
@@ -20,7 +21,6 @@ use stack_kms::{
     UnverifiedContext,
 };
 use uuid::Uuid;
-use vitaminc_protected::Controlled as _;
 
 #[derive(Default)]
 struct Observations {
@@ -106,11 +106,11 @@ async fn cipher() -> (StackCipher<Source>, Arc<Observations>) {
 
 fn plan() -> record::Plan {
     record::plan(
-        &vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+        (vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
             "value": {"context": ["lifecycle", "value"], "outputs": ["c"], "type": "string"}
         }))
-        .unwrap()
-        .risky_unwrap(),
+        .unwrap())
+        .as_protected_ref(),
     )
     .unwrap()
 }

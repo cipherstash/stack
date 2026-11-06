@@ -181,6 +181,8 @@ fn convert(error: eql_bindings::encryption::targets::TargetError) -> TargetError
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "eql")]
+    use stack_encrypt::AsProtectedRef as _;
 
     #[cfg(not(feature = "eql"))]
     #[test]
@@ -321,8 +323,7 @@ mod tests {
                 }
             });
             let frame = dynamic::frame::serde::to_vec(&wire).expect("plan frame");
-            let plan = record::plan_with(stack_encrypt::Controlled::risky_ref(&frame), &resolver())
-                .expect("plan");
+            let plan = record::plan_with(frame.as_protected_ref(), &resolver()).expect("plan");
             dynamic::field_operators(&plan, "profile", &resolver())
                 .expect("operators")
                 .into_iter()

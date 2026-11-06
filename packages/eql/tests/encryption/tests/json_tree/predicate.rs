@@ -8,9 +8,9 @@
 
 use super::elements::{derive, eql_text, frame_of, Eql};
 use super::*;
+use stack_encrypt::AsProtectedRef as _;
 
 use stack_encrypt::dynamic::{self, record, OpSpec, Operand};
-use stack_encrypt::Controlled as _;
 use stack_encrypt::KeysetCipher;
 
 /// The paths the documents order: what the predicates' ranges ask at.
@@ -37,7 +37,9 @@ fn people_plan() -> record::Plan {
         }
     });
     record::plan_with(
-        &dynamic::frame::serde::to_vec(&wire).unwrap().risky_unwrap(),
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
         &Eql,
     )
     .unwrap()
