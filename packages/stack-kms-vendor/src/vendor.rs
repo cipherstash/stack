@@ -26,9 +26,10 @@ pub type KeyBytes = Protected<[u8; 32]>;
 ///
 /// * **Bind the associated data.** `unwrap` must fail unless `aad` is the
 ///   `aad` given to `wrap`. A vendor with native associated data (AWS KMS
-///   encryption context, Vault Transit `associated_data`, Google Cloud KMS
-///   `additionalAuthenticatedData`) passes it through. A vendor without it
-///   must bind it some other way: wrap the bound key of
+///   encryption context, Google Cloud KMS `additionalAuthenticatedData`)
+///   passes it through. A vendor without it (Azure Key Vault), or with it
+///   on some keys or versions only (Vault Transit), must bind it some other
+///   way: wrap the bound key of
 ///   [`bound::bind_key`](crate::bound::bind_key) in place of the key, and
 ///   open it with [`bound::open_bound_key`](crate::bound::open_bound_key).
 /// * **Report failures as [`Error::Backend`]**, with

@@ -42,6 +42,13 @@
 //! # }
 //! ```
 //!
+//! # Capabilities and limits
+//!
+//! The [capability matrix](stack_kms_vendor#capability-matrix) of
+//! `stack-kms-vendor` compares this backend with ZeroKMS and the other
+//! key vendor backends: key lifetime, vendor calls, what the vendor sees
+//! and can refuse, credentials, rotation and known limits.
+//!
 //! # Access
 //!
 //! The identity needs the `wrapKey` and `unwrapKey` key permissions and,

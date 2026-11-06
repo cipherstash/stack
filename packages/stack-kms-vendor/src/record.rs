@@ -115,10 +115,19 @@ impl KeysetRecord {
         })
     }
 
-    /// Wrap this record's key under another vendor key of the same
-    /// backend, for example after a key rotation in the vendor. The keyset
-    /// id, name and mode stay the same, so every value sealed under the
-    /// keyset still opens.
+    /// Wrap this record's key under a vendor key of the same backend: the
+    /// record's own key after a rotation in the vendor (its newest version),
+    /// or another key. The keyset id, name and mode stay the same. Stored
+    /// values are not re-keyed.
+    ///
+    /// Under derived data keys every value sealed under the keyset still
+    /// opens, because each data key comes from the root key. Under wrapped
+    /// data keys each value's data key stays wrapped under the vendor key
+    /// that sealed it, and the adapter unwraps it with the record's current
+    /// `key_ref`. A rewrap to a new version of the same vendor key is safe;
+    /// **a rewrap to another vendor key makes the values sealed before it
+    /// fail to open** (`InvalidCiphertext`). See the
+    /// [capability matrix](crate#rotation).
     ///
     /// Two vendor calls: unwrap under the old key, wrap under the new one.
     pub async fn rewrap<B: KeyVendorBackend>(
