@@ -89,8 +89,8 @@ mod config;
 mod time;
 
 pub use auth::{
-    AccessToken, AuthError, CachedToken, ClientSecretLogin, TokenProvider, ACCESS_TOKEN_VARIABLE,
-    DEFAULT_AUTHORITY_HOST, DEFAULT_REFRESH_BEFORE_EXPIRY,
+    AccessToken, AuthError, AzureCredentials, CachedToken, ClientSecretLogin, TokenProvider,
+    ACCESS_TOKEN_VARIABLE, DEFAULT_AUTHORITY_HOST, DEFAULT_REFRESH_BEFORE_EXPIRY,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use auth::{DefaultCredentials, ManagedIdentityLogin, WorkloadIdentityLogin};

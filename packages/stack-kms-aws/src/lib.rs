@@ -74,7 +74,10 @@ pub use client::{
     CONTEXT_KEYSET_ID, CONTEXT_PURPOSE,
 };
 pub use config::{AwsKmsConfig, ConfigError};
-pub use credentials::{CachedCredentials, Credentials, CredentialsError, CredentialsProvider};
+pub use credentials::{
+    AwsCredentials, CachedCredentials, Credentials, CredentialsError, CredentialsProvider,
+    DEFAULT_REFRESH_BEFORE_EXPIRY,
+};
 pub use time::{system_clock, Clock};
 
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]

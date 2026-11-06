@@ -25,7 +25,6 @@ stack-kms-vendor = { path = "../stack-kms-vendor", version = "0.1.0" }
 
 vitaminc = { workspace = true, features = ["protected"] }
 base64ct = { version = "1.7", features = ["alloc"] }
-futures = "0.3.25"
 hmac = "0.13"
 sha2 = "0.11"
 serde = { workspace = true }

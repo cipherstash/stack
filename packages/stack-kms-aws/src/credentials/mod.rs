@@ -19,14 +19,11 @@
 
 use std::fmt;
 use std::future::Future;
-use std::time::Duration;
 
-use futures::lock::Mutex;
-use stack_kms::{BackendErrorKind, MaybeSend};
+use stack_kms::MaybeSend;
+use stack_kms_vendor::{CredentialError, CredentialKind, Expiring, Expiry, FetchCredential};
 use web_time::SystemTime;
 use zeroize::Zeroizing;
-
-use crate::time::{system_clock, Clock};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod chain;
@@ -144,39 +141,26 @@ impl Credentials {
     }
 }
 
-/// The credentials could not be got.
-#[derive(Debug, thiserror::Error)]
-#[error("AWS credentials: {message}")]
-pub struct CredentialsError {
-    kind: BackendErrorKind,
-    message: String,
-}
-
-impl CredentialsError {
-    /// A failure of `kind`, described by `message`. Never put a secret in
-    /// the message.
-    pub fn new(kind: BackendErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    /// No credentials are configured, or they were refused.
-    pub fn access_denied(message: impl Into<String>) -> Self {
-        Self::new(BackendErrorKind::AccessDenied, message)
-    }
-
-    /// The credentials source did not answer.
-    pub fn unavailable(message: impl Into<String>) -> Self {
-        Self::new(BackendErrorKind::Unavailable, message)
-    }
-
-    /// The failure kind the client reports.
-    pub fn kind(&self) -> BackendErrorKind {
-        self.kind
+impl Expiring for Credentials {
+    fn expiry(&self) -> Expiry {
+        self.expires_at.map_or(Expiry::Never, Expiry::At)
     }
 }
+
+/// The credential kind of this crate: [`Credentials`], one set for the
+/// client. It names [`CredentialsError`] and [`CachedCredentials`].
+#[derive(Debug)]
+pub enum AwsCredentials {}
+
+impl CredentialKind for AwsCredentials {
+    const LABEL: &'static str = "AWS credentials";
+    type Key = ();
+    type Credential = Credentials;
+}
+
+/// The credentials could not be got. The message starts with "AWS
+/// credentials".
+pub type CredentialsError = CredentialError<AwsCredentials>;
 
 /// Where a client gets its credentials. The client asks before it signs
 /// each request, so a provider that fetches should cache
@@ -199,97 +183,39 @@ impl CredentialsProvider for Credentials {
     }
 }
 
-/// The default time before expiry at which [`CachedCredentials`] fetches
-/// new credentials.
-pub const DEFAULT_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(5 * 60);
+pub use stack_kms_vendor::DEFAULT_REFRESH_BEFORE_EXPIRY;
 
 /// Keeps the credentials `inner` returns, and fetches new ones when they
-/// are within the refresh window of their expiry
-/// ([`DEFAULT_REFRESH_BEFORE_EXPIRY`]).
+/// are near their expiry: [`DEFAULT_REFRESH_BEFORE_EXPIRY`] before, or a
+/// third of their life before when they live less than three times that.
 ///
 /// One fetch runs at a time: callers that arrive during a fetch wait for
 /// it and share its result. If a fetch fails while the cached credentials
 /// have not yet expired, they are still returned. Credentials with no
 /// expiry are kept for good.
-pub struct CachedCredentials<P> {
-    inner: P,
-    cached: Mutex<Option<Credentials>>,
-    refresh_before: Duration,
-    clock: Clock,
-}
+pub type CachedCredentials<P> = stack_kms_vendor::CachedToken<P, AwsCredentials>;
 
-impl<P: fmt::Debug> fmt::Debug for CachedCredentials<P> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CachedCredentials")
-            .field("inner", &self.inner)
-            .field("refresh_before", &self.refresh_before)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<P: CredentialsProvider> CachedCredentials<P> {
-    /// Cache the credentials of `inner`.
-    pub fn new(inner: P) -> Self {
-        Self {
-            inner,
-            cached: Mutex::new(None),
-            refresh_before: DEFAULT_REFRESH_BEFORE_EXPIRY,
-            clock: system_clock(),
-        }
-    }
-
-    /// Fetch new credentials `refresh_before` before expiry.
-    pub fn with_refresh_before(mut self, refresh_before: Duration) -> Self {
-        self.refresh_before = refresh_before;
-        self
-    }
-
-    /// Read the time from `clock`.
-    pub fn with_clock(mut self, clock: Clock) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    /// The provider whose credentials are cached.
-    pub fn inner(&self) -> &P {
-        &self.inner
+impl<P: CredentialsProvider> FetchCredential<P> for AwsCredentials {
+    fn fetch<'a>(
+        provider: &'a P,
+        _key: &'a (),
+    ) -> impl Future<Output = Result<Credentials, CredentialsError>> + MaybeSend + 'a {
+        provider.credentials()
     }
 }
 
 impl<P: CredentialsProvider> CredentialsProvider for CachedCredentials<P> {
-    async fn credentials(&self) -> Result<Credentials, CredentialsError> {
-        let mut cached = self.cached.lock().await;
-        let now = (self.clock)();
-        if let Some(credentials) = cached.as_ref() {
-            let fresh = credentials
-                .expires_at
-                .is_none_or(|expiry| now + self.refresh_before < expiry);
-            if fresh {
-                return Ok(credentials.clone());
-            }
-        }
-        match self.inner.credentials().await {
-            Ok(credentials) => {
-                *cached = Some(credentials.clone());
-                Ok(credentials)
-            }
-            Err(error) => match cached.as_ref() {
-                Some(credentials) if credentials.expires_at.is_some_and(|e| now < e) => {
-                    Ok(credentials.clone())
-                }
-                _ => Err(error),
-            },
-        }
+    fn credentials(
+        &self,
+    ) -> impl Future<Output = Result<Credentials, CredentialsError>> + MaybeSend {
+        self.get(&())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::Arc;
-
-    use web_time::UNIX_EPOCH;
 
     use super::*;
 
@@ -334,85 +260,11 @@ mod tests {
         assert!(!text.contains("the-token"));
     }
 
-    /// A provider that hands out credentials expiring `lifetime` after the
-    /// test clock, or fails when told to.
-    struct Counting {
-        calls: AtomicUsize,
-        fail: std::sync::atomic::AtomicBool,
-        now: Arc<AtomicU64>,
-        lifetime: Option<Duration>,
-    }
-
-    impl CredentialsProvider for Counting {
-        async fn credentials(&self) -> Result<Credentials, CredentialsError> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst);
-            if self.fail.load(Ordering::SeqCst) {
-                return Err(CredentialsError::unavailable("down"));
-            }
-            let credentials = Credentials::new(format!("AKID{call}"), "secret", None);
-            Ok(match self.lifetime {
-                Some(lifetime) => credentials.with_expiry(
-                    UNIX_EPOCH + Duration::from_secs(self.now.load(Ordering::SeqCst)) + lifetime,
-                ),
-                None => credentials,
-            })
-        }
-    }
-
-    fn cached(lifetime: Option<Duration>) -> (CachedCredentials<Counting>, Arc<AtomicU64>) {
-        let now = Arc::new(AtomicU64::new(1_000_000));
-        let clock_now = Arc::clone(&now);
-        let provider = Counting {
-            calls: AtomicUsize::new(0),
-            fail: false.into(),
-            now: Arc::clone(&now),
-            lifetime,
-        };
-        let clock: Clock =
-            Arc::new(move || UNIX_EPOCH + Duration::from_secs(clock_now.load(Ordering::SeqCst)));
-        (CachedCredentials::new(provider).with_clock(clock), now)
-    }
-
-    #[tokio::test]
-    async fn credentials_are_fetched_again_before_they_expire() {
-        let (cache, now) = cached(Some(Duration::from_secs(3600)));
-        assert_eq!(cache.credentials().await.unwrap().access_key_id(), "AKID0");
-        now.fetch_add(3600 - 301, Ordering::SeqCst);
-        assert_eq!(cache.credentials().await.unwrap().access_key_id(), "AKID0");
-        now.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(cache.credentials().await.unwrap().access_key_id(), "AKID1");
-        assert_eq!(cache.inner().calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn credentials_without_expiry_are_kept() {
-        let (cache, now) = cached(None);
-        cache.credentials().await.unwrap();
-        now.fetch_add(10 * 365 * 86_400, Ordering::SeqCst);
-        assert_eq!(cache.credentials().await.unwrap().access_key_id(), "AKID0");
-        assert_eq!(cache.inner().calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn a_failed_refresh_keeps_unexpired_credentials_only() {
-        let (cache, now) = cached(Some(Duration::from_secs(3600)));
-        cache.credentials().await.unwrap();
-        cache.inner().fail.store(true, Ordering::SeqCst);
-        now.fetch_add(3500, Ordering::SeqCst);
-        assert_eq!(cache.credentials().await.unwrap().access_key_id(), "AKID0");
-        now.fetch_add(100, Ordering::SeqCst);
-        let error = cache.credentials().await.unwrap_err();
-        assert_eq!(error.kind(), BackendErrorKind::Unavailable);
-    }
-
-    #[tokio::test]
-    async fn the_refresh_window_is_configurable() {
-        let (cache, now) = cached(Some(Duration::from_secs(3600)));
-        let cache = cache.with_refresh_before(Duration::ZERO);
-        cache.credentials().await.unwrap();
-        now.fetch_add(3599, Ordering::SeqCst);
-        assert_eq!(cache.credentials().await.unwrap().access_key_id(), "AKID0");
-        now.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(cache.credentials().await.unwrap().access_key_id(), "AKID1");
+    #[test]
+    fn the_expiry_is_the_expiry_time() {
+        let credentials = Credentials::new("AKID", "secret", None);
+        assert_eq!(credentials.expiry(), Expiry::Never);
+        let at = web_time::UNIX_EPOCH + std::time::Duration::from_secs(60);
+        assert_eq!(credentials.with_expiry(at).expiry(), Expiry::At(at));
     }
 }

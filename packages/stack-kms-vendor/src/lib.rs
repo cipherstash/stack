@@ -25,6 +25,9 @@
 //! * [`run_batch`]: N vendor calls with a concurrency limit, backoff on
 //!   [`Throttled`](stack_kms::BackendErrorKind::Throttled), and
 //!   fail-whole-batch.
+//! * [`CachedToken`]: keeps the credential a login returns, and gets a new
+//!   one before it expires. Every vendor crate caches its credentials with
+//!   it, and shares [`AccessToken`] and [`CredentialError`] too.
 //! * [`VendorTransport`]: the HTTP seam a vendor client sends through, of
 //!   the same shape as [`ZeroKMSConnection`](stack_kms::ZeroKMSConnection),
 //!   so the same vendor code runs on native Rust and in the WASI guest.
@@ -236,6 +239,7 @@
 
 mod batch;
 pub mod bound;
+mod credential;
 pub mod derive;
 mod error;
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
@@ -255,6 +259,10 @@ mod fake;
 pub mod replay;
 
 pub use batch::{run_batch, BatchOptions};
+pub use credential::{
+    system_clock, AccessToken, CachedToken, Clock, CredentialError, CredentialKind, Expiring,
+    Expiry, FetchCredential, DEFAULT_REFRESH_BEFORE_EXPIRY,
+};
 pub use error::RecordError;
 pub use record::{KeysetRecord, RECORD_FORMAT_VERSION, RECORD_PREFIX};
 pub use router::KeyRouter;
