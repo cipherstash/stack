@@ -1514,6 +1514,13 @@ macro_rules! __scalar_matrix_planner_metadata_case {
                     JOIN pg_catalog.pg_type rt ON rt.oid = o.oprright
                     WHERE o.oprname IN ({op_list})
                       AND ('{d}'::regtype = o.oprleft OR '{d}'::regtype = o.oprright)
+                      -- Cross-pair blockers (this domain against ANOTHER domain's
+                      -- query twin) are deliberately metadata-free: they only
+                      -- exist to raise, so keep them out of this accounting.
+                      AND NOT (rt.typname LIKE 'query\_%' AND lt.oid = '{d}'::regtype
+                               AND rt.typname <> 'query_' || substr(lt.typname, 8))
+                      AND NOT (lt.typname LIKE 'query\_%' AND rt.oid = '{d}'::regtype
+                               AND lt.typname <> 'query_' || substr(rt.typname, 8))
                     "#
                 );
                 let rows: Vec<(String, String, String, bool, bool, bool, bool)> =
