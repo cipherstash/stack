@@ -3539,7 +3539,6 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "base64ct",
- "futures",
  "hmac",
  "serde",
  "serde_json",
@@ -3562,7 +3561,6 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "base64ct",
- "futures",
  "rand_core 0.6.4",
  "rsa",
  "serde",
@@ -3585,7 +3583,6 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "base64ct",
- "futures",
  "rand_core 0.6.4",
  "rsa",
  "serde",
@@ -3608,7 +3605,6 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "base64ct",
- "futures",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3620,7 +3616,6 @@ dependencies = [
  "url",
  "uuid",
  "vitaminc",
- "web-time",
  "zeroize",
 ]
 

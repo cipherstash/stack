@@ -2136,7 +2136,6 @@ name = "stack-kms-aws"
 version = "0.1.0"
 dependencies = [
  "base64ct",
- "futures",
  "hmac",
  "serde",
  "serde_json",
@@ -2155,7 +2154,6 @@ name = "stack-kms-azure"
 version = "0.1.0"
 dependencies = [
  "base64ct",
- "futures",
  "serde",
  "serde_json",
  "stack-kms",
@@ -2172,7 +2170,6 @@ name = "stack-kms-gcp"
 version = "0.1.0"
 dependencies = [
  "base64ct",
- "futures",
  "serde",
  "serde_json",
  "stack-kms",
@@ -2189,7 +2186,6 @@ name = "stack-kms-vault"
 version = "0.1.0"
 dependencies = [
  "base64ct",
- "futures",
  "serde",
  "serde_json",
  "stack-kms",
@@ -2197,7 +2193,6 @@ dependencies = [
  "thiserror 1.0.69",
  "url",
  "vitaminc",
- "web-time",
  "zeroize",
 ]
 

@@ -25,12 +25,10 @@ stack-kms-vendor = { path = "../stack-kms-vendor", version = "0.1.0" }
 
 vitaminc = { workspace = true, features = ["protected"] }
 base64ct = { version = "1.7", features = ["alloc"] }
-futures = "0.3.25"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }
-web-time = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]

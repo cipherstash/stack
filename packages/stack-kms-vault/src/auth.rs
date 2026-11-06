@@ -25,18 +25,17 @@
 
 use std::fmt;
 use std::future::Future;
-use std::sync::{Mutex as SyncMutex, PoisonError};
 use std::time::Duration;
 
-use futures::lock::Mutex;
 use serde::{Deserialize, Serialize};
 use stack_kms::{BackendErrorKind, MaybeSend};
-use stack_kms_vendor::{classify_status, VendorRequest, VendorTransport};
-use web_time::SystemTime;
+use stack_kms_vendor::{
+    classify_status, CredentialError, CredentialKind, Expiring, Expiry, FetchCredential,
+    VendorRequest, VendorTransport,
+};
 use zeroize::Zeroizing;
 
 use crate::config::{is_path, process_env, EnvLookup, VaultConfig};
-use crate::time::{system_clock, Clock};
 
 /// A Vault token, and how long its lease lasts from when it was issued.
 ///
@@ -93,39 +92,27 @@ impl VaultToken {
     }
 }
 
-/// A token could not be got.
-#[derive(Debug, thiserror::Error)]
-#[error("Vault auth: {message}")]
-pub struct AuthError {
-    kind: BackendErrorKind,
-    message: String,
-}
-
-impl AuthError {
-    /// A failure of `kind`, described by `message`. Never put a secret in
-    /// the message.
-    pub fn new(kind: BackendErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    /// No auth method is configured, or the login was refused.
-    pub fn access_denied(message: impl Into<String>) -> Self {
-        Self::new(BackendErrorKind::AccessDenied, message)
-    }
-
-    /// The auth method did not answer.
-    pub fn unavailable(message: impl Into<String>) -> Self {
-        Self::new(BackendErrorKind::Unavailable, message)
-    }
-
-    /// The failure kind the client reports.
-    pub fn kind(&self) -> BackendErrorKind {
-        self.kind
+impl Expiring for VaultToken {
+    fn expiry(&self) -> Expiry {
+        self.lease.map_or(Expiry::Never, Expiry::After)
     }
 }
+
+pub use stack_kms_vendor::DEFAULT_REFRESH_BEFORE_EXPIRY;
+
+/// The credential kind of this crate: a [`VaultToken`], one for the
+/// client. It names [`AuthError`] and [`CachedToken`].
+#[derive(Debug)]
+pub enum VaultAuth {}
+
+impl CredentialKind for VaultAuth {
+    const LABEL: &'static str = "Vault auth";
+    type Key = ();
+    type Credential = VaultToken;
+}
+
+/// A token could not be got. The message starts with "Vault auth".
+pub type AuthError = CredentialError<VaultAuth>;
 
 /// Where a client gets its Vault token. The client asks before each
 /// request, so a provider that logs in should cache ([`CachedToken`]).
@@ -148,19 +135,6 @@ impl TokenProvider for VaultToken {
     }
 }
 
-/// The default time before the end of a lease at which [`CachedToken`]
-/// logs in again. For a short lease the window is a third of the lease.
-pub const DEFAULT_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(5 * 60);
-
-/// A token in the cache, and when to get the next one.
-struct Cached {
-    token: VaultToken,
-    /// When to log in again. `None`: never.
-    refresh_at: Option<SystemTime>,
-    /// When the lease ends. `None`: never.
-    expires_at: Option<SystemTime>,
-}
-
 /// Keeps the token `inner` returns, and gets a new one when its lease is
 /// near its end: [`DEFAULT_REFRESH_BEFORE_EXPIRY`] before, or a third of
 /// the lease before when the lease is shorter than three times that.
@@ -169,104 +143,28 @@ struct Cached {
 /// it and share its result. If a login fails while the cached token's lease
 /// has not ended, the cached token is still returned. A token with no
 /// lease is kept until Vault refuses it ([`TokenProvider::invalidate`]).
-pub struct CachedToken<P> {
-    inner: P,
-    cached: SyncMutex<Option<Cached>>,
-    fetch: Mutex<()>,
-    refresh_before: Duration,
-    clock: Clock,
-}
+pub type CachedToken<P> = stack_kms_vendor::CachedToken<P, VaultAuth>;
 
-impl<P: fmt::Debug> fmt::Debug for CachedToken<P> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CachedToken")
-            .field("inner", &self.inner)
-            .field("refresh_before", &self.refresh_before)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<P: TokenProvider> CachedToken<P> {
-    /// Cache the token of `inner`.
-    pub fn new(inner: P) -> Self {
-        Self {
-            inner,
-            cached: SyncMutex::new(None),
-            fetch: Mutex::new(()),
-            refresh_before: DEFAULT_REFRESH_BEFORE_EXPIRY,
-            clock: system_clock(),
-        }
+impl<P: TokenProvider> FetchCredential<P> for VaultAuth {
+    fn fetch<'a>(
+        provider: &'a P,
+        _key: &'a (),
+    ) -> impl Future<Output = Result<VaultToken, AuthError>> + MaybeSend + 'a {
+        provider.token()
     }
 
-    /// Log in again at most `refresh_before` before the lease ends.
-    pub fn with_refresh_before(mut self, refresh_before: Duration) -> Self {
-        self.refresh_before = refresh_before;
-        self
-    }
-
-    /// Read the time from `clock`.
-    pub fn with_clock(mut self, clock: Clock) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    /// The provider whose token is cached.
-    pub fn inner(&self) -> &P {
-        &self.inner
-    }
-
-    /// The cached token, if it does not need a login yet.
-    fn fresh(&self, now: SystemTime) -> Option<VaultToken> {
-        let cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
-        cached
-            .as_ref()
-            .filter(|cached| cached.refresh_at.is_none_or(|at| now < at))
-            .map(|cached| cached.token.clone())
+    fn invalidate(provider: &P) {
+        provider.invalidate();
     }
 }
 
 impl<P: TokenProvider> TokenProvider for CachedToken<P> {
-    async fn token(&self) -> Result<VaultToken, AuthError> {
-        if let Some(token) = self.fresh((self.clock)()) {
-            return Ok(token);
-        }
-        let _fetch = self.fetch.lock().await;
-        // Another caller may have logged in while this one waited.
-        let now = (self.clock)();
-        if let Some(token) = self.fresh(now) {
-            return Ok(token);
-        }
-        match self.inner.token().await {
-            Ok(token) => {
-                let (refresh_at, expires_at) = match token.lease {
-                    Some(lease) => {
-                        let window = self.refresh_before.min(lease / 3);
-                        (now.checked_add(lease - window), now.checked_add(lease))
-                    }
-                    None => (None, None),
-                };
-                *self.cached.lock().unwrap_or_else(PoisonError::into_inner) = Some(Cached {
-                    token: token.clone(),
-                    refresh_at,
-                    expires_at,
-                });
-                Ok(token)
-            }
-            Err(error) => {
-                let cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
-                match cached.as_ref() {
-                    Some(cached) if cached.expires_at.is_some_and(|end| now < end) => {
-                        Ok(cached.token.clone())
-                    }
-                    _ => Err(error),
-                }
-            }
-        }
+    fn token(&self) -> impl Future<Output = Result<VaultToken, AuthError>> + MaybeSend {
+        self.get(&())
     }
 
     fn invalidate(&self) {
-        *self.cached.lock().unwrap_or_else(PoisonError::into_inner) = None;
-        self.inner.invalidate();
+        stack_kms_vendor::CachedToken::invalidate(self);
     }
 }
 
@@ -612,11 +510,6 @@ pub use kubernetes::{
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-    use std::sync::Arc;
-
-    use web_time::UNIX_EPOCH;
-
     use super::*;
 
     #[test]
@@ -636,94 +529,10 @@ mod tests {
         assert!(!text.contains("the-secret-id"));
     }
 
-    struct Counting {
-        calls: AtomicUsize,
-        fail: AtomicBool,
-        lease: Option<Duration>,
-    }
-
-    impl TokenProvider for Counting {
-        async fn token(&self) -> Result<VaultToken, AuthError> {
-            let call = self.calls.fetch_add(1, Ordering::SeqCst);
-            if self.fail.load(Ordering::SeqCst) {
-                return Err(AuthError::unavailable("down"));
-            }
-            let token = VaultToken::new(format!("token-{call}"));
-            Ok(match self.lease {
-                Some(lease) => token.with_lease(lease),
-                None => token,
-            })
-        }
-    }
-
-    fn cached(lease: Option<Duration>) -> (CachedToken<Counting>, Arc<AtomicU64>) {
-        let now = Arc::new(AtomicU64::new(1_000_000));
-        let clock_now = Arc::clone(&now);
-        let clock: Clock =
-            Arc::new(move || UNIX_EPOCH + Duration::from_secs(clock_now.load(Ordering::SeqCst)));
-        let provider = Counting {
-            calls: AtomicUsize::new(0),
-            fail: false.into(),
-            lease,
-        };
-        (CachedToken::new(provider).with_clock(clock), now)
-    }
-
-    async fn token_of(cache: &CachedToken<Counting>) -> String {
-        cache.token().await.unwrap().token().to_owned()
-    }
-
-    #[tokio::test]
-    async fn a_token_is_got_again_before_its_lease_ends() {
-        let (cache, now) = cached(Some(Duration::from_secs(3600)));
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(3600 - 301, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-1");
-        assert_eq!(cache.inner().calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn a_short_lease_refreshes_a_third_before_its_end() {
-        let (cache, now) = cached(Some(Duration::from_secs(60)));
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(39, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-1");
-    }
-
-    #[tokio::test]
-    async fn a_token_with_no_lease_is_kept_until_invalidated() {
-        let (cache, now) = cached(None);
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(10 * 365 * 86_400, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-0");
-        cache.invalidate();
-        assert_eq!(token_of(&cache).await, "token-1");
-    }
-
-    #[tokio::test]
-    async fn a_failed_login_keeps_a_token_whose_lease_has_not_ended() {
-        let (cache, now) = cached(Some(Duration::from_secs(3600)));
-        assert_eq!(token_of(&cache).await, "token-0");
-        cache.inner().fail.store(true, Ordering::SeqCst);
-        now.fetch_add(3500, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(100, Ordering::SeqCst);
-        let error = cache.token().await.unwrap_err();
-        assert_eq!(error.kind(), BackendErrorKind::Unavailable);
-    }
-
-    #[tokio::test]
-    async fn the_refresh_window_is_configurable() {
-        let (cache, now) = cached(Some(Duration::from_secs(3600)));
-        let cache = cache.with_refresh_before(Duration::ZERO);
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(3599, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-0");
-        now.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(token_of(&cache).await, "token-1");
+    #[test]
+    fn the_lease_is_the_expiry() {
+        assert_eq!(VaultToken::new("t").expiry(), Expiry::Never);
+        let token = VaultToken::new("t").with_lease(Duration::from_secs(60));
+        assert_eq!(token.expiry(), Expiry::After(Duration::from_secs(60)));
     }
 }

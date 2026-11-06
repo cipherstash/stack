@@ -7,12 +7,7 @@ use web_time::{SystemTime, UNIX_EPOCH};
 
 /// The time source of a client: `SystemTime::now` unless a test sets
 /// another.
-pub type Clock = std::sync::Arc<dyn Fn() -> SystemTime + Send + Sync>;
-
-/// The system clock.
-pub fn system_clock() -> Clock {
-    std::sync::Arc::new(SystemTime::now)
-}
+pub use stack_kms_vendor::{system_clock, Clock};
 
 /// The civil date of a day count since 1970-01-01 (Howard Hinnant's
 /// `civil_from_days`).

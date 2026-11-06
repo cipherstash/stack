@@ -89,8 +89,8 @@ pub use auth::DefaultCredentials;
 #[cfg(not(target_arch = "wasm32"))]
 pub use auth::MetadataServerLogin;
 pub use auth::{
-    AccessToken, AuthError, CachedToken, TokenProvider, CLOUD_KMS_SCOPE,
-    DEFAULT_REFRESH_BEFORE_EXPIRY,
+    AccessToken, AuthError, CachedToken, GoogleCredentials, TokenProvider, ACCESS_TOKEN_VARIABLE,
+    CLOUD_KMS_SCOPE, DEFAULT_REFRESH_BEFORE_EXPIRY,
 };
 #[cfg(feature = "service-account")]
 pub use auth::{ServiceAccountKey, ServiceAccountLogin, DEFAULT_TOKEN_URI};
