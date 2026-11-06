@@ -128,6 +128,9 @@ export function matchNeedleMinLength(opts: MatchIndexOpts): number | undefined {
  * (`'%ada%'`), so the floor may have to apply to the unwrapped term rather than
  * to the string the caller passed.
  */
+// The message never quotes the needle: it is the caller's plaintext search
+// term, and every adapter throws this reason to its caller (who may log it).
+// Report the length, which is what the caller needs to fix the query.
 export function matchNeedleError(
   needle: unknown,
   opts: MatchIndexOpts,
@@ -142,5 +145,5 @@ export function matchNeedleError(
     return `free-text search needs a non-empty search term; an empty term produces no tokens and would match every row.`
   }
   if (min === undefined || length >= min) return undefined
-  return `free-text search needs at least ${min} characters (the index tokenizer's token_length), but the search term ${JSON.stringify(needle)} has ${length}. A shorter term produces no tokens and would match every row.`
+  return `free-text search needs at least ${min} characters (the index tokenizer's token_length), but the search term has ${length}. A shorter term produces no tokens and would match every row.`
 }

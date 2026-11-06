@@ -74,5 +74,8 @@ export { matchNeedleError } from './schema/match-defaults.js'
 // `./types`: deciding which wire version a table targets is adapter plumbing,
 // not something an end user should be reaching for.
 export { hasBuildColumnKeyMap } from './types.js'
+// Log-safe failure description: adapters log an error's kind, never its
+// message, which may quote a plaintext value.
+export { describeFailure } from './utils/logger/describe-failure.js'
 // Shared structured logger (adapters log rejections through the same instance).
 export { logger } from './utils/logger/index.js'

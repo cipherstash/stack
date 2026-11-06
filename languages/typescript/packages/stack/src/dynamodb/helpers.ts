@@ -4,6 +4,7 @@ import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
 import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import type { EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
+import { describeFailure } from '@/utils/logger/describe-failure'
 import type { AnyEncryptedTable, EncryptedDynamoDBError } from './types'
 
 export const ciphertextAttrSuffix = '__source'
@@ -68,7 +69,9 @@ export function handleError(
     context,
   })
 
-  logger.error(`DynamoDB error in ${context}: ${errorMessage}`)
+  // Log the failure's kind, never its message: it may quote a plaintext value
+  // (CIP-5161). The caller gets the full message on the returned error.
+  logger.error(`DynamoDB error in ${context} (${describeFailure(error)}).`)
 
   if (options?.errorHandler) {
     options.errorHandler(dynamoError)
