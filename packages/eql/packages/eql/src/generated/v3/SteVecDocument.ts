@@ -14,4 +14,13 @@ import type { SteVecForm } from "./SteVecForm";
  * document's single data key, with per-entry nonces derived from the
  * entries' selectors).
  */
-export type SteVecDocument = { v: SchemaVersion, k: SteVecForm, i: Identifier, h: KeyHeader, sv: Array<SteVecEntry>, };
+export type SteVecDocument = { v: SchemaVersion, k: SteVecForm, i: Identifier, h: KeyHeader, sv: Array<SteVecEntry>, 
+/**
+ * Array-root marker. The SQL root validator allows it and the array
+ * accessors (`jsonb_array_length`, `jsonb_array_elements`, `->(doc, int)`)
+ * REQUIRE it (`eql_v3_internal.is_ste_vec_array`), so a document the
+ * database accepts must also parse here. Optional and non-nullable: SQL
+ * rejects `"a": null` (`jsonb_typeof(...) = 'boolean'`), so the schema
+ * and deserializer reject it too.
+ */
+a?: boolean, };

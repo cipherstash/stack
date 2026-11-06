@@ -45,10 +45,7 @@
       "description": "`public.eql_v3_json_entry` — one sv element (returned by `->`). Carries a\nselector `s`, raw AEAD ciphertext `c` (see [`EntryCiphertext`] — the\ndecryption unit is `h` + `s` + `c`, with the document `h` grafted onto\nextracted entries by `->`), an optional array-membership marker `a`\n(emitted only when true), and — for ordered (number/string) path entries\nonly — the `op` ordering term. Value entries (value-inclusive selectors)\nand non-orderable path entries are term-less: exact matching is selector\npresence, so no per-entry equality term exists (`hm` is retired). The\noptional `i`/`v`/`h` fields model metadata grafted onto an entry returned by\n`->`; naming them explicitly keeps unknown keys rejectable.",
       "properties": {
         "a": {
-          "type": [
-            "boolean",
-            "null"
-          ]
+          "type": "boolean"
         },
         "c": {
           "$ref": "#/$defs/EntryCiphertext"
@@ -114,6 +111,10 @@
   "additionalProperties": false,
   "description": "`public.eql_v3_json_search` — a SteVec encrypted-JSON document\n(`{v, k, i, h, sv:[entry]}`, no root ciphertext — the root document\nciphertext lives on the root sv entry). Strict. `k` is the `\"sv\"` form\ndiscriminator (see [`SteVecForm`]); `h` is the document [`KeyHeader`],\nstored once for the whole document (every entry encrypts under the\ndocument's single data key, with per-entry nonces derived from the\nentries' selectors).",
   "properties": {
+    "a": {
+      "description": "Array-root marker. The SQL root validator allows it and the array\naccessors (`jsonb_array_length`, `jsonb_array_elements`, `->(doc, int)`)\nREQUIRE it (`eql_v3_internal.is_ste_vec_array`), so a document the\ndatabase accepts must also parse here. Optional and non-nullable: SQL\nrejects `\"a\": null` (`jsonb_typeof(...) = 'boolean'`), so the schema\nand deserializer reject it too.",
+      "type": "boolean"
+    },
     "h": {
       "$ref": "#/$defs/KeyHeader"
     },

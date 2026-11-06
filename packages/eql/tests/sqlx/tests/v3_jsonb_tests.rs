@@ -1396,6 +1396,36 @@ async fn v3_jsonb_path_exists_and_first(pool: PgPool) -> anyhow::Result<()> {
 }
 
 #[sqlx::test]
+async fn v3_jsonb_empty_array_accessors(pool: PgPool) -> anyhow::Result<()> {
+    // An empty encrypted array (`a: true, sv: []`) has length 0 and yields no
+    // elements. `array_agg` over zero rows is NULL, which used to make
+    // `jsonb_array_length` return NULL and `jsonb_array_elements` raise
+    // "upper bound of FOR loop cannot be null" (CIP-5156).
+    let d = r#"{"v":3,"k":"sv","i":{"t":"t","c":"c"},"h":"kh","a":true,"sv":[]}"#;
+    let len: Option<i32> = sqlx::query_scalar(&format!(
+        "SELECT eql_v3.jsonb_array_length('{d}'::public.eql_v3_json_search::jsonb)"
+    ))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(len, Some(0), "an empty array has length 0, not NULL");
+
+    let n: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM eql_v3.jsonb_array_elements('{d}'::public.eql_v3_json_search::jsonb)"
+    ))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(n, 0, "an empty array yields no elements");
+
+    let contained: bool = sqlx::query_scalar(
+        "SELECT eql_v3.jsonb_document_contains('{}'::jsonb[], '{\"s\":\"aa\",\"c\":\"x\"}'::jsonb)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(!contained, "nothing is contained in an empty sv array");
+    Ok(())
+}
+
+#[sqlx::test]
 async fn v3_jsonb_array_length_and_elements(pool: PgPool) -> anyhow::Result<()> {
     let d = array_doc();
     let len: i32 = sqlx::query_scalar(&format!(
