@@ -203,15 +203,21 @@ async fn a_record_edited_in_its_bound_fields_does_not_unwrap() {
     }
 }
 
-#[tokio::test]
-async fn a_rewrapped_record_still_opens_old_values() {
-    let vendor = || FakeVendor::new(KeyVendor::Aws).with_key("next/v2", Protected::new([2u8; 32]));
-    let record = KeysetRecord::create(&vendor(), FakeVendor::KEY_REF, KeyMode::Wrapped, None)
+/// Seal one value and derive one term under `record`, rewrap the record to
+/// `new_ref`, and check the old value opens and the term is the same.
+async fn rewrap_keeps_old_values<B: stack_kms_vendor::KeyVendorBackend>(
+    make: impl Fn() -> B,
+    record: KeysetRecord,
+    new_ref: &str,
+) {
+    let old = StackCipher::builder()
+        .kms(VendorKeySource::new(make(), [record.clone()]).unwrap())
+        .init()
         .await
         .unwrap();
-    let old = StackCipher::builder()
-        .kms(VendorKeySource::new(vendor(), [record.clone()]).unwrap())
-        .init()
+    let sealed = old
+        .default_keyset()
+        .encrypt("v".to_string(), b"ctx")
         .await
         .unwrap();
     let term = old
@@ -220,14 +226,17 @@ async fn a_rewrapped_record_still_opens_old_values() {
         .await
         .unwrap();
 
-    let rewrapped = record.rewrap(&vendor(), "next/v2").await.unwrap();
+    let rewrapped = record.rewrap(&make(), new_ref).await.unwrap();
     assert_eq!(rewrapped.id(), record.id());
-    assert_eq!(rewrapped.key_ref(), "next/v2");
+    assert_eq!(rewrapped.mode(), record.mode());
+    assert_eq!(rewrapped.key_ref(), new_ref);
     let new = StackCipher::builder()
-        .kms(VendorKeySource::new(vendor(), [rewrapped]).unwrap())
+        .kms(VendorKeySource::new(make(), [rewrapped]).unwrap())
         .init()
         .await
         .unwrap();
+    let opened: String = new.decrypt(sealed, b"ctx").await.unwrap();
+    assert_eq!(opened, "v", "a value sealed before the rewrap opens");
     let again = new
         .default_keyset()
         .equality_term("v", nonempty!("ctx"))
@@ -238,6 +247,52 @@ async fn a_rewrapped_record_still_opens_old_values() {
         again.as_bytes(),
         "the index key did not change"
     );
+}
+
+#[tokio::test]
+async fn a_wrapped_record_does_not_rewrap_to_another_key() {
+    let vendor = FakeVendor::new(KeyVendor::Aws).with_key("next/v2", Protected::new([2u8; 32]));
+    let record = KeysetRecord::create(&vendor, FakeVendor::KEY_REF, KeyMode::Wrapped, None)
+        .await
+        .unwrap();
+    let before = vendor.calls();
+    match record.rewrap(&vendor, "next/v2").await {
+        Err(RecordError::RewrapToAnotherKey { keyset, from, to }) => {
+            assert_eq!(keyset, record.id());
+            assert_eq!(from, FakeVendor::KEY_REF);
+            assert_eq!(to, "next/v2");
+        }
+        other => panic!("a wrapped record must not move to another key, got {other:?}"),
+    }
+    assert_eq!(vendor.calls(), before, "refused before any vendor call");
+}
+
+#[tokio::test]
+async fn a_wrapped_record_rewraps_under_its_own_key_and_keeps_old_values() {
+    let vendor = || FakeVendor::new(KeyVendor::Aws);
+    let record = KeysetRecord::create(&vendor(), FakeVendor::KEY_REF, KeyMode::Wrapped, None)
+        .await
+        .unwrap();
+    rewrap_keeps_old_values(vendor, record, FakeVendor::KEY_REF).await;
+}
+
+#[tokio::test]
+async fn a_derived_record_rewraps_to_another_key_and_keeps_old_values() {
+    let vendor = || {
+        StaticKeyVendor::new("key-a", Protected::new([1u8; 32]))
+            .with_key("key-b", Protected::new([2u8; 32]))
+    };
+    let record = KeysetRecord::create(&vendor(), "key-a", KeyMode::Derived, None)
+        .await
+        .unwrap();
+    rewrap_keeps_old_values(vendor, record.clone(), "key-b").await;
+
+    // The fake vendor too, so a wrapped-capable vendor is covered.
+    let fake = || FakeVendor::new(KeyVendor::Aws).with_key("next/v2", Protected::new([2u8; 32]));
+    let record = KeysetRecord::create(&fake(), FakeVendor::KEY_REF, KeyMode::Derived, None)
+        .await
+        .unwrap();
+    rewrap_keeps_old_values(fake, record, "next/v2").await;
 }
 
 #[tokio::test]

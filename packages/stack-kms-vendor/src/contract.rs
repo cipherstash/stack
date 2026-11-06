@@ -166,6 +166,10 @@ impl<B: KeyVendorBackend> KeyVendorBackend for Observed<B> {
         self.inner.supports_mode(mode)
     }
 
+    fn same_key(&self, a: &str, b: &str) -> bool {
+        self.inner.same_key(a, b)
+    }
+
     async fn wrap(&self, key_ref: &str, key: &KeyBytes, aad: &[u8]) -> Result<Vec<u8>, KmsError> {
         self.throttle()?;
         let _ = self.wraps.fetch_add(1, Ordering::SeqCst);

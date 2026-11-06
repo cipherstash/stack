@@ -2,12 +2,12 @@
 'stash': patch
 ---
 
-Correct what `stash keyset rewrap` says about stored values. A rewrap does not
-re-key stored data. In the `derived` mode stored values stay readable. In the
-`wrapped` mode each value's data key stays wrapped under the vendor key that
-sealed it, so a rewrap to a new version of the same key keeps them readable,
-but a rewrap to another `--vendor-key` makes the values sealed before it fail
-to open. The command help, the note it prints, and the `stash-cli` skill now
-say so, and the README has a `stash keyset` section. The `stash-zerokms` skill now says that key vendor backends exist for
-the Rust crates and the Go SDK, that TypeScript does not support them yet, and
-that `stash keyset` creates their keyset records.
+`stash keyset rewrap` now refuses to move a `wrapped`-mode record to another
+vendor key, with the code `rewrap_refused`, before any vendor call. Each stored
+value keeps its data key wrapped under the vendor key that sealed it, so such a
+move would leave the stored values unable to open. A `wrapped` record may still
+move to a new version of its own key (after a rotation), and a `derived` record
+may move to any key. The command help, the note it prints, the README and the
+`stash-cli` skill state the rule. The `stash-zerokms` skill now says that key
+vendor backends exist for the Rust crates and the Go SDK, that TypeScript does
+not support them yet, and that `stash keyset` creates their keyset records.

@@ -1618,7 +1618,7 @@ the alternatives and the reason.
 
 ### Facts checked against the code (the code wins)
 
-- **Found (OPEN, a defect):** `KeysetRecord::rewrap` to **another** vendor
+- **Found (FIXED, see "The rewrap fix" below):** `KeysetRecord::rewrap` to **another** vendor
   key makes every value sealed before it under **wrapped data keys** fail to
   open (`InvalidCiphertext`). Each value's wrapped data key stays wrapped
   under the old vendor key, and `VendorKeySource::retrieve_keys` unwraps it
@@ -1630,9 +1630,8 @@ the alternatives and the reason.
   note, the `stash-cli` skill and the unreleased CIP-5312 changeset all said
   "stored values stay readable". **Decision:** correct all five texts in this
   ticket; change no behaviour. **Alternative:** refuse the rewrap (code,
-  out of scope for a docs ticket). The code fix is open: refuse a wrapped
-  record's move to another key, or keep the old key references in the record
-  for unwrap.
+  out of scope for a docs ticket). The orchestrator then chose the refusal,
+  made in this layer (below).
 - **Drift fixed (ADR-0009):** "a settle of N values costs about 1 + N vendor
   calls". The code makes the 1 (the index key unwrap) only when the settle
   derives a search term, and a vendor with batch calls (Vault) makes ⌈N /
@@ -1690,6 +1689,50 @@ the alternatives and the reason.
   `@cipherstash/auth` entry names the vendor crates in its changeset rule.
   `SECURITY.md` already listed the five crates; its `@cipherstash/auth` row
   now says the binding compiles them in.
+### The rewrap fix (orchestrator decision)
+
+- **Decision (binding, from the orchestrator):** **refuse** a rewrap that
+  would make stored values unreadable. Under wrapped data keys,
+  `KeysetRecord::rewrap` refuses a key reference that names another vendor
+  key with the new `RecordError::RewrapToAnotherKey { keyset, from, to }`
+  (`stack_kms_vendor::rewrap_another_key`), before any vendor call. A new
+  version of the same key is allowed. Under derived data keys any key is
+  allowed, because only the root key is rewrapped. **Alternatives:** keep a
+  history of old key references in the record; re-key stored data.
+  **Reason:** re-keying is out of scope (ADR-0009), and a key history would
+  grow the record with no limit.
+- **Decision:** "same key" is a new provided method,
+  `KeyVendorBackend::same_key(a, b)`, default string equality. Google Cloud
+  KMS ignores a `/cryptoKeyVersions/{n}` suffix (through `parse_key_name`).
+  Azure compares the vault origin (lower case) and the key name, and ignores
+  the version (through `KeyId::parse`). A reference that does not parse is
+  compared as text. AWS KMS keeps the default: a key ARN, a key id and an
+  alias of the same key count as different keys, because the client cannot
+  tell offline where an alias points, and AWS rotation keeps the ARN. Vault
+  keeps the default: the key reference is the key name and holds no version.
+  The trait docs say to answer `false` when unsure (a false `false` only
+  refuses a rewrap). `Observed` forwards it. **Not forwarded:** the Go
+  guest's `GuestVendor` keeps the default, because the guest never rewraps a
+  record; it still compiles.
+- **Decision:** the fix is on the CIP-5313 layer, in its own commit, not in
+  the CIP-5306 layer that introduced `rewrap`. **Reason (orchestrator):**
+  rebasing eight reviewed layers risks conflicts.
+- **Decision:** the auth binding maps the error to a new `KeysetFailure`
+  code, `REWRAP_REFUSED` (`index.d.ts` and its drift test updated). The CLI
+  maps it to the code `rewrap_refused` with its own message and hint
+  (`messages.keyset.rewrapRefused`, `rewrapRefusedHint`). The help, the
+  rewrap note, the README, both skills, the crate matrix, the
+  `KeysetRecord::rewrap` docs, the Go `doc.go` and the three changesets now
+  state the rule.
+- **Tests:** stack-kms-vendor: a wrapped rewrap to another key is refused
+  with no vendor call; a wrapped rewrap under its own key and a derived
+  rewrap to another key (static and fake vendors) open a value sealed
+  before it and derive the same term. stack-kms-gcp and stack-kms-azure
+  (their emulators): a wrapped record rewraps to a new version, unversioned
+  and pinned (Azure: RSA and `oct-HSM` keys), and the old value opens; a
+  wrapped rewrap to another key is refused with no request; a derived one
+  moves; `same_key` unit tests. stack-auth-node: the envelope of the new code.
+  CLI: the `--json` error of a refused rewrap.
 - **Revisit:** an Azure client resolves an unversioned key's current version
   once for its life. After a rotation it keeps wrapping under the old version
   until a restart or a failed wrap. Documented; a TTL on the cached version
@@ -1702,10 +1745,6 @@ ticket that recorded it.
 
 **Open**
 
-- **CIP-5313 (OPEN, defect):** a rewrap of a wrapped-data-key record to
-  another vendor key silently makes its stored values unreadable; the docs
-  now warn, the code (`KeysetRecord::rewrap`, `keysetRewrap`, `stash keyset
-  rewrap`) still accepts it.
 - **CIP-5313 (OPEN):** the docs site (cipherstash.com/docs) has nothing on
   key vendor backends or `stash keyset`.
 - **CIP-5313 (Revisit):** Azure caches a key's current version for the life
@@ -1771,3 +1810,8 @@ ticket that recorded it.
 - CIP-5311 → CIP-5313: the capability matrix on the Rust side.
 - CIP-5312 → CIP-5313: the CLI README section for `stash keyset` (the docs
   site is still open, above).
+- **CIP-5313 (FIXED, defect):** a rewrap of a wrapped-data-key record to
+  another vendor key made its stored values unreadable. `KeysetRecord::rewrap`
+  now refuses it (`RecordError::RewrapToAnotherKey`; `REWRAP_REFUSED` in
+  `@cipherstash/auth`; `rewrap_refused` in `stash keyset rewrap`), and allows
+  a new version of the same key (`KeyVendorBackend::same_key`).

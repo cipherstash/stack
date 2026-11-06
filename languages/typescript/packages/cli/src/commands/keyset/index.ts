@@ -522,6 +522,13 @@ function hasKeysetFunctions(value: unknown): value is NativeKeyset {
 function unwrap(result: NativeResult): KeysetResult {
   if (result.failure) {
     const failure = result.failure
+    if (failure.type === 'REWRAP_REFUSED') {
+      throw new KeysetError(
+        'rewrap_refused',
+        messages.keyset.rewrapRefused,
+        messages.keyset.rewrapRefusedHint,
+      )
+    }
     throw new KeysetError(
       failure.type.toLowerCase(),
       failure.error.message,

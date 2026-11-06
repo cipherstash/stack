@@ -54,6 +54,24 @@ pub trait KeyVendorBackend: Send + Sync {
         true
     }
 
+    /// Whether the key references `a` and `b` name the same vendor key,
+    /// perhaps at different versions of it.
+    ///
+    /// [`KeysetRecord::rewrap`](crate::KeysetRecord::rewrap) asks this for a
+    /// record in the wrapped data key mode. Such a record may move to a new
+    /// version of its key, but not to another key: each stored value's data
+    /// key stays wrapped under the key that sealed it, and the adapter
+    /// unwraps it with the record's current key reference.
+    ///
+    /// The default is string equality. A vendor whose key references can
+    /// name a version (Google Cloud KMS `…/cryptoKeyVersions/{n}`, an Azure
+    /// key identifier with `/{version}`) overrides it to ignore the version.
+    /// Answer `false` when unsure: a false `true` lets a rewrap make stored
+    /// values unreadable, and a false `false` only refuses a rewrap.
+    fn same_key(&self, a: &str, b: &str) -> bool {
+        a == b
+    }
+
     /// Wrap `key` under the vendor key `key_ref`, binding `aad`.
     fn wrap(
         &self,
