@@ -365,9 +365,15 @@ the alternatives and the reason.
   in `stack-kms-vendor`. A keyset id or name that a vendor record has goes
   to the vendor (a local record name wins over a ZeroKMS keyset of the same
   name); everything else, and the default keyset, goes to ZeroKMS. The type
-  holds exactly one vendor; `VendorKeySource::new` refuses records of two
-  vendors with `RecordError::SecondVendor`, and a record of another vendor
-  than the backend with `RecordError::ForeignVendor`.
+  holds at most one vendor: its ZeroKMS side must implement the marker
+  `stack_kms::ZeroKmsKeySource`, which no router implements, so
+  `KeyRouter<KeyRouter<_, Aws>, Gcp>` does not compile (a `compile_fail`
+  doc test shows it). This was not true when first written: the ZeroKMS
+  side took any `DataKeySource`, so a router could hold a second router; the
+  review after CIP-5313 found it and the marker closes it.
+  `VendorKeySource::new` refuses records of two vendors with
+  `RecordError::SecondVendor`, and a record of another vendor than the
+  backend with `RecordError::ForeignVendor`.
 - **Decision:** the static key backend (`StaticKeyVendor`) wraps with
   AES-256-GCM under a random 96-bit nonce: `version(1)=1 ‖ nonce(12) ‖
   ciphertext ‖ tag`. It holds several keys by reference, for rotation.
@@ -1810,6 +1816,10 @@ ticket that recorded it.
 - CIP-5311 → CIP-5313: the capability matrix on the Rust side.
 - CIP-5312 → CIP-5313: the CLI README section for `stash keyset` (the docs
   site is still open, above).
+- **Review after CIP-5313 (FIXED):** "at most one vendor" was not held by
+  the type: `KeyRouter`'s ZeroKMS side took any `DataKeySource`, so a router
+  could nest a second router and vendor. The ZeroKMS side must now implement
+  `stack_kms::ZeroKmsKeySource`, which no router implements.
 - **CIP-5313 (FIXED, defect):** a rewrap of a wrapped-data-key record to
   another vendor key made its stored values unreadable. `KeysetRecord::rewrap`
   now refuses it (`RecordError::RewrapToAnotherKey`; `REWRAP_REFUSED` in
