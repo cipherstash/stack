@@ -1,5 +1,29 @@
 # @cipherstash/eql
 
+## 3.1.0
+
+### Minor Changes
+
+- e930e5b: Security: the ORE block comparator (`eql_v3_internal.compare_ore_block_256_term`
+  and `compare_ore_block_256_terms`, behind every ordered ORE operator and the ORE
+  operator class) now runs a constant number of operations for operands of the
+  same shape (term count, term width, NULL positions), whether and wherever they
+  differ. Previously its run time depended on where two values first differ, so a
+  party able to time queries could learn how long a prefix their query value
+  shares with stored values. For text the effect was large: a comparison took
+  about 11 µs when the first term differs and 47 µs when only the sixth does.
+  Results are unchanged. Single-term comparisons cost about 6% more when the
+  terms differ and about 36% more (roughly 1 µs) when they are equal, since equal
+  terms now run the hash too; text comparisons now take about 18 µs whatever the
+  operands. Multi-term (text) values now check every paired term, so a
+  malformed or mismatched-width term after the first difference, or one paired
+  with a NULL element, raises instead of being skipped; see
+  [U-001](../../docs/upgrading/v3.1.md#u-001-block-ore-text-comparisons-check-every-term)
+  for how to find such rows before upgrading. A timing harness is in
+  `packages/eql/tests/timing/ore_block_256/`.
+- 0275684: **The `eql-bindings` crate resolves an EQL type named as a string to its own Stack Encrypt plan** (`stack-encrypt` feature). `eql_bindings::encryption::targets` carries a catalog-generated table of every EQL type a data plan may name as a field target — its name across languages, family and suffix, the plaintext `ValueKind` it takes, the indexes it carries, its query twin, and whether the engine can produce it today with the reason when not — and `encrypt` / `decrypt` / `query` entry points that dispatch on the name and run the type's derived `EncryptFrom` / `DecryptInto`, resolving to the EQL value's JSON bytes through the engine's `Pending` so a guest batches it with the rest of a plan. This is the EQL half of EQL types as plan field targets (cipherstash/stack#1062): a Go data plan names `TextEq` and the guest returns the finished EQL value instead of assembling one. `TextEq` is the only producible type; every other name is refused with the plan's reason. The SQL surface and the TypeScript package are unchanged.
+- c851db5: **Rust `TextEq` and `TextEqQuery` support Stack Encrypt's target-directed API behind the `stack-encrypt` feature.** The stored table and column identifier supplies the encryption context; native ciphertext and equality terms are transcoded into EQL payloads while Vitamin C owns plaintext encoding. This is a new producer profile with exact string equality, independent of existing cipherstash-client ciphertext and terms. Query operands carry no recoverable ciphertext.
+
 ## 3.0.6
 
 ### Patch Changes
