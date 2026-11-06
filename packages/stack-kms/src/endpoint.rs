@@ -51,7 +51,7 @@ pub enum InvalidEndpoint {
     /// CipherStash's own regional endpoints; anything else must be configured
     /// explicitly by the operator.
     #[error(
-        "the token's services claim may only name a CipherStash-hosted ZeroKMS endpoint (`https://<region>.<provider>.viturhosted.net`)"
+        "the token's services claim may only name a CipherStash-hosted ZeroKMS endpoint (`https://<region>.<provider>.viturhosted.net/`)"
     )]
     #[diagnostic(
         code(stack_kms::endpoint_not_hosted),
@@ -145,9 +145,11 @@ impl ZeroKmsEndpoint {
     /// someone else wrote. So on top of [`new`](Self::new)'s hygiene, a
     /// claimed endpoint must be a CipherStash-hosted ZeroKMS:
     ///
-    /// * scheme `https`, on the default port
+    /// * scheme `https`, on the default port, at the root path
     /// * host `<region>.<provider>.viturhosted.net`, for a region CipherStash
-    ///   runs (`cts_common::Region`) — the form CTS issues
+    ///   runs (`cts_common::Region`) — the form CTS issues. A region newer
+    ///   than this build's `cts-common` is refused, as its workspace CRN
+    ///   already is by stack-auth.
     ///
     /// Any other endpoint (a gateway, a local ZeroKMS, plain `http`) is
     /// accepted only from explicit configuration: `CS_ZEROKMS_HOST` or the
@@ -162,6 +164,7 @@ impl ZeroKmsEndpoint {
         let url = endpoint.as_url();
         let hosted = url.scheme() == "https"
             && url.port().is_none()
+            && url.path() == "/"
             && url.host_str().is_some_and(|host| {
                 cts_common::ZeroKmsServiceDiscovery::region_from_host_fqdn(host).is_ok()
             });
@@ -441,6 +444,22 @@ mod tests {
                 claimed("http://us-east-1.aws.viturhosted.net/"),
                 Err(InvalidEndpoint::NotHosted(_))
             ));
+        }
+
+        #[test]
+        fn rejects_a_path_on_a_hosted_name() {
+            // The claim chooses the host's ZeroKMS, not some other service
+            // under a path prefix on it.
+            for s in [
+                "https://us-east-1.aws.viturhosted.net/other/service",
+                "https://us-east-1.aws.viturhosted.net/other/service/",
+            ] {
+                assert!(
+                    matches!(claimed(s), Err(InvalidEndpoint::NotHosted(_))),
+                    "{s}: {:?}",
+                    claimed(s)
+                );
+            }
         }
 
         #[test]

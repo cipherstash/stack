@@ -741,11 +741,12 @@ pub enum Error {
     #[diagnostic(code(stack_kms::connection_init))]
     ConnectionInit(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
 
-    /// The ZeroKMS endpoint named by the token's `services` claim is unusable.
+    /// The ZeroKMS endpoint named by the token's `services` claim is unusable,
+    /// is not CipherStash-hosted, or is not the one this client already uses.
     #[error("Invalid ZeroKMS endpoint in the token's services claim: {0}")]
     #[diagnostic(
         code(stack_kms::invalid_endpoint),
-        help("Configure the ZeroKMS endpoint explicitly (`CS_ZEROKMS_HOST`), or use a token whose services claim names a usable one.")
+        help("Configure the ZeroKMS endpoint explicitly (`CS_ZEROKMS_HOST`), or use tokens whose services claim names the CipherStash-hosted endpoint for this client's region.")
     )]
     InvalidEndpoint(
         #[from]
