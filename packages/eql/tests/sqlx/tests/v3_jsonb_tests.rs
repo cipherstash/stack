@@ -1400,7 +1400,7 @@ async fn v3_jsonb_empty_array_accessors(pool: PgPool) -> anyhow::Result<()> {
     // An empty encrypted array (`a: true, sv: []`) has length 0 and yields no
     // elements. `array_agg` over zero rows is NULL, which used to make
     // `jsonb_array_length` return NULL and `jsonb_array_elements` raise
-    // "upper bound of FOR loop cannot be null" (CIP-5156).
+    // "upper bound of FOR loop cannot be null".
     let d = r#"{"v":3,"k":"sv","i":{"t":"t","c":"c"},"h":"kh","a":true,"sv":[]}"#;
     let len: Option<i32> = sqlx::query_scalar(&format!(
         "SELECT eql_v3.jsonb_array_length('{d}'::public.eql_v3_json_search::jsonb)"
