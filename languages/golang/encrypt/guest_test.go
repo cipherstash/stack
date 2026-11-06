@@ -140,7 +140,7 @@ func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
 			t.Errorf("guest imports %s::%s, outside the allowed surface", module, name)
 		}
 	}
-	want := []string{"token_get", "transport_send"}
+	want := []string{"token_get", "transport_send", "vendor_credential_get"}
 	sort.Strings(transportImports)
 	if !reflect.DeepEqual(transportImports, want) {
 		t.Fatalf("transport imports = %v, want %v", transportImports, want)

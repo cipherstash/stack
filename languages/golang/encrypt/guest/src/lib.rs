@@ -38,11 +38,18 @@
 //!
 //! Control stays in Rust: request assembly, key derivation, batching, and
 //! AAD/PRF context binding run unmodified inside the guest. The host
-//! provides exactly two imports (HTTP transport and the bearer token — see
-//! [`host`]); what crosses the boundary per call is a value tree in, a
-//! ciphertext/record tree out, and — inside the call — the same bytes that
-//! would cross TLS anyway. The client key enters guest memory once at
-//! `se_cipher_init`; derived data keys and index keys never leave.
+//! provides exactly three imports (HTTP transport, the ZeroKMS bearer token
+//! and a key vendor backend's short-lived credential — see [`host`]); what
+//! crosses the boundary per call is a value tree in, a ciphertext/record
+//! tree out, and — inside the call — the same bytes that would cross TLS
+//! anyway. The client key (and a static key backend's key) enters guest
+//! memory once at `se_cipher_init`; root keys, derived data keys and index
+//! keys never leave.
+//!
+//! A client holds ZeroKMS and at most one key vendor backend (AWS KMS,
+//! Google Cloud KMS, Azure Key Vault, Vault Transit or a static key), routed
+//! by keyset ([`vendor`]). The vendor clients sign their requests here, with
+//! credentials the host supplies per request.
 //!
 //! The exports are the record path (`se_encrypt_record`, `se_decrypt_record`),
 //! per-field term derivation (`se_term`), a target field's EQL query value
@@ -66,7 +73,7 @@
 //! Split into:
 //!
 //! - [`ops`], [`options`], [`config`], [`response`], [`headers`],
-//!   [`status`], [`targets`] — everything that is pure logic over
+//!   [`status`], [`targets`], [`vendor`] — everything that is pure logic over
 //!   `StackCipher<K>` / `KeysetCipher<K>` / bytes. Compiles and unit-tests
 //!   on the native host target (`cargo test` here, no wasm toolchain
 //!   needed) against `stack_kms::FakeDataKeySource`.
@@ -92,6 +99,7 @@ pub mod options;
 pub mod response;
 pub mod status;
 pub mod targets;
+pub mod vendor;
 
 // The ABI's packed u64 results embed 32-bit pointers, its bounds checks
 // read the wasm linear-memory size, and `host` calls imported functions —

@@ -1,7 +1,9 @@
 //! The host imports and the types built over them: [`WasiHostConnection`]
-//! (a [`ZeroKMSConnection`] whose transport is the host's HTTP client) and
+//! (a [`ZeroKMSConnection`] whose transport is the host's HTTP client),
 //! [`HostTokenStrategy`] (an [`AuthStrategy`] that asks the host for the
-//! bearer token). wasm32-only — everything here calls an imported function.
+//! bearer token) and [`HostCredentialImport`] (the key vendor backend's
+//! short-lived credentials, see [`crate::vendor`]). wasm32-only — everything
+//! here calls an imported function.
 //!
 //! # Import contract (module `cipherstash_transport`)
 //!
@@ -18,11 +20,34 @@
 //!   status `0` is success, anything else a host-side failure. This
 //!   guest's own: the credential guest supplies tokens rather than asking
 //!   for them.
+//! - `vendor_credential_get(vendor, scope_ptr, scope_len, cred_out) ->
+//!   status` — hand over one short-lived credential of the configured key
+//!   vendor backend (ADR-0011). `vendor` is the `KeyVendor` byte (1 AWS,
+//!   2 Google Cloud, 3 Azure, 4 Vault); `scope` (UTF-8, borrowed for the
+//!   call) is the OAuth scope for Google Cloud and Azure and empty for AWS
+//!   and Vault. `cred_out` is a `(ptr_out, len_out)` slot pair filled with
+//!   an `se_alloc`'d buffer holding one value in the transport codec (its
+//!   keys are in [`crate::vendor`]). Status `0` is success, anything else a
+//!   host-side failure. Same shape as `token_get`. The host fills it from
+//!   the vendor's own Go credential chain; only ready-to-use, short-lived
+//!   credentials cross (temporary AWS credentials, an access token, a Vault
+//!   token), never a long-lived signing key, so the guest does no RSA and
+//!   reads no service account key. The import is referenced only by the
+//!   vendor clients: a guest built with no vendor client would not import it.
 //!
 //! What crosses the boundary per ZeroKMS call is exactly what would cross
 //! TLS anyway: the URL, the bearer token, and the serialized protocol
 //! bytes. Key material derived from a response never crosses back — the
 //! derivation runs inside the guest ([`stack_kms`]'s client, unmodified).
+//!
+//! The same holds for a key vendor backend. A vendor request crosses as
+//! the signed HTTP request the vendor would receive over TLS: a wrapped key
+//! out, and, in the response, a key the vendor unwrapped. That response is
+//! read only inside the guest, and the host wipes its own copy once it is
+//! in guest memory (as for a ZeroKMS response). Root keys, index keys and
+//! data keys are derived or unwrapped in the guest and never cross back to
+//! the host. What crosses *in* through `vendor_credential_get` is a
+//! short-lived credential, which the guest uses to sign and then drops.
 //!
 //! Request bodies and response bodies can carry key-material contexts and
 //! wrapped keys, so both are wiped on drop here; the buffers the host wrote
@@ -35,16 +60,27 @@ use stack_auth::{AuthError, AuthStrategy, CustomError, SecretToken, ServiceToken
 use stack_guest_abi::buffers;
 use stack_guest_abi::headers::header_value;
 use stack_guest_abi::transport;
+use stack_kms::{BackendErrorKind, KeyVendor};
 use stack_kms::{BaseUrlUnresolved, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint};
 use zeroize::Zeroizing;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 use crate::headers::request_headers;
 use crate::response::map_response;
+use crate::vendor::{CredentialError, CredentialImport};
+use vitaminc_aead_value::transport as codec;
+use vitaminc_aead_value::FfiValue;
 
 #[link(wasm_import_module = "cipherstash_transport")]
 extern "C" {
     fn token_get(token_ptr_out: *mut u32, token_len_out: *mut u32) -> i32;
+    fn vendor_credential_get(
+        vendor: u32,
+        scope_ptr: *const u8,
+        scope_len: u32,
+        cred_ptr_out: *mut u32,
+        cred_len_out: *mut u32,
+    ) -> i32;
 }
 
 /// A [`ZeroKMSConnection`] whose transport is the `transport_send` host
@@ -193,5 +229,59 @@ impl AuthStrategy for &HostTokenStrategy {
         // `SecretToken` wipes on drop; `bytes` (the only other copy) wipes
         // via its `Zeroizing` wrapper above.
         Ok(ServiceToken::new(SecretToken::new(text)))
+    }
+}
+
+/// The `vendor_credential_get` import as a [`CredentialImport`]: the key
+/// vendor backend's short-lived credential, asked of the host before each
+/// vendor request.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HostCredentialImport;
+
+impl CredentialImport for HostCredentialImport {
+    fn credential(&self, vendor: KeyVendor, scope: &str) -> Result<FfiValue, CredentialError> {
+        let failed = |message: String| CredentialError {
+            kind: BackendErrorKind::Unavailable,
+            message,
+        };
+        let mut ptr: u32 = 0;
+        let mut len: u32 = 0;
+        let scope_len = u32::try_from(scope.len())
+            .map_err(|_| failed("the credential scope is too long".to_owned()))?;
+        // SAFETY: `scope` is borrowed for the call; the out-slots are stack
+        // locals the host writes once.
+        let status = unsafe {
+            vendor_credential_get(
+                u32::from(vendor.byte()),
+                scope.as_ptr(),
+                scope_len,
+                &mut ptr,
+                &mut len,
+            )
+        };
+        // Reclaim before judging the status, as `token_get` does: a host
+        // that placed the credential and then failed must not leave it
+        // registered and unwiped.
+        //
+        // SAFETY: the pointer comes from the host's `se_alloc` call; the
+        // registry validates it before any Vec is rebuilt.
+        let bytes = unsafe { buffers::take(ptr as *mut u8, len as usize) }.map(Zeroizing::new);
+        if status != 0 {
+            return Err(failed(format!(
+                "the host's {} credential source failed with status {status}",
+                vendor.name()
+            )));
+        }
+        let bytes = bytes
+            .ok_or_else(|| failed("the host credential buffer failed validation".to_owned()))?;
+        // The decoded strings are `Protected` and wipe on drop; `bytes`
+        // wipes through its `Zeroizing` wrapper.
+        codec::decode_value(&mut codec::Reader::new(&bytes)).map_err(|_| CredentialError {
+            kind: BackendErrorKind::AccessDenied,
+            message: format!(
+                "the host's {} credential is not a value in the transport codec",
+                vendor.name()
+            ),
+        })
     }
 }

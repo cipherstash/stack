@@ -16,7 +16,8 @@ import (
 )
 
 // Client is one wasm instance holding one ZeroKMS client: its key, its
-// default keyset, and the keysets it has loaded since. It is safe for
+// default keyset, and the keysets it has loaded since — and, when it is
+// given one, a key vendor backend with its keyset records. It is safe for
 // concurrent use; calls are serialised internally, because a wasm instance
 // is single-threaded. Close it when done, as with any resource.
 //
@@ -65,11 +66,23 @@ type Client struct {
 // With no options it is a working client: the credentials are
 // [AutoCredentials], and every other setting has a default. Each
 // [ClientOption] changes one.
+//
+// With [WithKeyVendor] and [WithKeysetRecords] the client also holds a key
+// vendor backend. NewClient parses and checks the records but makes no
+// vendor call: a record key is unwrapped on the first use of its keyset.
 func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error) {
 	var cfg clientOptions
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	// A StaticKey is consumed like the client key: wiped whatever the
+	// outcome, a refused config and a replaced option included.
+	defer func() {
+		wipeVendorKey(cfg.keyVendor)
+		for _, v := range cfg.supersededVendors {
+			wipeVendorKey(v)
+		}
+	}()
 	rt := cfg.transport
 	if rt == nil {
 		rt = http.DefaultTransport
@@ -96,6 +109,10 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	zerokmsURL, err := zerokmsEndpoint(cfg.zerokmsURL)
 	if err == nil && cfg.keysetCacheSize < 0 {
 		err = fmt.Errorf("%w: WithKeysetCacheSize must not be negative", ErrEncoding)
+	}
+	var vendor *vendorSpec
+	if err == nil {
+		vendor, err = keyVendorConfig(cfg.keyVendor, cfg.keysetRecords)
 	}
 	if explicit, ok := creds.(*explicitCredentials); ok && err == nil && explicit.token == nil {
 		// Knowable from the credentials as they were built: the one place
@@ -152,6 +169,8 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 		clientKey:       resolved.ClientKey,
 		zerokmsURL:      zerokmsURL,
 		keysetCacheSize: cfg.keysetCacheSize,
+		vendor:          vendor,
+		keysetRecords:   cfg.keysetRecords,
 	})
 	if err != nil {
 		return nil, err
@@ -163,7 +182,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	// whatever the init's outcome.
 	resolved.ClientKey.Wipe()
 
-	t := &transport{rt: rt, token: resolved.Token}
+	t := &transport{rt: rt, token: resolved.Token, vendor: vendor}
 	inst, err := newInstance(ctx, wasm, t, guest.PolicyFor(cfg.requireLockedMemory))
 	if err != nil {
 		return nil, err
@@ -283,6 +302,10 @@ type initConfig struct {
 	clientKey       *ClientKey
 	zerokmsURL      string
 	keysetCacheSize int
+	// vendor and keysetRecords are the key vendor backend, nil and empty
+	// when the client has none.
+	vendor        *vendorSpec
+	keysetRecords []string
 }
 
 // encodeConfig renders the se_cipher_init object. The result holds the
@@ -308,6 +331,9 @@ func encodeConfig(cfg initConfig) ([]byte, error) {
 	}
 	if cfg.keysetCacheSize > 0 {
 		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.keysetCacheSize)})
+	}
+	if cfg.vendor != nil {
+		fields = append(fields, cfg.vendor.configFields(cfg.keysetRecords)...)
 	}
 	return vcffi.Marshal(fields)
 }
@@ -402,6 +428,7 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 	growth := c.inst.mem.GrowthRefusal()
 	if c.transport != nil {
 		c.transport.tokenErr = nil
+		c.transport.credentialErr = nil
 	}
 	out, err := f(c.inst)
 	switch {
@@ -437,6 +464,11 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		} else {
 			err = fmt.Errorf("%w (token source: %w)", err, c.transport.tokenErr)
 		}
+	}
+	// The same for a key vendor backend's credential source: the guest
+	// reports only that vendor_credential_get failed.
+	if err != nil && c.transport != nil && c.transport.credentialErr != nil {
+		err = fmt.Errorf("%w (key vendor credential source: %w)", err, c.transport.credentialErr)
 	}
 	if err != nil {
 		return nil, err
