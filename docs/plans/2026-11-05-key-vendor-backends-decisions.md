@@ -1017,3 +1017,199 @@ the alternatives and the reason.
   shapes, not recorded from Cloud KMS. The opt-in live job is the only real
   check. It needs the variable `STACK_KMS_GCP_LIVE_KEY` and the secret
   `STACK_KMS_GCP_SERVICE_ACCOUNT_KEY`.
+
+## CIP-5309: Azure Key Vault key vendor backend (stack-kms-azure)
+
+### The Key Vault client
+
+- **Decision:** `stack-kms-azure` is a new root workspace member with
+  `AzureKeyVault<T: VendorTransport, A: TokenProvider>`, on the
+  `stack-kms-gcp` template. `wrap` is `POST {key}/{version}/wrapkey`,
+  `unwrap` is `POST {key}/{version}/unwrapkey` (JSON, base64url).
+  `generate_wrapped`, `batch_limit`, `wrap_batch` and `unwrap_batch` are the
+  trait defaults: Key Vault has no data key generation and no batch
+  operation. Both key modes. `send_json(method, key_ref, operation, body)` is
+  public, as for the other vendors. Key Vault and Managed HSM are one client:
+  the host of the key identifier selects the token scope.
+- **Decision:** the API version is **7.4** (`API_VERSION`). **Alternative:**
+  7.5 or 7.6. **Reason:** 7.4 is GA on Key Vault and Managed HSM and has every
+  operation the client uses; nothing newer is needed.
+- **Decision:** `key_ref` is the key identifier,
+  `https://{vault}.vault.azure.net/keys/{name}` or
+  `https://{hsm}.managedhsm.azure.net/keys/{name}`, optionally `/{version}`.
+  `KeyId::parse` accepts only the six known Azure DNS suffixes (public, China
+  and US Government clouds, Key Vault and Managed HSM), HTTPS, no port, query,
+  fragment or credentials, names `[A-Za-z0-9-]` and versions `[A-Za-z0-9]{1,64}`.
+  Anything else is `NotFound` before any call. **Alternative:** any HTTPS host,
+  or a configurable endpoint. **Reason:** the client sends a bearer token to
+  that host, so an edited keyset record must not be able to send it elsewhere.
+  Private endpoints keep the public DNS names, so the list covers them. No
+  test needs another host: the emulator answers any URL.
+- **Decision:** the algorithm follows the key type: `RSA` and `RSA-HSM` wrap
+  with **RSA-OAEP-256**, `oct` and `oct-HSM` with **A256KW**; `EC` and other
+  types are refused (`AccessDenied`). The client learns the type and, for an
+  unversioned key identifier, the current version from one
+  `GET /keys/{name}[/{version}]`, kept per key reference for the life of the
+  client. `AzureKeyVaultConfig::with_algorithm` fixes the algorithm; with a
+  versioned key identifier the client then reads no key. A key whose type
+  does not match the configured algorithm is refused. **Alternative:** read
+  the key on every wrap, or a TTL on the cached version. **Reason:** the
+  ticket says "resolve once"; one read per key per process is cheap. To keep
+  a disabled version from blocking wraps, a failed wrap drops the cached
+  version, so the next wrap reads the key again (tested).
+- **Decision (the stored wrapped key):** `1 ‖ algorithm(1: 1 = RSA-OAEP-256,
+  2 = A256KW) ‖ version length(1) ‖ version (ASCII) ‖ Azure ciphertext`
+  (`compact_ciphertext`, `split_wrapped_key`, `wrapped_key_version`). It is
+  the Vault/GCP layout with the version as a string id (Azure versions are 32
+  hexadecimal characters) and with the algorithm added. An unwrap therefore
+  needs no key read and no configuration: the record key and every wrapped
+  data key name the version and algorithm that made them. The keyset record's
+  `key_ref` can stay unversioned (rotation needs no record change); a
+  versioned one pins wraps only. Size: 115 bytes for A256KW, 291 bytes for
+  RSA-OAEP-256 with a 2048-bit key. **Alternative:** store the full versioned
+  `kid` (60 to 100 bytes more per value, and it repeats the key reference).
+- **Decision (no AAD):** the client **always** wraps the bound key of
+  `stack_kms_vendor::bound` (CIP-5310), padded with 7 zero bytes to **72
+  bytes** (`WRAP_PLAINTEXT_LEN`), for both algorithms. An unwrap refuses a
+  plaintext that is not 72 bytes, has non-zero padding, or whose digest does
+  not match (`InvalidCiphertext`). **Reason:** A256KW (RFC 3394) needs a
+  multiple of 8 bytes and at least 16; the bound key is 65. RSA-OAEP-256 with
+  a 2048-bit key takes up to 190 bytes, so 72 fits too, and one plaintext
+  format serves both. **Alternative:** pad only for A256KW. **Reason:** one
+  format is simpler and has one test. Both algorithms are non-malleable
+  (RSA-OAEP; AES key wrap has its own integrity check), which the bound key
+  needs. **The Azure trade-off** (documented on `AzureKeyVault`): Azure does
+  not see or log the binding, so a wrapped key moved to another keyset, value
+  or descriptor unwraps at Azure and is then refused by the client. The
+  leaf AAD binds the descriptor as for every vendor.
+- **Decision:** error mapping (`error_kind(status, codes, unwrap)`), where
+  `codes` are `error.code` and `error.innererror.code`: `KeyDisabled`,
+  `KeyExpired`, `KeyNotYetValid` to `Unavailable` (as AWS
+  `DisabledException`); 429 or `Throttled` to `Throttled`; 401, 403,
+  `Unauthorized`, `Forbidden` to `AccessDenied`; 404, `KeyNotFound`,
+  `NotFound` to `NotFound`; 5xx to `Unavailable`; 400 `BadParameter` **on an
+  unwrap** to `InvalidCiphertext` (Azure could not decrypt: damaged bytes, or
+  another key or version); any other 4xx to `AccessDenied` (the CIP-5307
+  rule). A 401 calls `TokenProvider::invalidate`. A wrap response whose `kid`
+  is not exactly the requested key version, or with no base64url value, is
+  `Unavailable`. **Known limit:** a `BadParameter` on an unwrap for another
+  reason (for example a refused API version) also reads as
+  `InvalidCiphertext`; Azure gives no finer code.
+- **Decision (Retry-After):** on a 429 the client sleeps the `Retry-After`
+  seconds (through the transport, at most `MAX_RETRY_AFTER` = 30 s; an HTTP
+  date is ignored), then returns `Throttled`, and the adapter's backoff
+  retries. **Alternative:** retry inside the client. **Reason:** the adapter
+  owns the retry policy; the client only honours the server's wait. A 503
+  with `Retry-After` does not wait: `Unavailable` is not retried.
+- **Decision:** no `rsa` dependency in the crate. Azure does every RSA
+  operation. The `rsa` crate is a **dev-dependency only**, for the fixture
+  emulator's RSA-OAEP-256, so RUSTSEC-2023-0071 (see the orchestrator review
+  of CIP-5308) does not reach the shipped crate. `aes` 0.8.4 (already in the
+  lockfile) is a dev-dependency for the emulator's RFC 3394 key wrap.
+
+### Credentials
+
+- **Decision:** the seam is `TokenProvider::token(scope)`: the scope is an
+  argument, because one client can reach Key Vault
+  (`https://vault.azure.net/.default`) and Managed HSM
+  (`https://managedhsm.azure.net/.default`), and national clouds have their
+  own. `CachedToken` keeps one token per scope (same refresh rules as GCP and
+  Vault); `invalidate` drops all. `AccessToken` (wiped, never printed) is the
+  static provider and is used for every scope; it is the guest seam
+  (ADR-0011).
+- **Decision:** `ClientSecretLogin` (everywhere) posts the client credentials
+  grant to `{authority}/{tenant}/oauth2/v2.0/token`. The tenant must be
+  `[A-Za-z0-9.-]` (it is in the path). `AZURE_AUTHORITY_HOST` (the Azure SDK
+  name) changes the host and must be HTTPS with no path.
+- **Decision:** `WorkloadIdentityLogin` (native only) posts the federated
+  token from `AZURE_FEDERATED_TOKEN_FILE` as a `client_assertion`, read on
+  each login. It was cheap: the same request as the client secret.
+- **Decision:** `ManagedIdentityLogin` (native only): IMDS
+  (`GET http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=…`,
+  `Metadata: true`) or App Service (`IDENTITY_ENDPOINT` +
+  `X-IDENTITY-HEADER`, api-version 2019-08-01). `AZURE_CLIENT_ID` names a
+  user-assigned identity (`client_id`). `IDENTITY_ENDPOINT` must be HTTP to a
+  loopback host or HTTPS, with no query, so the identity header cannot go
+  elsewhere. A token's life is `expires_in` (number or string), else
+  `expires_on` less now. IMDS 410 (updating) is `Unavailable`; a refused
+  identity (400, 404) is `AccessDenied`.
+- **Decision:** `DefaultCredentials::from_env` (native) picks, in the
+  `DefaultAzureCredential` order: `AZURE_KEY_VAULT_ACCESS_TOKEN` (a static
+  token; the name is ours, Azure has none); `AZURE_TENANT_ID` +
+  `AZURE_CLIENT_ID` + `AZURE_CLIENT_SECRET`; `AZURE_TENANT_ID` +
+  `AZURE_CLIENT_ID` + `AZURE_FEDERATED_TOKEN_FILE`; else managed identity
+  (App Service when `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` are set, else
+  IMDS). `AzureKeyVault::from_env` (`DefaultAzureKeyVault`, feature `http`,
+  native) builds it with a 1 s connect limit on the credentials transport.
+- **Decision (deferred, security):** **client certificate credentials are not
+  supported**. They sign a JWT with the service principal's RSA key, which
+  would put the `rsa` crate (RUSTSEC-2023-0071) back into a shipped crate.
+  `AZURE_CLIENT_CERTIFICATE_PATH` without a secret is refused with a clear
+  message. Also not supported: Azure CLI credentials, Azure Arc and Service
+  Fabric managed identity.
+
+### Tests and CI
+
+- **Decision:** no fixture was recorded from Azure (no emulator and no
+  credentials here). Responses are written by hand in the documented Key
+  Vault, Entra ID and managed identity shapes. The request sides were
+  computed by a separate Python script, not by the client (base64url, the AAD
+  frame, the bound key digest and padding, the form bodies); the client sent
+  the same bytes on the first run. RSA-OAEP-256 ciphertexts were made by
+  `openssl pkeyutl` under a **TEST-ONLY 2048-bit RSA key** generated for these
+  tests (`tests/fixtures/test_only_rsa_key.pkcs8.b64`, base64 PKCS #8 DER, no
+  PEM block); A256KW ciphertexts by a Python RFC 3394 key wrap over `openssl
+  enc -aes-256-ecb`, under the RFC 3394 example key (`TEST_ONLY_KEK`), checked
+  against RFC 3394 §4.6. A test opens each fixture ciphertext with the
+  test-only keys. Fixtures: wrap (with the key read) and unwrap for a Key
+  Vault RSA key and a Managed HSM `oct-HSM` key, a pinned older version,
+  client secret, workload identity, IMDS and App Service tokens, and 14 error
+  responses. Tokens and secrets are `fixture-*`; no real-shaped secret.
+- **Decision:** the contract suite runs over an in-process emulator
+  (`tests/common::KeyVaultEmulator`: RSA-OAEP-256 with the test-only key (every
+  RSA version uses it), A256KW with an AES key per version, rotation,
+  disabled versions, throttles with `Retry-After`, Azure's error shapes, and a
+  token endpoint whose tokens carry a scope that each key request checks),
+  for an RSA key and an `oct-HSM` key, with a static token and with client
+  secret credentials.
+- **Decision:** `tests/live.rs` runs when `STACK_KMS_AZURE_LIVE_KEY` (a Key
+  Vault RSA key) is set, and also tests `STACK_KMS_AZURE_LIVE_HSM_KEY` when
+  set: the whole contract suite, wrong AAD, a damaged ciphertext and a
+  missing key. **It has not run**: no Azure credentials here. The mise task
+  `test:live:stack-kms-azure` refuses to run without the key and credentials.
+- **Decision:** CI: `integration-azure-key-vault.yml`, one job `live`, on
+  the GCP template: inert until the variable is set, then a pre-flight fails
+  the job if a secret is empty; the secrets reach only the test step.
+- **To turn the live job on (a person):** create an RSA key (2048 bits or
+  more) in a Key Vault for the test only (optionally an `oct-HSM` AES-256 key
+  in a Managed HSM); an app registration with a client secret and the role
+  "Key Vault Crypto Service Encryption User" on that key only ("Managed HSM
+  Crypto Service Encryption User" on the HSM key). Then set:
+  - repository **variable** `STACK_KMS_AZURE_LIVE_KEY` = the key identifier;
+  - optional repository **variable** `STACK_KMS_AZURE_LIVE_HSM_KEY`;
+  - repository **secrets** `STACK_KMS_AZURE_TENANT_ID`,
+    `STACK_KMS_AZURE_CLIENT_ID`, `STACK_KMS_AZURE_CLIENT_SECRET`.
+- **Decision:** `tests-crates.yml` and `udeps.yml` include the new path,
+  `cargo publish --dry-run` packages the crate (passed locally with the CI
+  list), `wasm:wasi-check` checks it (passed), `doc:stack-kms-azure` joins
+  `mise run doc`, and `crates-ci.test.mjs` expects ten crate task files.
+  `workflow-dispatch-job-conditions.test.mjs` lists the workflow and job.
+- **Decision:** `stack-kms-azure` joins the `stack-kms-vendor` release group,
+  staged (`release = false`, `publish = false`). Arming it follows the
+  CIP-5307 steps, with `cargo publish -p stack-kms-azure` after
+  `stack-kms-vendor`. No changeset: Rust only.
+- **Note:** `scripts` vitest still has the two failures noted in CIP-5306
+  (`bench-index-expressions`, `check-auth-npm-changeset`); every other file
+  passes.
+
+### Deferred
+
+- **Deferred to CIP-5311:** the guest wiring: `AzureKeyVault::new(config,
+  HostVendorTransport, <a TokenProvider over the host import>)`. The host
+  import must take the scope (Key Vault and Managed HSM need different
+  tokens). Status mapping of the new errors.
+- **Deferred to CIP-5312:** `stash keyset` can create Azure records with
+  `AzureKeyVault::from_env()`.
+- **Deferred (no ticket):** client certificate credentials (blocked on a
+  constant-time RSA signer), Azure CLI and Arc credentials, re-recording the
+  fixtures from real Azure once the live job has credentials.
