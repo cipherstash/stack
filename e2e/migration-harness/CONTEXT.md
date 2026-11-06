@@ -28,6 +28,10 @@ _Avoid_: subject, worker, executor
 The deterministic checks that decide whether a Run passed. No agent takes part, and the Migrator never sees them.
 _Avoid_: grader, judge, evaluator
 
+**App Host**:
+The restricted process in which the Oracle installs and runs a migrated Fixture App, so the app's code can reach only its own Run's stores and never the Oracle.
+_Avoid_: runner, worker, sandbox
+
 **Editor**:
 The agent that revises the guide from a Run's Oracle failures, Friction Log and transcript.
 _Avoid_: improver, reviewer, author
