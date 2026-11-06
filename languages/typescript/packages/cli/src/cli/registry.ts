@@ -833,4 +833,164 @@ export const registry: CommandGroup[] = [
       },
     ],
   },
+  {
+    title: 'Key vendor backends',
+    commands: [
+      {
+        name: 'keyset create',
+        summary:
+          'Create a keyset record for a key vendor backend (not needed with ZeroKMS)',
+        long: [
+          'ZeroKMS users never need this command. It is only for a keyset held',
+          'by a key vendor backend: AWS KMS, Google Cloud KMS, Azure Key Vault,',
+          'HashiCorp Vault Transit, or the static key backend.',
+          '',
+          'Generates a keyset id and a key, wraps the key under --vendor-key',
+          '(one vendor call), and prints the keyset record as a dotenv line,',
+          'CS_KEYSET_RECORD (or CS_KEYSET_RECORD_<NAME> with --name). The',
+          'record is not secret: only the vendor key can unwrap its key. No SDK',
+          'reads that variable by itself: pass its value to',
+          'encrypt.WithKeysetRecords (Go) or KeysetRecord::parse (Rust).',
+          '',
+          'Credentials come from the vendor environment, never from a flag:',
+          '  aws    AWS_REGION; AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY',
+          '         (+ AWS_SESSION_TOKEN), web identity, ECS or IMDS.',
+          '         No ~/.aws profiles: export them first, for example with',
+          '         `aws configure export-credentials --format env`.',
+          '  gcp    GOOGLE_OAUTH_ACCESS_TOKEN (e.g. `gcloud auth',
+          '         print-access-token`), else the metadata server. Service',
+          '         account key files are not read.',
+          '  azure  AZURE_KEY_VAULT_ACCESS_TOKEN; AZURE_TENANT_ID +',
+          '         AZURE_CLIENT_ID + AZURE_CLIENT_SECRET or',
+          '         AZURE_FEDERATED_TOKEN_FILE; else managed identity.',
+          '  vault  VAULT_ADDR (+ VAULT_NAMESPACE, VAULT_TRANSIT_MOUNT);',
+          '         VAULT_TOKEN, AppRole or Kubernetes auth.',
+          '  static --key-env names the variable that holds the 32-byte key',
+          '         (base64 or hex). Without it a new key is generated and',
+          '         printed as CS_STATIC_KEY, which is a secret. Derived only.',
+          '',
+          'Stdout carries only the dotenv block (or the --json event); progress',
+          'goes to stderr, so `stash keyset create … > keyset.env` is safe.',
+        ].join('\n'),
+        examples: [
+          'keyset create --backend aws --vendor-key arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab --mode wrapped --name users',
+          'keyset create --backend vault --vendor-key users --mode derived --out keyset.env',
+          'keyset create --backend static --vendor-key dev-key --mode derived --out .env.keyset.local',
+        ],
+        flags: [
+          {
+            name: '--backend',
+            value: '<aws|gcp|azure|vault|static>',
+            description: 'The key vendor backend. Required.',
+          },
+          {
+            name: '--vendor-key',
+            value: '<ref>',
+            description:
+              'The vendor key that wraps the keyset key: an AWS KMS key ARN, a Cloud KMS crypto key name, an Azure Key Vault key identifier, a Vault Transit key name, or a label for a static key. Required.',
+          },
+          {
+            name: '--mode',
+            value: '<wrapped|derived>',
+            description:
+              'The key mode. wrapped: each value has its own vendor-wrapped data key. derived: data keys come from a root key cached for a short time. The static backend offers derived only. Required.',
+          },
+          {
+            name: '--name',
+            value: '<name>',
+            description:
+              'A local name for the keyset (1 to 255 bytes). Also names the variable: CS_KEYSET_RECORD_<NAME>.',
+          },
+          {
+            name: '--key-env',
+            value: '<VAR>',
+            description:
+              'Static backend only: the environment variable that holds the static key. Omit it to generate a new key.',
+          },
+          {
+            name: '--out',
+            value: '<file>',
+            description:
+              'Write the block to this file (mode 0600) instead of stdout. An existing file is refused unless --force.',
+          },
+          {
+            name: '--force',
+            description: 'Overwrite an existing --out file.',
+          },
+          {
+            name: '--json',
+            description:
+              'Emit one NDJSON object: { status: "created", record, keysetId, envVar, … } (with a generated static key in staticKey), or { status: "written", path, … } with --out, which never carries the static key. Failures are { status: "error" }.',
+          },
+        ],
+      },
+      {
+        name: 'keyset rewrap',
+        summary:
+          'Rewrap a keyset record under the current or another vendor key (not needed with ZeroKMS)',
+        long: [
+          'ZeroKMS users never need this command.',
+          '',
+          'Unwraps the record key and wraps it again (two vendor calls). With',
+          'no --vendor-key it uses the record’s own vendor key, which moves the',
+          'record to that key’s current version after a rotation. With',
+          '--vendor-key it moves the record to another key of the same backend.',
+          'The keyset id, name and mode stay the same, so stored values stay',
+          'readable. Stored data is not re-keyed.',
+          '',
+          'The record is the argument, or --in <file> (a file that --out wrote,',
+          'or the bare record). Credentials come from the vendor environment, as',
+          'for `keyset create`. For a static record, --key-env names the',
+          'variable that holds its current key, and --new-key-env the new',
+          'key (omit it to generate one) when --vendor-key names another key.',
+        ].join('\n'),
+        examples: [
+          'keyset rewrap --in keyset.env --out keyset.env --force',
+          'keyset rewrap stack-keyset:AQEC… --vendor-key arn:aws:kms:us-east-1:111122223333:key/new-key-id',
+          'keyset rewrap --in .env.keyset.local --key-env CS_STATIC_KEY --vendor-key dev-key-2 --new-key-env CS_STATIC_KEY_2',
+        ],
+        flags: [
+          {
+            name: '--in',
+            value: '<file>',
+            description:
+              'Read the record from this file instead of the argument. The file must hold exactly one record.',
+          },
+          {
+            name: '--vendor-key',
+            value: '<ref>',
+            description:
+              'The vendor key to wrap under. Default: the record’s own vendor key.',
+          },
+          {
+            name: '--key-env',
+            value: '<VAR>',
+            description:
+              'Static backend only: the environment variable that holds the record’s current static key. Required for a static record.',
+          },
+          {
+            name: '--new-key-env',
+            value: '<VAR>',
+            description:
+              'Static backend only: the environment variable that holds the static key of --vendor-key. Omit it to generate a new key.',
+          },
+          {
+            name: '--out',
+            value: '<file>',
+            description:
+              'Write the block to this file (mode 0600) instead of stdout. An existing file is refused unless --force.',
+          },
+          {
+            name: '--force',
+            description: 'Overwrite an existing --out file.',
+          },
+          {
+            name: '--json',
+            description:
+              'Emit one NDJSON object: { status: "rewrapped", … }, or { status: "written", … } with --out. Failures are { status: "error" }.',
+          },
+        ],
+      },
+    ],
+  },
 ]
