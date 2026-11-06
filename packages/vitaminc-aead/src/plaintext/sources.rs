@@ -397,11 +397,12 @@ impl<'a, T: Zeroize> Scalar for &'a Protected<T> where &'a T: Scalar {}
 ///
 /// `T` may be unsized. `ProtectedRef<'_, str>` is a text leaf and
 /// `ProtectedRef<'_, [u8]>` a byte leaf. A `Protected<String>` lends a
-/// `ProtectedRef<String>`, which [`as_deref`](ProtectedRef::as_deref)
-/// narrows to text and [`as_ref_of`](ProtectedRef::as_ref_of) to either,
-/// so annotate which one you mean: a string sealed as bytes reads back only
-/// as bytes, never as a `String`. A bare `str` lends nothing, because
-/// nothing wipes it.
+/// `ProtectedRef<String>`, which seals as text, as does the
+/// `ProtectedRef<str>` that [`as_deref`](ProtectedRef::as_deref) narrows
+/// it to. To seal its bytes instead, narrow it with
+/// [`as_ref_of`](ProtectedRef::as_ref_of) to `[u8]`; a string sealed as
+/// bytes reads back only as bytes, never as a `String`. A bare `str` lends
+/// nothing, because nothing wipes it.
 impl<'a, T: ?Sized> Encrypt for ProtectedRef<'a, T>
 where
     &'a T: Encrypt,
