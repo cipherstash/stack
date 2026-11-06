@@ -615,3 +615,190 @@ the alternatives and the reason.
 - **Note:** the vendor crates are staged (`release = false`). Arming them is
   a manual step after stack-kms and stack-encrypt from this stack are on
   crates.io (see the CIP-5307 section).
+
+## CIP-5310: HashiCorp Vault Transit key vendor backend (stack-kms-vault)
+
+### Changes to the vendor seam (stack-kms-vendor)
+
+- **Decision:** vendor batch calls are three new provided methods on
+  `KeyVendorBackend`: `batch_limit() -> Option<NonZeroUsize>` (default
+  `None`), `wrap_batch(key_ref, &[WrapItem])` and `unwrap_batch(key_ref,
+  &[UnwrapItem])` (defaults: one `wrap` or `unwrap` per item). When
+  `batch_limit` is `Some(n)`, `VendorKeySource` sends the wrapped data keys
+  of a generate or retrieve in chunks of at most `n`, one batch call per
+  chunk, and generates each data key locally with the CSPRNG. The chunks run
+  through `run_batch`, so a throttled chunk backs off and is sent again
+  whole, and `concurrency` limits the chunks in flight. The keyset record key
+  is still one `unwrap`. **Alternative:** a Vault-only path, or a batch
+  `generate_wrapped`. **Reason:** additive (AWS and the static backend change
+  nothing); Transit has no batch data key operation, so local generation plus
+  a batch encrypt is the only one-call form; Google Cloud KMS and Azure have
+  no batch operation, so they keep the default.
+- **Decision:** the contract suite forwards the batch methods in `Observed`
+  (each item counts as a wrap or unwrap; `Observer::batches()` counts the
+  calls) and has a new check, `uses_vendor_batches`: under wrapped data
+  keys, `2n + 1` values seal and open in exactly three batch calls.
+  `FakeVendor::with_batch_limit` runs the batch path in stack-kms-vendor's
+  own tests.
+- **Decision (the "AAD bound by us" mechanism, for CIP-5309 too):** new
+  module `stack_kms_vendor::bound`. The vendor encrypts a **bound key**
+  `version(1)=1 ‖ SHA-256(frame["stack-kms-vendor/bound-key/v1", aad]) ‖
+  key` (65 bytes) in place of the key; `open_bound_key` checks the digest in
+  constant time (`subtle`, already in the lockfile). The bytes are pinned.
+  **Alternative:** AEAD-wrap the vendor ciphertext under a key derived per
+  record, or carry a MAC. **Reason:** both need a second key that must come
+  from somewhere (the vendor, so one more call, or the record, which then
+  holds a key in the clear). The digest needs no key: it is sound when the
+  vendor's encryption is non-malleable, which is true of every vendor
+  encryption we use (AES-GCM, ChaCha20-Poly1305, RSA-OAEP). The module docs
+  say so. 65 bytes fits RSA-OAEP-256 with a 2048-bit key. **CIP-5309 (Azure
+  RSA wrap) should use it.**
+
+### The Vault client
+
+- **Decision:** `stack-kms-vault` is a new root workspace member with
+  `VaultTransit<T: VendorTransport, A: TokenProvider>`, on the
+  `stack-kms-aws` template. Every encrypt, decrypt and rewrap uses
+  `batch_input`, a single key too, so there is one request shape. `wrap` and
+  `unwrap` are a batch of one. `generate_wrapped` is the trait default
+  (local key, one `wrap`): Transit's `datakey` endpoint has no batch form.
+  `batch_limit` is `VaultConfig::batch_size`, default 250
+  (`DEFAULT_BATCH_SIZE`). Both key modes. `send_json(method, path, body)` is
+  public (tests use it to enable the engine and create keys).
+- **Decision:** the associated data. The client **always** encrypts a bound
+  key. For a derived key (`derived=true`) it also sends the whole `aad` as
+  `context` (base64), so Vault's own derivation binds the keyset id, iv and
+  descriptor. Tested on Vault 1.20: a non-derived key **silently ignores**
+  `context`, and an unknown parameter only adds a warning, so neither can be
+  the binding on its own. `associated_data` (Vault 1.16 and later) is not
+  used: on an older Vault or another implementation it would be dropped with
+  only a warning. **Alternative:** context only for derived keys and the bound
+  key only for the others. **Reason:** one plaintext format for every key,
+  and a wrong derivation setting can then fail a call but never weaken the
+  binding (a test covers a non-derived key configured as derived).
+- **Decision:** how the client knows a key is derived: `KeyDerivation`
+  in the config, `Detect` (the default) reads `GET /v1/{mount}/keys/{name}`
+  once per key and keeps the answer; `Derived` and `NotDerived` skip the
+  read. `Detect` also refuses a missing key (`NotFound`, because Transit's
+  `encrypt` would create it when the token has `create`) and a key type that
+  is not an AEAD (`aes256-gcm96`, `aes128-gcm96`, `chacha20-poly1305`) or
+  cannot encrypt and decrypt (`AccessDenied`). **Alternative:** a flag in the
+  keyset record. **Reason:** the record format is CIP-5306's and is shared by
+  every vendor; the key read costs one call per key per process.
+- **Decision:** the stored wrapped key is `1 ‖ key version (u32 BE) ‖ the
+  decoded Vault ciphertext`, not the `vault:vN:base64` text: 98 bytes for a
+  bound key, about 40 fewer per value in the leaf tag. `compact_ciphertext`
+  and `expand_ciphertext` convert, and refuse anything that does not re-encode
+  to the same text. A wrapped key that does not expand is refused as
+  `InvalidCiphertext` before any call.
+- **Decision:** `key_ref` is the Transit key name: one path segment of
+  `[A-Za-z0-9._-]`, not `.` or `..`. Anything else is `NotFound` before any
+  call (no path injection). The mount and the namespace are one or more such
+  segments; the address must be HTTP or HTTPS with no user, query or
+  fragment.
+- **Decision:** error mapping (`error_kind(status, message)`): 401 and 403
+  `AccessDenied`; 404 `NotFound` (a missing mount or key read); 429
+  `Throttled`; 5xx `Unavailable` (503 is sealed or standby); any other 4xx
+  `AccessDenied`. A 400 maps by Vault's error text, lower case:
+  `NOT_FOUND_MARKERS` (`encryption key not found`, `key not found`) first,
+  then `INVALID_CIPHERTEXT_MARKERS` (`invalid ciphertext`, `message
+  authentication failed`, `unable to decrypt`, `could not decode`,
+  `ciphertext version`, `version is too new`); any other 400 is
+  `AccessDenied` (for example a derived key with no context), as for AWS. The
+  text is the first failed batch item's `error`, else `errors`. A failed item
+  in a 200 batch fails the whole batch. A bound key that does not open is
+  `InvalidCiphertext`; a success that cannot be read is `Unavailable`.
+- **Decision:** a 403 calls the new `TokenProvider::invalidate` (default:
+  nothing), so a cached login token that Vault revoked is dropped and the
+  next request logs in again. The failed request is not retried.
+- **Decision:** `rewrap(key_ref, wrapped, aad)` is a public method (Transit
+  `rewrap`, with `context` for a derived key), not a trait method. It moves a
+  wrapped key to the latest key version without the key leaving Vault.
+  `KeysetRecord::rewrap` (unwrap and wrap) still works for a move to another
+  key.
+
+### Auth
+
+- **Decision:** the seam is `TokenProvider` (future bounded by
+  `MaybeSend`, plus `invalidate`). `VaultToken` (wiped, never printed) is the
+  static provider (`VAULT_TOKEN`). `AppRoleLogin` (everywhere) and
+  `KubernetesLogin` (native only; it reads the service account token file on
+  each login) log in at `/v1/auth/{mount}/login` and return the token with
+  its lease. A refused login (HTTP 400 or 403) is `AccessDenied`.
+- **Decision:** `CachedToken` logs in again before the lease ends: 5 minutes
+  before (`DEFAULT_REFRESH_BEFORE_EXPIRY`), or a third of the lease before
+  when the lease is shorter. One login at a time; a failed login returns the
+  cached token while its lease lasts. A token with no lease is kept until
+  `invalidate`. **Alternative:** `renew-self`. **Reason:** a renewal cannot
+  pass the token's max TTL, so a client that renews must also log in again;
+  one path is simpler and is tested. The docs note that each AppRole login
+  uses one use of a `secret_id` with a use limit.
+- **Decision:** `DefaultAuth::from_env` (native) picks, in order:
+  `VAULT_TOKEN`; `VAULT_APPROLE_ROLE_ID` + `VAULT_APPROLE_SECRET_ID` (mount
+  `VAULT_APPROLE_MOUNT`, default `approle`); `VAULT_KUBERNETES_ROLE` (mount
+  `VAULT_KUBERNETES_MOUNT`, default `kubernetes`; token file
+  `VAULT_KUBERNETES_TOKEN_PATH`, default the service account path). Vault has
+  no standard names for the AppRole and Kubernetes variables; these are ours.
+  `VaultConfig::from_env` reads `VAULT_ADDR`, `VAULT_NAMESPACE` and
+  `VAULT_TRANSIT_MOUNT` (default `transit`). `VaultTransit::from_env`
+  (`DefaultVaultTransit`, feature `http`, native) builds both.
+- **Not supported:** a custom CA (`VAULT_CACERT`) and mTLS client
+  certificates. `HttpVendorTransport` uses the platform verifier. No ticket
+  asks for them.
+
+### Tests and CI
+
+- **Decision:** the fixtures were recorded from `vault server -dev` 1.20.4
+  by `tests/vault_dev.rs`'s `records_the_fixtures` (it runs only with
+  `STACK_KMS_VAULT_RECORD_FIXTURES=1`, against dev root token
+  `fixture-root-token`). Each file is an exchange sequence (the key read,
+  then the call): encrypt, decrypt, a batch of three each way, all for a
+  derived and a non-derived key; rewrap after a rotation; an AppRole login;
+  and eight real error responses. Written by hand, and named so: the
+  Kubernetes login (a dev server has no Kubernetes) and five errors a dev
+  server does not give (429, 503 sealed, 500, a policy 403, a retired key
+  version).
+- **Decision:** the contract suite runs over an in-process Transit emulator
+  (`tests/common::TransitEmulator`: AES-GCM, derived keys that require
+  `context` and plain keys that ignore it, as Vault does; the batch and error
+  shapes; AppRole and Kubernetes logins; token and namespace checks), for a
+  derived and a non-derived key, with `Detect` and with the derivation
+  configured, at batch size 4 so the chunking runs.
+- **Decision:** `tests/vault_dev.rs` runs when `STACK_KMS_VAULT_ADDR` is set
+  (token `STACK_KMS_VAULT_TOKEN`, default `root`): the whole contract suite
+  for a derived and a non-derived key, eight error mappings, rotation and
+  rewrap, and an AppRole login with a least-privilege policy. It ran locally
+  against `hashicorp/vault:1.20` in Docker and passed.
+- **Decision:** CI: a new `vault` job in `tests-crates.yml` runs
+  `hashicorp/vault:1.20` (pinned by the multi-platform index digest) in dev
+  mode as a service and calls the new mise task
+  `test:vault:stack-kms-vault`, which refuses to run without the address. A
+  new `doc:stack-kms-vault` task joins `mise run doc`. `wasm:wasi-check` now
+  checks `stack-kms-vault` (default features). `tests-crates.yml` and
+  `udeps.yml` include the new path; `crates-ci.test.mjs` now expects eight
+  crate task files.
+- **Decision:** `stack-kms-vault` joins the `stack-kms-vendor` release group,
+  staged (`release = false`, `publish = false` in `release-plz.toml`), and
+  the `cargo publish --dry-run` list. Arming it follows the CIP-5307 steps,
+  with `cargo publish -p stack-kms-vault` after `stack-kms-vendor`. No
+  changeset: Rust only.
+- **Note:** a local `cargo publish --dry-run` can fail with "no `bound` in
+  `stack_kms_vendor`" after an earlier dry run packaged an older
+  `stack-kms-vendor` 0.1.0: cargo treats the packaged crate as an immutable
+  registry crate and reuses its old build. Remove
+  `~/.cargo/registry/src/-*/stack-kms-vendor-0.1.0`, `target/package` and the
+  `stack-kms-vendor` files in `target/debug/{.fingerprint,deps}`. CI starts
+  clean.
+- **Note:** `scripts` vitest still has the two failures noted in CIP-5306;
+  every other file passes.
+
+### Deferred
+
+- **Deferred to CIP-5309:** Azure Key Vault RSA wrap binds its associated
+  data with `stack_kms_vendor::bound`.
+- **Deferred to CIP-5311:** the guest wiring: `VaultTransit::new(config,
+  HostVendorTransport, <a TokenProvider over the host import>)`, and the
+  status mapping of the new errors.
+- **Deferred to CIP-5312:** `stash keyset` can create Vault records with
+  `VaultTransit::from_env()`.
+- **Deferred (no ticket):** `VAULT_CACERT` and mTLS; `renew-self`.
