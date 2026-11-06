@@ -468,7 +468,7 @@ export const messages = {
     generatedStaticKeyWarning:
       'A new static key was generated (CS_STATIC_KEY). It is a secret and the only copy: put it in a secret store now. Without it, nothing sealed under this keyset can be read.',
     rewrapNote:
-      'Replace the old record with the new one in every app. Values already stored stay readable: the keyset id and its key do not change.',
+      'Replace the old record with the new one in every app. Stored values are not re-keyed. They stay readable in the derived mode, and in the wrapped mode after a move to a new version of the same vendor key. In the wrapped mode, values sealed before a move to another vendor key no longer open.',
     vendorConfigHint:
       'The vendor client reads its settings and credentials from the environment, as the SDKs do. Run `stash keyset create --help` for the variables of each backend.',
   },
