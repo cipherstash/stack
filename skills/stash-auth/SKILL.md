@@ -159,7 +159,7 @@ yourself.
 
 | Strategy | Use for | Credential source |
 |---|---|---|
-| `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`), else fails `NOT_AUTHENTICATED` |
+| `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`) — the session of the workspace named by `CS_WORKSPACE_CRN` if set (never the CLI's current workspace; tokens are checked against it, `WORKSPACE_MISMATCH` otherwise), else the current workspace's — else fails `NOT_AUTHENTICATED` |
 | `AccessKeyStrategy` | Services, CI, backfill jobs | Explicit workspace CRN + access key |
 | `OidcFederationStrategy` | Per-user (identity-bound) encryption | Your IdP's JWT, fetched via a callback on every operation — one CTS token cached per distinct JWT (see Client lifetime) |
 | `DeviceSessionStrategy` | CLI-adjacent tooling | The device-code session `stash auth login` created |
