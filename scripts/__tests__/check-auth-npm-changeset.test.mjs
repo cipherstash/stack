@@ -243,10 +243,20 @@ describe('require-auth-npm-changeset.yml', () => {
 
   const filters = workflow?.on?.pull_request?.paths ?? []
 
-  it('diffs the crate and both binding folders', () => {
+  it('diffs the crates the binding compiles in and both binding folders', () => {
     expect(shipped).toEqual([
       'packages/stack-auth/Cargo.toml',
       'packages/stack-auth/src',
+      'packages/stack-kms-vendor/Cargo.toml',
+      'packages/stack-kms-vendor/src',
+      'packages/stack-kms-aws/Cargo.toml',
+      'packages/stack-kms-aws/src',
+      'packages/stack-kms-vault/Cargo.toml',
+      'packages/stack-kms-vault/src',
+      'packages/stack-kms-gcp/Cargo.toml',
+      'packages/stack-kms-gcp/src',
+      'packages/stack-kms-azure/Cargo.toml',
+      'packages/stack-kms-azure/src',
       'languages/typescript/packages/auth',
       'languages/typescript/packages/stack-auth-wasm',
     ])

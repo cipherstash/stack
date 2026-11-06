@@ -60,6 +60,17 @@ on:
       # require-auth-npm-changeset.yml.
       - 'packages/stack-auth/Cargo.toml'
       - 'packages/stack-auth/src/**'
+      # The key vendor crates the auth binding compiles in (stash keyset).
+      - 'packages/stack-kms-vendor/Cargo.toml'
+      - 'packages/stack-kms-vendor/src/**'
+      - 'packages/stack-kms-aws/Cargo.toml'
+      - 'packages/stack-kms-aws/src/**'
+      - 'packages/stack-kms-vault/Cargo.toml'
+      - 'packages/stack-kms-vault/src/**'
+      - 'packages/stack-kms-gcp/Cargo.toml'
+      - 'packages/stack-kms-gcp/src/**'
+      - 'packages/stack-kms-azure/Cargo.toml'
+      - 'packages/stack-kms-azure/src/**'
       - 'languages/typescript/packages/auth/**'
       - 'languages/typescript/packages/stack-auth-wasm/**'
       # The Rust that produces every EQL payload these suites round-trip.
@@ -154,6 +165,17 @@ on:
       # require-auth-npm-changeset.yml.
       - 'packages/stack-auth/Cargo.toml'
       - 'packages/stack-auth/src/**'
+      # The key vendor crates the auth binding compiles in (stash keyset).
+      - 'packages/stack-kms-vendor/Cargo.toml'
+      - 'packages/stack-kms-vendor/src/**'
+      - 'packages/stack-kms-aws/Cargo.toml'
+      - 'packages/stack-kms-aws/src/**'
+      - 'packages/stack-kms-vault/Cargo.toml'
+      - 'packages/stack-kms-vault/src/**'
+      - 'packages/stack-kms-gcp/Cargo.toml'
+      - 'packages/stack-kms-gcp/src/**'
+      - 'packages/stack-kms-azure/Cargo.toml'
+      - 'packages/stack-kms-azure/src/**'
       - 'languages/typescript/packages/auth/**'
       - 'languages/typescript/packages/stack-auth-wasm/**'
       # The Rust that produces every EQL payload these suites round-trip.
