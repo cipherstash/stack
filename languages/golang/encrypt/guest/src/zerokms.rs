@@ -45,7 +45,7 @@ impl std::error::Error for NoZeroKms {}
 /// The refusal of every request that reaches [`MaybeZeroKms::Absent`].
 pub fn no_zerokms() -> Error {
     Error::Backend {
-        vendor: KeyBackend::ZeroKms.name(),
+        backend: KeyBackend::ZeroKms,
         kind: BackendErrorKind::NotFound,
         source: Box::new(NoZeroKms),
     }
@@ -175,7 +175,7 @@ mod tests {
         assert_eq!(absent.key_mode(id), None);
         // Another backend error is not this one.
         assert!(!is_no_zerokms(&Error::Backend {
-            vendor: KeyBackend::ZeroKms.name(),
+            backend: KeyBackend::ZeroKms,
             kind: BackendErrorKind::NotFound,
             source: "other".into(),
         }));

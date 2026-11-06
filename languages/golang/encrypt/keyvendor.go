@@ -38,10 +38,9 @@ type KeyVendor interface {
 // vendorSpec is a KeyVendor as the client uses it: the config keys the
 // guest reads, and where the per-request credential comes from.
 type vendorSpec struct {
-	// name is the guest's key_vendor value.
-	name string
-	// id is the KeyVendor byte the guest names in vendor_credential_get.
-	id uint32
+	// vendor is the backend. Its byte is what the guest names in
+	// vendor_credential_get; its name is the guest's key_vendor value.
+	vendor keyVendorID
 	// fields are the backend's settings in the guest config.
 	fields vcvalue.Object
 	// staticKey is StaticKey's key, consumed by NewClient.
@@ -50,15 +49,40 @@ type vendorSpec struct {
 	token     AccessTokenSource
 }
 
-// The KeyVendor bytes of the v2 leaf header and the keyset record. They
-// cross the vendor_credential_get import.
+// keyVendorID is a KeyVendor byte of the v2 leaf header and the keyset
+// record. It crosses the vendor_credential_get import.
+type keyVendorID uint32
+
+// The KeyVendor bytes. They are a storage commitment, as in the Rust crate
+// stack-kms (KeyVendor::byte).
 const (
-	vendorAWS    = 1
-	vendorGCP    = 2
-	vendorAzure  = 3
-	vendorVault  = 4
-	vendorStatic = 5
+	vendorAWS    keyVendorID = 1
+	vendorGCP    keyVendorID = 2
+	vendorAzure  keyVendorID = 3
+	vendorVault  keyVendorID = 4
+	vendorStatic keyVendorID = 5
 )
+
+// keyVendorNames is the one table of the vendor names on the Go side: the
+// guest's key_vendor value of each KeyVendor byte. The guest reads the name
+// with KeyVendor::from_name of the Rust crate stack-kms, so these strings
+// are a wire format, not a choice. TestKeyVendorNamesMatchTheGuest pins
+// each one to the guest's name for the same byte.
+var keyVendorNames = map[keyVendorID]string{
+	vendorAWS:    "aws-kms",
+	vendorGCP:    "gcp-kms",
+	vendorAzure:  "azure-key-vault",
+	vendorVault:  "vault-transit",
+	vendorStatic: "static",
+}
+
+// String is the vendor's name, as the guest spells it.
+func (id keyVendorID) String() string {
+	if name, ok := keyVendorNames[id]; ok {
+		return name
+	}
+	return fmt.Sprintf("key vendor %d", uint32(id))
+}
 
 // AWSKMS is AWS KMS as the key vendor backend. The key in each keyset
 // record is a KMS key ARN. Both key modes.
@@ -85,7 +109,7 @@ func (v AWSKMS) keyVendor() (*vendorSpec, error) {
 	if v.Endpoint != "" {
 		fields = append(fields, vcvalue.Field{Key: "aws_endpoint", Value: v.Endpoint})
 	}
-	return &vendorSpec{name: "aws-kms", id: vendorAWS, fields: fields, aws: v.Credentials}, nil
+	return &vendorSpec{vendor: vendorAWS, fields: fields, aws: v.Credentials}, nil
 }
 
 // GoogleCloudKMS is Google Cloud KMS as the key vendor backend. The key in
@@ -109,7 +133,7 @@ func (v GoogleCloudKMS) keyVendor() (*vendorSpec, error) {
 	if v.Endpoint != "" {
 		fields = append(fields, vcvalue.Field{Key: "gcp_endpoint", Value: v.Endpoint})
 	}
-	return &vendorSpec{name: "gcp-kms", id: vendorGCP, fields: fields, token: v.Token}, nil
+	return &vendorSpec{vendor: vendorGCP, fields: fields, token: v.Token}, nil
 }
 
 // AzureKeyVault is Azure Key Vault or Managed HSM as the key vendor
@@ -128,7 +152,7 @@ func (v AzureKeyVault) keyVendor() (*vendorSpec, error) {
 	if v.Token == nil {
 		return nil, fmt.Errorf("%w: AzureKeyVault needs a Token source", ErrEncoding)
 	}
-	return &vendorSpec{name: "azure-key-vault", id: vendorAzure, token: v.Token}, nil
+	return &vendorSpec{vendor: vendorAzure, token: v.Token}, nil
 }
 
 // VaultTransit is HashiCorp Vault's Transit secrets engine as the key
@@ -162,7 +186,7 @@ func (v VaultTransit) keyVendor() (*vendorSpec, error) {
 	if v.Mount != "" {
 		fields = append(fields, vcvalue.Field{Key: "vault_mount", Value: v.Mount})
 	}
-	return &vendorSpec{name: "vault-transit", id: vendorVault, fields: fields, token: v.Token}, nil
+	return &vendorSpec{vendor: vendorVault, fields: fields, token: v.Token}, nil
 }
 
 // StaticKey is a 32-byte key the application holds, as the key vendor
@@ -200,8 +224,7 @@ func (v StaticKey) keyVendor() (*vendorSpec, error) {
 		return nil, fmt.Errorf("%w: StaticKey's Key is %d bytes, not 32", ErrEncoding, len(v.Key))
 	}
 	return &vendorSpec{
-		name:      "static",
-		id:        vendorStatic,
+		vendor:    vendorStatic,
 		fields:    vcvalue.Object{{Key: "static_key_ref", Value: v.KeyRef}},
 		staticKey: v.Key,
 	}, nil
@@ -330,7 +353,7 @@ func keyVendorConfig(v KeyVendor, records []string) (*vendorSpec, error) {
 // The result holds a StaticKey's key: the caller wipes what it encodes.
 func (s *vendorSpec) configFields(records []string) vcvalue.Object {
 	fields := vcvalue.Object{
-		{Key: "key_vendor", Value: s.name},
+		{Key: "key_vendor", Value: s.vendor.String()},
 		{Key: "keyset_records", Value: append([]string(nil), records...)},
 	}
 	fields = append(fields, s.fields...)
@@ -510,8 +533,8 @@ func StaticAccessToken(token string) AccessTokenSource {
 // asked for, and renders it as the guest reads it. The result holds a
 // secret; the caller wipes it.
 func (s *vendorSpec) vendorCredential(ctx context.Context, vendor uint32, scope string) ([]byte, error) {
-	if vendor != s.id {
-		return nil, fmt.Errorf("encrypt: the guest asked for a credential of key vendor %d, but the client's is %s", vendor, s.name)
+	if keyVendorID(vendor) != s.vendor {
+		return nil, fmt.Errorf("encrypt: the guest asked for a credential of key vendor %d, but the client's is %s", vendor, s.vendor)
 	}
 	var fields vcvalue.Object
 	var expires time.Time
@@ -538,12 +561,12 @@ func (s *vendorSpec) vendorCredential(ctx context.Context, vendor uint32, scope 
 			return nil, err
 		}
 		if t.Token == "" {
-			return nil, fmt.Errorf("%w: the %s token source returned an empty token", ErrNoKeyVendorCredentials, s.name)
+			return nil, fmt.Errorf("%w: the %s token source returned an empty token", ErrNoKeyVendorCredentials, s.vendor)
 		}
 		fields = vcvalue.Object{{Key: "token", Value: t.Token}}
 		expires = t.Expires
 	default:
-		return nil, fmt.Errorf("encrypt: the %s key backend takes no credentials", s.name)
+		return nil, fmt.Errorf("encrypt: the %s key backend takes no credentials", s.vendor)
 	}
 	if !expires.IsZero() {
 		fields = append(fields, vcvalue.Field{Key: "expires_at", Value: expires.Unix()})

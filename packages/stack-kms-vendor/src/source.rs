@@ -107,7 +107,7 @@ pub(crate) fn vendor_of<'a>(
 
 fn not_found(vendor: KeyVendor) -> Error {
     Error::Backend {
-        vendor: vendor.name(),
+        backend: vendor.into(),
         kind: BackendErrorKind::NotFound,
         source: "no keyset record for this keyset".into(),
     }
@@ -115,7 +115,7 @@ fn not_found(vendor: KeyVendor) -> Error {
 
 fn unavailable(vendor: KeyVendor, message: &'static str) -> Error {
     Error::Backend {
-        vendor: vendor.name(),
+        backend: vendor.into(),
         kind: BackendErrorKind::Unavailable,
         source: message.into(),
     }
@@ -123,7 +123,7 @@ fn unavailable(vendor: KeyVendor, message: &'static str) -> Error {
 
 fn invalid(vendor: KeyVendor, message: &'static str) -> Error {
     Error::Backend {
-        vendor: vendor.name(),
+        backend: vendor.into(),
         kind: BackendErrorKind::InvalidCiphertext,
         source: message.into(),
     }
@@ -445,7 +445,7 @@ impl<B: KeyVendorBackend> DataKeySource for VendorKeySource<B> {
         unverified_context: Option<Cow<'_, UnverifiedContext>>,
     ) -> Result<Vec<DataKeyWithTag>, Error> {
         let vendor = self.vendor();
-        refuse_zerokms_extensions(vendor.name(), &payloads, unverified_context.as_deref())?;
+        refuse_zerokms_extensions(vendor, &payloads, unverified_context.as_deref())?;
         let record = self.resolve_id(keyset_id)?;
         match record.mode() {
             KeyMode::Derived => {
@@ -510,7 +510,7 @@ impl<B: KeyVendorBackend> DataKeySource for VendorKeySource<B> {
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, Error> {
         let vendor = self.vendor();
-        refuse_zerokms_extensions(vendor.name(), &payloads, unverified_context)?;
+        refuse_zerokms_extensions(vendor, &payloads, unverified_context)?;
         let record = self.resolve_id(keyset_id)?;
         if payloads
             .iter()

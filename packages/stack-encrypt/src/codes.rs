@@ -327,7 +327,7 @@ mod tests {
         use crate::ErrorPayload;
         use serde_json::json;
         let failure = Error::Kms(crate::kms::Error::Backend {
-            vendor: "test-vendor",
+            backend: crate::kms::KeyVendor::Aws.into(),
             kind: crate::kms::BackendErrorKind::AccessDenied,
             source: Box::new(std::io::Error::other("vendor detail")),
         });
@@ -337,10 +337,10 @@ mod tests {
         );
         assert_eq!(
             serde_json::Value::Object(failure.payload()),
-            json!({ "vendor": "test-vendor", "kind": "AccessDenied" })
+            json!({ "vendor": "aws-kms", "kind": "AccessDenied" })
         );
         let refusal = Error::Kms(crate::kms::Error::ZeroKmsOnly {
-            vendor: "test-vendor",
+            vendor: crate::kms::KeyVendor::Vault,
             feature: crate::kms::ZeroKmsFeature::UnverifiedContext,
         });
         assert_eq!(
@@ -349,7 +349,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::Value::Object(refusal.payload()),
-            json!({ "vendor": "test-vendor", "feature": "unverified_context" })
+            json!({ "vendor": "vault-transit", "feature": "unverified_context" })
         );
     }
 

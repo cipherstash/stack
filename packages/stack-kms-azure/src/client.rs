@@ -18,8 +18,8 @@ use zeroize::Zeroizing;
 use crate::auth::{AuthError, TokenProvider};
 use crate::config::{is_version, AzureKeyVaultConfig, KeyId, WrapAlgorithm, MAX_VERSION_LEN};
 
-/// The vendor name in errors ([`KeyVendor::name`] of [`KeyVendor::Azure`]).
-const VENDOR: &str = "azure-key-vault";
+/// This client's vendor: what [`KeyVendorBackend::vendor`] answers and what its errors name.
+const VENDOR: KeyVendor = KeyVendor::Azure;
 
 /// The first byte of a wrapped key this client stores: the format of the
 /// rest (`algorithm(1) ‖ version length(1) ‖ version ‖ Azure ciphertext`).
@@ -79,7 +79,7 @@ pub enum AzureKeyVaultError {
 
 fn backend(kind: BackendErrorKind, error: AzureKeyVaultError) -> Error {
     Error::Backend {
-        vendor: VENDOR,
+        backend: VENDOR.into(),
         kind,
         source: Box::new(error),
     }
@@ -595,7 +595,7 @@ impl<T: VendorTransport + Send + Sync, A: TokenProvider> AzureKeyVault<T, A> {
 
 impl<T: VendorTransport + Send + Sync, A: TokenProvider> KeyVendorBackend for AzureKeyVault<T, A> {
     fn vendor(&self) -> KeyVendor {
-        KeyVendor::Azure
+        VENDOR
     }
 
     /// The same key in the same vault or HSM, whatever version either key

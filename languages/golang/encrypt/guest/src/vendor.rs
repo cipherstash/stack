@@ -391,13 +391,10 @@ impl<T, C> std::fmt::Debug for GuestVendor<T, C> {
 }
 
 /// Every method of [`GuestVendor::None`]: it holds no keyset, so a call is
-/// a routing bug, refused rather than answered.
+/// a routing bug, refused rather than answered. It is not a backend
+/// failure, because there is no backend to name.
 fn no_vendor() -> Error {
-    Error::Backend {
-        vendor: "none",
-        kind: BackendErrorKind::NotFound,
-        source: "no key vendor backend is configured".into(),
-    }
+    Error::Unexpected("no key vendor backend is configured".into())
 }
 
 /// Dispatch one `KeyVendorBackend` method to the configured client.

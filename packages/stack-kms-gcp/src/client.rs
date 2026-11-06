@@ -17,8 +17,8 @@ use crate::auth::{AuthError, TokenProvider};
 use crate::config::{parse_key_name, GcpKmsConfig};
 use crate::crc32c::crc32c;
 
-/// The vendor name in errors ([`KeyVendor::name`] of [`KeyVendor::Gcp`]).
-const VENDOR: &str = "gcp-kms";
+/// This client's vendor: what [`KeyVendorBackend::vendor`] answers and what its errors name.
+const VENDOR: KeyVendor = KeyVendor::Gcp;
 
 /// The first byte of a wrapped key this client stores: the format of the
 /// rest (`key version(4, BE) ‖ Cloud KMS ciphertext`).
@@ -80,7 +80,7 @@ pub enum GcpKmsError {
 
 fn backend(kind: BackendErrorKind, error: GcpKmsError) -> Error {
     Error::Backend {
-        vendor: VENDOR,
+        backend: VENDOR.into(),
         kind,
         source: Box::new(error),
     }
@@ -406,7 +406,7 @@ fn to_json<S: Serialize>(operation: &'static str, value: &S) -> Result<Zeroizing
 
 impl<T: VendorTransport + Send + Sync, A: TokenProvider> KeyVendorBackend for GcpKms<T, A> {
     fn vendor(&self) -> KeyVendor {
-        KeyVendor::Gcp
+        VENDOR
     }
 
     /// The same crypto key, whatever `…/cryptoKeyVersions/{n}` either

@@ -20,8 +20,8 @@ use vitaminc::protected::{Controlled, Protected};
 
 fn kind_of(error: Error) -> BackendErrorKind {
     match error {
-        Error::Backend { vendor, kind, .. } => {
-            assert_eq!(vendor, "gcp-kms");
+        Error::Backend { backend, kind, .. } => {
+            assert_eq!(backend.name(), "gcp-kms");
             kind
         }
         other => panic!("not a backend error: {other:?}"),
