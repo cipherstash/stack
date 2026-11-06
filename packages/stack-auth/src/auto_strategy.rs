@@ -136,14 +136,6 @@ impl AutoStrategy {
             let has_token = ws_store
                 .map(|ws| ws.exists_profile::<Token>())
                 .unwrap_or(false);
-            if !has_token {
-                if let Some(crn) = &crn {
-                    tracing::info!(
-                        workspace = %crn.workspace_id,
-                        "no saved session for the workspace named by the CRN"
-                    );
-                }
-            }
             if has_token {
                 let mut builder = DeviceSessionStrategy::with_profile(store);
                 if let Some(crn) = &crn {
