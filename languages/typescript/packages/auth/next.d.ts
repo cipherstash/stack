@@ -8,7 +8,7 @@
  */
 
 import type { TokenResult } from "./wasm-types.d.ts";
-import type { GetTokenResult } from "./wasm-inline.d.ts";
+import type { WarmedAuthStrategy } from "./warmed.d.ts";
 
 export type { TokenResult } from "./wasm-types.d.ts";
 
@@ -160,24 +160,11 @@ export declare function csSanitizeHeaders(
 ): Headers;
 
 /**
- * An `AuthStrategy` backed by a token a middleware already warmed — it requires
- * no federation, so consumers (incl. protect-ffi) can drive `getToken()` from
- * any context. `getToken()` returns the same `Result` shape as a real strategy
- * (always a `{ data }` success here, since the warmed token is pre-validated),
- * so this stays a drop-in wherever an `OidcFederationStrategy` is consumed.
- *
- * **It does not refresh.** Unlike `OidcFederationStrategy` / `AccessKeyStrategy`,
- * `getToken()` hands back the *same* token every time, so the strategy is valid
- * only until that token's TTL expires — after which downstream CTS/ZeroKMS calls
- * fail with no refresh path. Treat it as request-scoped: a detached callback
- * within the request is fine, but don't cache it across requests — re-read the
- * header (or federate) on the next one.
+ * The no-federation strategy {@link csAuthHeader} returns. Declared in
+ * `warmed.d.ts` (shared with `@cipherstash/auth/start`); see it for the TTL
+ * boundary — **the strategy does not refresh**, so it is request-scoped only.
  */
-export interface WarmedAuthStrategy {
-  readonly requiresFederation: false;
-  getToken(): Promise<GetTokenResult>;
-  free(): void;
-}
+export type { WarmedAuthStrategy } from "./warmed.d.ts";
 
 /**
  * Read the warmed token injected by {@link csFederationMiddleware} into an
