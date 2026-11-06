@@ -18,8 +18,12 @@ name: Integration — stack-kms-gcp (Google Cloud KMS)
 #      repository secret STACK_KMS_GCP_SERVICE_ACCOUNT_KEY to the JSON key.
 #
 # Once the variable is set, a missing or empty secret FAILS the job (the
-# pre-flight below): a credentialed job that skips for want of a secret reads
-# exactly like one that passes.
+# pre-flight in _test-kms-live.yml): a credentialed job that skips for want
+# of a secret reads exactly like one that passes.
+#
+# The job itself is _test-kms-live.yml, shared with
+# integration-azure-key-vault.yml. This file keeps the triggers, the opt-in,
+# the fork-PR condition and the names of the variable and the secret.
 #
 # Fork PRs have no secrets, so the job skips them; every other event runs.
 # Enforced by scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
@@ -33,6 +37,7 @@ on:
       - packages/stack-kms/**
       - Cargo.lock
       - .github/workflows/integration-gcp-kms.yml
+      - .github/workflows/_test-kms-live.yml
   pull_request:
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
@@ -41,14 +46,11 @@ on:
       - packages/stack-kms/**
       - Cargo.lock
       - .github/workflows/integration-gcp-kms.yml
+      - .github/workflows/_test-kms-live.yml
   workflow_dispatch: {}
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    shell: bash
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,55 +59,18 @@ concurrency:
 jobs:
   live:
     name: stack-kms-gcp against Cloud KMS
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 30
     if: >-
       vars.STACK_KMS_GCP_LIVE_KEY != ''
       && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository)
-    env:
-      MISE_ENV: test
-      STACK_KMS_GCP_LIVE_KEY: ${{ vars.STACK_KMS_GCP_LIVE_KEY }}
-    steps:
-      # Fast pre-flight: fail in seconds if the secret was rotated or
-      # cleared, before the toolchain install and the compile.
-      - name: Require the Cloud KMS service account key
-        env:
-          SERVICE_ACCOUNT_KEY: ${{ secrets.STACK_KMS_GCP_SERVICE_ACCOUNT_KEY }}
-        run: |
-          if [ -z "$SERVICE_ACCOUNT_KEY" ]; then
-            echo "::error::STACK_KMS_GCP_LIVE_KEY is set but the secret STACK_KMS_GCP_SERVICE_ACCOUNT_KEY is empty"
-            exit 1
-          fi
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
-
-      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
-        with:
-          version: 2026.4.0
-          install: true
-          working_directory: .
-          cache: true
-          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
-          cache_key_prefix: mise-v1-ubuntu-2204
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-
-      # The key goes to a file only this user can read, outside the
-      # checkout, and is removed after the test.
-      - name: Write the service account key
-        env:
-          SERVICE_ACCOUNT_KEY: ${{ secrets.STACK_KMS_GCP_SERVICE_ACCOUNT_KEY }}
-        run: |
-          umask 077
-          printf '%s' "$SERVICE_ACCOUNT_KEY" > "$RUNNER_TEMP/stack-kms-gcp-live.json"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/stack-kms-gcp-live.json" >> "$GITHUB_ENV"
-
-      - name: stack-kms-gcp against Cloud KMS
-        run: mise run test:live:stack-kms-gcp
-
-      - name: Remove the service account key
-        if: always()
-        run: rm -f "$RUNNER_TEMP/stack-kms-gcp-live.json"
+    uses: ./.github/workflows/_test-kms-live.yml
+    with:
+      crate: stack-kms-gcp
+      name: stack-kms-gcp against Cloud KMS
+      live-key-variable: STACK_KMS_GCP_LIVE_KEY
+      required-secrets: credentials-json STACK_KMS_GCP_SERVICE_ACCOUNT_KEY
+      live-env: STACK_KMS_GCP_LIVE_KEY=${{ vars.STACK_KMS_GCP_LIVE_KEY }}
+      # The test reads the service account key file this names.
+      credentials-file-env: GOOGLE_APPLICATION_CREDENTIALS
+    secrets:
+      credentials-json: ${{ secrets.STACK_KMS_GCP_SERVICE_ACCOUNT_KEY }}

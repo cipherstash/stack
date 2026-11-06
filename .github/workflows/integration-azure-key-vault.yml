@@ -25,8 +25,12 @@ name: Integration — stack-kms-azure (Azure Key Vault)
 #      STACK_KMS_AZURE_CLIENT_SECRET.
 #
 # Once the variable is set, a missing or empty secret FAILS the job (the
-# pre-flight below): a credentialed job that skips for want of a secret reads
-# exactly like one that passes.
+# pre-flight in _test-kms-live.yml): a credentialed job that skips for want
+# of a secret reads exactly like one that passes.
+#
+# The job itself is _test-kms-live.yml, shared with integration-gcp-kms.yml.
+# This file keeps the triggers, the opt-in, the fork-PR condition and the
+# names of the variables and the secrets.
 #
 # Fork PRs have no secrets, so the job skips them; every other event runs.
 # Enforced by scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
@@ -40,6 +44,7 @@ on:
       - packages/stack-kms/**
       - Cargo.lock
       - .github/workflows/integration-azure-key-vault.yml
+      - .github/workflows/_test-kms-live.yml
   pull_request:
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
@@ -48,14 +53,11 @@ on:
       - packages/stack-kms/**
       - Cargo.lock
       - .github/workflows/integration-azure-key-vault.yml
+      - .github/workflows/_test-kms-live.yml
   workflow_dispatch: {}
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    shell: bash
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -64,53 +66,23 @@ concurrency:
 jobs:
   live:
     name: stack-kms-azure against Azure Key Vault
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 30
     if: >-
       vars.STACK_KMS_AZURE_LIVE_KEY != ''
       && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository)
-    env:
-      MISE_ENV: test
-      STACK_KMS_AZURE_LIVE_KEY: ${{ vars.STACK_KMS_AZURE_LIVE_KEY }}
-      STACK_KMS_AZURE_LIVE_HSM_KEY: ${{ vars.STACK_KMS_AZURE_LIVE_HSM_KEY }}
-    steps:
-      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
-      # before the toolchain install and the compile.
-      - name: Require the Azure service principal
-        env:
-          TENANT_ID: ${{ secrets.STACK_KMS_AZURE_TENANT_ID }}
-          CLIENT_ID: ${{ secrets.STACK_KMS_AZURE_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.STACK_KMS_AZURE_CLIENT_SECRET }}
-        run: |
-          missing=0
-          for name in TENANT_ID CLIENT_ID CLIENT_SECRET; do
-            if [ -z "${!name}" ]; then
-              echo "::error::STACK_KMS_AZURE_LIVE_KEY is set but the secret STACK_KMS_AZURE_${name} is empty"
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          persist-credentials: false
-
-      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
-        with:
-          version: 2026.4.0
-          install: true
-          working_directory: .
-          cache: true
-          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
-          cache_key_prefix: mise-v1-ubuntu-2204
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-
-      # The secrets reach only this step's environment.
-      - name: stack-kms-azure against Azure Key Vault
-        env:
-          AZURE_TENANT_ID: ${{ secrets.STACK_KMS_AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.STACK_KMS_AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.STACK_KMS_AZURE_CLIENT_SECRET }}
-        run: mise run test:live:stack-kms-azure
+    uses: ./.github/workflows/_test-kms-live.yml
+    with:
+      crate: stack-kms-azure
+      name: stack-kms-azure against Azure Key Vault
+      live-key-variable: STACK_KMS_AZURE_LIVE_KEY
+      required-secrets: |
+        azure-tenant-id STACK_KMS_AZURE_TENANT_ID
+        azure-client-id STACK_KMS_AZURE_CLIENT_ID
+        azure-client-secret STACK_KMS_AZURE_CLIENT_SECRET
+      live-env: |
+        STACK_KMS_AZURE_LIVE_KEY=${{ vars.STACK_KMS_AZURE_LIVE_KEY }}
+        STACK_KMS_AZURE_LIVE_HSM_KEY=${{ vars.STACK_KMS_AZURE_LIVE_HSM_KEY }}
+    secrets:
+      azure-tenant-id: ${{ secrets.STACK_KMS_AZURE_TENANT_ID }}
+      azure-client-id: ${{ secrets.STACK_KMS_AZURE_CLIENT_ID }}
+      azure-client-secret: ${{ secrets.STACK_KMS_AZURE_CLIENT_SECRET }}
