@@ -1617,7 +1617,7 @@ fn plan_refusal(error: &vitaminc_aead_frame::serde::Error, frame: &[u8]) -> Erro
 /// // Only the ciphertext comes back, as the record's frame; the term is
 /// // one-way.
 /// let opened = record::decrypt(Scope::Client(&cipher), sealed, &plan, None)?.await?;
-/// assert_eq!(opened.risky_ref(), frame.risky_ref());
+/// assert_eq!(opened, frame);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
 /// ```

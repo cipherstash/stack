@@ -94,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Scalar` and the type implements `Zeroize`.
   - `u8` alone, and a `Vec` of any type other than `u8`, still do not encrypt
     into one `Ciphertext`.
+- **`ValueFrame` implements `PartialEq`, comparing frames in constant time.**
+  Two frames are equal when their bytes are. So `34u32` and `34u64` are not
+  equal. Two maps with their keys in a different order are not equal either. Frames
+  of different lengths are unequal at once. The frame is now held in an
+  `Equatable<Protected<Vec<u8>>>`. Until vitaminc-protected implements
+  `ConstantTimeEq` for `Vec<u8>` (cipherstash/vitaminc#602), the bytes are
+  compared through `TimingSafeEq`.
 
 ## [0.3.0] - 2026-10-27
 

@@ -22,7 +22,7 @@
 //!
 //! // The same value, as a binding would hand it over.
 //! let from_host = ValueFrame::from_bytes(frame.as_protected_ref())?;
-//! assert_eq!(from_host.risky_ref(), frame.risky_ref());
+//! assert_eq!(from_host, frame);
 //! # Ok(())
 //! # }
 //! ```
@@ -39,7 +39,8 @@ use vitaminc_aead::plaintext::{
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
 use vitaminc_protected::{
-    AsProtectedRef, Buffer, Controlled, OpaqueDebug, Protected, ProtectedRef,
+    AsProtectedRef, Buffer, Controlled, Equatable, OpaqueDebug, Protected, ProtectedRef,
+    TimingSafeEq,
 };
 
 use super::ValueKind;
@@ -61,6 +62,9 @@ use crate::{Label, LabelError};
 /// `Debug` ([`OpaqueDebug`]) names the type and masks the frame, which is
 /// plaintext.
 ///
+/// Two frames compare with `==` in constant time. See the [`PartialEq`
+/// impl](#impl-PartialEq-for-ValueFrame) for what equal means.
+///
 /// # The value model
 ///
 /// A frame can carry any of vitaminc's scalars. The engine admits a subset,
@@ -75,7 +79,7 @@ use crate::{Label, LabelError};
 /// sink adapter that holds these rules, so a frame from a host and a frame
 /// opened from a ciphertext are read the same way.
 #[derive(OpaqueDebug)]
-pub struct ValueFrame(Protected<Vec<u8>>);
+pub struct ValueFrame(Equatable<Protected<Vec<u8>>>);
 
 /// Why [`ValueFrame::from_bytes`] or [`ValueFrame::check`] refused its bytes.
 #[derive(Debug, thiserror::Error)]
@@ -170,12 +174,12 @@ impl ValueFrame {
     /// move into the frame's [`Protected`] without being copied. While the
     /// writer wrote, the `Buffer` wiped each allocation it outgrew.
     fn from_buffer(buffer: Buffer) -> Self {
-        Self(buffer.into())
+        Self(Equatable::from(Protected::from(buffer)))
     }
 
     /// The null, as a frame: what an absent value opens to.
     pub(super) fn null() -> Self {
-        Self(Protected::new(vec![vitaminc_aead::tags::NULL]))
+        Self(Equatable::new(vec![vitaminc_aead::tags::NULL]))
     }
 
     /// A typed null of `ty`, as a frame: the leaf alone. Walked into the
@@ -184,7 +188,7 @@ impl ValueFrame {
     /// typed null of its own types only ([`model_null`]), so `ty` is one of
     /// those a [`ValueKind`] names.
     pub(super) fn typed_null(ty: FixedType) -> Self {
-        let mut leaf = Protected::new(Vec::new());
+        let mut leaf = Equatable::new(Vec::new());
         vitaminc_aead::leaf::write_typed_null(ty, leaf.risky_inner_mut());
         Self(leaf)
     }
@@ -209,7 +213,7 @@ impl ValueFrame {
 
     /// The frame bytes, still protected.
     pub fn into_inner(self) -> Protected<Vec<u8>> {
-        self.0
+        Protected::new(self.0.risky_unwrap())
     }
 
     /// The frame, for walking.
@@ -362,7 +366,35 @@ impl Decrypt for ValueFrame {
 /// original does.
 impl Clone for ValueFrame {
     fn clone(&self) -> Self {
-        Self(Protected::new(self.0.risky_ref().to_vec()))
+        Self(Equatable::new(self.0.risky_ref().to_vec()))
+    }
+}
+
+/// Two frames are equal when their bytes are. The bytes are compared in
+/// constant time, so the comparison does not reveal where two frames first
+/// differ. Frames of different lengths are unequal at once, which reveals
+/// only their lengths. A ciphertext's length already shows those.
+///
+/// This compares frames, not values. A frame records each scalar's width and
+/// type, so `34u32` and `34u64` are not equal, and neither are `0.0` and
+/// `-0.0`, or a typed null and a plain one. A map is equal to another only
+/// when its keys are written in the same order.
+///
+/// ```
+/// use stack_encrypt::dynamic::ValueFrame;
+///
+/// assert_eq!(ValueFrame::of(34u64)?, ValueFrame::of(34u64)?);
+/// assert_ne!(ValueFrame::of(34u64)?, ValueFrame::of(34u32)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+impl PartialEq for ValueFrame {
+    fn eq(&self, other: &Self) -> bool {
+        // The frame is held in an `Equatable`, which would compare it itself,
+        // but vitaminc-protected 0.9.1 has no `ConstantTimeEq` for `Vec<u8>`.
+        // Until it does, compare the bytes through `TimingSafeEq`, which uses
+        // `subtle`, and derive `PartialEq` once the impl is released.
+        let (ours, theirs) = (self.0.risky_ref(), other.0.risky_ref());
+        TimingSafeEq::ts_eq(ours.as_slice(), theirs.as_slice()).into()
     }
 }
 
@@ -1294,6 +1326,46 @@ impl<O: PutRow> MapSink for RowMap<O> {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
+
+    mod equality {
+        use super::*;
+
+        #[test]
+        fn frames_with_the_same_bytes_are_equal() {
+            let frame = ValueFrame::of("alice").unwrap();
+            assert_eq!(frame, frame.clone());
+            assert_eq!(
+                frame,
+                ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
+            );
+        }
+
+        #[test]
+        fn frames_with_different_bytes_of_the_same_length_are_not_equal() {
+            let (a, b) = (
+                ValueFrame::of("alice").unwrap(),
+                ValueFrame::of("alicf").unwrap(),
+            );
+            assert_eq!(a.risky_ref().len(), b.risky_ref().len());
+            assert_ne!(a, b);
+        }
+
+        #[test]
+        fn frames_of_different_lengths_are_not_equal() {
+            assert_ne!(
+                ValueFrame::of("alice").unwrap(),
+                ValueFrame::of("alice!").unwrap()
+            );
+        }
+
+        #[test]
+        fn the_same_number_at_two_widths_is_not_equal() {
+            assert_ne!(
+                ValueFrame::of(34u32).unwrap(),
+                ValueFrame::of(34u64).unwrap()
+            );
+        }
+    }
 
     fn s(value: &str) -> Tree {
         Tree::String(value.into())
