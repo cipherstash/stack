@@ -1,0 +1,116 @@
+name: Integration — stack-kms-azure (Azure Key Vault)
+
+# stack-kms-azure against real Azure Key Vault and, optionally, Managed HSM
+# (tests/live.rs). Microsoft publishes no Key Vault emulator, so unlike the
+# LocalStack and Vault jobs in tests-crates.yml this needs a real key and real
+# credentials. Every other stack-kms-azure test runs in tests-crates.yml,
+# against fixtures and an in-process emulator.
+#
+# OPT-IN. The job runs only when the repository variable
+# STACK_KMS_AZURE_LIVE_KEY is set, so the workflow is inert until someone sets
+# up the Azure side. To turn it on:
+#
+#   1. Create an RSA key (2048 bits or more) in a Key Vault, for this test
+#      only. Optionally, create an oct-HSM AES-256 key in a Managed HSM too
+#      (a Managed HSM is billed by the hour, so this part is optional).
+#   2. Create an app registration (service principal) with a client secret.
+#      Give it the role "Key Vault Crypto Service Encryption User" on the key
+#      and nothing else ("Managed HSM Crypto Service Encryption User" on the
+#      HSM key, if there is one).
+#   3. Set the repository variable STACK_KMS_AZURE_LIVE_KEY to the key
+#      identifier (https://<vault>.vault.azure.net/keys/<name>), and, for the
+#      HSM, STACK_KMS_AZURE_LIVE_HSM_KEY
+#      (https://<hsm>.managedhsm.azure.net/keys/<name>). Set the repository
+#      secrets STACK_KMS_AZURE_TENANT_ID, STACK_KMS_AZURE_CLIENT_ID and
+#      STACK_KMS_AZURE_CLIENT_SECRET.
+#
+# Once the variable is set, a missing or empty secret FAILS the job (the
+# pre-flight below): a credentialed job that skips for want of a secret reads
+# exactly like one that passes.
+#
+# Fork PRs have no secrets, so the job skips them; every other event runs.
+# Enforced by scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - packages/stack-kms-azure/**
+      - packages/stack-kms-vendor/**
+      - packages/stack-kms/**
+      - Cargo.lock
+      - .github/workflows/integration-azure-key-vault.yml
+  pull_request:
+    # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
+    paths:
+      - packages/stack-kms-azure/**
+      - packages/stack-kms-vendor/**
+      - packages/stack-kms/**
+      - Cargo.lock
+      - .github/workflows/integration-azure-key-vault.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: stack-kms-azure against Azure Key Vault
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 30
+    if: >-
+      vars.STACK_KMS_AZURE_LIVE_KEY != ''
+      && (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository)
+    env:
+      MISE_ENV: test
+      STACK_KMS_AZURE_LIVE_KEY: ${{ vars.STACK_KMS_AZURE_LIVE_KEY }}
+      STACK_KMS_AZURE_LIVE_HSM_KEY: ${{ vars.STACK_KMS_AZURE_LIVE_HSM_KEY }}
+    steps:
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the toolchain install and the compile.
+      - name: Require the Azure service principal
+        env:
+          TENANT_ID: ${{ secrets.STACK_KMS_AZURE_TENANT_ID }}
+          CLIENT_ID: ${{ secrets.STACK_KMS_AZURE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.STACK_KMS_AZURE_CLIENT_SECRET }}
+        run: |
+          missing=0
+          for name in TENANT_ID CLIENT_ID CLIENT_SECRET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::STACK_KMS_AZURE_LIVE_KEY is set but the secret STACK_KMS_AZURE_${name} is empty"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # The secrets reach only this step's environment.
+      - name: stack-kms-azure against Azure Key Vault
+        env:
+          AZURE_TENANT_ID: ${{ secrets.STACK_KMS_AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.STACK_KMS_AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.STACK_KMS_AZURE_CLIENT_SECRET }}
+        run: mise run test:live:stack-kms-azure
