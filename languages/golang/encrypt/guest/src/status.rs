@@ -347,7 +347,7 @@ mod tests {
         use stack_kms::BackendErrorKind as Kind;
         let status = |kind| {
             status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Backend {
-                vendor: "test-vendor",
+                backend: stack_kms::KeyVendor::Aws.into(),
                 kind,
                 source: Box::new(std::io::Error::other("detail")),
             }))
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(status(Kind::InvalidCiphertext), STATUS_AUTH);
         assert_eq!(
             status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::ZeroKmsOnly {
-                vendor: "test-vendor",
+                vendor: stack_kms::KeyVendor::Aws,
                 feature: stack_kms::ZeroKmsFeature::DecryptionPolicy,
             })),
             STATUS_ENCODING

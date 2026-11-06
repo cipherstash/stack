@@ -169,8 +169,8 @@ impl KeysetError {
                 if let Some(help) = error.help() {
                     let _ = fields.insert("help".into(), help.to_string().into());
                 }
-                if let RecordError::Kms(stack_kms::Error::Backend { vendor, kind, .. }) = error {
-                    let _ = fields.insert("vendor".into(), (*vendor).into());
+                if let RecordError::Kms(stack_kms::Error::Backend { backend, kind, .. }) = error {
+                    let _ = fields.insert("vendor".into(), backend.name().into());
                     let _ = fields.insert("kind".into(), kind.as_str().into());
                 }
             }
@@ -832,7 +832,7 @@ mod tests {
                 to: "b".into(),
             }),
             KeysetError::Record(RecordError::Kms(stack_kms::Error::Backend {
-                vendor: "static",
+                backend: KeyVendor::Static.into(),
                 kind: stack_kms::BackendErrorKind::NotFound,
                 source: "none".into(),
             })),

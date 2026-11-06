@@ -180,10 +180,7 @@ pub fn take_vendor_config(
     let vendor = slots
         .string("key_vendor")?
         .ok_or(ConfigError::Missing("key_vendor"))?;
-    let vendor = KeyVendor::ALL
-        .into_iter()
-        .find(|v| v.name() == vendor.as_str())
-        .ok_or(ConfigError::Invalid("key_vendor"))?;
+    let vendor = KeyVendor::from_name(vendor.as_str()).ok_or(ConfigError::Invalid("key_vendor"))?;
     let records = slots.records()?;
     let settings = match vendor {
         KeyVendor::Aws => VendorSettings::Aws {

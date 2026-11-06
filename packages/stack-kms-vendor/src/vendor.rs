@@ -33,7 +33,7 @@ pub type KeyBytes = Protected<[u8; 32]>;
 ///   [`bound::bind_key`](crate::bound::bind_key) in place of the key, and
 ///   open it with [`bound::open_bound_key`](crate::bound::open_bound_key).
 /// * **Report failures as [`Error::Backend`]**, with
-///   [`KeyVendor::name`] as `vendor` and the nearest
+///   this vendor ([`vendor`](Self::vendor)) as `backend` and the nearest
 ///   [`BackendErrorKind`](stack_kms::BackendErrorKind). A wrong key, a wrong
 ///   `aad` or damaged bytes is `InvalidCiphertext`. A rate limit is
 ///   `Throttled`: the adapter backs off and retries it. Never put key
@@ -207,12 +207,12 @@ pub struct UnwrapItem<'a> {
 /// A fresh random 256-bit key, from the CSPRNG.
 pub(crate) fn random_key(vendor: KeyVendor) -> Result<KeyBytes, Error> {
     let mut rng = SafeRand::from_entropy().map_err(|error| Error::Backend {
-        vendor: vendor.name(),
+        backend: vendor.into(),
         kind: stack_kms::BackendErrorKind::Unavailable,
         source: Box::new(error),
     })?;
     KeyBytes::random(&mut rng).map_err(|error| Error::Backend {
-        vendor: vendor.name(),
+        backend: vendor.into(),
         kind: stack_kms::BackendErrorKind::Unavailable,
         source: Box::new(error),
     })
@@ -221,12 +221,12 @@ pub(crate) fn random_key(vendor: KeyVendor) -> Result<KeyBytes, Error> {
 /// Fresh random bytes, from the CSPRNG.
 pub(crate) fn random_bytes<const N: usize>(vendor: KeyVendor) -> Result<[u8; N], Error> {
     let mut rng = SafeRand::from_entropy().map_err(|error| Error::Backend {
-        vendor: vendor.name(),
+        backend: vendor.into(),
         kind: stack_kms::BackendErrorKind::Unavailable,
         source: Box::new(error),
     })?;
     <[u8; N]>::random(&mut rng).map_err(|error| Error::Backend {
-        vendor: vendor.name(),
+        backend: vendor.into(),
         kind: stack_kms::BackendErrorKind::Unavailable,
         source: Box::new(error),
     })

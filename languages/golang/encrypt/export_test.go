@@ -134,6 +134,19 @@ func deterministicClient(ctx context.Context, wasm []byte, seed [32]byte) (*Clie
 	return c, nil
 }
 
+// KeyVendorWire is the KeyVendor byte and the key_vendor name the client
+// sends to the guest for v.
+func KeyVendorWire(v KeyVendor) (byte, string, error) {
+	spec, err := v.keyVendor()
+	if err != nil {
+		return 0, "", err
+	}
+	return byte(spec.vendor), spec.vendor.String(), nil
+}
+
+// KeyVendorNameCount is the number of vendors in the Go table of names.
+func KeyVendorNameCount() int { return len(keyVendorNames) }
+
 // NewDeterministicVendorClient is NewDeterministicClient with a key vendor
 // backend beside the seeded ZeroKMS stand-in: the deterministic build's
 // object config, {"seed", key_vendor, keyset_records, ...}. Vendor requests

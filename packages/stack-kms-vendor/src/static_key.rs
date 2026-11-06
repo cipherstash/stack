@@ -78,7 +78,7 @@ impl StaticKeyVendor {
 
 fn failure(kind: BackendErrorKind, message: &'static str) -> Error {
     Error::Backend {
-        vendor: KeyVendor::Static.name(),
+        backend: KeyVendor::Static.into(),
         kind,
         source: message.into(),
     }
@@ -150,8 +150,8 @@ mod tests {
 
     fn kind(error: Error) -> BackendErrorKind {
         match error {
-            Error::Backend { vendor, kind, .. } => {
-                assert_eq!(vendor, "static");
+            Error::Backend { backend, kind, .. } => {
+                assert_eq!(backend, KeyVendor::Static.into());
                 kind
             }
             other => panic!("expected a backend error, got {other:?}"),

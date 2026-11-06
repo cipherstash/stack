@@ -19,8 +19,8 @@ use crate::credentials::{CredentialsError, CredentialsProvider};
 use crate::sigv4::{sign, SigningParams};
 use crate::time::{system_clock, Clock};
 
-/// The vendor name in errors.
-const VENDOR: &str = "aws-kms";
+/// This client's vendor: what [`KeyVendorBackend::vendor`] answers and what its errors name.
+const VENDOR: KeyVendor = KeyVendor::Aws;
 /// The AWS KMS JSON protocol content type.
 const CONTENT_TYPE: &str = "application/x-amz-json-1.1";
 /// The SigV4 signing name of AWS KMS.
@@ -80,7 +80,7 @@ pub enum AwsKmsError {
 
 fn backend(kind: BackendErrorKind, error: AwsKmsError) -> Error {
     Error::Backend {
-        vendor: VENDOR,
+        backend: VENDOR.into(),
         kind,
         source: Box::new(error),
     }
@@ -372,7 +372,7 @@ fn plaintext_key(operation: &'static str, response: KeyResponse) -> Result<KeyBy
 
 impl<T: VendorTransport + Send + Sync, C: CredentialsProvider> KeyVendorBackend for AwsKms<T, C> {
     fn vendor(&self) -> KeyVendor {
-        KeyVendor::Aws
+        VENDOR
     }
 
     async fn wrap(&self, key_ref: &str, key: &KeyBytes, aad: &[u8]) -> Result<Vec<u8>, Error> {

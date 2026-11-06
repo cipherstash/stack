@@ -2511,7 +2511,7 @@ mod tests {
         let vitur = |kind| ViturRequestError::new(kind, "stubbed", std::io::Error::other("detail"));
         let backend = |kind| {
             Error::Kms(stack_kms::Error::Backend {
-                vendor: "test-vendor",
+                backend: stack_kms::KeyVendor::Static.into(),
                 kind,
                 source: Box::new(std::io::Error::other("detail")),
             })

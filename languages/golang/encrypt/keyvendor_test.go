@@ -198,6 +198,40 @@ func (refusing) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("this test makes no HTTP request")
 }
 
+// TestKeyVendorNamesMatchTheGuest pins the Go table of vendor names to the
+// Rust names (KeyVendor::name in stack-kms). For each backend, the guest
+// must accept the name the client sends as key_vendor, and a keyset record
+// with the byte the client uses. The guest refuses a name it does not know,
+// and a record of another vendor, so a drift on either side fails here.
+func TestKeyVendorNamesMatchTheGuest(t *testing.T) {
+	token := encrypt.StaticAccessToken("t")
+	vendors := []encrypt.KeyVendor{
+		encrypt.AWSKMS{Region: "us-east-1", Credentials: &countingCredentials{}},
+		encrypt.GoogleCloudKMS{Token: token},
+		encrypt.AzureKeyVault{Token: token},
+		encrypt.VaultTransit{Address: "https://vault.example.com", Token: token},
+		encrypt.StaticKey{KeyRef: "k", Key: bytes.Repeat([]byte{1}, 32)},
+	}
+	seen := map[byte]string{}
+	for _, v := range vendors {
+		id, name, err := encrypt.KeyVendorWire(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other, ok := seen[id]; ok {
+			t.Fatalf("%s and %s have the same byte %d", other, name, id)
+		}
+		seen[id] = name
+		t.Run(name, func(t *testing.T) {
+			record := keysetRecord(randomID(t), id, modeDerived, "pin", "k", []byte{1})
+			_ = vendorClient(t, refusing{}, v, record)
+		})
+	}
+	if len(seen) != encrypt.KeyVendorNameCount() {
+		t.Errorf("the test covers %d vendors, the table has %d", len(seen), encrypt.KeyVendorNameCount())
+	}
+}
+
 // fakeKMS answers the AWS KMS JSON API for the three operations the client
 // uses. A "ciphertext blob" is the key and the SHA-256 of the encryption
 // context's cipherstash:aad, so a decrypt under another context fails as

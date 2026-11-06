@@ -19,8 +19,8 @@ use zeroize::Zeroizing;
 use crate::auth::{AuthError, TokenProvider};
 use crate::config::{is_segment, KeyDerivation, VaultConfig};
 
-/// The vendor name in errors ([`KeyVendor::name`] of [`KeyVendor::Vault`]).
-const VENDOR: &str = "vault-transit";
+/// This client's vendor: what [`KeyVendorBackend::vendor`] answers and what its errors name.
+const VENDOR: KeyVendor = KeyVendor::Vault;
 
 /// The first byte of a wrapped key this client stores: the format of the
 /// rest (`version(4, BE) ‖ Vault ciphertext bytes`).
@@ -88,7 +88,7 @@ pub enum VaultError {
 
 fn backend(kind: BackendErrorKind, error: VaultError) -> Error {
     Error::Backend {
-        vendor: VENDOR,
+        backend: VENDOR.into(),
         kind,
         source: Box::new(error),
     }
@@ -524,7 +524,7 @@ fn stored(operation: &'static str, result: BatchResult) -> Result<Vec<u8>, Error
 
 impl<T: VendorTransport + Send + Sync, A: TokenProvider> KeyVendorBackend for VaultTransit<T, A> {
     fn vendor(&self) -> KeyVendor {
-        KeyVendor::Vault
+        VENDOR
     }
 
     async fn wrap(&self, key_ref: &str, key: &KeyBytes, aad: &[u8]) -> Result<Vec<u8>, Error> {

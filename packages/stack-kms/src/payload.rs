@@ -59,7 +59,7 @@ pub trait ZeroKmsExtensions {
 /// [`DataKeySource`](crate::DataKeySource) method, so that a lock context
 /// or a policy is refused, not silently dropped.
 pub fn refuse_zerokms_extensions<P: ZeroKmsExtensions>(
-    vendor: &'static str,
+    vendor: crate::KeyVendor,
     payloads: &[P],
     unverified_context: Option<&UnverifiedContext>,
 ) -> Result<(), crate::Error> {
@@ -252,7 +252,7 @@ mod tests {
 
     mod zerokms_extensions {
         use super::*;
-        use crate::Error;
+        use crate::{Error, KeyVendor};
         use std::collections::HashMap;
 
         fn tag() -> Vec<Context> {
@@ -299,7 +299,7 @@ mod tests {
         fn refused(result: Result<(), Error>) -> ZeroKmsFeature {
             match result {
                 Err(Error::ZeroKmsOnly { vendor, feature }) => {
-                    assert_eq!(vendor, "test-vendor");
+                    assert_eq!(vendor, KeyVendor::Static);
                     feature
                 }
                 other => panic!("expected a ZeroKmsOnly refusal, got {other:?}"),
@@ -310,7 +310,7 @@ mod tests {
         fn a_vendor_refuses_every_zerokms_feature() {
             let ctx = tag();
             let plain = [GenerateKeyPayload::new("d", Cow::Owned(vec![]))];
-            assert!(refuse_zerokms_extensions("test-vendor", &plain, None).is_ok());
+            assert!(refuse_zerokms_extensions(KeyVendor::Static, &plain, None).is_ok());
 
             let with_context = [
                 GenerateKeyPayload::new("d", Cow::Owned(vec![])),
@@ -318,7 +318,7 @@ mod tests {
             ];
             assert_eq!(
                 refused(refuse_zerokms_extensions(
-                    "test-vendor",
+                    KeyVendor::Static,
                     &with_context,
                     None
                 )),
@@ -328,7 +328,11 @@ mod tests {
             let with_policy =
                 [RetrieveKeyPayload::new([0u8; 16], "d", b"t").with_decryption_policy(policy())];
             assert_eq!(
-                refused(refuse_zerokms_extensions("test-vendor", &with_policy, None)),
+                refused(refuse_zerokms_extensions(
+                    KeyVendor::Static,
+                    &with_policy,
+                    None
+                )),
                 ZeroKmsFeature::DecryptionPolicy
             );
 
@@ -337,7 +341,7 @@ mod tests {
             let unverified = UnverifiedContext(claims);
             assert_eq!(
                 refused(refuse_zerokms_extensions(
-                    "test-vendor",
+                    KeyVendor::Static,
                     &plain,
                     Some(&unverified)
                 )),
@@ -350,7 +354,7 @@ mod tests {
         fn an_empty_unverified_context_is_not_refused() {
             let plain = [GenerateKeyPayload::new("d", Cow::Owned(vec![]))];
             let empty = UnverifiedContext(HashMap::new());
-            assert!(refuse_zerokms_extensions("test-vendor", &plain, Some(&empty)).is_ok());
+            assert!(refuse_zerokms_extensions(KeyVendor::Static, &plain, Some(&empty)).is_ok());
         }
 
         #[test]
