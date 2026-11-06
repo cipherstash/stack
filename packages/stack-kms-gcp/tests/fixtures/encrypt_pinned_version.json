@@ -1,0 +1,41 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://cloudkms.googleapis.com/v1/projects/test-only-project/locations/global/keyRings/cipherstash-fixture/cryptoKeys/fixture-key/cryptoKeyVersions/2:encrypt",
+      "headers": [
+        [
+          "authorization",
+          "Bearer fixture-access-token"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ]
+      ],
+      "body": {
+        "plaintext": "Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0M=",
+        "additionalAuthenticatedData": "BAAAAAAAAAAkAAAAAAAAAHN0YWNrLWttcy12ZW5kb3Ivd3JhcHBlZC1kYXRhLWtleS92MRAAAAAAAAAADx4tPEtaaXiHlqW0w9Lh8BAAAAAAAAAAAQEBAQEBAQEBAQEBAQEBAQsAAAAAAAAAdXNlcnMvZW1haWw=",
+        "plaintextCrc32c": "1618493874",
+        "additionalAuthenticatedDataCrc32c": "130468208"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        [
+          "content-type",
+          "application/json; charset=UTF-8"
+        ]
+      ],
+      "body": {
+        "name": "projects/test-only-project/locations/global/keyRings/cipherstash-fixture/cryptoKeys/fixture-key/cryptoKeyVersions/2",
+        "ciphertext": "CiQAJGkadvNFiRYxQukGpPXsH5mn+UILBKXRpfGmC4+IrCQ/q1wYG9KKCbZDl992riv68erBgpebX9t6NChYAE82r0cYIwZ+w5BcZ963iIyCwVmuqBRxcsEdBT4j1zKcVVun5CBPLuCO",
+        "ciphertextCrc32c": "2110219672",
+        "verifiedPlaintextCrc32c": true,
+        "verifiedAdditionalAuthenticatedDataCrc32c": true,
+        "protectionLevel": "SOFTWARE"
+      }
+    }
+  }
+]
