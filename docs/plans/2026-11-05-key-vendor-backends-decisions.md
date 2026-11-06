@@ -1581,3 +1581,17 @@ the alternatives and the reason.
 - **Revisit:** if the TypeScript SDK gets key vendor backends, it should
   read `CS_KEYSET_RECORD*` by itself, and then the CLI's "no SDK reads it"
   line changes.
+
+## Orchestrator review of CIP-5312
+
+- **Revisit:** the CLI suggests the env names `CS_KEYSET_RECORD[_<NAME>]` and
+  `CS_STATIC_KEY`, but no SDK reads them. The Go SDK takes records through
+  `WithKeysetRecords`, and Rust through its API. Accepted as a naming
+  convention that the CLI states plainly. A later change can make the Go and
+  Rust SDKs read them by default, or the CLI can stop suggesting them.
+- **Note:** the GCP path in the CLI refuses `GOOGLE_APPLICATION_CREDENTIALS`,
+  because the binary has no RSA code. A user runs
+  `GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token)` instead.
+- **Checked:** `pnpm run code:check` reports errors only in the ignored local
+  `.turbo/` cache and a `biome.json` schema-version notice from a newer local
+  Biome. There are no errors in tracked source.
