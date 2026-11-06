@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { readWorkflow } from './lib/workflows.mjs'
 
 const WORKFLOW = '.github/workflows/claude-review.yml'
-const ACTION_SHA = 'bf38e86e58df9ebf3420326d019f955bb3be64dd'
+const ACTION_SHA = '8041f1d17e0e7d2f2cfe35002962e9f26237c0bb' // v1.0.263
 const gha = (expression) => `\${{ ${expression} }}`
 
 const workflow = readWorkflow(WORKFLOW)
