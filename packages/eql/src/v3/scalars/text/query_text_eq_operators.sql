@@ -29,3 +29,103 @@ CREATE OPERATOR <> (
   LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_ord_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_text_ord_ore, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_ord_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_ord
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_ord
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_ord_ope
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_text_ord_ope, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_ord_ope
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_search_ore
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_text_search_ore, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_search_ore
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR = (
+  FUNCTION = eql_v3_internal.eq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_search
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = public.eql_v3_text_search, RIGHTARG = eql_v3.query_text_eq
+);
+
+CREATE OPERATOR <> (
+  FUNCTION = eql_v3_internal.neq,
+  LEFTARG = eql_v3.query_text_eq, RIGHTARG = public.eql_v3_text_search
+);

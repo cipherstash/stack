@@ -105,6 +105,14 @@ public.eql_v3_bigint_ord    →  eql_v3.query_bigint_ord
 public.eql_v3_timestamp_ord →  eql_v3.query_timestamp_ord
 ```
 
+Use the query domain of the column's *own* domain. Pairing a column with a
+different domain's query operand (for example `public.eql_v3_text_ord` with
+`eql_v3.query_text_eq`) raises `operator = is not supported between ...: use the
+query domain that matches the column` rather than returning no rows. This
+guard covers the comparison operators (`=`, `<>`, `<`, `<=`, `>`, `>=`, `@@`)
+that both the column and the wrong query domain support, within one type
+family. Build the cast from the column's own domain every time.
+
 **One irregular case:** `types.Json` builds `public.eql_v3_json_search`, but
 its query domain is `eql_v3.query_json` — not `query_json_search`.
 

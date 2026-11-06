@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use eql_domains::{Domain, DomainFamily, Role, Term};
 
 use crate::context::{domain_name, is_ord_capable, query_domain_name};
-use crate::operator_surface::OPERATORS;
+use crate::operator_surface::{Operator, OperatorSignature, TypeSlot, OPERATORS};
 
 /// REQUIRE edge for the v3 schema file — pulled in by every generated file.
 const V3_SCHEMA: &str = "src/v3/schema.sql";
@@ -248,6 +248,47 @@ fn query_types_path(family_name: &str) -> String {
     scalar_path(family_name, &format!("query_{family_name}_types.sql"))
 }
 
+/// The family's term-bearing storage domains OTHER than `domain` — the operands
+/// that must never be compared with `domain`'s query twin. Storage-only domains
+/// (no terms, no operators) are left out: every pair costs two schema objects
+/// (see [`cross_pair_operators`]).
+fn cross_pair_domains(spec: &DomainFamily, domain: &Domain) -> Vec<&'static Domain> {
+    spec.domains
+        .iter()
+        .filter(|d| d.is_scalar() && d.name != domain.name && !d.terms.is_empty())
+        .collect()
+}
+
+/// The operators (with their `(domain, domain)` signature) blocked for a
+/// `(sibling storage domain, this domain's query twin)` pair: those BOTH domains
+/// advertise. A query twin of a different domain is a DIFFERENT index family, so
+/// there is no sound comparison to offer — the pair raises rather than flatten to
+/// native `jsonb <op> jsonb`.
+///
+/// The intersection, not the union, is deliberate. Each blocked pair costs a
+/// function and an operator, and the uninstaller takes a lock per object against
+/// a stock budget it already approaches (docs/upgrading/v3.0.md, U-009), so the
+/// set is held to the operators a caller can reasonably believe both sides
+/// support. The remaining unblocked cases name an operator one side does not
+/// support at all, which is a second mistake on top of the wrong query domain.
+fn cross_pair_operators(
+    domain: &Domain,
+    sibling: &Domain,
+) -> Vec<(&'static Operator, OperatorSignature)> {
+    let ours = Term::operators_for_terms(domain.terms);
+    let theirs = Term::operators_for_terms(sibling.terms);
+    OPERATORS
+        .iter()
+        .filter(|op| ours.contains(&op.symbol.as_str()) && theirs.contains(&op.symbol.as_str()))
+        .filter_map(|op| {
+            op.signatures
+                .iter()
+                .find(|s| s.left == TypeSlot::Domain && s.right == TypeSlot::Domain)
+                .map(|s| (op, *s))
+        })
+        .collect()
+}
+
 /// Body for a term-bearing domain's query_<name>_functions.sql: the
 /// query-operand extractor OVERLOADS (the same extractors, on
 /// `eql_v3.query_<name>`) plus the comparison WRAPPERS binding the storage
@@ -255,11 +296,19 @@ fn query_types_path(family_name: &str) -> String {
 /// both directions. Reuses the same `functions.sql` template as the storage
 /// surface; a query operand carries the same terms, so each wrapper compares
 /// `extractor(a)` to `extractor(b)` with no ciphertext cast.
-pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String {
+///
+/// `siblings` are the family's OTHER scalar storage domains (see
+/// [`cross_pair_domains`]). Each gets exact-signature blockers against this
+/// query twin in both directions — see [`cross_pair_operators`].
+pub fn render_query_functions_file(
+    family_name: &str,
+    domain: &Domain,
+    siblings: &[&Domain],
+) -> String {
     use crate::consts::sql_str;
     use crate::context::{
-        domain_name, environment, extractor_entry, query_domain_name, wrapper_entry,
-        FunctionsContext,
+        cross_blocker_entry, domain_name, environment, extractor_entry, query_domain_name,
+        wrapper_entry, FunctionsContext, SqlParam,
     };
     let name = domain.full_name(family_name);
     let query_name = domain.query_name(family_name);
@@ -277,14 +326,12 @@ pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String
     // for supported operators only (a query operand is never sent for a blocked
     // operator). `is_supported(op) ⟹ extractor_for_operator is Some`.
     //
-    // Query twins deliberately emit NO blockers (unlike the storage surface). A
-    // query operand only ever appears as the RHS of `col <op> operand`, and for
-    // an unsupported `<op>` that predicate resolves against the STORAGE domain's
-    // `(<storage>, jsonb)` blocker (the query operand degrades to its `jsonb`
-    // base), which raises — so the realistic path is already protected. The only
-    // unblocked cases are nonsensical `operand <op> operand` / `operand <op>
-    // jsonb`, which no caller writes; blocking them would mean emitting the full
-    // blocker matrix against every query twin for zero real-world coverage.
+    // Query twins emit no blockers against their OWN storage domain or `jsonb`:
+    // a query operand only ever appears as the RHS of `col <op> operand`, and
+    // for an unsupported `<op>` that predicate resolves against the STORAGE
+    // domain's `(<storage>, jsonb)` blocker, which raises. The pairs that are
+    // NOT covered that way are a DIFFERENT domain's operand against this twin,
+    // handled by the cross-pair blockers below.
     for op in OPERATORS {
         if !supported.contains(&op.symbol.as_str()) {
             continue;
@@ -305,6 +352,35 @@ pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String
             &storage_dom,
             extractor,
         ));
+    }
+
+    // Cross-pair blockers: a DIFFERENT domain of this family against this query
+    // twin. Both are domains over `jsonb`, so without an exact signature
+    // PostgreSQL flattens the pair to native `jsonb <op> jsonb` and answers
+    // silently (`eql_v3_text_ord = query_text_eq` is false for equal values).
+    for sibling in siblings {
+        let sibling_dom = domain_name(&sibling.full_name(family_name));
+        for (op, sig) in cross_pair_operators(domain, sibling) {
+            for (left, right) in [
+                (sibling_dom.clone(), query_dom.clone()),
+                (query_dom.clone(), sibling_dom.clone()),
+            ] {
+                entries.push(cross_blocker_entry(
+                    op,
+                    [
+                        SqlParam {
+                            name: "a",
+                            ty: left,
+                        },
+                        SqlParam {
+                            name: arg_b_name(op.symbol.as_str()),
+                            ty: right,
+                        },
+                    ],
+                    &sig.render(&query_dom).returns,
+                ));
+            }
+        }
     }
 
     let ctx = FunctionsContext {
@@ -330,7 +406,14 @@ pub fn render_query_functions_file(family_name: &str, domain: &Domain) -> String
 /// `CREATE OPERATOR` binding `(storage_domain, query_<name>)` for every
 /// supported operator, plus its `(query_<name>, storage_domain)` commutator, so
 /// `col <op> $1::eql_v3.query_<name>` resolves to the query wrapper.
-pub fn render_query_operators_file(family_name: &str, domain: &Domain) -> String {
+///
+/// `siblings` as for [`render_query_functions_file`]: each binds a blocker for
+/// the `(sibling, query)` pair and its commutator.
+pub fn render_query_operators_file(
+    family_name: &str,
+    domain: &Domain,
+    siblings: &[&Domain],
+) -> String {
     use crate::context::{
         domain_name, environment, operator_entry, query_domain_name, OperatorsContext,
     };
@@ -348,7 +431,13 @@ pub fn render_query_operators_file(family_name: &str, domain: &Domain) -> String
         operators.push(operator_entry(op, &storage_dom, &query_dom, true));
         operators.push(operator_entry(op, &query_dom, &storage_dom, true));
     }
-
+    for sibling in siblings {
+        let sibling_dom = domain_name(&sibling.full_name(family_name));
+        for (op, _) in cross_pair_operators(domain, sibling) {
+            operators.push(operator_entry(op, &sibling_dom, &query_dom, false));
+            operators.push(operator_entry(op, &query_dom, &sibling_dom, false));
+        }
+    }
     let ctx = OperatorsContext {
         requires: vec![
             V3_SCHEMA.to_string(),
@@ -953,11 +1042,11 @@ pub fn render_type(spec: &DomainFamily, out_dir: &Path) -> Vec<(PathBuf, String)
             let query_name = d.query_name(family_name);
             rendered.push((
                 out_dir.join(format!("{query_name}_functions.sql")),
-                render_query_functions_file(family_name, d),
+                render_query_functions_file(family_name, d, &cross_pair_domains(spec, d)),
             ));
             rendered.push((
                 out_dir.join(format!("{query_name}_operators.sql")),
-                render_query_operators_file(family_name, d),
+                render_query_operators_file(family_name, d, &cross_pair_domains(spec, d)),
             ));
         }
         if let Some(agg) = render_aggregates_file(family_name, d) {
@@ -1133,6 +1222,51 @@ pub fn clean_all(out_root: &Path) -> Result<Vec<PathBuf>, WriteError> {
 
 #[cfg(test)]
 mod tests {
+    /// A query twin carries blockers for every OTHER term-bearing
+    /// domain of its family (both directions, only operators both sides
+    /// advertise) and none for the family's own storage domain or storage-only
+    /// domains, so a mismatched pair raises instead of flattening to `jsonb`.
+    #[test]
+    fn query_twin_blocks_other_domains_of_its_family() {
+        let text = eql_domains::CATALOG
+            .iter()
+            .find(|f| f.name == "text")
+            .expect("text family");
+        let eq = text.domains.iter().find(|d| d.name == "eq").unwrap();
+        let ord = text.domains.iter().find(|d| d.name == "ord").unwrap();
+        let siblings = cross_pair_domains(text, eq);
+        assert!(siblings
+            .iter()
+            .all(|d| d.name != "eq" && !d.terms.is_empty()));
+        assert!(siblings.iter().any(|d| d.name == "ord"));
+
+        let sql = render_query_functions_file("text", eq, &siblings);
+        for (l, r) in [
+            ("public.eql_v3_text_ord", "eql_v3.query_text_eq"),
+            ("eql_v3.query_text_eq", "public.eql_v3_text_ord"),
+        ] {
+            assert!(
+                sql.contains(&format!("eql_v3_internal.eq(a {l}, b {r})")),
+                "missing {l} = {r} blocker"
+            );
+        }
+        // query_text_eq advertises only `=`/`<>`: no ordering blocker.
+        assert!(!sql.contains("eql_v3_internal.lt(a public.eql_v3_text_ord"));
+        // Never the own twin, never the storage-only base domain.
+        assert!(!sql.contains("eql_v3_internal.eq(a public.eql_v3_text_eq"));
+        assert!(!sql.contains("eql_v3_internal.eq(a public.eql_v3_text,"));
+
+        let ops = render_query_operators_file("text", eq, &siblings);
+        assert!(ops.contains(
+            "FUNCTION = eql_v3_internal.eq,\n  LEFTARG = public.eql_v3_text_ord, RIGHTARG = eql_v3.query_text_eq\n"
+        ));
+
+        // The ordering twin gets ordering blockers against `search`.
+        let ord_sql = render_query_functions_file("text", ord, &cross_pair_domains(text, ord));
+        assert!(ord_sql
+            .contains("eql_v3_internal.lt(a public.eql_v3_text_search, b eql_v3.query_text_ord)"));
+    }
+
     use super::*;
     use eql_domains::CATALOG;
 
