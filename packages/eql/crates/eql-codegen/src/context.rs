@@ -214,7 +214,7 @@ pub enum FnEntry {
         ctor: String,      // e.g. hmac_256 (called as {{ internal_schema }}.{{ ctor }})
     },
     Wrapper {
-        op: String,            // SQL operator used in the body, e.g. =
+        op: String,            // schema-qualified body operator, e.g. OPERATOR(pg_catalog.=)
         function_name: String, // e.g. eq
         args: [SqlParam; 2],
         call_a: String, // e.g. eql_v3.eq_term(a)   (embeds extract_arg cast logic)
@@ -258,17 +258,13 @@ pub fn extractor_entry(term: Term) -> FnEntry {
 
 /// Build an inlinable comparison-wrapper entry for a supported operator.
 /// `dom` is the schema-qualified domain name; `op` is the already-resolved
-/// operator (the caller iterates `OPERATORS`, so no symbol re-lookup is needed).
-pub fn wrapper_entry(
-    dom: &str,
-    op: &Operator,
-    arg_a: &str,
-    arg_b: &str,
-    extractor: &str,
-) -> FnEntry {
+/// operator (the caller iterates `OPERATORS`, so no symbol re-lookup is needed);
+/// `term` is the term serving `op`, which supplies both the extractor and the
+/// schema the body's operator is named in.
+pub fn wrapper_entry(dom: &str, op: &Operator, arg_a: &str, arg_b: &str, term: Term) -> FnEntry {
+    let extractor = term.extractor();
     FnEntry::Wrapper {
-        // Body operator: `symbol` for all but `@@`, whose body uses bloom `@>`.
-        op: op.body_operator().to_string(),
+        op: qualified_body_operator(op, term),
         // Supported path → the public wrapper name. Differs from `function_name`
         // (the blocker name) only for `@@`, whose wrapper is `eql_v3.matches`.
         function_name: op.wrapper_function_name().to_string(),
@@ -286,6 +282,23 @@ pub fn wrapper_entry(
         call_b: extract_arg(arg_b, extractor, dom, "b"),
         empty_bloom_guard: op.needs_empty_bloom_guard(),
     }
+}
+
+/// The wrapper body's operator, schema-qualified as `OPERATOR(<schema>.<sym>)`.
+///
+/// `sym` is `op.body_operator()` (the symbol itself for all but `@@`, whose
+/// body uses bloom `@>`); `<schema>` is `term.operator_schema()`. A wrapper is
+/// unpinned `LANGUAGE sql` so it can inline, which means its body is parsed
+/// under the caller's `search_path` — a bare operator would resolve to whatever
+/// that path finds. See [`Term::operator_schema`] for the ORE failure this
+/// closes. Qualifying keeps the wrapper inlinable: the inlined
+/// expression carries the same operator OID either way.
+pub fn qualified_body_operator(op: &Operator, term: Term) -> String {
+    format!(
+        "OPERATOR({}.{})",
+        term.operator_schema(),
+        op.body_operator()
+    )
 }
 
 /// Build an unsupported-operator entry. Every such entry shares one uniform
@@ -337,7 +350,7 @@ pub fn operator_entry(op: &Operator, leftarg: &str, rightarg: &str, supported: b
     };
     // A supported operator is backed by a public comparison wrapper (SCHEMA); a
     // blocked one by an internal blocker (INTERNAL_SCHEMA). `supported` tracks
-    // wrapper emission exactly: `is_supported(op) ⟹ extractor_for_operator is
+    // wrapper emission exactly: `is_supported(op) ⟹ term_for_operator is
     // Some`, so `render_functions_file` always emits a wrapper for a supported
     // operator and a blocker otherwise.
     let function_schema = if supported { SCHEMA } else { INTERNAL_SCHEMA };
