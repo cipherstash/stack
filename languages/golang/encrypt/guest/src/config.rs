@@ -27,6 +27,12 @@
 //! | `gcp_endpoint`    | `gcp-kms` | overrides the Cloud KMS endpoint |
 //! | `static_key_ref`  | `static`, required | the static key's reference, as the records name it |
 //! | `static_key`      | `static`, required | the static key: 32 bytes (a bytes value, not a string) |
+//! | `default_keyset`  | no ZeroKMS only | the default keyset, `{"id": 16 bytes}` or `{"name": …}`; else the only record |
+//! | `root_key_ttl_ms` | any | how long a derived data key keyset's root key stays unwrapped, in milliseconds (`0` keeps none; default 5 minutes) |
+//!
+//! With a key vendor backend and none of `client_id`, `client_key` and
+//! `zerokms_url`, the client has no ZeroKMS: the default keyset is the
+//! vendor's, and a request for any other keyset is `STATUS_NO_ZEROKMS`.
 //!
 //! A vendor key for another backend than `key_vendor`, or with no
 //! `key_vendor`, is refused, as an unknown key is. The vendor's credentials
@@ -46,6 +52,7 @@
 //! ABI layer immediately after decoding (see [`crate::abi`]).
 
 use std::num::NonZeroUsize;
+use std::time::Duration;
 
 use stack_kms::{ClientKey, KeyVendor, ZeroKmsEndpoint};
 use stack_kms_vendor::KeyBytes;
@@ -54,7 +61,7 @@ use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
 use zeroize::Zeroizing;
 
-use crate::vendor::{VendorConfig, VendorSettings};
+use crate::vendor::{DefaultKeyset, VendorConfig, VendorSettings};
 
 /// A parse failure, carrying which key was at fault. Maps to
 /// `STATUS_ENCODING` at the ABI, and [`describe`](Self::describe) is the
@@ -83,6 +90,9 @@ pub enum ConfigError {
     /// A key vendor backend key that does not apply to the configured
     /// `key_vendor`, or that was given with no `key_vendor`.
     NotForVendor(&'static str),
+    /// A key that applies only to a client with a key vendor backend and no
+    /// ZeroKMS (`default_keyset`).
+    OnlyWithoutZeroKms(&'static str),
 }
 
 impl ConfigError {
@@ -104,13 +114,19 @@ impl ConfigError {
             Self::NotForVendor(key) => {
                 format!("the config's {key} does not apply to its key_vendor")
             }
+            Self::OnlyWithoutZeroKms(key) => {
+                format!("the config's {key} applies only to a client with no ZeroKMS")
+            }
         }
     }
 }
 
 /// Everything `se_cipher_init` needs to build the cipher.
 pub struct CipherConfig {
-    pub client_key: ClientKey,
+    /// The ZeroKMS client key. `None` for a client with a key vendor
+    /// backend and no ZeroKMS: the config then has no `client_id`,
+    /// `client_key` or `zerokms_url`.
+    pub client_key: Option<ClientKey>,
     pub endpoint: Option<ZeroKmsEndpoint>,
     pub keyset_cache_size: Option<NonZeroUsize>,
     /// The key vendor backend, when one is configured.
@@ -119,7 +135,7 @@ pub struct CipherConfig {
 
 /// The key vendor backend keys of the config, in the order the table above
 /// gives them.
-const VENDOR_KEYS: [&str; 10] = [
+const VENDOR_KEYS: [&str; 12] = [
     "key_vendor",
     "keyset_records",
     "aws_region",
@@ -130,6 +146,8 @@ const VENDOR_KEYS: [&str; 10] = [
     "gcp_endpoint",
     "static_key_ref",
     "static_key",
+    "default_keyset",
+    "root_key_ttl_ms",
 ];
 
 /// Take the key vendor backend keys out of `entries` and parse them. The
@@ -189,11 +207,25 @@ pub fn take_vendor_config(
         // client for is not one it can configure.
         _ => return Err(ConfigError::Invalid("key_vendor")),
     };
+    let default_keyset = slots.default_keyset()?;
+    let root_key_ttl = slots
+        .string("root_key_ttl_ms")?
+        .map(|ms| {
+            ms.parse::<u64>()
+                .map(Duration::from_millis)
+                .map_err(|_| ConfigError::Invalid("root_key_ttl_ms"))
+        })
+        .transpose()?;
     // Whatever is left was given for another backend.
     if let Some((key, _)) = slots.0.first() {
         return Err(ConfigError::NotForVendor(key));
     }
-    Ok(Some(VendorConfig { settings, records }))
+    Ok(Some(VendorConfig {
+        settings,
+        records,
+        default_keyset,
+        root_key_ttl,
+    }))
 }
 
 /// The vendor keys of one config, taken one at a time.
@@ -243,6 +275,32 @@ impl VendorSlots {
                 _ => Err(ConfigError::WrongType(KEY)),
             })
             .collect()
+    }
+
+    /// `default_keyset`: a selector object, `{"id": 16 bytes}` or
+    /// `{"name": string}`.
+    fn default_keyset(&mut self) -> Result<Option<DefaultKeyset>, ConfigError> {
+        const KEY: &str = "default_keyset";
+        let Some(value) = self.take(KEY) else {
+            return Ok(None);
+        };
+        let FfiValue::Object(mut entries) = value else {
+            return Err(ConfigError::WrongType(KEY));
+        };
+        let (Some((tag, value)), None) = (entries.pop(), entries.pop()) else {
+            return Err(ConfigError::Invalid(KEY));
+        };
+        match (tag.as_str(), value) {
+            ("id", FfiValue::Bytes(bytes)) => Uuid::from_slice(bytes.risky_ref())
+                .map(|id| Some(DefaultKeyset::Id(id)))
+                .map_err(|_| ConfigError::Invalid(KEY)),
+            ("name", FfiValue::String(name)) => std::str::from_utf8(name.risky_ref())
+                .ok()
+                .filter(|name| !name.is_empty())
+                .map(|name| Some(DefaultKeyset::Name(name.to_owned())))
+                .ok_or(ConfigError::Invalid(KEY)),
+            _ => Err(ConfigError::Invalid(KEY)),
+        }
     }
 
     fn static_key(&mut self) -> Result<KeyBytes, ConfigError> {
@@ -306,17 +364,34 @@ pub fn parse_config(value: FfiValue) -> Result<CipherConfig, ConfigError> {
         *slot = Some(text);
     }
 
-    let client_id = client_id.ok_or(ConfigError::Missing("client_id"))?;
-    let client_id = Uuid::parse_str(&client_id).map_err(|_| ConfigError::Invalid("client_id"))?;
+    // A key vendor backend is an alternative to ZeroKMS: with one, and no
+    // ZeroKMS key at all, the client has no ZeroKMS. Any ZeroKMS key given
+    // makes the others required, as before.
+    let vendor_only =
+        vendor.is_some() && client_id.is_none() && client_key_encoded.is_none() && url.is_none();
+    let client_key = if vendor_only {
+        None
+    } else {
+        let client_id = client_id.ok_or(ConfigError::Missing("client_id"))?;
+        let client_id =
+            Uuid::parse_str(&client_id).map_err(|_| ConfigError::Invalid("client_id"))?;
 
-    // Lenient by design: `from_encoded_v1` takes hex in either case *or* the
-    // base64 `secretkey.json` holds, matching every native loader. The
-    // `Zeroizing` slot wipes the encoded copy however this returns — the
-    // decoded `FfiValue`'s own copy was consumed above, and the raw input
-    // buffer is the ABI layer's to wipe.
-    let client_key_encoded = client_key_encoded.ok_or(ConfigError::Missing("client_key"))?;
-    let client_key = ClientKey::from_encoded_v1(client_id, &client_key_encoded)
-        .map_err(|_| ConfigError::Invalid("client_key"))?;
+        // Lenient by design: `from_encoded_v1` takes hex in either case *or*
+        // the base64 `secretkey.json` holds, matching every native loader.
+        // The `Zeroizing` slot wipes the encoded copy however this returns —
+        // the decoded `FfiValue`'s own copy was consumed above, and the raw
+        // input buffer is the ABI layer's to wipe.
+        let client_key_encoded = client_key_encoded.ok_or(ConfigError::Missing("client_key"))?;
+        Some(
+            ClientKey::from_encoded_v1(client_id, &client_key_encoded)
+                .map_err(|_| ConfigError::Invalid("client_key"))?,
+        )
+    };
+    // The default keyset of a client with ZeroKMS is the one a ZeroKMS
+    // administrator set; only a vendor-only client names its own.
+    if !vendor_only && vendor.as_ref().is_some_and(|v| v.default_keyset.is_some()) {
+        return Err(ConfigError::OnlyWithoutZeroKms("default_keyset"));
+    }
 
     let endpoint = url
         .map(|u| u.parse().map_err(|_| ConfigError::Invalid("zerokms_url")))
@@ -381,7 +456,7 @@ mod tests {
             ("client_key", &hex),
         ]))
         .expect("minimal config parses");
-        assert_eq!(cfg.client_key.key_id, id);
+        assert_eq!(cfg.client_key.as_ref().expect("zerokms").key_id, id);
         assert!(cfg.endpoint.is_none());
         assert!(cfg.keyset_cache_size.is_none());
     }
@@ -463,9 +538,17 @@ mod tests {
         ] {
             let cfg = parse_config(obj(vec![("client_id", &id_s), ("client_key", &encoded)]))
                 .unwrap_or_else(|e| panic!("{label} must parse, got {e:?}"));
-            assert_eq!(cfg.client_key.key_id, id, "{label}");
             assert_eq!(
-                cfg.client_key.to_hex_v1().expect("re-encode"),
+                cfg.client_key.as_ref().expect("zerokms").key_id,
+                id,
+                "{label}"
+            );
+            assert_eq!(
+                cfg.client_key
+                    .as_ref()
+                    .expect("zerokms")
+                    .to_hex_v1()
+                    .expect("re-encode"),
                 hex,
                 "{label} must recover the same keyset"
             );
@@ -697,6 +780,92 @@ mod tests {
         assert_eq!(
             cfg.vendor.map(|v| v.settings.vendor()),
             Some(KeyVendor::Gcp)
+        );
+    }
+
+    #[test]
+    fn a_vendor_and_no_zerokms_key_is_a_vendor_only_client() {
+        let cfg = parse_config(FfiValue::Object(vec![
+            ("key_vendor".into(), s("gcp-kms")),
+            ("keyset_records".into(), records()),
+            (
+                "default_keyset".into(),
+                FfiValue::Object(vec![("name".into(), s("payments"))]),
+            ),
+            ("root_key_ttl_ms".into(), s("60000")),
+        ]))
+        .expect("config parses");
+        assert!(cfg.client_key.is_none());
+        let vendor = cfg.vendor.expect("vendor");
+        assert_eq!(
+            vendor.default_keyset,
+            Some(DefaultKeyset::Name("payments".into()))
+        );
+        assert_eq!(vendor.root_key_ttl, Some(Duration::from_secs(60)));
+
+        // One ZeroKMS key makes the others required.
+        assert_eq!(
+            parse_config(FfiValue::Object(vec![
+                ("key_vendor".into(), s("gcp-kms")),
+                ("keyset_records".into(), records()),
+                ("zerokms_url".into(), s("https://zerokms.example.com")),
+            ]))
+            .err(),
+            Some(ConfigError::Missing("client_id"))
+        );
+        // No vendor and no ZeroKMS key is still a missing client id.
+        assert_eq!(
+            parse_config(FfiValue::Object(vec![])).err(),
+            Some(ConfigError::Missing("client_id"))
+        );
+    }
+
+    #[test]
+    fn a_default_keyset_needs_a_client_with_no_zerokms() {
+        let (id, hex) = client_key_hex();
+        let mut entries = match obj(vec![("client_id", &id.to_string()), ("client_key", &hex)]) {
+            FfiValue::Object(entries) => entries,
+            _ => unreachable!(),
+        };
+        entries.push(("key_vendor".into(), s("gcp-kms")));
+        entries.push(("keyset_records".into(), records()));
+        entries.push((
+            "default_keyset".into(),
+            FfiValue::Object(vec![(
+                "id".into(),
+                FfiValue::Bytes(vitaminc_protected::Protected::new(vec![1; 16])),
+            )]),
+        ));
+        assert_eq!(
+            parse_config(FfiValue::Object(entries)).err(),
+            Some(ConfigError::OnlyWithoutZeroKms("default_keyset"))
+        );
+
+        for bad in [
+            s("payments"),
+            FfiValue::Object(vec![]),
+            FfiValue::Object(vec![("name".into(), s(""))]),
+            FfiValue::Object(vec![(
+                "id".into(),
+                FfiValue::Bytes(vitaminc_protected::Protected::new(vec![1; 15])),
+            )]),
+            FfiValue::Object(vec![("name".into(), s("a")), ("id".into(), s("b"))]),
+        ] {
+            assert!(vendor_config(vec![
+                ("key_vendor", s("gcp-kms")),
+                ("keyset_records", records()),
+                ("default_keyset", bad),
+            ])
+            .is_err());
+        }
+        assert_eq!(
+            vendor_config(vec![
+                ("key_vendor", s("gcp-kms")),
+                ("keyset_records", records()),
+                ("root_key_ttl_ms", s("-1")),
+            ])
+            .unwrap_err(),
+            ConfigError::Invalid("root_key_ttl_ms")
         );
     }
 }

@@ -37,6 +37,7 @@ const (
 	StatusAuthRefreshRequired       = 27
 	// Appended by the crypto guest after the credential guest's codes.
 	StatusContextMismatch = 28
+	StatusNoZeroKMS       = 29
 )
 
 // StatusError is the sentinel a guest status decodes to. A status this host
@@ -100,6 +101,8 @@ func StatusError(status uint32) error {
 		return ErrAuthRefreshRequired
 	case StatusContextMismatch:
 		return ErrContextMismatch
+	case StatusNoZeroKMS:
+		return ErrNoZeroKMS
 	default:
 		return unrecognizedStatus(status)
 	}

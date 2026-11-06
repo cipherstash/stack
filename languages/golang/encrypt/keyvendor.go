@@ -207,10 +207,17 @@ func wipeVendorKey(v KeyVendor) {
 	}
 }
 
-// WithKeyVendor gives the client one key vendor backend beside ZeroKMS. It
-// needs [WithKeysetRecords]; one without the other is refused. A later
+// WithKeyVendor gives the client one key vendor backend. It needs
+// [WithKeysetRecords]; one without the other is refused. A later
 // WithKeyVendor replaces an earlier one. The default is none: every keyset
 // is ZeroKMS's, as before.
+//
+// A key vendor backend is an alternative to ZeroKMS. With no
+// [WithCredentials] the client has no ZeroKMS: NewClient neither needs nor
+// looks for ZeroKMS credentials, the default keyset is a vendor keyset (see
+// [WithDefaultKeyset]), and a call that needs a ZeroKMS keyset fails with
+// [ErrNoZeroKMS]. To hold both, also give WithCredentials, for example
+// WithCredentials(AutoCredentials()).
 func WithKeyVendor(v KeyVendor) ClientOption {
 	return func(o *clientOptions) {
 		if o.keyVendor != nil {
@@ -228,6 +235,63 @@ func WithKeyVendor(v KeyVendor) ClientOption {
 // id or a name. Records add up across calls.
 func WithKeysetRecords(records ...string) ClientOption {
 	return func(o *clientOptions) { o.keysetRecords = append(o.keysetRecords, records...) }
+}
+
+// WithDefaultKeyset names the default keyset of a client that has a key
+// vendor backend and no ZeroKMS: the keyset [Client.DefaultKeyset] and every
+// call that names no keyset use. Name it by the name or the id in its keyset
+// record, as [Client.Keyset] does: [KeysetName] or [KeysetID]. With one
+// keyset record it is that record's keyset and this option is not needed;
+// with several and no default, NewClient fails with [ErrNotFound].
+//
+// A client with ZeroKMS has the default keyset its ZeroKMS administrator
+// set, and refuses this option with [ErrEncoding].
+func WithDefaultKeyset(sel KeysetSelector) ClientOption {
+	return func(o *clientOptions) { o.defaultKeyset, o.defaultKeysetSet = sel, true }
+}
+
+// WithRootKeyTTL sets how long the guest keeps a keyset's root key
+// unwrapped under derived data keys, after which the next use unwraps it
+// again: one vendor call, which the vendor can refuse. Zero keeps none:
+// each use of a root key unwraps it, so an Encrypt that also derives search
+// terms unwraps it twice. The default is 5 minutes. It has
+// no effect on wrapped data keys, which keep nothing beyond one call.
+// Negative, or with no [WithKeyVendor], is refused with [ErrEncoding].
+func WithRootKeyTTL(d time.Duration) ClientOption {
+	return func(o *clientOptions) { o.rootKeyTTL = &d }
+}
+
+// checkVendorOnlyOptions refuses the options that need a key vendor
+// backend, or a client with no ZeroKMS, when the client has not got one.
+func checkVendorOnlyOptions(cfg *clientOptions, vendorOnly bool) error {
+	if cfg.rootKeyTTL != nil {
+		if cfg.keyVendor == nil {
+			return fmt.Errorf("%w: WithRootKeyTTL needs WithKeyVendor", ErrEncoding)
+		}
+		if *cfg.rootKeyTTL < 0 {
+			return fmt.Errorf("%w: WithRootKeyTTL must not be negative", ErrEncoding)
+		}
+	}
+	if !cfg.defaultKeysetSet {
+		return nil
+	}
+	if !vendorOnly {
+		return fmt.Errorf("%w: WithDefaultKeyset needs WithKeyVendor and no WithCredentials: a client with ZeroKMS has the default keyset its administrator set", ErrEncoding)
+	}
+	switch cfg.defaultKeyset.(type) {
+	case KeysetName, KeysetID:
+		return nil
+	default:
+		return fmt.Errorf("%w: WithDefaultKeyset takes a KeysetName or a KeysetID", ErrEncoding)
+	}
+}
+
+// noZeroKMS is the Credentials of a client that has a key vendor backend
+// and no ZeroKMS: nothing to resolve, no client key and no token.
+type noZeroKMS struct{}
+
+func (noZeroKMS) resolve(context.Context, resolveOptions) (*resolvedCredentials, error) {
+	return &resolvedCredentials{}, nil
 }
 
 // keyVendorConfig checks the key vendor options host-side, before anything

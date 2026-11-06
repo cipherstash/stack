@@ -100,6 +100,7 @@ pub mod response;
 pub mod status;
 pub mod targets;
 pub mod vendor;
+pub mod zerokms;
 
 // The ABI's packed u64 results embed 32-bit pointers, its bounds checks
 // read the wasm linear-memory size, and `host` calls imported functions —

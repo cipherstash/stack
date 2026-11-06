@@ -122,10 +122,16 @@ pub const STATUS_AUTH_REFRESH_REQUIRED: u32 = 27;
 /// and only that — never a verdict on the record's integrity.
 pub const STATUS_CONTEXT_MISMATCH: u32 = 28;
 
+/// A client with a key vendor backend and no ZeroKMS was asked for a
+/// ZeroKMS keyset: a keyset none of its keyset records names, or a value a
+/// ZeroKMS keyset sealed. Refused before any request. A configuration
+/// error: the fix is ZeroKMS credentials, or a keyset record.
+pub const STATUS_NO_ZEROKMS: u32 = 29;
+
 /// The last code in the table. A guest appending a code of its own starts
 /// at `LAST_STATUS + 1` and moves this constant with it, so two guests can
 /// never claim one number.
-pub const LAST_STATUS: u32 = STATUS_CONTEXT_MISMATCH;
+pub const LAST_STATUS: u32 = STATUS_NO_ZEROKMS;
 
 #[cfg(test)]
 mod tests {
@@ -164,6 +170,7 @@ mod tests {
             STATUS_AUTH_OTHER,
             STATUS_AUTH_REFRESH_REQUIRED,
             STATUS_CONTEXT_MISMATCH,
+            STATUS_NO_ZEROKMS,
         ];
         for (i, code) in codes.iter().enumerate() {
             assert_eq!(*code, i as u32 + 1, "code {i} is out of sequence");

@@ -221,6 +221,12 @@ func (b *requestBody) Close() error {
 
 // tokenGet is token_get: hand the guest the current bearer token.
 func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tokenLenOut uint32) int32 {
+	if t.token == nil {
+		// A client with a key vendor backend and no ZeroKMS has no token
+		// source; its guest builds no ZeroKMS client, so it never asks.
+		t.tokenErr = ErrNoZeroKMS
+		return hostFailed
+	}
 	token, err := t.token.Token(ctx)
 	if err != nil {
 		t.tokenErr = err
