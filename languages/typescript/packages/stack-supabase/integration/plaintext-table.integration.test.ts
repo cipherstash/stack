@@ -141,9 +141,16 @@ describe.each([
     expect(data).toEqual([{ row_key: `${key}1`, email: 'a@example.com' }])
   })
 
-  // Declared mode refuses `select('*')` outright: with no introspection there
-  // is no column list to expand it from.
-  it.skipIf(mode === 'declared mode')('reads with select("*")', async () => {
+  // Declared mode has no introspected column list to expand `*` from, so it
+  // refuses `select('*')` for a plaintext table exactly as for an encrypted
+  // one. Asserted rather than skipped: the integration suites must not skip.
+  it('reads with select("*") only where a column list exists', async () => {
+    if (mode === 'declared mode') {
+      expect(() => instance.from(AUDIT).select('*')).toThrow(
+        /does not support select\('\*'\)/,
+      )
+      return
+    }
     const { data, error } = await instance
       .from(AUDIT)
       .select('*')
