@@ -127,8 +127,17 @@ export async function decryptResults<T extends object, TData = T[]>(
   const hasSelect = ctx.selectColumns !== null
   const hasMutationWithReturning = ctx.hasMutation && hasSelect
 
-  if (!hasSelect && !hasMutationWithReturning) {
-    // No select means no data to decrypt (e.g., insert without .select())
+  if (
+    (!hasSelect && !hasMutationWithReturning) ||
+    !ctx.columns.hasEncryptedColumns
+  ) {
+    // Nothing to decrypt, so the rows are returned as PostgREST sent them:
+    //  - no select (e.g. an insert without `.select()`) returns no row data;
+    //  - a plaintext table (no encrypted columns) has no ciphertext to decrypt,
+    //    and is not registered with the encryption client either — both engines
+    //    would refuse it as "a table this client was not initialized with"
+    //    (see `tableHasEncryptedColumns`). Nor is there a `Date` to rebuild:
+    //    `postprocessDecryptedRow` only touches encrypted columns.
     return {
       data: result.data as TData,
       error: null,

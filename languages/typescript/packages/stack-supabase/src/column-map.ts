@@ -81,6 +81,27 @@ export function isV3ColumnLike(builder: unknown): builder is V3ColumnLike {
 }
 
 /**
+ * Whether a table carries at least one encrypted column.
+ *
+ * The ONE rule for "is this a plaintext table". It decides two things that must
+ * agree, which is why both read it from here:
+ *
+ * - `create.ts` hands `Encryption({ schemas })` only the tables for which this
+ *   is true (it rejects an empty schema list, and a plaintext table gives it
+ *   nothing to do).
+ * - The query pipeline (`ColumnMap.hasEncryptedColumns`) bypasses the
+ *   encryption client for every table for which it is false. Both engines
+ *   refuse a model operation on a table they were not initialized with, so a
+ *   table left out of the first must never reach the client through the second.
+ *
+ * If the two rules ever diverged, every read of the affected tables would fail
+ * with "decryptModel received a table this client was not initialized with".
+ */
+export function tableHasEncryptedColumns(table: AnyV3Table): boolean {
+  return Object.keys(table.columnBuilders).length > 0
+}
+
+/**
  * Reject a declared property name that is also a DIFFERENT physical column.
  *
  * `select('*')` expands the introspected DB names into property names, so a
@@ -131,6 +152,14 @@ export class ColumnMap {
    * Filters and select strings address columns by both, so recognition must
    * cover both. */
   readonly encryptedColumnNames: string[]
+  /**
+   * False for a plaintext table: one with no encrypted columns. Such a table is
+   * not registered with the encryption client (see
+   * {@link tableHasEncryptedColumns}), so the mutation-encrypt and
+   * result-decrypt steps must pass its rows through instead of calling the
+   * client — which would refuse the unregistered table.
+   */
+  readonly hasEncryptedColumns: boolean
 
   /** DB column name → JS property name — the inverse of {@link propToDb}, used
    * to expand `select('*')` back into property names. Null prototype: a DB
@@ -195,6 +224,7 @@ export class ColumnMap {
     }
 
     this.encryptedColumnNames = Object.keys(this.v3Columns)
+    this.hasEncryptedColumns = tableHasEncryptedColumns(table)
   }
 
   /** Resolve a JS property name to its DB column name. `Object.hasOwn` guards
