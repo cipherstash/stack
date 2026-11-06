@@ -229,14 +229,17 @@ fn every_lending_owner_seals_as_the_protected_value() {
     assert_eq!(sealed(both.as_protected_ref()), sealed(&protected));
 }
 
-/// A borrowed string seals as text only when the caller asks for text.
+/// A protected string narrowed to a borrowed `str` seals as text only when
+/// the caller asks for text. A bare `str` does not lend at all.
 #[test]
 fn a_borrowed_str_seals_as_what_the_caller_asks_for() {
-    let text: ProtectedRef<'_, str> = "pw".as_protected_ref();
+    let owner = Protected::new(String::from("pw"));
+
+    let text: ProtectedRef<'_, str> = owner.as_protected_ref().as_deref();
     let read: String = round_trip(text);
     assert_eq!(read, "pw");
 
-    let bytes: ProtectedRef<'_, [u8]> = "pw".as_protected_ref();
+    let bytes: ProtectedRef<'_, [u8]> = owner.as_protected_ref().as_ref_of();
     let read: Vec<u8> = round_trip(bytes);
     assert_eq!(read, b"pw");
 }
