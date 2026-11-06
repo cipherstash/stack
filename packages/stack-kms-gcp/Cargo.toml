@@ -1,0 +1,57 @@
+[package]
+name = "stack-kms-gcp"
+description = "The Google Cloud KMS key vendor backend for Stack Encrypt: a hand-written Cloud KMS client with service account and metadata server credentials, for native Rust and the WASI guest"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Publishable, in the `stack-kms-vendor` version group with the vendor seam it
+# implements. release-plz.toml keeps `release = false` until the first version
+# is on crates.io (published by hand; see stack-kms-vendor's Cargo.toml).
+
+[features]
+default = ["http"]
+# `GcpKms::from_env`: the native transport (`HttpVendorTransport`) and the
+# default credentials over it. Native only; on wasm32 it adds nothing.
+http = ["stack-kms-vendor/http"]
+
+[dependencies]
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false }
+stack-kms-vendor = { path = "../stack-kms-vendor", version = "0.1.0" }
+
+vitaminc = { workspace = true, features = ["protected"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+futures = "0.3.25"
+# RS256 for the service account JWT. Pure Rust, so it builds for
+# wasm32-wasip1 (ring and aws-lc-rs need a C toolchain there). See the
+# CIP-5308 section of docs/plans/2026-11-05-key-vendor-backends-decisions.md
+# for RUSTSEC-2023-0071.
+rsa = { version = "0.9.10", default-features = false, features = ["std", "sha2", "pem", "u64_digit"] }
+# The blinding RNG of the RSA signature (rsa 0.9 takes rand_core 0.6).
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+web-time = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+stack-kms-vendor = { path = "../stack-kms-vendor", features = ["test-support", "http"] }
+stack-encrypt = { path = "../stack-encrypt", default-features = false }
+aes-gcm = { version = "0.10.3", features = ["zeroize"] }
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+uuid = { workspace = true }
+vitaminc = { workspace = true, features = ["protected", "random"] }
+
+# Builds `GcpKms::from_env`, which needs the native transport.
+[[test]]
+name = "live"
+required-features = ["http"]
+
+[package.metadata.docs.rs]
+all-features = true
