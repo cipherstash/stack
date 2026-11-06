@@ -15,6 +15,14 @@
 //! Encryption/decryption, keyset and client management, and config save/load
 //! all remain in `cipherstash-client` for now.
 //!
+//! # Key backends
+//!
+//! ZeroKMS is one key backend. The `stack-kms-vendor` crate adds the key
+//! vendor backends (AWS KMS, Google Cloud KMS, Azure Key Vault, HashiCorp
+//! Vault Transit and a static key) on the [`DataKeySource`] and
+//! [`IndexKeySource`] traits of this crate. Its crate documentation has a
+//! capability matrix that compares each of them with ZeroKMS.
+//!
 //! # Quick start
 //!
 // The quick start goes through `StackKmsBuilder`, which configures the default
