@@ -22,6 +22,8 @@ use stack_kms_vendor::{
     HttpVendorTransport, HttpVendorTransportOptions, KeyBytes, KeyVendorBackend, KeysetRecord,
     RecordError, StaticKeyVendor,
 };
+use std::future::Future;
+use std::pin::Pin;
 use vitaminc::protected::{Controlled, Protected};
 use vitaminc::random::{Generatable, SafeRand};
 use vitaminc_protected::OpaqueDebug;
@@ -236,22 +238,63 @@ fn vendor_config(vendor: KeyVendor, error: impl std::error::Error + 'static) -> 
 /// them, each with its short name (the `--backend` value). The output
 /// names a backend with [`KeyVendor::name`] (`aws-kms`, …), and the input
 /// takes that name too, so a value the output gives is a valid input.
-/// This table is the only list of the short names.
-pub(crate) const BACKENDS: [(&str, KeyVendor); 5] = [
-    ("aws", KeyVendor::Aws),
-    ("gcp", KeyVendor::Gcp),
-    ("azure", KeyVendor::Azure),
-    ("vault", KeyVendor::Vault),
-    ("static", KeyVendor::Static),
+/// This table is the only list of the backends in this module: adding a
+/// vendor is one row here.
+pub(crate) const BACKENDS: [Backend; 5] = [
+    Backend {
+        short: "aws",
+        vendor: KeyVendor::Aws,
+        run: Some(run_aws),
+    },
+    Backend {
+        short: "gcp",
+        vendor: KeyVendor::Gcp,
+        run: Some(run_gcp),
+    },
+    Backend {
+        short: "azure",
+        vendor: KeyVendor::Azure,
+        run: Some(run_azure),
+    },
+    Backend {
+        short: "vault",
+        vendor: KeyVendor::Vault,
+        run: Some(run_vault),
+    },
+    Backend {
+        short: "static",
+        vendor: KeyVendor::Static,
+        // The static key is not in the environment: `create` and `rewrap`
+        // read or generate it, and build the backend themselves.
+        run: None,
+    },
 ];
+
+/// One row of [`BACKENDS`].
+pub(crate) struct Backend {
+    /// The short `--backend` name.
+    pub(crate) short: &'static str,
+    /// The vendor.
+    pub(crate) vendor: KeyVendor,
+    /// Build the vendor's client from the environment and run an operation
+    /// on it. `None` for the static key backend.
+    run: Option<RunVendor>,
+}
+
+/// A [`Backend::run`]: one vendor call (or two, for a rewrap) through a
+/// client built from the environment.
+type RunVendor = fn(Operation) -> Pin<Box<dyn Future<Output = VendorResult> + Send>>;
+
+/// What a [`RunVendor`] returns.
+type VendorResult = Result<KeysetRecord, KeysetError>;
 
 /// The backend that `text` names: a short name of [`BACKENDS`] or the
 /// [`KeyVendor::name`] of one of its vendors.
 fn parse_backend(text: &str) -> Result<KeyVendor, KeysetError> {
     BACKENDS
         .iter()
-        .find(|(short, vendor)| *short == text || vendor.name() == text)
-        .map(|(_, vendor)| *vendor)
+        .find(|backend| backend.short == text || backend.vendor.name() == text)
+        .map(|backend| backend.vendor)
         .ok_or_else(|| {
             KeysetError::Options(format!(
                 "Unknown key backend {text:?}. {}",
@@ -262,10 +305,10 @@ fn parse_backend(text: &str) -> Result<KeyVendor, KeysetError> {
 
 /// The accepted backend names, for an error message, from [`BACKENDS`].
 fn backend_choices() -> String {
-    let short: Vec<&str> = BACKENDS.iter().map(|(short, _)| *short).collect();
+    let short: Vec<&str> = BACKENDS.iter().map(|backend| backend.short).collect();
     let full: Vec<&str> = BACKENDS
         .iter()
-        .map(|(_, vendor)| vendor.name())
+        .map(|backend| backend.vendor.name())
         .filter(|name| !short.contains(name))
         .collect();
     format!(
@@ -493,30 +536,48 @@ fn result(record: &KeysetRecord, generated_static_key: Option<String>) -> Keyset
 }
 
 /// Build the vendor's client from the environment and run `operation` on it.
-async fn run_vendor(vendor: KeyVendor, operation: Operation) -> Result<KeysetRecord, KeysetError> {
-    match vendor {
-        KeyVendor::Aws => {
-            let kms = stack_kms_aws::DefaultAwsKms::from_env()
-                .map_err(|error| vendor_config(vendor, error))?;
-            operation.run(&kms).await
-        }
-        KeyVendor::Vault => {
-            let vault = stack_kms_vault::DefaultVaultTransit::from_env()
-                .map_err(|error| vendor_config(vendor, error))?;
-            operation.run(&vault).await
-        }
-        KeyVendor::Azure => {
-            let azure = stack_kms_azure::DefaultAzureKeyVault::from_env()
-                .map_err(|error| vendor_config(vendor, error))?;
-            operation.run(&azure).await
-        }
-        KeyVendor::Gcp => run_gcp(operation).await,
-        // The callers handle the static key backend before this point, and
-        // `KeyVendor` is non-exhaustive.
-        _ => Err(KeysetError::Options(format!(
-            "stash keyset cannot reach the {vendor} key backend."
-        ))),
-    }
+/// The vendor's row of [`BACKENDS`] says how.
+async fn run_vendor(vendor: KeyVendor, operation: Operation) -> VendorResult {
+    // The callers handle the static key backend before this point, and
+    // `KeyVendor` is non-exhaustive.
+    let run = BACKENDS
+        .iter()
+        .find(|backend| backend.vendor == vendor)
+        .and_then(|backend| backend.run)
+        .ok_or_else(|| {
+            KeysetError::Options(format!(
+                "stash keyset cannot reach the {vendor} key backend."
+            ))
+        })?;
+    run(operation).await
+}
+
+fn run_aws(operation: Operation) -> Pin<Box<dyn Future<Output = VendorResult> + Send>> {
+    Box::pin(async move {
+        let kms = stack_kms_aws::DefaultAwsKms::from_env()
+            .map_err(|error| vendor_config(KeyVendor::Aws, error))?;
+        operation.run(&kms).await
+    })
+}
+
+fn run_vault(operation: Operation) -> Pin<Box<dyn Future<Output = VendorResult> + Send>> {
+    Box::pin(async move {
+        let vault = stack_kms_vault::DefaultVaultTransit::from_env()
+            .map_err(|error| vendor_config(KeyVendor::Vault, error))?;
+        operation.run(&vault).await
+    })
+}
+
+fn run_azure(operation: Operation) -> Pin<Box<dyn Future<Output = VendorResult> + Send>> {
+    Box::pin(async move {
+        let azure = stack_kms_azure::DefaultAzureKeyVault::from_env()
+            .map_err(|error| vendor_config(KeyVendor::Azure, error))?;
+        operation.run(&azure).await
+    })
+}
+
+fn run_gcp(operation: Operation) -> Pin<Box<dyn Future<Output = VendorResult> + Send>> {
+    Box::pin(gcp(operation))
 }
 
 /// Google Cloud KMS, with the credentials this binding supports.
@@ -527,7 +588,7 @@ async fn run_vendor(vendor: KeyVendor, operation: Operation) -> Result<KeysetRec
 /// print-access-token`), else the metadata server on Google Cloud. A service
 /// account key file (`GOOGLE_APPLICATION_CREDENTIALS`) is refused with that
 /// remedy, so it is never ignored.
-async fn run_gcp(operation: Operation) -> Result<KeysetRecord, KeysetError> {
+async fn gcp(operation: Operation) -> VendorResult {
     use stack_kms_gcp::{
         AccessToken, CachedToken, GcpKms, GcpKmsConfig, MetadataServerLogin, ACCESS_TOKEN_VARIABLE,
     };
@@ -888,10 +949,23 @@ mod tests {
 
     #[test]
     fn the_backend_names_are_the_cli_names() {
-        let names: Vec<_> = BACKENDS.iter().map(|(name, _)| *name).collect();
+        let names: Vec<_> = BACKENDS.iter().map(|backend| backend.short).collect();
         assert_eq!(names, ["aws", "gcp", "azure", "vault", "static"]);
-        for (name, vendor) in BACKENDS {
-            assert_eq!(parse_backend(name).unwrap(), vendor);
+        for backend in BACKENDS {
+            assert_eq!(parse_backend(backend.short).unwrap(), backend.vendor);
+        }
+    }
+
+    /// Every vendor but the static key backend runs from the environment.
+    #[test]
+    fn every_vendor_client_backend_has_a_runner() {
+        for backend in BACKENDS {
+            assert_eq!(
+                backend.run.is_some(),
+                backend.vendor != KeyVendor::Static,
+                "{}",
+                backend.vendor
+            );
         }
     }
 
@@ -901,7 +975,7 @@ mod tests {
     fn the_backend_input_takes_the_output_names() {
         for vendor in KeyVendor::ALL {
             assert_eq!(parse_backend(vendor.name()).unwrap(), vendor);
-            assert!(BACKENDS.iter().any(|(_, v)| *v == vendor), "{vendor}");
+            assert!(BACKENDS.iter().any(|b| b.vendor == vendor), "{vendor}");
         }
         let Err(KeysetError::Options(message)) = parse_backend("zerokms") else {
             panic!("zerokms is not a key vendor backend");
