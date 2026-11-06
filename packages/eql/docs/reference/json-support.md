@@ -214,7 +214,7 @@ separate equality-indexed scalar column when server-side grouping is required.
 - **`eql_v3.jsonb_document_contains(a public.eql_v3_json_search, b public.eql_v3_json_search) RETURNS boolean`** — true if every selector in `b` is present in `a` (selector-subset containment); backs the `@>` operator.
 - **`eql_v3.jsonb_contains(a jsonb, b jsonb)` / `eql_v3.jsonb_contained_by(a jsonb, b jsonb)`** — function-form containment entrypoints for platforms that cannot type an operator call (Supabase PostgREST RPC, for example); same result as `@>` / `<@` (a parity test pins this).
 - **`eql_v3.jsonb_array(val jsonb) RETURNS jsonb[]`** — function-form array accessor for the same platforms.
-- **`eql_v3.to_ste_vec_query(val public.eql_v3_json_search) RETURNS eql_v3.query_json`** — the GIN-indexable query shape `@>` inlines to.
+- **`eql_v3.to_ste_vec_query(val public.eql_v3_json_search) RETURNS eql_v3.query_json`** — the GIN-indexable query shape `@>` inlines to. This is the only document-to-needle conversion: `doc::eql_v3.query_json` is **not** equivalent (PostgreSQL ignores casts from a domain, so it is a plain coercion that fails the `query_json` CHECK).
 - **`eql_v3.meta_data(val jsonb)`** — envelope accessor: returns `{i, v, h}` (the key header `h` included so an extracted entry can be decrypted). **`eql_v3.ciphertext(val jsonb)`** — returns the `c` field; on the ste_vec surface `c` is raw AEAD output, decryptable only together with the entry's `s` and the document `h`. **`eql_v3.selector(val jsonb)` / `(entry public.eql_v3_json_entry)`** — selector accessor.
 
 ### Path query functions
