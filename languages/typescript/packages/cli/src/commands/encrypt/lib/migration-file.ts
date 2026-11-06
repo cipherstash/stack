@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import * as p from '@clack/prompts'
 import { detectDrizzle } from '@/commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { messages } from '@/messages.js'
 import { scaffoldDrizzleMigration } from '../drizzle-helper.js'
 
 /** Where a generated migration landed, and how to apply it. */
@@ -41,6 +43,21 @@ export async function writeMigrationFile(opts: {
       outDir: migrationsDir,
       sql: opts.sql,
     })
+    // `drizzle.config.ts` decides where drizzle-kit writes, so an explicit
+    // --migrations-dir is only honoured as a fallback. Say so rather than leave
+    // the user believing the file is where they asked for it.
+    if (
+      opts.migrationsDir !== undefined &&
+      result.dir !== result.requestedDir
+    ) {
+      p.log.warn(
+        messages.eql.migrationDrizzleOutOverridden(
+          result.dir,
+          result.requestedDir,
+          '--migrations-dir',
+        ),
+      )
+    }
     return {
       filePath: result.path,
       nextStep: `Apply with your usual Drizzle migrate command:\n  ${runnerCommand(detectPackageManager(), 'drizzle-kit migrate')}`,

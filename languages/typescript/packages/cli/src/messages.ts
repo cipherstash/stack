@@ -175,8 +175,12 @@ export const messages = {
      * config wins and the user needs to know which one their file landed in —
      * silently using the real one would leave `--out` looking honoured.
      */
-    migrationDrizzleOutOverridden: (configured: string, requested: string) =>
-      `drizzle-kit wrote into ${configured}, not the --out you passed (${requested}) — the \`out\` in your drizzle.config.ts decides where migrations go, and stash follows it so the journal stays consistent. Change it there if you want them elsewhere.`,
+    migrationDrizzleOutOverridden: (
+      configured: string,
+      requested: string,
+      flag = '--out',
+    ) =>
+      `drizzle-kit wrote into ${configured}, not the ${flag} you passed (${requested}) — the \`out\` in your drizzle.config.ts decides where migrations go, and stash follows it so the journal stays consistent. Change it there if you want them elsewhere.`,
     /**
      * `--name` with `--supabase`. The Supabase filename is fixed because
      * duplicate detection matches on the `_cipherstash_eql.sql` suffix, so the
