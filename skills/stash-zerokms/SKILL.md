@@ -215,6 +215,19 @@ const client = await Encryption({
   why CLI operations (`stash encrypt backfill`, dev-time tooling) work
   without any keyset configuration.
 
+## Key vendor backends (keysets outside ZeroKMS)
+
+A keyset can also live in a **key vendor backend** instead of ZeroKMS: AWS
+KMS, Google Cloud KMS, Azure Key Vault, HashiCorp Vault Transit, or a static
+key. The customer then holds a **keyset record** (a `stack-keyset:…` string),
+and a key in their own KMS protects it. Clients, grants, lock context and
+decryption policies are ZeroKMS features: a vendor keyset has none of them, and
+it refuses a lock context with an error. Only the Rust crates and the Go SDK
+support key vendor backends today. `@cipherstash/stack` (TypeScript) does not
+support them yet, so a TypeScript app keeps its keysets in ZeroKMS. `stash
+keyset create` makes a keyset record and `stash keyset rewrap` moves one to
+another vendor key; see `stash-cli` before you rewrap a `wrapped`-mode record.
+
 ## Two gates, two very different failures
 
 Keyset access and lock context are **independent gates**, and their failures
