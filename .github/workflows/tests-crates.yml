@@ -23,6 +23,7 @@ on:
       - packages/stack-kms-vendor/**
       - packages/stack-kms-aws/**
       - packages/stack-kms-vault/**
+      - packages/stack-kms-gcp/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
@@ -49,6 +50,7 @@ on:
       - packages/stack-kms-vendor/**
       - packages/stack-kms-aws/**
       - packages/stack-kms-vault/**
+      - packages/stack-kms-gcp/**
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
@@ -156,14 +158,14 @@ jobs:
       # source does not have yet. stack-profile and stack-auth are in the list
       # because stack-kms and stack-encrypt depend on them: without them, cargo
       # resolves the published versions, which lag the tree. stack-kms-vendor,
-      # stack-kms-aws and stack-kms-vault are publishable but staged in release-plz.toml (their
+      # stack-kms-aws, stack-kms-vault and stack-kms-gcp are publishable but staged in release-plz.toml (their
       # first version is published by hand); packaging them here keeps them
       # publishable meanwhile. No token.
       # `--allow-dirty` tolerates files earlier steps leave in the tree. Once a
       # version is on crates.io, cargo warns rather than fails on a dry run of
       # it.
       - name: Verify the stack-* crates package cleanly for crates.io
-        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt -p stack-kms-vendor -p stack-kms-aws -p stack-kms-vault
+        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt -p stack-kms-vendor -p stack-kms-aws -p stack-kms-vault -p stack-kms-gcp
 
   # stack-kms-aws against a real AWS KMS API: LocalStack, as a service
   # (ADR-0011). The `rust` job runs the same test binary, where it skips

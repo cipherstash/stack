@@ -68,6 +68,9 @@ const EXPECTED_DISPATCHABLE = [
   // The same dry run for the @cipherstash/auth line.
   '.github/workflows/auth-preflight.yml',
   '.github/workflows/integration-protect-ffi.yml',
+  // Opt-in by the STACK_KMS_GCP_LIVE_KEY repository variable; dispatch runs it
+  // against a branch the path filter does not select.
+  '.github/workflows/integration-gcp-kms.yml',
   // Path-filtered to the release machinery, so dispatch is how it gets run
   // against a branch that changed something the filter does not name.
   '.github/workflows/lint-release.yml',
@@ -121,6 +124,8 @@ const EXPECTED_FORK_GUARDED_JOBS = [
   // The routine token is a repository secret, which forks are not given.
   '.github/workflows/code-review.yml / request',
   '.github/workflows/integration-drizzle.yml / integration',
+  // A repository secret (the Cloud KMS service account key).
+  '.github/workflows/integration-gcp-kms.yml / live',
   '.github/workflows/integration-prisma-next.yml / integration',
   '.github/workflows/integration-protect-ffi.yml / integration',
   '.github/workflows/integration-supabase.yml / integration',
@@ -218,7 +223,12 @@ const PERMISSIVE_NEEDS = {
  * switched on by `CLAUDE_REVIEW_ENABLED`; left unset it would read as skipped
  * on every event, and the fork guard would be credited with the skip.
  */
-const PERMISSIVE_VARS = { CLAUDE_REVIEW_ENABLED: 'true' }
+const PERMISSIVE_VARS = {
+  CLAUDE_REVIEW_ENABLED: 'true',
+  // integration-gcp-kms.yml's opt-in: the crypto key name of the live test.
+  STACK_KMS_GCP_LIVE_KEY:
+    'projects/p/locations/global/keyRings/r/cryptoKeys/stack-kms-gcp-live',
+}
 
 /**
  * `github.event` carries the webhook payload of the triggering event, so on a

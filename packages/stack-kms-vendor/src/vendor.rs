@@ -38,8 +38,10 @@ pub type KeyBytes = Protected<[u8; 32]>;
 ///   `Throttled`: the adapter backs off and retries it. Never put key
 ///   material or plaintext in an error.
 /// * **`key_ref` is the versioned vendor key reference** from the keyset
-///   record (an AWS key ARN, a Vault key name, a Google Cloud KMS
-///   `cryptoKeyVersions` path, an Azure key id). Its format is the vendor's.
+///   record (an AWS key ARN, a Vault key name, a Google Cloud KMS crypto
+///   key name, an Azure key id). Its format is the vendor's. A vendor key
+///   that rotates behind one name is versioned by the vendor: its
+///   ciphertexts name the version that made them.
 pub trait KeyVendorBackend: Send + Sync {
     /// Which key vendor backend this is.
     fn vendor(&self) -> KeyVendor;
