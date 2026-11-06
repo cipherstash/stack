@@ -1,18 +1,22 @@
-//! Shared test support: recorded fixtures, a replaying transport, and an
-//! in-process emulation of the AWS KMS JSON API.
+//! Shared test support: the fixture time and credentials, and an in-process
+//! emulation of the AWS KMS JSON API. The fixture and replay harness is
+//! `stack_kms_vendor::replay`, shared by every vendor crate.
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64ct::{Base64, Encoding};
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use stack_kms_aws::{AwsKms, AwsKmsConfig, Clock, Credentials};
+// Each test binary uses a different part of the harness.
+#[allow(unused_imports)]
+pub use stack_kms_vendor::replay::{Fixture, FixtureRequest, FixtureResponse, Fixtures, Replay};
 use stack_kms_vendor::{TransportError, VendorRequest, VendorResponse, VendorTransport};
 use web_time::{SystemTime, UNIX_EPOCH};
 
@@ -35,114 +39,12 @@ pub fn fixture_credentials() -> Credentials {
     )
 }
 
-#[derive(Deserialize)]
-pub struct FixtureRequest {
-    pub method: String,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Value,
-}
+/// The fixtures of this crate.
+pub const FIXTURES: Fixtures =
+    Fixtures::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"));
 
-#[derive(Clone, Deserialize)]
-pub struct FixtureResponse {
-    pub status: u16,
-    #[serde(default)]
-    pub headers: Vec<(String, String)>,
-    pub body: Value,
-}
-
-impl FixtureResponse {
-    pub fn to_response(&self) -> VendorResponse {
-        let body = match &self.body {
-            Value::String(text) => text.clone().into_bytes(),
-            other => serde_json::to_vec(other).unwrap(),
-        };
-        let mut response = VendorResponse::new(self.status, body);
-        for (name, value) in &self.headers {
-            response = response.header(name, value);
-        }
-        response
-    }
-}
-
-#[derive(Deserialize)]
-pub struct Fixture {
-    pub request: FixtureRequest,
-    pub response: FixtureResponse,
-}
-
-pub fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {
-    let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}"))
-}
-
-/// A transport that checks each request against a recorded one and
-/// answers with the recorded response.
-#[derive(Default)]
-pub struct Replay {
-    exchanges: Mutex<VecDeque<(Option<FixtureRequest>, VendorResponse)>>,
-}
-
-impl Replay {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Expect `fixture`'s request and answer with its response.
-    pub fn expect(self, fixture: Fixture) -> Self {
-        let response = fixture.response.to_response();
-        self.exchanges
-            .lock()
-            .unwrap()
-            .push_back((Some(fixture.request), response));
-        self
-    }
-
-    /// Answer the next request, whatever it is, with `response`.
-    pub fn answer(self, response: VendorResponse) -> Self {
-        self.exchanges.lock().unwrap().push_back((None, response));
-        self
-    }
-
-    pub fn is_done(&self) -> bool {
-        self.exchanges.lock().unwrap().is_empty()
-    }
-}
-
-impl VendorTransport for Replay {
-    async fn send(&self, request: VendorRequest) -> Result<VendorResponse, TransportError> {
-        let (expected, response) = self
-            .exchanges
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("a request the fixtures do not expect");
-        if let Some(expected) = expected {
-            let body: Value = serde_json::from_slice(&request.body).unwrap();
-            let actual = json!({
-                "method": request.method,
-                "url": request.url,
-                "headers": request.headers,
-                "body": body,
-            });
-            let wanted = json!({
-                "method": expected.method,
-                "url": expected.url,
-                "headers": expected.headers,
-                "body": expected.body,
-            });
-            assert_eq!(
-                actual,
-                wanted,
-                "the request differs from the fixture; actual:\n{}",
-                serde_json::to_string_pretty(&actual).unwrap()
-            );
-        }
-        Ok(response)
-    }
-
-    async fn sleep(&self, _duration: Duration) {}
+pub fn load<T: DeserializeOwned>(name: &str) -> T {
+    FIXTURES.load(name)
 }
 
 /// A client over `transport` with the fixture time and credentials.
