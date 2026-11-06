@@ -77,12 +77,16 @@ mod config;
 pub mod crc32c;
 mod time;
 
-pub use auth::{
-    AccessToken, AuthError, CachedToken, ServiceAccountKey, ServiceAccountLogin, TokenProvider,
-    CLOUD_KMS_SCOPE, DEFAULT_REFRESH_BEFORE_EXPIRY, DEFAULT_TOKEN_URI,
-};
+#[cfg(all(feature = "service-account", not(target_arch = "wasm32")))]
+pub use auth::DefaultCredentials;
 #[cfg(not(target_arch = "wasm32"))]
-pub use auth::{DefaultCredentials, MetadataServerLogin};
+pub use auth::MetadataServerLogin;
+pub use auth::{
+    AccessToken, AuthError, CachedToken, TokenProvider, CLOUD_KMS_SCOPE,
+    DEFAULT_REFRESH_BEFORE_EXPIRY,
+};
+#[cfg(feature = "service-account")]
+pub use auth::{ServiceAccountKey, ServiceAccountLogin, DEFAULT_TOKEN_URI};
 pub use client::{
     compact_ciphertext, error_kind, split_wrapped_key, wrapped_key_version, GcpKms, GcpKmsError,
     CHECKSUM_MARKERS, INVALID_CIPHERTEXT_MARKERS, WRAPPED_KEY_FORMAT,
