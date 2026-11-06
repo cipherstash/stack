@@ -45,6 +45,11 @@ pub fn environment() -> minijinja::Environment<'static> {
     )
     .expect("functions/unsupported.sql.j2 template");
     env.add_template(
+        "functions/crossblocker.sql.j2",
+        include_str!("../templates/functions/crossblocker.sql.j2"),
+    )
+    .expect("functions/crossblocker.sql.j2 template");
+    env.add_template(
         "operators.sql",
         include_str!("../templates/operators.sql.j2"),
     )
@@ -230,6 +235,16 @@ pub enum FnEntry {
         args: [SqlParam; 2],
         returns: String, // boolean / text / jsonb / domain (selection STAYS in Rust)
     },
+    /// A blocker for a storage domain paired with ANOTHER domain's query twin.
+    /// Compact (no per-parameter docs) because there is one per ordered pair of
+    /// domains in a family, and its message names both operands so the caller
+    /// sees which query domain they should have used.
+    CrossBlocker {
+        operator_lit: String,
+        function_name: String,
+        args: [SqlParam; 2],
+        returns: String,
+    },
 }
 
 #[derive(serde::Serialize)]
@@ -294,6 +309,16 @@ pub fn wrapper_entry(
 pub fn unsupported_entry(op: &Operator, args: [SqlParam; 2], returns: &str) -> FnEntry {
     FnEntry::Unsupported {
         // operator_lit is sql_str-escaped defensively for the single-quoted RAISE literal.
+        operator_lit: sql_str(op.symbol.as_str()),
+        function_name: op.function_name.to_string(),
+        args,
+        returns: returns.to_string(),
+    }
+}
+
+/// Build a cross-domain blocker entry (see [`FnEntry::CrossBlocker`]).
+pub fn cross_blocker_entry(op: &Operator, args: [SqlParam; 2], returns: &str) -> FnEntry {
+    FnEntry::CrossBlocker {
         operator_lit: sql_str(op.symbol.as_str()),
         function_name: op.function_name.to_string(),
         args,
