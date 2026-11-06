@@ -95,8 +95,10 @@ func (t *transport) send(ctx context.Context, m api.Module,
 	mem := m.Memory()
 	status, respHeaders, respBody := t.perform(ctx, mem,
 		methodPtr, methodLen, urlPtr, urlLen, headersPtr, headersLen, bodyPtr, bodyLen)
-	// The response carries wrapped key material; once it is in guest memory
-	// the host copy is wiped.
+	// The response can carry key material: a ZeroKMS response, or from a
+	// key vendor backend an unwrapped key in plaintext. Once it is in guest
+	// memory this copy is wiped. The copies in net/http, TLS and the
+	// RoundTripper are not.
 	defer wipe(respBody)
 	if !place(ctx, m, respHeadersPtrOut, respHeadersLenOut, respHeaders) ||
 		!place(ctx, m, respBodyPtrOut, respBodyLenOut, respBody) {

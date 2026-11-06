@@ -73,6 +73,11 @@ func WithKeysetCacheSize(n int) ClientOption {
 // [NewCredentials] the token exchange runs in the store the caller opened,
 // not through this RoundTripper: pass auth.WithRoundTripper to that
 // store instead. Nil means http.DefaultTransport, the default.
+//
+// With a key vendor backend ([WithKeyVendor]) the RoundTripper also sends
+// the vendor requests, and it sees the keys that they and their responses
+// carry in plaintext. Give it only a RoundTripper you trust with key
+// material.
 func WithTransport(rt http.RoundTripper) ClientOption {
 	return func(o *clientOptions) { o.transport = rt }
 }

@@ -118,9 +118,12 @@
 // The guest imports exactly three host functions: an HTTP send, served by
 // any [net/http.RoundTripper], a bearer-token fetch, served by the
 // credentials' auth strategy, and a key vendor credential fetch, served by
-// the source given with [WithKeyVendor]. What crosses per ZeroKMS or vendor
-// call is what would cross TLS anyway; derived and unwrapped key material
-// never leaves the guest. Under
+// the source given with [WithKeyVendor]. What crosses per ZeroKMS call is
+// what would cross TLS anyway, and keys derived from a ZeroKMS response
+// never leave the guest: a response alone is not usable. A key vendor
+// backend is different: the host does the TLS, so the host and the
+// RoundTripper see each vendor request and response in plaintext, and those
+// carry unwrapped keys (see [KeyVendor]). Under
 // [AutoCredentials] and [OIDCFederation] the same RoundTripper also carries
 // the authentication requests to CTS, so one scoped to the ZeroKMS host alone
 // is not enough. Under [NewCredentials] those requests go through the store
@@ -163,12 +166,23 @@
 // id with [Client.Keyset]. A value sealed under one backend never opens
 // under the other.
 //
-// The guest builds and signs every vendor request. The host supplies only
-// short-lived credentials, per request: temporary AWS credentials, a Google
-// OAuth access token, an Azure access token for the scope the guest names,
-// or a Vault token. Fill them from the vendor's own Go credential chain
-// through [AWSCredentialsFunc], [AccessTokenFunc] or [OAuth2AccessTokens].
-// This package imports no vendor SDK.
+// The guest builds and signs every vendor request. The host supplies the
+// credentials, per request: AWS credentials, a Google OAuth access token, an
+// Azure access token for the scope the guest names, or a Vault token. Fill
+// them from the vendor's own Go credential chain through
+// [AWSCredentialsFunc], [AccessTokenFunc] or [OAuth2AccessTokens], which
+// give short-lived credentials. [AWSCredentialsFromEnv] and a fixed Vault
+// token can give long-lived ones, and those cross to the guest on each
+// request too. This package imports no vendor SDK.
+//
+// The host sends the vendor requests and does their TLS. So the host, and
+// the RoundTripper given with [WithTransport], see in plaintext the key that
+// a wrap request sends and the key that an unwrap or generate response
+// returns: a root key under derived data keys, a data key under wrapped data
+// keys. Unlike a ZeroKMS response, such a key is usable alone. The client
+// wipes the request and response bodies it holds, but not the buffers of
+// net/http, TLS or the RoundTripper. Give WithTransport only a RoundTripper
+// you trust with key material.
 //
 // Each keyset record fixes one key mode. Wrapped data keys give each value
 // its own vendor-wrapped data key. Derived data keys derive each data key
