@@ -14,7 +14,7 @@
 use super::context::AeadContext;
 use std::collections::VecDeque;
 
-use stack_kms::{DataKey, DataKeyWithTag, Iv};
+use stack_kms::{DataKey, DataKeyWithTag, Iv, KeyBackend};
 use uuid::Uuid;
 
 use crate::{Descriptor, Error};
@@ -38,6 +38,9 @@ pub(super) enum RequestKind {
         tag: Vec<u8>,
         descriptor: Descriptor,
         keyset_id: Uuid,
+        /// The key backend the leaf names. The settle refuses a request
+        /// whose backend is not the cipher's, before any key call.
+        backend: KeyBackend,
     },
 }
 
@@ -77,6 +80,36 @@ impl Request {
         Self::retrieve_under(iv, tag, Descriptor::of(context.into()), keyset_id)
     }
 
+    /// Request re-derivation of the data key of `leaf`, under `context` —
+    /// which must be the one the key was generated under.
+    ///
+    /// The same request as [`retrieve_data_key`](Self::retrieve_data_key)
+    /// with the leaf's iv, tag and keyset id, and it also carries the key
+    /// backend the leaf names ([`SealedValue::key_backend`]). The settle
+    /// refuses the request with [`Error::ForeignBackend`] before any key
+    /// call when that is not the cipher's key backend.
+    /// [`retrieve_data_key`](Self::retrieve_data_key) always names ZeroKMS,
+    /// so prefer this constructor when a [`SealedValue`] is in hand.
+    ///
+    /// [`SealedValue`]: crate::SealedValue
+    /// [`SealedValue::key_backend`]: crate::SealedValue::key_backend
+    pub fn retrieve_leaf_key(leaf: &crate::SealedValue, context: impl Into<AeadContext>) -> Self {
+        Self::retrieve_leaf(leaf, Descriptor::of(context.into()))
+    }
+
+    /// [`retrieve_leaf_key`](Self::retrieve_leaf_key) over an already
+    /// rendered descriptor. Crate-internal, as
+    /// [`generate_under`](Self::generate_under).
+    pub(crate) fn retrieve_leaf(leaf: &crate::SealedValue, descriptor: Descriptor) -> Self {
+        Self(RequestKind::RetrieveDataKey {
+            iv: *leaf.iv(),
+            tag: leaf.tag().to_vec(),
+            descriptor,
+            keyset_id: leaf.keyset_id(),
+            backend: leaf.key_backend(),
+        })
+    }
+
     /// [`generate_data_key`](Self::generate_data_key) over a descriptor that
     /// has already been rendered.
     ///
@@ -103,6 +136,7 @@ impl Request {
             tag,
             descriptor,
             keyset_id,
+            backend: KeyBackend::ZeroKms,
         })
     }
 
@@ -336,7 +370,9 @@ mod tests {
                 tag,
                 descriptor,
                 keyset_id,
+                backend,
             } => {
+                assert_eq!(backend, stack_kms::KeyBackend::ZeroKms);
                 assert_eq!(keyset_id, ks());
                 assert_eq!(iv, Iv::default());
                 assert_eq!(tag, vec![7, 8, 9]);
