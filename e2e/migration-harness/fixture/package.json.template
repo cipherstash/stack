@@ -1,0 +1,17 @@
+{
+  "name": "protect-migration-customer-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "node --check src/app.mjs && node --check src/stores.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1163.0",
+    "@aws-sdk/lib-dynamodb": "3.1163.0",
+    "@cipherstash/protect": "10.2.1",
+    "@cipherstash/protect-dynamodb": "6.0.1",
+    "postgres": "3.4.8"
+  }
+}
