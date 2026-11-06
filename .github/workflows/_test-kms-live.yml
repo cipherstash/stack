@@ -1,0 +1,149 @@
+name: Key vendor backend live test
+
+# The one job behind the opt-in live workflows of the key vendor backends
+# that have no emulator: integration-gcp-kms.yml (Google Cloud KMS) and
+# integration-azure-key-vault.yml (Azure Key Vault). Each caller keeps its
+# triggers, its opt-in and fork-PR condition on the calling job, and the
+# names of its repository variables and secrets. This file holds what was
+# the same in both: the secret pre-flight, the toolchain, and the
+# `mise run test:live:<crate>` step.
+#
+# A caller gives:
+#
+#   * `crate`: the crate. The test task is `test:live:<crate>`.
+#   * `name`: the name of the test step.
+#   * `live-key-variable`: the repository variable that turns the caller on,
+#     for the pre-flight message.
+#   * `required-secrets`: one line for each secret the test needs:
+#     `<secret of this workflow> <repository secret>`. The pre-flight fails
+#     the job when one of them is empty: a credentialed job that skips for
+#     want of a secret reads exactly like one that passes.
+#   * `live-env`: `NAME=value` lines (repository variables, not secrets)
+#     that the test reads.
+#   * the secrets, by the names below. `credentials-json` goes to a file
+#     only this user can read, outside the checkout, and its path goes in
+#     the variable `credentials-file-env` names. The `azure-*` secrets reach
+#     only the test step's environment.
+
+on:
+  workflow_call:
+    inputs:
+      crate:
+        type: string
+        required: true
+      name:
+        type: string
+        required: true
+      live-key-variable:
+        type: string
+        required: true
+      required-secrets:
+        type: string
+        required: true
+      live-env:
+        type: string
+        required: true
+      credentials-file-env:
+        type: string
+        default: ''
+    secrets:
+      credentials-json:
+        required: false
+      azure-tenant-id:
+        required: false
+      azure-client-id:
+        required: false
+      azure-client-secret:
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  live:
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 30
+    env:
+      MISE_ENV: test
+    steps:
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the toolchain install and the compile.
+      - name: Require the secrets
+        env:
+          LIVE_KEY_VARIABLE: ${{ inputs.live-key-variable }}
+          REQUIRED_SECRETS: ${{ inputs.required-secrets }}
+          credentials_json: ${{ secrets.credentials-json }}
+          azure_tenant_id: ${{ secrets.azure-tenant-id }}
+          azure_client_id: ${{ secrets.azure-client-id }}
+          azure_client_secret: ${{ secrets.azure-client-secret }}
+        run: |
+          missing=0
+          while read -r input secret; do
+            [ -n "$input" ] || continue
+            name="${input//-/_}"
+            if [ -z "${!name}" ]; then
+              echo "::error::$LIVE_KEY_VARIABLE is set but the secret $secret is empty"
+              missing=1
+            fi
+          done <<< "$REQUIRED_SECRETS"
+          exit "$missing"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # Repository variables, not secrets. Each line must be NAME=value.
+      - name: Set the live key variables
+        env:
+          LIVE_ENV: ${{ inputs.live-env }}
+        run: |
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            if ! [[ "$line" =~ ^[A-Z][A-Z0-9_]*= ]]; then
+              echo "::error::live-env line is not NAME=value"
+              exit 1
+            fi
+            echo "$line" >> "$GITHUB_ENV"
+          done <<< "$LIVE_ENV"
+
+      - name: Write the credentials file
+        if: inputs.credentials-file-env != ''
+        env:
+          CREDENTIALS_JSON: ${{ secrets.credentials-json }}
+          CREDENTIALS_FILE_ENV: ${{ inputs.credentials-file-env }}
+          CRATE: ${{ inputs.crate }}
+        run: |
+          umask 077
+          printf '%s' "$CREDENTIALS_JSON" > "$RUNNER_TEMP/$CRATE-live.json"
+          echo "$CREDENTIALS_FILE_ENV=$RUNNER_TEMP/$CRATE-live.json" >> "$GITHUB_ENV"
+
+      - name: ${{ inputs.name }}
+        env:
+          AZURE_TENANT_ID: ${{ secrets.azure-tenant-id }}
+          AZURE_CLIENT_ID: ${{ secrets.azure-client-id }}
+          AZURE_CLIENT_SECRET: ${{ secrets.azure-client-secret }}
+        # The input is a constant in a caller in this repository. It is
+        # written into the command, not passed through the environment, so
+        # scripts/__tests__/crates-ci.test.mjs can see which task runs.
+        run: mise run test:live:${{ inputs.crate }}
+
+      - name: Remove the credentials file
+        if: always() && inputs.credentials-file-env != ''
+        env:
+          CRATE: ${{ inputs.crate }}
+        run: rm -f "$RUNNER_TEMP/$CRATE-live.json"
