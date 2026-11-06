@@ -179,6 +179,19 @@ type StaticKey struct {
 	Key []byte
 }
 
+// String hides the key.
+func (v StaticKey) String() string {
+	return fmt.Sprintf("encrypt.StaticKey{KeyRef: %s, Key: <redacted>}", v.KeyRef)
+}
+
+// GoString hides it from %#v too.
+func (v StaticKey) GoString() string { return v.String() }
+
+// LogValue hides it from slog.
+func (v StaticKey) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("key_ref", v.KeyRef))
+}
+
 func (v StaticKey) keyVendor() (*vendorSpec, error) {
 	if v.KeyRef == "" {
 		return nil, fmt.Errorf("%w: StaticKey needs a KeyRef", ErrEncoding)
