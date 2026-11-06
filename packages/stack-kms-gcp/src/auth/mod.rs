@@ -9,13 +9,14 @@
 //! * [`ServiceAccountLogin`]: a service account key (the JSON file Google
 //!   issues, [`ServiceAccountKey`]) signs a JWT with RS256 and exchanges it
 //!   at the token endpoint (RFC 7523). Everywhere: the key can come from
-//!   bytes.
+//!   bytes. Feature `service-account` (on by default).
 //! * [`MetadataServerLogin`]: the token of the attached service account,
 //!   from the metadata server of Compute Engine, GKE, Cloud Run and Cloud
 //!   Functions. **Native only.**
 //! * [`CachedToken`]: keeps the token a login returns and gets a new one
 //!   before it expires.
-//! * [`DefaultCredentials`] (native): picks one from the environment.
+//! * [`DefaultCredentials`] (native, feature `service-account`): picks one
+//!   from the environment.
 //!
 //! In the WASI guest the host supplies the token (ADR-0011): the guest
 //! implements [`TokenProvider`] over a host import.
@@ -32,8 +33,10 @@ use std::sync::{Mutex as SyncMutex, PoisonError};
 use std::time::Duration;
 
 use futures::lock::Mutex;
+#[cfg(any(feature = "service-account", not(target_arch = "wasm32")))]
 use serde::Deserialize;
 use stack_kms::{BackendErrorKind, MaybeSend};
+#[cfg(any(feature = "service-account", not(target_arch = "wasm32")))]
 use stack_kms_vendor::{classify_status, VendorResponse};
 use web_time::SystemTime;
 use zeroize::Zeroizing;
@@ -43,14 +46,19 @@ use crate::time::{system_clock, Clock};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod metadata;
+#[cfg(feature = "service-account")]
 mod service_account;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use metadata::{MetadataServerLogin, DEFAULT_METADATA_HOST, METADATA_TOKEN_PATH};
+#[cfg(feature = "service-account")]
 pub use service_account::{
-    ServiceAccountKey, ServiceAccountLogin, ASSERTION_LIFETIME, CLOUD_KMS_SCOPE, DEFAULT_TOKEN_URI,
+    ServiceAccountKey, ServiceAccountLogin, ASSERTION_LIFETIME, DEFAULT_TOKEN_URI,
     JWT_BEARER_GRANT_TYPE,
 };
+
+/// The OAuth scope of Cloud KMS.
+pub const CLOUD_KMS_SCOPE: &str = "https://www.googleapis.com/auth/cloudkms";
 
 /// An OAuth 2.0 access token, and how long it lasts from when it was
 /// issued.
@@ -159,6 +167,7 @@ impl TokenProvider for AccessToken {
     }
 }
 
+#[cfg(any(feature = "service-account", not(target_arch = "wasm32")))]
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: Option<String>,
@@ -166,6 +175,7 @@ struct TokenResponse {
     expires_in: u64,
 }
 
+#[cfg(any(feature = "service-account", not(target_arch = "wasm32")))]
 #[derive(Deserialize)]
 struct TokenErrorBody {
     error: Option<serde_json::Value>,
@@ -174,6 +184,7 @@ struct TokenErrorBody {
 
 /// The access token of a token endpoint or metadata server response.
 /// `source` names it in errors.
+#[cfg(any(feature = "service-account", not(target_arch = "wasm32")))]
 pub(crate) fn read_token_response(
     source: &str,
     response: &VendorResponse,
@@ -352,7 +363,7 @@ impl<P: TokenProvider> TokenProvider for CachedToken<P> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "service-account", not(target_arch = "wasm32")))]
 mod default {
     use stack_kms_vendor::VendorTransport;
 
@@ -420,7 +431,7 @@ mod default {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "service-account", not(target_arch = "wasm32")))]
 pub use default::DefaultCredentials;
 
 #[cfg(test)]

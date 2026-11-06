@@ -14,11 +14,8 @@ use stack_kms_vendor::{VendorRequest, VendorTransport};
 use web_time::SystemTime;
 use zeroize::Zeroizing;
 
-use super::{read_token_response, AccessToken, AuthError, TokenProvider};
+use super::{read_token_response, AccessToken, AuthError, TokenProvider, CLOUD_KMS_SCOPE};
 use crate::time::{system_clock, unix_seconds, Clock};
-
-/// The OAuth scope of Cloud KMS.
-pub const CLOUD_KMS_SCOPE: &str = "https://www.googleapis.com/auth/cloudkms";
 
 /// Google's OAuth 2.0 token endpoint, the `token_uri` of every service
 /// account key Google issues.

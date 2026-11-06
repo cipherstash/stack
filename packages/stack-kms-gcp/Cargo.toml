@@ -14,10 +14,16 @@ license-file = "LICENSE"
 # is on crates.io (published by hand; see stack-kms-vendor's Cargo.toml).
 
 [features]
-default = ["http"]
+default = ["http", "service-account"]
 # `GcpKms::from_env`: the native transport (`HttpVendorTransport`) and the
 # default credentials over it. Native only; on wasm32 it adds nothing.
-http = ["stack-kms-vendor/http"]
+http = ["stack-kms-vendor/http", "service-account"]
+# `ServiceAccountKey` and `ServiceAccountLogin`: the RS256 JWT exchange. Off,
+# the crate has no RSA code and no `rsa` dependency. The Go WASI guest turns
+# it off: its host supplies the access token (ADR-0011), so the guest never
+# signs with a service account key (RUSTSEC-2023-0071, see CIP-5311 in the
+# decision log).
+service-account = ["dep:rsa", "dep:rand_core"]
 
 [dependencies]
 stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false }
@@ -30,9 +36,9 @@ futures = "0.3.25"
 # wasm32-wasip1 (ring and aws-lc-rs need a C toolchain there). See the
 # CIP-5308 section of docs/plans/2026-11-05-key-vendor-backends-decisions.md
 # for RUSTSEC-2023-0071.
-rsa = { version = "0.9.10", default-features = false, features = ["std", "sha2", "pem", "u64_digit"] }
+rsa = { version = "0.9.10", default-features = false, features = ["std", "sha2", "pem", "u64_digit"], optional = true }
 # The blinding RNG of the RSA signature (rsa 0.9 takes rand_core 0.6).
-rand_core = { version = "0.6.4", features = ["getrandom"] }
+rand_core = { version = "0.6.4", features = ["getrandom"], optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -52,6 +58,14 @@ vitaminc = { workspace = true, features = ["protected", "random"] }
 [[test]]
 name = "live"
 required-features = ["http"]
+
+[[test]]
+name = "contract"
+required-features = ["service-account"]
+
+[[test]]
+name = "fixtures"
+required-features = ["service-account"]
 
 [package.metadata.docs.rs]
 all-features = true
