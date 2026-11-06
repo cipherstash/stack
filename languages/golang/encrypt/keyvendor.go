@@ -24,10 +24,10 @@ import (
 // client.Keyset(encrypt.KeysetName("payments")).
 //
 // The guest makes the vendor requests and signs them. The client's
-// RoundTripper ([WithTransport]) sends them. Keys stay in the guest: the
-// host supplies only short-lived credentials, never key material. See the
-// package documentation for what each backend and key mode can and cannot
-// do.
+// RoundTripper ([WithTransport]) sends them, so the host sees the keys that
+// those requests and responses carry in plaintext. See the package
+// documentation for what crosses to the host, and for what each backend and
+// key mode can and cannot do.
 //
 // The interface is sealed: the five types above are its only
 // implementations.
@@ -192,7 +192,8 @@ func (v VaultTransit) keyVendor() (*vendorSpec, error) {
 // StaticKey is a 32-byte key the application holds, as the key vendor
 // backend: for development, tests, and deployments that keep a key in their
 // own secret store. Derived data keys only, because the key is always in
-// memory. Nothing outside the process can refuse or audit its use.
+// memory. Nothing outside the process can refuse or audit its use. The key
+// crosses from the host to the guest once, when NewClient starts.
 type StaticKey struct {
 	// KeyRef is the key's reference, as the keyset records name it.
 	// Required.
@@ -426,6 +427,10 @@ func (f AWSCredentialsFunc) AWSCredentials(ctx context.Context) (AWSCredentials,
 // AWS_SESSION_TOKEN on each request. Without the first two it fails with
 // [ErrNoKeyVendorCredentials]. For anything else (a role, IRSA, IMDS, SSO)
 // use the AWS SDK's chain through [AWSCredentialsFunc].
+//
+// With no AWS_SESSION_TOKEN these are usually the long-lived keys of an IAM
+// user, and they cross to the guest on each request. Prefer the temporary
+// credentials of a role, through [AWSCredentialsFunc].
 func AWSCredentialsFromEnv() AWSCredentialSource {
 	return AWSCredentialsFunc(func(context.Context) (AWSCredentials, error) {
 		c := AWSCredentials{
