@@ -507,6 +507,49 @@ mod tests {
         ));
     }
 
+    /// The recording itself refuses a duplicate key: the captured program is
+    /// the build failure, not a map that holds the key twice. (The replay
+    /// would also refuse it, so only the captured program shows that the
+    /// recording checks.)
+    #[test]
+    fn a_duplicate_key_is_refused_while_recording() {
+        struct Duplicate {
+            passthrough: bool,
+        }
+        impl PrfValue for Duplicate {
+            fn prf_visit_with_context<'a, P, V, C>(
+                self,
+                prf: &P,
+                context: C,
+                visitor: V,
+            ) -> P::Ok<V::Value>
+            where
+                P: Prf,
+                V: PrfVisitor<P::Block, P::Passthrough>,
+                C: IntoPrfContext<'a>,
+            {
+                let context = context.into_prf_context().into_owned();
+                let map = prf.prf_map(None).prf_entry("k", 1u8, context.clone());
+                if self.passthrough {
+                    map.passthrough_entry_boxed("k", Box::new(2u32))
+                        .end(visitor)
+                } else {
+                    map.prf_entry("k", 2u8, context).end(visitor)
+                }
+            }
+        }
+        for passthrough in [false, true] {
+            let program = Program::capture(Duplicate { passthrough }, Context::empty());
+            assert!(
+                matches!(
+                    program,
+                    Program::Failed(Failure::Build(PrfBuildError::DuplicateKey))
+                ),
+                "passthrough: {passthrough}"
+            );
+        }
+    }
+
     #[test]
     fn a_recording_is_not_a_derivation() {
         let captured: Captured<u8> = Captured::of(Program::Absent(Context::empty()));
