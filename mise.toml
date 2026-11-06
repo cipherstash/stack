@@ -13,6 +13,7 @@ includes = [
   "packages/stack-kms-vendor/tasks.toml",
   "packages/stack-kms-aws/tasks.toml",
   "packages/stack-kms-vault/tasks.toml",
+  "packages/stack-kms-gcp/tasks.toml",
   "packages/stack-profile/tasks.toml",
   "packages/stack-encrypt/tasks.toml",
   "packages/stack-guest-abi/tasks.toml",
@@ -134,6 +135,10 @@ check stack-kms-aws
 # The Vault Transit key vendor backend, default features on: its native
 # transport and Kubernetes auth are gated off on wasm32.
 check stack-kms-vault
+# The Google Cloud KMS key vendor backend, default features on: its native
+# transport, key files and metadata server are gated off on wasm32. Its RS256
+# signer (the `rsa` crate) is pure Rust.
+check stack-kms-gcp
 # The Go binding's credential guest (ADR-0005) compiles stack-profile for
 # WASI: the hostname and the process id are native-only there.
 check stack-profile

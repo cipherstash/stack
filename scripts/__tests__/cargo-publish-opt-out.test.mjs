@@ -58,7 +58,7 @@ const WORKSPACES = [
     // stack-encrypt and stack-encrypt-derive (which `eql-bindings`'
     // `stack-encrypt` feature depends on from crates.io). stack-guest-abi is
     // the Go guests' internal ABI and stays unpublished. stack-kms-vendor,
-    // stack-kms-aws and stack-kms-vault are publishable but staged: release-plz.toml keeps them
+    // stack-kms-aws, stack-kms-vault and stack-kms-gcp are publishable but staged: release-plz.toml keeps them
     // from releasing until their first version is published by hand (see
     // release-plz-root-config.test.mjs).
     root: '.',
@@ -71,6 +71,7 @@ const WORKSPACES = [
       'packages/stack-kms-vendor',
       'packages/stack-kms-aws',
       'packages/stack-kms-vault',
+      'packages/stack-kms-gcp',
     ]),
     expects: 'packages/stack-auth',
   },
