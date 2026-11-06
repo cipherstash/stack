@@ -172,8 +172,9 @@ on:
 
 jobs:
   integration:
-    name: Supabase v3 integration (db=${{ matrix.db }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Supabase v3 integration (db=${{ matrix.db }}) (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
     # No concurrency group: `integration-db` gives each job its own compose
     # project and ephemeral host ports, so live-DB jobs no longer contend and do
     # not need serialising. See that action for why the old
@@ -190,10 +191,27 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     strategy:
+      fail-fast: false
       # A one-element matrix, not a cross-product: the Supabase adapter only ever
       # runs against the Supabase variant. Kept as a matrix so adding a second
       # database is a one-line change.
       matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
         db: [supabase]
 
     env:

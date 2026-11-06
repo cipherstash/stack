@@ -61,23 +61,227 @@ env:
 
 jobs:
   fuzz-regression:
-    name: fuzz regression (${{ matrix.slug }})
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: fuzz regression (${{ matrix.slug }}) (${{ matrix.runner.name }})
     # Not on the nightly schedule, which is the campaign's. A manual dispatch
     # runs both jobs.
     if: github.event_name != 'schedule'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ matrix.runner.label }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { task: "fuzz:access-key", slug: access-key }
-          - { task: "fuzz:jwt-decode", slug: jwt-decode }
-          - { task: "fuzz:client-key", slug: client-key }
-          - { task: "fuzz:sealed-value", slug: sealed-value }
-          - { task: "fuzz:term-decode", slug: term-decode }
-          - { task: "fuzz:check-record", slug: check-record }
-          - { task: "fuzz:plan-build", slug: plan-build }
+          - task: "fuzz:access-key"
+            slug: access-key
+            runner:
+              id: blacksmith
+              name: blacksmith 4vcpu
+              label: blacksmith-4vcpu-ubuntu-2404
+          - task: "fuzz:access-key"
+            slug: access-key
+            runner:
+              id: github
+              name: github
+              label: ubuntu-24.04
+          - task: "fuzz:access-key"
+            slug: access-key
+            runner:
+              id: runs-on-2
+              name: runs-on c8a 2cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:access-key"
+            slug: access-key
+            runner:
+              id: runs-on-4
+              name: runs-on c8a 4cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:access-key"
+            slug: access-key
+            runner:
+              id: runs-on-8
+              name: runs-on c8a 8cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:jwt-decode"
+            slug: jwt-decode
+            runner:
+              id: blacksmith
+              name: blacksmith 4vcpu
+              label: blacksmith-4vcpu-ubuntu-2404
+          - task: "fuzz:jwt-decode"
+            slug: jwt-decode
+            runner:
+              id: github
+              name: github
+              label: ubuntu-24.04
+          - task: "fuzz:jwt-decode"
+            slug: jwt-decode
+            runner:
+              id: runs-on-2
+              name: runs-on c8a 2cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:jwt-decode"
+            slug: jwt-decode
+            runner:
+              id: runs-on-4
+              name: runs-on c8a 4cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:jwt-decode"
+            slug: jwt-decode
+            runner:
+              id: runs-on-8
+              name: runs-on c8a 8cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:client-key"
+            slug: client-key
+            runner:
+              id: blacksmith
+              name: blacksmith 4vcpu
+              label: blacksmith-4vcpu-ubuntu-2404
+          - task: "fuzz:client-key"
+            slug: client-key
+            runner:
+              id: github
+              name: github
+              label: ubuntu-24.04
+          - task: "fuzz:client-key"
+            slug: client-key
+            runner:
+              id: runs-on-2
+              name: runs-on c8a 2cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:client-key"
+            slug: client-key
+            runner:
+              id: runs-on-4
+              name: runs-on c8a 4cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:client-key"
+            slug: client-key
+            runner:
+              id: runs-on-8
+              name: runs-on c8a 8cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:sealed-value"
+            slug: sealed-value
+            runner:
+              id: blacksmith
+              name: blacksmith 4vcpu
+              label: blacksmith-4vcpu-ubuntu-2404
+          - task: "fuzz:sealed-value"
+            slug: sealed-value
+            runner:
+              id: github
+              name: github
+              label: ubuntu-24.04
+          - task: "fuzz:sealed-value"
+            slug: sealed-value
+            runner:
+              id: runs-on-2
+              name: runs-on c8a 2cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:sealed-value"
+            slug: sealed-value
+            runner:
+              id: runs-on-4
+              name: runs-on c8a 4cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:sealed-value"
+            slug: sealed-value
+            runner:
+              id: runs-on-8
+              name: runs-on c8a 8cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:term-decode"
+            slug: term-decode
+            runner:
+              id: blacksmith
+              name: blacksmith 4vcpu
+              label: blacksmith-4vcpu-ubuntu-2404
+          - task: "fuzz:term-decode"
+            slug: term-decode
+            runner:
+              id: github
+              name: github
+              label: ubuntu-24.04
+          - task: "fuzz:term-decode"
+            slug: term-decode
+            runner:
+              id: runs-on-2
+              name: runs-on c8a 2cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:term-decode"
+            slug: term-decode
+            runner:
+              id: runs-on-4
+              name: runs-on c8a 4cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:term-decode"
+            slug: term-decode
+            runner:
+              id: runs-on-8
+              name: runs-on c8a 8cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:check-record"
+            slug: check-record
+            runner:
+              id: blacksmith
+              name: blacksmith 4vcpu
+              label: blacksmith-4vcpu-ubuntu-2404
+          - task: "fuzz:check-record"
+            slug: check-record
+            runner:
+              id: github
+              name: github
+              label: ubuntu-24.04
+          - task: "fuzz:check-record"
+            slug: check-record
+            runner:
+              id: runs-on-2
+              name: runs-on c8a 2cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:check-record"
+            slug: check-record
+            runner:
+              id: runs-on-4
+              name: runs-on c8a 4cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:check-record"
+            slug: check-record
+            runner:
+              id: runs-on-8
+              name: runs-on c8a 8cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:plan-build"
+            slug: plan-build
+            runner:
+              id: blacksmith
+              name: blacksmith 4vcpu
+              label: blacksmith-4vcpu-ubuntu-2404
+          - task: "fuzz:plan-build"
+            slug: plan-build
+            runner:
+              id: github
+              name: github
+              label: ubuntu-24.04
+          - task: "fuzz:plan-build"
+            slug: plan-build
+            runner:
+              id: runs-on-2
+              name: runs-on c8a 2cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:plan-build"
+            slug: plan-build
+            runner:
+              id: runs-on-4
+              name: runs-on c8a 4cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - task: "fuzz:plan-build"
+            slug: plan-build
+            runner:
+              id: runs-on-8
+              name: runs-on c8a 8cpu
+              label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
