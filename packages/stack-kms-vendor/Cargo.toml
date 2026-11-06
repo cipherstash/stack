@@ -17,9 +17,11 @@ license-file = "LICENSE"
 
 [features]
 # `stack_kms_vendor::contract` (the shared contract suite every key vendor
-# backend runs) and `FakeVendor` (an in-memory key vendor backend). The
-# contract suite drives a real `StackCipher`, so this pulls stack-encrypt in.
-test-support = ["dep:stack-encrypt", "stack-kms/test-support"]
+# backend runs), `FakeVendor` (an in-memory key vendor backend) and
+# `stack_kms_vendor::replay` (the recorded-fixture harness every vendor
+# crate's tests use). The contract suite drives a real `StackCipher`, so this
+# pulls stack-encrypt in; the fixtures are serde types, so it pulls serde in.
+test-support = ["dep:stack-encrypt", "dep:serde", "stack-kms/test-support"]
 # `HttpVendorTransport`: the native `VendorTransport`, over the reqwest client
 # and the TLS configuration stack-kms uses for ZeroKMS. Native only: on wasm32
 # the dependencies are not in the graph and the type does not exist, because
@@ -39,6 +41,8 @@ hkdf = "0.13"
 sha2 = "0.11"
 subtle = "2.6"
 miette = { workspace = true }
+# The fixture types of `replay` only.
+serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

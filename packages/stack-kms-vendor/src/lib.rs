@@ -251,6 +251,8 @@ mod vendor;
 pub mod contract;
 #[cfg(feature = "test-support")]
 mod fake;
+#[cfg(feature = "test-support")]
+pub mod replay;
 
 pub use batch::{run_batch, BatchOptions};
 pub use error::RecordError;
