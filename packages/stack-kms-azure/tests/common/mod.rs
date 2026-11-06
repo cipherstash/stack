@@ -51,8 +51,8 @@ pub fn issued_at() -> SystemTime {
 }
 
 /// The TEST-ONLY 256-bit AES key of the fixture `oct-HSM` key version: the
-/// RFC 3394 example key-encryption key (`00 01 .. 1F`). It is no one's key.
-pub const TEST_ONLY_KEK: [u8; 32] = [
+/// RFC 3394 example key (`00 01 .. 1F`). It is no one's key.
+pub const TEST_ONLY_VENDOR_KEY: [u8; 32] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31,
 ];
@@ -76,9 +76,9 @@ const KW_IV: [u8; 8] = [0xA6; 8];
 
 /// AES key wrap (RFC 3394) under a 256-bit key: an implementation for the
 /// emulator, pinned by the RFC's own example in `tests/fixtures.rs`.
-pub fn kw_wrap(kek: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
+pub fn kw_wrap(vendor_key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
     assert!(plaintext.len().is_multiple_of(8) && plaintext.len() >= 16);
-    let cipher = Aes256::new(GenericArray::from_slice(kek));
+    let cipher = Aes256::new(GenericArray::from_slice(vendor_key));
     let n = plaintext.len() / 8;
     let mut a = KW_IV;
     let mut r: Vec<[u8; 8]> = plaintext.chunks(8).map(|c| c.try_into().unwrap()).collect();
@@ -99,11 +99,11 @@ pub fn kw_wrap(kek: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
 }
 
 /// AES key unwrap (RFC 3394). `None` when the integrity check fails.
-pub fn kw_unwrap(kek: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>> {
+pub fn kw_unwrap(vendor_key: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>> {
     if !ciphertext.len().is_multiple_of(8) || ciphertext.len() < 24 {
         return None;
     }
-    let cipher = Aes256::new(GenericArray::from_slice(kek));
+    let cipher = Aes256::new(GenericArray::from_slice(vendor_key));
     let n = ciphertext.len() / 8 - 1;
     let mut a: [u8; 8] = ciphertext[..8].try_into().unwrap();
     let mut r: Vec<[u8; 8]> = ciphertext[8..]
@@ -544,10 +544,10 @@ impl KeyVaultEmulator {
                     .unwrap(),
             ),
             ("unwrapkey", Material::Rsa) => self.rsa.decrypt(Oaep::new::<Sha256>(), &value).ok(),
-            ("wrapkey", Material::Aes(kek)) => {
-                (value.len().is_multiple_of(8) && value.len() >= 16).then(|| kw_wrap(kek, &value))
-            }
-            ("unwrapkey", Material::Aes(kek)) => kw_unwrap(kek, &value),
+            ("wrapkey", Material::Aes(vendor_key)) => (value.len().is_multiple_of(8)
+                && value.len() >= 16)
+                .then(|| kw_wrap(vendor_key, &value)),
+            ("unwrapkey", Material::Aes(vendor_key)) => kw_unwrap(vendor_key, &value),
             _ => None,
         };
         match result {
