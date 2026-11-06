@@ -1,0 +1,5 @@
+error[E0027]: pattern does not mention field `password`
+  --> tests/ui/owned_struct_unmapped_field.rs:16:18
+   |
+16 | #[stash(struct = User, context = "users")]
+   |                  ^^^^ missing field `password`

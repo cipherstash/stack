@@ -223,6 +223,10 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
+    /// `#[stash(passthrough)]`, on a field of a `struct = ..` record with the
+    /// owned derives. The plaintext field is moved into the record in the
+    /// clear, not encrypted, and moved back when the record is decrypted.
+    pub(crate) passthrough: bool,
 }
 
 impl FieldAttrs {
@@ -296,6 +300,13 @@ impl FieldAttrs {
                     parsed.decrypt = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("passthrough") {
+                    if parsed.passthrough {
+                        return Err(meta.error("`passthrough` is given twice"));
+                    }
+                    parsed.passthrough = true;
+                    return Ok(());
+                }
                 // Removed rather than unknown, so the message can say what
                 // to write instead.
                 if meta.path.is_ident("nested") {
@@ -310,8 +321,8 @@ impl FieldAttrs {
                 }
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, \
-                     `identity = \"...\"`, `from = field`, `default`, `default = expr` or \
-                     `decrypt`",
+                     `identity = \"...\"`, `from = field`, `default`, `default = expr`, \
+                     `decrypt` or `passthrough`",
                 ))
             })?;
         }

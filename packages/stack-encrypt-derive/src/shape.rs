@@ -51,6 +51,15 @@ pub(crate) enum Kind {
     /// Not derived: `Default::default()` or the given expression.
     Default(Option<Expr>),
     Context,
+    /// `#[stash(passthrough)]`, on a field of a `struct = ..` record with the
+    /// owned derives. The plaintext field `from` is moved into the record as
+    /// it is, and moved back on decryption. It is not encrypted and not
+    /// authenticated.
+    Passthrough {
+        /// The plaintext field that is carried through. This is the field's
+        /// own name, or the field that `#[stash(from = field)]` names.
+        from: Member,
+    },
 }
 
 /// What a field of a `struct = ..` derive has and a field of a `plaintext`
@@ -71,10 +80,15 @@ impl Field {
         matches!(self.kind, Kind::Derived { .. })
     }
 
-    /// The `from` member, if this is a derived field with one.
+    pub(crate) fn is_passthrough(&self) -> bool {
+        matches!(self.kind, Kind::Passthrough { .. })
+    }
+
+    /// The `from` member, if this is a derived or passthrough field with one.
     pub(crate) fn from(&self) -> Option<&Member> {
         match &self.kind {
             Kind::Derived { by_field } => by_field.as_ref().map(|by_field| &by_field.from),
+            Kind::Passthrough { from } => Some(from),
             Kind::Default(_) | Kind::Context => None,
         }
     }
@@ -99,7 +113,9 @@ impl Field {
                 by_field: Some(by_field),
             } => FieldContext::Own(&by_field.context),
             Kind::Derived { by_field: None } => FieldContext::Caller,
-            Kind::Default(_) | Kind::Context => unreachable!("a `default` field has no context"),
+            Kind::Default(_) | Kind::Context | Kind::Passthrough { .. } => {
+                unreachable!("a `default` or `passthrough` field has no context")
+            }
         }
     }
 }
@@ -135,6 +151,18 @@ pub(crate) enum FieldContext<'a> {
     Caller,
 }
 
+/// Which pair of declaration traits a derive emits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug))]
+pub(crate) enum Flavor {
+    /// `EncryptFrom` and `DecryptInto`: the structural declarations. They run
+    /// over a borrowed plaintext.
+    Structural,
+    /// `EncryptTarget` and `DecryptSource`: the owned declarations. These also
+    /// emit the structural pair.
+    Owned,
+}
+
 /// The record a derive input describes.
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Record {
@@ -159,6 +187,10 @@ impl Record {
     }
 
     pub(crate) fn parse(input: &DeriveInput) -> Result<Self> {
+        Self::parse_as(input, Flavor::Structural)
+    }
+
+    pub(crate) fn parse_as(input: &DeriveInput, flavor: Flavor) -> Result<Self> {
         let attrs = ContainerAttrs::parse(&input.attrs)?;
 
         let data = match &input.data {
@@ -181,6 +213,16 @@ impl Record {
         // `ContainerAttrs::parse` has established that `context` is present
         // exactly when `struct` is.
         let fields = collect(&data.fields, attrs.context.as_ref())?;
+        if flavor == Flavor::Structural {
+            if let Some(field) = fields.iter().find(|f| f.is_passthrough()) {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "`passthrough` is a field of an owned record: derive `EncryptTarget` and \
+                     `DecryptSource`, which move the plaintext field into the record and back. \
+                     The structural `EncryptFrom` / `DecryptInto` derives have no form for it",
+                ));
+            }
+        }
         if fields
             .iter()
             .filter(|f| matches!(f.kind, Kind::Context))
@@ -244,7 +286,10 @@ impl Record {
 /// `Encrypted<Terms>` instead; two fields keyed under one segment would
 /// share their data's identity.
 fn one_output_per_plaintext_field(fields: &[Field]) -> Result<()> {
-    let derived: Vec<&Field> = fields.iter().filter(|f| f.is_derived()).collect();
+    let derived: Vec<&Field> = fields
+        .iter()
+        .filter(|f| f.is_derived() || f.is_passthrough())
+        .collect();
     for (at, field) in derived.iter().enumerate() {
         let name = |f: &Field| f.member.to_token_stream().to_string();
         for earlier in &derived[..at] {
@@ -264,6 +309,9 @@ fn one_output_per_plaintext_field(fields: &[Field]) -> Result<()> {
                         ),
                     ));
                 }
+            }
+            if field.is_passthrough() || earlier.is_passthrough() {
+                continue;
             }
             if let (FieldContext::Own(own), FieldContext::Own(earlier_own)) =
                 (field.field_context(), earlier.field_context())
@@ -355,15 +403,39 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                 && (attrs.default.is_some()
                     || attrs.identity.is_some()
                     || attrs.from.is_some()
-                    || attrs.decrypt)
+                    || attrs.decrypt
+                    || attrs.passthrough)
             {
                 return Err(syn::Error::new_spanned(
                     &field.ty,
-                    "`context_field` is metadata and cannot also be derived or defaulted",
+                    "`context_field` is metadata and cannot also be derived, defaulted or \
+                     passed through",
                 ));
+            }
+            if attrs.passthrough {
+                if prefix.is_none() {
+                    return Err(syn::Error::new_spanned(
+                        &field.ty,
+                        "`passthrough` carries one field of the plaintext struct into the record \
+                         in the clear, which is what `#[stash(struct = ..)]` reaches: a \
+                         `plaintext` record derives every field from the whole value",
+                    ));
+                }
+                if attrs.default.is_some() || attrs.identity.is_some() || attrs.decrypt {
+                    return Err(syn::Error::new_spanned(
+                        &field.ty,
+                        "a `passthrough` field is moved through as it is, so `identity`, \
+                         `default` and `decrypt` do not apply to it: it is keyed under nothing, \
+                         filled from the plaintext and moved back on decryption",
+                    ));
+                }
             }
             let kind = if attrs.context_field {
                 Kind::Context
+            } else if attrs.passthrough {
+                Kind::Passthrough {
+                    from: attrs.from.unwrap_or_else(|| member.clone()),
+                }
             } else {
                 match attrs.default {
                     Some(default) => {
@@ -589,7 +661,8 @@ pub(crate) fn outputs(fields: &[&Field]) -> (TokenStream, TokenStream) {
 /// The chain zipping `operations` into one description, and the nested
 /// tuple pattern that binds each operation's output to its local in the
 /// closure that maps the chain's output.
-fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream) {
+fn zip_chain(operations: Vec<(TokenStream, Ident)>, method: &str) -> (TokenStream, TokenStream) {
+    let method = Ident::new(method, proc_macro2::Span::call_site());
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
     for (index, (operation, local)) in operations.into_iter().enumerate() {
@@ -597,7 +670,7 @@ fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream
             chain = operation;
             pattern = quote!(#local);
         } else {
-            chain = quote!(#chain.zip(#operation));
+            chain = quote!(#chain.#method(#operation));
             pattern = quote!((#pattern, #local));
         }
     }
@@ -606,7 +679,18 @@ fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream
 
 /// The zipped `operations`, mapped to `result`.
 pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
-    let (chain, pattern) = zip_chain(operations);
+    let (chain, pattern) = zip_chain(operations, "zip");
+    quote!(#chain.map(move |#pattern| #result))
+}
+
+/// [`zip`] over recovered plaintext. Each field opened before a later field
+/// fails is wiped, not dropped as it is (`Decryption::zip_wiping`). An owned
+/// record's fields open through this.
+pub(crate) fn zip_wiping(
+    operations: Vec<(TokenStream, Ident)>,
+    result: TokenStream,
+) -> TokenStream {
+    let (chain, pattern) = zip_chain(operations, "zip_wiping");
     quote!(#chain.map(move |#pattern| #result))
 }
 

@@ -35,6 +35,9 @@ fn assignments<'a>(
             Kind::Default(Some(expr)) => quote!(#expr),
             Kind::Default(None) => quote!(::core::default::Default::default()),
             Kind::Context => stored.clone(),
+            Kind::Passthrough { .. } => {
+                unreachable!("the structural derive refuses a passthrough field")
+            }
         };
         quote!(#member: #value)
     })
@@ -272,7 +275,11 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
     quote!(#plan #(#impls)*)
 }
 
-fn decryptable_impl(input: &DeriveInput, record: &Record, derived: &[&Field]) -> TokenStream {
+pub(crate) fn decryptable_impl(
+    input: &DeriveInput,
+    record: &Record,
+    derived: &[&Field],
+) -> TokenStream {
     let krate = &record.krate;
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();

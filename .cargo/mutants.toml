@@ -81,6 +81,11 @@ exclude_re = [
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
   # Both unit-context conversions explicitly return Self::default().
   'stack-encrypt/src/target/context\.rs:\d+:\d+: replace <impl From<\(\)> for (DeclaredContext|ExpectedContext<T>)>::from -> Self with Default::default\(\)$',
+  # Omitting an expectation is expecting nothing: `ExpectedContext::omitted`
+  # returns Self::default(). That an omitted expectation opens under the
+  # stored context without checking it is pinned by
+  # `a_stored_context_opens_as_stored_and_checks_an_expectation`.
+  'stack-encrypt/src/target/input\.rs:\d+:\d+: replace <impl AllowsNoContext for ExpectedContext<T>>::omitted -> Self with Default::default\(\)$',
   # A caller-free declaration adds nothing to the declared context: the
   # conversion returns Self::default().
   'stack-encrypt/src/target/input\.rs:\d+:\d+: replace <impl From<NoCallerContext> for super::DeclaredContext>::from -> Self with Default::default\(\)$',

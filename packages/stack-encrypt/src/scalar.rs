@@ -227,6 +227,18 @@ impl<P: OpaqueDecode> DecryptSource<P> for Ciphertext {
         })
     }
 }
+/// A ciphertext is what a record decrypts. As a field of a derived record, it
+/// is the field that can be decrypted, beside any terms.
+impl crate::target::Decryptable for Ciphertext {
+    const DECRYPTABLE: bool = true;
+}
+impl<P: OpaqueDecode, Ctx: Into<OptionalContext<ScalarContext>>> crate::target::DecryptField<P, Ctx>
+    for Ciphertext
+{
+    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+        Some(self.decryption(context.into()))
+    }
+}
 impl<K: 'static> KeysetCipher<'_, K> {
     /// Consume and encrypt a scalar as one opaque ciphertext with empty context.
     /// The owned source is wiped before this returns the batched pending request.
