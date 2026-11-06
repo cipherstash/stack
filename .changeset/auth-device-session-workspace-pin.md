@@ -1,5 +1,6 @@
 ---
 "@cipherstash/auth": patch
+"stash": patch
 ---
 
 `CS_WORKSPACE_CRN` is now honoured when you are signed in through the CLI (no access key). Previously the CRN was ignored and the CLI's *current* workspace was used, so switching workspaces with the CLI silently changed which workspace a process authenticated against. Now the session saved for the workspace named by the CRN is used, and every token is checked against that workspace, failing with `WORKSPACE_MISMATCH` otherwise. If no session exists for that workspace, the result is `NOT_AUTHENTICATED`. Without a CRN, behaviour is unchanged.

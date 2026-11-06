@@ -136,6 +136,14 @@ impl AutoStrategy {
             let has_token = ws_store
                 .map(|ws| ws.exists_profile::<Token>())
                 .unwrap_or(false);
+            if !has_token {
+                if let Some(crn) = &crn {
+                    tracing::info!(
+                        workspace = %crn.workspace_id,
+                        "no saved session for the workspace named by the CRN"
+                    );
+                }
+            }
             if has_token {
                 let mut builder = DeviceSessionStrategy::with_profile(store);
                 if let Some(crn) = &crn {
@@ -381,6 +389,17 @@ mod tests {
             let store = write_token_store(dir.path());
             // The CLI user switches to another workspace with no session.
             store.init_workspace("AAAAAAAAAAAAAAAA").unwrap();
+
+            let result = AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None);
+
+            assert!(matches!(result, Ok(AutoStrategy::DeviceSession(_))));
+        }
+
+        #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
+        fn crn_matching_the_current_workspace_builds_a_device_session() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = write_token_store(dir.path());
 
             let result = AutoStrategy::detect_inner(None, Some(valid_crn()), Some(store), None);
 

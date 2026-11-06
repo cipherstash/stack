@@ -135,13 +135,16 @@ pub struct DeviceSessionStrategyBuilder {
 impl DeviceSessionStrategyBuilder {
     /// Pin the strategy to the workspace named by `crn`.
     ///
-    /// For a strategy built from a profile store, the token is loaded from
-    /// that workspace's directory rather than from the store's *current*
-    /// workspace, so a CLI user who has switched workspaces does not change
-    /// which one this process uses. Every token returned by `get_token` is
-    /// also checked against the workspace, failing with
-    /// [`AuthError::WorkspaceMismatch`] if it belongs to another one — as
-    /// [`AccessKeyStrategy`](crate::AccessKeyStrategy) does.
+    /// Every token returned by `get_token` is checked against the CRN's
+    /// workspace, failing with [`AuthError::WorkspaceMismatch`] if it belongs
+    /// to another one — as [`AccessKeyStrategy`](crate::AccessKeyStrategy)
+    /// does. Only the workspace ID is compared, not the region.
+    ///
+    /// For a strategy built with [`with_profile`](DeviceSessionStrategy::with_profile),
+    /// the token is also loaded from that workspace's directory rather than
+    /// from the store's *current* workspace, so a CLI user who has switched
+    /// workspaces does not change which one this process uses. The other
+    /// sources are already a specific workspace's, so the pin only verifies.
     pub fn workspace_crn(mut self, crn: &Crn) -> Self {
         self.expected_workspace = Some(crn.workspace_id);
         self
