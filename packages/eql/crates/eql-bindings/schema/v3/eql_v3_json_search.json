@@ -109,7 +109,7 @@
   "$id": "https://schemas.cipherstash.com/eql/v3/eql_v3_json_search.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "`public.eql_v3_json_search` — a SteVec encrypted-JSON document\n(`{v, k, i, h, sv:[entry]}`, no root ciphertext — the root document\nciphertext lives on the root sv entry). Strict. `k` is the `\"sv\"` form\ndiscriminator (see [`SteVecForm`]); `h` is the document [`KeyHeader`],\nstored once for the whole document (every entry encrypts under the\ndocument's single data key, with per-entry nonces derived from the\nentries' selectors).",
+  "description": "`public.eql_v3_json_search` — a SteVec encrypted-JSON document\n(`{v, k, i, h, sv:[entry]}` plus an optional array-root flag `a`, no root ciphertext — the root document\nciphertext lives on the root sv entry). Strict. `k` is the `\"sv\"` form\ndiscriminator (see [`SteVecForm`]); `h` is the document [`KeyHeader`],\nstored once for the whole document (every entry encrypts under the\ndocument's single data key, with per-entry nonces derived from the\nentries' selectors).",
   "properties": {
     "a": {
       "description": "Array-root marker. The SQL root validator allows it and the array\naccessors (`jsonb_array_length`, `jsonb_array_elements`, `->(doc, int)`)\nREQUIRE it (`eql_v3_internal.is_ste_vec_array`), so a document the\ndatabase accepts must also parse here. Optional and non-nullable: SQL\nrejects `\"a\": null` (`jsonb_typeof(...) = 'boolean'`), so the schema\nand deserializer reject it too.",

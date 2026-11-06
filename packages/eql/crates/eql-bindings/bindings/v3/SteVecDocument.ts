@@ -7,7 +7,7 @@ import type { SteVecForm } from "./SteVecForm";
 
 /**
  * `public.eql_v3_json_search` — a SteVec encrypted-JSON document
- * (`{v, k, i, h, sv:[entry]}`, no root ciphertext — the root document
+ * (`{v, k, i, h, sv:[entry]}` plus an optional array-root flag `a`, no root ciphertext — the root document
  * ciphertext lives on the root sv entry). Strict. `k` is the `"sv"` form
  * discriminator (see [`SteVecForm`]); `h` is the document [`KeyHeader`],
  * stored once for the whole document (every entry encrypts under the
