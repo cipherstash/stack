@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-06
+
+### Documentation
+
+- state the ProtectedRef wipe contract, not the open hole
+
+### Features
+
+- ProtectedRef::as_deref narrows a protected borrow, and Cow<[u8]> lends its bytes
+
+### Fixes
+
+- a plain Vec<u8> or [u8] does not lend a ProtectedRef
+
 ## [0.9.0] - 2026-11-04
 
 ### Wire format
