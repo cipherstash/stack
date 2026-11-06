@@ -18,4 +18,4 @@ import type { Selector } from "./Selector";
  * optional `i`/`v`/`h` fields model metadata grafted onto an entry returned by
  * `->`; naming them explicitly keeps unknown keys rejectable.
  */
-export type SteVecEntry = { s: Selector, c: EntryCiphertext, a?: boolean | null, op?: OpeCllw, i?: Identifier, v?: SchemaVersion, h?: KeyHeader, };
+export type SteVecEntry = { s: Selector, c: EntryCiphertext, a?: boolean, op?: OpeCllw, i?: Identifier, v?: SchemaVersion, h?: KeyHeader, };
