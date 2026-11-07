@@ -66,18 +66,23 @@ let by_id = cipher.keyset(IdentifiedBy::uuid(keyset_id)).await?;
 
 #### Encrypt and decrypt one value
 
-`encrypt` takes ownership of the value and wipes it. It returns one
-`Ciphertext`. A context ties the ciphertext to where it belongs, so it
-cannot be decrypted anywhere else.
+`encrypt` returns one `Ciphertext`. A context ties the ciphertext to where
+it belongs, so it cannot be decrypted anywhere else.
+
+`encrypt` accepts an owned value or a borrowed one. It wipes an owned
+value, such as a `String`. It only reads a borrowed value, such as a
+`&str`, so the caller is responsible for wiping the original.
 
 ```rust
 use stack_encrypt::Ciphertext;
 
-let secret: Ciphertext = keyset.encrypt("secret".to_owned()).await?;
+// Not on `next` yet: borrowed values such as `&str`.
+let secret: Ciphertext = keyset.encrypt("secret").await?;
 let plaintext: String = keyset.decrypt(secret).await?;
 
+let number: String = read_card_number()?;
 let card: Ciphertext = keyset
-    .encrypt_with_context("4111 1111 1111 1111".to_owned(), "users/42/card")
+    .encrypt_with_context(number, "users/42/card") // wipes `number`
     .await?;
 
 // Store the ciphertext as bytes, or as Base64 text through Serde.
@@ -440,9 +445,11 @@ describes the descriptor and the AAD. The module documentation of
   then marked as not portable.
 - **Checks run before keys are used.** Every check that needs no key runs
   before Stack Encrypt asks ZeroKMS for a key, or loads an index key.
-- **Encryption takes ownership.** `encrypt` and `encrypt_into` take the
-  plaintext and wipe it, including when they fail. A decrypted value is an
-  ordinary owned value. The caller is responsible for wiping it.
+- **Encryption wipes an owned plaintext.** `encrypt` and `encrypt_into` wipe an
+  owned plaintext, including when they fail. They only read a borrowed
+  plaintext, so the caller is responsible for wiping it. Stack Encrypt
+  wipes every copy it makes. A decrypted value is an ordinary owned value.
+  The caller is responsible for wiping it.
 - **Context is passed by reference.** A method that takes a context
   borrows it while the request runs. So a program can use one context for
   a write, a query, and a read without cloning it. An owned context also
@@ -659,6 +666,22 @@ parameter named `aad`.
   The context inputs, such as `RequiredContext`, still need an owned value.
 - **Finished when** the public examples pass a context by reference, with
   no clone, and compile.
+
+#### Encrypt borrowed values
+
+- **What to build.** Let `encrypt` and `encrypt_with_context` accept a
+  borrowed single value, such as `&str`, `&[u8]`, or `&i64`. Keep the
+  current behaviour for an owned value.
+- **Why.** A program that encrypts a string literal must write
+  `"secret".to_owned()` on `next`. The copy adds nothing, because a literal
+  cannot be wiped.
+- **How.** The engine already reads an owned value through a borrow
+  (`ScalarRef` in `scalar.rs`). But `OpaqueEncode` requires `Zeroize` and
+  `'static`, so `&str` does not meet it. A borrowed value needs its own
+  bound, and the request borrows the value for as long as it runs.
+- **Done already.** Owned single values (#1404).
+- **Finished when** `keyset.encrypt("secret")` compiles, and a test shows
+  that Stack Encrypt wipes its own copies of a borrowed value.
 
 #### Constructors for `IdentifiedBy`
 
