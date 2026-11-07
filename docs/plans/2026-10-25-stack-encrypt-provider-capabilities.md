@@ -138,10 +138,10 @@ that passes ZeroKMS lock context through.
   `Tag`, `Value`, and `IdentityClaim`. Its `RetrievedKey` now exposes key
   material only. `stack-kms::DataKey` contains the initialisation vector
   (IV) and the key. `DataKey` does not contain the original
-  authentication tag that the proposed refinement flow returns. To support
-  that flow, the protocol and the client need to return that tag in their
-  responses. This matches the user's earlier explanation of the intended
-  behaviour.
+  authentication tag that [tag
+  refinement](2026-11-07-stack-encrypt-tag-refinement.md) returns. To
+  support that flow, the protocol and the client need to return that tag
+  in their responses.
 
 ## 1. Keyset selection derived from plaintext
 
@@ -454,10 +454,11 @@ A searchable target requires an index key strategy that is explicitly
 supported. The engine must not assume that every data key backend supplies
 deterministic search keys automatically.
 
-### Refined tags
+### Tag refinement
 
-Support for refined tags also needs two distinct inputs: the tag stored
-and sent in the request, and the original authentication tag returned.
+[Tag refinement](2026-11-07-stack-encrypt-tag-refinement.md) needs two
+distinct inputs: the refined tag and its caveats, stored and sent in the
+request, and the original authentication tag returned.
 When designing neutral responses, keep the ZeroKMS flow that the user
 intended. Do not require every provider to implement refinable tags, or a
 generic KMS to return that concept.
@@ -532,8 +533,8 @@ provider are explicit. The interoperability specification must cover:
 
    A minimal fake provider without keysets, locks, or index keys must
    still encrypt opaque values.
-6. Settle support for refined tags in responses with the ZeroKMS client
-   and protocol. Add integration fixtures without assuming the pinned API
+6. Settle support for tag refinement in responses with the ZeroKMS
+   client and protocol. Add integration fixtures without assuming the pinned API
    already returns the original tag.
 7. Leave the decision on the `AsyncCipher` adapter and the trait clean-up
    to the packaging pass. Until then, keep the documented constraints on

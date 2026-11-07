@@ -24,6 +24,7 @@ log](2026-10-24-stack-encrypt-api-review.md).
 | --- | --- |
 | AAD (additional authenticated data) | Data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](#context-and-aad) |
 | Binding | A part of the context that ties a ciphertext to its row, such as a row ID. It is in the stored context and not in the query context. Passed as `Bind::new(..)` |
+| Caveat | A named, typed fact added to a stored value's key tag by tag refinement, such as `row_id` or `created_at`. ZeroKMS verifies it. See [Tag refinement](#tag-refinement) |
 | Ciphertext | One encrypted value, as the Rust `Ciphertext` type. It is stored as bytes, or as Base64 text |
 | Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Rust and Go run the same cases. The files are in `conformance/stack-encrypt/v1/` |
 | Context name | The last declared scope of a field: its name by default, pinned when the Rust field is renamed. Two fields of one record never share one |
@@ -39,6 +40,7 @@ log](2026-10-24-stack-encrypt-api-review.md).
 | Search term | A value stored next to a ciphertext, so that a query can find it without decrypting it. Equality, order, and match each use their own term |
 | Stored context | Every part of a value's context. The data key and the AAD derive under it |
 | Stored format | Everything Stack Encrypt writes to the database. See [The stored format stays compatible with Go rc.3](#the-stored-format-stays-compatible-with-go-rc3) |
+| Tag refinement | Replacing a stored key tag with an HMAC of it and a caveat, so ZeroKMS can verify the caveat when it returns the key. See [Tag refinement](#tag-refinement) |
 | Target | The encrypted type that a value is stored as, such as `Ciphertext`, an EQL type like `TextEq`, or a record type |
 
 ## Target state
@@ -802,14 +804,14 @@ record never share a context. If they did, they would share a key and an
 AAD, and a ciphertext copied between the two columns would open. ADR-0006
 records this.
 
-A part of the context is one of three kinds. The declaration says which,
+A part of the context is one of two kinds. The declaration says which,
 and fixes the order: the scopes first, then the bindings.
 
 | Kind of part | Verb | Example | In the query context | In the descriptor | In the AAD | Verified by |
 | --- | --- | --- | --- | --- | --- | --- |
 | Scope | `scope` | A record name, a field's context name, or a tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
 | Binding | `bind` | A row's UUID, or the IP address of the writer | No | Yes | Yes | ZeroKMS and the AEAD |
-| Post-seal part | None. The database adds it | A key the database generates after the insert | No | Through the refined tag | No | ZeroKMS only |
+
 
 The words were decided on 7 November 2026. A caller scopes a value with a
 scope. A scope narrows the data and the queries over it. A caller binds a
@@ -830,11 +832,10 @@ part leaves the customer's system.
 ZeroKMS version 2 is planned to remove the limit and to encrypt the
 access log.
 
-A post-seal part is added after sealing, by a database trigger that
-refines the stored tag. ZeroKMS verifies the refined tag and returns the
-original. The AAD binds the original. The design allows for this kind. The work
-depends on ZeroKMS, and is the [refined tags](#changes-that-would-alter-the-stored-format)
-item.
+A caveat added by [tag
+refinement](2026-11-07-stack-encrypt-tag-refinement.md) is not a part of
+the context. ZeroKMS verifies it. It is in neither the query context
+nor the AAD.
 
 The use case is access intelligence. Each value is bound to its row by a
 client-generated UUID. A query by column or by tenant still finds it.
@@ -891,6 +892,30 @@ mod tests {
         );
     }
 }
+```
+
+#### Tag refinement
+
+Tag refinement adds a caveat, a named fact, to the ZeroKMS key tag of a
+stored value. The value is then tied to its row and to the facts of its
+writing. Its context, its AAD, and its queries do not change.
+ZeroKMS verifies the caveats when it returns the key, and logs them.
+That log is where access intelligence comes from.
+
+[Tag refinement and caveats](2026-11-07-stack-encrypt-tag-refinement.md)
+has the design.
+
+```rust
+// Not on `next` yet: `refine` and `caveats`.
+let sealed: TextEq = sealed
+    .refine("written_from", request.ip())?
+    .refine("created_at", now())?;
+let body: String = String::decrypt_from(sealed, &keyset).await?;
+```
+
+```sql
+-- In a trigger, once the primary key is known.
+NEW.body := eql_v4.refine_tag(NEW.body, 'row_id', NEW.id::text);
 ```
 
 #### Other rules
@@ -1007,7 +1032,7 @@ format version beside it.
 
 | Planned change | What it would alter |
 | --- | --- |
-| Refined tags | The tag stored in the envelope, and what the AAD binds |
+
 | Search terms under the query context | A new form of search term, beside the rc.3 form, where terms derive under every part |
 | Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
@@ -1025,31 +1050,41 @@ format version beside it.
 - **Finished when** Rust and Go each open blobs that the other wrote, and
   the conformance profiles cover it.
 
-#### Authenticated metadata in an EQL payload
+#### Tag refinement
 
-- **What to build.** An optional field, `m`, in every EQL payload type,
-  for authenticated metadata. It contains named bindings, stored in the clear inside the payload, such as the address a value was written from
-  and when. The
-  Rust declaration marks a binding as stored `in = metadata`, and the
-  derive writes it into the field's payload. The dynamic grammar has the
-  same form, so Go can declare it. The EQL bundle accepts the field in
-  every domain and ignores it in every operator.
-- **Why.** Access intelligence needs each value's writing facts bound to
-  it. As row columns, a reader would have to select every one of them to
-  decrypt the value. Inside the payload, one column stores the value and its bindings, so
-  `SELECT body` is enough. Scenario 9 of the [context
-  scenarios](2026-10-24-stack-encrypt-context-examples.md) shows it.
-- **Without EQL.** The same shape works in a target type of our own, with
-  the bindings as passthrough fields of the target. Scenario 10 shows it.
-  That needs bindings declared on a target type, from the [record
-  derives](#record-derives) item, and no change to EQL.
-- **Stored format.** The field is optional, so a payload without it is
-  unchanged. A payload with it is a new form beside the rc.3 form.
-- **Done already.** Nothing.
+Decided on 7 November 2026. [Tag refinement and
+caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
+
+- **What to build.**
+  - `refine(name, value)` on every EQL type and on a JSON document. It
+    computes `HMAC(tag, PAE(name, value))`, stores the result as the tag,
+    and appends the caveat to the payload's list.
+    - `eql_v4.refine_tag(payload, name, value)`, the same in SQL, for a
+    trigger that refines with the generated primary key. The tag is
+    inside the ciphertext envelope, so this needs the envelope layout from
+    [key tag extraction](#typed-text-encodings-and-key-tag-extraction),
+    for writing as well as reading.
+  - `refine` and `caveats` as operations of the dynamic interface, so Go
+    can refine a value before it writes the row, and read the caveats.
+  - `caveats()` on a stored value, to read the list without decrypting.
+  - The optional `caveats` list in every EQL payload type.
+  - On decrypt, send the stored tag and the caveats to ZeroKMS, and
+    rebuild the leaf AAD from the original tag it returns.
+- **Why.** Access intelligence needs each value tied to its row and to
+  the facts of its writing. A caveat does that without touching the
+  context, the AAD, or the queries.
+- **Stored format.** The list is present only once a caveat is added, so
+  a payload without one is the rc.3 form. The change is additive.
+- **Depends on ZeroKMS.** The read path needs the retrieve-key request to
+  carry the caveats, and the response to return the original tag. That
+  work is outside this repository.
+- **Done already.** `Ciphertext::key_tag` reads the tag in Rust (#1404).
+  The leaf AAD already binds the original tag.
 - **Finished when** these are all true:
-  - scenario 9 encrypts, and is read back from one column;
-  - it fails to open when the metadata is changed;
-  - the EQL conformance profile covers the field in Rust and in Go.
+  - the example in the tag refinement document round-trips through a
+    trigger, in Rust and in Go;
+  - a changed caveat, or a changed tag, is refused by ZeroKMS;
+  - the EQL conformance profile covers the `caveats` list.
 
 #### Typed text encodings and key tag extraction
 
@@ -1062,7 +1097,7 @@ format version beside it.
   - A SQL and PL/pgSQL function that reads the ZeroKMS key tag from a stored
     ciphertext. It must check the version and the lengths before it reads.
 - **Why.** Some columns store ciphertext as text. SQL needs to read the key
-  tag for refined tags.
+  tag for tag refinement.
 - **Limits.** PostgreSQL can decode Base64, but not Base85. So SQL can read
   the key tag from Base85 text only if we supply a decoder. Reading the tag
   does not authenticate it.
@@ -1203,8 +1238,8 @@ review.
   bytes.
 - **Scenarios.** The [context
   examples](2026-10-24-stack-encrypt-context-examples.md) are the
-  acceptance matrix: ten scenarios, from a static context alone to the
-  bindings that access intelligence stores. Two earlier scenarios were removed, because
+  acceptance matrix: eight scenarios, from a static context alone to an
+  EQL type with its column as the context. Two earlier scenarios were removed, because
   each sealed a value that was also another field's context, so nothing
   could open without the plaintext.
 - **Done already.** The order in which parts are joined is fixed and
@@ -1223,7 +1258,7 @@ review.
   compile time. `RequiredContext`, `OptionalContext`, and `NoCallerContext`
   (#1404) are the three states this keeps.
 - **Finished when** these are both true:
-  - all ten scenarios run as tests in Rust and Go, through the
+  - all eight scenarios run as tests in Rust and Go, through the
     builder;
   - a Rust call with an undeclared part fails to compile.
 
@@ -1496,7 +1531,6 @@ The lead who approves this plan decides each question.
 | --- | --- | --- |
 | What is the name of the wrapper that authenticates a collection's order and length? | `Positioned<Vec<T>>`. Or a name chosen in the naming review | `Positioned`. Decide in the naming review |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
-| Should Stack Encrypt use refined tags? | Store a tag derived from the ZeroKMS key tag with a hash-based message authentication code (HMAC). Or keep the original tag | No recommendation yet. The protocol is not designed |
 | How does a declaration mark a binding in the context, in Rust and in the dynamic grammar? | A kind on each part of the declaration, in the derive, the plan builder, and the Go struct tag. The spelling depends on the context vocabulary and the field reference design, decided with the context artifact | Decide with differences three to seven of the context artifact |
 | Should keysets be chosen from data, and should Stack Encrypt use ZeroKMS lock context? | Optional capabilities of a key provider. Or leave them out | Optional capabilities, after the customer release |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |

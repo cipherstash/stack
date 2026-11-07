@@ -2,7 +2,7 @@
 
 Date: 7 November 2026.
 
-This document lists ten ways a record can get its context, each as a
+This document lists eight ways a record can get its context, each as a
 code example with its use case. Together they are the acceptance matrix
 for the work item [Context from fields and from the
 caller](2026-10-24-stack-encrypt-api-plan.md#context-from-fields-and-from-the-caller)
@@ -248,98 +248,4 @@ let email = String::decrypt_from_with_context(stored, &keyset, Scope::new(&colum
 let query: TextEqQuery = "alice@example.com"
     .encrypt_into_with_context(&keyset, Scope::new(&column))
     .await?;
-```
-
-## 9. Bindings stored inside the EQL payload, for access intelligence
-
-Access intelligence needs to know which value was read, and the facts
-about its writing: the address it was written from, and when. Each fact
-is a binding. If each one were its own column, a reader would have to
-select every one of them to decrypt the value. So the bindings travel
-inside the EQL payload instead, in an authenticated metadata field. One column then stores the value and its bindings, so `SELECT body` is
-enough to decrypt it.
-
-The metadata is stored in the clear. It is part of the stored context, so
-the AAD and the descriptor cover it. A changed address fails to open.
-Each binding is in the descriptor, so ZeroKMS logs it at every key
-retrieval. That log is where the access record comes from.
-
-EQL has no such field today; the plan's [stored format
-work](2026-10-24-stack-encrypt-api-plan.md#authenticated-metadata-in-an-eql-payload)
-adds it.
-
-```rust
-#[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Note, context = "notes", bind(field = "id"))]
-struct EncryptedNote {
-    #[stash(passthrough)]
-    id: Uuid,                     // the row's primary key column
-    #[stash(bind(field = "written_from", in = metadata))]
-    #[stash(bind(field = "written_at", in = metadata))]
-    body: TextSearch,             // one EQL column: ciphertext, terms, and the metadata
-}
-
-let note = Note { id: Uuid::new_v4(), written_from: request.ip(), written_at: now(), body };
-let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
-
-// The payload stored in the `body` column, with the metadata in `m`:
-// {"v": 1, "i": {"t": "notes", "c": "body"}, "c": "...", "bf": [...],
-//  "m": {"written_from": "203.0.113.5", "written_at": "2026-11-07T10:15:00Z"}}
-
-// `SELECT id, body FROM notes WHERE id = $1` is enough. The reader passes
-// nothing: the row ID comes from its column, and the address and the
-// time come from the payload. ZeroKMS logs all three with the key.
-let note = Note::decrypt_from(encrypted, &keyset).await?;
-```
-
-ZeroKMS today limits the length of a descriptor, and logs it in the
-clear. ZeroKMS version 2 is planned to remove the limit and to encrypt
-the access log.
-
-## 10. The same bindings, in a type of our own instead of EQL
-
-The shape of scenario 9 does not depend on EQL. A target type of our
-own can store the ciphertext and its bindings as one value. It needs only the derives Stack Encrypt already has or plans.
-
-The bindings are passthrough fields of the target, stored in the clear inside
-it. They are part of the stored context. One column stores
-the whole value, through Serde, and the reader passes nothing.
-
-What EQL adds is the PostgreSQL side: a domain for the column, and the
-operators that run a search on it. A type of our own has neither. Add a
-search term to it only if the application writes the SQL that compares
-the term.
-
-```rust
-#[derive(Zeroize)]
-struct Written {
-    text: String,
-    from: IpAddr,
-    at: Timestamp,
-}
-
-/// One stored value: the ciphertext and two bindings.
-#[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
-#[stash(plaintext = Written, bind(field = "from"), bind(field = "at"))]
-struct EncryptedNoteBody {
-    ciphertext: Ciphertext,
-    #[stash(passthrough)]
-    from: IpAddr,
-    #[stash(passthrough)]
-    at: Timestamp,
-}
-
-#[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Note, context = "notes", bind(field = "id"))]
-struct EncryptedNote {
-    #[stash(passthrough)]
-    id: Uuid,
-    body: EncryptedNoteBody,             // one column, stored as JSON through Serde
-}
-
-let note = Note { id: Uuid::new_v4(), body: Written { text, from: request.ip(), at: now() } };
-let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
-
-// `SELECT id, body FROM notes WHERE id = $1` is enough, as in scenario 9.
-let note = Note::decrypt_from(encrypted, &keyset).await?;
 ```
