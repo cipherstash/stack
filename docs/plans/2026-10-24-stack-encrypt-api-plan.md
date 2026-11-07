@@ -354,30 +354,46 @@ static form of these queries is possible.
 #### Query a JSON document without a plan
 
 In the target state, a JSON query works like a [scalar
-query](#query-a-field). An operand type encrypts into its EQL query type.
-The target type of the field supplies the column and the options. So the
-program does not write a plan. An order query on a path that the target
-does not order is refused.
+query](#query-a-field). An operand type encrypts into its EQL query type
+with `encrypt_into`, the same verb as every other value. The program does
+not write a plan.
+
+With the default options, the operand needs only the column. The caller
+passes it as the context, as a scalar query does:
 
 ```rust
-use eql_bindings::v4::json_tree::{JsonTreeElementsQuery, JsonTreeLeafQuery, JsonTreeQuery};
-use stack_encrypt::json::{AtPath, Contains, ElementMatch};
+use eql_bindings::v4::json_tree::{JsonTreeLeafQuery, JsonTreeQuery};
+use stack_encrypt::json::{AtPath, Contains};
 
 // Not on `next` yet: JSON operand types. The names are a proposal.
 let ada: JsonTreeQuery = Contains(json!({ "name": "Ada" }))
-    .encrypt_into_for::<EncryptedProfile>(&keyset)
-    .await?;
-let older: JsonTreeLeafQuery = AtPath::gt("$.age", 30)
-    .encrypt_into_for::<EncryptedProfile>(&keyset)
-    .await?;
-let home: JsonTreeElementsQuery = ElementMatch::at("$.visits[*]")
-    .eq("place", "home")
-    .gt("at", 15)
-    .encrypt_into_for::<EncryptedProfile>(&keyset)
+    .encrypt_into_with_context(&keyset, &column)
     .await?;
 ```
 
-The names and the way a query names its target are an [open
+With custom options, the operand names the target type of the field. The
+target's declaration supplies the column and the options. An order query
+on a path that the target does not order is refused.
+
+```rust
+use eql_bindings::v4::json_tree::JsonTreeElementsQuery;
+use stack_encrypt::json::ElementMatch;
+
+// Not on `next` yet: JSON operand types. The names are a proposal.
+let ada: JsonTreeQuery = Contains::<EncryptedProfile>(json!({ "name": "Ada" }))
+    .encrypt_into(&keyset)
+    .await?;
+let older: JsonTreeLeafQuery = AtPath::<EncryptedProfile>::gt("$.age", 30)
+    .encrypt_into(&keyset)
+    .await?;
+let home: JsonTreeElementsQuery = ElementMatch::<EncryptedProfile>::at("$.visits[*]")
+    .eq("place", "home")
+    .gt("at", 15)
+    .encrypt_into(&keyset)
+    .await?;
+```
+
+The names of the operand types are an [open
 question](#open-questions-and-decisions-to-be-made).
 
 The dynamic interface is still needed when the program learns the query
@@ -994,7 +1010,7 @@ The lead who approves this plan decides each question.
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
-| How should a static JSON query name its target and operator? | Operand types such as `Contains` and `AtPath` that encrypt into the EQL query types for a named target type. Or query methods on the target type, such as `EncryptedProfile::query().at("$.age").gt(30)` | Operand types, to match scalar queries such as `TextEqQuery`. Decide the names in the naming review |
+| What are the names of the JSON operand types? | `Contains`, `AtPath`, and `ElementMatch` in `stack_encrypt::json`, generic over the target type when the field has custom options. Or names chosen in the naming review | Keep one verb, `encrypt_into`, and put the target type on the operand. Decide the names in the naming review |
 | Should a `Vec<u8>` encrypt as one value, or as one value for each byte? | One value, as #1501 built it. Or one value for each byte, with `OpaqueBlob<Vec<u8>>` for a whole vector | First check whether Go rc.3 stores a byte string as one value. If it does, keep one value |
 | Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
