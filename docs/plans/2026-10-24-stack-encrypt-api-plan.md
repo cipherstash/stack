@@ -308,7 +308,7 @@ passes it as the context, as a scalar query does:
 use eql_bindings::v4::json_tree::{JsonTreeLeafQuery, JsonTreeQuery};
 use stack_encrypt::json::{AtPath, Contains};
 
-// Not on `next` yet: JSON operand types. The names are a proposal.
+// Not on `next` yet: the public JSON operand types.
 let ada: JsonTreeQuery = Contains(json!({ "name": "Ada" }))
     .encrypt_into_with_context(&keyset, &column)
     .await?;
@@ -322,7 +322,7 @@ on a path that the target does not order is refused.
 use eql_bindings::v4::json_tree::JsonTreeElementsQuery;
 use stack_encrypt::json::ElementMatch;
 
-// Not on `next` yet: JSON operand types. The names are a proposal.
+// Not on `next` yet: the public JSON operand types.
 let ada: JsonTreeQuery = Contains::<EncryptedProfile>(json!({ "name": "Ada" }))
     .encrypt_into(&keyset)
     .await?;
@@ -362,8 +362,9 @@ The kinds of JSON query, and what each one finds:
 | Jsonpath predicate | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
 | Children and child count | The entries directly below one node, or how many there are | A node token |
 
-The names of the operand types are an [open
-question](#open-questions-and-decisions-to-be-made).
+The operand types are named `Contains`, `AtPath`, and `ElementMatch`,
+with `Predicate` for a jsonpath predicate and `Children` for the entries
+below a node. The user agreed these names on 7 November 2026.
 
 The operand types are not new. The dynamic interface already has one
 private input type for each operator, in `stack_encrypt::dynamic`:
@@ -871,11 +872,12 @@ format version beside it.
 - **What to build.** Make the dynamic interface's input types public.
   There is one for each kind of JSON query: containment, comparison at a
   path, element match, jsonpath predicate, and reads of children. Give
-  each one
-  constructors, and an `EncryptTarget` implementation that encrypts it
-  into its EQL query type. The target type of the field supplies the
-  column and the options. The dynamic parser keeps reading into the same
-  types, so there is one definition of each input.
+  each one constructors, and an `EncryptTarget` implementation that
+  encrypts it into its EQL query type. The target type of the field
+  supplies the column and the options. The dynamic parser keeps reading
+  into the same types, so there is one definition of each input.
+- **Names.** `Contains`, `AtPath`, `ElementMatch`, `Predicate`, and
+  `Children`, in `stack_encrypt::json`. Agreed on 7 November 2026.
 - **Why.** On `next`, a Rust program needs a plan for any JSON query, and
   needs the dynamic interface for element match, predicates, and children.
   Go already has typed methods for these.
@@ -1043,7 +1045,6 @@ The lead who approves this plan decides each question.
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
-| What are the public names of the JSON operand types? | `Contains`, `AtPath`, and `ElementMatch` in `stack_encrypt::json`, generic over the target type when the field has custom options. Or the dynamic module's current names, such as `ElementsInput` | Keep one verb, `encrypt_into`, and put the target type on the operand. One type serves the static form and the dynamic parser. Decide the names in the naming review |
 | Should a `Vec<u8>` encrypt as one value, or as one value for each byte? | One value, as #1501 built it. Or one value for each byte, with `OpaqueBlob<Vec<u8>>` for a whole vector | First check whether Go rc.3 stores a byte string as one value. If it does, keep one value |
 | Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
