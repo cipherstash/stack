@@ -1174,8 +1174,8 @@ review.
   bytes.
 - **Scenarios.** The [context
   examples](2026-10-24-stack-encrypt-context-examples.md) are the
-  acceptance matrix: seven scenarios, from a static context alone to a
-  scope that is never stored. Two earlier scenarios were removed, because
+  acceptance matrix: nine scenarios, from a static context alone to the
+  bindings that access intelligence stores. Two earlier scenarios were removed, because
   each sealed a value that was also another field's context, so nothing
   could open without the plaintext.
 - **Done already.** The order in which parts are joined is fixed and
@@ -1194,7 +1194,7 @@ review.
   compile time. `RequiredContext`, `OptionalContext`, and `NoCallerContext`
   (#1404) are the three states this keeps.
 - **Finished when** these are both true:
-  - all seven scenarios run as tests in Rust and Go, through the
+  - all nine scenarios run as tests in Rust and Go, through the
     builder;
   - a Rust call with an undeclared part fails to compile.
 

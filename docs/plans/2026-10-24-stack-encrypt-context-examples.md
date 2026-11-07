@@ -2,7 +2,7 @@
 
 Date: 7 November 2026.
 
-This document lists the seven ways a record can get its context, each as a
+This document lists nine ways a record can get its context, each as a
 code example with its use case. Together they are the acceptance matrix
 for the work item [Context from fields and from the
 caller](2026-10-24-stack-encrypt-api-plan.md#context-from-fields-and-from-the-caller)
@@ -211,6 +211,99 @@ let encrypted: EncryptedSecret = secret
     .await?;
 let secret = Secret::decrypt_from_with_context(encrypted, &keyset, Scope::new(&host)).await?;
 ```
+
+## 8. An EQL type, with its column as the context
+
+An EQL type such as `TextEq` is one column's value, stored in a
+PostgreSQL column of type `public.eql_v4_text_eq`. Its context is the
+table and column, as an `Identifier`. The type stores the identifier in
+its `i` field, so a reader takes it from the stored value. A reader that
+knows which column it is reading passes the identifier as well. If the
+stored identifier differs, the value is refused before any key is
+fetched.
+
+Inside a record, the derive supplies the identifier from the record's
+name and the field's context name, so none of this is written by hand.
+
+```rust
+use eql_bindings::{v4::text::{TextEq, TextEqQuery}, Identifier};
+
+let column = Identifier::for_column("users", "email")?;
+
+// Encrypt one value for the column. The identifier is the context, and
+// `TextEq` stores it in `i`.
+let stored: TextEq = "alice@example.com"
+    .encrypt_into_with_context(&keyset, Scope::new(&column))
+    .await?;
+
+// Decrypt, taking the column from the stored value.
+let email = String::decrypt_from(stored, &keyset).await?;
+
+// Decrypt, checking that the stored column is the one expected. A value
+// from `users.name` is refused with `ContextMismatch` before any key
+// is fetched.
+let email = String::decrypt_from_with_context(stored, &keyset, Scope::new(&column)).await?;
+
+// A query for the column uses the same context, so its term matches.
+let query: TextEqQuery = "alice@example.com"
+    .encrypt_into_with_context(&keyset, Scope::new(&column))
+    .await?;
+```
+
+## 9. Bindings stored for access intelligence
+
+Access intelligence needs to know which value was read, and the facts
+about its writing: the row, the address it was written from, and when.
+Each of those is a binding, stored in the clear in the row. Encrypt reads
+them from the plaintext. A reader takes them from the row, so it needs to
+know none of them.
+
+Each binding is in the descriptor, so ZeroKMS logs them at every key
+retrieval. That log is where the access record comes from. A binding is
+not in the query context, so queries are unchanged.
+
+```rust
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(
+    struct = Note,
+    context = "notes",
+    scope(field = "tenant"),
+    bind(field = "id"),
+    bind(field = "written_from"),
+    bind(field = "written_at"),
+)]
+struct EncryptedNote {
+    #[stash(passthrough)]
+    tenant: u64,
+    #[stash(passthrough)]
+    id: Uuid,
+    #[stash(passthrough)]
+    written_from: IpAddr,
+    #[stash(passthrough)]
+    written_at: Timestamp,
+    body: Ciphertext,
+}
+
+let note = Note { tenant, id: Uuid::new_v4(), written_from: request.ip(), written_at: now(), body };
+let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
+
+// The reader passes nothing. Every part comes from the row, and ZeroKMS
+// logs the whole context when it returns the key.
+let note = Note::decrypt_from(encrypted, &keyset).await?;
+
+// A reader that serves one tenant and one row checks both.
+let note = Note::decrypt_from_with_context(
+    encrypted,
+    &keyset,
+    Scope::new(session.tenant).bind(requested_id),
+)
+.await?;
+```
+
+Two limits apply. The descriptor has a length limit at ZeroKMS, so the
+bindings must stay short. And the descriptor is sent to ZeroKMS, so the
+address and the time leave the customer's system. For access
+intelligence that is the point. A customer should still know it.
 
 ## Scenarios that were removed
 
