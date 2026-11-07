@@ -1120,12 +1120,10 @@ review.
   bytes.
 - **Scenarios.** The [context
   examples](2026-10-24-stack-encrypt-context-examples.md) are the
-  acceptance matrix. Scenarios 3 and 8 are removed. Each seals a value
-  that is also the context of another field. Nothing can open without the
-  plaintext, so the sealed copy protects nothing. Scenario 7 stays: a caller-supplied part
-  that is never stored, such as a host ID, so the data opens only on that
-  host. Its type name `PartiallyStoredUser` is wrong, because the record
-  is fully stored. Only part of the context is not.
+  acceptance matrix: seven scenarios, from a static context alone to a
+  scope that is never stored. Two earlier scenarios were removed, because
+  each sealed a value that was also another field's context, so nothing
+  could open without the plaintext.
 - **Done already.** The order in which parts are joined is fixed and
   tested in Rust and Go (#1491). The context inputs `RequiredContext`,
   `NoCallerContext`, and `OptionalContext` exist (#1404). #1504 adds
@@ -1142,8 +1140,8 @@ review.
   compile time. `RequiredContext`, `OptionalContext`, and `NoCallerContext`
   (#1404) are the three states this keeps.
 - **Finished when** these are both true:
-  - scenarios 0, 1, 2, 4, 5, 6, and 7 run as tests in Rust and Go,
-    through the builder;
+  - all seven scenarios run as tests in Rust and Go, through the
+    builder;
   - a Rust call with an undeclared part fails to compile.
 
 #### Query context and stored context
