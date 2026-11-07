@@ -32,7 +32,9 @@ log](2026-10-24-stack-encrypt-api-review.md).
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | Passthrough field | A field stored unencrypted next to the encrypted fields. It is not authenticated |
+| Query scope | The prefix of the stored context that search terms derive under. A query supplies it. See [Two scopes of one context](#two-scopes-of-one-context) |
 | Search term | A value stored next to a ciphertext, so that a query can find it without decrypting it. Equality, order, and match each use their own term |
+| Stored context | Every part of a value's context. The data key and the AAD derive under it |
 | Stored format | Everything Stack Encrypt writes to the database. See [The stored format stays compatible with Go rc.3](#the-stored-format-stays-compatible-with-go-rc3) |
 | Target | The encrypted type that a value is stored as, such as `Ciphertext`, an EQL type like `TextEq`, or a record type |
 
@@ -145,11 +147,15 @@ The derives need no Serde. A program that stores an encrypted value as
 JSON adds `Serialize` and `Deserialize` to the encrypted type. That is
 the same as for any other type.
 
-To tie every field to one row, the caller supplies the row ID as a context
-extension, and supplies it again to decrypt. The extension also changes the
-search terms, so a query must supply the same row ID. How to bind a
-ciphertext to its row while its search terms cover the whole column is an
-[open question](#open-questions-and-decisions-to-be-made).
+To tie every field to one row, the caller supplies the row ID as a part of
+the context, and supplies it again to decrypt. The row ID is a binding
+part. It is in the stored context, so the key and the AAD depend on it. It
+is not in the query scope, so a query still finds the row across the
+column.
+
+[Two scopes of one context](#two-scopes-of-one-context) gives the rule.
+The API for declaring a binding part is an [open
+question](#open-questions-and-decisions-to-be-made).
 
 ```rust
 let encrypted: EncryptedUser = user
@@ -747,6 +753,41 @@ Sources: the module documentation of `packages/stack-encrypt/src/cipher.rs`
 describes the descriptor and the AAD. The module documentation of
 `packages/stack-encrypt/src/target/context.rs` describes the search terms.
 
+#### Two scopes of one context
+
+Decided on 7 November 2026. A context has two scopes:
+
+- **The stored context** is every part. The data key and the AAD derive
+  under it.
+- **The query scope** is a prefix of the stored context. Search terms
+  derive under it. A query supplies the query scope, and matches every row
+  stored under it.
+
+A part of the context is one of three kinds. The declaration says which,
+and fixes the order: the query scope first, then the binding parts.
+
+| Kind of part | Example | In the query scope | In the descriptor | In the AAD | Verified by |
+| --- | --- | --- | --- | --- | --- |
+| Scoped | The label and the field, or a tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
+| Binding | A row's UUID, or the IP address of the writer | No | Yes | Yes | ZeroKMS and the AEAD |
+| Post-seal | A key the database generates after the insert | No | Through the refined tag | No | ZeroKMS only |
+
+A part is scoped unless the declaration marks it, because that is what Go
+rc.3 writes. A binding part can be stored in the row as a context field,
+so the reader takes it from the row. ZeroKMS logs the descriptor at every
+key retrieval, so a binding part such as the writer's IP address is in the
+access log. The descriptor has a length limit. It is also sent to ZeroKMS, so the
+part leaves the customer's system.
+
+A post-seal part is added after sealing, by a database trigger that
+refines the stored tag. ZeroKMS verifies the refined tag and returns the
+original. The AAD binds the original. The design allows for this kind. The work
+depends on ZeroKMS, and is the [refined tags](#changes-that-would-alter-the-stored-format)
+item.
+
+The use case is access intelligence. Each value is bound to its row by a
+client-generated UUID. A query by column or by tenant still finds it.
+
 #### Other rules
 
 - **Rust and Go behave the same.** Every built-in capability has the same
@@ -855,7 +896,7 @@ format version beside it.
 | Planned change | What it would alter |
 | --- | --- |
 | Refined tags | The tag stored in the envelope, and what the AAD binds |
-| Separate row binding and search scope | The AAD, and the context that search terms are derived under |
+| Search terms under the query scope | A new form of search term, beside the rc.3 form, where terms derive under every part |
 | Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
@@ -998,6 +1039,23 @@ format version beside it.
   `NoCallerContext`, and `OptionalContext` exist (#1404). #1504 adds
   `ContextExtension` and `ExpectedContext`, and is in review.
 - **Finished when** all nine scenarios run as tests in Rust and Go.
+
+#### Two scopes of one context
+
+- **What to build.** The binding kind of part, in the declaration and in
+  the dynamic grammar. Search terms derive under the query scope, and the
+  key and the AAD under the stored context. A binding part can be a context
+  field stored in the row. The order is fixed: the query scope, then the
+  binding parts.
+- **Why.** Access intelligence needs each value bound to its row, and found
+  by a column or tenant query. [Two scopes of one
+  context](#two-scopes-of-one-context) has the rule.
+- **Done already.** Nothing. Today every part is in both scopes.
+- **Finished when** these are all true, in Rust and in Go:
+  - a record with a binding row ID encrypts;
+  - a column query finds it;
+  - it fails to open under another row ID;
+  - the stored bytes of a record with no binding part are unchanged.
 
 #### Name context parameters `context`
 
@@ -1160,7 +1218,7 @@ The lead who approves this plan decides each question.
 | Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should Stack Encrypt use refined tags? | Store a tag derived from the ZeroKMS key tag with a hash-based message authentication code (HMAC). Or keep the original tag | No recommendation yet. The protocol is not designed |
-| How should a ciphertext be bound to its row while its search terms cover a wider scope? | Separate row binding from search scope in the declaration, for example with `PrimaryKey` and `ScopeKey` roles. Or keep one context | Separate them. Never add a row ID to the search scope automatically |
+| How does a declaration mark a binding part of the context, in Rust and in the dynamic grammar? | A kind on each part of the declaration, in the derive, the plan builder, and the Go struct tag. The spelling depends on the context vocabulary and the field reference design, decided with the context artifact | Decide with differences two to seven of the context artifact |
 | Should keysets be chosen from data, and should Stack Encrypt use ZeroKMS lock context? | Optional capabilities of a key provider. Or leave them out | Optional capabilities, after the customer release |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
