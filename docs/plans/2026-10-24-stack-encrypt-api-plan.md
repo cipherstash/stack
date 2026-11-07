@@ -365,8 +365,20 @@ The kinds of JSON query, and what each one finds:
 The names of the operand types are an [open
 question](#open-questions-and-decisions-to-be-made).
 
-None of the operand types exists on `next`. Today a Rust program queries
-a JSON document [through a plan](#query-through-a-plan). A plan is part
+The operand types are not new. The dynamic interface already has one
+private input type for each operator, in `stack_encrypt::dynamic`:
+
+- `DocumentInput` for containment;
+- `AtInput` for a comparison at a path;
+- `ElementsInput` for element match.
+
+The dynamic parser reads the JSON object a binding sends into one of
+them. The engine then derives the operand from it. The static form makes
+those types public, with constructors. The parser reads into the same
+types, so both forms share one set of input rules.
+
+The public forms do not exist on `next`. Today a Rust program queries a
+JSON document [through a plan](#query-through-a-plan). A plan is part
 of the dynamic interface. The dynamic interface is still the right tool for a
 query known only at run time, such as a jsonpath predicate that a user
 types.
@@ -856,17 +868,21 @@ format version beside it.
 
 #### Static JSON queries
 
-- **What to build.** A typed Rust operand type for each kind of JSON
-  query: containment, comparison at a path, element match, jsonpath
-  predicate, and reads of children. Each one encrypts into its EQL query
-  type. The target type of the field supplies the column and the
-  options.
+- **What to build.** Make the dynamic interface's input types public.
+  There is one for each kind of JSON query: containment, comparison at a
+  path, element match, jsonpath predicate, and reads of children. Give
+  each one
+  constructors, and an `EncryptTarget` implementation that encrypts it
+  into its EQL query type. The target type of the field supplies the
+  column and the options. The dynamic parser keeps reading into the same
+  types, so there is one definition of each input.
 - **Why.** On `next`, a Rust program needs a plan for any JSON query, and
   needs the dynamic interface for element match, predicates, and children.
   Go already has typed methods for these.
-- **Done already.** Typed containment and comparison at a path, through a
-  plan (`op::Contains`, `op::AtPath`). The EQL query types exist in
-  `eql-bindings`.
+- **Done already.** The input types and their parsing rules, as private
+  types in `stack_encrypt::dynamic::json_query`. Typed containment and
+  comparison at a path, through a plan (`op::Contains`, `op::AtPath`). The
+  EQL query types exist in `eql-bindings`.
 - **Finished when** the [static JSON query
   example](#query-a-json-document) compiles, and an order
   query on a path the target does not order is refused.
@@ -1027,7 +1043,7 @@ The lead who approves this plan decides each question.
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
-| What are the names of the JSON operand types? | `Contains`, `AtPath`, and `ElementMatch` in `stack_encrypt::json`, generic over the target type when the field has custom options. Or names chosen in the naming review | Keep one verb, `encrypt_into`, and put the target type on the operand. Decide the names in the naming review |
+| What are the public names of the JSON operand types? | `Contains`, `AtPath`, and `ElementMatch` in `stack_encrypt::json`, generic over the target type when the field has custom options. Or the dynamic module's current names, such as `ElementsInput` | Keep one verb, `encrypt_into`, and put the target type on the operand. One type serves the static form and the dynamic parser. Decide the names in the naming review |
 | Should a `Vec<u8>` encrypt as one value, or as one value for each byte? | One value, as #1501 built it. Or one value for each byte, with `OpaqueBlob<Vec<u8>>` for a whole vector | First check whether Go rc.3 stores a byte string as one value. If it does, keep one value |
 | Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
