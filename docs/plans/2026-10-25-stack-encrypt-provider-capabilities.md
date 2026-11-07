@@ -1,12 +1,22 @@
 # Key selection, lock context, and provider capabilities
 
-Dated 25 October 2026, with an update on 27 October 2026. This assessment
+Dated 25 October 2026, with updates on 27 October 2026 and 7 November
+2026. The last check was against `next` at commit `e4990e49b`. This assessment
 accompanies the [API implementation plan](2026-10-24-stack-encrypt-api-plan.md).
 
 ## Status and requests
 
 This document contains recommendations for review. The recommendations
-are not accepted public signatures. Nothing in them is implemented.
+are not accepted public signatures. Nothing in them is implemented. On 7
+November 2026, no merged pull request implemented keyset routing from
+plaintext, lock context, or the neutral provider split.
+
+From 7 November 2026, the stored format of Go `v0.1.0-rc.3` must not
+break. The stored format is what is written to the database, such as
+ciphertext envelopes and search terms. The refined-tag work in item 6
+below changes the stored tag, so it must keep rc.3 data readable. See the
+[API
+plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
 
 The user who requested this assessment asked for three things:
 
@@ -37,7 +47,8 @@ The JSON operation contract is under separate user review.
 | `IndexKeySource` | The trait in `stack-kms` that loads the deterministic index key of a keyset, used to derive search terms |
 | `Pending` | The request object that `StackCipher` returns. Settling it (awaiting it) sends the batched ZeroKMS calls |
 | Key I/O | Any request to the key provider to generate or retrieve a key |
-| AAD | Additional authenticated data (AAD): data that an authentication tag covers but the ciphertext does not contain |
+| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
+| AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
 | `MaybeSend` | A bound that means `Send` on native targets and no bound on WebAssembly (WASM) |
 | Vitamin C | CipherStash's library of cryptographic primitives |
 
@@ -62,6 +73,19 @@ For two roles to share a source value, the definition must declare it
 explicitly. The engine must not infer it from a name.
 
 ## Current implementation
+
+### Update on 7 November 2026
+
+- Pull request #1501 batches an owned `Vec` collection. Encrypting makes
+  one `generate_keys` call. Decrypting makes one `retrieve_keys` call for
+  each keyset. A ciphertext from another keyset is refused before any key
+  is retrieved.
+- Pull request #1493 adds lifecycle conformance, including bounded
+  concurrency when the KMS client splits a batch into chunks.
+- Pull request #1501 moves the Rust crates to Vitamin C 0.9. The section
+  on `AsyncCipher` below describes 0.8.0, and was not checked against 0.9.
+- Pull request #1403 bumps `stack-kms` to 0.2.0, and `stack-auth` to
+  0.44.0. Neither bump adds lock context or routing.
 
 ### Update on 27 October 2026
 
@@ -411,9 +435,9 @@ a registered provider and key format. The metadata never names arbitrary
 network endpoints or credentials to execute.
 
 Keep ZeroKMS's key tag simple for Rust and SQL consumers to extract,
-within its documented envelope profile. Other providers' metadata does not
+within its documented envelope format. Other providers' metadata does not
 need to invent such a tag. The stable encoding of blob payloads does not
-depend on these envelope profiles of each provider.
+depend on the envelope format of each provider.
 
 ### Future providers
 

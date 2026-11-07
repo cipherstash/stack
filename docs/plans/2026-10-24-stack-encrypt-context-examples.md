@@ -7,6 +7,34 @@ Date: 24 October 2026. This design exploration goes with the
 **Everything introduced here is proposed syntax, not an implemented API.**
 None of the code below compiles against Stack Encrypt today.
 
+## Implementation status on 7 November 2026
+
+This document was checked against `next` at commit `e4990e49b`. The
+directional selectors are not implemented. These parts of the model are
+now in the code:
+
+- **Required input.** Pull request #1404 adds `RequiredContext`,
+  `NoCallerContext`, and `OptionalContext` for the owned API. A required
+  `u64` stays required, even though `u64` implements `Default`.
+- **Composition.** Pull request #1491 makes repeated Rust extensions append
+  in order. A grouped extension stays one part. This matches the
+  composition rule below.
+- **Conformance.** Pull request #1491 adds shared Rust and Go cases for a
+  base with extensions, for stored-context expectations, and for altered
+  context. The nine scenarios below are not among those cases.
+
+Still open, or in progress:
+
+- `ContextExtension` and `ExpectedContext` as caller inputs. Pull request
+  #1504 adds them, and is in progress.
+- `context(...)`, `from_context`, `prefix`, and `tuple(...)`. No pull
+  request adds them.
+
+From 7 November 2026, the stored format of Go `v0.1.0-rc.3` must not
+break. So a new selector must produce the same context bytes as rc.3 for
+data that rc.3 can write. See the [API
+plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
+
 This document
 compares what happens to encryption context in each useful combination of
 context source and context storage. That comparison comes before anyone
@@ -19,11 +47,12 @@ public workflow examples document linked above.
 These terms appear throughout. Each one is also explained where it first
 matters:
 
-- **Encryption context** is a value that each ciphertext is bound to. Stack
-  Encrypt gives it to the cipher as additional authenticated data (AAD).
-  AAD is not encrypted, but decryption fails unless the same value is
-  supplied again. The same context also scopes a field's search index terms
-  (see `packages/stack-encrypt/src/target/context.rs`).
+- **Encryption context**, or context, is data that a ciphertext is tied
+  to, such as a column name or a row ID. Decryption needs the same context.
+  The context also scopes a field's search terms. See [Context and
+  AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad).
+- **AAD** means additional authenticated data. Encryption checks it for one ciphertext, but does not encrypt it. Stack Encrypt builds it from
+  the context.
 - **Static prefix** is the fixed string in the declaration, such as
   `"users"`. Together with the field name it forms a field's static base.
 - **Logical row context**, written `R`, is the part of the context that
@@ -737,8 +766,11 @@ caller selector must stay required, even if its Rust type implements
 `Default`. A required `u64` must not silently become zero only because
 `u64: Default`.
 
-That rule exposes a real limit in today's convenience methods. Their only
-test is `Context: Default`. An implementation of this proposal would need
+That rule exposed a real limit in the convenience methods of 24 October
+2026. Their only test was `Context: Default`. Since #1404, the owned
+methods use the explicit capabilities `AllowsNoContext` and
+`AcceptsContext` instead. The structural methods in `target::legacy` still
+use `Default`. An implementation of this proposal would need
 one of two things:
 
 - a `RequiredContext<T>` input that has no default, with an easy

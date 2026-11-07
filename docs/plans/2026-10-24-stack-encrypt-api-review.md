@@ -7,9 +7,18 @@ opaque ciphertext and store the result.
 This document is a running log of the issues found. Each numbered section
 records one issue: what the code does now, what changes were proposed, and
 which decisions are made or still open. The proposed APIs are illustrations,
-not implemented code. All the issues below are still unimplemented. Add a
-numbered section for each new issue, and keep observations, proposed
-changes, and open decisions apart.
+not implemented code, unless a status line says otherwise. Add a numbered
+section for each new issue, and keep observations, proposed changes, and
+open decisions apart.
+
+On 7 November 2026, this log was checked against `next` at commit
+`e4990e49b`. Some issues are now partly done. The owned API for one value and for collections is merged. A conformance corpus for Rust and Go is merged too. No issue is completely done.
+
+The [summary of
+status](#summary-of-status) gives the status of each issue and the pull
+requests behind it. "Current behaviour" sections describe the code when
+each issue was written. Where a code block in one of them is now wrong, a
+note follows the block.
 
 Three companion documents go with this log:
 
@@ -23,17 +32,40 @@ Three companion documents go with this log:
   requirements, the recommended decisions, the order of work, and when the
   work is complete.
 
-## No backward compatibility with the prototype
+## The stored format must stay compatible from 7 November 2026
+
+On 7 November 2026, the user decided: "The stored data must not break as of
+now. The Go customer has already started implementation with rc.3. We can
+make breaking changes to the code/API but not the stored format."
+
+The stored format is what is written to the database. It includes
+ciphertexts with their envelopes and headers. It includes index and search
+terms. It includes JSON tree entries.
+
+The baseline is what the Go module at
+tag `languages/golang/v0.1.0-rc.3` writes, with the EQL v4 SQL bundle
+attached to that release. The tag is commit `114e08448`, built on 2
+November 2026 from `next` at `929451b49`.
+
+From now on, a change that would alter the stored format must keep data
+written by rc.3 readable and searchable. Otherwise it must add a new,
+versioned format beside the rc.3 format. The Rust and Go code and APIs can
+still change in breaking ways. The [API
+plan](2026-10-24-stack-encrypt-api-plan.md#work-that-the-stored-format-decision-constrains)
+lists the planned work that this decision constrains.
+
+### History: no backward compatibility with the prototype
 
 On 25 October 2026 the user clarified that this API has never shipped beyond
 an early prototype. Backward compatibility, and migration of prototype data,
-are not requirements. This replaces any earlier suggestion in this log to
+were not requirements. That replaced any earlier suggestion in this log to
 keep old encodings or public imports. The new Rust, Go, guest, and EQL
-(Encrypt Query Language) implementations must agree with each other. They do
-not need to keep the prototype's representations.
+(Encrypt Query Language) implementations must agree with each other.
 
-Issue 22 limits this exemption: once the customer release ships, customer
-data must not be broken.
+The decision of 7 November 2026 replaces this one for stored data. The
+earlier decision still applies to the code and the APIs. Issue 22 had said
+the exemption would end when the customer release shipped. It now ends for
+stored data before that release.
 
 ## Terms used in this log
 
@@ -42,17 +74,19 @@ where they first appear.
 
 | Term | Meaning |
 | --- | --- |
-| Vitamin C | CipherStash's Rust cryptography library, published as the `vitaminc-*` crates. Stack Encrypt uses version 0.8.0 |
+| Vitamin C | CipherStash's Rust cryptography library, published as the `vitaminc-*` crates. Stack Encrypt used version 0.8.0 when this log started. #1501 moved it to 0.9 |
 | ZeroKMS | CipherStash's key management service, which issues and retrieves data keys |
 | KMS | Key management service |
 | EQL | Encrypt Query Language, the SQL and storage format for searchable encrypted data in PostgreSQL |
 | AEAD | Authenticated encryption with associated data |
-| AAD | Additional authenticated data: data that the ciphertext is bound to, but that is not encrypted |
-| Context | The application data a caller binds a ciphertext to, such as a column name. Stack Encrypt derives each leaf's AAD from it, and sends ZeroKMS a text descriptor of it, such as `users/age` |
+| AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
+| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
 | Leaf | One sealed value, `SealedValue`, in Vitamin C's ciphertext tree |
 | Node | One element of Vitamin C's ciphertext tree, `Node<SealedValue>`: a single leaf, a sequence, a map, an empty container, or a passthrough value |
 | Passthrough | A field that is copied into the output in plaintext, without encryption |
-| Target | An output type that declares how a plaintext is encrypted into it, through `EncryptFrom` |
+| Target | An output type that declares how a plaintext is encrypted into it, through `EncryptFrom`, or `EncryptTarget` in the owned API |
+| Owned API | The Rust API added by #1404 that consumes its plaintext input: `keyset.encrypt`, `EncryptInto`, and `DecryptFrom`, over `EncryptTarget` and `DecryptSource` |
+| Stored format | What is written to the database, as Go `v0.1.0-rc.3` writes it. See [the stored-format decision](#the-stored-format-must-stay-compatible-from-7-november-2026) |
 | Plan | The lower-level builder, `Plan`, that composes encryption operations. The derives generate plans, and the dynamic interface uses them |
 | Dynamic interface | The interface driven by data instead of Rust types, used through FFI (foreign function interface) and by the Go SDK |
 | Guest | The WebAssembly build of the Rust engine that the Go SDK runs |
@@ -60,42 +94,53 @@ where they first appear.
 
 ## Summary of status
 
-| Issue | Status on the last update |
+| Issue | Status on 7 November 2026 |
 | --- | --- |
-| 1. Cipher trait mismatch | Open. The user asked for separate `encrypt` and `encrypt_with_context` methods |
-| 2. Opaque ciphertext storage | Open. Decisions recorded for ordinary encryption, collections, and text encodings |
-| 3. Plaintext-side encryption | Open. Receiver decided on 24 October 2026 |
-| 4. Fixed context on the scalar derive | Direction agreed. Implementation pending |
-| 5. `EncryptFrom` has no `encrypt_from` | Open |
-| 6. Plan builder `encrypt_into` | Open. Revisit during the plan API discussion |
-| 7. Mixed encrypted and plaintext fields | Passthrough attribute accepted in principle. Implementation pending |
-| 8. Whole-value encryption and layouts | Open architectural discussion |
-| 9. Ownership across Stack and Vitamin C | Open architectural discussion. Moving the traits is proposed, not authorised |
-| 10. Public `encrypt_as` | Decision agreed. Implementation pending |
-| 11. Context from an input struct | Open |
-| 12. `Default` compared with optional context | Open |
-| 13. JSON layouts and output adaptation | Open. One follow-up agreed |
-| 14. Decrypt context variants | Direction required by the user. Receiver still to confirm |
-| 15. Go JSON work in pull request #1353 | Coordination item |
-| 16. Prior query design | Adopted as the baseline |
-| 17. One name for definition selection | Recommendation. Final spelling not accepted |
-| 18. Consuming inputs with cleanup | Decisions made on 25 October 2026 |
-| 19. First-release completeness | Decisions accepted on 25 October 2026. JSON contract under user review |
-| 20. Keysets chosen from plaintext | Recommendations, not accepted |
-| 21. Packaging and `AsyncCipher` | Proposals |
-| 22. Customer-driven order of work | Order of work set by the customer's needs. Merged work reconciled on 27 October 2026 |
+| 1. Cipher trait mismatch | Partly done. #1404 adds `encrypt`, `encrypt_with_context`, `decrypt`, and `decrypt_with_context` on the keyset. How Stack's ciphers relate to Vitamin C's traits is still open |
+| 2. Opaque ciphertext storage | Partly done. #1404 adds `Ciphertext`; text encodings and `OpaqueBlob` (#1503, in progress) are still open |
+| 3. Plaintext-side encryption | Partly done. #1404 implements the keyset receiver, and an empty context for `Ciphertext` through both APIs. The structural API keeps its different rules |
+| 4. Fixed context on the scalar derive | Still open. #1491 makes the composition rules in this issue true for repeated extensions |
+| 5. `EncryptFrom` has no `encrypt_from` | Partly done. #1404 adds `EncryptTarget` and `DecryptSource`; the structural traits remain |
+| 6. Plan builder `encrypt_into` | Still open |
+| 7. Mixed encrypted and plaintext fields | Still open. In progress in #1504 |
+| 8. Whole-value encryption and layouts | Still open. In progress in #1503 and #1504 |
+| 9. Ownership across Stack and Vitamin C | Still open. #1501 moves the Rust crates to Vitamin C 0.9 |
+| 10. Public `encrypt_as` | Still open. `encrypt_as` is still public |
+| 11. Context from an input struct | Still open |
+| 12. `Default` compared with optional context | Partly done. #1404 adds explicit context inputs for the owned API. The structural API still uses `Default` |
+| 13. JSON layouts and output adaptation | Still open |
+| 14. Decrypt context variants | Partly done. #1404 implements both pairs for one value, and #1501 for collections. Records are in progress in #1504 |
+| 15. Go JSON work in pull request #1353 | Coordination item. Unchanged |
+| 16. Prior query design | Adopted as the baseline. Unchanged |
+| 17. One name for definition selection | Still open |
+| 18. Consuming inputs with cleanup | Partly done (#1404, #1493, #1501). Blob cleanup, partial Serde decoding, and drop-guarded results are still open |
+| 19. First-release completeness | Partly done (#1445, #1446, #1451, #1452, #1492). Opening a child bound to its parent is still open |
+| 20. Keysets chosen from plaintext | Still open |
+| 21. Packaging and `AsyncCipher` | Still open |
+| 22. Customer-driven order of work | Partly done. The conformance corpus is merged. Merged work was reconciled on 7 November 2026 |
 
 ## 1. Cipher trait mismatch and the required context argument
 
-**Status:** Open.
+**Status:** Partly done. #1404 adds `encrypt` and `encrypt_with_context`, and
+the matching `decrypt` pair, on the keyset. The open questions about
+Vitamin C's cipher traits remain.
 
 The user asked for two separate methods, so that the common case needs no
 empty context argument. Questions remain about how Stack's ciphers relate
 to Vitamin C's cipher traits.
 
+### Decision of 7 November 2026: name context parameters `context`
+
+A parameter that takes the caller's context is named `context`. The name `aad` is kept only for a value that is an AAD.
+
+Several public methods, such as `encrypt_tree`, still name the context `aad`. The [API
+plan](2026-10-24-stack-encrypt-api-plan.md#name-context-parameters-context)
+lists them as work to do. The rename breaks the Rust API only. It does not
+change the stored format.
+
 ### Requested API direction
 
-Passing an empty tuple, `()`, for the common case of no application AAD is
+Passing an empty tuple, `()`, for the common case of no application context is
 needless ceremony. Use separate methods, following the convention used
 elsewhere:
 
@@ -116,6 +161,11 @@ methods instead of implementing a Vitamin C trait.
 let ciphertext = keyset.encrypt(42_i32, ()).await?;
 let ciphertext = keyset.encrypt(42_i32, "users/age").await?;
 ```
+
+Note added on 7 November 2026: this block is no longer current. #1404
+renamed the two-argument method to `encrypt_tree`. `keyset.encrypt(value)`
+now takes one argument and returns a `Ciphertext`. The second argument of
+`encrypt_tree` is named `aad` in the code, but it takes a context.
 
 Vitamin C (`vitaminc-aead` 0.8.0) provides the `Cipher` trait and the
 `AsyncCipher` trait. Stack implements the synchronous `Cipher` trait on
@@ -163,7 +213,7 @@ discussion of batching). Vitamin C's trait definitions are in
 
 ## 2. The Node and SealedValue types make opaque ciphertext storage harder
 
-**Status:** Open. Several decisions are recorded below.
+**Status:** Partly done. Several decisions are recorded below. Pull request #1404 adds `Ciphertext`. The type has `to_bytes`, `from_bytes`, `key_tag`, and Serde support as Base64 or bytes. The text encodings and `OpaqueBlob` are still open.
 
 ### Decisions so far
 
@@ -214,8 +264,10 @@ The follow-up of 25 October 2026 also set these directions:
   caller? If it stays with the caller, say so explicitly, and keep it out
   of the simple scalar path.
 
-The prototype's canonical leaf encoding is a useful starting point. It is
-not a backward-compatibility obligation.
+The prototype's canonical leaf encoding is a useful starting point. On 25
+October 2026 it was not a backward-compatibility obligation. Since 7
+November 2026 it is, because Go rc.3 writes that envelope. #1404's
+`Ciphertext` uses the same envelope unchanged.
 
 ### Current behaviour
 
@@ -234,7 +286,8 @@ passthrough nodes. It does not keep the plaintext type as a type parameter.
 A leaf's canonical bytes contain its keyset ID, the metadata needed to
 retrieve its key, and the local ciphertext. That versioned byte format is
 the storage commitment. The leaf's Serde representation is not the same
-compatibility commitment.
+compatibility commitment. Since 7 November 2026, data written by Go rc.3
+must stay readable.
 
 ### Effect on callers
 
@@ -253,6 +306,12 @@ let leaf = SealedValue::from_bytes(&bytes)?;
 let ciphertext = StackCipherText::Single(leaf);
 let value: i32 = cipher.decrypt(ciphertext, ()).await?;
 ```
+
+Note added on 7 November 2026: this block is no longer current. With #1404,
+`keyset.encrypt(42_i32, ())` does not compile. The tree form is `keyset.encrypt_tree(42_i32, ())`.
+
+For one value, `keyset.encrypt(42_i32)` returns a `Ciphertext`. A `Ciphertext` has `to_bytes` and `from_bytes`. `keyset.decrypt` opens it. `StackCipher::decrypt` still takes a tree and a
+context, as in the last line.
 
 The caller has to:
 
@@ -279,9 +338,9 @@ Vitamin C's container definition is in `vitaminc-aead` 0.8.0,
 
 ## 3. Plaintext-side encryption has different syntax and context requirements
 
-**Status:** Open. The receiver for ordinary `encrypt` was decided on 24
-October 2026. The differing requirements for an empty context are still
-open.
+**Status:** Partly done. The receiver for ordinary `encrypt` was decided on 24 October 2026. Pull request #1404 implements it. Pull request #1404 also gives `Ciphertext`
+the same empty context through the keyset and through `EncryptInto`. The
+structural API keeps its different requirements.
 
 ### Decision: the keyset is the receiver for ordinary encryption
 
@@ -351,6 +410,12 @@ let ciphertext: StackCipherText = 10_i32
     .await?;
 ```
 
+Note added on 7 November 2026: this block no longer compiles as written. This was checked by reading the source, not by compiling.
+
+Since #1404, the crate-root `EncryptInto` is the owned trait. `StackCipherText` is not an owned target on `next`. The structural form needs
+`stack_encrypt::target::legacy::EncryptInto`. The owned equivalent is
+`let ciphertext: Ciphertext = 10_i32.encrypt_into_with_context(&keyset, "users/age").await?;`.
+
 The output type selects the `EncryptFrom` implementation. For
 `StackCipherText`, that implementation requires a source that implements
 `Encrypt + Clone`, and an `AeadContext`. An `AeadContext` must not be
@@ -396,7 +461,8 @@ inconsistency is separate from the receiver decision above.
 
 ## 4. The scalar derive cannot declare a fixed literal context
 
-**Status:** Direction agreed. Implementation pending.
+**Status:** Direction agreed. Still open. #1491 makes repeated Rust
+extensions append, so the composition table below now matches the code.
 
 ### Agreed direction
 
@@ -455,7 +521,7 @@ context composed directly.
 
 The derive implementation still has to specify how a static literal is
 represented: for example, as text or as a parsed path label. Encryption and
-decryption then produce the same descriptor and AEAD context. This choice is
+decryption then produce the same descriptor and AAD. This choice is
 separate from keeping the `EncryptInto` trait.
 
 ### Current behaviour and workaround
@@ -485,6 +551,10 @@ let encrypted: EncryptedInteger = IntegerInput { value: 10 }
     .await?;
 ```
 
+Note added on 7 November 2026: since #1404, "EncryptInto" here must be
+`stack_encrypt::target::legacy::EncryptInto`. The crate-root `EncryptInto` is the owned trait. The `EncryptFrom` derive does not implement it.
+This was checked by reading the source, not by compiling.
+
 This form declares the field's context as the pair `("example", "value")`.
 ZeroKMS receives it as the descriptor `example/value`. For optional caller
 extensions, the form uses `DeclaredContext`, a type with a default. It is
@@ -501,7 +571,10 @@ ordinary literal attribute cannot do that on a scalar derive today.
 
 ## 5. EncryptFrom does not define encrypt_from
 
-**Status:** Open. No replacement design has been chosen.
+**Status:** Partly done. #1404 adds the declaration traits `EncryptTarget`
+and `DecryptSource`, executed by the owned `EncryptInto` and `DecryptFrom`.
+The structural `EncryptFrom` and `DecryptInto` remain. #1504 is in
+progress.
 
 Review the trait names and method names, or where the convenience function
 lives. Keep the distinction between declaring an operation and executing
@@ -533,7 +606,7 @@ surprising.
 
 ## 6. The plan builder's encrypt_into reads like the execution method
 
-**Status:** Open. Revisit during the plan API discussion.
+**Status:** Still open. Revisit during the plan API discussion.
 
 `Plan::value::<S>().encrypt_into::<T>()` is an inherent builder method. It
 selects an output target and requires `T: EncryptFrom<S>`. It does not
@@ -561,8 +634,7 @@ changed. The proposal leaves `EncryptInto::encrypt_into` unchanged.
 
 ## 7. The output derive cannot mix encrypted and plaintext fields directly
 
-**Status:** The passthrough attribute is accepted in principle.
-Implementation pending.
+**Status:** The passthrough attribute is accepted in principle. Still open. Pull request #1504 adds it to the owned derives. That pull request is in progress.
 
 ### Accepted proposal: a passthrough attribute
 
@@ -593,7 +665,9 @@ target traits.
 This gap applies only to Stack's output-side `EncryptFrom` derive. Vitamin
 C already has a plaintext-side `#[derive(Encrypt, Decrypt)]`, with
 `#[aead(passthrough)]` on source fields. Stack's
-`keyset.encrypt(&user, aad)` can take that derived source. The result is a
+`keyset.encrypt(&user, aad)` can take that derived source. Since #1404,
+that method is `keyset.encrypt_tree(&user, aad)`, and its `aad` parameter
+takes a context. The result is a
 generic `StackCipherText` map with sealed and passthrough nodes.
 
 That route has three limits:
@@ -615,7 +689,8 @@ That route has three limits:
 ## 8. Clarify whole-value encryption, layouts, and searchable outputs
 
 **Status:** Open architectural discussion. The recommendations below are
-not decisions.
+not decisions. #1503 is in progress for workflow 1, and #1504 for workflows
+2 and 3.
 
 Three user workflows need clear support:
 
@@ -693,7 +768,7 @@ establish it. The first revised example uses Serde traits provisionally.
 Arbitrary user implementations of those traits cannot give that guarantee.
 
 Before promising execution that does not depend on secrets, define which
-lengths and shapes may be public. Also decide whether a stricter profile of
+lengths and shapes may be public. Also decide whether a stricter set of
 supported types is needed. The examples document this open question
 separately from how easy the wrapper is to use.
 
@@ -706,7 +781,9 @@ guarantee for whole objects, or a codec choice.
 ## 9. Ownership of the value-encryption API across Stack and Vitamin C
 
 **Status:** Open architectural discussion. Moving the traits is proposed.
-It is not authorised implementation work.
+It is not authorised implementation work. #1501 moves the Rust crates to
+Vitamin C 0.9. `OpaqueEncode` now follows Vitamin C's `Scalar` marker for
+which types are single values.
 
 ### Recommendation
 
@@ -748,8 +825,9 @@ Vitamin C.
   draw a separate boundary for a lower-level core of primitives.
 - These must agree across the new consumers: context composition, type
   tags, ciphertext framing, index normalisation, and the transport frames of
-  the bindings. They can change without keeping prototype data and without a
-  migration.
+  the bindings. On 25 October 2026 they could change without keeping
+  prototype data and without a migration. Since 7 November 2026, stored
+  data written by Go rc.3 must stay readable and searchable.
 - Keep one canonical identity for each trait and type. Update consumers
   directly. Re-exports for compatibility are not needed. Independent copies
   of trait definitions would need duplicate implementations and adapters.
@@ -766,7 +844,8 @@ The installed `vitaminc-encrypt` 0.8.0 manifest confirms that it depends on
 
 ## 10. The public encrypt_as duplicates encrypt_into
 
-**Status:** Decision agreed. Implementation pending.
+**Status:** Decision agreed. Still open: `encrypt_as` is still public on
+`next`.
 
 ### Decision
 
@@ -806,8 +885,8 @@ the default context or the caller's context.
 
 ## 11. Context fields do not yet take context from an input struct
 
-**Status:** Open. The syntax is still open. The shorthand
-`context(field = "id")` is recommended.
+**Status:** Still open. The syntax is still open. The shorthand
+`context(field = "id")` is recommended. No merged pull request adds it.
 
 ### Current behaviour
 
@@ -890,8 +969,9 @@ ID becomes a stored ID.
 
 ## 12. Default is not the same as optional caller context
 
-**Status:** Open. The directional-context examples showed this problem. No
-mechanism is chosen.
+**Status:** Partly done. The directional-context examples showed this
+problem. Pull request #1404 implements the first option below for the owned API. It adds `RequiredContext`, with the capabilities `AllowsNoContext` and `AcceptsContext`. #1501 adds compile-fail tests for a `u64` context. The
+structural API still uses `Default`.
 
 `EncryptInto::encrypt_into` and `DecryptFrom::decrypt_from` offer the form
 without context whenever the associated `Context` type implements
@@ -1200,8 +1280,10 @@ guarantees when it reads.
 
 ## 14. Decrypt convenience methods need explicit context variants
 
-**Status:** Direction required by the user. The receiver, and the migration
-of the competing method, are recommendations still to confirm.
+**Status:** Partly done. #1404 implements `T::decrypt_from` and
+`decrypt_from_with_context`, and the keyset pair, for one value. #1501
+adds them for collections. The structural `decrypt_into` remains in
+`target::legacy`.
 
 **Required direction:** provide a method without context and a separate
 `_with_context` method, mirroring encryption. The user prefers the name
@@ -1222,6 +1304,10 @@ These methods exist today on the blanket extension trait `DecryptFrom`:
 - `ciphertext.decrypt_into(cipher, context)`;
 - `Plaintext::decrypt_from(ciphertext, cipher)`;
 - `Plaintext::decrypt_from_with_context(ciphertext, cipher, context)`.
+
+Since #1404, these three methods are in `target::legacy::DecryptFrom`. The
+crate-root `DecryptFrom` is the owned trait, with `decrypt_from` and
+`decrypt_from_with_context` and no `decrypt_into`.
 
 `DecryptInto<P>` separately declares the opening operation. These method
 and trait names are easy to confuse.
@@ -1271,13 +1357,14 @@ that draft as the baseline. The plan records specific points to reconcile:
 - portability between the static and dynamic interfaces;
 - when validation happens.
 
-The user's clarification about the prototype replaces older compatibility
-requirements. The source document was not changed.
+The user's clarification about the prototype replaced older compatibility
+requirements. The decision of 7 November 2026 adds one back: the stored
+format of Go rc.3 must not break. The source document was not changed.
 
 ## 17. Use the same name to select a definition for encryption and queries
 
-**Status:** `.using(...)` is recommended. The final spelling is not yet
-accepted.
+**Status:** Still open. `.using(...)` is recommended. The final spelling is
+not yet accepted.
 
 The user finds it confusing that encryption uses `.using(...)` and queries
 use `.on(...)`, and asked to consider one name for both. The recommendation
@@ -1311,7 +1398,8 @@ implementation already provides this API.
 ## 18. A single ciphertext needs inputs that are consumed and cleaned up
 
 **Status:** Decided on 25 October 2026, with the follow-up decisions below.
-No completed audit is claimed.
+Partly done: #1404 and #1501 guard and wipe owned sources, and #1493 adds
+lifecycle conformance. No completed audit is claimed.
 
 ### Decision on encoding traits and consumed input
 
@@ -1388,7 +1476,9 @@ upstream is
 ## 19. First-release completeness and remaining review decisions
 
 **Status:** The decisions below were accepted on 25 October 2026. The
-detailed JSON operation contract is still under user review.
+detailed JSON operation contract is still under user review. Partly done:
+#1492 enrols the JSON operations in conformance. Opening a child bound to
+its parent is still open.
 
 ### Encoded ciphertext and equality
 
@@ -1431,7 +1521,7 @@ Names and packaging are explicitly the last design activity.
 
 ## 20. Keysets chosen from plaintext, and optional provider policies
 
-**Status:** The recommendations below are not yet accepted.
+**Status:** Still open. The recommendations below are not yet accepted.
 
 ### Request
 
@@ -1481,8 +1571,7 @@ declarations, and the work needed for acceptance.
 
 ## 21. Packaging, naming, and retiring AsyncCipher
 
-**Status:** The names and package moves are proposals. No implementation has
-changed.
+**Status:** Still open. The names and package moves are proposals. Pull request #1404 uses some agreed names. No package has moved.
 
 The user favours removing Vitamin C's `AsyncCipher`, and moving encryption
 behaviour for applications into Stack Encrypt. The
@@ -1512,7 +1601,7 @@ Vitamin C #519.
 ## 22. Customer-driven order of work: Go JSON and match search first
 
 **Status:** Order of work set by the customer's needs. Merged work
-reconciled on 27 October 2026.
+reconciled on 7 November 2026. The conformance corpus is merged.
 
 ### The customer's needs come first
 
@@ -1523,7 +1612,7 @@ characters. The quality of a standalone Rust release is secondary.
 - Claude's stack of JSON-tree pull requests, headed by #1363, has now
   merged. Revise the older Go plan in #1353 against it, and against the
   agreed API direction.
-- Vitamin C #520 and #526 implement the storage profiles. Review by a
+- Vitamin C #520 and #526 implement the storage profile: Vitamin C's versioned byte format for an opaque value that is stored. Review by a
   colleague, and the release, are pending. Stack still needs to adopt that
   release.
 
@@ -1541,7 +1630,8 @@ Defer these:
 - the final Rust derives.
 
 The earlier exemption for prototype compatibility does not allow breaking
-customer data after this release.
+customer data. Since 7 November 2026, that applies from now, not only
+after the final release, because the customer builds on Go rc.3.
 
 ### Short words in match search
 
@@ -1596,8 +1686,7 @@ came from.
 #### Short-word terms
 
 Pull request #1397 implements short-word terms that are deterministic and
-domain-separated, inside the existing Bloom filter. EQL's pinned match
-profile turns them on. This avoids a separate index for short words.
+domain-separated, inside the existing Bloom filter. EQL's pinned match configuration turns them on. This avoids a separate index for short words.
 
 It is not the random-variant mechanism explored earlier. It does not by
 itself resolve the user's concern about frequency and leakage. The native Go
@@ -1618,7 +1707,42 @@ implemented. The remaining items include:
 The customer release does not wait for the final Rust traits or crate
 moves.
 
-#### What this reconciliation checked
+### Reconciliation with merged work, 7 November 2026
+
+This review compared `next` at `e4990e49b` with the previous baseline,
+`ffeed7adb`. It read each pull request description, and the code where the
+description was not enough. It ran no test suite.
+
+#### What merged
+
+- #1404 adds the owned API for one value. #1501 extends it to `Vec<S>`, and
+  moves the Rust crates to Vitamin C 0.9.
+- #1491 makes repeated Rust context extensions append in order, as Go
+  already did.
+- #1460, #1461, #1462, #1469, #1491, #1492, and #1493 add a conformance
+  corpus that native Rust and the Go guest both run.
+- #1444, #1445, #1446, #1451, and #1452 add element-scoped and jsonpath
+  predicate queries over JSON documents, in the engine, EQL, and Go.
+- #1500 documents Go `v0.1.0-rc.3`. That version was tagged on 2 November 2026.
+- #1403 fixes findings on the release candidate, and bumps the crate
+  versions that `stack-encrypt` 0.3.0 needs.
+
+#### Remaining work on 7 November 2026
+
+- the specification around the conformance corpus: versions, schemas,
+  and the Python and TypeScript runners;
+- opening a child bound to its parent;
+- configurable match pipelines in Go;
+- direct typed EQL conversion;
+- freezing the release candidate's stored format;
+- later, separating the roles of context.
+
+#### Differences from the plan
+
+#1501 encrypts `Vec<u8>` as one value. The plan recommends encrypting it
+byte by byte. The API plan records this as a question for the user.
+
+#### What the reconciliation of 27 October 2026 checked
 
 This review inspected the source and the existing tests. It did not run the
 run-time or database test suites again, and it changed no production code.

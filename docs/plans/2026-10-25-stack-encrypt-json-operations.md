@@ -1,7 +1,7 @@
 # JSON tree: operation inventory and release contract
 
-Updated 27 October 2026 against merged `next`
-`ffeed7adb3f7d8739cda53261046147852bffc82`. This document accompanies the
+Updated 7 November 2026 against merged `next` at commit `e4990e49b`. The
+previous update was on 27 October 2026, at `ffeed7adb`. This document accompanies the
 [API plan](2026-10-24-stack-encrypt-api-plan.md).
 
 ## Summary
@@ -12,6 +12,17 @@ supported now and what work remains. Each operation has an ID from J01 to
 J20, used in the table of operations below. Two operations still have
 gaps: J14 and J17. The SQL types and functions come from Encrypt Query
 Language (EQL).
+
+Since 27 October 2026, two operations have been added as J21 and J22.
+J21 tests several conditions on one array element. J22 sends a jsonpath
+predicate as one query parameter. Both are in the engine, EQL, and Go. The
+`eql-json-v1` conformance profile, from #1492, enrols the JSON operations
+in Rust, Go, and PostgreSQL tests.
+
+From 7 November 2026, the stored format of Go `v0.1.0-rc.3` must not
+break. The stored format is what is written to the database, such as JSON
+tree entries and their search terms. See the [API
+plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
 
 The Rust example in this document uses the proposed public derive and
 facade. That example is not executable code for the current engine. The
@@ -37,9 +48,11 @@ and its findings on the engine and Go give the exact source evidence.
 | Root fallback | Past the walk budget, the database returns the sealed root alone. The client opens the whole document and picks out the requested values |
 | Wildcard bound | How many elements each `[*]` in a read path expands to. One extra probe at the bound detects a longer array |
 | Reads that Rust verifies against the original request | Prepared reads: Rust derives the request again when the rows are opened, and checks every row against it |
-| Post-cascade profile | The storage and search format as it is after the cascaded tags change in #1379 |
+| Post-cascade format | The JSON storage and search format after #1379 added cascaded tags. Go rc.3 writes it, so it must stay compatible |
+| Conformance profile | A named, versioned set of test cases for one area, such as `eql-json-v1`. Each language runs the same cases. The files are in `conformance/stack-encrypt/v1/` |
 | Facade | The proposed public Rust API of `stack-encrypt` |
-| AAD | Additional authenticated data (AAD): data that an authentication tag covers but the ciphertext does not contain |
+| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
+| AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
 
 ## Current names
 
@@ -53,6 +66,8 @@ and its findings on the engine and Go give the exact source evidence.
 | Prepared selector and prepared subtree read | `encrypt.JSONSelection`, `encrypt.JSONRead` |
 | SQL capability values | `JSONSelector`, `JSONToken`, `JSONTokens` |
 | Result of opening one value | `JSONValue{Found, JSON}` |
+| Operand for several conditions on one array element | `eql.JSONSearchElementsQuery`, `eql_v4.query_json_elements` |
+| Operand for a compiled jsonpath predicate | `eql.JSONSearchPredicateQuery`, `eql_v4.query_json_predicate` |
 
 The handwritten Rust EQL adapters keep their `JsonTree*` names. The
 internal engine type `JsonDocument` is not the Go ciphertext type.
@@ -63,7 +78,7 @@ internal engine type `JsonDocument` is not the Go ciphertext type.
 
 The SDK resolves the target options configured for a field into native
 `JsonOptions`. The SDK uses the same options for writes, queries, and
-reads. The released profile uses column identity and keyset selection.
+reads. The released configuration takes a document's context from its column, and its keys from the selected keyset.
 
 Separate row binding and search scope are accepted future API work. Row
 binding and search scope are not supported as EQL context inputs today.
@@ -84,7 +99,7 @@ authenticate.
 | J03 | Write and read in batches | Implemented, with a shared executor and chunking by the provider | None listed |
 | J04 | Contains | Implemented: `Contains`, `contains`, and `@>` with `query_json` | Generated code checks the needle and refuses some shapes |
 | J05 | Contained by | Implemented: `ContainedBy`, `contained_by`, and `<@` | None listed |
-| J06 | Scalar equality at a path | Implemented: `EqAt`, `eq_at` | Compares value selectors, not ordering terms |
+| J06 | Scalar equality at a path | Implemented: `EqAt`, `eq_at` | Compares value selectors, not ordering terms. J21 keeps several tests on one array element |
 | J07 | The four ordering predicates | Implemented in runtime paths and in `At.<Path>` accessors | Ordered number and string paths only |
 | J08 | Inclusive range | Implemented: `Between`, `between_at`, with named lower and upper operands | None listed |
 | J09 | Sort | A selector and explicit SQL | Sorting at a wildcard path needs a defined reduction. Do not assume the first array element |
@@ -98,7 +113,15 @@ authenticate.
 | J17 | Immediate children | `Children` prepares a concrete token. SQL returns the child entries | Opening child scalars bound to their parent is not implemented |
 | J18 | Count children | A `ChildCount` token. SQL returns a count that can be NULL | The count is not an authenticated proof of completeness |
 | J19 | Walk budget and root fallback | Implemented. After root fallback, the client applies the selection originally requested | None listed |
-| J20 | Comparisons between stored values | Existing document containment and entry ordering | Only within a compatible column, keyset, and profile |
+| J20 | Comparisons between stored values | Existing document containment and entry ordering | Only within a compatible column, keyset, and storage format |
+| J21 | Several conditions on one array element | Implemented in the engine and EQL (#1445), and in Go as `Elements.<Array>.Match` (#1451) | Needs ordered paths. Uses no index |
+| J22 | A jsonpath predicate as one parameter | Implemented in the engine and EQL as `match` and `@@` (#1446), and in Go as `Match` (#1452) | Supports a subset of jsonpath. Uses no index |
+
+Status on 7 November 2026: no merged pull request changes J14 or J17. The
+`eql-json-v1` profile enrols tests for J01 to J08, J10, J11, J15, J16, and
+J19, with J21 and J22. Its requirement IDs are not the J numbers. I made this mapping from that conformance profile's contract. I did not check it test by test.
+
+In J21, equality compares folded ordering terms, not exact values. In J22, the EQL reference documents five cases where the answer differs from `jsonb_path_match`.
 
 ### Open requirements for J13 and J17
 
@@ -133,7 +156,12 @@ subtree read.
   such as `[n]` are for subtree reads. A wildcard selector addresses every
   path that differs only in its array positions. Two separate EqAt
   predicates can match different elements of one array. One containment
-  needle keeps them matched to the same element.
+  needle keeps them matched to the same element. So does J21.
+- **Native `jsonb` functions give wrong answers.** The encrypted column is
+  a PostgreSQL domain over `jsonb`. So PostgreSQL's own `jsonb` functions
+  accept it, and run over the stored envelope, not the document. For
+  example, `jsonb_path_match(col, ...)` returns false for every row, with
+  no error. #1444 documents this and does not block the functions.
 - **Strict checks on JSON input.** The Rust parser now rejects duplicate
   keys and out-of-range integer literals before key I/O, that is, before
   any request to the key provider. For typed Go values, Go encodes first,
@@ -162,7 +190,8 @@ subtree read.
   document whose root is not sealed cannot fall back to the sealed root.
   The walk budget does not limit the size of every response.
 - **Header version.** The header version is still 1, although the cascade
-  changed what the AAD binds. Freeze the post-cascade profile explicitly.
+  changed what the AAD binds. Freeze the post-cascade format explicitly. Go rc.3 writes this format. Since 7 November 2026, a later change must
+  keep it readable and searchable, or add a new header version beside it.
   The unchanged header does not show compatibility with older prototype
   ciphertexts. The query projection order is now random, so parity tests
   need to compare projections in a canonical form, by meaning.
@@ -245,6 +274,12 @@ include:
 - `{"path","low","high"}`
 - `{"path"}`
 - `{"path","wildcard_bound"}`
+
+Since #1445 and #1446, two more operations take these inputs:
+
+- `element_match` takes `{"path", "wildcard_bound", "predicates"}`. The
+  `wildcard_bound` is optional.
+- `match` takes `{"predicate", "vars"}`, as `jsonb_path_match` does.
 
 JSON values are UTF-8 JSON text. Query results state the `encoding`
 (`eql`, `text`, `text_array`, or scalar `bytes`), the SQL domain, and the
@@ -341,16 +376,14 @@ A row ID is never an index or query input implicitly.
 
 ## Remaining work and release gates
 
-1. Write down the implemented wire grammar, errors, presence states,
-   and context profile in the formal specification and the set of
-   conformance tests that were promised. General Rust definitions,
+1. Write down the implemented wire grammar, errors, and presence states in the formal specification and the promised conformance tests. Write down the context rules of the released configuration there too. General Rust definitions,
    caching, and more context roles can come later.
 2. Close the stated scope gaps in J14 and J17. Subtree reads are the
    supported way to get plaintext for all matches. An opener for children
    bound to their parent is separate engine work. Do not add generic
    decryption of raw entries as a shortcut.
 3. Replace the internal EQL bridge with typed conversion. The bridge
-   serialises to `Value` and deserialises again. Keep the frozen profile.
+   serialises to `Value` and deserialises again. Keep the stored format.
    The change is an optimisation, not a missing execution path for Go
    JSON.
 4. Run the existing Rust, guest, Go, and PostgreSQL suites on the release
@@ -370,6 +403,16 @@ A row ID is never an index or query input implicitly.
    Ordinary random bytes do not need to match. Replace the temporary Go
    pins of Vitamin C before a final release. Opaque storage is already
    adopted. Opaque storage is a separate format from JSON tree storage.
+
+### Status of this work on 7 November 2026
+
+| Item | Status |
+| --- | --- |
+| 1. Specification and conformance | Partly done. #1492 adds the `eql-json-v1` conformance profile. That profile is experimental: it does not certify a whole SDK |
+| 2. J14 and J17 | Still open |
+| 3. Typed EQL conversion | Still open |
+| 4. Run the suites on the release candidate | Partly done. #1492 runs them in CI, including a job against PostgreSQL |
+| 5. Freeze the stored vectors and the EQL bundle | Still open. Go rc.3 already writes this format, so the frozen format must keep it readable |
 
 ## What this refresh did not check
 

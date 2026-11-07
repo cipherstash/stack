@@ -1,6 +1,7 @@
 # Stack Encrypt: complete public API examples for review
 
-Date: 24 October 2026.
+Date: 24 October 2026. Implementation status checked on 7 November 2026,
+against `next` at commit `e4990e49b`.
 
 This document tests the proposed public Rust API of Stack Encrypt against
 three complete workflows. The code in it is a proposal. The code does not
@@ -39,8 +40,14 @@ documents cover related ground:
   dynamic, and SQL examples, including extraction and walks.
 
 The user clarified on 25 October 2026 that this API is an early prototype.
-The new API does not need to stay backward compatible with the old APIs or
-their encodings.
+The new API does not need to stay backward compatible with the old APIs.
+
+On 7 November 2026, the user decided that the stored format must not break
+from now on, because the Go customer builds on Go `v0.1.0-rc.3`. The stored
+format is what is written to the database, such as ciphertext envelopes and
+search terms. The APIs can still change. This replaces the decision of 25
+October 2026 for stored data. See the [API
+plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
 
 ## Terms used in this document
 
@@ -52,11 +59,12 @@ these terms from it:
   records which keyset that was.
 - **Data key**: the key that encrypts one value. Stack Encrypt requests data
   keys from ZeroKMS in batches.
-- **Context**: extra input that is bound to a ciphertext when it is sealed,
-  such as `("users", "email")` or a record id. Decryption fails unless the
-  reader supplies the same context. Encryption uses the context as
-  additional authenticated data (AAD): data that encryption authenticates
-  but does not encrypt. Search terms are also derived from the context.
+- **Context**: data that a ciphertext is tied to, such as
+  `("users", "email")` or a record id. Decryption needs the same context.
+  Search terms are also derived from it. See [Context and
+  AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad).
+- **AAD**: additional authenticated data. Encryption checks it for one ciphertext, but does not encrypt it. Stack Encrypt builds it from the
+  context.
 - **Leaf**: one encrypted value. "Sealing" a leaf means encrypting and
   authenticating it.
 - **Envelope**: the complete stored form of a ciphertext. It includes the
@@ -130,29 +138,32 @@ for example:
 ciphertext for the encoded collection instead.
 
 The latest recommendation applies the same rule to byte vectors. No wrapper
-or special case is needed to keep the prototype's behaviour. These calls
+or special case is needed to keep the prototype's behaviour. Pull request
+#1501 differs: it encrypts `Vec<u8>` and `[u8; N]` as one value. The [API
+plan](2026-10-24-stack-encrypt-api-plan.md#differences-between-merged-code-and-this-plan)
+records this as a question for the user. These calls
 need the proposed opaque ciphertext and support for targets that take no
 context.
 
 ### Status of each API surface
 
-| Surface | Status in this review |
-| --- | --- |
-| `keyset.encrypt(value)` and `encrypt_with_context(value, context)` | Agreed direction; current code still has the two-argument `encrypt` method |
-| `value.encrypt_into(&keyset)` and `encrypt_into_with_context` | Retained existing entry points |
-| No public `encrypt_as` in these examples | Agreed direction; current implementation still exposes it |
-| `#[stash(passthrough)]` on output fields | Accepted in principle; needs implementation on both encrypt and decrypt derives |
-| A fixed context on a scalar output derive | Agreed direction; not required by these particular examples |
-| `OpaqueBlob<T>` | Agreed wrapper direction; provisional name. Requests whole-value serialization and one encrypted leaf, using a library-owned codec |
-| `Ciphertext` | Proposed name for an opaque single-value ciphertext; **not** today's `StackCipherText` or `CipherText` enum |
-| `Ciphertext::to_bytes` / `from_bytes` | Proposed direct access to the existing canonical sealed-leaf encoding, without node extraction |
-| `Ciphertext: Serialize + Deserialize` | Proposed storage contract: Base64 of the canonical bytes for human-readable serializers, bytes for binary serializers |
-| Encoded ciphertext field targets | Accepted: dedicated ciphertext wrappers for Base64 or Base85 storage compose with encrypt and decrypt targets; final names remain for the naming pass |
-| `Ciphertext` as an encryption or decryption target | Proposed single-value target, including scalars and `String`; use `OpaqueBlob<Vec<u8>>` for a whole byte vector under the latest recommendation |
-| Decrypt into `OpaqueBlob<T>`, then `into_inner()` | Proposed symmetric decoding path; returns the original application value after authentication and decoding |
-| Direct `decrypt` / `decrypt_with_context` | Accepted ordinary decrypt pair, symmetric with direct encryption |
-| `User::decrypt_from` / `decrypt_from_with_context` | Accepted destination-directed pair on `DecryptFrom` |
-| `SearchableEmail` in example 3 | Application-defined target composed from ciphertext and an existing `EqualityTerm` |
+| Surface | Status in this review | Implementation on 7 November 2026 |
+| --- | --- | --- |
+| `keyset.encrypt(value)` and `encrypt_with_context(value, context)` | Agreed direction | Done for one value (#1404) |
+| `value.encrypt_into(&keyset)` and `encrypt_into_with_context` | Retained existing entry points | Done for one value and for `Vec<S>` (#1404, #1501) |
+| No public `encrypt_as` in these examples | Agreed direction | Still open. `encrypt_as` is still public |
+| `#[stash(passthrough)]` on output fields | Accepted in principle | Still open. In progress in #1504 |
+| A fixed context on a scalar output derive | Agreed direction; not required by these examples | Still open |
+| `OpaqueBlob<T>` | Agreed wrapper direction; provisional name | Still open. In progress in #1503 |
+| `Ciphertext` | Proposed name for an opaque single-value ciphertext | Done (#1404) |
+| `Ciphertext::to_bytes` / `from_bytes` | Proposed direct access to the canonical sealed-leaf encoding | Done (#1404). The envelope is unchanged |
+| `Ciphertext: Serialize + Deserialize` | Proposed: Base64 for human-readable formats, bytes for binary formats | Done (#1404) |
+| Encoded ciphertext field targets | Accepted; final names remain for the naming pass | Still open |
+| `Ciphertext` as an encryption or decryption target | Proposed single-value target | Done (#1404). `Vec<u8>` is one value, unlike the recommendation (#1501) |
+| Decrypt into `OpaqueBlob<T>`, then `into_inner()` | Proposed symmetric decoding path | Still open. In progress in #1503 |
+| Direct `decrypt` / `decrypt_with_context` | Accepted ordinary decrypt pair | Done for one value (#1404) |
+| `User::decrypt_from` / `decrypt_from_with_context` | Accepted destination-directed pair | Done for one value and `Vec` (#1404, #1501). Records are in #1504 |
+| `SearchableEmail` in example 3 | Application-defined target | Still open. #1504 turns example 3 into a test |
 
 The first three Rust programs use the proposed `OpaqueBlob`, `Ciphertext`,
 and passthrough APIs, or some of them. Each is a complete candidate program.
@@ -168,8 +179,7 @@ typed wrapper is still an open alternative.
 The ciphertext's byte decoder
 only parses a stored envelope. Authentication happens when it is decrypted.
 The new Rust implementation and the dynamic implementation must agree on
-the context and leaf encodings. They do not need to keep the prototype's
-encoding.
+the context and leaf encodings. On 24 October 2026 they did not need to keep the prototype's encoding. Since 7 November 2026, they must keep reading the encodings that Go rc.3 writes.
 
 The trait name `DecryptFrom` may surprise readers. The trait supplies the
 convenience functions, while `#[derive(DecryptInto)]` describes how an
@@ -325,9 +335,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 Without an application context, use the form
 `keyset.encrypt(OpaqueBlob::new(user))`. A matching no-context
-`reader.decrypt(loaded)` is accepted, so that encrypt and decrypt match. It
-is not the signature of today's decrypt method. Today's method takes two
-arguments.
+`reader.decrypt(loaded)` is accepted, so that encrypt and decrypt match.
+Since #1404, `keyset.decrypt(ciphertext)` takes one argument for an opaque
+value. `OpaqueBlob` itself is not merged.
 This document uses an explicit context in the full example so that the
 saved format is unambiguous.
 
@@ -377,7 +387,7 @@ Before claiming such a guarantee, define these things:
 - which shape and length information may be public;
 - the restrictions on custom implementations.
 
-A stricter profile may need bounded shapes, fixed-width encodings, padding,
+A stricter set of supported types may need bounded shapes, fixed-width encodings, padding,
 and controlled encoders and decoders, with verification at the
 implementation level. Padding the ciphertext to a fixed size does not by
 itself make the serialization before it constant-time. Authentication must
@@ -662,7 +672,9 @@ work as they do in example 2.
 
 Stack Encrypt already supports collection conversion, through its blanket
 implementation `EncryptFrom<Vec<S>> for Vec<T>` when `T: EncryptFrom<S>` and
-the target's context can be cloned.
+the target's context can be cloned. Since #1501, the owned API has the same
+batching for `Vec<S>` into `Vec<T>`. The batching counts below apply to
+both.
 
 The conversion collects every row's
 pending operations before sending any of them. The two users need four data
@@ -771,13 +783,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
+Note added on 7 November 2026: this program no longer uses existing APIs
+as written. Since #1404, the crate-root `EncryptInto` and `DecryptFrom` are
+the owned traits. `TextEq` implements only the structural declarations. So
+the program needs `stack_encrypt::target::legacy::{DecryptFrom,
+EncryptInto}`, or `keyset.encrypt_as`, as `eql-bindings` uses. This was
+checked by reading the source, not by compiling.
+
 `TextEq` includes its EQL version, its identifier, the ciphertext, and the
 equality term. Its context type is `NonEmpty<Identifier>`. The application
 supplies the typed identifier for the expected table and column, on both
 writes and reads. Decryption checks it against the stored identifier before
 opening the ciphertext.
 
-The `v4` namespace is deliberate: this Rust producer profile targets EQL v4.
+The `v4` namespace is deliberate: this Rust producer targets EQL v4.
 The TypeScript integrations use EQL v3.
 
 ### Gap before `TextEq` can replace `SearchableEmail`

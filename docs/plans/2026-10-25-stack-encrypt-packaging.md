@@ -1,6 +1,7 @@
 # Stack Encrypt packaging and public names
 
-Dated 25 October 2026, with an implementation update on 27 October 2026.
+Dated 25 October 2026, with implementation updates on 27 October 2026 and
+7 November 2026. The last check was against `next` at commit `e4990e49b`.
 This recommendation for review accompanies the
 [implementation plan](2026-10-24-stack-encrypt-api-plan.md).
 
@@ -21,6 +22,43 @@ contract is under separate user review.
 - Adopt the public glossary for Rust. Keep the merged Go and SQL names for
   JSON.
 
+## Terms used in this document
+
+| Term | Meaning |
+| --- | --- |
+| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
+| AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
+| Stored format | What is written to the database, as Go `v0.1.0-rc.3` writes it. See [the stored-format decision](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026) |
+
+## Update on 7 November 2026
+
+Pull request #1404 implements some names from the glossary below. They are
+`Ciphertext`, `EncryptInto`, `DecryptFrom`, `OpaqueEncode`, `OpaqueDecode`,
+and the traits `target::EncryptTarget` and `target::DecryptSource`. Pull request #1504 adds the derives with those names. Pull request #1503 adds `OpaqueBlob`. Both are in progress.
+
+These parts of the proposal are not implemented:
+
+- the `Cipher` rename, `TargetDefinition`, `PrimaryKey`, and `ScopeKey`;
+- the `encoding` module and the encoded ciphertext wrappers;
+- `.target::<T>()` on the plan builder, and the `provider` module;
+- the `stack-encrypt-format` crate, and the rename of `stack-kms`;
+- the retirement of `AsyncCipher`.
+
+`encrypt_as` is still public. The structural `decrypt_into` is still
+public, in `target::legacy`. `StackCipherText` remains for the tree API. The tree methods are `encrypt_tree` and `decrypt_tree`.
+
+Other changes that affect packaging:
+
+- Pull request #1501 moves the Rust crates to Vitamin C 0.9. It also
+  re-exports `Buffer`, `ProtectedRef`, and `AsProtectedRef` from the crate
+  root.
+- Pull request #1403 bumps `stack-kms` to 0.2.0 on crates.io. So the
+  proposed rename to `stack-zerokms` would now rename a published crate.
+
+From 7 November 2026, the stored format must not break. The user's
+exemption for prototypes below now applies to the APIs only. Moving codecs
+and adapters between crates must keep the bytes that Go rc.3 writes.
+
 ## Update on 27 October 2026
 
 Go JSON and opaque storage are merged into `next`, through #1369, #1370,
@@ -29,8 +67,8 @@ words.
 
 What remains before customers can use them is configuration and
 conformance work, and release readiness. That includes replacing the
-temporary Go module pins of Vitamin C. Rust stays on Vitamin C 0.8.0 from
-crates.io. A customer release does not wait for crate extraction or for the
+temporary Go module pins of Vitamin C. Rust stayed on Vitamin C 0.8.0
+from crates.io until #1501 moved it to 0.9. A customer release does not wait for crate extraction or for the
 final Rust facade (the proposed public Rust API).
 
 ## Sources for this assessment
@@ -63,7 +101,8 @@ encryption traits to implement an application type.
 
 Moving code should remove duplicate abstractions. Moving code should not
 keep both public surfaces under new names. The user's compatibility
-exemption for prototypes applies to this API. Before deleting
+exemption for prototypes applies to this API, but not to the stored format
+since 7 November 2026. Before deleting
 dependencies upstream, review the other consumers of Vitamin C that use
 them.
 
@@ -73,7 +112,7 @@ them.
 | --- | --- |
 | `stack-encrypt` | The public Rust API; traversing and reconstructing values; target declarations and definitions; context and scope roles; normalisation and adapters for searchable targets; plans; batching; JSON tree execution; and validating and executing dynamic definitions |
 | `stack-encrypt-derive` | Derive macros that generate the same declarations and definitions a user can write by hand. `stack-encrypt` re-exports the derives |
-| `stack-encrypt-format` (new) | Pure data representations and codecs shared by the engine and the bindings: frame primitives and the required scalar representations, the stable blob profile, parsing and encoding of the ciphertext envelope, and validated Base64 and Base85 text. No key requests and no execution runtime |
+| `stack-encrypt-format` (new) | Pure data representations and codecs shared by the engine and the bindings: frame primitives and the required scalar representations, the stable format of stored blobs, parsing and encoding of the ciphertext envelope, and validated Base64 and Base85 text. No key requests and no execution runtime |
 | `stack-zerokms` (the current `stack-kms`, renamed) | The ZeroKMS protocol client, authentication integration, native keysets, request types for lock context, and responses. Not the neutral abstraction over several providers |
 | `eql-bindings` | EQL storage and query types by version, JSON serialisation compatible with SQL, the catalog, and Stack target adapters. Stays downstream of the engine |
 | Vitamin C crates | Protected memory; randomness; AEAD and key operations on bytes; HMAC, PRF, and ORE algorithm primitives; and reusable canonical encoding of context |
@@ -119,7 +158,7 @@ runtime.
 - Re-export the ordinary format types through Stack Encrypt, so users
   normally need only that one dependency.
 
-The format crate is one implementation with separate profiles. Each of
+The format crate is one implementation with separate formats. Each of
 these has its own contract and versioning requirements: blob storage, the
 transport to and from the guest, and ciphertext envelopes. Sharing code must not
 silently turn the Serde mapping for short-lived transport into the stored
@@ -190,7 +229,7 @@ opaque ciphertext.
 ### Frames and codecs
 
 Move the generic frame code and the codecs that Stack needs into the
-format crate. Stack owns the stored blob profile and its compatibility
+format crate. Stack owns the stored blob format and its compatibility
 promise.
 
 This refines the earlier recommendation to reuse Vitamin C's frame codec.
@@ -370,7 +409,7 @@ must not redefine stored SQL formats or dynamic discriminants by accident.
    Replace the temporary Go module pins of Vitamin C for a final release.
 2. Complete the outstanding Go match configuration, and close the gaps in
    JSON reads and conformance. Short whole-word matching is implemented in
-   EQL. Its leakage and profile compatibility still need explicit
+   EQL. Its leakage and its compatibility with the stored format still need explicit
    acceptance for the release.
 3. After the customer release, set up the shared format crate. Move the
    value model, traversal, and the normalisation and index adapters that
@@ -382,7 +421,7 @@ must not redefine stored SQL formats or dynamic discriminants by accident.
    must already have been handled before the release.
 5. Complete the public Rust trait and derive names, imports, and
    executable examples. These changes must not rename the released Go API
-   or reinterpret stored profiles. The changes must not require customers to
+   or reinterpret stored data. The changes must not require customers to
    re-encrypt or reindex.
 
 Acceptance includes:

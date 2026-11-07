@@ -1,7 +1,8 @@
 # Stack Encrypt API implementation plan
 
-First written on 24 October 2026. Checked against the merged code on 27
-October 2026.
+First written on 24 October 2026. Checked against the merged code on 7
+November 2026, at `next` commit `e4990e49b`. The previous check was on 27
+October 2026, at `ffeed7adb`.
 
 Status: proposed implementation direction. This plan develops the [API
 review log](2026-10-24-stack-encrypt-api-review.md), the [public
@@ -16,15 +17,16 @@ show proposed APIs, not working code in the current release.
 
 ## Summary
 
-- The Go JSON foundations and Go opaque storage are merged. The customer
-  work that remains is conformance to the contract, closing the remaining
-  gaps in reads and configuration, and release readiness. See [Status on 27
-  October 2026](#status-on-27-october-2026).
+- The Go JSON foundations and Go opaque storage are merged. Since 27
+  October 2026, three more things have merged. They are the owned Rust API for single values and collections, a conformance corpus for Rust and Go, and two new JSON queries. See [Status on 7 November
+  2026](#status-on-7-november-2026).
+- The customer work that remains is listed in [Remaining customer
+  work](#remaining-customer-work). It includes opening a child bound to its
+  parent, configurable Go match options, the gaps in the specification, and
+  release readiness.
 - The Go customer release comes first. The final Rust facade and the crate
   moves come after it, and do not hold it up.
-- Until the customer release, nothing needs to stay compatible with the
-  prototype API or its stored data. After it, the Go interface and the
-  stored data must stay compatible.
+- On 7 November 2026, the user decided that the stored format must not break from now on. The Go customer has started building on Go `v0.1.0-rc.3`. The Rust and Go code and APIs can still change in breaking ways. See [Stored format must stay compatible from 7 November 2026](#stored-format-must-stay-compatible-from-7-november-2026).
 - The [decision checkpoint](#decision-checkpoint-on-25-october-2026) lists
   the settled directions. The [remaining questions](#remaining-questions)
   table lists what is still open.
@@ -33,14 +35,16 @@ show proposed APIs, not working code in the current release.
 
 | Term | Meaning |
 | --- | --- |
-| AAD (additional authenticated data) | Data that encryption binds to a ciphertext without encrypting it. Decryption fails unless the same AAD is supplied again |
+| AAD (additional authenticated data) | Data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](#context-and-aad) |
 | AEAD (authenticated encryption with associated data) | The cipher that seals each value and authenticates its AAD |
 | Blob | A value that `OpaqueBlob<T>` encodes as a whole and seals as one ciphertext |
 | Bloom filter | The bit array that the match index stores. Each term sets some bits, so a query can test whether a value may contain the term |
 | Cascaded tags | Each JSON container's authentication tag covers the tags of its children. #1379 added them |
-| Column and keyset profile | The released configuration. It uses the column identity and the keyset selection, and accepts no row binding or search scope input |
+| Column and keyset configuration | The released configuration. A JSON document's context is its column, and its keys come from the selected keyset. It accepts no row binding or search scope input |
 | Configured target | A target together with typed options, such as a JSON target with a list of ordered paths |
-| Context | Values bound into a ciphertext, such as a column name or a row ID. Decryption fails unless the same context is supplied again |
+| Conformance corpus | The shared test cases and requirement lists in `conformance/stack-encrypt`. Native Rust and the Go guest both run them |
+| Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Each language runs the same cases. The files are in `conformance/stack-encrypt/v1/` |
+| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](#context-and-aad) |
 | Dynamic interface | The interface that takes declarations and requests as data instead of Rust types. Go uses it through the guest |
 | EQL (Encrypt Query Language) | The SQL types and functions in `packages/eql` that store and query encrypted values in PostgreSQL |
 | Facade | The proposed public Rust API of `stack-encrypt`: its traits, derives, and convenience methods |
@@ -48,36 +52,138 @@ show proposed APIs, not working code in the current release.
 | Guest | The Rust engine compiled to WebAssembly, which the Go SDK runs |
 | Key I/O | Any request to ZeroKMS to resolve, load, or derive keys |
 | Keyset | A set of keys in ZeroKMS, the CipherStash key management service (KMS) |
+| OPE (order-preserving encryption) | Encryption whose ciphertexts keep the order of the plaintexts |
 | Open and seal | To seal a value is to encrypt and authenticate it. To open it is to authenticate and decrypt it |
 | ORE (order-revealing encryption) | Index terms that reveal the order of the plaintexts, for range queries and sorting |
-| OPE (order-preserving encryption) | Encryption whose ciphertexts keep the order of the plaintexts |
+| Owned API | The new Rust conversion API, which consumes its plaintext input: `keyset.encrypt`, `EncryptInto`, and `DecryptFrom`, over `EncryptTarget` and `DecryptSource` declarations. #1404 added it |
 | Passthrough field | A field copied unencrypted from the plaintext type to the encrypted output |
 | Plan | The lower-level description of which fields a conversion encrypts, indexes, or passes through. Derives and dynamic declarations compile to plans |
-| Post-cascade profile | The JSON storage and search format as it is after #1379 added cascaded tags and randomised order. This is the format to freeze |
+| Post-cascade format | The JSON storage and search format after #1379 added cascaded tags and randomised order. Go rc.3 writes it, so it must stay compatible |
 | Pseudo-version | A Go module version that names a commit instead of a released tag |
 | Reads that Rust verifies against the original request | Go prepared reads. When the rows are opened, Rust derives the request again and checks every row against it |
+| Refined tag | A proposed tag that Stack Encrypt would derive from the ZeroKMS key tag with an HMAC, and store in place of the original tag. See [Typed encodings and extractable ZeroKMS tags](#typed-encodings-and-extractable-zerokms-tags) |
 | Row binding | Context that ties a ciphertext to one row, such as the row ID, so that it opens only for that row. Also called ciphertext binding |
 | Search scope | The part of the context that also goes into index keys and search terms, such as a tenant ID. One query matches every row in the scope |
-| Target | A type or dynamic name that says how a value is encrypted and stored, such as `JsonSearch` or `TextEq` |
+| Storage profile | Vitamin C's versioned byte format for an opaque value that is stored. Vitamin C #520 added it |
+| Stored format | What is written to the database, as Go `v0.1.0-rc.3` writes it. See [Stored format must stay compatible from 7 November 2026](#stored-format-must-stay-compatible-from-7-november-2026) |
+| Structural API | The earlier Rust API over borrowed input and the `EncryptFrom` and `DecryptInto` declarations. Its convenience methods are now in `stack_encrypt::target::legacy` |
 | Target definition | The resolved, immutable form of a target's declaration: options, prepared indexes, context rules, and operation metadata |
+| Target | A type or dynamic name that says how a value is encrypted and stored, such as `JsonSearch` or `TextEq` |
 | Typestate | A builder whose type changes with each call, so the compiler refuses to run an incomplete request |
 | Vitamin C | CipherStash's cryptography library, `vitaminc`. Its codec encodes values as binary frames |
 
-## Status on 27 October 2026
+## Context and AAD
+
+The context is the data that a ciphertext is tied to, such as a column
+name or a row ID. The field's declaration supplies part of the context,
+such as `users/age`. The caller can supply the rest, such as a row ID.
+
+Stack Encrypt uses the context in three ways:
+
+1. **To derive the data key.** Stack Encrypt sends the context to ZeroKMS
+   as a text descriptor, such as `users/age`. ZeroKMS needs the same
+   descriptor to derive the key again.
+2. **To build the AAD of each ciphertext.** The AAD is data that
+   encryption checks without encrypting it. Stack Encrypt builds it from
+   the context and the place of the value in its record. The AAD also
+   includes the format version, the keyset ID, and the key tag.
+3. **To derive the search terms** for the field.
+
+A different context gives a different key and a different AAD, so
+decryption fails.
+
+A parameter that takes the caller's context is named `context`. The name
+`aad` is kept for a value that is an AAD, such as the derived AAD of one
+leaf. Some public methods do not follow this rule yet. See [Name context
+parameters `context`](#name-context-parameters-context).
+
+Sources: the module documentation of `packages/stack-encrypt/src/cipher.rs`
+describes the descriptor and the AAD. The module documentation of
+`packages/stack-encrypt/src/target/context.rs` describes the search terms.
+
+## Status on 7 November 2026
+
+On 7 November 2026, this plan was checked against merged `next` at commit
+`e4990e49b`. Each pull request description was read. Where the description
+did not settle a status, the code on `next` was read too. No test suite was
+run for this check.
+
+### Merged between 27 October and 7 November 2026
+
+| Pull request | What it delivers | Plan items it affects |
+| --- | --- | --- |
+| #1404 | The owned API for one value, with the `Ciphertext` type and explicit context inputs. Renames the structural keyset methods to `encrypt_tree` and `decrypt_tree` | Requirements; decrypt interface; public traits; work areas A, B, and C |
+| #1491 | Repeated Rust context extensions append in order, as in Go. Adds context conformance cases | Work area B; the dynamic specification |
+| #1501 | Owned `Vec<S>` collections, encrypted as one batch of key requests. Moves the Rust crates to Vitamin C 0.9 | Requirements; work areas C and D; cleanup |
+| #1460, #1461, #1462, #1469 | Conformance profiles for scalars, declarations, runtime values, stored reads, value kinds, and query operators, run by native Rust and the Go guest | Implementation step 1; the dynamic specification |
+| #1492 | The `eql-json-v1` conformance profile, run in two required CI jobs: a fast job without a database, and a job against PostgreSQL | Implementation steps 1 and 3; the JSON contract |
+| #1493 | The `lifecycle-v1` conformance profile for ownership release, cancellation, cleanup, and key I/O | Cleanup acceptance work |
+| #1444, #1445, #1446, #1451, #1452 | Two new JSON queries in the engine, EQL, and Go. #1444 documents a limit of native `jsonb` functions | The JSON contract |
+| #1500 | Go documentation and a changelog for `v0.1.0-rc.3`, which was tagged on 2 November 2026 | Release readiness |
+| #1403 | Fixes from the review of the release candidate. Bumps the crate versions that `stack-encrypt` 0.3.0 needs | Release readiness |
+
+### Remaining customer work
+
+The conformance corpus is now merged, so it is no longer the first item.
+The customer work that remains:
+
+1. **Finish the specification around the corpus.** The conformance profiles are marked experimental. That means they test parts of the contract, but do not certify a whole SDK. The contract is not frozen. JSON Schema files,
+   protocol version identifiers, a release compatibility matrix, and fresh
+   cross-language exchange of JSON values are not done. Python and
+   TypeScript runners are not done.
+2. **Open a child bound to its parent** (J17 in the JSON contract). No
+   merged pull request implements it.
+3. **Configurable Go match options** (#1112), and the tokeniser and filter
+   pipeline. No merged pull request implements them.
+4. **Freeze the release candidate.** Freeze the post-cascade JSON vectors
+   and the matching EQL bundle. The new conformance jobs run in CI, but
+   they do not freeze the stored format.
+5. **Replace the temporary Go pins of Vitamin C** before a final Go
+   release. Go `v0.1.0-rc.3` is a prerelease, so it can keep them.
+
+### Differences between merged code and this plan
+
+These differences are recorded here. This plan's decisions are not changed
+to match them.
+
+- **Byte vectors.** This plan recommends that `Vec<u8>` encrypts byte by byte into `Vec<Ciphertext>`. It recommends `OpaqueBlob<Vec<u8>>` for a whole vector. Pull request #1501 does the opposite. In #1501, `Vec<u8>` and `[u8; N]` encrypt into one `Ciphertext`. In #1501, `u8` is not an `OpaqueEncode` type. The reason given in #1501 is that Vitamin C has no single value for `u8`. Vitamin C could not read an element that only Stack could encode.
+  The user needs to decide whether to accept this.
+- **The structural API stays beside the owned API.** This plan says to
+  remove replaced APIs directly. On `next`, `EncryptFrom`, `DecryptInto`,
+  the derives with those names, and the public `encrypt_as` remain. Their
+  borrowed convenience methods moved to `stack_encrypt::target::legacy`.
+  Issue #1488 tracks their removal.
+- **Context composition.** #1491 makes repeated extensions append. That matches this plan's order: the base, then each extension. The dynamic
+  grammar and Go `Extend` accept only scalar extension parts, and refuse a
+  grouped part. Go accepts an empty text extension when the base is
+  nonempty, and Rust's `NonEmpty` refuses it. The context contract records
+  both differences as part of the supported API.
+- **Compatibility of stored data.** Pull request #1491 changes which context repeated Rust extensions produce. The #1491 changelog explains how to read old records. Data written by Go `v0.1.0-rc.3` is not affected. The [stored-format section](#pull-request-1491-and-data-written-by-go-rc3) gives the evidence.
+- **Vitamin C 0.9 and the order schemes.** Pull request #1501 moves to Vitamin C 0.9, `ore-rs` 0.11.0, and `clww-ore` 0.7.0. The #1501 description says that neither order-scheme release changes a stored order term. This check did not test that claim against rc.3 data.
+
+### Work in progress in open pull requests
+
+These pull requests target `next` and are not merged. Nothing in them is
+counted as done in this plan.
+
+- #1503 adds `OpaqueBlob<T>`. The wrapper encodes a value with Vitamin C's storage profile, and seals it as one `Ciphertext`.
+- #1504 adds the `EncryptTarget` and `DecryptSource` derives, the
+  `#[stash(passthrough)]` attribute, and the context inputs
+  `ContextExtension` and `ExpectedContext`. It turns the public examples
+  for mixed and searchable records into tests.
 
 ### Merged Go work
 
-On 27 October 2026, this plan was checked against merged `next` at commit
-`ffeed7adb3f7d8739cda53261046147852bffc82`. This Go work is merged:
+The check on 27 October 2026, against `next` at commit `ffeed7adb`, found
+this Go work merged:
 
 - the Go JSON catalog, configured targets, queries, reads that Rust verifies
   against the original request, typed documents, and executable
   documentation (#1372, #1373, #1378, and #1402);
 - Go adoption of opaque storage (#1369 and #1370).
 
-The active customer work is now conformance to the contract, closing the
-remaining gaps in reads and configuration, and release readiness. That work
-does not implement those foundations again. See the refreshed [Go JSON
+The remaining customer work does not implement those foundations again.
+See [Remaining customer work](#remaining-customer-work), the refreshed [Go JSON
 plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
 and the [JSON operations
 inventory](2026-10-25-stack-encrypt-json-operations.md).
@@ -87,7 +193,7 @@ inventory](2026-10-25-stack-encrypt-json-operations.md).
 Pull request #1379 added cascaded tags, and randomised the order of stored
 entries and query projections. A wildcard `->` now selects an unspecified
 element, so old SQL recipes that relied on the first element in document
-order are invalid. Freeze the post-cascade profile. Compare query semantics
+order are invalid. Freeze the post-cascade format. Compare query semantics
 in tests, not the randomised byte order.
 
 Pull request #1397 implements short whole-word terms in the shared Bloom
@@ -100,9 +206,9 @@ does not accept a stronger privacy claim for those terms.
 Go's Vitamin C storage modules are temporarily pinned to pseudo-versions at
 commit `06568ba93bd9`. The guard for a final release requires each
 pseudo-version to be replaced with a released module tag. Prereleases can
-keep pseudo-versions. Rust remains on Vitamin C 0.8.0 from crates.io.
-Schedule the crate moves and the final Rust facade after the customer
-release.
+keep pseudo-versions, and Go `v0.1.0-rc.3` still uses them. #1501 moved
+the Rust workspaces from Vitamin C 0.8.0 to 0.9 from crates.io. Schedule
+the crate moves and the final Rust facade after the customer release.
 
 ### Decisions made on 25 October 2026
 
@@ -151,9 +257,27 @@ recommendation](2026-10-25-stack-encrypt-packaging.md) defines:
 - coordinated migration work.
 
 The recommendation is a proposal for review. Nobody has accepted the
-renames. None of the proposal is implemented.
+renames. #1404 implements some of the names in its glossary that were
+already agreed: `Ciphertext`, `OpaqueEncode`, `OpaqueDecode`,
+`EncryptTarget`, and `DecryptSource`. No crate moves or renames are
+implemented.
 
-### No compatibility with the prototype
+### Stored format must stay compatible from 7 November 2026
+
+**Decision of 7 November 2026.** The user decided: "The stored data must not break as of now. The Go customer has already started implementation with rc.3. We can make breaking changes to the code/API but not the stored format."
+
+The stored format is what is written to the database. It includes ciphertexts with their envelopes and headers. It includes index and search terms. It includes JSON tree entries.
+
+The baseline is the Go module `github.com/cipherstash/stack/languages/golang` at tag `languages/golang/v0.1.0-rc.3`. That tag is commit `114e08448`, built on 2 November 2026 from `next` at `929451b49`. The baseline also includes the EQL v4 SQL bundle, `eql-v4-install.sql`, attached to that release. The rc.3 changelog, from #1500, describes the release.
+
+This decision replaces the decision of 25 October 2026 for stored data. For the code and the APIs, the earlier decision still applies: Rust and Go APIs can change without compatibility aliases or deprecation periods. Any change that would alter the stored format must do one of two things:
+
+- keep data written by rc.3 readable and searchable; or
+- add a new, versioned format beside the rc.3 format, and keep reading the rc.3 format.
+
+This plan does not choose between the two for any item. The open items are listed in [Work that the stored-format decision constrains](#work-that-the-stored-format-decision-constrains).
+
+#### History: the decision of 25 October 2026
 
 On 25 October 2026, the user clarified the compatibility scope. This API has
 existed only as an early prototype. Do not preserve its APIs, stored
@@ -168,9 +292,28 @@ merged Go implementation does still keep a reader for the legacy JSON
 encoding of opaque values. Record that reader as existing behaviour, not as
 a new requirement to build machinery for migrating prototype data.
 
-This exemption ends for the customer profiles when they are released. After
-that, later refactors of the Rust API and packages must keep the Go
-interface, and keep stored data and search compatible.
+The 25 October decision said that this exemption would end when the customer's configurations were released. The decision of 7 November 2026 ends it for stored data now, before a final release. The Go interface is not frozen by that decision.
+
+#### Work that the stored-format decision constrains
+
+Each item below would change the stored format if it were built as first planned. Each must now keep rc.3 data readable and searchable, or add a new versioned format beside it. Which option to take for each is an open question.
+
+| Planned work | How it touches the stored format |
+| --- | --- |
+| Freezing the post-cascade format | rc.3 already writes it. The frozen format must be the rc.3 one, or a new version beside it |
+| The refined-tag proposal | It changes the tag stored in the envelope, and what the AAD binds |
+| Separating row binding and search scope | It changes the AAD and the context that index terms are derived under |
+| The `OpaqueBlob` codec, including the Borsh fallback | Go rc.3 already writes opaque structs with Vitamin C's storage profile. A Rust codec must read those bytes |
+| Encoded ciphertext field targets (Base64 and Base85) | They change how a ciphertext is written as text in a column |
+| The `SealedValue` envelope layout and the JSON header version | The key-tag offsets and the header version 1 are what rc.3 wrote. The plan earlier said the offsets were not a commitment |
+| Byte vectors | Whether Go rc.3 writes a byte string as one value, and so whether the byte-vector decision affects stored data, was not checked |
+| Configurable match options and the tokeniser pipeline | New options must not change the terms of columns written with rc.3 defaults |
+
+#### Pull request #1491 and data written by Go rc.3
+
+Pull request #1491 does not change data that Go rc.3 can write. It changes only the Rust typed chain's `extend` method in `plan/chain.rs`. In `dynamic/record.rs`, the path that the Go guest uses, #1491 only adds a test. Go's `Extend` already appended parts in order.
+
+Go rc.3 was built from `929451b49`. That commit is earlier than the merge of #1491. The data that #1491 affects is data written by repeated Rust `.extend` calls before #1491. That data is Rust-only.
 
 ## Requirements established in the review
 
@@ -185,8 +328,7 @@ interface, and keep stored data and search compatible.
 - Use `EncryptInto` to batch a collection, including `Vec<i32>` into
   `Vec<Ciphertext>` without caller context. This division was agreed on 25
   October 2026. The current recommendation for byte vectors follows the same
-  collection rule, and uses `OpaqueBlob` for a whole vector. Compatibility
-  with the prototype gives no reason to add an exception for raw bytes.
+  collection rule, and uses `OpaqueBlob` for a whole vector. Compatibility with the prototype API gives no reason to add an exception for raw bytes.
 - Rust traits and derives are the main static interface. Plans support those
   declarations, and their lowering to the dynamic interface and FFI.
 - Design static and dynamic support against the same contract for the engine
@@ -206,11 +348,25 @@ interface, and keep stored data and search compatible.
   checks. Deliberate passthrough fields move to the output instead of being
   erased.
 - Keep EQL's contract between the engine and the SQL coherent, and keep the
-  shared batching and execution behaviour. Prototype representations need
-  not be preserved.
+  shared batching and execution behaviour. From 7 November 2026, the stored format of Go rc.3 must be preserved. Other prototype representations need not be.
 - Investigate the serialisation round trips in the EQL JSON adapter, and
   replace them with direct typed conversion. Keep the engine and the SQL in
   agreement.
+
+### Status of these requirements on 7 November 2026
+
+| Requirement | Status | What remains |
+| --- | --- | --- |
+| Keyset-directed `encrypt` and `encrypt_with_context`, with `EncryptInto` kept | Partly done (#1404) | Remove the public `encrypt_as`, which is still on `next` |
+| One value gives one opaque ciphertext, and `encrypt` takes no collection | Partly done (#1404) | `OpaqueBlob<T>`. #1503 is in progress |
+| `EncryptInto` batches a collection without caller context | Done for `Vec<S>` (#1501) | Byte vectors differ from this plan. See [Differences between merged code and this plan](#differences-between-merged-code-and-this-plan) |
+| Rust traits and derives are the main static interface | Partly done (#1404) | The derives with the new names. #1504 is in progress |
+| Static and dynamic support against one contract, with engine-level interoperability tests | Partly done (#1460, #1461, #1462, #1469, #1491, #1492) | The items in [Remaining customer work](#remaining-customer-work), item 1 |
+| Decrypt with and without context, with no invented default | Done for one value (#1404) | Record targets. #1504 is in progress |
+| `OpaqueEncode` and `OpaqueDecode`, and consuming `encrypt` and `encrypt_into` | Done for one value and for `Vec<S>` (#1404, #1501) | Records. #1504 is in progress |
+| `Zeroize` bound and guarded cleanup | Partly done (#1404, #1493, #1501) | See [Cleanup in target-directed encryption and at the Go boundary](#cleanup-in-target-directed-encryption-and-at-the-go-boundary) |
+| Keep EQL's engine and SQL contract coherent | Done for the merged JSON queries. #1492 runs them against PostgreSQL in CI | None listed |
+| Direct typed conversion in the EQL JSON adapter | Still open | No merged pull request changes it |
 
 ## Recommended decision: general configured targets
 
@@ -454,13 +610,22 @@ Settle the names of declaration traits and convenience traits together with
 review issue 5. The public examples use the destination-directed pair.
 Remove the competing ciphertext method when implementing this interface.
 
+Status on 7 November 2026: partly done. #1404 implements `keyset.decrypt`,
+`decrypt_with_context`, `T::decrypt_from`, and `decrypt_from_with_context`
+for one `Ciphertext`. #1501 adds them for `Vec<Ciphertext>`. The owned
+`DecryptFrom` has no `decrypt_into` method. The structural
+`decrypt_into` still exists in `target::legacy`. The opt-in adapter for
+results that are wiped on drop is still open.
+
 ## Recommended public traits and context input capabilities
 
 Status: the user accepted this direction on 24 October 2026. Separate the
 conversion methods from the `EncryptTarget` and `DecryptSource`
 declarations. Use explicit capabilities for caller context instead of
-`Default`. Implementation, complete signatures, and updates to call sites
-remain pending.
+`Default`. #1404 implements this direction for opaque values, and #1501
+for collections of them. Records, complete signatures, and updates to call
+sites remain pending. The status of each point is listed at the end of this
+section.
 
 This section settles the direction of work areas A and B, later in this
 plan. Earlier examples keep their historical derive names until they are
@@ -498,7 +663,7 @@ always fails.
 Plaintext visitor traits remain a separate representation layer that Stack
 owns. Moving or renaming them must keep a single canonical trait
 implementation, and a consistent wire contract across the new consumers.
-Compatibility with the prototype is not needed. Configured-target options
+Compatibility with the prototype API is not needed. The stored format must stay compatible. Configured-target options
 are another associated capability, not context.
 
 Declaration methods continue to return operation descriptions that the core
@@ -527,7 +692,7 @@ capabilities:
 | `ExpectedContext<C>` | Allowed | Accepted `C` | Leaving it out rebuilds the stored context, and supplying it also checks that context |
 
 `OptionalContext` does not append a synthetic empty prefix, and leaving out
-an extension does not append `()`. `ExpectedContext` never extends the AAD.
+an extension does not append `()`. `ExpectedContext` never extends the context, so it never changes the AAD.
 The table specifies behaviour, and the names can change without changing it.
 A requirement for nonempty input belongs to the accepted argument type or to
 the validated resolved context, not to whether the input is optional.
@@ -588,6 +753,20 @@ The implementation must prove these points:
   examples](2026-10-24-stack-encrypt-context-examples.md) run through Rust
   and through dynamic plans.
 
+Status of these points on 7 November 2026:
+
+| Point | Status |
+| --- | --- |
+| Leaving out required input fails to compile, even when `C: Default` | Done. #1404 adds `RequiredContext`, `AllowsNoContext`, and `AcceptsContext`. #1501 adds compile-fail tests, including a collection of `u64` |
+| A target that accepts no input rejects context | Done. #1501 adds a compile-fail test for `NoCallerContext` |
+| An optional extension and an expected context keep their meanings | Still open. `ContextExtension` and `ExpectedContext` as context inputs are in #1504, which is in progress |
+| All nine directional scenarios run through Rust and dynamic plans | Still open. #1491 tests a base with ordered extensions and stored-context expectations, not the nine scenarios |
+
+#1404 implements the traits in the tables above, the associated type
+`ContextInput`, and `ScalarContext`, the owned context of an opaque value.
+`OptionalContext` gives an opaque value an empty context when the caller
+leaves it out, through both the keyset and the target-directed API.
+
 Keep support for owned sources, and keep batching. This separation of traits
 must not add a blanket `Clone` bound. The final signatures must show the
 support for borrowed sources and for owned sources. They must not hide the
@@ -628,8 +807,12 @@ State the remaining requirements explicitly:
 - Opening by selector accepts at most one entry for each document group.
 - Use subtree reads to retrieve plaintext for all matches.
 - General inputs for search scope and row binding remain unsupported for EQL
-  targets. The existing column and keyset profile can be released without
-  claiming them.
+  targets. The existing column and keyset configuration can be released without claiming them.
+
+Two JSON queries were added after this section was first written. Pull requests #1445 and #1451 test several conditions on one array element. Pull requests #1446 and #1452 turn a jsonpath predicate into one query parameter. Neither query uses
+an index. The [JSON operations
+inventory](2026-10-25-stack-encrypt-json-operations.md) lists them as J21
+and J22.
 
 The JSON contract now uses randomised projection order and ciphertexts bound
 by cascaded tags. Semantic parity and cross-opening are required. Comparing
@@ -754,8 +937,7 @@ the output, are initialised and shared with convenient `encrypt_into` calls.
    initialise a client or keyset.
 8. **Apply the user's prototype scope.** These parts of the older document
    are not constraints here: decoding legacy match options, deprecation
-   requirements, release-preservation requirements, and frozen Go wire
-   formats. Keep the new Rust, Go, and EQL consumers aligned. The appendix's
+   requirements, release-preservation requirements, and frozen Go wire formats. The decision of 7 November 2026 now freezes the stored format, though not the Go API. Keep the new Rust, Go, and EQL consumers aligned. The appendix's
    `cipher.encrypt(plan, value)` and plaintext derive are illustrative older
    proposals. They do not replace our agreed entry points.
 
@@ -995,7 +1177,8 @@ Accepted on 25 October 2026:
   outputs and layouts compose those operations.
 - The lifecycle and cleanup scope below are part of the accepted design.
 - The bound for plaintext cleanup is `Zeroize`. The implementation is not
-  finished.
+  finished. #1404 implements it for opaque values, and #1501 for
+  collections of them.
 
 ### Owned input is the direct API contract
 
@@ -1090,7 +1273,7 @@ partial decoding.
 #### Stable storage format first
 
 Decided on 25 October 2026, as the priority: first define a stable,
-versioned binary storage profile. The codec was first designed for
+versioned binary storage format. The codec was first designed for
 short-lived transport, and stored blobs need a stronger compatibility
 commitment. Improvements to zeroisation and constant-time implementation can
 follow, provided they keep the meaning of the stored format.
@@ -1103,7 +1286,7 @@ C #519](https://github.com/cipherstash/vitaminc/issues/519), created for
 this review, tracks this action. The issue explicitly separates storage
 stability from the transport-only reasons in Vitamin C #332.
 
-#### Storage profile implemented in Vitamin C and Go
+#### Vitamin C storage profile implemented in Vitamin C and Go
 
 By 27 October 2026, Vitamin C's dedicated storage profile, and its Go reader
 and writer, addressed the format work from #519. That work is in Vitamin
@@ -1111,7 +1294,7 @@ C #520 and #526, carried onto upstream main by #544. Stack #1369 and #1370
 adopt the Go codec: generated opaque structs call `vcffi.MarshalStorage` and
 `UnmarshalStorage`.
 
-The profile is versioned (`VCS` plus a version). It supports explicit
+The storage profile is versioned (`VCS` plus a version). It supports explicit
 optional values and typed map keys, and it is separate from transport. Do
 not report these properties of the transport mapping as defects of the new
 storage profile:
@@ -1133,8 +1316,9 @@ cross-reading tests and the normative corpus matter.
 
 #### Remaining Rust and release work
 
-Rust workspaces still use Vitamin C 0.8.0 from crates.io. So this work does
-not implement the final proposed Rust `OpaqueBlob` facade. When that facade
+On 27 October 2026, the Rust workspaces used Vitamin C 0.8.0 from
+crates.io. #1501 moved them to 0.9. Neither change implements the final
+proposed Rust `OpaqueBlob` facade. #1503 adds `OpaqueBlob<T>` over the storage profile. #1503 is in progress. When that facade
 is built, adopt the dedicated storage entry points, instead of reusing the
 transport Serde codec for storage. Go's temporary pseudo-version dependency
 must move to released module tags for a final Go release. A new evaluation
@@ -1143,8 +1327,7 @@ of serialisers is not on the critical path for customers.
 Stable bytes do not establish constant-time behaviour or complete cleanup.
 Keep the remaining work on guarded output, temporary buffers, partial
 decoding, and values that the caller owns, without changing the stored
-format. The JSON tree keeps its own node and envelope encoding. Freeze its
-post-cascade profile separately from opaque blobs.
+format. The JSON tree keeps its own node and envelope encoding. Freeze its post-cascade format separately from opaque blobs.
 
 ### Cleanup in target-directed encryption and at the Go boundary
 
@@ -1169,6 +1352,28 @@ Acceptance work:
 - cover nested source and blob cases;
 - cover owned inputs that are not `Clone`.
 
+Status of this acceptance work on 7 November 2026:
+
+| Acceptance item | Status |
+| --- | --- |
+| Source cleanup and drop on successful and failing requests | Done for opaque values and collections. #1404 wipes the owned source before it returns the pending request. #1501 adds drop witnesses, which are test values that record whether they were wiped |
+| Cancellation, and requests dropped before they are polled | Done. #1493 adds lifecycle tests, and #1501 adds them for collections |
+| Nested source and blob cases | Partly done. #1501 tests a nested `Vec<Vec<_>>` as one batch. Blob cases wait for #1503 |
+| Owned inputs that are not `Clone` | Done for collections (#1501) |
+
+Other cleanup work that merged:
+
+- #1501 makes the frame codec write into a Vitamin C `Buffer`. A `Buffer` wipes each allocation it outgrows.
+- #1501 makes the frame readers, and the Go guest's frame inputs, take
+  protected bytes.
+- #1501 wipes the plaintexts decrypted so far when a later element of a
+  collection fails.
+- #1493 records a known gap: plaintext that stays in guest memory after a
+  Go decrypt.
+
+Cleanup after a partial Serde deserialisation, and the opt-in adapter for
+results that are wiped on drop, are still open.
+
 Where necessary, inspect optimised code for wiping and copying behaviour.
 Ordinary tests alone cannot prove that no copy remains. Do not infer a
 current vulnerability, or a completed guarantee, from this design
@@ -1187,7 +1392,7 @@ of opaque storage are now merged.
    - operator input and result encodings;
    - grouped reads;
    - errors;
-   - the column and keyset profile.
+      - the column and keyset configuration.
 2. **Close the actual remaining customer gaps.** The gaps are opening a
    child bound to its parent, and complex ordered-path declarations if
    needed. The gaps also include configurable Go match options (#1112), and
@@ -1203,7 +1408,7 @@ of opaque storage are now merged.
 4. **Release the dependencies and the customer interface.** For a final
    release, replace Vitamin C's temporary Go pseudo-version pins. The
    existing guard allows them in prereleases. Opaque storage is already
-   integrated. Keep it separate from the JSON-tree storage profile. Build
+   integrated. Keep it separate from the JSON tree storage format. Build
    production guests and the matching SQL.
 5. **Complete the Rust convenience APIs and packaging.** Implement public
    traits, derives, the definition lifecycle, and crate moves within the
@@ -1211,9 +1416,19 @@ of opaque storage are now merged.
    that keeps the format.
 
 Use one execution engine throughout. The final Rust facade and package
-layout do not gate the existing Go JSON profile. Do not reimplement
+layout do not gate the existing Go JSON support. Do not reimplement
 configured JSON options, or reads that Rust verifies against the original
 request: both are already merged.
+
+Status of each step on 7 November 2026:
+
+| Step | Status | What remains |
+| --- | --- | --- |
+| 1. Specify the implemented contract | Partly done. The conformance corpus covers declarations, runtime values, reads, context, scalars, value kinds, query operators, JSON operations, and lifecycle (#1460, #1461, #1462, #1469, #1491, #1492, #1493) | The specification itself. See [Required deliverable: dynamic interoperability specification](#required-deliverable-dynamic-interoperability-specification) |
+| 2. Close the remaining customer gaps | Still open | Opening a child bound to its parent, and #1112. The new element and predicate queries (#1445, #1446, #1451, #1452) were not on this list |
+| 3. Validate and freeze the release candidate | Partly done. #1492 runs the JSON suites against PostgreSQL in CI, and records the SQL bundle hash. #1403 fixes findings from the review of the release candidate | Freezing the post-cascade vectors and the EQL bundle |
+| 4. Release the dependencies and the customer interface | Still open. Go `v0.1.0-rc.3` is a prerelease | Replacing the Go pseudo-version pins |
+| 5. Complete the Rust convenience APIs and packaging | Partly done (#1404, #1501). #1503 and #1504 are in progress | Records, blobs, the definition lifecycle, and crate moves |
 
 ### Required deliverable: dynamic interoperability specification
 
@@ -1223,6 +1438,34 @@ documentation, after the Rust API has diverged from the Go API. The current
 examples remain proposals until they are reconciled into that specification.
 Adding this deliverable does not claim that the specification has been
 written.
+
+Status on 7 November 2026: partly done. The conformance corpus in
+`conformance/stack-encrypt` contains the executable fixtures, and contract
+documents for each conformance profile. It covers these parts of the required coverage
+below:
+
+- the current declaration grammar, with accepted and rejected declarations
+  (#1460);
+- runtime values, missing compared with null, and structured diagnostics
+  (#1461);
+- validation stages, and which failures come before key I/O (#1462);
+- context ordering and grouping, descriptors, AAD, and index context, for
+  the current shared context (#1491);
+- JSON operations, the predicate grammar, and SQL oracles (#1492).
+
+These parts are not done:
+
+- **The format.** No JSON Schema files exist. The declaration grammar
+  contract explains that a schema of shapes alone would not enforce the
+  semantic rules.
+- **Versions.** The conformance profiles are marked experimental: they do not certify a whole SDK. The contract is not frozen. The `v1` in the corpus is a corpus format version, not a
+  protocol version.
+- **Roles.** The grammar for search scope, primary keys, and scope keys
+  does not exist. The context contract says that this split is separate
+  work.
+- **Other runners and exchange.** Python and TypeScript runners, fresh
+  cross-language exchange of JSON values, and a release compatibility
+  matrix are not done.
 
 Recommended format: a versioned specification package that contains:
 
@@ -1276,8 +1519,7 @@ Required coverage:
     extraction.
 - **Versioning.** Explicit protocol and schema identifiers, handling of
   supported versions and capabilities, and rejection of unsupported
-  features. Define future evolution without adding compatibility obligations
-  for the prototype.
+  features. Define future evolution without adding compatibility obligations for the prototype API. The rc.3 stored format is the first version that later versions must keep reading.
 
 Conformance fixtures include accepted and rejected definitions and requests,
 expected error codes and paths, normalised definitions, and deterministic
@@ -1302,19 +1544,19 @@ The configured-target work above covers review issue 13 in depth. The full
 API redesign also needs the work in this table. Each row names a concrete
 deliverable. Recommendations do not silently settle the open decisions.
 
-| Work area | Review issues | Required deliverable |
-| --- | --- | --- |
-| Public methods, traits, and ownership | 1, 3, 5, 9, 10, 14 | One map of signatures, imports, and receivers; operation-trait design; and migration of dependencies |
-| Context contract | 1, 3, 4, 11, 12, 14 | Context rules for scalars and records, explicit optionality, and a matching dynamic representation |
-| Ciphertext persistence | 2, 8 | Opaque scalar output, canonical bytes, Serde and Base64 behaviour, and a defined boundary with structural trees |
-| Whole-value wrapper | 8 | Codec, authenticated format version, decode contract, and bounded timing claims |
-| Mixed records and collections | 7, 8, 11 | Derive support for passthrough, renaming, and context fields, and retained collection batching |
-| Configured targets and queries | 13 | Typed Rust factories, dynamic options, configuration lifetime, JSON conversion, and Go coverage |
-| Names, integration, and release | 5, 6, 9, 10, 13, 14 | Final glossary, coordinated consumer updates, format fixtures, and executable public examples |
-| Parallel Go JSON work | 15 | Reconcile PR #1353 and tasks #1348 to #1352 with this contract, and reuse compatible implementation work |
-| Prior query design | 16 | Reuse the supplied field-owned query model, and reconcile handles, configuration ownership, JSON capabilities, and portability |
-| Consistent definition selector | 17 | Choose one method name for encrypt and query. Recommended: `using`, with bounds specific to each operation |
-| Single-ciphertext encoding and cleanup | 18 | `OpaqueEncode` and `OpaqueDecode`, consuming `encrypt` and `encrypt_into`, guarded lifetimes for sources and buffers, and an explicit cleanup scope |
+| Work area | Review issues | Required deliverable | Status on 7 November 2026 |
+| --- | --- | --- | --- |
+| Public methods, traits, and ownership | 1, 3, 5, 9, 10, 14 | One map of signatures, imports, and receivers; operation-trait design; and migration of dependencies | Partly done (#1404, #1501). The structural API and `encrypt_as` remain |
+| Context contract | 1, 3, 4, 11, 12, 14 | Context rules for scalars and records, explicit optionality, and a matching dynamic representation | Partly done (#1404, #1491). Directional selectors and records remain |
+| Ciphertext persistence | 2, 8 | Opaque scalar output, canonical bytes, Serde and Base64 behaviour, and a defined boundary with structural trees | Partly done (#1404). Typed text encodings and encoded field targets remain |
+| Whole-value wrapper | 8 | Codec, authenticated format version, decode contract, and bounded timing claims | Still open. #1503 is in progress |
+| Mixed records and collections | 7, 8, 11 | Derive support for passthrough, renaming, and context fields, and retained collection batching | Collections done (#1501). Record derives are in #1504, which is in progress |
+| Configured targets and queries | 13 | Typed Rust factories, dynamic options, configuration lifetime, JSON conversion, and Go coverage | Still open for Rust. Go coverage gained two JSON queries (#1451, #1452) |
+| Names, integration, and release | 5, 6, 9, 10, 13, 14 | Final glossary, coordinated consumer updates, format fixtures, and executable public examples | Partly done. Format fixtures are in the conformance corpus. The public examples become tests in #1504, which is in progress |
+| Parallel Go JSON work | 15 | Reconcile PR #1353 and tasks #1348 to #1352 with this contract, and reuse compatible implementation work | Unchanged since 27 October 2026. #1353 is still open |
+| Prior query design | 16 | Reuse the supplied field-owned query model, and reconcile handles, configuration ownership, JSON capabilities, and portability | Unchanged |
+| Consistent definition selector | 17 | Choose one method name for encrypt and query. Recommended: `using`, with bounds specific to each operation | Still open |
+| Single-ciphertext encoding and cleanup | 18 | `OpaqueEncode` and `OpaqueDecode`, consuming `encrypt` and `encrypt_into`, guarded lifetimes for sources and buffers, and an explicit cleanup scope | Partly done (#1404, #1493, #1501). Blob cleanup and partial decoding remain |
 
 ### A. Consolidate the public Rust method and trait structure
 
@@ -1325,11 +1567,12 @@ sections below organise the full scope of the review, not the critical path
 for customers.
 
 Keep the agreed ordinary keyset receiver and the `EncryptInto` conversion
-forms. Use the accepted destination-directed decrypt pair. Write out all
+forms. Use the accepted destination-directed decrypt pair.
+
+Write out all
 signatures, imports, bounds, and return types before renaming traits. Keep
 the ordinary keyset `decrypt` and `decrypt_with_context` for opaque
-ciphertexts. Remove redundant prototype conveniences without compatibility
-shims.
+ciphertexts. Remove redundant prototype conveniences without compatibility shims. The APIs can break. The stored format must not.
 
 Separate plaintext representation, target operation declarations, and
 execution conveniences explicitly. Resolve two inconsistencies:
@@ -1354,6 +1597,20 @@ record, searchable record, and JSON calls compile with the documented
 imports, including from generic callers. The method inventory has no
 unexplained duplicate execution path. Compile-fail tests cover the trait
 capabilities that are not supported.
+
+Status on 7 November 2026: partly done.
+
+- **Done.** #1404 separates the declarations (`EncryptTarget`,
+  `DecryptSource`) from the conversion methods (`EncryptInto`,
+  `DecryptFrom`) for opaque values. #1501 extends them to `Vec<S>`. Scalar
+  calls compile with the crate-root imports, and compile-fail tests cover
+  unsupported inputs and context.
+- **Not done.** Blob, typed record, searchable record, and JSON calls do
+  not yet compile through the owned API. Pull requests #1503 and #1504 are in progress.
+- **Duplicate path.** The method inventory still has a duplicate path. The
+  structural `EncryptFrom` and `DecryptInto`, `encrypt_as`, and the helpers
+  in `target::legacy` remain beside the owned API. Issue #1488 tracks their
+  removal.
 
 ### B. Turn the context scenarios into a normative contract
 
@@ -1635,6 +1892,26 @@ dynamic declarations. Required input is enforced, altered or wrong context
 is refused, and existing context encodings agree across all new
 implementations.
 
+Status on 7 November 2026: partly done.
+
+- **Composition order.** #1491 fixes it for the current shared context. A
+  field's base comes first, then each extension, appended in order. A
+  grouped extension stays one part. An empty extension adds nothing.
+  Before #1491, repeated Rust extensions replaced earlier ones.
+- **Evidence.** #1491's conformance cases check the descriptor, AAD, and
+  index context bytes in native Rust. They check the plan that Go sends,
+  and cross-opening between the two languages. Other cases check
+  stored-context expectations, altered context, and refusals before key
+  I/O.
+- **Required input.** #1404 enforces it for opaque values without using
+  `Default`. #1504 adds optional extensions and expected context as inputs. #1504 is in progress.
+- **Empty context.** #1404 resolves the mismatch for the new `Ciphertext`
+  target. The target accepts an empty context through both APIs. EQL targets
+  still require a nonempty context.
+- **Still open.** The nine directional scenarios, source-field selection
+  on records, the dynamic form of grouped extensions, and the split between
+  ciphertext binding and search scope.
+
 ### C. Finish the ciphertext and whole-value storage contracts
 
 Accepted direction: a single-value plaintext encoding produces one opaque
@@ -1677,6 +1954,17 @@ discover an unsupported shape only after keys have been minted.
 Keep generic structural encryption and searchable JSON explicit. Specify
 whether persistence of structural trees is supported, and in what stable
 format. Coordinate any protocol changes with their consumers.
+
+Status on 7 November 2026: partly done by #1404.
+
+- **`Ciphertext`.** The new type stores exactly the existing `SealedValue`
+  v1 envelope. It has `to_bytes` and `from_bytes`. Parsing does not authenticate. Human-readable Serde writes padded standard Base64, and
+  binary Serde writes bytes. `Debug` uses Vitamin C's `OpaqueDebug`, so it
+  does not print the ciphertext.
+- **Single values only.** `OpaqueEncode` is sealed. A type qualifies only if Vitamin C encrypts it as a single value. So `encrypt` does not compile for a struct, a map, or a `Vec<i32>`.
+- **Trees.** Structural trees use `encrypt_tree` and `decrypt_tree`, and
+  their persistence is still unspecified. Nullable values also use the
+  tree API, because `Option<T>` is not an `OpaqueEncode` type.
 
 #### Typed encodings and extractable ZeroKMS tags
 
@@ -1772,6 +2060,15 @@ Protocol details remain deferred. This is the intended behaviour, not a
 claim that the current client or engine already implements it. Add
 integration coverage for refinement and decryption when that work is merged.
 
+Status on 7 November 2026: partly done.
+
+- **Done.** #1404 adds `Ciphertext::key_tag`. The accessor reads the
+  ZeroKMS key tag from the envelope without decrypting, and its
+  documentation says the tag is untrusted until the ciphertext opens.
+- **Still open.** `to_base64` and `to_base85` with the typed text wrappers.
+  The encoded ciphertext field targets. The SQL and PL/pgSQL extraction
+  helper, and its Rust, Go, and SQL fixtures. The refined-tag flow.
+
 #### Single values for encrypt, collections for EncryptInto
 
 Decided on 25 October 2026: direct `encrypt` handles one single-value input,
@@ -1807,14 +2104,32 @@ Acceptance checks:
 Existing collection composition is kept. Opaque `Ciphertext`, and its target
 support without context, are new work.
 
-The current prototype treats `Vec<u8>` as one byte value, but that is not a
-compatibility constraint. The latest recommendation is uniform collection
+The current prototype treats `Vec<u8>` as one byte value. On 25 October 2026, that was not a compatibility constraint. After the decision of 7 November 2026, it is a constraint if Go rc.3 stores byte strings that way. This was not checked.
+
+The latest recommendation is uniform collection
 behaviour. `Vec<u8>` to `Vec<Ciphertext>` encrypts individual bytes, while
 `OpaqueBlob<Vec<u8>>` encodes the complete vector as one value. Do not add a
 conversion from `Vec<u8>` to `Ciphertext`, or a bytes wrapper, only to keep
-prototype behaviour. A distinct raw-byte capability would need its own use
-case, and the blob codec need not reproduce the prototype's raw-byte
-encoding.
+prototype behaviour.
+
+A distinct raw-byte capability would need its own use
+case. The blob codec need not reproduce the prototype's raw-byte encoding. A byte string that Go rc.3 stores must still open, since 7 November 2026.
+
+Status on 7 November 2026: partly done, with one difference from this
+plan.
+
+| Acceptance check | Status |
+| --- | --- |
+| Reject direct `encrypt(Vec<i32>)` before execution | Done. `Vec<i32>` is not an `OpaqueEncode` type, and a compile-fail test in #1501 checks it |
+| Support `Vec<i32>` to `Vec<Ciphertext>` without context | Done (#1501). Encrypting makes one `generate_keys` call, and decrypting makes one `retrieve_keys` call for each keyset |
+| Keep target-directed opening and batching of collections | Done (#1501) |
+| Recover the blob as a whole collection | Still open. #1503 is in progress |
+
+The difference is in byte vectors. Pull request #1501 makes `Vec<u8>` and `[u8; N]` encrypt into one `Ciphertext`. In #1501, `u8` is not an `OpaqueEncode` type. So `Vec<u8>` never encrypts byte by byte. That is the opposite of the recommendation above.
+
+The reason given in #1501 is that Vitamin C has no single value for `u8`.
+
+Pull request #1501 also leaves the order and length of a `Vec` unauthenticated. ADR-0010 decides this for stored rows.
 
 #### Blob codec, format, and timing requirements
 
@@ -1840,14 +2155,17 @@ The constant-time question needs a concrete conclusion. Assess:
 - which custom implementations are allowed.
 
 If arbitrary Serde types remain supported, do not promise constant-time
-serialisation from end to end. If that property is required, select a
-restricted profile separately. Constant-time behaviour cannot be inferred
+serialisation from end to end. If that property is required, select a restricted set of supported types separately. Constant-time behaviour cannot be inferred
 from the wrapper or its encryption primitive.
 
 Completion criteria for work area C: scalar and blob examples persist, and
 reload through a new cipher instance. The examples reject invalid encodings
 and verify fixtures for the selected format. The supported timing contract
 and the codec version are documented.
+
+Status on 7 November 2026: partly done. The scalar half is merged (#1404).
+The `record-scalars-v1` profile (#1460) checks that frozen Rust scalar
+ciphertexts open in Go, and that fresh Go ciphertexts open in Rust. The blob half, its codec version, and its timing contract are in #1503. #1503 is in progress.
 
 ### D. Complete record derives and preserve collection composition
 
@@ -1868,6 +2186,13 @@ decrypt, nested targets, renamed passthrough fields, and stored context.
 Dynamic and Go declarations produce equivalent semantics. A plaintext-side
 derive that generates output types is a deferred convenience, not a
 prerequisite for these workflows.
+
+Status on 7 November 2026: partly done.
+
+- **Collections.** #1501 composes an owned `Vec<S>` into one logical batch.
+  Lifecycle tests check that an empty collection makes no provider call.
+- **Records.** No record derive for the owned API is merged. Pull request #1504 adds one, with passthrough, renaming, nested targets, and stored context. Pull request #1504 is in progress.
+- **Configured nested targets.** #1504 defers them. The JSON plaintext type is `serde_json::Value`. That type does not implement `Zeroize`.
 
 ### E. Finish the configured policy's lifetime and query interface
 
@@ -1892,6 +2217,10 @@ of mandatory hand-written plans. Keep direct typed EQL conversion, and
 support in the catalog and guest, as deliverables of the configured-target
 sequence.
 
+Status on 7 November 2026: still open. No merged pull request implements
+typed factories, a definition lifecycle, or typed EQL conversion in Rust.
+The catalog gained two JSON query roles in #1445 and #1446.
+
 ### F. Make naming and coordinated integration part of completion
 
 Use the [packaging glossary](2026-10-25-stack-encrypt-packaging.md) for:
@@ -1907,9 +2236,41 @@ and distinguish it from executing `EncryptInto`. New spellings and crate
 moves still need review.
 
 Remove replaced APIs directly, and update the EQL, Go, and guest consumers
-together. There is no requirement to read prototype ciphertext or keep old
-imports. Specify the selected encoding and cryptographic semantics, and set
+together. There is no requirement to keep old imports. From 7 November 2026, ciphertext written by Go rc.3 must stay readable and searchable. Specify the selected encoding and cryptographic semantics, and set
 up fixtures for that contract from now on.
+
+#### Name context parameters `context`
+
+Decided on 7 November 2026: a parameter that takes the caller's context is
+named `context`. The name `aad` is kept only for a value that is an AAD,
+such as the AAD that Vitamin C derives for one leaf. The private functions
+`seal_leaf`, `open_leaf`, and `leaf_aad`, and those in `json/derive.rs`,
+already follow the rule.
+
+On `next` at `e4990e49b`, these public methods in
+`packages/stack-encrypt/src/cipher.rs` take a context through a parameter
+named `aad`:
+
+| Method | Line |
+| --- | --- |
+| `KeysetCipher::encrypt_tree` | 1021 |
+| `KeysetCipher::decrypt_tree` | 1036 |
+| `StackCipher::decrypt` | 1105 |
+| `PendingStackCipherText::plan`, whose bound is `IntoAad` | 1485 |
+| `PendingStackCipherText::seal` | 1520 |
+| `PendingStackCipherText::into_pending` | 1554 |
+
+Rename each of these parameters to `context`. This is a breaking change to
+the Rust API only. The decision of 7 November 2026 allows it. The change
+does not change the stored format.
+
+Vitamin C's `IntoAad` trait also takes a context. Renaming it is a change
+in Vitamin C. Record it there as a follow-up. It is not done in this
+repository.
+
+The Go SDK and the dynamic interface in `packages/stack-encrypt/src/dynamic`
+have no public field or parameter named `aad`. I checked with `git grep`
+on `next`.
 
 Completion criteria for work area F:
 
@@ -1925,6 +2286,16 @@ redesign. The earlier Go release uses the gates for Go, the engine, and
 storage in the [implementation
 sequence](#configured-target-implementation-sequence-and-completion-criteria).
 Those gates do not depend on the facade.
+
+Status on 7 November 2026: partly done.
+
+- **Cross-opening.** The conformance corpus checks cross-opening between
+  native Rust and the Go guest for scalars, records, context, and JSON
+  (#1460, #1491, #1492).
+- **Batching.** #1493 and #1501 check batching.
+- **Guest builds.** CI builds the guests for the conformance jobs.
+- **Not done.** The public examples are not yet tests. Pull request #1504 makes the record examples into tests. Pull request #1504 is in progress. The plan builder method is not renamed
+  to `target`. The replaced APIs are not removed.
 
 ## Recommended order for the remaining design decisions
 
@@ -1955,7 +2326,7 @@ These directions are settled:
   named-type declarations, and explicit scope eligibility;
 - a versioned interoperability specification with shared conformance
   coverage;
-- no backward compatibility with the prototype.
+- no backward compatibility with the prototype API. On 7 November 2026, the user added that the stored format of Go rc.3 must not break.
 
 Do not reopen these choices only because older examples or descriptions of
 work areas still use provisional wording.
@@ -1967,19 +2338,18 @@ from the obligations to specify and implement:
 
 | Remaining question | Decision required |
 | --- | --- |
-| JSON contract completion | The main Go interface is implemented. Close the gaps in opening a child bound to its parent, and in formal conformance. Use the current semantics of cascaded tags and random order. Do not reopen operator design, or rename released Go APIs for cosmetic consistency |
+| JSON contract completion | The main Go interface is implemented, and #1492 enrols it in conformance. Close the gap in opening a child bound to its parent, and keep the current semantics |
+| Byte vectors | #1501 encrypts `Vec<u8>` as one value, unlike this plan. Accept that behaviour, or change the code |
 | Key selection and optional provider policy | Review keyset selection derived from plaintext, routed execution scoped to a client, and ZeroKMS lock context, as optional provider capabilities. In the provider-capabilities companion, assess the neutral boundary between data keys and index keys, and the deliberate non-use of Vitamin C's `AsyncCipher` |
-| Customer storage profiles | Go opaque storage is integrated. For the final release, replace the temporary Go dependency pins, and freeze the post-cascade JSON and search profiles. Rust blob conveniences and crate moves can follow |
+| Customer storage formats | Go opaque storage is integrated. For the final release, replace the Go pins, and freeze the post-cascade format |
 | Configurable match and short input | #1397 implements deterministic short-word terms in the same Bloom filter. Broader configurable Go tokenisers and filters remain, including #1112. Reconcile the earlier privacy concern explicitly. Merging support does not prove that leakage is unchanged |
 | Packaging and names (review in progress) | Review the packaging companion's shared format crate, value execution owned by Stack, a Vitamin C boundary of primitives only, retirement of `AsyncCipher`, the ZeroKMS client rename, and role-based JSON names. Encoded ciphertext field targets themselves are accepted. The accepted trait names, `ScopeKey`, and receiver choices are not open again |
 
 ### Next steps
 
-Next, complete the specification of the supported contract, and close the
-remaining customer gaps in configuration and reads. Then validate the
-release candidate, and resolve the pins for the final release. The original
-end-to-end JSON implementation is already done. Packaging remains deferred.
-Keep the initial ORE equality policy unchanged.
+Next, close the remaining customer gaps in configuration and reads. Finish the specification around the merged conformance corpus. Then freeze the release candidate, and resolve the pins for the final release. The Rust conveniences for blobs and the crate moves can follow after the customer storage formats are final.
+
+The original end-to-end JSON implementation is already done. The first conformance corpus is also done. Packaging remains deferred. Keep the initial ORE equality policy unchanged.
 
 Specification and implementation work still includes:
 
@@ -1989,6 +2359,11 @@ Specification and implementation work still includes:
 - binary envelope fields;
 - Rust, Go, and SQL fixtures;
 - the flow of the refined tag and the original tag.
+
+On 7 November 2026, the conformance corpus covers the current context
+grouping, the current dynamic grammar, and Rust and Go fixtures. It does
+not cover scope, version identifiers, stable error codes as a frozen list,
+or the refined tag.
 
 Record candidate choices in the formal specification for review. Do not
 treat every byte offset or adapter signature as a new architectural
@@ -2003,6 +2378,15 @@ Cleanup implementation still needs:
 - checks for cancellation and drop;
 - an explicit adapter for drop-guarded results.
 
+Status on 7 November 2026:
+
+| Cleanup item | Status |
+| --- | --- |
+| Guarded encoder sinks | Partly done. #1501 makes the frame codec write into a `Buffer`. A `Buffer` wipes each allocation it outgrows |
+| Handling of partial decoding | Partly done. #1493 and #1501 wipe the values decoded so far when a later value fails. A partly built Serde value is still open |
+| Checks for cancellation and drop | Done (#1493, #1501) |
+| An explicit adapter for drop-guarded results | Still open |
+
 Under the user's latest sequencing decision, implementation improvements can
 follow the stable format. Keep the stored contract, and document the actual
 guarantees, instead of claiming that the eventual goals are already met.
@@ -2014,8 +2398,7 @@ signatures and proof. That is implementation design within the recorded
 ownership model. It is not a reason to reopen whether writes and queries
 share a policy.
 
-Passthrough implementation, transcoder adapters, collection composition,
-moving traits, documentation updates, and acceptance tests remain work
-items. These items are not reasons to describe the agreed API direction as
-undecided. The prototype needs no backward-compatibility phase. The customer
-release creates a new commitment for Go and for persisted data.
+Passthrough implementation, transcoder adapters, moving traits,
+documentation updates, and acceptance tests remain work items. Collection
+composition for the owned API is done (#1501). These items are not reasons to describe the agreed API direction as
+undecided. The prototype API needs no backward-compatibility phase. The stored format has needed one since 7 November 2026, because the Go customer builds on rc.3.
