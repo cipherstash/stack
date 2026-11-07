@@ -1,21 +1,62 @@
 # Context sources and storage: directional API examples
 
-Date: 2026-10-24. Design exploration accompanying the
-[API review log](2026-10-24-stack-encrypt-api-review.md) and
+Date: 24 October 2026. This design exploration goes with the
+[API review log](2026-10-24-stack-encrypt-api-review.md) and the
 [complete public workflow examples](2026-10-24-stack-encrypt-public-examples.md).
 
 **Everything introduced here is proposed syntax, not an implemented API.**
-The purpose is to compare context behavior across the meaningful source and
-storage combinations before selecting attributes or changing traits. The
-`Ciphertext` and `passthrough` proposals are inherited from the workflow draft.
+None of the code below compiles against Stack Encrypt today.
+
+This document
+compares what happens to encryption context in each useful combination of
+context source and context storage. That comparison comes before anyone
+chooses attributes or changes traits. The `Ciphertext` and `passthrough`
+proposals come from the workflow draft. The workflow draft is the complete
+public workflow examples document linked above.
+
+## Terms used in this document
+
+These terms appear throughout. Each one is also explained where it first
+matters:
+
+- **Encryption context** is a value that each ciphertext is bound to. Stack
+  Encrypt gives it to the cipher as additional authenticated data (AAD).
+  AAD is not encrypted, but decryption fails unless the same value is
+  supplied again. The same context also scopes a field's search index terms
+  (see `packages/stack-encrypt/src/target/context.rs`).
+- **Static prefix** is the fixed string in the declaration, such as
+  `"users"`. Together with the field name it forms a field's static base.
+- **Logical row context**, written `R`, is the part of the context that
+  changes from record to record, such as a user id.
+- **Effective context** is the complete context one field is encrypted
+  under: its static base combined with `R`.
+- **Selector** is a declaration inside `context(...)` that says where to
+  get `R`, for one direction or for both.
+- **Caller argument** is a context value the application passes to a
+  `*_with_context` method, rather than one read from a record.
+- **Passthrough field** is an output field copied in cleartext from the
+  input, with `#[stash(passthrough)]`. A passthrough field is not encrypted
+  and not authenticated.
+- **`from_context` field** is an output field that stores the computed `R`
+  in cleartext, so that decryption can read it back.
+- **Caller extension** is an existing feature of the simple static form.
+  The caller adds an extra context value to the declared static context.
+- **Keyset** is a set of encryption keys held in ZeroKMS, CipherStash's key
+  management service. `cipher.default_keyset()` chooses which keyset
+  encrypts.
+- **The derive** means the `EncryptFrom` and `DecryptInto` derive macros in
+  `packages/stack-encrypt-derive`.
 
 ## Recommendation: directional sources, separate storage
 
-Borrow Serde's nested directional attribute style: it supports separate
-serialization and deserialization names within one `rename` attribute.
-See [Serde's field attributes](https://serde.rs/field-attrs.html).
+Name each direction, and say for each one where to get context. Store
+the context with a separate field annotation.
 
-For encryption, use direction names to say **where to obtain context**:
+The nested direction style comes from Serde. Serde's `rename` attribute can
+contain separate names for serialisation and deserialisation. See
+[Serde's field attributes](https://serde.rs/field-attrs.html).
+
+For encryption, the direction names say **where to get context**:
 
 ```rust
 #[stash(context(
@@ -25,107 +66,133 @@ For encryption, use direction names to say **where to obtain context**:
 ))]
 ```
 
-The two `field` selectors refer to different objects: the plaintext input
-when encrypting, and the encrypted input when decrypting. They must yield the
-same typed context value. Unlike a Serde rename, these are not independent
-cryptographic names: changing the context value or its shape between the two
-directions prevents decryption.
+The two `field` selectors refer to different objects. On encrypt, the
+selector reads the plaintext input. On decrypt, it reads the encrypted
+input. Both must produce the same typed context value.
 
-For the common case where both directions use the same Rust field name,
-the recommended shorthand is:
+Unlike the two names in a Serde rename, the two selectors are not
+independent cryptographic names. If the context value or its shape differs
+between the two directions, decryption fails.
+
+Both directions often use the same Rust field name. For that case, the
+recommended shorthand is:
 
 ```rust
 #[stash(context(prefix = "users", field = "id"))]
 ```
 
-This expands exactly to `encrypt(field = "id"), decrypt(field = "id")`.
-It still reads two different objects: the plaintext input on encrypt and the
-encrypted input on decrypt. It does not copy or store the field implicitly;
-the output layout must make that value available, normally with passthrough.
+This shorthand expands exactly to
+`encrypt(field = "id"), decrypt(field = "id")`. It still reads two
+different objects: the plaintext input on encrypt, and the encrypted input
+on decrypt. The shorthand does not copy or store the field by itself. The
+output layout must make that value available, normally with passthrough.
 Use the explicit directional form when the names or sources differ.
 
-Use a separate field annotation to **store the computed context** when it is
-not already carried by ordinary passthrough fields:
+To **store the computed context**, use a separate field annotation. This is
+needed only when ordinary passthrough fields do not already contain the
+context value:
 
 ```rust
 #[stash(from_context)]
 scope: u64,
 ```
 
-`from_context` fills an output metadata field from the computed logical
-context. It does not choose the context source. A passthrough source field
-can already carry the context value, in which case no `from_context` field
-is needed. No new source-side encryption methods or public `encrypt_as`
-entry point are introduced.
+A `from_context` field is an output metadata field filled from the
+computed logical context. It does not choose where the context comes from.
+A passthrough source field can already contain the context value. In that
+case, no `from_context` field is needed. This proposal adds no new
+source-side encryption methods and no public `encrypt_as` entry point.
 
-This is preferable to bare `context(in)` / `context(out)`: either term could
-mean an operation direction, an input/output object, or storing a value.
-`encrypt`, `decrypt`, and `from_context` give those roles distinct names.
+These names are better than bare `context(in)` and `context(out)`. Each of
+those terms could mean any of three things:
+
+- an operation direction;
+- an input object or an output object;
+- storing a value.
+
+The names `encrypt`, `decrypt`, and `from_context` give those three roles
+separate names.
 
 ## Proposed vocabulary and semantics
+
+The table lists each proposed form inside `context(...)` and what it means.
 
 | Syntax inside `context(...)` | Meaning |
 | --- | --- |
 | `prefix = "users"` | Static base for this layout's field contexts |
 | `field = "id"` | Shorthand for both `encrypt(field = "id")` and `decrypt(field = "id")` |
-| `encrypt(caller = u64)` | Obtain the logical context from a required `u64` argument |
-| `encrypt(field = "id")` | Obtain it from the plaintext input's `id` |
-| `decrypt(caller = u64)` | Obtain it from a required `u64` argument on decrypt |
-| `decrypt(field = "scope")` | Obtain it from the encrypted input's cleartext `scope` |
+| `encrypt(caller = u64)` | Get the logical context from a required `u64` argument |
+| `encrypt(field = "id")` | Get it from the plaintext input's `id` |
+| `decrypt(caller = u64)` | Get it from a required `u64` argument on decrypt |
+| `decrypt(field = "scope")` | Get it from the encrypted input's cleartext `scope` |
 | `encrypt(tuple(field = "tenant_id", field = "id"))` | Build one ordered, typed pair from plaintext fields |
 | `decrypt(tuple(field = "id", caller = u64))` | Build one pair from a stored field and the decrypt argument |
 
-`tuple(...)` is a declarative selector, not a Rust expression or a function
-that gets access to keys. It can nest. `field` names resolve at compile time;
-the first design supports direct fields, not arbitrary paths or callbacks.
-There is at most one caller argument selector per direction; use a tuple or
-typed context object as that argument when it carries several values.
+`tuple(...)` is a declarative selector. It is not a Rust expression or a
+function that gets access to keys. A `tuple(...)` can contain another
+`tuple(...)`.
 
-Use either the shared `field` shorthand or both explicit directional
-selectors. For the initial API, reject mixing the shorthand with directional
-selectors instead of inventing precedence rules. That keeps the expansion
-predictable; a record with asymmetric names uses the explicit form.
+The derive resolves `field` names at compile time. The first design
+supports direct fields only, not arbitrary paths or callbacks. Each
+direction has at most one caller argument selector. When that argument
+needs several values, make it a tuple or a typed context object.
+
+A declaration uses either the shared `field` shorthand, or both explicit
+directional selectors. For the initial API, the derive rejects a mix of the
+shorthand and directional selectors. Rejecting the mix avoids inventing
+precedence rules, and keeps the expansion predictable. A record whose names
+differ between directions uses the explicit form.
+
 `context = "users"`
-remains the existing simple spelling for a static prefix with optional caller
-extensions; it is used in scenario 0.
+remains the existing simple spelling for a static prefix with optional
+caller extensions. Scenario 0 uses it.
 
 ### Composition rule
 
-Call the logical row context `R`. For a field named `name`, its static base is
-`B = ("users", "name")` and its effective context is `(B, R)`. With only a
-static prefix and no extension it is just `B`, not `(B, ())`.
+Call the logical row context `R`. A field named `name` has the static base
+`B = ("users", "name")`. Its effective context is `(B, R)`. With only
+a static prefix and no extension, the effective context is `B`, not
+`(B, ())`.
 
-The selector's result is **one structured value**. A pair `(tenant_id, id)`
-produces `(("users", "name"), (tenant_id, id))`, not
-`((("users", "name"), tenant_id), id)`. `from_context` stores `R`, not the
-field-dependent effective context. Static prefixes and field identities are
-reconstructed from the declaration.
+The selector's result is **one structured value**. A pair
+`(tenant_id, id)` produces `(("users", "name"), (tenant_id, id))`, not
+`((("users", "name"), tenant_id), id)`. A `from_context` field stores `R`,
+not the effective context. The effective context differs from field to
+field. Static prefixes and field identities are rebuilt from the
+declaration.
 
-Names in this proposal do not change existing byte encodings. Mapping new
-selectors onto the existing context machinery must preserve types, order,
-grouping, and descriptor rendering. A new explicit selector is a new
-declaration; it must not silently reinterpret existing stored data.
+The names in this proposal do not change existing byte encodings. When new
+selectors are mapped onto the existing context code, they must preserve
+types, order, grouping, and descriptor rendering. A new explicit selector
+is a new declaration. It must not silently reinterpret data that is already
+stored.
 
 ### Storage and expected context
 
-When all of `R` can be reconstructed from stored fields, the default decrypt
-call uses those fields. The caller may additionally supply an expected `R`
-through the existing `ExpectedContext<R>` pattern: check equality first, then
-use the stored value. That expected value is **not another extension**.
+Sometimes stored fields contain all of `R`. Then the default decrypt call
+rebuilds `R` from those fields. The caller can also supply an expected `R`
+through the existing `ExpectedContext<R>` pattern. Decryption then checks
+that the two are equal, and uses the stored value. That expected value is
+**not another extension**.
 
-When a decrypt selector needs a caller argument, that argument is required
-to construct `R`; no no-context convenience is available. It is not an
-expected-value check on context already fully available from the record.
+A decrypt selector can need a caller argument. That argument is then
+required to build `R`, and no call without a context is available. It is
+not a check of an expected value against context the record already
+contains in full.
 
-If a future caller needs both a required input and a separate expectation
-on the assembled `R`, use a distinct checked-context input or a named API.
-Do not overload one unlabelled argument to mean both. That combined check
-API remains outside this proposal; scenario 7 makes the need visible.
+A future caller could need both a required input and a separate check of
+the assembled `R`. That caller would use a distinct checked-context input
+or a named API. Do not make one unlabelled argument mean both. This
+proposal does not include that combined-check API. Scenario 7 shows where
+the need arises.
 
 ## Scenario matrix
 
-| Scenario | Encrypt obtains context from | Context available in stored output | Decrypt obtains context from |
-| --- | --- | --- | --- |
+Each scenario combines one context source with one way of storing it. The
+table shows where each scenario gets and stores the context.
+
+| Scenario | Encrypt gets context from | Context available in stored output | Decrypt gets context from |
+| ---: | --- | --- | --- |
 | 0 | Static prefix; no row context | Declaration | Declaration |
 | 1 | Caller argument | Not stored | Caller argument |
 | 2 | Caller argument | Dedicated metadata field | Metadata field |
@@ -137,21 +204,24 @@ API remains outside this proposal; scenario 7 makes the need visible.
 | 8 | Plaintext `(tenant_id, id)` | Neither component is stored in cleartext | Caller supplies the pair |
 
 An encrypted copy of a context field does not make that context available
-before decrypt. Scenarios 3 and 8 retain encrypted copies to recover the
-complete plaintext object; callers still need the context independently.
+before decryption. Scenarios 3 and 8 keep encrypted copies so that
+decryption can recover the complete plaintext object. Callers still need to
+supply the context separately.
 
 ## Shared code for the examples
 
-Each scenario defines an output type and an async function. Combine this
-prelude, the scenario blocks, and the final `main` into one candidate program.
-They use real file serialization through the same helper, so no example
-relies on a context value being secretly carried inside an in-memory handle.
-All use proposed APIs and therefore cannot yet be typechecked against Stack.
+Each scenario defines an output type and an async function. Together, this
+prelude, the scenario blocks, and the final `main` form one candidate
+program. Every example stores its output in a real file and reads it back
+through the same helper. So no example depends on a context value hidden
+inside an in-memory handle. All the examples use proposed APIs, so they
+cannot be typechecked against Stack yet.
 
-Dependencies match the workflow draft: Stack Encrypt, Serde with derives,
-serde_json, tempfile, and Tokio. ZeroKMS credentials are required once these
-APIs exist. `scope = 7` in caller examples is external application context,
-not a keyset selector or an authorization credential.
+The dependencies match the workflow draft: Stack Encrypt, Serde with
+derives, serde_json, tempfile, and Tokio. Once these APIs exist, the
+examples need ZeroKMS credentials. In the caller examples, `scope = 7` is
+external application context. It is not a keyset selector or an
+authorisation credential.
 
 ```rust
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -191,8 +261,9 @@ fn store_and_reload<T: Serialize + DeserializeOwned>(value: &T) -> Result<T> {
 
 ## 0. Static prefix only
 
-This is the baseline. There is no dynamic row context to store or supply.
-It retains the existing static-context form and proposed passthrough support.
+This example shows the baseline: a static prefix and nothing else. There
+is no row context to store or supply. The example keeps the existing
+static-context form, and uses the proposed passthrough support.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -219,15 +290,17 @@ async fn example_0() -> Result<()> {
 }
 ```
 
-For this shorthand, caller extensions remain available as previously agreed:
-encrypt and decrypt must receive the same extension. The remaining examples
-use explicit directional selectors, so their argument requirements follow
-those selectors; there is no additional implicit extension layered on top.
+With this shorthand, caller extensions stay available, as previously
+agreed. Encrypt and decrypt must receive the same extension. The remaining
+examples use explicit directional selectors. Their argument requirements
+come from those selectors alone. No implicit extension is added on top.
 
 ## 1. Caller context, not stored
 
-`scope` is absent from the output. The caller must provide it again. A
-plaintext `id` in this layout is unrelated to the chosen context source.
+This example shows a context that the caller supplies and the output does
+not store. `scope` is absent from the output, so the caller must provide it
+again on decrypt. The plaintext `id` in this layout has nothing to do with
+the chosen context source.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -262,13 +335,16 @@ async fn example_1() -> Result<()> {
 }
 ```
 
-Logical context: `7_u64`. Effective name context: `(("users", "name"), 7_u64)`.
+Logical context: `7_u64`. Effective context for `name`:
+`(("users", "name"), 7_u64)`.
 
 ## 2. Caller context, stored in an output metadata field
 
-The source is still the function argument. `from_context` stores its value;
-the decrypt selector explicitly chooses that stored field. `scope` is output
-metadata, not a field to add to the recovered `User`.
+This example shows a caller-supplied context that the output stores, so
+decrypt needs no argument. The source is still the function argument. The
+`from_context` field stores its value, and the decrypt selector explicitly
+chooses that stored field. `scope` is output metadata. It is not a field to
+add to the recovered `User`.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -305,15 +381,18 @@ async fn example_2() -> Result<()> {
 }
 ```
 
-Logical context remains `7_u64`. It is stored once, not appended a second time
-on decrypt. This generalizes the existing caller-supplied-and-stored case to
+The logical context is still `7_u64`. The output stores it once, and
+decrypt does not append it a second time. This example extends the
+existing case, where the caller supplies the context and it is stored, to
 the field-by-field layout.
 
 ## 3. Plaintext field as context, no cleartext context stored
 
-The encrypt selector reads `User.id`; no argument is needed. The output's
-`id` is encrypted, so it cannot supply the context required to open itself.
-The reader obtains the id from its external record lookup.
+This example shows a context read from a plaintext field that is then
+encrypted, so the output has no cleartext copy. The encrypt selector reads
+`User.id`, so encrypt needs no argument. The output's `id` is encrypted. An
+encrypted `id` cannot supply the context needed to decrypt itself. The
+reader gets the id from its own record lookup, outside the record.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -345,16 +424,19 @@ async fn example_3() -> Result<()> {
 }
 ```
 
-Both directions construct `R = 42_u64`. Supplying a different id fails to
-open the encrypted fields. The id is not dropped or defaulted when rebuilding
-`User`; its encrypted copy is opened using the externally supplied context.
+Both directions build `R = 42_u64`. If the reader supplies a different id,
+the encrypted fields fail to decrypt. Rebuilding `User` does not drop the
+id or use a default. Decryption opens the encrypted copy of the id with
+the context the reader supplied.
 
 ## 4. Plaintext field as context, stored as the corresponding output field
 
-This is the natural ID-bound form of workflow example 2. The context selector
-and the passthrough annotation have separate jobs: select `id`, and copy it.
-It uses the common-field shorthand, equivalent to the explicit pair of
-directional selectors introduced above.
+This example shows a context read from a plaintext field and stored as a
+passthrough copy of the same field. It is the obvious id-bound form of
+workflow example 2. The context selector and the passthrough annotation
+have separate jobs: the selector chooses `id`, and passthrough copies it.
+The example uses the shared `field` shorthand. That shorthand is the same
+as the explicit pair of directional selectors introduced above.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -392,17 +474,21 @@ async fn example_4() -> Result<()> {
 }
 ```
 
-The second decrypt call uses the `ExpectedContext<u64>` conversion. It checks
-the stored id instead of constructing `(stored_id, expected_id)`. Changing
-`id` alone breaks decryption; moving an entire consistent record is detected
-only when the reader supplies the expected id (or another placement check).
-`created_at` remains ordinary unauthenticated passthrough metadata.
+The second decrypt call uses the `ExpectedContext<u64>` conversion. That
+call checks the stored id. It does not build `(stored_id, expected_id)`.
+
+Changing `id` alone breaks decryption. Moving a whole consistent record is
+detected only if the reader supplies the expected id, or checks placement
+another way. `created_at` stays ordinary passthrough metadata. Passthrough
+metadata is not authenticated.
 
 ## 5. Several plaintext fields as context, stored in separate fields
 
-Add a tenant id to the input. The context is the ordered pair `(tenant_id, id)`.
-The output renames `id` to `user_id` to demonstrate why direction-specific
-field selectors are useful. No duplicate context metadata field is needed.
+This example shows a context built from two plaintext fields, both stored
+as passthrough fields. The input gains a tenant id, and the context is the
+ordered pair `(tenant_id, id)`. The output renames `id` to `user_id`. The
+rename shows why separate field selectors for each direction are useful.
+No extra context metadata field is needed.
 
 ```rust
 #[derive(Debug, PartialEq)]
@@ -455,17 +541,21 @@ async fn example_5() -> Result<()> {
 }
 ```
 
-Both directions construct `(7_u64, 42_u64)`. Rust field order does not choose
-the context order: the selector does. A Serde wire rename also does not change
-the selector; it names Rust fields, not serialized property names.
+Both directions build `(7_u64, 42_u64)`. The selector sets the order of
+the context, not the order of the Rust fields. A Serde rename of the
+stored property also leaves the selector unchanged. Selectors name Rust
+fields, not serialised property names.
 
 ## 6. Plaintext field plus caller argument, store the combined context
 
-Here `R = (User.id, caller_scope)`. `binding` stores that complete pair. The
-original id is also retained as ciphertext so `User` can be reconstructed
-without adding a new rule that maps pieces of metadata into plaintext fields.
-That deliberately redundant representation keeps this example focused on
-context composition rather than projection conveniences.
+This example shows a context built from a plaintext field and a caller
+argument, with the whole pair stored. Here
+`R = (User.id, caller_scope)`, and the `binding` field stores that
+complete pair. The output also keeps the original id as ciphertext, so
+that decryption can rebuild `User`. Without that copy, the derive would
+need a new rule that maps pieces of metadata into plaintext fields. The
+id is stored twice on purpose, so that this example stays about how the
+context is put together, not about mapping metadata to fields.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -501,14 +591,17 @@ async fn example_6() -> Result<()> {
 }
 ```
 
-The encryption function accepts only the caller-supplied component (`7`), not
-the pair the derive can construct itself. A checked decrypt would expect the
-whole reconstructed pair `(42, 7)`, not just that caller component.
+The encryption function accepts only the part the caller supplies (`7`).
+It does not accept the whole pair, because the derive can build the pair
+itself. A checked decrypt would expect the whole rebuilt pair `(42, 7)`,
+not only the caller's part.
 
 ## 7. Plaintext field plus caller argument, store only the field component
 
-Store `id` as a normal field, but keep the external scope out of the output.
-Decryption combines the stored id with the scope supplied by the reader.
+This example shows a context built from a plaintext field and a caller
+argument, with only the field stored. The output stores `id` as a normal
+passthrough field, and leaves the external scope out. Decryption combines
+the stored id with the scope the reader supplies.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -543,17 +636,19 @@ async fn example_7() -> Result<()> {
 }
 ```
 
-This also constructs `(42_u64, 7_u64)` in both directions. It shows why
-"stored context" cannot always be represented as a single yes/no flag:
-some components may be stored and others supplied externally. A separate
-expected-id check can be performed against `loaded.id` before opening when
-the application also needs to assert the record's destination.
+This example also builds `(42_u64, 7_u64)` in both directions. It shows
+why one yes-or-no flag cannot always describe whether context is stored.
+Some parts may be stored, and others supplied from outside the record.
+The application can also need to check which record it has. If so, it can
+compare `loaded.id` with an expected id before decrypting.
 
 ## 8. Several plaintext fields as context, keep neither component in cleartext
 
-The encrypt side obtains `(tenant_id, id)` from the source. The reader supplies
-the complete pair from outside the encrypted record; both source fields are
-recovered from ciphertext after that context has been established.
+This example shows a context built from two plaintext fields, with neither
+stored in cleartext. The encrypt side gets `(tenant_id, id)` from the
+source. The reader supplies the complete pair from outside the encrypted
+record. Once that context is supplied, decryption recovers both source
+fields from their ciphertexts.
 
 ```rust
 #[derive(EncryptFrom, DecryptInto, Serialize, Deserialize)]
@@ -587,11 +682,13 @@ async fn example_8() -> Result<()> {
 }
 ```
 
-This is a new typed selector contract. It does not mean flattening the pair
-into text, or treating separately chained extensions as interchangeable with
-one tuple-valued argument.
+This is a new contract for a typed selector. It does not mean flattening
+the pair into text. It also does not make separately chained extensions
+interchangeable with one argument whose value is a tuple.
 
 ## Candidate program entry point
+
+This `main` runs all nine scenarios in order.
 
 ```rust
 #[tokio::main]
@@ -611,10 +708,12 @@ async fn main() -> Result<()> {
 
 ## Consequences for the traits and derive
 
-The logical context `R` is not always the value a caller passes. For example:
+The logical context `R` is not always the value a caller passes. The table
+compares `R` with the caller's input in the scenarios that have a row
+context:
 
 | Scenario | Logical `R` | Caller input on encrypt | Caller input on decrypt |
-| --- | --- | --- | --- |
+| ---: | --- | --- | --- |
 | 1 | `u64` | Required `u64` | Required `u64` |
 | 2 | `u64` | Required `u64` | Optional expectation of `u64` |
 | 3 | `u64` | None | Required `u64` |
@@ -623,101 +722,133 @@ The logical context `R` is not always the value a caller passes. For example:
 | 7 | `(u64, u64)` | Required `u64` component | Required `u64` component |
 | 8 | `(u64, u64)` | None | Required pair |
 
-Today `EncryptFrom<S>::Context` and `DecryptInto<P>::Context` already belong
-to separate traits and can differ. They describe the input the caller needs
-to supply, not necessarily the final context used by every operation. That
-distinction should be explicit in documentation; `ContextInput` might be a
-clearer name, but a rename is not decided here.
+Today, `EncryptFrom<S>::Context` already belongs to a different trait from
+`DecryptInto<P>::Context`. The two types can differ.
 
-No-caller-input selectors can expose a defaultable input, such as `()`, to
-support `encrypt_into`. Stored-context decrypt uses the existing
-`ExpectedContext<R>` idea. Required caller selectors must remain required
-even if their Rust type implements `Default`: a required `u64` must not
-silently become zero merely because `u64: Default`.
+Each `Context` type describes the input the caller needs to supply. That
+input is not always the final context every operation uses. The documentation should state that difference. The name
+`ContextInput` might be clearer, but this document does not decide on a
+rename.
 
-That exposes a real constraint in today's convenience methods, whose only
+To support `encrypt_into`, a selector that needs no caller input can
+expose an input that has a default, such as `()`. A decrypt that reads
+stored context uses the existing `ExpectedContext<R>` idea. A required
+caller selector must stay required, even if its Rust type implements
+`Default`. A required `u64` must not silently become zero only because
+`u64: Default`.
+
+That rule exposes a real limit in today's convenience methods. Their only
 test is `Context: Default`. An implementation of this proposal would need
-a non-defaultable `RequiredContext<T>` input (with an ergonomic conversion
-from `T`), or a separate trait capability controlling context-free calls.
-The examples show bare caller values at call sites, but do not assume that
-the associated input type can be bare `u64`. Choose that mechanism before
-claiming the directional API enforces required inputs.
+one of two things:
+
+- a `RequiredContext<T>` input that has no default, with an easy
+  conversion from `T`;
+- a separate trait capability that controls calls without a context.
+
+The examples pass bare caller values at call sites. They do not assume
+that the associated input type can be a bare `u64`. Choose that mechanism
+before claiming the directional API enforces required inputs.
 
 The current public `Encryption` constructors must also gain or expose the
-core-owned source-selection machinery needed by the derive. Existing plan
-context fields demonstrate source-dependent context, but are label-based,
-carry the field, and use different composition rules. They are not already
-an implementation of this proposal's general typed, optionally stored `R`.
+source-selection code the derive needs, owned by the core crate.
+
+Plan context fields are the existing context fields of the plan builder,
+in `packages/stack-encrypt/src/plan/build.rs`. They already show context
+that depends on the source. But plan context fields are based on labels,
+carry the field, and use different composition rules. So they do not
+already implement this proposal's general `R`: a typed value that can be
+stored.
 
 ## Rules the implementation should enforce
 
+The implementation should enforce these rules:
+
 - Selectors for both directions must produce the same context type and
-  ordered structure. Different Rust field names are fine; different values
+  ordered structure. Different Rust field names are fine. Different values
   or grouping are not a supported way to encrypt and decrypt one record.
 - Resolve field names and types at compile time. A decrypt selector cannot
-  read an encrypted field to obtain the context needed to decrypt it.
+  read an encrypted field to get the context needed to decrypt it.
 - A `from_context` field is cleartext output metadata with the logical
-  context's type. It cannot also be encrypted, defaulted, or independently
-  copied from an unrelated source. Ordinary passthrough fields do not
-  become context merely because their names are `id` or `tenant_id`.
-- Extra metadata is not invented as a plaintext field during recovery.
-  Every original plaintext field must have a defined recovery path; no
-  silent omission or defaulting to compensate for a context-only source.
-- Check supplied expectations before key retrieval where possible. A
-  context value read from storage remains untrusted until encrypted fields
-  authenticate under it. An expectation check alone is not authentication.
-- If a selected source value is duplicated in stored context metadata and
-  in a separately recovered plaintext field, validate their agreement
-  before returning the reconstructed object. Do not return a different id
+  context's type. It cannot also be encrypted, set to a default, or copied
+  separately from an unrelated source. An ordinary passthrough field does
+  not become context only because its name is `id` or `tenant_id`.
+- Recovery does not invent extra metadata as a plaintext field. Every
+  original plaintext field must have a defined way to be recovered. No
+  field is silently left out, or set to a default, because a source was
+  used only for context.
+- Check supplied expectations before fetching keys, where possible. A
+  context value read from storage stays untrusted until the encrypted
+  fields authenticate under it. An expectation check alone is not
+  authentication.
+- A selected source value can appear both in stored context metadata and
+  in a separately recovered plaintext field. If so, check that the two
+  agree before returning the rebuilt object. Never return an id different
   from the one the encrypted fields were bound to.
-- Stored context should be required in the serialized schema; a missing
-  field must not silently fall back to a default context. Empty-context
-  policy must be explicit and retain the current nonempty target rule.
-- For indexed targets, the selected context also scopes their terms unless
-  a future API explicitly separates index context from ciphertext context.
-  A row-specific id therefore changes search semantics; these examples
-  concern ciphertext layouts and do not silently promise cross-row queries.
+- Stored context should be required in the serialised schema. A missing
+  field must not silently fall back to a default context. The policy for
+  empty context must be explicit. That policy must keep the current rule
+  that a target's context is nonempty.
+- An indexed target is a field that also produces search index terms. For
+  an indexed target, the selected context also scopes those terms, unless
+  a future API explicitly separates index context from ciphertext
+  context. So a row-specific id changes how search works. These
+  examples are about ciphertext layouts. They do not silently promise
+  queries that match across rows.
 
-Required tests include storage round trips for every scenario, missing
-required arguments, wrong expected values, altered stored context, tuple
-reordering/regrouping, renamed source/output fields, and attempted circular
-decrypt dependencies. Same-typed field swaps may evade a type check, so
-round-trip and mismatch tests remain necessary even with typed selectors.
+The required tests are:
+
+- storage round trips for every scenario;
+- missing required arguments;
+- wrong expected values;
+- altered stored context;
+- reordered or regrouped tuples;
+- renamed source or output fields;
+- attempts to make decryption depend on its own output in a circle.
+
+Two fields of the same type can be swapped without failing a type check.
+So round-trip and mismatch tests are still needed, even with typed
+selectors.
 
 ## Alternatives worth comparing
 
-1. **Field-level `context(encrypt, decrypt)` flags.** Concise for one id,
-   but references the output declaration while the encrypt source lives
-   elsewhere, leaves multi-field order implicit, and cannot readily describe
-   caller-plus-field composition. Prefer explicit container selectors first.
-2. **One `context = expression` callback.** Flexible, but hides dependencies,
-   makes reverse reconstruction and cycle checks harder, and encourages
-   arbitrary application code in the declaration. Keep simple declarative
-   selectors as the initial surface.
-3. **A typed context object with a dedicated derive.** Could reduce repetition
-   for large composite contexts and carry a stronger encoding contract.
-   Consider it after the scalar/tuple cases establish the desired semantics.
+1. **Field-level `context(encrypt, decrypt)` flags.** These are concise for
+   one id. But they refer to the output declaration, while the encrypt
+   source is declared elsewhere. They leave the order of several fields
+   unstated, and cannot easily describe a context built from a caller
+   argument and a field. Prefer explicit selectors on the container first.
+2. **One `context = expression` callback.** This is flexible, but it hides
+   dependencies. It makes rebuilding the context in reverse harder, and
+   makes cycles harder to detect. It also encourages arbitrary application
+   code in the declaration. Keep simple declarative selectors as the
+   initial API.
+3. **A typed context object with a dedicated derive.** This could reduce
+   repetition for large composite contexts, and give a stronger encoding
+   contract. Consider it once the single-value and tuple cases have settled
+   the intended behaviour.
 
-The recommendation is the directional selector plus independent storage
-model, not a commitment to every spelling shown here. In particular,
-`from_context`, `prefix`, the tuple notation, and how required inputs are
-represented remain review choices.
+The recommendation is the model of directional selectors with separate
+storage. It is not a commitment to every spelling shown here. In
+particular, these remain choices for review: `from_context`, `prefix`, the
+tuple notation, and how required inputs are represented.
 
 ## Evidence and validation
 
-Current behavior was checked in
-[context types](../../packages/stack-encrypt/src/target/context.rs),
-[target traits and convenience methods](../../packages/stack-encrypt/src/target/operations.rs),
-[derive validation](../../packages/stack-encrypt-derive/src/shape.rs), and
-[plan context fields](../../packages/stack-encrypt/src/plan/build.rs).
-The directional nesting is inspired by Serde, not provided by Serde.
+The current behaviour was checked in these files:
 
-These are candidate API examples. Syntax/link checks do not establish macro
-support, type correctness, or encryption behavior. No live encryption or
-database tests are claimed, and no library implementation is changed.
+- [context types](../../packages/stack-encrypt/src/target/context.rs);
+- [target traits and convenience methods](../../packages/stack-encrypt/src/target/operations.rs);
+- [derive validation](../../packages/stack-encrypt-derive/src/shape.rs);
+- [plan context fields](../../packages/stack-encrypt/src/plan/build.rs).
 
-Validation completed: `rustfmt` parsed the combined nine-scenario candidate
-program and the introductory fragments (wrapped as Rust items), using edition
-2024. Local links, Markdown fences, and trailing whitespace were checked in
-this document and both companion documents. No proposed macro was expanded
-or typechecked.
+Serde inspired the directional nesting, but Serde does not provide it.
+
+These are candidate API examples. Checks of syntax and links do not show
+that the macros support them, that the types are correct, or that
+encryption works as described. This document claims no live encryption
+or database tests, and changes no library code.
+
+The following validation was completed. `rustfmt` parsed the combined
+candidate program for the nine scenarios, using edition 2024. It also
+parsed the introductory fragments, wrapped as Rust items. Local links,
+Markdown fences, and trailing whitespace were checked in this document and
+both companion documents. No proposed macro was expanded or typechecked.

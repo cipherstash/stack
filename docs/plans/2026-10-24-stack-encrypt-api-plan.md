@@ -1,177 +1,300 @@
 # Stack Encrypt API implementation plan
 
-Date: 2026-10-24. Status: proposed implementation direction, developed from
-the [review log](2026-10-24-stack-encrypt-api-review.md),
-[public examples](2026-10-24-stack-encrypt-public-examples.md), and
-[context examples](2026-10-24-stack-encrypt-context-examples.md).
+First written on 24 October 2026. Checked against the merged code on 27
+October 2026.
 
-This document turns the review into implementation choices and completion
-criteria. User requirements are distinguished from recommendations that
-have not yet been accepted. Examples below are proposed APIs, not working
-code for the current release.
+Status: proposed implementation direction. This plan develops the [API
+review log](2026-10-24-stack-encrypt-api-review.md), the [public
+examples](2026-10-24-stack-encrypt-public-examples.md), and the [context
+examples](2026-10-24-stack-encrypt-context-examples.md) into implementation
+choices, and sets the criteria for finishing each one.
 
-**Implementation reconciliation, 2026-10-27:** reviewed merged `next` at
-`ffeed7adb3f7d8739cda53261046147852bffc82`. Go JSON catalog, configured
-targets, queries, request-bound reads, typed documents and executable docs
-have landed (#1372, #1373, #1378, #1402). Opaque Go storage adoption has
-landed (#1369/#1370). The active customer work is now contract conformance,
-remaining read/configuration gaps and release readiness, not implementing
-those foundations again. See the refreshed
-[Go JSON plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
-and [JSON inventory](2026-10-25-stack-encrypt-json-operations.md).
+The plan marks which statements are the user's requirements and which are
+recommendations that nobody has accepted yet. "The user" is the person who
+asked for the review and who decides its open questions. The code examples
+show proposed APIs, not working code in the current release.
 
-#1379 added cascade authentication and randomized storage/projection order.
-Wildcard `->` now selects an unspecified element; old first-in-document-order
-recipes are invalid. Freeze the post-cascade format and compare query
-semantics rather than randomized byte ordering. #1397 implements short
-whole-word terms in the shared Bloom filter; configurable native Go match
-options and broader tokenizer/filter work remain. This is implementation
-status, not acceptance of a stronger privacy claim for those terms.
+## Summary
 
-Go's Vitamin C storage modules are temporarily pinned to `06568ba93bd9`.
-The final-release guard requires replacing pseudo-versions with released
-module tags; prereleases may carry them. Rust remains on crates.io 0.8.0.
-Keep crate moves and the final Rust facade behind customer delivery.
+- The Go JSON foundations and Go opaque storage are merged. The customer
+  work that remains is conformance to the contract, closing the remaining
+  gaps in reads and configuration, and release readiness. See [Status on 27
+  October 2026](#status-on-27-october-2026).
+- The Go customer release comes first. The final Rust facade and the crate
+  moves come after it, and do not hold it up.
+- Until the customer release, nothing needs to stay compatible with the
+  prototype API or its stored data. After it, the Go interface and the
+  stored data must stay compatible.
+- The [decision checkpoint](#decision-checkpoint-on-25-october-2026) lists
+  the settled directions. The [remaining questions](#remaining-questions)
+  table lists what is still open.
 
-**Latest delivery decisions, 2026-10-25:** encoded ciphertext field targets
-are accepted. The comprehensive JSON first-release contract and Rust/dynamic
-examples are in [JSON operations](2026-10-25-stack-encrypt-json-operations.md),
-including extraction and walks. ORE does not provide equality initially;
-retain a future explicit capability for equality-preserving encodings.
-Prioritize stable blob storage bytes via
-[Vitamin C #519](https://github.com/cipherstash/vitaminc/issues/519);
-zeroization/timing implementation improvements may follow without changing
-stored format. The naming/package review is now in progress. These decisions supersede
-earlier sequencing recommendations below where they conflict.
+## Terms used in this plan
 
-**Follow-up decisions:** custom Rust query stages may be explicitly
-Rust-only, with `NotPortable` on dynamic export until registered; built-in
-capabilities retain Rust/Go parity. Every validation independent of keys
-runs before key resolution/loading. The user is still reviewing the JSON
-operation contract; its detailed API proposals are not collectively
-approved. New keyset-routing, lock-context and provider-capability questions
-are assessed in [provider capabilities](2026-10-25-stack-encrypt-provider-capabilities.md).
+| Term | Meaning |
+| --- | --- |
+| AAD (additional authenticated data) | Data that encryption binds to a ciphertext without encrypting it. Decryption fails unless the same AAD is supplied again |
+| AEAD (authenticated encryption with associated data) | The cipher that seals each value and authenticates its AAD |
+| Blob | A value that `OpaqueBlob<T>` encodes as a whole and seals as one ciphertext |
+| Bloom filter | The bit array that the match index stores. Each term sets some bits, so a query can test whether a value may contain the term |
+| Cascaded tags | Each JSON container's authentication tag covers the tags of its children. #1379 added them |
+| Column and keyset profile | The released configuration. It uses the column identity and the keyset selection, and accepts no row binding or search scope input |
+| Configured target | A target together with typed options, such as a JSON target with a list of ordered paths |
+| Context | Values bound into a ciphertext, such as a column name or a row ID. Decryption fails unless the same context is supplied again |
+| Dynamic interface | The interface that takes declarations and requests as data instead of Rust types. Go uses it through the guest |
+| EQL (Encrypt Query Language) | The SQL types and functions in `packages/eql` that store and query encrypted values in PostgreSQL |
+| Facade | The proposed public Rust API of `stack-encrypt`: its traits, derives, and convenience methods |
+| FFI (foreign function interface) | The boundary through which another language calls the Rust engine |
+| Guest | The Rust engine compiled to WebAssembly, which the Go SDK runs |
+| Key I/O | Any request to ZeroKMS to resolve, load, or derive keys |
+| Keyset | A set of keys in ZeroKMS, the CipherStash key management service (KMS) |
+| Open and seal | To seal a value is to encrypt and authenticate it. To open it is to authenticate and decrypt it |
+| ORE (order-revealing encryption) | Index terms that reveal the order of the plaintexts, for range queries and sorting |
+| OPE (order-preserving encryption) | Encryption whose ciphertexts keep the order of the plaintexts |
+| Passthrough field | A field copied unencrypted from the plaintext type to the encrypted output |
+| Plan | The lower-level description of which fields a conversion encrypts, indexes, or passes through. Derives and dynamic declarations compile to plans |
+| Post-cascade profile | The JSON storage and search format as it is after #1379 added cascaded tags and randomised order. This is the format to freeze |
+| Pseudo-version | A Go module version that names a commit instead of a released tag |
+| Reads that Rust verifies against the original request | Go prepared reads. When the rows are opened, Rust derives the request again and checks every row against it |
+| Row binding | Context that ties a ciphertext to one row, such as the row ID, so that it opens only for that row. Also called ciphertext binding |
+| Search scope | The part of the context that also goes into index keys and search terms, such as a tenant ID. One query matches every row in the scope |
+| Target | A type or dynamic name that says how a value is encrypted and stored, such as `JsonSearch` or `TextEq` |
+| Target definition | The resolved, immutable form of a target's declaration: options, prepared indexes, context rules, and operation metadata |
+| Typestate | A builder whose type changes with each call, so the compiler refuses to run an incomplete request |
+| Vitamin C | CipherStash's cryptography library, `vitaminc`. Its codec encodes values as binary frames |
 
-**Packaging review:** the user favors retiring Vitamin C `AsyncCipher` and
-moving application encryption behavior into Stack. The
-[packaging and naming recommendation](2026-10-25-stack-encrypt-packaging.md)
-defines crate ownership, an acyclic dependency graph, the proposed shared
-format crate, role-based public names and coordinated migration work. It is
-a proposal for review, not an accepted rename or an implementation.
+## Status on 27 October 2026
 
-**Compatibility scope (user clarification, 2026-10-25):** this API has only
-existed as an early prototype. Do not preserve its APIs, stored ciphertexts,
-or encodings for backward compatibility. No legacy decoders, compatibility
-aliases, deprecation period, or data migration is required. Choose the
-coherent new design and update its Rust, Go, guest, and EQL consumers
-together. Engine output must still agree with the SQL that consumes it;
-that is current interoperability, not a legacy-format requirement.
-The merged Go implementation nevertheless retains a legacy JSON opaque
-reader; record it as existing behavior, not a new requirement to add
-prototype migration machinery. This exemption ends for customer profiles when released: subsequent
-Rust API/package refactors must preserve the Go interface and stored
-data/search compatibility.
+### Merged Go work
+
+On 27 October 2026, this plan was checked against merged `next` at commit
+`ffeed7adb3f7d8739cda53261046147852bffc82`. This Go work is merged:
+
+- the Go JSON catalog, configured targets, queries, reads that Rust verifies
+  against the original request, typed documents, and executable
+  documentation (#1372, #1373, #1378, and #1402);
+- Go adoption of opaque storage (#1369 and #1370).
+
+The active customer work is now conformance to the contract, closing the
+remaining gaps in reads and configuration, and release readiness. That work
+does not implement those foundations again. See the refreshed [Go JSON
+plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
+and the [JSON operations
+inventory](2026-10-25-stack-encrypt-json-operations.md).
+
+### JSON storage and match changes in #1379 and #1397
+
+Pull request #1379 added cascaded tags, and randomised the order of stored
+entries and query projections. A wildcard `->` now selects an unspecified
+element, so old SQL recipes that relied on the first element in document
+order are invalid. Freeze the post-cascade profile. Compare query semantics
+in tests, not the randomised byte order.
+
+Pull request #1397 implements short whole-word terms in the shared Bloom
+filter. Configurable native Go match options and broader tokeniser and
+filter work remain. This paragraph records implementation status only. It
+does not accept a stronger privacy claim for those terms.
+
+### Temporary Vitamin C pins
+
+Go's Vitamin C storage modules are temporarily pinned to pseudo-versions at
+commit `06568ba93bd9`. The guard for a final release requires each
+pseudo-version to be replaced with a released module tag. Prereleases can
+keep pseudo-versions. Rust remains on Vitamin C 0.8.0 from crates.io.
+Schedule the crate moves and the final Rust facade after the customer
+release.
+
+### Decisions made on 25 October 2026
+
+The latest decisions about what to release:
+
+- Encoded ciphertext field targets are accepted. These are fields whose
+  stored output is the ciphertext as text, such as Base64.
+- The comprehensive JSON contract for the first release, with Rust and
+  dynamic examples, is in [JSON
+  operations](2026-10-25-stack-encrypt-json-operations.md). The contract
+  includes extraction and walks.
+- ORE does not provide equality at first. Keep the option of a future
+  explicit capability for encodings that preserve equality.
+- Make stable blob storage bytes the priority, through [Vitamin
+  C #519](https://github.com/cipherstash/vitaminc/issues/519). Improvements
+  to zeroisation and timing can follow without changing the stored format.
+- The review of names and packages is now in progress.
+
+Where these decisions conflict with earlier sequencing recommendations in
+this plan, these decisions apply.
+
+### Follow-up decisions
+
+- Custom Rust query stages can be explicitly Rust-only. They export to the
+  dynamic interface as `NotPortable` until they are registered. Built-in
+  capabilities keep parity between Rust and Go.
+- Every validation that does not need keys runs before keys are resolved or
+  loaded.
+- The user is still reviewing the JSON operation contract. Its detailed API
+  proposals are not approved as a set.
+- The [provider
+  capabilities](2026-10-25-stack-encrypt-provider-capabilities.md) companion
+  assesses the new questions about keyset routing, lock context, and
+  provider capabilities.
+
+### Packaging review
+
+The user favours retiring Vitamin C's `AsyncCipher`, and moving application
+encryption behaviour into Stack. The [packaging and naming
+recommendation](2026-10-25-stack-encrypt-packaging.md) defines:
+
+- crate ownership;
+- a dependency graph with no cycles;
+- the proposed shared format crate;
+- role-based public names;
+- coordinated migration work.
+
+The recommendation is a proposal for review. Nobody has accepted the
+renames. None of the proposal is implemented.
+
+### No compatibility with the prototype
+
+On 25 October 2026, the user clarified the compatibility scope. This API has
+existed only as an early prototype. Do not preserve its APIs, stored
+ciphertexts, or encodings for backward compatibility. No legacy decoders,
+compatibility aliases, deprecation period, or data migration is required.
+Choose the coherent new design, and update its Rust, Go, guest, and EQL
+consumers together.
+
+Engine output must still agree with the SQL that consumes it. That is
+current interoperability, not a requirement to support a legacy format. The
+merged Go implementation does still keep a reader for the legacy JSON
+encoding of opaque values. Record that reader as existing behaviour, not as
+a new requirement to build machinery for migrating prototype data.
+
+This exemption ends for the customer profiles when they are released. After
+that, later refactors of the Rust API and packages must keep the Go
+interface, and keep stored data and search compatible.
 
 ## Requirements established in the review
 
-- Ordinary encryption is keyset-directed, with `encrypt` and
-  `encrypt_with_context`. Keep the separate target-directed `EncryptInto`
-  conversion interface; remove redundant public `encrypt_as`.
-- Single-value encryption produces opaque ciphertext; `OpaqueBlob<T>`
+- The keyset directs ordinary encryption through `encrypt` and
+  `encrypt_with_context`. Keep `EncryptInto` as a separate conversion
+  interface directed by the target. Remove the redundant public
+  `encrypt_as`.
+- Encrypting a single value produces an opaque ciphertext. `OpaqueBlob<T>`
   explicitly encodes a composite value before sealing it as one value.
-  Direct `encrypt` does not automatically lift over collections. Use
-  `EncryptInto` for collection batching, including `Vec<i32>` into
-  `Vec<Ciphertext>` without caller context. This division is agreed as of
-  2026-10-25. The current byte-vector recommendation follows that same
-  collection rule and uses `OpaqueBlob` for a whole vector; there is no
-  prototype-compatibility reason to add a raw-byte exception.
-- Rust traits and derives are the primary static interface. Plans support
-  those declarations and dynamic/FFI lowering.
-- Design static and dynamic support against the same engine/definition
-  contract. Deliver the customer Go interface first; polished public Rust
-  traits/derives may follow. Engine-level Rust interoperability tests remain
-  required, so this does not introduce a second Go encryption implementation.
+  Direct `encrypt` does not automatically apply itself to each item of a
+  collection.
+- Use `EncryptInto` to batch a collection, including `Vec<i32>` into
+  `Vec<Ciphertext>` without caller context. This division was agreed on 25
+  October 2026. The current recommendation for byte vectors follows the same
+  collection rule, and uses `OpaqueBlob` for a whole vector. Compatibility
+  with the prototype gives no reason to add an exception for raw bytes.
+- Rust traits and derives are the main static interface. Plans support those
+  declarations, and their lowering to the dynamic interface and FFI.
+- Design static and dynamic support against the same contract for the engine
+  and definitions. Deliver the Go customer interface first. Polished public
+  Rust traits and derives can follow. Interoperability tests at the level of
+  the Rust engine are still required, so this order does not introduce a
+  second Go encryption implementation.
 - Provide decrypt entry points with and without explicit context. The
-  no-context variant must not invent a default required application value.
-- `OpaqueEncode` / `OpaqueDecode` name the single-ciphertext representation
-  capabilities. Both `encrypt` and `encrypt_into`, including their
-  context-taking variants, consume input and take responsibility for
-  cleaning up owned plaintext and plaintext artifacts. Ownership alone is
-  not a zeroization implementation; require `Zeroize` on plaintext types
-  and enforce cleanup through guarded storage and lifecycle checks. Deliberate passthrough
-  fields transfer to the output rather than being erased.
-- Keep EQL's engine/SQL contract coherent and retain shared batching/execution
-  behavior; prototype representations need not be preserved.
-- Investigate and replace the EQL JSON adapter's serialization round trips
-  with direct typed conversion, maintaining engine/SQL agreement.
+  variant without context must not invent a default value for a required
+  application input.
+- `OpaqueEncode` and `OpaqueDecode` name the capabilities that represent a
+  value as a single ciphertext. `encrypt` and `encrypt_into`, including
+  their context-taking variants, consume their input. Both operations take
+  responsibility for cleaning up owned plaintext and plaintext artefacts.
+- Ownership alone does not implement zeroisation. Require `Zeroize` on
+  plaintext types, and enforce cleanup through guarded storage and lifecycle
+  checks. Deliberate passthrough fields move to the output instead of being
+  erased.
+- Keep EQL's contract between the engine and the SQL coherent, and keep the
+  shared batching and execution behaviour. Prototype representations need
+  not be preserved.
+- Investigate the serialisation round trips in the EQL JSON adapter, and
+  replace them with direct typed conversion. Keep the engine and the SQL in
+  agreement.
 
 ## Recommended decision: general configured targets
 
-Use a general target-plus-typed-options contract. Do not add a public
-`json_tree(...)` derive construct. Rust constructs concrete options directly;
-the dynamic interface deserializes its options into that same type. JSON
-supplies the options type, validation, and implementation behind the general
-mechanism. Sharing a contract does not require sharing input syntax or
-making static Rust configuration pass through deserialization.
+Use a general contract: a target plus typed options. Do not add a public
+`json_tree(...)` derive construct. Rust constructs concrete options
+directly. The dynamic interface deserialises its options into that same
+type.
+
+JSON supplies the options type, the validation, and the implementation
+behind the general mechanism. Sharing a contract does not require shared
+input syntax, or static Rust configuration that passes through
+deserialisation.
 
 Three approaches were considered:
 
 | Approach | Benefit | Limitation | Recommendation |
 | --- | --- | --- | --- |
-| Typed Rust options factory | Compiler checks the options type; normal Rust APIs and tooling | The function itself is not portable, but its concrete output has a data form | Preferred static surface |
-| Named policy type holding options | Reusable and discoverable | Adds a provider trait and marker type where a function can suffice | Optional later convenience |
-| Target plus data options | Expressible in Go declarations and dynamic data | Requires deserialization and semantic validation | Dynamic surface, producing the same typed options |
+| Typed Rust options factory | The compiler checks the options type, and normal Rust APIs and tools work | The function itself is not portable, but its concrete output has a data form | Preferred static interface |
+| Named policy type that holds options | Reusable and easy to discover | Adds a provider trait and a marker type where a function is enough | Optional later convenience |
+| Target plus options as data | Can be written in Go declarations and dynamic data | Needs deserialisation and semantic validation | Dynamic interface, producing the same typed options |
 
-This supersedes the initial recommendation to put option field literals in
-Rust attributes. Rejecting a Rust factory because its code cannot cross FFI
-was unnecessarily restrictive: the common boundary is its typed result,
-not the code used to construct it. No arbitrary encryption callback is
-introduced; the factory only supplies configuration.
+The first recommendation put option field literals in Rust attributes, and
+this recommendation replaces it. The first recommendation rejected a Rust
+factory because its code cannot cross FFI. The rejection was too
+restrictive: the common boundary is the factory's typed result, not the code
+that builds it. This plan introduces no arbitrary encryption callback. The
+factory only supplies configuration.
 
-The target owns its source capabilities, canonical output, options/defaults,
-validation, encryption description, index/query capabilities, and opening
-behavior. Context remains a separate input. Configuration does not supply
-arbitrary execution callbacks or let a caller redefine EQL's wire fields.
+The target owns:
 
-Implement configuration as a target capability (working name:
-`ConfigurableTarget<S>`), lowering into the existing operation descriptions.
-Its associated options type has a data representation. Rust factories
-return that type directly; registered dynamic targets deserialize into it.
-Validate and normalize once when a reusable declaration is built. Both
-paths use the same target-owned semantic validator, before key I/O. Use
-validated deserialization, for example a wire helper plus `TryFrom`, rather
-than a derived deserializer that bypasses checked builders. Keep any raw
-options fields private if the public type promises validated invariants.
+- its source capabilities, canonical output, and options and defaults;
+- validation, the encryption description, and index and query capabilities;
+- how its output is opened.
+
+Context remains a separate input. Configuration does not supply arbitrary
+execution callbacks. Configuration also does not let a caller redefine EQL's
+wire fields.
+
+Implement configuration as a target capability, with the working name
+`ConfigurableTarget<S>`. The capability lowers into the existing operation
+descriptions. Its associated options type has a data representation. Rust
+factories return that type directly. Registered dynamic targets deserialise
+into it.
+
+Validate and normalise the options once, when a reusable declaration is
+built. Both paths run the target's own semantic validator before key I/O.
+Use validated deserialisation, for example a wire helper plus `TryFrom`. Do
+not use a derived deserialiser that bypasses the checked builders. If the
+public type promises validated invariants, keep any raw options fields
+private.
 
 Compile-time guarantees cover factory resolution and signatures, the
-target/options association, and typed builder arguments. They do not imply
-that a string is a valid JSON path or that the factory evaluates at compile
-time. JSON path construction is currently fallible. Begin with a fallible
-factory contract, `fn() -> Result<Target::Options, E>`, with errors converted
-to the engine's configuration error path. Propagate errors without panics
-or `unwrap`; a later literal-path macro can add stronger static validation.
+association between target and options, and typed builder arguments. They do
+not mean that a string is a valid JSON path, or that the factory runs at
+compile time. Building a JSON path can currently fail.
 
-Resolve the factory once per reusable configured declaration and reuse its
-normalized options for writes and queries. A factory can read mutable
-external state, so its type alone cannot prove a fixed policy; document
-that fixed-policy providers must be stable. Do not independently reevaluate
-the provider when generating a query. Intentionally variable configuration
-belongs in an explicitly constructed configured-target instance.
+Start with a fallible factory contract,
+`fn() -> Result<Target::Options, E>`, with errors converted to the engine's
+configuration error path. Propagate errors without panics or `unwrap`. A
+later macro for literal paths can add stronger static validation.
 
-Unlike today's `Layout`, the general capability must not require one index:
-targets may have none or multiple. Adapt the existing JSON layout internally
-while migrating; do not expose two competing configured-target concepts.
-The target catalog resolves registered targets for Go. Custom Rust targets
-remain possible without registration, but cannot be dynamically addressed
-until their adapter and descriptor are included in the guest build.
+Resolve the factory once for each reusable configured declaration, and reuse
+its normalised options for writes and queries. A factory can read mutable
+external state, so its type alone cannot prove a fixed policy. Document that
+providers of a fixed policy must be stable. Do not evaluate the provider
+again when generating a query. Configuration that is meant to vary belongs
+in a configured-target instance that the caller constructs explicitly.
+
+Unlike today's `Layout`, the general capability must not require exactly one
+index: a target can have none, or several. Adapt the existing JSON layout
+internally during the migration. Do not expose two competing concepts of a
+configured target.
+
+For Go, the target catalog resolves registered targets. Custom Rust targets
+remain possible without registration. The dynamic interface can address them
+only once the guest build includes their adapter and descriptor.
 
 ## Candidate static syntax
 
 `target(options = payroll_options)` names a Rust factory for the inner
 target of a transparent newtype. The inner Rust type selects the output
-representation and associated options type. The spelling is proposed;
-typed factories for Rust and typed deserialization for dynamic callers are
-the revised recommendation.
+representation and the associated options type. The spelling is a proposal.
+The revised recommendation is typed factories for Rust, and typed
+deserialisation for dynamic callers.
 
 ```rust
 use eql_bindings::v4::json_tree::JsonTreeDocument as EqlEncryptedJsonTree;
@@ -192,15 +315,17 @@ fn payroll_options() -> Result<JsonOptions, TermError> {
 struct EncryptedPayroll(EqlEncryptedJsonTree);
 ```
 
-The factory body uses today's `JsonOptions` builder; the derive support is
-proposed. The derive calls the factory and type-checks its result against
-the inner target's associated options type. It knows neither JSON path
-semantics nor JSON-specific option names, and does not serialize or
-deserialize the factory's result. The configured target constructs its
-output, which the derive wraps. Serde transparency preserves that output's
-wire envelope; SQL driver traits are a separate integration requirement.
-The same factory attribute should work on a field of a derived output
-record, with existing context selection rules.
+The factory body uses today's `JsonOptions` builder. The derive support is
+proposed. The derive calls the factory, and type-checks its result against
+the inner target's associated options type. The derive does not depend on
+the meaning of JSON paths, or on JSON-specific option names. It does not
+serialise or deserialise the factory's result.
+
+The configured target constructs its output, and the derive wraps it. Serde
+transparency keeps that output's wire envelope. SQL driver traits are a
+separate integration requirement. The same factory attribute should work on
+a field of a derived output record, under the existing rules for selecting
+context.
 
 ```rust
 let encrypted: EncryptedPayroll = payroll
@@ -212,14 +337,16 @@ let restored = serde_json::Value::decrypt_from_with_context(
 ).await?;
 ```
 
-Fixed policy is a recipe for writes and queries. Transparent deserialization
-does not attest that an existing row was created with that policy. In
-particular, the full ordered-path policy is not stored in the JSON header.
+A fixed policy is a recipe for writes and queries. Transparent
+deserialisation does not prove that an existing row was created with that
+policy. In particular, the JSON header does not store the full policy of
+ordered paths.
 
 ## Candidate dynamic representation and Go requirements
 
-Implemented by #1372: string targets and configured object targets share
-the native options validator. Use the landed `JsonSearch` identifier:
+Pull request #1372 implements this: string targets and configured object
+targets share the native options validator. Use the merged `JsonSearch`
+identifier:
 
 ```json
 {
@@ -234,44 +361,57 @@ the native options validator. Use the landed `JsonSearch` identifier:
 ```
 
 Keep `"target": "TextEq"` as shorthand for that target's default options.
-The object form and JSON target options are now implemented.
-Reject unknown options, incompatible options, unsupported target names, and
-invalid paths during declaration validation. Do not silently fall back to
-defaults. Specify one consistent JSON wire format and context encoding
-across the Rust, dynamic, Go, and database paths.
+The object form and the JSON target options are now implemented. Reject
+unknown options, incompatible options, unsupported target names, and invalid
+paths during declaration validation. Do not fall back to defaults silently.
+Specify one consistent JSON wire format and context encoding across the
+Rust, dynamic, Go, and database paths.
 
 Go's generator and policy API must represent these same options, emit the
-same declaration, and obtain the EQL value from the guest. Go must not
-assemble the EQL envelope or reproduce JSON indexing. Discovery must expose
-the options contract and capabilities; extend the existing target catalog
-and resolver rather than installing a parallel JSON registry.
-The dynamic registry invokes the concrete target options deserializer; it
-does not look up or invoke the Rust application's factory by name. A Go
-caller supplies equivalent options data. If a Rust policy must be exported,
-serialize its resolved options, not its function identifier. This contract
-does not require all Rust-only targets to depend on Serde; data conversion
-is required for targets registered with the dynamic interface.
+same declaration, and get the EQL value from the guest. Go must not assemble
+the EQL envelope or reproduce JSON indexing. Discovery must expose the
+options contract and the capabilities. Extend the existing target catalog
+and resolver instead of installing a parallel JSON registry.
 
-The catalog/guest, JSON value kind, strict JSON text parser and generated
-Go target options are now implemented. #1373 adds operation input shapes and
-operand encodings, and #1378 adds typed Go document adapters. Remaining
-work includes the formal versioned specification, generalized definition
-lifecycle/caching, direct typed EQL conversion and context-role separation.
-The current data-plan grammar is still a field map; the illustrative
-versioned schema below is not already accepted by the runtime.
+The dynamic registry calls the concrete target's options deserialiser. It
+does not look up or call the Rust application's factory by name. A Go caller
+supplies equivalent options as data. If a Rust policy must be exported,
+serialise its resolved options, not the function's identifier. This contract
+does not require every Rust-only target to depend on Serde: only targets
+registered with the dynamic interface need data conversion.
 
-Writes and queries must reuse the normalized configured target in Rust and
+These are now implemented:
+
+- the catalog and guest;
+- the JSON value kind;
+- the strict JSON text parser;
+- the generated Go target options.
+
+Pull request #1373 adds operation input shapes and operand encodings. Pull
+request #1378 adds typed Go document adapters. Remaining work includes:
+
+- the formal versioned specification;
+- a general lifecycle and caching for definitions;
+- direct typed EQL conversion;
+- separating the roles within context.
+
+The current grammar for data plans is still a map of fields. The runtime
+does not yet accept the illustrative versioned schema later in this plan.
+
+Writes and queries must reuse the normalised configured target in Rust and
 Go. An ordering query on an undeclared path must fail before key I/O.
-Containment, path equality, ordering, and extraction need capability metadata
-that can express their different operand/result shapes, not a single
-assumed scalar query twin. Decryption must use stored cryptographic metadata
-and context, not require the caller to remember the write's ordered paths.
 
-## Accepted decrypt surface and return ownership
+Containment, path equality, ordering, and extraction need capability
+metadata that can express their different shapes of operand and result. The
+metadata cannot assume a single scalar query counterpart. Decryption must
+use the stored cryptographic metadata and context. It must not require the
+caller to remember the write's ordered paths.
 
-**Decision, 2026-10-25:** retain ordinary keyset-directed decryption for one
-opaque ciphertext and destination-directed `DecryptFrom` for declared
-targets/layouts. Both paths have context-free and context-taking variants:
+## Accepted decrypt interface and return ownership
+
+Decided on 25 October 2026: keep ordinary keyset-directed decryption for one
+opaque ciphertext. Keep destination-directed `DecryptFrom` for declared
+targets and layouts. Both paths have variants with and without context:
 
 ```rust
 let value: i32 = keyset.decrypt(encrypted).await?;
@@ -282,44 +422,52 @@ let plaintext = User::decrypt_from_with_context(encrypted, &keyset, context)
     .await?;
 ```
 
-These are independent call examples, not sequential reuse of a consumed
-ciphertext. Direct decrypt mirrors direct encrypt; `DecryptFrom` mirrors
-target-directed `EncryptInto`. The existing input capabilities still govern
-whether omission of context is available. Do not add a competing public
-ciphertext-receiver `decrypt_into` method.
+These are separate call examples. They do not reuse one consumed ciphertext
+in sequence. Direct decrypt mirrors direct encrypt, and `DecryptFrom`
+mirrors the target-directed `EncryptInto`. The existing input capabilities
+still decide whether a caller can leave out context. Do not add a competing
+public `decrypt_into` method that takes the ciphertext as its receiver.
 
 Successful decryption returns an ordinary owned `T: Zeroize`. Stack guards
-recovered bytes and intermediate plaintext while it owns them; successful
-return transfers responsibility for the value to the caller. `Zeroize` does
-not automatically wipe that returned value on drop. Support explicitly
-requested drop-guarded results without requiring a wrapper around every
-decrypted application struct; the precise opt-in adapter is implementation
-design within this decision. Guarding the completed value does not resolve
-partial-deserialization cleanup, which remains required work.
+the recovered bytes and intermediate plaintext for as long as they belong to
+Stack. A successful return transfers responsibility for the value to the
+caller. `Zeroize` does not automatically wipe that returned value on drop.
 
-This reads as constructing `User` from ciphertext. Calling
-`encrypted.decrypt_from(...)` would conflict with the ordinary From/Into
-receiver convention; retain the agreed destination receiver.
-The destination-directed pair already exists on the blanket `DecryptFrom`
-extension trait. Today's ciphertext method is
-`encrypted.decrypt_into(cipher, context)`, also on `DecryptFrom`, and has
-no separate context-free overload. The current declaration trait
-`DecryptInto<P>` is another layer; do not rename it accidentally while
-settling method ergonomics. Consolidate declaration and convenience-trait
-naming with review issue 5. The public examples use the destination-directed
-pair; remove the competing ciphertext method when implementing this surface.
+Support results with a drop guard when the caller explicitly asks for one,
+without requiring a wrapper around every decrypted application struct. The
+exact opt-in adapter is implementation design within this decision. Guarding
+the completed value does not solve cleanup after a partial deserialisation.
+That cleanup remains required work.
+
+`User::decrypt_from(...)` reads as constructing a `User` from a ciphertext.
+Calling `encrypted.decrypt_from(...)` would conflict with the usual From and
+Into receiver convention, so keep the agreed destination receiver. The
+destination-directed pair already exists on the blanket `DecryptFrom`
+extension trait.
+
+Today's ciphertext method is `encrypted.decrypt_into(cipher, context)`, also
+on `DecryptFrom`. That method has no separate overload without context. The
+current declaration trait `DecryptInto<P>` is a different layer, so do not
+rename it by accident while settling how the methods are called.
+
+Settle the names of declaration traits and convenience traits together with
+review issue 5. The public examples use the destination-directed pair.
+Remove the competing ciphertext method when implementing this interface.
 
 ## Recommended public traits and context input capabilities
 
-Status: direction accepted by the user on 2026-10-24: separate conversion
-methods from `EncryptTarget`/`DecryptSource` declarations, and use explicit
-caller-context capabilities instead of `Default`. Implementation, complete
-signatures, and call-site updates remain pending. This section resolves the
-direction of work areas A and B below; earlier examples retain historical
-derive names until their migration.
+Status: the user accepted this direction on 24 October 2026. Separate the
+conversion methods from the `EncryptTarget` and `DecryptSource`
+declarations. Use explicit capabilities for caller context instead of
+`Default`. Implementation, complete signatures, and updates to call sites
+remain pending.
 
-Keep two user-facing conversion traits, implemented by blanket library
-implementations:
+This section settles the direction of work areas A and B, later in this
+plan. Earlier examples keep their historical derive names until they are
+migrated.
+
+Keep two user-facing conversion traits, both provided by blanket
+implementations in the library:
 
 | Trait | Public methods | Receiver |
 | --- | --- | --- |
@@ -327,13 +475,14 @@ implementations:
 | `DecryptFrom` | `decrypt_from`, `decrypt_from_with_context` | Plaintext destination type; ciphertext supplied as an argument |
 
 These methods run declarations through the common engine and return the
-existing batched awaitable. Target implementers do not override execution.
-Ordinary `keyset.encrypt` and `encrypt_with_context` remain inherent methods
-and do not gain a plaintext-side `encrypt` synonym. Their accepted decrypt
-counterparts are `keyset.decrypt` and `decrypt_with_context`.
+existing batched awaitable value. Target implementers do not override
+execution. The ordinary `keyset.encrypt` and `encrypt_with_context` remain
+inherent methods, and do not gain an `encrypt` synonym on the plaintext.
+Their accepted decrypt counterparts are `keyset.decrypt` and
+`decrypt_with_context`.
 
-Give the declaration traits role names, rather than From/Into names that
-promise conversion methods they do not define:
+Give the declaration traits names that state their role. From and Into names
+would promise conversion methods that these traits do not define:
 
 | Proposed declaration | Implemented on | Describes |
 | --- | --- | --- |
@@ -341,59 +490,70 @@ promise conversion methods they do not define:
 | `target::DecryptSource<P>` | Recoverable encrypted output | How this stored value yields `P` |
 
 The corresponding derives should use the same names. This replaces today's
-declaration traits `EncryptFrom<P>` and `DecryptInto<P>`; it does not remove
-the retained `EncryptInto` extension trait. A term-only target implements
-only `EncryptTarget`: no decrypt method that always fails. Plaintext visitor
-traits remain a separate Stack-owned representation layer; moving/renaming
-them must retain a single canonical trait implementation and a consistent
-wire contract across the new consumers; prototype compatibility is not needed.
-Configured-target options are another associated capability, not context.
+declaration traits `EncryptFrom<P>` and `DecryptInto<P>`. It does not remove
+the retained `EncryptInto` extension trait. A target that only produces
+terms implements only `EncryptTarget`, so it has no decrypt method that
+always fails.
 
-Declaration methods continue returning core-owned operation descriptions.
-Encryption declarations do not receive the plaintext and cipher together;
-decrypt declarations inspect stored output and select its opening, without
-performing key I/O. Plans, derives, and dynamic resolution reuse those
-descriptions. Keep the declaration module public for custom targets and
-keep normal method imports/derives available from the Stack entry point.
+Plaintext visitor traits remain a separate representation layer that Stack
+owns. Moving or renaming them must keep a single canonical trait
+implementation, and a consistent wire contract across the new consumers.
+Compatibility with the prototype is not needed. Configured-target options
+are another associated capability, not context.
 
-Use `ContextInput` as the associated-type name on each declaration trait.
-It describes only what the caller must or may supply. It is not the complete
-cryptographic context, which can also include a prefix and fields selected
-from plaintext or stored output. Encrypt and decrypt declare this type
-independently.
+Declaration methods continue to return operation descriptions that the core
+owns. Encryption declarations do not receive the plaintext and the cipher
+together. Decrypt declarations inspect the stored output and select how to
+open it, without any key I/O. Plans, derives, and dynamic resolution reuse
+those descriptions. Keep the declaration module public for custom targets,
+and keep the normal method imports and derives available from the Stack
+entry point.
 
-Recommend library-owned input wrappers with explicit capabilities:
+Use `ContextInput` as the name of the associated type on each declaration
+trait. `ContextInput` describes only what the caller must or can supply. It
+is not the complete cryptographic context. The complete context can also
+include a prefix, and fields selected from the plaintext or the stored
+output. Encrypt and decrypt declare this type independently.
 
-| Proposed input | Omitted argument | Supplied argument | Meaning |
+Recommended: input wrappers that the library owns, each with explicit
+capabilities:
+
+| Proposed input | Argument left out | Argument supplied | Meaning |
 | --- | --- | --- | --- |
-| `NoCallerContext` | Allowed | Not accepted | Declaration derives all context and exposes no caller input |
-| `RequiredContext<C>` | Unavailable | Required `C` | Supplies context or the missing component selected by the declaration |
-| `OptionalContext<C>` | Allowed | Accepted `C` | For ordinary ciphertext: omission means empty context; supplied context is used directly |
-| `ContextExtension<C>` | Allowed | Accepted `C` | Omission preserves the declared base; supply extends it |
-| `ExpectedContext<C>` | Allowed | Accepted `C` | Omission reconstructs stored context; supply additionally checks it |
+| `NoCallerContext` | Allowed | Not accepted | The declaration derives all context and takes no caller input |
+| `RequiredContext<C>` | Not available | Required `C` | Supplies the context, or the missing component that the declaration selects |
+| `OptionalContext<C>` | Allowed | Accepted `C` | For an ordinary ciphertext, leaving it out means empty context, and a supplied context is used directly |
+| `ContextExtension<C>` | Allowed | Accepted `C` | Leaving it out keeps the declared base, and supplying it extends the base |
+| `ExpectedContext<C>` | Allowed | Accepted `C` | Leaving it out rebuilds the stored context, and supplying it also checks that context |
 
-`OptionalContext` does not append a synthetic empty prefix, and omission
-of an extension does not append `()`. `ExpectedContext` never extends AAD.
-The table specifies behavior; names may be refined without changing it.
-Nonempty requirements belong to the accepted argument type or validated
-resolved context, not to whether an input is optional. Search targets still
-require a nonempty effective context. Ordinary scalar ciphertext should
-accept the same empty context through both keyset and target-directed APIs.
+`OptionalContext` does not append a synthetic empty prefix, and leaving out
+an extension does not append `()`. `ExpectedContext` never extends the AAD.
+The table specifies behaviour, and the names can change without changing it.
+A requirement for nonempty input belongs to the accepted argument type or to
+the validated resolved context, not to whether the input is optional.
 
-No-context methods require an explicit, sealed `AllowsNoContext` capability;
-`_with_context` methods require a corresponding `AcceptsContext` capability
-with its accepted argument type. Neither is inferred from `C: Default`.
-`RequiredContext<u64>` consequently remains required even though `u64`
-defaults to zero. The helpers accept ordinary argument values (or ergonomic
-checked conversions); users do not manually wrap `RequiredContext` or
-`ExpectedContext` at every call. Conversion errors propagate before key I/O.
+Search targets still require a nonempty effective context. Ordinary scalar
+ciphertext should accept the same empty context through both the keyset API
+and the target-directed API.
 
-The core-owned wrappers carry presence and intent; target declarations
-perform source selection and context composition. For composite required
-input, `C` may be a tuple or named struct; it does not have to be the full
-logical context. Preserve existing grouping rules and context encodings.
+Methods without context require an explicit, sealed `AllowsNoContext`
+capability. `_with_context` methods require a matching `AcceptsContext`
+capability with its accepted argument type. Neither capability is inferred
+from `C: Default`. So `RequiredContext<u64>` stays required, even though
+`u64` defaults to zero.
 
-Examples of independent encrypt/decrypt requirements:
+The helper methods accept ordinary argument values, or convenient checked
+conversions. Users do not wrap values in `RequiredContext` or
+`ExpectedContext` by hand at every call. Conversion errors propagate before
+key I/O.
+
+The wrappers that the core owns record presence and intent. Target
+declarations select the sources and compose the context. For composite
+required input, `C` can be a tuple or a named struct. It does not have to be
+the full logical context. Keep the existing grouping rules and context
+encodings.
+
+Examples where encrypt and decrypt have different requirements:
 
 | Declaration | Encrypt input | Decrypt input |
 | --- | --- | --- |
@@ -402,183 +562,247 @@ Examples of independent encrypt/decrypt requirements:
 | Source row ID not recoverable before decrypt | `NoCallerContext` | `RequiredContext<u64>` |
 | Static field base with optional unstored extension | `ContextExtension<C>` | `ContextExtension<C>` |
 
-In the last row, decrypting an extended ciphertext requires supplying the
-same extension; availability of the omitted method is not a promise that
-it opens every ciphertext of that Rust type. A derive can expose an optional
-extension instead of `NoCallerContext` where its declaration explicitly
-allows that behavior. Expected-context checks do not authenticate stored
-data themselves: successful cryptographic opening remains necessary.
+In the last row, decrypting a ciphertext that has an extension requires the
+same extension. That the method without context is available does not
+promise that it opens every ciphertext of that Rust type. Where a
+declaration explicitly allows it, a derive can expose an optional extension
+instead of `NoCallerContext`. Expected-context checks do not authenticate
+stored data themselves. Successful cryptographic opening is still necessary.
 
 The dynamic plan must encode the same requirements, source selectors, and
-storage rules. Rust enforces omitted/supplied method availability with trait
-bounds; the engine enforces dynamic input presence and validity before key
-I/O. Omitted input, explicit zero, and an empty supplied value are distinct.
-Go generation can expose convenient signatures using that metadata, but
-the guest remains authoritative for runtime requests.
+storage rules. Rust uses trait bounds to enforce which methods are
+available, with or without context. The engine enforces the presence and
+validity of dynamic input before key I/O. Omitted input, an explicit zero,
+and an empty supplied value are three different things. Go generation can
+expose convenient signatures from that metadata, but the guest stays
+authoritative for runtime requests.
 
-Implementation proof points: compile-fail required-input calls even for
-`C: Default`, reject context for a no-input-only target, preserve optional
-extension versus expectation semantics, and execute all nine directional
-scenarios through Rust and dynamic plans. Preserve owned-source support
-and batching; this trait separation must not add a blanket `Clone` bound.
-The final signatures must show where borrowed and owned sources are
-supported rather than concealing the existing difference behind the rename.
+The implementation must prove these points:
+
+- a call that leaves out required input fails to compile, even when
+  `C: Default`;
+- a target that accepts only no input rejects context;
+- an optional extension and an expected context keep their different
+  meanings;
+- all nine directional scenarios in the [context
+  examples](2026-10-24-stack-encrypt-context-examples.md) run through Rust
+  and through dynamic plans.
+
+Keep support for owned sources, and keep batching. This separation of traits
+must not add a blanket `Clone` bound. The final signatures must show the
+support for borrowed sources and for owned sources. They must not hide the
+existing difference behind the rename.
 
 ## Go JSON implementation and PR #1353
 
-The [Go JSON plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
-has been updated against merged `next`. Tracking issue #1347 and steps
-#1348–#1352 are closed. #1372, #1373 and #1378 implement the catalog,
-configured JSON targets, dynamic execution, operation-specific operands,
-request-bound opening and generated typed Go frontend; #1402 supplies
-current docs and the executable database example.
+The [Go JSON
+plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
+has been updated against merged `next`. Tracking issue #1347 and steps #1348
+to #1352 are closed. #1372, #1373, and #1378 implement:
 
-The shipped target identifier is `JsonSearch`; Go uses `eql.JSONSearch`,
-`JSONSearchQuery`, `JSONSearchLeafQuery` and `JSONEntry`. Do not impose the
-proposed `EncryptedJson` glossary as a pre-release rewrite. Preserve the
-role distinctions and freeze actual customer names before later Rust renames.
-Prepared Go reads retain their cipher and use `Open(ctx, rows)`. The engine
-rederives trusted selectors/read keys from the original request. No new
-persistent guest-handle protocol is needed to implement that verification.
+- the catalog;
+- configured JSON targets;
+- dynamic execution;
+- operands specific to each operation;
+- opening that Rust verifies against the original request;
+- the generated typed Go front end.
 
-Residual requirements must be explicit: SQL children/counts exist but a
-parent-bound plaintext child opener does not; selector opening accepts at
-most one entry per document group. Use subtree reads for all-match plaintext
-retrieval. General scope/row-binding inputs remain unsupported for EQL
-targets. The existing column/keyset profile can ship without claiming them.
+Pull request #1402 supplies current documentation and the executable
+database example.
 
-The JSON contract now uses randomized projection order and cascade-bound
-ciphertexts. Semantic parity and cross-opening are required; raw term byte
-equality is meaningful only with controlled test randomness. Go typed JSON
-adapters follow `encoding/json`, while raw JSON goes through the strict
-engine parser. Do not claim arbitrary Go encoders preserve every input byte.
+The released target identifier is `JsonSearch`. Go uses `eql.JSONSearch`,
+`JSONSearchQuery`, `JSONSearchLeafQuery`, and `JSONEntry`. Do not impose the
+proposed `EncryptedJson` glossary as a rewrite before release. Keep the
+distinctions between roles, and freeze the actual customer names before
+later Rust renames.
+
+Prepared Go reads keep their cipher and use `Open(ctx, rows)`. The engine
+derives the trusted selectors and read keys again from the original request.
+No new protocol for persistent guest handles is needed to implement that
+verification.
+
+State the remaining requirements explicitly:
+
+- SQL for children and child counts exists, but there is no opener for
+  plaintext children that is bound to their parent.
+- Opening by selector accepts at most one entry for each document group.
+- Use subtree reads to retrieve plaintext for all matches.
+- General inputs for search scope and row binding remain unsupported for EQL
+  targets. The existing column and keyset profile can be released without
+  claiming them.
+
+The JSON contract now uses randomised projection order and ciphertexts bound
+by cascaded tags. Semantic parity and cross-opening are required. Comparing
+raw term bytes is meaningful only with controlled test randomness. Go typed
+JSON adapters follow `encoding/json`, while raw JSON goes through the
+engine's strict parser. Do not claim that arbitrary Go encoders preserve
+every input byte.
 
 ## Prior query design: baseline and reconciliation
 
-**Decision update, 2026-10-25:** ORE does not answer equality in the initial
-API, for any plaintext type. Equality uses its declared equality-capable
-index. Keep capability selection parameterized by the index, plaintext
-encoding/domain and options, so a future explicit exact/injective integer
-encoding can opt into equality without changing query syntax or wire
-operator identity. Never infer `Eq` merely from ordering support: text and
-other lossy encodings cannot establish plaintext equality. A future opt-in
-must retain overlap rejection (one selected provider per operator) and
-must not silently invalidate existing `(Equality, Ore)` definitions. This
-policy does not disable JSON scalar equality, which uses value selectors
-rather than ORE/OPE terms.
+### No ORE equality in the first API
 
-Read in full on 2026-10-25: the user-supplied **Stack Encrypt query design**,
-dated 2026-10-21, at
-`/Users/dan/Downloads/Stack Encrypt query design.md` (654 lines). The source
-document was not modified. It is explicitly a discussion draft, based on
-an earlier `next` snapshot; its historical code/release claims were not
-revalidated as part of this reading. Use it as the query-design baseline,
-not as a settled specification or a reason to redesign queries from scratch.
+Decided on 25 October 2026: ORE does not support equality in the first API,
+for any plaintext type. Equality uses the field's declared index that
+supports equality. Parameterise capability selection by the index, by the
+encoding or domain of the plaintext, and by the options. A future explicit
+exact or injective integer encoding can then opt in to equality, without
+changing the query syntax or the operator's wire identity.
+
+Never infer `Eq` only from support for ordering. Text and other lossy
+encodings cannot establish plaintext equality. A future opt-in must keep the
+rejection of overlaps, with one selected provider for each operator. It must
+not silently invalidate existing `(Equality, Ore)` definitions.
+
+This policy does not disable JSON scalar equality. JSON scalar equality uses
+value selectors, not ORE or OPE terms.
+
+### The query design draft of 21 October 2026
+
+On 25 October 2026, the whole user-supplied **Stack Encrypt query design**
+draft was read. The draft is dated 21 October 2026. It is 654 lines long, at
+`/Users/dan/Downloads/Stack Encrypt query design.md`. The source document
+was not changed.
+
+The document is explicitly a discussion draft, based on an earlier snapshot
+of `next`. Its historical claims about code and releases were not checked
+again as part of this reading.
+
+Use the draft as the baseline for query design. It is not a settled
+specification, or a reason to redesign queries from scratch.
 
 ### Existing proposal to carry forward
 
-- The caller selects an operator and a typed field/target handle. The field
-  supplies its own configured index; remove `DefaultIndex` and caller `.via`.
-- Each field has at most one index answering each operator. Refuse overlaps
-  at declaration validation instead of choosing an index by priority.
-- Declare operators, index capabilities, and admitted source types once;
-  derive or verify typed lookup, dynamic lookup, and discovery from that
+- The caller selects an operator and a typed field or target handle. The
+  field supplies its own configured index. Remove `DefaultIndex` and the
+  caller's `.via`.
+- Each field has at most one index that supports each operator. Refuse
+  overlaps at declaration validation, instead of choosing an index by
+  priority.
+- Declare operators, index capabilities, and admitted source types once.
+  Derive or verify typed lookup, dynamic lookup, and discovery from that
   declaration. Avoid another capability table in EQL.
 - Share query derivation and refusals through the same semantic functions.
-  In particular, tokenize match input once and retain the tokens needed for
+  In particular, tokenise match input once, and keep the tokens needed for
   probabilistic verification in the query object.
-- Retain index/source types in typed field handles. Unsupported operators
-  are compile errors on the typed path and validated errors dynamically.
-- Model analyzer case behavior once in its stages, rather than restating
-  it in both the match configuration and the operator.
+- Keep index and source types in typed field handles. Unsupported operators
+  are compile errors on the typed path, and validation errors on the dynamic
+  path.
+- Model the analyser's handling of letter case once, in its stages, instead
+  of stating it in both the match configuration and the operator.
 
-The draft already proposes the query call
-`cipher.query(op::Matches, text).on(&field).await?`, typed
-`FieldRef` handles, and a loaded configuration/analyzer owned by the dynamic
-plan (`Loaded` / `Arc<DynAnalyzer>`). Those are substantive designs to reuse;
-they do not yet settle how our output-derived typed factory options are
-initialized and shared with convenient `encrypt_into` calls.
+The draft already proposes three designs to reuse:
+
+- the query call `cipher.query(op::Matches, text).on(&field).await?`;
+- typed `FieldRef` handles;
+- a loaded configuration and analyser that the dynamic plan owns (`Loaded`
+  and `Arc<DynAnalyzer>`).
+
+These designs do not yet settle how our typed factory options, derived from
+the output, are initialised and shared with convenient `encrypt_into` calls.
 
 ### Reconciliation with this review
 
 1. **Generate handles from the same output-target declaration.** The query
-   appendix proposes a plaintext-side `EncryptionPlan` derive and generated
-   encrypted counterparts. Our agreed starting point is output-side
-   `EncryptTarget`/`DecryptSource` derives. Recommend emitting typed handles
-   from that declaration, without separately restating indexes on plaintext.
-   A source-side convenience derive can later generate the same target.
-   Hand-written plans remain lower-level composition, not mandatory usage.
-2. **Resolve typed factory ownership.** A generic `Match<O>` can fix a policy
-   identity in its type, but an arbitrary factory can still compute different
-   values on different calls. Carry a resolved configuration instance through
-   writes and field handles; settle the owner/initialization API. The draft's
-   dynamic plan ownership is useful precedent, not proof that all static
-   factory results are compile-time constants.
+   appendix proposes an `EncryptionPlan` derive on the plaintext side, and
+   generated encrypted counterparts. Our agreed starting point is the
+   output-side `EncryptTarget` and `DecryptSource` derives. Recommended:
+   emit typed handles from that declaration, without restating indexes
+   separately on the plaintext. A convenience derive on the source side can
+   later generate the same target. Hand-written plans remain lower-level
+   composition, not required usage.
+2. **Settle who owns the results of typed factories.** A generic `Match<O>`
+   can fix a policy identity in its type. An arbitrary factory can still
+   compute different values on different calls. Carry a resolved
+   configuration instance through writes and field handles, and settle the
+   API for its owner and its initialisation. The draft's ownership in the
+   dynamic plan is useful precedent. That precedent does not prove that all
+   static factory results are compile-time constants.
 3. **Separate portable options from execution types.** JSON's Rust factory
-   and dynamic deserializer can construct the same `JsonOptions`. The draft's
-   `Match<O>` and `Match<Dynamic>` intentionally have different execution
-   types to accommodate generic/custom analyzer stages. Preserve shared
-   validated options and semantic implementations for the portable subset;
-   do not force all typed analyzers through a serializable stage enum.
-4. **Accepted portability scope.** Ship built-in advertised
-   capabilities in Rust and Go together. Downstream custom Rust stages can
-   remain explicitly typed-only with `NotPortable` until registered. This
-   qualifies the draft's blanket "lands in Rust first" rule; it must not
-   become permission to defer the Go JSON capability under this plan.
+   and its dynamic deserialiser can construct the same `JsonOptions`. To
+   allow generic and custom analyser stages, the draft's `Match<O>` and
+   `Match<Dynamic>` deliberately have different execution types. Keep shared
+   validated options and semantic implementations for the portable subset.
+   Do not force all typed analysers through a serialisable enum of stages.
+4. **Accepted portability scope.** Release built-in advertised capabilities
+   in Rust and Go together. Downstream custom Rust stages can stay
+   explicitly typed-only, with `NotPortable`, until they are registered.
+   This qualifies the draft's blanket "lands in Rust first" rule. This
+   qualification must not become permission to defer the Go JSON capability
+   under this plan.
 5. **Include JSON capabilities before fixing lookup representations.** The
-   draft's 16-shape dynamic enum covers equality, match, and scalar ordering,
-   not the new JSON target. Extend operator identity, operand/result shapes,
-   capability validation, and overlap rules for containment, `AtPath`, and
-   extraction. Its interim validated index list using one capability table
-   is a viable starting point; the specific closed enum is not a decision.
-6. **Use the agreed context/scope model.** Replace label-only assumptions
-   with separate ciphertext binding and search scope. Row binding does not
-   flow into search terms; `PrimaryKey` is context-eligible and `ScopeKey`
-   is also scope-eligible. Apply the same declared scope to index generation
-   and queries. Preserve the requirement to return or supply row context
-   when decrypting selected results.
-7. **Accepted validation timing.** All checks independent of keys precede
-   key resolution/loading, including query-input checks. The draft's possible
-   named-keyset resolution before those checks is superseded. Reuse the
-   same validator for Go's `check_query` and execution rather than copying
-   it or tokenization. Provider facts and cryptographic checks that require
-   keys remain later stages. Explicit earlier client initialization/keyset
-   calls are not retroactively prevented by this operation-validation rule.
-8. **Apply the user's prototype scope.** Legacy match-option decoding,
-   deprecation/release-preservation requirements, and frozen Go wire formats
-   in the older document are not constraints here. Keep new Rust/Go/EQL
-   consumers aligned. The appendix's `cipher.encrypt(plan, value)` and
-   plaintext derive are illustrative older proposals, not replacements for
-   our agreed entry points.
+   draft's dynamic enum of 16 shapes covers equality, match, and scalar
+   ordering, but not the new JSON target. For containment, `AtPath`, and
+   extraction, extend the operator identity, operand shapes, result shapes,
+   capability validation, and overlap rules. The draft's interim validated
+   index list, using one capability table, is a workable starting point. Its
+   specific closed enum is not a decision.
+6. **Use the agreed model for context and scope.** Replace the assumption
+   that context is only a label with separate ciphertext binding and search
+   scope. Row binding does not flow into search terms. `PrimaryKey` is
+   eligible for context only. `ScopeKey` is eligible for both context and
+   scope. Apply the same declared scope to index generation and to queries.
+   Keep the requirement to return or supply row context when decrypting
+   selected results.
+7. **Accepted validation timing.** All checks that do not need keys come
+   before keys are resolved or loaded, including checks on query input. This
+   replaces the draft's possible resolution of a named keyset before those
+   checks. Reuse the same validator for Go's `check_query` and for
+   execution, instead of copying it or the tokenisation. Provider facts, and
+   cryptographic checks that need keys, remain later stages. This rule for
+   validating operations does not forbid explicit earlier calls that
+   initialise a client or keyset.
+8. **Apply the user's prototype scope.** These parts of the older document
+   are not constraints here: decoding legacy match options, deprecation
+   requirements, release-preservation requirements, and frozen Go wire
+   formats. Keep the new Rust, Go, and EQL consumers aligned. The appendix's
+   `cipher.encrypt(plan, value)` and plaintext derive are illustrative older
+   proposals. They do not replace our agreed entry points.
 
-ORE/Eq is now decided as described above. Retain integration work on
-typed field-handle construction/spelling, dynamic
-`Index<ValueFrame>` versus a shared semantic-function boundary, feasibility
-of compile-time match-option checks, Go's `check_query`, and ADR updates.
-Type-safe stage ordering does not by itself validate runtime numeric values
-or string paths; stronger const-check claims require implementation proof.
-Use these as specific integration decisions rather than an unbounded query
-API task. Coordinate their Go surface with PR #1353.
+ORE equality is now decided, as described in [No ORE equality in the first
+API](#no-ore-equality-in-the-first-api). Integration work remains on:
+
+- how typed field handles are constructed and spelled;
+- dynamic `Index<ValueFrame>` compared with a shared boundary of semantic
+  functions;
+- the feasibility of checking match options at compile time;
+- Go's `check_query`;
+- updates to the architecture decision records (ADRs).
+
+Type-safe ordering of stages does not by itself validate runtime numeric
+values or string paths. Stronger claims about const checks need proof in the
+implementation. Treat these items as specific integration decisions, not as
+an open-ended query API task. Coordinate their Go interface with PR #1353.
 
 ## Recommended owner: a reusable typed target definition
 
-Status: recommendation for review. Use an immutable **target definition**
-to own resolved options, prepared indexes/analyzers, context-selection rules,
-and operation metadata. The output derive generates this definition's typed
-field accessors from the same declaration that generates encryption. It
-contains no plaintext, row values, credentials, or selected keyset. A field
-handle borrows or shares that definition and retains its plaintext/index
-types; it is not an independent name plus a newly constructed default index.
+Status: recommendation for review. Use an immutable target definition to
+own:
 
-**Selector naming, 2026-10-25:** the user finds encryption's `using` and
-query's `on` confusing and requests considering one name. Recommend
-`.using(...)` for both: each selects the definition or field whose declared
-policy governs the operation. This spelling is proposed, not yet accepted.
-Encryption still accepts the requested target's associated definition type;
-query still requires `QueryTarget<Op, Input>` on a selected field or
-single-value definition. Shared naming does not weaken either bound or
-make an entire multi-field record a query target. Older `on` examples in
-the supplied query draft describe its earlier spelling.
+- the resolved options;
+- prepared indexes and analysers;
+- the rules for selecting context;
+- the operation metadata.
+
+The output derive generates the definition's typed field accessors from the
+same declaration that generates encryption. The definition contains no
+plaintext, row values, credentials, or selected keyset. A field handle
+borrows or shares that definition, and keeps its plaintext and index types.
+It is not an independent name plus a newly constructed default index.
+
+### One selector name for encryption and queries
+
+On 25 October 2026, the user said that encryption's `using` and the query's
+`on` are confusing, and asked for one name to be considered. Recommended:
+`.using(...)` for both. In each case it selects the definition or field
+whose declared policy governs the operation. This spelling is proposed, not
+yet accepted.
+
+Encryption still accepts the requested target's associated definition type.
+A query still requires `QueryTarget<Op, Input>` on a selected field or
+single-value definition. Sharing one name does not weaken either bound, or
+make a whole multi-field record a query target. The older `on` examples in
+the supplied query draft show its earlier spelling.
 
 Proposed usage, assuming the previously described `EncryptedUser` target:
 
@@ -594,96 +818,111 @@ let query = cipher
     .await?;
 ```
 
-`definition()` obtains the shared resolved definition of that source/target
-mapping. Plain `encrypt_into` obtains the same definition internally. It
-does not independently invoke the options factory. `.email()` is generated
-from the output field declaration, not a hand-maintained second schema.
-The method name `definition` is proposed; it names a resolved declaration,
-not a builder that users must reconstruct before every operation.
+`definition()` gets the shared resolved definition of that mapping from
+source to target. Plain `encrypt_into` gets the same definition internally,
+and does not call the options factory separately. `.email()` is generated
+from the declaration of the output field, not from a second schema that
+someone maintains by hand. The method name `definition` is proposed. It
+names a resolved declaration, not a builder that users must reconstruct
+before every operation.
 
 ### Call order and strict typestate
 
-User requirement, 2026-10-25: use strict typestate for the fluent API. The
-user prefers the reading `cipher.using(&field).query(op, input)` and is open
-to supporting both call orders. Recommend definition-first as the canonical
-documented query form, while supporting operator-first through the same
-request states:
+On 25 October 2026, the user required strict typestate for the fluent API.
+The user prefers the reading `cipher.using(&field).query(op, input)`, and is
+open to supporting both call orders. Recommended: document the
+definition-first form as the canonical query form, and support the
+operator-first form through the same request states:
 
 ```rust
 let a = cipher.using(&users.email()).query(op::Eq, email).await?;
 let b = cipher.query(op::Eq, email).using(&users.email()).await?;
 ```
 
-Both are proposed. The current implementation is query-first, followed by
-`.on(...)`; this recommendation changes that interface.
+Both forms are proposed. The current implementation is query-first, followed
+by `.on(...)`. This recommendation changes that interface.
 
 | Starting state | Method | Resulting state |
 | --- | --- | --- |
-| Cipher | `using(&definition)` | Bound definition, no query selected |
-| Bound definition | `query(op, input)` | Query with definition/operator/input known |
-| Cipher | `query(op, input)` | Query awaiting a definition |
-| Query awaiting a definition | `using(&definition)` | The same query state as the definition-first path |
+| Cipher | `using(&definition)` | Definition bound, no query selected |
+| Definition bound | `query(op, input)` | Query with its definition, operator, and input known |
+| Cipher | `query(op, input)` | Query waiting for a definition |
+| Query waiting for a definition | `using(&definition)` | The same query state as the definition-first path |
 
-The transition that brings the definition and operator/input together has
-the `QueryTarget<Op, Input>` bound. A definition-first bound handle need not
-pretend to know the future operator. Once combined, the index and context
-requirements are determined. Only the executable state implements
-`IntoFuture`; a bound definition alone, a query missing its definition, or
-a query missing required context cannot be awaited. Required context is
-completed by a typed context-input transition; optional/no-input cases
-start with a valid omitted state. Context completion must not be represented
-solely as an unchecked `Option` plus a runtime missing-input error on the
-static path.
+The transition that brings the definition together with the operator and
+input has the `QueryTarget<Op, Input>` bound. A handle bound in the
+definition-first order does not need to fix the future operator in advance.
+Combining the two determines the index. It also determines the context
+requirements.
 
-Do not expose another `using` transition after a query's definition has
-been selected, or another query-selection transition on the request.
+Only the executable state implements `IntoFuture`. A bound definition alone,
+a query missing its definition, and a query missing required context cannot
+be awaited.
+
+A typed context-input transition completes required context. Cases with
+optional input or no input start in a valid state with context left out. On
+the static path, completing context must not be represented only as an
+unchecked `Option` plus a runtime error for missing input.
+
+Do not expose another `using` transition after a query's definition has been
+selected, or another transition on the request that selects a query.
 Supporting these two orders does not promise every permutation of keyset,
 context, and operation selection. Specify those transitions separately,
-starting with context supplied after its required type is known. Share
-the final query request, validation, and execution implementation rather
-than duplicate them per call order. Input-dependent errors such as an
-invalid path still need runtime validation; typestate checks completeness
-and capability, not arbitrary value semantics.
+starting with context supplied after its required type is known.
 
-The same discipline applies to encryption requests: a fixed-policy
-`encrypt_into` has an implicit definition and can be awaited without
-`using`; selecting an explicit compatible definition is a one-time
-transition before execution. This does not add a new ordinary `encrypt`
-receiver or require fixed-policy callers to bind definitions manually.
+Share the final query request, validation, and execution implementation,
+instead of duplicating them for each call order. Errors that depend on
+input, such as an invalid path, still need runtime validation. Typestate
+checks completeness and capability, not the meaning of arbitrary values.
 
-Completion tests must include both query orders with identical semantics,
-and compile-fail cases for unsupported operators/inputs, premature await,
-missing required context, and repeated definition selection. Definition
-borrows/shared handles must remain valid for the lifetime of the request.
+The same rules apply to encryption requests. A fixed-policy `encrypt_into`
+has an implicit definition, so a caller can await it without `using`.
+Selecting an explicit compatible definition is a single transition before
+execution. This does not add a new ordinary `encrypt` receiver, or require
+callers with a fixed policy to bind definitions by hand.
+
+Completion tests must include:
+
+- both query orders, with identical semantics;
+- compile-fail cases for unsupported operators and inputs, awaiting too
+  early, missing required context, and selecting a definition twice.
+
+Borrowed definitions and shared handles must stay valid for the lifetime of
+the request.
 
 ### Fixed declarations
 
-Use lazy, fallible initialization for the fixed definition, retaining each
-successful result for reuse. Allow explicit startup initialization via
-`EncryptedUser::definition()?`, while the shorthand write initializes it
-on demand and returns any error through its awaitable. Factory errors must
-not panic or perform key I/O; do not permanently cache initialization
-failures. Coordinate concurrent first use so successful initialization is
-performed once, and account for reentrant/recursive initialization in the
-implementation rather than allowing a deadlock.
+Initialise the fixed definition lazily, in a way that can fail, and keep
+each successful result for reuse. Allow explicit initialisation at startup
+through `EncryptedUser::definition()?`. The shorthand write initialises the
+definition on demand, and returns any error through its awaitable value.
+Factory errors must not panic or perform key I/O.
 
-The identity is the complete concrete declaration (including source/target
-mapping and generic policy parameters), not merely the ciphertext's output
-type. Different instantiations must not share a cache slot by accident.
-This is an implementation requirement, not a claim that a static inside a
-generic Rust function is automatically per-monomorphization.
+Do not cache initialisation failures permanently. Coordinate concurrent
+first use so that successful initialisation happens once. Handle reentrant
+and recursive initialisation in the implementation, instead of allowing a
+deadlock.
 
-Fixed factories must describe stable application policy; they are not the
-interface for reloading environment settings or tenant-specific options.
-The cache makes writes and queries in one process share the resolved policy;
-it does not prove another process or an older stored row uses that policy.
-Per-call context, source values, and keyset choice remain separate inputs.
+The identity of a definition is the complete concrete declaration, including
+the mapping from source to target and any generic policy parameters. It is
+not only the ciphertext's output type. Different instantiations must not
+share a cache slot by accident. This is an implementation requirement. It
+does not claim that a static inside a generic Rust function is automatically
+one per monomorphisation.
+
+Fixed factories must describe stable application policy. They are not the
+interface for reloading environment settings, or for options that differ for
+each tenant. The cache makes writes and queries in one process share the
+resolved policy. It does not prove that another process, or an older stored
+row, uses that policy. Per-call context, source values, and keyset choice
+remain separate inputs.
 
 ### Runtime declarations
 
-Load/create a distinct definition instance for runtime options. A configured
-instance is not stored in the fixed-declaration cache. Use the same type of
-definition and field handles, so queries and writes share that instance.
+Load or create a separate definition instance for runtime options. A
+configured instance is not stored in the fixed-declaration cache. Use the
+same type of definition and field handles, so that queries and writes share
+that instance.
 
 Proposed Rust spelling for a configurable library target:
 
@@ -698,495 +937,625 @@ let encrypted: EqlEncryptedJsonTree = value
 
 Here `using` takes a resolved typed target definition, not a hand-built
 plan. This requires a lazy conversion request: select the definition before
-building the operation or invoking a default factory. Its await lowers to
-the existing `Pending`/batch executor; the shared engine remains unchanged.
-The definition's output/source types constrain the conversion. Queries use
-the same definition (or its field handles), supplying the required context
-and keyset for that call.
+building the operation or calling a default factory. Awaiting the request
+lowers it to the existing `Pending` and batch executor, and the shared
+engine does not change. The definition's output and source types constrain
+the conversion. Queries use the same definition, or its field handles, and
+supply the required context and keyset for that call.
 
-A fixed-policy wrapper such as `EncryptedPayroll` does not expose runtime
-override of its declared options. Use the configurable underlying target
-for the runtime case, avoiding silent overrides of a fixed policy. Exact
-configuration APIs for multi-field runtime definitions are still to be
-specified; they must select typed options without introducing another
-execution mechanism.
+A fixed-policy wrapper such as `EncryptedPayroll` does not allow its
+declared options to be overridden at runtime. Use the configurable
+underlying target for the runtime case, so that nothing silently overrides a
+fixed policy. The exact configuration APIs for runtime definitions with
+several fields are still to be specified. They must select typed options
+without introducing another execution mechanism.
 
-Go's loaded dynamic plan owns its resolved definitions and generated field
-accessors reach those definitions. It has no Rust factory to invoke. The
-guest validates and builds the configuration once per loaded declaration,
-then writes/queries use the loaded instance. A different runtime policy is
-a different instance; it does not mutate one used by in-flight operations.
+Go's loaded dynamic plan owns its resolved definitions, and generated field
+accessors reach those definitions. Go has no Rust factory to call. The guest
+validates and builds the configuration once for each loaded declaration, and
+then writes and queries use the loaded instance. A different runtime policy
+is a different instance. It does not change an instance that operations in
+progress are using.
 
 ### Implementation proof and boundary
 
-Prove the cache/handle design early with two fixed mappings, multiple generic
-instantiations, concurrent first use, initialization failure/retry, and
-separate runtime instances. Prove a query and its write use the same options
-without calling the factory twice. Preserve source lifetimes, owned-source
-support, batch lowering, and no-HTTP/WASM builds. Queries on a field without
-the operator must remain compile errors, with dynamic equivalents checked
-at declaration/query validation.
+Prove the cache and handle design early with:
 
-Prefer this generated-definition approach over requiring callers to author
-a second plan or putting configuration state in each ciphertext. Plans are
-still the lower-level implementation of the definition. Portable option
-serialization and index capability discovery remain part of its dynamic
-contract; the definition object does not itself need to serialize arbitrary
-Rust closures or custom analyzer code.
+- two fixed mappings;
+- several generic instantiations;
+- concurrent first use;
+- an initialisation failure followed by a retry;
+- separate runtime instances.
+
+Prove that a query and its write use the same options without calling the
+factory twice. Keep the source lifetimes, the support for owned sources,
+batch lowering, and the builds without HTTP and for WebAssembly. A query on
+a field without the operator must remain a compile error, with dynamic
+equivalents checked at declaration or query validation.
+
+Prefer this approach, with generated definitions, over requiring callers to
+write a second plan or putting configuration state in each ciphertext. Plans
+are still the lower-level implementation of the definition. Portable
+serialisation of options and discovery of index capabilities remain part of
+its dynamic contract. The definition object does not itself need to
+serialise arbitrary Rust closures or custom analyser code.
 
 ## Single-ciphertext representation and plaintext ownership
 
-Accepted decisions, 2026-10-25: use `OpaqueEncode` / `OpaqueDecode` for
-single-ciphertext representation, replacing the working names `EncodeValue`
-/ `DecodeValue`. Both direct `encrypt` and target-directed `encrypt_into`
-consume their values and take responsibility for owned plaintext cleanup,
-including their context-taking variants. These are representation
-capabilities; the engine still performs cryptography. `EncryptTarget` /
-`DecryptSource` describe how encrypted outputs and layouts compose those
-operations. The lifecycle and cleanup scope below are part of the accepted
-design. The plaintext cleanup bound is `Zeroize`; implementation remains
-to be completed.
+Accepted on 25 October 2026:
+
+- Use `OpaqueEncode` and `OpaqueDecode` to represent a value as a single
+  ciphertext. They replace the working names `EncodeValue` and
+  `DecodeValue`.
+- Direct `encrypt` and target-directed `encrypt_into`, including their
+  context-taking variants, consume their values. Both operations take
+  responsibility for cleaning up owned plaintext.
+- These are representation capabilities, and the engine still performs the
+  cryptography. `EncryptTarget` and `DecryptSource` describe how encrypted
+  outputs and layouts compose those operations.
+- The lifecycle and cleanup scope below are part of the accepted design.
+- The bound for plaintext cleanup is `Zeroize`. The implementation is not
+  finished.
 
 ### Owned input is the direct API contract
 
 `keyset.encrypt(value)` and its context-taking counterpart take an owned
-single-value input. No implicit clone and no `Clone` bound. For example,
-passing a `String` transfers it; a borrowed `&str` does not transfer the
-storage it refers to and must not receive the same cleanup promise. Do not
-add a silent borrowed-input fallback to the consuming operation.
+single-value input. There is no implicit clone and no `Clone` bound.
 
-**Decision, 2026-10-25:** require `Zeroize` for plaintext types and use a
-library-owned guard. Use the existing ecosystem trait rather than defining
-a new cleanup trait or alternative protected-ownership adapter for now.
-`Zeroize` supplies the operation; the library must arrange to invoke it on
-every supported exit path. A bound alone does not arrange cleanup on drop.
+For example, passing a `String` transfers it. A borrowed `&str` does not
+transfer the storage it refers to. So it must not receive the same cleanup
+promise. Do not add a silent fallback to borrowed input in the consuming
+operation.
+
+Decided on 25 October 2026: require `Zeroize` for plaintext types, and use a
+guard that the library owns. For now, use that existing ecosystem trait,
+instead of defining a new cleanup trait or another adapter for protected
+ownership. `Zeroize` supplies the wiping operation, and the library must
+arrange to call it on every supported exit path. A bound alone does not
+arrange cleanup on drop.
 
 Acquire protected ownership synchronously when creating the encryption
-request, before returning its future/builder. An `async fn` body is not run
-until polling, so placing the first guard inside that body would leave an
-unpolled request with an ordinarily dropped source. A sync constructor
-returning the typed future can establish the guard first. Every subsequent
-builder transition moves that guarded ownership rather than making a new
-unprotected copy.
+request, before returning its future or builder. The body of an `async fn`
+does not run until the future is polled. If the first guard were inside that
+body, a request that is never polled would drop its source in the ordinary
+way. A synchronous constructor that returns the typed future can set up the
+guard first. Every later builder transition moves that guarded ownership,
+instead of making a new unprotected copy.
 
-The representation trait may encode through a temporary internal borrow of
-the guarded value into a library-owned sensitive sink. Public consumption
-does not require giving an encoder unrestricted ownership of the source or
-an ordinary growable `Vec<u8>` for scratch work. Wipe and release the source
-as soon as encoding no longer needs it; keep encoded plaintext guarded until
-sealing completes. Preserve the single-leaf representation boundary.
+The representation trait can encode through a temporary internal borrow of
+the guarded value, into a sensitive sink that the library owns. Public
+consumption does not require giving an encoder unrestricted ownership of the
+source, or an ordinary growable `Vec<u8>` for scratch work. Wipe and release
+the source as soon as encoding no longer needs it. Keep the encoded
+plaintext guarded until sealing completes. Keep the boundary of a
+representation as a single leaf.
 
 ### Cleanup scope and implementation obligations
 
-- Cover owned source storage, encoded buffers, codec scratch, and any
-  library-created plaintext copies. Use established non-elidable wiping
-  primitives/protected storage rather than `clear()` or ordinary drop alone.
-- Cover success, encoding/configuration/KMS/AEAD errors, partially prepared
-  batches, request cancellation, and an unpolled request being dropped.
-  Use drop guards for ordinary unwinding too; process abort or a leaked
-  future is not a destructor guarantee.
-- Avoid reallocations that abandon uncleared buffers; growing sensitive
-  sinks must have a cleanup strategy for old allocations. Prevent plaintext
-  from escaping in diagnostics, Debug, caches, and instrumentation.
-- On decrypt, protect recovered bytes and partial decode state until cleanup
-  or successful ownership transfer to the caller. Successful returned
-  plaintext is intentionally retained; its subsequent lifetime is the
-  caller's responsibility unless the return type itself is protected.
-- A Rust move does not prove all physical copies were erased. In particular,
-  `Copy` inputs leave caller-owned originals usable, and compiler temporaries
-  may exist. The enforceable API promise concerns supported owned storage
-  and library-managed artifacts, not caller-retained copies or erasure of
-  every register/stack remnant. Verify stronger claims with compiler evidence.
+- Cover owned source storage, encoded buffers, codec scratch space, and any
+  plaintext copies that the library creates. Use established wiping
+  primitives that the compiler cannot remove, or protected storage. Do not
+  rely on `clear()` or an ordinary drop alone.
+- Cover success, errors in encoding, configuration, KMS, and AEAD, partly
+  prepared batches, cancelled requests, and a request dropped before it is
+  polled. Use drop guards for ordinary unwinding too. A process abort or a
+  leaked future does not run destructors, so neither is covered.
+- Avoid reallocations that leave uncleared buffers behind. Sensitive sinks
+  that grow must have a cleanup strategy for their old allocations. Prevent
+  plaintext from escaping in diagnostics, `Debug` output, caches, and
+  instrumentation.
+- On decrypt, protect the recovered bytes and partial decode state until
+  cleanup, or until ownership passes successfully to the caller.
+  Successfully returned plaintext is kept on purpose. After the return, its
+  lifetime is the caller's responsibility, unless the return type itself is
+  protected.
+- A Rust move does not prove that all physical copies were erased. In
+  particular, `Copy` inputs leave the caller's originals usable, and
+  compiler temporaries may exist. The API promise that can be enforced
+  covers supported owned storage and the artefacts that the library manages.
+  It does not cover copies that the caller keeps, or every remnant in
+  registers and on the stack. Check stronger claims with evidence from the
+  compiled code.
 
 The [zeroize documentation](https://docs.rs/zeroize/latest/zeroize/)
-documents drop-based guards, non-elidable wiping, and limits involving
-moves, stack copies, and reallocations. The source currently uses
-`Protected<Vec<u8>>` at the AEAD boundary, but that does not establish
-end-to-end cleanup of every caller value and intermediate. This discussion
-is a design requirement, not a completed source/assembly zeroization audit.
+describes guards based on drop, wiping that the compiler cannot remove, and
+the limits involving moves, stack copies, and reallocations. The source
+currently uses `Protected<Vec<u8>>` at the AEAD boundary. That does not
+establish cleanup of every caller value and intermediate from end to end.
+This discussion is a design requirement, not a completed audit of
+zeroisation in the source or the assembly.
 
 ### Consequences for blobs, layouts, and Go
 
-`OpaqueBlob<T>` cannot promise source cleanup from `T: Serialize` alone.
-Require `T: Serialize + Zeroize` for the proposed Serde-backed blob input;
-owned blob decoding requires `T: DeserializeOwned + Zeroize`. Ordinary
-application structs may derive `Zeroize`. A
-generic Serde implementation can allocate or retain hidden copies, so strong
-claims also require a supported codec/implementation contract; wrapping its
-final byte buffer does not make arbitrary user serialization code compliant.
+`OpaqueBlob<T>` cannot promise to clean up the source from `T: Serialize`
+alone. Require `T: Serialize + Zeroize` for the proposed blob input that
+uses Serde. Owned blob decoding requires `T: DeserializeOwned + Zeroize`.
+Ordinary application structs can derive `Zeroize`.
 
-In particular, `T: Zeroize` only supplies cleanup once a `T` exists. If
-derived `Deserialize` allocates a `String` field and fails on a later field,
-the partially built fields ordinarily drop without invoking `T::zeroize`.
-Even adding `ZeroizeOnDrop` to the enclosing struct cannot fix a struct
-that was never constructed. Keep this as a concrete decoder design and
-acceptance requirement; do not claim the new bound solves partial decoding.
+A generic Serde implementation can allocate or keep hidden copies, so strong
+claims also need a supported contract for the codec and implementation.
+Wrapping the final byte buffer does not make arbitrary user serialisation
+code compliant.
+
+In particular, `T: Zeroize` only supplies cleanup once a `T` exists. Suppose
+a derived `Deserialize` allocates a `String` field and then fails on a later
+field. The fields built so far drop in the ordinary way, without calling
+`T::zeroize`. Even adding `ZeroizeOnDrop` to the enclosing struct cannot fix
+a struct that was never constructed. Keep this as a concrete requirement for
+decoder design and acceptance, and do not claim that the new bound solves
+partial decoding.
 
 ### Blob codec assessment: Vitamin C frames
 
-**Priority decision, 2026-10-25:** first define a stable, versioned binary
-storage profile. The codec was originally ephemeral transport; stored blobs
-need a stronger compatibility commitment. Zeroization and constant-time
-implementation improvements can follow, provided they preserve stored
-format semantics. Do not defer decisions that affect stored bytes (option
-presence, type mapping, versions) or claim timing/cleanup properties not
-implemented. The `Zeroize` input bound and ownership direction remain.
-Track this action in
-[Vitamin C #519](https://github.com/cipherstash/vitaminc/issues/519), created
-for this review. It explicitly distinguishes storage stability from the
-transport-only rationale in Vitamin C #332.
+#### Stable storage format first
 
-**Implemented upstream and in Go, 2026-10-27:** Vitamin C's dedicated
-storage profile and Go reader/writer address the format work from #519
-(#520/#526, carried onto upstream main via #544). Stack #1369/#1370 adopt
-the Go codec: opaque generated structs call `vcffi.MarshalStorage` and
-`UnmarshalStorage`. The profile is versioned (`VCS` plus version), supports
-explicit optional values and typed map keys, and is separate from transport.
-The transport mapping's `Some(())` ambiguity and text-only map-key rules
-must not be reported as defects of this new storage profile.
+Decided on 25 October 2026, as the priority: first define a stable,
+versioned binary storage profile. The codec was first designed for
+short-lived transport, and stored blobs need a stronger compatibility
+commitment. Improvements to zeroisation and constant-time implementation can
+follow, provided they keep the meaning of the stored format.
+
+Do not defer decisions that affect stored bytes, such as option presence,
+type mapping, and versions. Do not claim timing or cleanup properties that
+are not implemented. The `Zeroize` input bound and the ownership direction
+remain. [Vitamin
+C #519](https://github.com/cipherstash/vitaminc/issues/519), created for
+this review, tracks this action. The issue explicitly separates storage
+stability from the transport-only reasons in Vitamin C #332.
+
+#### Storage profile implemented in Vitamin C and Go
+
+By 27 October 2026, Vitamin C's dedicated storage profile, and its Go reader
+and writer, addressed the format work from #519. That work is in Vitamin
+C #520 and #526, carried onto upstream main by #544. Stack #1369 and #1370
+adopt the Go codec: generated opaque structs call `vcffi.MarshalStorage` and
+`UnmarshalStorage`.
+
+The profile is versioned (`VCS` plus a version). It supports explicit
+optional values and typed map keys, and it is separate from transport. Do
+not report these properties of the transport mapping as defects of the new
+storage profile:
+
+- the ambiguity of `Some(())`;
+- the rules that allow only text map keys.
 
 Go generated shapes use `vc` tags and `GeneratedVersion2`. A reader rejects
-unsupported future blob versions distinctly and retains the old JSON
-fallback. Go storage mapping has documented qualifications: nil containers
-become empty, supported nonfinite floats round-trip, and unsupported opaque
-types are refused by generation. Go pointers and Rust `Option` do not always
-write identical bytes; cross-reading and the normative corpus matter.
+unsupported future blob versions with a distinct error, and still falls back
+to the old JSON encoding. Go storage mapping has these documented
+qualifications:
 
-Rust workspaces still use crates.io Vitamin C 0.8.0; the final proposed Rust
-`OpaqueBlob` facade has not thereby been implemented. Adopt the dedicated
-storage entry points when that facade lands rather than repurposing the
-transport Serde codec. Go's temporary pseudo-version dependency must move
-to released module tags for a final Go release. A new serializer evaluation
-is not on the customer critical path.
+- nil containers become empty;
+- supported nonfinite floats round-trip;
+- generation refuses unsupported opaque types.
 
-Stable bytes do not establish constant-time behavior or complete cleanup.
-Retain the remaining guarded-output, temporary-buffer, partial decode and
-caller-owned-value work, without changing stored format. JSON tree retains
-its own node/envelope encoding; its post-cascade compatibility profile must
-be frozen separately from opaque blobs.
+Go pointers and Rust `Option` do not always write identical bytes, so
+cross-reading tests and the normative corpus matter.
 
-The same consuming contract applies to target-directed `encrypt_into`.
-For a structural target, declared passthrough fields intentionally
-move into the output; wipe encrypted source fields and temporary copies,
-not plaintext fields the caller explicitly chose to retain. Fan-out to
-ciphertext and index operations should read a guarded source where possible
-instead of requiring a plaintext clone per operation.
+#### Remaining Rust and release work
 
-Specify cleanup for dynamic host/guest transport and JSON parsing buffers
-as part of the Go implementation. The Rust guest cannot erase Go caller
-objects it never owned; host-managed copies need host cleanup and ordinary
-Go values do not acquire Rust move semantics. Document that boundary rather
-than claiming guest cleanup erases every copy in the calling process.
+Rust workspaces still use Vitamin C 0.8.0 from crates.io. So this work does
+not implement the final proposed Rust `OpaqueBlob` facade. When that facade
+is built, adopt the dedicated storage entry points, instead of reusing the
+transport Serde codec for storage. Go's temporary pseudo-version dependency
+must move to released module tags for a final Go release. A new evaluation
+of serialisers is not on the critical path for customers.
 
-Acceptance work: source-cleanup/drop observation on successful and failing
-requests, cancellation/unpolled-request tests, nested source/blob cases,
-and owned non-Clone inputs. Inspect optimized code for wipe/copy behavior
-where necessary; ordinary tests alone cannot prove absence of every residual
-copy. Do not infer a current vulnerability or a completed guarantee from
-this design discussion.
+Stable bytes do not establish constant-time behaviour or complete cleanup.
+Keep the remaining work on guarded output, temporary buffers, partial
+decoding, and values that the caller owns, without changing the stored
+format. The JSON tree keeps its own node and envelope encoding. Freeze its
+post-cascade profile separately from opaque blobs.
+
+### Cleanup in target-directed encryption and at the Go boundary
+
+The same consuming contract applies to target-directed `encrypt_into`. For a
+structural target, declared passthrough fields move into the output on
+purpose. Wipe encrypted source fields and temporary copies, not plaintext
+fields that the caller explicitly chose to keep. Where possible, the fan-out
+to ciphertext and index operations should read a guarded source, instead of
+needing a plaintext clone for each operation.
+
+As part of the Go implementation, specify cleanup for dynamic transport
+between host and guest, and for JSON parsing buffers. The Rust guest cannot
+erase Go caller objects that it never owned. Copies that the host manages
+need cleanup by the host, and ordinary Go values do not gain Rust move
+semantics. Document that boundary, instead of claiming that guest cleanup
+erases every copy in the calling process.
+
+Acceptance work:
+
+- observe source cleanup and drop on successful and failing requests;
+- test cancellation, and requests dropped before they are polled;
+- cover nested source and blob cases;
+- cover owned inputs that are not `Clone`.
+
+Where necessary, inspect optimised code for wiping and copying behaviour.
+Ordinary tests alone cannot prove that no copy remains. Do not infer a
+current vulnerability, or a completed guarantee, from this design
+discussion.
 
 ## Configured-target implementation sequence and completion criteria
 
-Customer commitments supersede the earlier Rust/Go front-end lockstep sequence.
-The foundational Go JSON slice and opaque storage adoption are now merged.
+Commitments to customers replace the earlier sequence, in which the Rust and
+Go front ends moved in step. The foundational Go JSON work and the adoption
+of opaque storage are now merged.
 
-1. **Specify the implemented contract.** Capture target options, operator
-   input/result encodings, grouped reads, errors and the column/keyset
-   profile in the formal interoperability spec and conformance fixtures.
-   Keep proposed schema envelopes distinct from the current field-map grammar.
-2. **Close actual remaining customer gaps.** Parent-bound child opening,
-   complex ordered-path declarations if needed, configurable Go match
-   options (#1112) and the tokenizer/filter pipeline. #1397 already supplies
-   short whole-word matching through EQL; confirm its accepted leakage and
-   freeze its index semantics rather than planning it as unimplemented.
-3. **Validate and freeze the release candidate.** Run the existing engine,
-   Go/guest and PostgreSQL suites against the selected bundle. Preserve
-   numeric/null behavior, cascade tamper checks, wildcard/fallback semantics,
-   known omission limitations and post-cascade stored vectors. Tests already
-   landed are not proof this review reran a release build.
-4. **Release the dependencies and customer surface.** Replace Vitamin C's
-   temporary Go pseudo-version pins for a final release; the existing guard
-   allows prereleases. Opaque storage is already integrated; keep it separate
-   from the JSON-tree storage profile. Build production guests and matching SQL.
-5. **Complete Rust ergonomics and packaging.** Implement public traits,
-   derives, definition lifecycle and crate moves behind the frozen Go/data
-   contract. Direct EQL conversion is a format-preserving optimization.
+1. **Specify the implemented contract.** Keep the proposed schema envelopes
+   distinct from the current field-map grammar. Record these in the formal
+   interoperability specification and conformance fixtures:
+   - target options;
+   - operator input and result encodings;
+   - grouped reads;
+   - errors;
+   - the column and keyset profile.
+2. **Close the actual remaining customer gaps.** The gaps are opening a
+   child bound to its parent, and complex ordered-path declarations if
+   needed. The gaps also include configurable Go match options (#1112), and
+   the tokeniser and filter pipeline. #1397 already supplies short
+   whole-word matching through EQL. Confirm the leakage accepted for it, and
+   freeze its index semantics, instead of planning it as unimplemented.
+3. **Validate and freeze the release candidate.** Run the existing suites
+   for the engine, for Go with the guest, and for PostgreSQL against the
+   selected bundle. Keep numeric and null behaviour, tamper checks on
+   cascaded tags, wildcard semantics, fallback semantics, known omission
+   limitations, and post-cascade stored vectors. Tests that are already
+   merged do not prove that this review ran a release build again.
+4. **Release the dependencies and the customer interface.** For a final
+   release, replace Vitamin C's temporary Go pseudo-version pins. The
+   existing guard allows them in prereleases. Opaque storage is already
+   integrated. Keep it separate from the JSON-tree storage profile. Build
+   production guests and the matching SQL.
+5. **Complete the Rust convenience APIs and packaging.** Implement public
+   traits, derives, the definition lifecycle, and crate moves within the
+   frozen Go and data contract. Direct EQL conversion is an optimisation
+   that keeps the format.
 
 Use one execution engine throughout. The final Rust facade and package
-layout are not gates for the existing Go JSON profile. Do not reimplement
-configured JSON options or request-bound reads that have already landed.
+layout do not gate the existing Go JSON profile. Do not reimplement
+configured JSON options, or reads that Rust verifies against the original
+request: both are already merged.
 
 ### Required deliverable: dynamic interoperability specification
 
-**User requirement:** develop a formal specification of the dynamic
-interoperability layer during implementation, not as documentation added
-after the Rust and Go APIs have diverged. The current examples remain
-proposals until reconciled into that specification; adding this deliverable
-does not claim the specification has already been written.
+The user requires a formal specification of the dynamic interoperability
+layer, developed during implementation. Do not write it afterwards as
+documentation, after the Rust API has diverged from the Go API. The current
+examples remain proposals until they are reconciled into that specification.
+Adding this deliverable does not claim that the specification has been
+written.
 
-**Recommended format:** a versioned specification package containing
-[JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12) schemas,
-normative semantic and wire-format rules, and executable conformance
-fixtures. JSON Schema describes declaration/request/response structure;
-it is not the entire behavioral or binary transport specification. Keep
-application semantic-type declarations distinct from JSON Schema's own
-`type`, `$defs`, and `$ref` vocabulary.
+Recommended format: a versioned specification package that contains:
+
+- [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12)
+  schemas;
+- normative rules for semantics and wire format;
+- executable conformance fixtures.
+
+JSON Schema describes the structure of declarations, requests, and
+responses. It is not the whole specification of behaviour or of the binary
+transport. Keep application declarations of semantic types distinct from
+JSON Schema's own `type`, `$defs`, and `$ref` vocabulary.
 
 Required coverage:
 
-- Definition grammar: built-in and named types, optional `types` section,
-  inline role wrappers, context selectors, scope eligibility, passthrough
-  and context storage, targets/options, query capabilities, defaults, and
-  unknown-field/extension handling. Named ordinary types need no role;
-  naming a type does not grant scope eligibility.
-- Semantic validation: resolve named types and field references, reject
-  invalid/cyclic references where unsupported, enforce primary-key versus
-  scope-key capabilities recursively, check source/output compatibility,
-  and derive write/query scope agreement. Do not imply generic JSON Schema
+- **Definition grammar.** Named ordinary types need no role. Naming a type
+  does not make it eligible for scope. The grammar covers:
+  - built-in and named types;
+  - the optional `types` section;
+  - inline role wrappers;
+  - context selectors and scope eligibility;
+  - passthrough and context storage;
+  - targets and options;
+  - query capabilities and defaults;
+  - handling of unknown fields and extensions.
+- **Semantic validation.** Resolve named types and field references, and
+  reject invalid or cyclic references where they are unsupported. Enforce
+  the capabilities of primary keys and scope keys recursively. Check that
+  sources and outputs are compatible, and derive agreement between the write
+  scope and the query scope. Do not imply that generic JSON Schema
   validators perform the engine's reference resolution or capability checks.
-- Operation contracts: input presence and context/scope roles, target and
-  definition identity, results, stable error codes and locations without
-  plaintext values, validation stages, and which failures precede key I/O.
-- Wire mapping: JSON and frame representations, integer widths/ranges and
-  lossless numeric transport, bytes/text encodings, missing versus null,
-  context ordering/grouping, descriptor/AAD/index-scope lowering, and
-  normative references to the ciphertext/SQL envelope and tag extraction.
-  Specify the host/guest ABI or reference its versioned specification;
-  JSON authoring syntax must not silently redefine the binary transport.
-- Versioning: explicit protocol/schema identifiers, supported-version and
-  capability handling, and rejection of unsupported features. Define future
-  evolution without adding compatibility obligations for the prototype.
+- **Operation contracts.** The contracts cover:
+  - input presence;
+  - the roles of context and scope;
+  - target and definition identity;
+  - results;
+  - stable error codes and locations, without plaintext values;
+  - validation stages;
+  - which failures come before key I/O.
+- **Wire mapping.** Specify the application binary interface (ABI) between
+  host and guest, or reference its versioned specification. JSON authoring
+  syntax must not silently redefine the binary transport. The mapping
+  covers:
+  - JSON and frame representations;
+  - integer widths and ranges, and lossless numeric transport;
+  - encodings of bytes and text;
+  - missing compared with null;
+  - context ordering and grouping;
+  - the lowering of descriptors, AAD, and index scope;
+  - normative references to the ciphertext and SQL envelope, and to tag
+    extraction.
+- **Versioning.** Explicit protocol and schema identifiers, handling of
+  supported versions and capabilities, and rejection of unsupported
+  features. Define future evolution without adding compatibility obligations
+  for the prototype.
 
-Conformance fixtures include accepted and rejected definitions/requests,
-expected error codes/paths, normalized definitions, and deterministic
-context/encoding vectors. Exercise the same fixtures through Rust and the
-Go guest path, plus SQL extraction where relevant. Randomized ciphertext
-comparisons use cross-decryption and query behavior, not byte equality.
-Schema validation is one layer of the suite; semantic rejection tests are
-required even for structurally valid JSON.
+Conformance fixtures include accepted and rejected definitions and requests,
+expected error codes and paths, normalised definitions, and deterministic
+vectors for context and encoding. Run the same fixtures through Rust and
+through the Go guest path, and through SQL extraction where relevant.
+Compare randomised ciphertexts by cross-decryption and query behaviour, not
+byte equality. Schema validation is one layer of the suite. Semantic
+rejection tests are required even for structurally valid JSON.
 
-Keep a single maintained contract: prefer generating structural schemas and
-capability metadata from the shared declaration models/catalog where that
-faithfully represents the specified grammar, with committed artifacts and
-CI drift checks. Review generated schemas against normative rules rather
-than treating Serde derives as a complete specification. Do not introduce
-OpenAPI or a new transport solely to document this non-HTTP interface.
+Keep a single maintained contract. Prefer generating structural schemas and
+capability metadata from the shared declaration models and catalog, where
+that faithfully represents the specified grammar. Commit the generated
+artefacts and check them for drift in CI.
+
+Review generated schemas against the normative rules, instead of treating
+Serde derives as a complete specification. This interface does not use HTTP.
+Do not introduce OpenAPI, or a new transport, only to document it.
 
 ## Coverage of the complete review
 
-The configured-target work above addresses issue 13 in depth. The full API
-redesign also requires the following work. Each row identifies a concrete
-deliverable; recommendations do not silently settle the open decisions.
+The configured-target work above covers review issue 13 in depth. The full
+API redesign also needs the work in this table. Each row names a concrete
+deliverable. Recommendations do not silently settle the open decisions.
 
 | Work area | Review issues | Required deliverable |
 | --- | --- | --- |
-| Public methods, traits, and ownership | 1, 3, 5, 9, 10, 14 | One signature/import/receiver map, operation-trait design, and dependency migration |
-| Context contract | 1, 3, 4, 11, 12, 14 | Scalar and record context rules, explicit optionality, and matching dynamic representation |
-| Ciphertext persistence | 2, 8 | Opaque scalar output, canonical bytes, Serde/Base64 behavior, and a defined boundary with structural trees |
+| Public methods, traits, and ownership | 1, 3, 5, 9, 10, 14 | One map of signatures, imports, and receivers; operation-trait design; and migration of dependencies |
+| Context contract | 1, 3, 4, 11, 12, 14 | Context rules for scalars and records, explicit optionality, and a matching dynamic representation |
+| Ciphertext persistence | 2, 8 | Opaque scalar output, canonical bytes, Serde and Base64 behaviour, and a defined boundary with structural trees |
 | Whole-value wrapper | 8 | Codec, authenticated format version, decode contract, and bounded timing claims |
-| Mixed records and collections | 7, 8, 11 | Passthrough/renaming/context-field derive support and retained collection batching |
-| Configured targets and queries | 13 | Typed Rust factories, dynamic options, configuration lifetime, JSON conversion and Go coverage |
+| Mixed records and collections | 7, 8, 11 | Derive support for passthrough, renaming, and context fields, and retained collection batching |
+| Configured targets and queries | 13 | Typed Rust factories, dynamic options, configuration lifetime, JSON conversion, and Go coverage |
 | Names, integration, and release | 5, 6, 9, 10, 13, 14 | Final glossary, coordinated consumer updates, format fixtures, and executable public examples |
-| Parallel Go JSON work | 15 | Reconcile PR #1353 and tasks #1348–#1352 with this contract; reuse compatible implementation work |
-| Prior query design | 16 | Reuse the supplied field-owned query model; reconcile handles, configuration ownership, JSON capabilities, and portability |
-| Consistent definition selector | 17 | Choose one method name for encrypt and query; recommend `using` with operation-specific bounds |
-| Single-ciphertext encoding and cleanup | 18 | `OpaqueEncode`/`OpaqueDecode`, consuming encrypt and encrypt_into, guarded source/buffer lifetimes, and explicit cleanup scope |
+| Parallel Go JSON work | 15 | Reconcile PR #1353 and tasks #1348 to #1352 with this contract, and reuse compatible implementation work |
+| Prior query design | 16 | Reuse the supplied field-owned query model, and reconcile handles, configuration ownership, JSON capabilities, and portability |
+| Consistent definition selector | 17 | Choose one method name for encrypt and query. Recommended: `using`, with bounds specific to each operation |
+| Single-ciphertext encoding and cleanup | 18 | `OpaqueEncode` and `OpaqueDecode`, consuming `encrypt` and `encrypt_into`, guarded lifetimes for sources and buffers, and an explicit cleanup scope |
 
 ### A. Consolidate the public Rust method and trait structure
 
-This is the Rust-facade workstream. Under the latest customer ordering, do
-only the engine/contract changes needed by Go before its release; defer
-standalone Rust ergonomics and trait relocation. The sections below organize
-the full review scope, not the customer critical path.
+This is the workstream for the Rust facade. Under the latest customer
+ordering, make only the engine and contract changes that Go needs before its
+release. Defer standalone Rust convenience work and the move of traits. The
+sections below organise the full scope of the review, not the critical path
+for customers.
 
-Keep the agreed ordinary keyset receiver and `EncryptInto` conversion forms.
-Use the accepted destination-directed decrypt pair. Write
-out all signatures, imports, bounds, and return types before renaming traits.
-Retain ordinary keyset `decrypt` / `decrypt_with_context` for opaque
-ciphertexts, and remove redundant prototype conveniences without
-compatibility shims.
+Keep the agreed ordinary keyset receiver and the `EncryptInto` conversion
+forms. Use the accepted destination-directed decrypt pair. Write out all
+signatures, imports, bounds, and return types before renaming traits. Keep
+the ordinary keyset `decrypt` and `decrypt_with_context` for opaque
+ciphertexts. Remove redundant prototype conveniences without compatibility
+shims.
 
 Separate plaintext representation, target operation declarations, and
-execution conveniences explicitly. Resolve why `EncryptFrom` declares
-`encryption()` while `encrypt_from` lives on `EncryptInto`, and why
-`DecryptFrom` supplies methods while `DecryptInto` describes opening. A
-rename without an ownership/signature map leaves the discovery problem.
+execution conveniences explicitly. Resolve two inconsistencies:
 
-Recommendation: Stack owns the public value-encryption model; Vitamin C
-retains general primitives. Specify the dependency boundary before moving
-code, retaining one canonical trait identity and the no-HTTP/WASM builds.
-Reassess the original Vitamin C cipher-trait mismatch in that architecture:
-do not add a public trait implementation merely for symmetry if it cannot
-carry structured KMS context or support its advertised operations.
+- `EncryptFrom` declares `encryption()`, while `encrypt_from` is on
+  `EncryptInto`;
+- `DecryptFrom` supplies methods, while `DecryptInto` describes opening.
 
-Completion: representative scalar, blob, typed record, searchable record,
-and JSON calls compile with the documented imports, including generic
-callers. The method inventory has no unexplained duplicate execution path.
-Compile-fail tests cover genuinely unsupported trait capabilities.
+A rename without a map of ownership and signatures leaves the discovery
+problem unsolved.
+
+Recommended: Stack owns the public model for encrypting values, and Vitamin
+C keeps general primitives. Specify the dependency boundary before moving
+code. Keep one canonical identity for each trait, and keep the builds
+without HTTP and for WebAssembly. Reassess the original mismatch with
+Vitamin C's cipher trait in that architecture. Do not add a public trait
+implementation only for symmetry, if it cannot pass structured KMS context
+or support the operations it advertises.
+
+Completion criteria for work area A: representative scalar, blob, typed
+record, searchable record, and JSON calls compile with the documented
+imports, including from generic callers. The method inventory has no
+unexplained duplicate execution path. Compile-fail tests cover the trait
+capabilities that are not supported.
 
 ### B. Turn the context scenarios into a normative contract
 
-The nine scenarios in the context document are the acceptance matrix, not
-optional examples. Cover scalar static context plus caller extension,
-source-field selection, caller input, output storage, and decrypt recovery
-or expected-context checks. Preserve the accepted `field = "id"` shorthand
-as selection on both inputs, without implicit copying.
+The nine scenarios in the [context
+examples](2026-10-24-stack-encrypt-context-examples.md) are the acceptance
+matrix, not optional examples. Cover:
 
-Fix composition order and grouping once: literal/field base, composite row
-context, and any caller extension. Specify the exact descriptor and AAD
-encoding for each case. An expected context checks stored context; it is
-not another extension. Never need to open ciphertext to discover the
-context required to open that ciphertext.
+- a scalar's static context plus a caller extension;
+- selecting a source field;
+- caller input;
+- storing context in the output;
+- recovering context, or checking expected context, on decrypt.
 
-Recommendation: represent no input, required input, optional extension,
-and optional expectation as explicit capabilities. Do not infer optionality
-from the application's `Default` implementation. Settle the wrapper or
-trait mechanism alongside the public signatures. Resolve the existing
-empty-context mismatch between ordinary scalar encryption and ciphertext
-targets without weakening nonempty-context requirements for search targets.
+Keep the accepted `field = "id"` shorthand as a selection on both inputs:
+the plaintext on encrypt, and the stored output on decrypt. The shorthand
+does not copy anything implicitly.
 
-Give each source/storage/composition rule a dynamic representation and Go
-authoring path. Current EQL identifier constraints must be reconciled with
-row/caller context explicitly, not bypassed or silently dropped.
+Fix the composition order and grouping once: the literal or field base, then
+the composite row context, then any caller extension. Specify the exact
+descriptor and AAD encoding for each case. An expected context checks the
+stored context, and is not another extension. A caller must never need to
+open a ciphertext to discover the context required to open that ciphertext.
 
-**Next discussion — recommendation, not yet a decision:** distinguish
-ciphertext binding from search scope. A row ID may bind a ciphertext to its
-record without making every index term row-specific. The target definition
-should explicitly describe both scopes; query construction uses the same
-declared search scope as index generation. For example, a searchable email
-may bind its ciphertext to `(users.email, tenant_id, user_id)` while its
-equality index is scoped to `(users.email, tenant_id)`, allowing a query
-before the user ID is known. Do not silently remove components from one
-generic context argument. Index-key derivation/KMS descriptors must respect
-this separation too; changing only leaf AAD is not a complete design.
-Finalize the conceptual split before choosing attribute names or exact
-tuple encodings, and represent it in the dynamic definition as well.
+Recommended: represent no input, required input, optional extension, and
+optional expectation as explicit capabilities. Do not infer optionality from
+the application's `Default` implementation. Settle the wrapper or trait
+mechanism together with the public signatures. Resolve the existing mismatch
+in empty context between ordinary scalar encryption and ciphertext targets.
+Do not weaken the requirement for nonempty context on search targets while
+doing so.
 
-**User direction:** allow row-bound ciphertext and document that reads must
-provide the row ID to decrypt. Search scope should cover multiple rows,
-such as a tenant; automatically including a row ID defeats ordinary search.
+Give each rule for source, storage, and composition a dynamic representation
+and a way to write it in Go. Reconcile the current EQL identifier
+constraints with row and caller context explicitly. Do not bypass those
+constraints, or drop context silently.
 
-**Misuse-resistant API recommendation (not yet accepted):**
+#### Separate ciphertext binding from search scope
 
-- Give existing record `context(field = "id")` and its directional variants
-  ciphertext-binding semantics. Do not implicitly feed those selected fields
-  or caller extensions into index keys or terms. This is a proposed
-  clarification for searchable targets; older examples did not distinguish
-  the roles, and must be updated together before implementation.
-- Declare search scope separately on the shared target definition. A named
-  application scope input (for example `TenantScope`) can come from operation
-  configuration/caller input. The capability proposal below also permits
-  record-field selectors when their types explicitly qualify as scopes.
-  The same typed scope is required for both
-  writing index terms and constructing queries. A tenant-bound cipher may
-  supply it only through an explicit declared mapping; never guess it from
-  unrelated metadata.
-- A binding input and a search-scope input are distinct capabilities even
-  when their underlying values have the same Rust type. Do not provide
+Status: recommendation for the next discussion, not yet a decision.
+
+Distinguish ciphertext binding from search scope. A row ID can bind a
+ciphertext to its record without making every index term specific to that
+row. The target definition should describe both scopes explicitly. Query
+construction uses the same declared search scope as index generation.
+
+For example, a searchable email can bind its ciphertext to
+`(users.email, tenant_id, user_id)`, while its equality index is scoped to
+`(users.email, tenant_id)`. A query can then run before the user ID is
+known. Do not silently remove components from one generic context argument.
+Index-key derivation and KMS descriptors must respect this separation too.
+Changing only the leaf AAD is not a complete design.
+
+Settle the conceptual split before choosing attribute names or exact tuple
+encodings, and represent it in the dynamic definition as well.
+
+The user's direction: allow ciphertext bound to a row, and document that
+reads must supply the row ID to decrypt. Search scope should cover several
+rows, such as a tenant. Including a row ID automatically would defeat
+ordinary search.
+
+#### Misuse-resistant API (recommendation, not accepted)
+
+- Give the existing record `context(field = "id")` and its directional
+  variants the meaning of ciphertext binding. Do not implicitly feed those
+  selected fields or caller extensions into index keys or terms. This is a
+  proposed clarification for searchable targets. Older examples did not
+  distinguish the roles. Update them all together before implementation.
+- Declare search scope separately, on the shared target definition. A named
+  application scope input, such as `TenantScope`, can come from operation
+  configuration or caller input. The capability proposal below also allows
+  record-field selectors, when their types explicitly qualify as scopes.
+- Writing index terms and constructing queries both require the same typed
+  scope. A cipher bound to a tenant can supply the scope only through an
+  explicit declared mapping. Never guess the scope from unrelated metadata.
+- A binding input and a search-scope input are distinct capabilities, even
+  when their underlying values have the same Rust type. Do not provide a
   blanket implicit conversion between the roles. If one operation needs both
-  caller inputs, use named members in its typed input rather than one
-  unlabelled value routed to both operations.
-- Missing required scope prevents awaiting a Rust request; dynamic/Go
-  validation rejects it before key I/O. A default column-wide scope is not
-  substituted when a tenant scope is missing. Scope-free searches use an
-  explicitly declared column-wide policy, with column identity still bound.
+  caller inputs, use named members in its typed input, not one unlabelled
+  value routed to both operations.
+- Missing required scope prevents awaiting a Rust request. Dynamic and Go
+  validation reject it before key I/O. A default column-wide scope is not
+  substituted when a tenant scope is missing. Searches without scope use an
+  explicitly declared column-wide policy, and still bind the column
+  identity.
 - The effective ciphertext binding should include the declared search scope
-  as well as record binding, so changing a supplied tenant also prevents
-  opening the ciphertext. Index derivation sees column identity plus search
-  scope only. Query requests never require record binding input.
-- Encrypted output must expose whatever the decrypt selector needs or
-  require it from the caller. Record-projection examples must select the ID;
-  there is no decrypt fallback which drops row binding. Selecting a field
-  as context does not implicitly store that field.
+  as well as the record binding. Then changing a supplied tenant also
+  prevents opening the ciphertext. Index derivation uses only the column
+  identity plus the search scope. Query requests never require
+  record-binding input.
+- Encrypted output must expose whatever the decrypt selector needs, or
+  require it from the caller. Examples that project records must select the
+  ID. No decrypt fallback drops row binding. Selecting a field as context
+  does not implicitly store that field.
 
 Working declaration spelling:
-`#[stash(context(field = "id"), search_scope(caller = TenantScope))]`.
-The spelling is illustrative; it preserves the agreed directional-context
-shorthand and gives search an explicitly separate role. Dynamic definitions
-must preserve this separation rather than providing a shared context bag.
+`#[stash(context(field = "id"), search_scope(caller = TenantScope))]`. The
+spelling is illustrative. The spelling keeps the agreed directional-context
+shorthand, and gives search an explicitly separate role. Dynamic definitions
+must keep this separation, instead of providing one shared collection of
+context values.
 
-This prevents accidental propagation of row IDs into search terms; it
-cannot prove the application chose a scope containing multiple rows. A user
-can deliberately put a row ID inside `TenantScope`. Do not claim otherwise,
-or attempt to infer semantics from field names such as `id`. Use explicit
-types/declarations and documentation for that remaining application choice.
+This design stops row IDs from spreading into search terms by accident. The
+design cannot prove that the application chose a scope that contains several
+rows. A user can deliberately put a row ID inside `TenantScope`. Do not
+claim otherwise, or try to infer meaning from field names such as `id`. Use
+explicit types, declarations, and documentation for that remaining
+application choice.
 
-#### Scope capability and role wrappers — assessment
+#### Scope capability and role wrappers
 
-**Proposal under discussion:** use both ideas together. Scope is the subset
-of context permitted for search terms; semantic wrappers provide positive
-trait implementations identifying that subset. Working capability names:
-`CiphertextContext` and `SearchScope: CiphertextContext`. These names describe
-eligibility, not source selection, optionality, or encoding. Integrate with
-the existing context representation rather than introducing a competing
-serializer. The previously agreed `ContextInput` capabilities still describe
-whether the caller must supply a value.
+Status: proposal under discussion.
 
-For example, `PrimaryKey<T>` implements ciphertext-context eligibility but
-not search-scope eligibility. `ScopeKey<T>` implements both, subject to
-the inner value's supported context encoding. Generic parameters are Rust
-types (`PrimaryKey<u64>`); `PrimaryKey(42)` is a value constructor. Prefer
-`ScopeKey<T>` as the name for the second wrapper; the user accepted this
-name in preference to `Collection<T>`, which can read as a container.
-These wrappers need the appropriate `Zeroize` support when they are owned
-plaintext fields, consistent with the existing ownership decision.
+Use both ideas together. Scope is the subset of context that search terms
+are allowed to use. Semantic wrappers provide positive trait implementations
+that identify that subset. The working capability names are
+`CiphertextContext`, and `SearchScope: CiphertextContext`. These names
+describe eligibility, not source selection, optionality, or encoding.
 
-Crucially, neither wrapper automatically adds the field to context or scope,
-stores it in encrypted output, or changes the plaintext's encryption layout.
-The target declaration still selects sources. An illustrative declaration
-is `context(field = "id"), search_scope(field = "tenant_id")`. With
+Integrate these capabilities with the existing context representation,
+instead of introducing a competing serialiser. The previously agreed
+`ContextInput` capabilities still describe whether the caller must supply a
+value.
+
+For example, `PrimaryKey<T>` implements eligibility for ciphertext context,
+but not for search scope. `ScopeKey<T>` implements both, subject to the
+inner value's supported context encoding. Generic parameters are Rust types,
+such as `PrimaryKey<u64>`. By contrast, `PrimaryKey(42)` is a value
+constructor.
+
+The name `ScopeKey<T>` is preferred for the second wrapper. The user
+accepted it in place of `Collection<T>`, because `Collection<T>` can read as
+a container. These wrappers need the appropriate `Zeroize` support when they
+are owned plaintext fields, consistent with the existing ownership decision.
+
+Neither wrapper automatically adds the field to context or scope, stores it
+in the encrypted output, or changes the plaintext's encryption layout. The
+target declaration still selects sources. An illustrative declaration is
+`context(field = "id"), search_scope(field = "tenant_id")`. With
 `id: PrimaryKey<u64>` and `tenant_id: ScopeKey<u64>`, the selection is
-valid; selecting `id` as search scope is a compile-time error. This makes
-typed field selection a reasonable alternative to the earlier recommendation
-to accept only caller-supplied search scope.
+valid, and selecting `id` as search scope is a compile-time error. This
+makes typed field selection a reasonable alternative to the earlier
+recommendation to accept only search scope supplied by the caller.
 
-Misuse-resistance requirements:
+Requirements for misuse resistance:
 
-- No blanket `SearchScope` implementation for every context, serializable
-  type, raw number, or raw string. Scope use is an explicit classification.
-- Composite scopes qualify only when every component is a scope. A tuple
-  containing a primary key cannot become a scope merely by tuple composition.
-  Context composites may contain either category.
-- Do not forward scope eligibility through `Deref`, `AsRef`, or implicit
-  conversions that erase a primary-key wrapper. Typed target/query handles
-  retain the definition's concrete scope type, rather than accepting any
-  type implementing `SearchScope` interchangeably. Distinct application
-  newtypes can distinguish tenant and project scopes with equal wire types.
-- Permit explicit application opt-in through a documented trait/derive
+- No blanket `SearchScope` implementation for every context type,
+  serialisable type, raw number, or raw string. Using a value as scope is an
+  explicit classification.
+- A composite scope qualifies only when every component is a scope. A tuple
+  that contains a primary key cannot become a scope only because it is a
+  tuple. Context composites can contain either category.
+- Do not pass scope eligibility through `Deref`, `AsRef`, or implicit
+  conversions that remove a primary-key wrapper. Typed target and query
+  handles keep the definition's concrete scope type, and do not accept any
+  other type that implements `SearchScope` in its place. Distinct
+  application newtypes can tell tenant and project scopes apart, even when
+  their wire types are equal.
+- Allow explicit opt-in by applications through a documented trait or derive
   contract. This is a semantic capability, not an unsafe-memory contract.
-  Sealing every implementation cannot prove that a value groups multiple
-  records: a caller can still explicitly rewrap a row identifier as a scope.
-  Guarantee rejection of accidental role mixing, not business semantics.
+  Sealing every implementation cannot prove that a value groups several
+  records, because a caller can still explicitly rewrap a row identifier as
+  a scope. Guarantee that accidental mixing of roles is rejected, not
+  business semantics.
 
-Dynamic definitions must retain field roles and context-versus-scope
-selection. Validate those roles before execution: an explicitly declared
-primary-key field is not scope-eligible. Plain JSON numbers carry no such
-role by themselves; do not infer it from the field name or wire encoding.
-Generated Go types can represent the distinction, while the engine validates
-dynamic declarations. Rust and dynamic lowering must produce the same
-canonical context/scope values; never use Rust type names as wire domains.
-Scope classification is not evidence of authorization to access a tenant.
+Dynamic definitions must keep field roles, and the choice between context
+and scope for each selection. Validate those roles before execution: a field
+explicitly declared as a primary key is not eligible for scope. A plain JSON
+number has no role by itself. Do not infer a role from the field name or the
+wire encoding. Generated Go types can represent the distinction, while the
+engine validates dynamic declarations.
 
-Acceptance work: valid typed field/caller scopes, rejected primary-key and
-mixed-tuple scopes, no automatic selection of marked fields, exact scope
-type agreement between write/query, and equivalent dynamic validation.
+Rust and dynamic lowering must produce the same canonical context and scope
+values. Never use Rust type names as wire domains. Classifying a value as
+scope is not evidence of authorisation to access a tenant.
+
+Acceptance work:
+
+- valid typed field scopes and caller scopes;
+- rejected primary-key scopes and mixed-tuple scopes;
+- no automatic selection of marked fields;
+- exact agreement of scope type between write and query;
+- equivalent dynamic validation.
 
 #### Dynamic scope roles and validation
 
-**Recommended design:** declare semantic types and source selectors in the
-definition, validate once on load, and supply values separately per operation.
-Do not let an individual request assert `scope_key` on an arbitrary value
-to override the loaded definition. A definition author can explicitly
-classify values, just as a Rust author can construct wrappers; this is
-misuse resistance, not authorization or proof of multi-row cardinality.
+Recommended design: declare semantic types and source selectors in the
+definition, validate them once on load, and supply values separately for
+each operation. Do not let an individual request assert `scope_key` on an
+arbitrary value to override the loaded definition. A definition author can
+explicitly classify values, in the same way that a Rust author can construct
+wrappers. This resists misuse. It is not authorisation, or proof that a
+scope covers several rows.
 
-**Accepted clarification:** `types` is optional; it holds reusable named
-types. Fields may use built-ins or inline role wrappers. Ordinary built-in
-or named values need no `kind`. Supported primitives remain eligible for
-ciphertext context, but search eligibility requires explicit `scope_key`
-classification (or another explicitly supported scope-capable type).
+Accepted clarification: `types` is optional, and contains reusable named
+types. Fields can use built-in types or inline role wrappers. Ordinary
+built-in or named values need no `kind`. Supported primitives remain
+eligible for ciphertext context. Eligibility for search requires explicit
+`scope_key` classification, or another explicitly supported type that can
+act as a scope.
 
-Illustrative declaration fragment (proposed schema, not today's wire API):
+Illustrative declaration fragment. This is a proposed schema, not today's
+wire API:
 
 ```json
 {
@@ -1203,167 +1572,212 @@ Illustrative declaration fragment (proposed schema, not today's wire API):
 }
 ```
 
-This is the context-related portion of a record target definition; encrypted
-email targets and their search options are declared separately as usual.
-The shared `field` shorthand selects plaintext fields on encrypt and stored
-fields on decrypt; it does not imply a field exists in a query request.
+This is the context-related part of a record target definition. Encrypted
+email targets and their search options are declared separately, as usual.
+The shared `field` shorthand selects plaintext fields on encrypt, and stored
+fields on decrypt. It does not imply that the field exists in a query
+request.
+
 For a query on the derived email handle, the definition exposes a required
-`TenantId` scope argument. No `UserId` argument is required or accepted as
-an alternative scope. A named/composite scope uses the same ordered schema
-on the write and query paths, regardless of their different source selectors.
+`TenantId` scope argument. No `UserId` argument is required, or accepted as
+an alternative scope. A named or composite scope uses the same ordered
+schema on the write and query paths, even though their source selectors
+differ.
 
-Definition loading resolves field references and source/output types,
-computes the context/scope capabilities, verifies all composite components,
-and rejects a primary-key search selector before key I/O. It also verifies
-decrypt selectors are available from stored fields or declared caller input.
-Compile the validated definition into an immutable handle shared by encrypt,
-decrypt and query operations. No second query-specific scope policy.
+Loading a definition:
 
-At execution validate presence, nominal type when supplied by a typed handle,
-physical representation, range, and composite shape against the selected
-definition. Raw wire values obtain their expected semantic type from the
-definition; they cannot prove their application provenance. Unknown role
-overrides or mismatched nominal value handles are rejected. No fallback to
-unscoped querying when a required scope is absent. When JSON is the authoring
-or request format, preserve full-width integers through lossless parsing;
-the frame transport already distinguishes supported integer widths.
+- resolves field references, and source and output types;
+- computes the context and scope capabilities;
+- verifies all composite components;
+- rejects a primary-key search selector before key I/O;
+- verifies that decrypt selectors are available from stored fields or
+  declared caller input.
 
-Recommended Go generation uses distinct named ID types and query methods
-with the required scope argument (`TenantID` rather than `uint64` or an
+Compile the validated definition into an immutable handle that encrypt,
+decrypt, and query operations share. There is no second scope policy
+specific to queries.
+
+At execution, validate these against the selected definition: presence,
+nominal type when a typed handle supplies it, physical representation,
+range, and composite shape. Raw wire values get their expected semantic type
+from the definition. A raw value cannot prove where it came from in the
+application. Unknown role overrides and mismatched nominal value handles are
+rejected. A query never falls back to unscoped querying when a required
+scope is absent.
+
+When JSON is the authoring or request format, keep full-width integers
+through lossless parsing. The frame transport already distinguishes the
+supported integer widths.
+
+Recommended Go generation uses distinct named ID types, and query methods
+that take the required scope argument (`TenantID`, not `uint64` or an
 untyped context map). Generated wrappers remain conveniences over the same
-validated runtime definition; ungenerated FFI callers receive runtime errors
-for invalid declarations/requests. Do not assert Go shares Rust's ownership
-or trait-bound guarantees.
+validated runtime definition. FFI callers that do not use generated code get
+runtime errors for invalid declarations and requests. Do not claim that Go
+shares Rust's ownership or trait-bound guarantees.
 
 Lower the chosen scope and binding through the existing canonical context
-machinery, retaining scalar widths, ordering and grouping. Current dynamic
-`context.rs` proves parity between runtime `ContextPiece` trees and Rust
-context derivations, but has no primary-key/scope-role distinction. Add role
-validation before lowering erases those distinctions, and keep the separate
-resolved scope and binding available to their respective operations.
-Do not persist role labels in every row just to recover them at runtime;
-definition identity and deployment remain explicit concerns of loading the
-same policy. Add Rust/Go/dynamic fixtures for valid scopes, primary-key
-refusals, nested scopes, missing inputs and identical derived terms/AAD.
+machinery, keeping scalar widths, ordering, and grouping. The current
+dynamic `context.rs` proves parity between runtime `ContextPiece` trees and
+Rust context derivations. It does not distinguish the primary-key role from
+the scope role. Add role validation before lowering removes those
+distinctions. Keep the resolved scope and the resolved binding available
+separately to their own operations.
 
-Completion: all nine cases execute through Rust and dynamic declarations;
-required input is enforced, altered/wrong context is refused, and existing
-context encodings agree across all new implementations.
+Do not store role labels in every row only to recover them at runtime.
+Definition identity and deployment remain explicit concerns of loading the
+same policy. Add Rust, Go, and dynamic fixtures for valid scopes,
+primary-key refusals, nested scopes, missing inputs, and identical derived
+terms and AAD.
+
+Completion criteria for work area B: all nine cases run through Rust and
+dynamic declarations. Required input is enforced, altered or wrong context
+is refused, and existing context encodings agree across all new
+implementations.
 
 ### C. Finish the ciphertext and whole-value storage contracts
 
 Accepted direction: a single-value plaintext encoding produces one opaque
-`Ciphertext`. A normal application struct uses `OpaqueBlob<T>` to encode
-and seal it as one value, or an explicit target for field-level encryption;
-Serde alone does not imply automatic blob serialization. A custom type can
-explicitly implement the single-value encoding capability. The wrapper
-name and detailed persistence contract remain proposals.
-Recommend canonical byte parsing/encoding, human-readable Serde as Base64
-of those bytes, binary Serde as
-bytes, and safe Debug behavior. Parsing an envelope does not authenticate
-it; authentication occurs during decrypt.
+`Ciphertext`. A normal application struct uses `OpaqueBlob<T>` to encode and
+seal it as one value, or an explicit target for field-level encryption.
+Serde alone does not imply automatic blob serialisation. A custom type can
+explicitly implement the single-value encoding capability. The wrapper name
+and the detailed persistence contract remain proposals.
 
-The existing encrypted-output transcoder can implement the adapter:
-`Node::Single(SealedValue)` is consumed by `Visitor::sealed` and moved into
-the opaque wrapper. Keep the sealed value internally rather than forcing
-a byte serialization at construction. There is no new encryption or KMS
-request. On decrypt the wrapper delegates to the same leaf-opening path,
-using a single-node wrapper if the internal API requires it.
+Recommended persistence behaviour:
 
-Do not convert maps, sequences, passthrough nodes, or sealed empty-container
-markers into this type merely because they have a byte representation.
-Serializing a whole encrypted tree retains its multiple ciphertexts and
-authentication boundaries; it does not produce single-value encryption.
-The leaf visitor's unsupported-shape errors are a defensive check, not the
-desired public discovery mechanism. Constrain ordinary encryption to
-single-value encodable inputs so unsupported structural inputs are rejected
-before encryption, statically in Rust where possible and during dynamic
-validation. Settle the exact plaintext capability with the representation
-traits; do not discover an unsupported shape only after minting keys.
+- canonical byte parsing and encoding;
+- human-readable Serde as Base64 of those bytes;
+- binary Serde as bytes;
+- safe `Debug` behaviour.
+
+Parsing an envelope does not authenticate it. Authentication happens during
+decryption.
+
+The existing transcoder for encrypted output can implement the adapter.
+`Visitor::sealed` consumes `Node::Single(SealedValue)` and moves it into the
+opaque wrapper. Keep the sealed value internally, instead of forcing a byte
+serialisation at construction. There is no new encryption or KMS request. On
+decrypt, the wrapper delegates to the same leaf-opening path, using a
+single-node wrapper if the internal API requires one.
+
+Do not convert maps, sequences, passthrough nodes, or sealed markers for
+empty containers into this type only because they have a byte
+representation. Serialising a whole encrypted tree keeps its several
+ciphertexts and authentication boundaries, and does not produce single-value
+encryption. The leaf visitor's errors for unsupported shapes are a defensive
+check, not the intended way for users to discover the rule.
+
+Constrain ordinary encryption to inputs that can be encoded as a single
+value. Unsupported structural inputs are then rejected before encryption:
+statically in Rust where possible, and during dynamic validation. Settle the
+exact plaintext capability together with the representation traits. Do not
+discover an unsupported shape only after keys have been minted.
 
 Keep generic structural encryption and searchable JSON explicit. Specify
-whether structural-tree persistence is supported and under what stable
-format. Any protocol changes must be coordinated with their consumers.
+whether persistence of structural trees is supported, and in what stable
+format. Coordinate any protocol changes with their consumers.
 
 #### Typed encodings and extractable ZeroKMS tags
 
-**Requirements added, 2026-10-25:** ciphertext text conversion returns the
-existing concrete encoding wrappers, not `String`. The user also wants to
-explore selecting an encoded ciphertext as a field's output type. The
-ZeroKMS key tag must be easily extractable from stored ciphertext, including
-in PL/pgSQL, to support a separately designed refinable-tag mechanism.
-The storage/authentication contract is not yet locked in.
+Requirements added on 25 October 2026:
 
-Current `eql-bindings::encoding::{Base64Text, Base85Text}` validates canonical
-padded standard Base64 and the crate's RFC 1924 Base85 encoding respectively.
-Their private strings, encoding constructors and validating deserializers
-make decoding infallible. They guarantee the text encoding, not that the
-bytes form a ciphertext. Reuse these types and add ordinary fallible text
-parsing conveniences rather than requiring Serde to construct them from text.
+- Converting a ciphertext to text returns the existing concrete encoding
+  wrappers, not `String`.
+- The user also wants to explore selecting an encoded ciphertext as a
+  field's output type.
+- The ZeroKMS key tag must be easy to extract from a stored ciphertext,
+  including in PL/pgSQL. This supports a refinable-tag mechanism that is
+  designed separately.
+
+The storage and authentication contract is not yet fixed.
+
+The current `eql-bindings::encoding::{Base64Text, Base85Text}` validate
+canonical padded standard Base64, and the crate's RFC 1924 Base85 encoding,
+respectively. Their private strings, encoding constructors, and validating
+deserialisers make decoding infallible. They guarantee the text encoding,
+not that the bytes form a ciphertext. Reuse these types, and add ordinary
+fallible conveniences for parsing text, instead of requiring Serde to
+construct them from text.
 
 Recommended ownership: a small Vitamin C encoding component, re-exported by
-Stack Encrypt and EQL. These byte/text utilities do not depend on encryption,
-SQL or EQL layouts. Keep TypeScript/schema integration optional in the owning
-crate, accounting for Rust's orphan rules when moving the existing trait
-implementations. Do not introduce a Stack Encrypt dependency on EQL merely
-to reuse its text wrappers. Final component placement remains a proposal.
+Stack Encrypt and EQL. These byte and text utilities do not depend on
+encryption, SQL, or EQL layouts. Keep TypeScript and schema integration
+optional in the owning crate, and account for Rust's orphan rules when
+moving the existing trait implementations. Do not make Stack Encrypt depend
+on EQL only to reuse its text wrappers. Final placement of the component
+remains a proposal.
 
-Proposed ciphertext methods return `Base64Text` / `Base85Text` from
-`to_base64` / `to_base85`; corresponding constructors accept the typed text
-and still return a ciphertext parse error when its decoded envelope is
-invalid. Encoding validation, envelope parsing and authentication are three
+Proposed ciphertext methods `to_base64` and `to_base85` return `Base64Text`
+and `Base85Text`. Matching constructors accept the typed text, and still
+return a ciphertext parse error when the decoded envelope is invalid.
+Encoding validation, envelope parsing, and authentication are three
 different guarantees. Use one canonical byte envelope under both encodings.
 
-**Accepted, 2026-10-25:** support explicit encoded ciphertext field targets.
-Use a ciphertext-specific storage wrapper
-(working names `Base64Ciphertext` / `Base85Ciphertext`) over making every
-`Base64Text` an encryption target. The wrapper validates both text and
-envelope, serializes as the text string, and composes with `EncryptTarget`
-and `DecryptSource`: seal once, then encode; parse before opening. These
-names remain provisional until the final naming pass; the first-class
-encoded target capability is settled. A structural output
-can mix `Ciphertext` and encoded ciphertext fields without additional KMS
+Accepted on 25 October 2026: support explicit encoded ciphertext field
+targets. Use a storage wrapper specific to ciphertexts, with the working
+names `Base64Ciphertext` and `Base85Ciphertext`, instead of making every
+`Base64Text` an encryption target. The wrapper validates both the text and
+the envelope, and serialises as the text string. The wrapper composes with
+`EncryptTarget` and `DecryptSource`: seal once and then encode, and parse
+before opening.
+
+These names stay provisional until the final naming pass, but the encoded
+target, as a capability in its own right, is settled. A structural output
+can mix `Ciphertext` fields and encoded ciphertext fields without extra KMS
 calls. Do not silently change the prescribed representation of EQL targets.
 
 The current `SealedValue` v1 envelope already uses a simple prefix:
 `version(1) | keyset_id(16) | iv(16) | tag_len(2, LE) | tag | local_ciphertext`.
-Its ZeroKMS tag begins at byte offset 35, with length at offsets 33–34.
-This is evidence that extraction can be simple, not a commitment to keep
-those offsets. Keep the chosen version's layout documented and parseable
-without the plaintext codec, key retrieval, or decryption. Prefer a checked
-borrowed header/envelope view and an accessor explicitly named `key_tag`
-over decomposing the whole ciphertext or conflating it with the AEAD tag.
-Extraction does not authenticate the returned tag.
+The envelope's ZeroKMS tag begins at byte offset 35, with its length at
+offsets 33 and 34. This shows that extraction can be simple. It is not a
+commitment to keep those offsets.
 
-Ship a matching SQL/PL/pgSQL extraction helper and Rust/Go/SQL fixtures with
-the storage format. Check versions, lengths and truncation before slicing.
-For text storage prefer Base64 when SQL must inspect the header:
-[PostgreSQL](https://www.postgresql.org/docs/current/functions-binarystring.html)
-has built-in Base64 decoding and byte slicing, but not Base85 decoding.
-If SQL extraction from a Base85 envelope is supported, supply an explicit
-decoder; do not leave it as an assumed capability. PostgreSQL Base64 output
-also inserts line breaks, unlike the canonical Rust wrapper: normalize SQL
-output or validate it against the same canonical rules in cross-language
-tests. JSON-tree storage needs its own header adapter: its shared key header
-is distinct from each node's ciphertext and parent tag.
+Document the chosen version's layout, and keep it parseable without the
+plaintext codec, key retrieval, or decryption. Prefer a checked borrowed
+view of the header or envelope, with an accessor explicitly named `key_tag`.
+Do not decompose the whole ciphertext, or confuse the key tag with the AEAD
+tag. Extraction does not authenticate the returned tag.
 
-The proposed refinement uses the ZeroKMS tag as an HMAC key and replaces it
-with a derived tag. **User clarification:** at decryption, ZeroKMS uses the
-refined tag for policy checks and logging, and returns the original tag.
-The decrypt path uses that returned original tag to reconstruct leaf AAD.
-This resolves the conceptual conflict with binding the original tag into
-AEAD: the stored/request tag and the authentication tag input need not be
-identical after refinement. Keep those roles explicit in the KMS response
-and decrypt implementation. Tag extraction returns the tag actually stored
-in the envelope, which may be refined. Protocol details remain deferred;
-this is the intended behavior, not a claim that the current client/engine
-already implements it. Add refinement/decrypt integration coverage when
-that work lands.
+Release a matching SQL and PL/pgSQL extraction helper, and Rust, Go, and SQL
+fixtures, with the storage format. Check versions, lengths, and truncation
+before slicing.
 
-**Decision, 2026-10-25:** direct `encrypt` handles one single-value input;
-`EncryptInto` handles collection composition and batching. This supersedes
-the earlier open question about automatic collection lifting. The agreed
-public examples are:
+For text storage, prefer Base64 when SQL must inspect the header.
+[PostgreSQL's binary string
+functions](https://www.postgresql.org/docs/current/functions-binarystring.html)
+include Base64 decoding and byte slicing, but not Base85 decoding. If SQL
+extraction from a Base85 envelope is supported, supply an explicit decoder.
+Do not leave Base85 decoding as an assumed capability.
+
+PostgreSQL's Base64 output also inserts line breaks, unlike the canonical
+Rust wrapper. Normalise the SQL output, or validate it against the same
+canonical rules in cross-language tests. JSON-tree storage needs its own
+header adapter, because its shared key header is distinct from each node's
+ciphertext and parent tag.
+
+The proposed refinement uses the ZeroKMS tag as an HMAC (hash-based message
+authentication code) key, and replaces it with a derived tag. The user
+clarified the decryption behaviour: ZeroKMS uses the refined tag for policy
+checks and logging, and returns the original tag. The decrypt path uses that
+returned original tag to rebuild the leaf AAD.
+
+This resolves the conceptual conflict with binding the original tag into the
+AEAD. After refinement, the stored or request tag and the tag used as
+authentication input need not be identical. Keep those roles explicit in the
+KMS response and the decrypt implementation. Tag extraction returns the tag
+actually stored in the envelope. That tag may be the refined one.
+
+Protocol details remain deferred. This is the intended behaviour, not a
+claim that the current client or engine already implements it. Add
+integration coverage for refinement and decryption when that work is merged.
+
+#### Single values for encrypt, collections for EncryptInto
+
+Decided on 25 October 2026: direct `encrypt` handles one single-value input,
+and `EncryptInto` handles collection composition and batching. This replaces
+the earlier open question about applying encryption to collections
+automatically. The agreed public examples are:
 
 ```rust
 let scalar: Ciphertext = keyset.encrypt(1_i32).await?;
@@ -1378,160 +1792,230 @@ let blob: Ciphertext = keyset
 ```
 
 The batch produces two independent ciphertexts through the shared batch
-executor; the blob encodes and seals the complete collection as one value.
-Do not add implicit collection handling to direct `encrypt`, or a separate
-batch entry point merely to provide functionality already covered by
-`EncryptInto`. Context-taking variants follow the same division.
+executor. The blob encodes and seals the complete collection as one value.
+Do not add implicit collection handling to direct `encrypt`. Do not add a
+separate batch entry point only to provide what `EncryptInto` already
+covers. Context-taking variants follow the same division.
 
-Acceptance checks: reject direct `encrypt(Vec<i32>)` before execution;
-support context-free `Vec<i32>` to `Vec<Ciphertext>`; preserve target-directed
-collection opening and batching; and recover the blob as a whole collection.
-Existing collection composition is retained, while opaque `Ciphertext` and
-its no-context target support are new work.
+Acceptance checks:
+
+- reject direct `encrypt(Vec<i32>)` before execution;
+- support `Vec<i32>` to `Vec<Ciphertext>` without context;
+- keep target-directed opening and batching of collections;
+- recover the blob as a whole collection.
+
+Existing collection composition is kept. Opaque `Ciphertext`, and its target
+support without context, are new work.
 
 The current prototype treats `Vec<u8>` as one byte value, but that is not a
 compatibility constraint. The latest recommendation is uniform collection
-behavior: `Vec<u8>` to `Vec<Ciphertext>` encrypts individual bytes, while
-`OpaqueBlob<Vec<u8>>` encodes the complete vector as one value. Do not add
-`Vec<u8>` to `Ciphertext` conversion or a bytes wrapper solely to retain
-prototype behavior. A distinct raw-byte capability would need its own use
-case. The blob codec need not reproduce the prototype's raw-byte encoding.
+behaviour. `Vec<u8>` to `Vec<Ciphertext>` encrypts individual bytes, while
+`OpaqueBlob<Vec<u8>>` encodes the complete vector as one value. Do not add a
+conversion from `Vec<u8>` to `Ciphertext`, or a bytes wrapper, only to keep
+prototype behaviour. A distinct raw-byte capability would need its own use
+case, and the blob codec need not reproduce the prototype's raw-byte
+encoding.
 
-For `OpaqueBlob<T>`, select the library-owned codec, authenticated codec/type
-discriminator and version, schema-evolution policy, error behavior, and
-supported source/decoded types. Authenticate before deserializing plaintext.
-Do not silently reinterpret an ordinary byte ciphertext as a different
-encoding. Preserve an explicit wrapper rather than implicit Serde fallback.
+#### Blob codec, format, and timing requirements
 
-The constant-time question needs a concrete conclusion: assess `serdect`,
-the codec, both sides of Serde (value traits and serializer/deserializer),
-length/shape disclosure, and permitted custom implementations. If arbitrary
-Serde types remain supported, do not promise end-to-end constant-time
-serialization. Select a restricted profile separately if that property is
-required; it cannot be inferred from the wrapper or its encryption primitive.
+For `OpaqueBlob<T>`, select:
 
-Completion: scalar and blob examples persist and reload through a fresh
-cipher, reject invalid encodings, and verify fixtures for the selected
-format. The supported timing contract and codec version are documented.
+- the codec, owned by the library;
+- an authenticated codec or type discriminator, and a version;
+- the schema-evolution policy;
+- the error behaviour;
+- the supported source and decoded types.
+
+Authenticate before deserialising plaintext. Do not silently reinterpret an
+ordinary byte ciphertext as a different encoding. Keep an explicit wrapper,
+not an implicit Serde fallback.
+
+The constant-time question needs a concrete conclusion. Assess:
+
+- `serdect`;
+- the codec;
+- both sides of Serde: the value traits, and the serialiser and
+  deserialiser;
+- disclosure of length and shape;
+- which custom implementations are allowed.
+
+If arbitrary Serde types remain supported, do not promise constant-time
+serialisation from end to end. If that property is required, select a
+restricted profile separately. Constant-time behaviour cannot be inferred
+from the wrapper or its encryption primitive.
+
+Completion criteria for work area C: scalar and blob examples persist, and
+reload through a new cipher instance. The examples reject invalid encodings
+and verify fixtures for the selected format. The supported timing contract
+and the codec version are documented.
 
 ### D. Complete record derives and preserve collection composition
 
-Implement explicit passthrough and source-field renaming, independently of
-context selection and storage. Generate decrypt reconstruction for the
-same record. Support nested targets with and without configuration, and
-report incompatible context or source types at their declarations.
+Implement explicit passthrough and renaming of source fields, independently
+of context selection and storage. Generate decrypt reconstruction for the
+same record. Support nested targets with and without configuration. Report
+incompatible context or source types at their declarations.
 
-Keep the collection behavior already present: `Vec<S>` to `Vec<T>` composes
-the target operations into one logical batch, rather than awaiting every
-row separately. Preserve document/leaf key granularity; one logical batch
-does not promise one physical ZeroKMS request beyond backend limits.
+Keep the existing collection behaviour: `Vec<S>` to `Vec<T>` composes the
+target operations into one logical batch, instead of awaiting each row
+separately. Keep the key granularity per document and per leaf. One logical
+batch does not promise one physical ZeroKMS request beyond the backend's
+limits.
 
-Completion: the public mixed-record and searchable-record examples run,
-including batch encrypt/decrypt, nested targets, renamed passthrough fields,
-and stored context. Dynamic/Go declarations produce equivalent semantics.
-A plaintext-side derive generating output types is deferred convenience,
-not a prerequisite for these workflows.
+Completion criteria for work area D: the public examples of mixed records
+and searchable records run. These examples include batch encrypt and
+decrypt, nested targets, renamed passthrough fields, and stored context.
+Dynamic and Go declarations produce equivalent semantics. A plaintext-side
+derive that generates output types is a deferred convenience, not a
+prerequisite for these workflows.
 
-### E. Finish the configured policy's lifetime and query surface
+### E. Finish the configured policy's lifetime and query interface
 
-Use the prior query-design baseline and reconciliation above. The query
-model is not an empty design space: field-owned index selection, typed
-handles, and shared derivation already have a detailed proposal.
+Use the query-design baseline and reconciliation in [Prior query
+design](#prior-query-design-baseline-and-reconciliation). The query model is
+not an empty design space. A detailed proposal already exists for
+field-owned index selection, typed handles, and shared derivation.
 
-The typed-factory direction is established. The target-definition section
-above now proposes its owner: a shared immutable fixed definition, or an
-explicit runtime instance, with generated typed field handles. Review that
-proposal and prove its initialization/lifetime behavior before treating the
-once-only reuse claim as implemented. Multi-field runtime configuration and
-the exact generated signatures still require specification.
+The direction of typed factories is established. The [target definition
+section](#recommended-owner-a-reusable-typed-target-definition) now proposes
+their owner. The owner is a shared immutable fixed definition or an explicit
+runtime instance, with generated typed field handles. Review that proposal,
+and prove its initialisation and lifetime behaviour, before treating the
+claim of reuse after one resolution as implemented. Runtime configuration
+with several fields, and the exact generated signatures, still need to be
+specified.
 
 Write complete static and Go examples for equality, JSON containment,
 ordered paths, and extraction, all using the write policy. Specify query
-results and unsupported-operation errors. Keep those examples free of
-mandatory hand-written plans. Preserve direct typed EQL conversion and
-catalog/guest support as deliverables of the configured-target sequence.
+results and the errors for unsupported operations. Keep those examples free
+of mandatory hand-written plans. Keep direct typed EQL conversion, and
+support in the catalog and guest, as deliverables of the configured-target
+sequence.
 
 ### F. Make naming and coordinated integration part of completion
 
-Use the [packaging glossary](2026-10-25-stack-encrypt-packaging.md) for the
-proposed role-based JSON names, retained `OpaqueBlob`/`Ciphertext` spellings,
-shared format crate and primitive/application split. Retain accepted
-declaration/convenience trait names. Recommend renaming the plan builder's
-output-selection method to `target`; distinguish it from executing
-`EncryptInto`. New spellings and crate moves still require review.
+Use the [packaging glossary](2026-10-25-stack-encrypt-packaging.md) for:
 
-Remove replaced APIs directly and update EQL, Go, and guest consumers
-together. There is no requirement to read prototype ciphertext or preserve
-old imports. Specify the selected encoding and cryptographic semantics,
-and establish fixtures for that contract going forward.
+- the proposed role-based JSON names;
+- the retained `OpaqueBlob` and `Ciphertext` spellings;
+- the shared format crate;
+- the split between primitives and the application layer.
 
-Completion: all public examples are executable tests, static/dynamic
-cross-opening and querying pass against the selected storage format, batching
-checks pass, and the guest builds remain supported. No new API is described
-as implemented until its Rust and Go acceptance criteria are met.
-These are full redesign completion criteria. The earlier Go release uses
-the facade-independent Go, engine and storage gates listed above.
+Keep the accepted names of the declaration and convenience traits.
+Recommended: rename the plan builder's output-selection method to `target`,
+and distinguish it from executing `EncryptInto`. New spellings and crate
+moves still need review.
+
+Remove replaced APIs directly, and update the EQL, Go, and guest consumers
+together. There is no requirement to read prototype ciphertext or keep old
+imports. Specify the selected encoding and cryptographic semantics, and set
+up fixtures for that contract from now on.
+
+Completion criteria for work area F:
+
+- all public examples are executable tests;
+- cross-opening and querying between the static and dynamic paths pass
+  against the selected storage format;
+- batching checks pass;
+- the guest builds remain supported.
+
+No new API is described as implemented until it meets its Rust and Go
+acceptance criteria. These are the completion criteria for the full
+redesign. The earlier Go release uses the gates for Go, the engine, and
+storage in the [implementation
+sequence](#configured-target-implementation-sequence-and-completion-criteria).
+Those gates do not depend on the facade.
 
 ## Recommended order for the remaining design decisions
 
-### Decision checkpoint, 2026-10-25
+### Decision checkpoint on 25 October 2026
 
-Settled direction: keyset-directed single-value encryption; target-directed
-collection batching; explicit `OpaqueBlob`; conversion methods separate
-from `EncryptTarget`/`DecryptSource` declarations; explicit context-input
-capabilities instead of `Default`; typed Rust options factories and dynamic
-deserialization into the same options; static and dynamic support together;
-shared typed definitions and field handles; a consistent `using` selector
-with strict typestate and definition-first query spelling; `OpaqueEncode`
-/ `OpaqueDecode`; consuming encrypt and encrypt_into with guarded cleanup;
-ordinary keyset decrypt alongside the destination-directed decrypt pair,
-both with context variants and ordinary owned `T: Zeroize` results;
-separate ciphertext context and search scope with `PrimaryKey`/`ScopeKey`
-eligibility; definition-time role validation in the dynamic interface,
-optional named-type declarations and explicit scope eligibility; and a
-versioned interoperability specification with shared conformance coverage;
-and no backward compatibility with the prototype. Do not reopen these
-choices merely because older examples or work-area descriptions retain
-provisional wording.
+These directions are settled:
 
-The remaining product/API decisions are narrower. Distinguish them from
-specification and implementation obligations:
+- single-value encryption directed by the keyset;
+- collection batching directed by the target;
+- explicit `OpaqueBlob`;
+- conversion methods separate from the `EncryptTarget` and `DecryptSource`
+  declarations;
+- explicit context-input capabilities instead of `Default`;
+- typed Rust options factories, and dynamic deserialisation into the same
+  options;
+- static and dynamic support together;
+- shared typed definitions and field handles;
+- a consistent `using` selector, with strict typestate and definition-first
+  query spelling;
+- `OpaqueEncode` and `OpaqueDecode`;
+- consuming `encrypt` and `encrypt_into`, with guarded cleanup;
+- ordinary keyset decrypt alongside the destination-directed decrypt pair,
+  both with context variants, and both returning ordinary owned `T: Zeroize`
+  results;
+- separate ciphertext context and search scope, with `PrimaryKey` and
+  `ScopeKey` eligibility;
+- validation of roles when a dynamic definition is loaded, optional
+  named-type declarations, and explicit scope eligibility;
+- a versioned interoperability specification with shared conformance
+  coverage;
+- no backward compatibility with the prototype.
+
+Do not reopen these choices only because older examples or descriptions of
+work areas still use provisional wording.
+
+### Remaining questions
+
+The remaining product and API decisions are narrower. Keep them separate
+from the obligations to specify and implement:
 
 | Remaining question | Decision required |
 | --- | --- |
-| JSON contract completion | Main Go surface is implemented. Close parent-bound child opening and formal conformance gaps; use current cascade/random-order semantics. Do not reopen operator design or rename shipped Go APIs for cosmetic consistency. |
-| Key selection and optional provider policy | Review plaintext-derived keyset selection, client-scoped routed execution, and ZeroKMS lock context as optional provider capabilities. Assess the neutral data/index-key boundary and the intentional non-use of Vitamin C AsyncCipher in the provider-capabilities companion. |
-| Customer storage profiles | Go opaque storage is integrated. Replace temporary Go dependency pins for final release and freeze post-cascade JSON/search profiles. Rust blob conveniences and crate relocation may follow. |
-| Configurable match and short input | #1397 implements deterministic short-word terms in the same Bloom filter. Broader configurable Go tokenizers/filters remain, including #1112. Reconcile the earlier privacy concern explicitly; merging support is not proof of unchanged leakage. |
-| Packaging and names — review in progress | Review the packaging companion's shared format crate, Stack-owned value execution, primitive-only Vitamin C boundary, AsyncCipher retirement, ZeroKMS client rename and role-based JSON names. Encoded ciphertext field targets themselves are accepted. The accepted trait names, `ScopeKey`, and receiver choices are not open again. |
+| JSON contract completion | The main Go interface is implemented. Close the gaps in opening a child bound to its parent, and in formal conformance. Use the current semantics of cascaded tags and random order. Do not reopen operator design, or rename released Go APIs for cosmetic consistency |
+| Key selection and optional provider policy | Review keyset selection derived from plaintext, routed execution scoped to a client, and ZeroKMS lock context, as optional provider capabilities. In the provider-capabilities companion, assess the neutral boundary between data keys and index keys, and the deliberate non-use of Vitamin C's `AsyncCipher` |
+| Customer storage profiles | Go opaque storage is integrated. For the final release, replace the temporary Go dependency pins, and freeze the post-cascade JSON and search profiles. Rust blob conveniences and crate moves can follow |
+| Configurable match and short input | #1397 implements deterministic short-word terms in the same Bloom filter. Broader configurable Go tokenisers and filters remain, including #1112. Reconcile the earlier privacy concern explicitly. Merging support does not prove that leakage is unchanged |
+| Packaging and names (review in progress) | Review the packaging companion's shared format crate, value execution owned by Stack, a Vitamin C boundary of primitives only, retirement of `AsyncCipher`, the ZeroKMS client rename, and role-based JSON names. Encoded ciphertext field targets themselves are accepted. The accepted trait names, `ScopeKey`, and receiver choices are not open again |
 
-Next complete the supported-contract specification and remaining customer
-configuration/read gaps, then validate the candidate and resolve final-release
-pins. The original JSON vertical slice is already implemented. Packaging
-remains deferred; keep initial ORE equality policy unchanged.
+### Next steps
 
-Specification/implementation work still includes exact context/scope grouping
-and encoding, dynamic grammar and version identifiers, error codes, binary
-envelope fields, Rust/Go/SQL fixtures, and the refined-versus-original tag
-flow. Record candidate choices in the formal specification for review; do
-not treat every byte offset or adapter signature as a new architectural
-decision. The initial persistence recommendation remains ordinary Serde
-composition for explicit layouts, without a new arbitrary-tree wire format.
+Next, complete the specification of the supported contract, and close the
+remaining customer gaps in configuration and reads. Then validate the
+release candidate, and resolve the pins for the final release. The original
+end-to-end JSON implementation is already done. Packaging remains deferred.
+Keep the initial ORE equality policy unchanged.
 
-Cleanup implementation still needs guarded encoder sinks, partial decode
-handling, cancellation/drop checks, and an explicit drop-guarded result
-adapter. Under the user's latest sequencing decision, implementation
-improvements may follow the stable format; preserve the stored contract and
-document actual guarantees instead of claiming the eventual goals are
-already satisfied. No completed constant-time/zeroization audit is implied.
+Specification and implementation work still includes:
 
-The shared-definition caching, initialization error/retry behavior, generic
-identity, and request lifetimes still need concrete signatures and proof.
-That is implementation design within the recorded ownership model, not a
-reason to reopen the question of whether writes and queries share a policy.
+- exact grouping and encoding of context and scope;
+- the dynamic grammar and version identifiers;
+- error codes;
+- binary envelope fields;
+- Rust, Go, and SQL fixtures;
+- the flow of the refined tag and the original tag.
+
+Record candidate choices in the formal specification for review. Do not
+treat every byte offset or adapter signature as a new architectural
+decision. The initial recommendation for persistence remains ordinary Serde
+composition for explicit layouts, without a new wire format for arbitrary
+trees.
+
+Cleanup implementation still needs:
+
+- guarded encoder sinks;
+- handling of partial decoding;
+- checks for cancellation and drop;
+- an explicit adapter for drop-guarded results.
+
+Under the user's latest sequencing decision, implementation improvements can
+follow the stable format. Keep the stored contract, and document the actual
+guarantees, instead of claiming that the eventual goals are already met.
+This plan does not imply a completed constant-time or zeroisation audit.
+
+The caching of shared definitions, the behaviour on initialisation error and
+retry, generic identity, and request lifetimes still need concrete
+signatures and proof. That is implementation design within the recorded
+ownership model. It is not a reason to reopen whether writes and queries
+share a policy.
 
 Passthrough implementation, transcoder adapters, collection composition,
-trait relocation, documentation updates, and acceptance tests remain work
-items. They are not reasons to characterize the agreed API direction as
-undecided. No backward-compatibility phase is needed for the prototype;
-the customer release establishes a new Go and persisted-data commitment.
+moving traits, documentation updates, and acceptance tests remain work
+items. These items are not reasons to describe the agreed API direction as
+undecided. The prototype needs no backward-compatibility phase. The customer
+release creates a new commitment for Go and for persisted data.

@@ -1,61 +1,140 @@
 # Stack Encrypt: complete public API examples for review
 
-Date: 2026-10-24. Companion to the
-[API review log](2026-10-24-stack-encrypt-api-review.md).
-The separate [context examples](2026-10-24-stack-encrypt-context-examples.md)
-explore directional source selection, storing context, and decrypt inputs
-across nine scenarios. Their attributes are proposals, not implemented APIs.
-The [JSON operation contract](2026-10-25-stack-encrypt-json-operations.md)
-covers the comprehensive first-release JSON workflows with Rust, dynamic
-and SQL examples, including extraction and walks.
+Date: 24 October 2026.
 
-The user clarified on 2026-10-25 that this API is an early prototype:
-backward compatibility with its old APIs and encodings is not required.
+This document tests the proposed public Rust API of Stack Encrypt against
+three complete workflows. The code in it is a proposal. The code does not
+compile against today's crate. This document is not documentation for a
+released version.
+Reviewers need to decide whether the API these examples show is the one to
+build.
 
-This document tests the proposed public API against three complete workflows:
-encrypt, persist, load, and decrypt a user; the searchable workflow also
-constructs and applies a query. It is an API design draft, not documentation
-for a released version. The examples deliberately leave plans and operation
-descriptions out of the application code.
+The questions to settle are listed in
+"What to review across the three workflows", near the end.
 
-Each main example is a separate program, with all imports and types shown.
-They use the same user fields and synthetic data. `created_at` is an `i64`
-Unix timestamp in seconds so that date-library configuration does not distract
-from the encryption API. The storage files live in a temporary directory and
-are removed when the program exits. Files stand in for a database boundary;
-the examples really encode, write, read, and decode their stored forms.
+The three workflows are:
 
-## What is agreed, and what these examples propose
+1. Encrypt a whole user record as one encrypted value, store it, load it,
+   and decrypt it.
+2. Encrypt only some fields of the record, store it, load it, and decrypt
+   it.
+3. Do the same as workflow 2, but also store a search term for the email.
+   Then build a query and use it to find the record.
 
-**Ownership decision (2026-10-25):** `encrypt` and `encrypt_into` consume
-their inputs, including context-taking variants. Their implementations must
-guard owned plaintext and temporary buffers for cleanup on success, error,
-and request drop; passthrough fields intentionally transfer to the output.
-The single-ciphertext capabilities are named `OpaqueEncode` / `OpaqueDecode`.
-Plaintext types must implement `Zeroize`; no new cleanup trait is planned.
-The candidate programs below predate that bound: update their source derives
-and any reuse of consumed input when making them executable.
-`Serialize` alone does not establish the cleanup contract for `OpaqueBlob<T>`.
+A fourth program shows how the same search works today with the Encrypt
+Query Language (EQL) types, using APIs that already exist.
 
-**Decrypt decision (2026-10-25):** retain direct `keyset.decrypt` and
-`decrypt_with_context` for opaque ciphertext, alongside destination-directed
-`T::decrypt_from` and `decrypt_from_with_context` for declared targets.
-Successful calls return ordinary owned `T: Zeroize`; the caller then owns
-cleanup responsibility. Stack guards intermediate plaintext. Support
-explicit drop-guarded results without imposing a wrapper by default;
-`Zeroize` alone does not wipe returned values on drop. These are accepted
-API contracts, not a claim that the prototype already implements them.
+## Related documents
 
-**Collection decision (2026-10-25):** direct `keyset.encrypt(value)` handles
-one single-value input and produces `Ciphertext`; it does not automatically
-encrypt collections element by element. Collection batching uses
-`EncryptInto`, for example
+This document is a companion to the
+[API review log](2026-10-24-stack-encrypt-api-review.md). Two other
+documents cover related ground:
+
+- The separate [context examples](2026-10-24-stack-encrypt-context-examples.md)
+  work through nine scenarios. They cover where a context comes from, whether
+  the context is stored, and what a decrypt call takes as input. The
+  attributes in that document are proposals, not implemented APIs.
+- The [JSON operation contract](2026-10-25-stack-encrypt-json-operations.md)
+  covers all the JSON workflows planned for the first release, with Rust,
+  dynamic, and SQL examples, including extraction and walks.
+
+The user clarified on 25 October 2026 that this API is an early prototype.
+The new API does not need to stay backward compatible with the old APIs or
+their encodings.
+
+## Terms used in this document
+
+The Stack Encrypt crate is `packages/stack-encrypt`. This document uses
+these terms from it:
+
+- **Keyset**: a set of keys in ZeroKMS, the CipherStash key service.
+  Every encrypted value is sealed under one keyset, and the sealed value
+  records which keyset that was.
+- **Data key**: the key that encrypts one value. Stack Encrypt requests data
+  keys from ZeroKMS in batches.
+- **Context**: extra input that is bound to a ciphertext when it is sealed,
+  such as `("users", "email")` or a record id. Decryption fails unless the
+  reader supplies the same context. Encryption uses the context as
+  additional authenticated data (AAD): data that encryption authenticates
+  but does not encrypt. Search terms are also derived from the context.
+- **Leaf**: one encrypted value. "Sealing" a leaf means encrypting and
+  authenticating it.
+- **Envelope**: the complete stored form of a ciphertext. It includes the
+  sealed bytes and the metadata needed to fetch the key again, so the caller
+  does not store anything separately.
+- **Target**: a Rust type that a value is encrypted into or decrypted from.
+  The target decides which ciphertext and which search terms are produced.
+- **Passthrough field**: a field copied unencrypted from the plaintext type
+  to the encrypted type, and back again on decrypt.
+- **Plan**: the internal description of which fields a conversion encrypts,
+  indexes, or passes through. Today a caller can build one with
+  `Plan::fields()`.
+- **Equality term**: a value stored next to a ciphertext that lets a query
+  find an exact match without decrypting.
+- **Zeroize**: overwrite memory that held plaintext, so the plaintext does
+  not stay in memory after use. `Zeroize` is the Rust trait that does this.
+
+## Decisions already made, and what these examples propose
+
+The first parts of this section record decisions made on 25 October 2026.
+The table after them lists every API surface in the examples and its status.
+
+### Ownership decision (25 October 2026)
+
+`encrypt` and `encrypt_into` take ownership of (consume) their inputs. This
+includes the variants that take a context. Their implementations must guard
+the owned plaintext and temporary buffers, so they are cleaned up on
+success, on error, and when the request is dropped. Passthrough fields are
+deliberately moved into the output.
+
+Other parts of this decision:
+
+- The capabilities for a single ciphertext are named `OpaqueEncode` and
+  `OpaqueDecode`.
+- Plaintext types must implement `Zeroize`. No new cleanup trait is planned.
+- `Serialize` alone does not establish the cleanup contract for
+  `OpaqueBlob<T>`.
+
+The candidate programs below were written before the `Zeroize` requirement.
+When making them executable, update their source derives, and remove any
+reuse of input that has been consumed.
+
+### Decrypt decision (25 October 2026)
+
+Stack Encrypt keeps two ways to decrypt:
+
+- the direct `keyset.decrypt` and `decrypt_with_context`, for an opaque
+  ciphertext;
+- the destination-directed `T::decrypt_from` and
+  `decrypt_from_with_context`, for a declared target.
+
+A successful call returns an ordinary owned `T: Zeroize`. The caller is then
+responsible for cleaning it up. Stack Encrypt guards intermediate plaintext.
+
+The API must support results that are wiped when they are dropped, if the
+caller asks for them, without forcing a wrapper on every caller. `Zeroize`
+alone does not wipe a returned value when it is dropped. These are accepted
+API contracts. This document does not claim that the prototype already
+implements them.
+
+### Collection decision (25 October 2026)
+
+The direct `keyset.encrypt(value)` takes one single-value input and produces
+one `Ciphertext`. It does not encrypt a collection element by element.
+
+To encrypt each element of a collection in one batch, use `EncryptInto`,
+for example:
 `let encrypted: Vec<Ciphertext> = vec![1_i32, 3_i32].encrypt_into(&keyset).await?`.
-`keyset.encrypt(OpaqueBlob::new(vec![1_i32, 3_i32])).await?` instead produces
-one ciphertext for the encoded collection. The latest recommendation
-applies the same rule to byte vectors, with no wrapper or special case
-needed to preserve prototype behavior. These calls require the proposed
-opaque ciphertext and no-context target support.
+
+`keyset.encrypt(OpaqueBlob::new(vec![1_i32, 3_i32])).await?` produces one
+ciphertext for the encoded collection instead.
+
+The latest recommendation applies the same rule to byte vectors. No wrapper
+or special case is needed to keep the prototype's behaviour. These calls
+need the proposed opaque ciphertext and support for targets that take no
+context.
+
+### Status of each API surface
 
 | Surface | Status in this review |
 | --- | --- |
@@ -68,66 +147,102 @@ opaque ciphertext and no-context target support.
 | `Ciphertext` | Proposed name for an opaque single-value ciphertext; **not** today's `StackCipherText` or `CipherText` enum |
 | `Ciphertext::to_bytes` / `from_bytes` | Proposed direct access to the existing canonical sealed-leaf encoding, without node extraction |
 | `Ciphertext: Serialize + Deserialize` | Proposed storage contract: Base64 of the canonical bytes for human-readable serializers, bytes for binary serializers |
-| Encoded ciphertext field targets | Accepted: dedicated ciphertext wrappers for Base64/Base85 storage compose with encrypt/decrypt targets; final names remain for the naming pass |
-| `Ciphertext` as an encryption/decryption target | Proposed single-value target, including scalars and `String`; use `OpaqueBlob<Vec<u8>>` for a whole byte vector under the latest recommendation |
+| Encoded ciphertext field targets | Accepted: dedicated ciphertext wrappers for Base64 or Base85 storage compose with encrypt and decrypt targets; final names remain for the naming pass |
+| `Ciphertext` as an encryption or decryption target | Proposed single-value target, including scalars and `String`; use `OpaqueBlob<Vec<u8>>` for a whole byte vector under the latest recommendation |
 | Decrypt into `OpaqueBlob<T>`, then `into_inner()` | Proposed symmetric decoding path; returns the original application value after authentication and decoding |
 | Direct `decrypt` / `decrypt_with_context` | Accepted ordinary decrypt pair, symmetric with direct encryption |
 | `User::decrypt_from` / `decrypt_from_with_context` | Accepted destination-directed pair on `DecryptFrom` |
 | `SearchableEmail` in example 3 | Application-defined target composed from ciphertext and an existing `EqualityTerm` |
 
-The first three Rust blocks use proposed `OpaqueBlob`, `Ciphertext`, and/or
-passthrough APIs. They are complete candidate programs, not programs claimed
-to compile against today's crate. The names and contracts above remain
-subject to review where marked proposed or provisional.
+The first three Rust programs use the proposed `OpaqueBlob`, `Ciphertext`,
+and passthrough APIs, or some of them. Each is a complete candidate program.
+None is claimed to compile against today's crate. The names and contracts in
+the table can still change where they are marked proposed or provisional.
 
-The proposed opaque ciphertext is intentionally untyped: the decrypt call's
-expected type selects decoding. A typed wrapper remains an open alternative.
-Its byte decoder parses a stored envelope; authentication happens on decrypt.
-Context and leaf encodings must agree across the new Rust and dynamic
-implementations; preserving the prototype's encoding is not required.
+### Notes on the proposed types
 
-The trait name `DecryptFrom` is somewhat surprising: it supplies the
+The proposed opaque ciphertext deliberately carries no plaintext type. The
+type that the decrypt call expects selects how the plaintext is decoded. A
+typed wrapper is still an open alternative.
+
+The ciphertext's byte decoder
+only parses a stored envelope. Authentication happens when it is decrypted.
+The new Rust implementation and the dynamic implementation must agree on
+the context and leaf encodings. They do not need to keep the prototype's
+encoding.
+
+The trait name `DecryptFrom` may surprise readers. The trait supplies the
 convenience functions, while `#[derive(DecryptInto)]` describes how an
-encrypted output recovers plaintext. These examples keep that existing
-distinction visible rather than silently redesigning it.
+encrypted output recovers its plaintext. These examples keep that existing
+split visible, rather than redesigning it without saying so.
+
+### What the examples leave out, and why
+
+The examples deliberately keep plans and operation descriptions out of the
+application code. The application code shows only the public calls.
+
+Each main example is a separate program, with all imports and types shown.
+All of them use the same user fields and made-up data. `created_at` is an
+`i64` Unix timestamp in seconds, so that configuring a date library does not
+distract from the encryption API.
+
+Files stand in for a database. The programs do encode, write, read, and
+decode their stored forms. The files are written to a temporary directory.
+The directory is removed when the program exits.
 
 ## Setup shared by the programs
 
-The proposed programs use `stack-encrypt` with its default `http` feature,
-`serde` with `derive`, `serde_json`, `tempfile`, and `tokio` with `macros` and
-`rt-multi-thread`. No published version currently supplies all proposed APIs,
-so this draft does not give a misleading installable Cargo manifest.
+The proposed programs use these crates:
 
-`StackCipher::new()` uses the configured ZeroKMS credentials: a CLI login or
-`CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`, and `CS_WORKSPACE_CRN`.
-The second client in each program represents a later reader using the same
-authorized configuration. The default keyset is selected for brevity; an
-already-selected tenant keyset can be used in its place.
+- `stack-encrypt`, with its default `http` feature;
+- `serde`, with `derive`;
+- `serde_json`;
+- `tempfile`;
+- `tokio`, with `macros` and `rt-multi-thread`.
 
-Decryption uses the client because the sealed value carries its keyset id.
-It still requires access to the corresponding keys and the correct context.
-The examples do not depend on in-memory fake keys surviving a reload.
+No published version of `stack-encrypt` supplies all the proposed APIs yet.
+This draft therefore gives no Cargo manifest, because one would suggest the
+programs can be installed and run.
+
+`StackCipher::new()` uses the configured ZeroKMS credentials. Those come
+from a CLI login, or from these environment variables: `CS_CLIENT_ID`,
+`CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`, and `CS_WORKSPACE_CRN`.
+
+The second client in each program stands for a later reader that uses the
+same authorised configuration. The examples select the default keyset to
+keep them short. A tenant keyset that the application has already selected
+can be used in its place.
+
+Decryption uses the client, because the sealed value records its keyset id.
+The reader still needs access to the matching keys and the correct context.
+The examples do not rely on in-memory fake keys surviving a reload.
 
 ## 1. Encrypt the whole user through an explicit blob wrapper
 
-**Intent:** store one encrypted document. All four fields, including the ID
-and creation time, are inside one encrypted serialization. There are no
-independently readable fields or search terms in the stored ciphertext.
+**What this example shows:** how to store one encrypted document. All four
+fields, including the id and creation time, are inside one encrypted
+serialization. The stored ciphertext contains no fields that can be read
+separately, and no search terms.
 
-`OpaqueBlob::new(user)` explicitly requests that treatment. Stack owns the
-serialization and matching deserialization, rather than requiring every
-application to select and invoke a codec. The proposed wrapper owns the input;
-`new` only wraps it, and serialization errors surface from the encryption
-operation. The context identifies the application's document schema and binds
-this document to an externally known record id.
+`OpaqueBlob::new(user)` explicitly asks for that treatment. Stack Encrypt
+owns the serialization and the matching deserialization, so each
+application does not have to choose and call a codec. The proposed wrapper
+takes ownership of the input. `new` only wraps the value. The
+encryption call returns any serialization error.
 
-For this draft the wrapper accepts `Serialize + Zeroize` on write and
-`DeserializeOwned + Zeroize` on read. This does
-not claim that arbitrary Serde implementations can satisfy a constant-time
-contract. The initial wrapper has one library-selected, versioned binary
-codec, not a caller-selected codec parameter. Selecting and specifying that
-codec remains implementation/design work; no particular binary format is
-claimed to be implemented or constant-time here.
+The context names the application's document schema
+(`"user-document-v1"`). The context also binds this document to a record id
+that the application knows from outside the ciphertext.
+
+In this draft, the wrapper accepts `Serialize + Zeroize` on write and
+`DeserializeOwned + Zeroize` on read. This does not claim that every Serde
+implementation can meet a constant-time contract.
+
+The first version of the
+wrapper has one versioned binary codec that the library chooses. The caller
+cannot choose a codec. Choosing and specifying that codec is still design
+and implementation work. This document does not claim that any binary format
+is implemented, or that any is constant-time.
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -187,73 +302,115 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-**What the API must guarantee:** the serialized bytes are one encrypted leaf
-under one data key. The envelope contains the retrieval metadata, so the
-caller never needs to save an IV or key tag separately. A different context
-must fail to open it. Stack owns the matching encode/decode pair and its
-compatibility contract. A blob-format discriminator and version must be
-authenticated, for example inside the encrypted payload, so decoding does
-not rely on guessing a codec or on unauthenticated format metadata. This
-can reuse the canonical outer ciphertext envelope; the blob payload is a
-new, explicit format rather than silently reinterpreting previously encrypted
-raw bytes. Application schema evolution remains explicit: a codec version
-does not automatically migrate changes to `User`.
+### What the API must guarantee for example 1
 
-**Without application context:** use `keyset.encrypt(OpaqueBlob::new(user))`
-form. A matching no-context `reader.decrypt(loaded)` is accepted for symmetry;
-it is not the signature of today's two-argument decrypt method. This document
-uses explicit context in the full example so the saved format is unambiguous.
+- The serialized bytes are one encrypted leaf under one data key.
+- The envelope contains the metadata needed to fetch the key again. The
+  caller never needs to save an initialisation vector (IV) or a key tag
+  separately.
+- A different context must fail to open the ciphertext.
+- Stack Encrypt owns the matching encode and decode pair, and the contract
+  for keeping them compatible.
+- The blob format's identifier and version must be authenticated, for
+  example by putting them inside the encrypted payload. Decoding then does
+  not depend on guessing a codec, or on format metadata that is not
+  authenticated.
+- The blob can reuse the canonical outer ciphertext envelope. The blob
+  payload is a new, explicit format. It must not quietly reinterpret raw
+  bytes that were encrypted before.
+- Changes to the application's schema still need explicit handling. A codec
+  version does not migrate changes to `User` automatically.
 
-**Meaning of the wrapper:** `OpaqueBlob<User>` is the plaintext-side request
-and the decoded value, not the stored ciphertext type. `Ciphertext` remains
-the persisted envelope. `into_inner()` returns an ordinary `User`. The
-wrapper does not by itself promise to zeroize arbitrary input/returned types;
-the codec should keep temporary plaintext buffers in wipeable storage.
-`#[derive(Encrypt)]` on `User` currently means a structural ciphertext tree
-and is not a substitute for wrapping the value as one blob.
+### Encrypting without an application context
+
+Without an application context, use the form
+`keyset.encrypt(OpaqueBlob::new(user))`. A matching no-context
+`reader.decrypt(loaded)` is accepted, so that encrypt and decrypt match. It
+is not the signature of today's decrypt method. Today's method takes two
+arguments.
+This document uses an explicit context in the full example so that the
+saved format is unambiguous.
+
+### What the wrapper means
+
+`OpaqueBlob<User>` is the request on the plaintext side, and the decoded
+value. It is not the stored ciphertext type. `Ciphertext` is still the
+stored envelope. `into_inner()` returns an ordinary `User`.
+
+The wrapper does not by itself promise to zeroize arbitrary input or
+returned types. The codec should keep temporary plaintext buffers in memory
+that can be wiped.
+
+`#[derive(Encrypt)]` on `User` currently means a structural tree of
+ciphertexts, one for each field. That derive cannot replace wrapping the
+value as one blob.
 
 ### Timing contract to investigate
 
-The desired property is serialization/deserialization whose timing does not
-depend on secret contents, under an explicit policy for lengths and shape.
-Constant time does not mean identical elapsed time for differently sized
-messages; what may vary must be declared public. The general requirement is
-secret-independent control flow and memory access, including outside the
-cryptographic primitive. See [BearSSL's constant-time guidance](https://www.bearssl.org/constanttime.html).
+The goal is serialization whose timing does not depend on the secret
+contents, in both directions. An explicit policy sets what may vary in
+lengths and shape.
 
-A library-owned binary codec gives us control over that implementation, but
-does not establish the property by itself. Strings, collection lengths,
-enum variants, validation errors, allocations, and user-defined Serde code
-can all introduce value-dependent work. Supporting arbitrary `Serialize` /
-`Deserialize` implementations cannot guarantee constant-time behavior for
-the whole operation.
+Constant time does not mean that messages of different sizes take the same
+elapsed time. The policy must declare which properties may vary, and treat
+them as public. In general, neither control flow nor memory access may
+depend on secrets. That applies outside the cryptographic primitive too.
+See [BearSSL's constant-time guidance](https://www.bearssl.org/constanttime.html).
 
-Before claiming such a guarantee, define supported types, permitted public
-shape/length information, and restrictions on custom implementations. A
-stricter profile may need bounded shapes, fixed-width encodings, padding,
-and controlled encoders/decoders, with implementation-level verification.
-Padding ciphertext to a fixed size alone does not make the preceding
-serialization constant-time. Authentication must complete before decoding
-the plaintext blob. This is a design requirement to investigate, not a
-guarantee made by these example programs or a constant-time audit result.
+A binary codec that the library owns gives us control over the
+implementation, but does not give the property by itself. Each of these can
+add work that depends on the values:
 
-**Investigation candidate: `serdect`.** It is already a dependency of
-`stack-encrypt`. Review its supported encodings and precise constant-time
-guarantees, including decoding/error behavior and length assumptions. Assess
-where it can help with ciphertext/byte serialization and whether any of its
-techniques apply to the `OpaqueBlob` codec. Do not assume guarantees for byte
-encoding extend to serializing arbitrary objects through Serde. This is a
-follow-up investigation, not a completed assessment or codec selection.
+- strings;
+- collection lengths;
+- enum variants;
+- validation errors;
+- memory allocations;
+- Serde code that users write.
+
+Supporting arbitrary `Serialize` and `Deserialize` implementations cannot
+guarantee constant-time behaviour for the whole operation.
+
+Before claiming such a guarantee, define these things:
+
+- the supported types;
+- which shape and length information may be public;
+- the restrictions on custom implementations.
+
+A stricter profile may need bounded shapes, fixed-width encodings, padding,
+and controlled encoders and decoders, with verification at the
+implementation level. Padding the ciphertext to a fixed size does not by
+itself make the serialization before it constant-time. Authentication must
+finish before the plaintext blob is decoded.
+
+This section states a design requirement to investigate. These example
+programs make no such guarantee. This section is not the result of a
+constant-time audit.
+
+**Candidate to investigate: `serdect`.** `serdect` is already a dependency
+of `stack-encrypt`. The investigation needs to:
+
+- review its supported encodings and its exact constant-time guarantees,
+  including its timing when decoding and on errors, and its assumptions
+  about lengths;
+- assess where it can help serialize ciphertexts and bytes;
+- assess whether any of its techniques apply to the `OpaqueBlob` codec.
+
+Do not assume that its guarantees for encoding bytes extend to serializing
+arbitrary objects through Serde. This is a follow-up investigation. It is
+not a finished assessment. It does not select a codec.
 
 ## 2. Encrypt selected fields into a chosen output layout
 
-**Intent:** store an ordinary record with plaintext `id` and `created_at`,
-and independently encrypted `name` and `email`. The output type states the
-layout. The two encrypted fields need no search indexes.
+**What this example shows:** how to store a record in which `id` and
+`created_at` stay as plaintext. `name` and `email` are each encrypted
+separately. The output type declares the layout. The two
+encrypted fields need no search indexes.
 
-The proposed ciphertext Serde implementation makes persistence compositional:
-ordinary Serde derives on the output encode plaintext fields normally and
-ciphertext fields as Base64 envelopes. There is no manual `Node` traversal.
+The proposed Serde implementation for `Ciphertext` lets persistence be
+built from ordinary parts. Ordinary Serde derives on the output type encode
+the plaintext fields as usual, and encode the ciphertext fields as Base64
+envelopes. The application does not walk any `Node` values by hand.
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -311,72 +468,95 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-**Context and execution:** `name` uses the structured context
-`("users", "name")`, and `email` uses `("users", "email")`. The keyset is
-shared, but each encrypted field receives its own data key. One conversion
-batches those key requests. The decrypt derive reconstructs `User`, opening
-the ciphertext fields and copying the passthrough fields back.
+### Context and execution in example 2
 
-**Plaintext semantics:** copying `id` does not automatically bind the sealed
-fields to it. Both plaintext fields remain unencrypted and unauthenticated.
-That is the requested passthrough behavior, not a promise of whole-record
-integrity. The example's name/email contexts distinguish columns, not rows.
+`name` uses the structured context `("users", "name")`, and `email` uses
+`("users", "email")`. The two fields share the keyset, but each encrypted
+field gets its own data key. One conversion sends the key requests for both
+fields in one batch. The decrypt derive rebuilds `User`: it opens the
+ciphertext fields and copies the passthrough fields back.
 
-If the application wants row binding, it can use the existing
-`user.encrypt_into_with_context(&keyset, expected_id)` entry point and the
-matching `User::decrypt_from_with_context(loaded, &reader, expected_id)`.
-The effective contexts then become `(("users", "name"), expected_id)` and
+### What passthrough fields do and do not protect
+
+Copying `id` does not bind the sealed fields to it. Both plaintext fields
+stay unencrypted and unauthenticated. That is the passthrough behaviour that
+was asked for. It does not promise integrity for the whole record. The
+example's `name` and `email` contexts tell columns apart, not rows.
+
+If the application wants each ciphertext bound to its row, it can use the
+existing entry point `user.encrypt_into_with_context(&keyset, expected_id)`
+and the matching
+`User::decrypt_from_with_context(loaded, &reader, expected_id)`. The
+contexts that take effect are then `(("users", "name"), expected_id)` and
 `(("users", "email"), expected_id)`. The reader supplies the expected id
-from its record lookup. That is an explicit variation, not an automatic
-effect of the passthrough attribute.
+from its record lookup. This is an explicit variation. The passthrough
+attribute does not cause it.
 
-**Existing `context_field` support:** the derive does have
-`#[stash(context_field)]`, but its current behavior is to store the
-caller-supplied context in an output field and use it again when decrypting.
-It does not read an id from the plaintext `User`. It also supplies the complete
-context: the macro rejects combining it with a literal `context = "users"`.
-Because the current `struct = User` form requires that literal, the attribute
-cannot currently be used on example 2's field-by-field declaration.
+### Existing `context_field` support
 
-**Separate source from storage:** obtaining context from plaintext fields
-and carrying context into the encrypted output are independent choices.
-An extended derive could read `User.id`, combine it with the declared field
-contexts, and also copy it into `EncryptedUser.id`. That would enable row
-binding without passing the id twice. The same model should accommodate
-several source fields, such as `(tenant_id, id)`, with explicit ordering and
-grouping.
+The derive already has `#[stash(context_field)]`. Its current behaviour is
+to store the context the caller supplied in an output field, and to use it
+again when decrypting. It does not read an id from the plaintext `User`.
 
-Alternatively, context can be passed as an argument and stored, passed and
-not stored, or derived from plaintext fields without being stored. In either
-non-stored case, the reader needs equivalent context from elsewhere before
-decrypting. Source selection and storage should be separately expressible;
-whether one annotation can conveniently request both remains a syntax choice.
-Today's `context_field` only covers the caller-supplied-and-stored case.
+`context_field` also supplies the complete context, so the macro refuses to
+combine it with a literal `context = "users"`. The current `struct = User`
+form requires that literal. As a result, the attribute cannot be used today
+in example 2's field-by-field declaration.
 
-For the source-derived-and-stored case, a reader could use the stored id,
-with an optional independently supplied expected id to reject a whole record
-moved to another destination. Changing the stored id alone must fail
-decryption. The values needed to reconstruct context must be available
-without first opening the ciphertext that requires them.
+### Where context comes from, compared with where it is stored
 
-**Review point:** the declaration is concise, but requires an explicit
-`EncryptedUser` type. A future source-side derive could generate that type;
-it should generate this same layout and context behavior. Also decide whether
-`User::decrypt_from(...)` is the desired public decrypt spelling before
-adding a competing no-context `loaded.decrypt_into(...)` convenience.
+Taking context from plaintext fields and carrying context into the encrypted
+output are separate choices. An extended derive could read `User.id`,
+combine it with the field contexts declared on the type, and also copy it
+into `EncryptedUser.id`. That would bind each ciphertext to its row without
+passing the id twice. The same model should handle several source fields,
+such as `(tenant_id, id)`, with explicit ordering and grouping.
+
+There are other combinations. Context can be:
+
+- passed as an argument and stored;
+- passed as an argument and not stored;
+- taken from plaintext fields and not stored.
+
+In either case where the context is not stored, the reader needs the same
+context from somewhere else before decrypting. The API should let callers
+express the source and the storage separately. Whether one annotation can
+ask for both is still a syntax choice. Today's `context_field` only covers
+the case where the caller supplies the context and it is stored.
+
+Suppose the context is taken from plaintext fields and also stored. A
+reader could then use the stored id. To reject a whole record that was moved
+to another place, the reader could also supply an expected id from
+elsewhere. Changing the stored id alone must make decryption fail. The values needed to rebuild the
+context must be available without first opening the ciphertext that
+requires them.
+
+### Review points for example 2
+
+The declaration is short, but it requires an explicit `EncryptedUser` type.
+A future derive on the source type could generate that type. If it does, it
+should generate this same layout and the same context behaviour.
+
+Reviewers also need to decide whether `User::decrypt_from(...)` is the
+public spelling for decryption that we want. That decision comes before
+adding a competing no-context convenience, `loaded.decrypt_into(...)`.
 
 ## 3. Use the same layout model with a searchable email target
 
-**Intent:** keep the same plaintext fields, encrypt the name normally, and
-store the email's ciphertext plus an equality term. Search terms come from
-the original typed plaintext through their declared operation, not from the
-JSON encoding used to persist the output.
+**What this example shows:** the same plaintext fields as example 2, with
+the name encrypted as before. The email is stored as its ciphertext plus an
+equality term. Search terms are made from the original typed plaintext,
+through the operation the target declares. They are not made from the JSON
+encoding used to store the output.
 
-`SearchableEmail` is an application-defined scalar target. It uses the caller
-context supplied by the outer record: `("users", "email")`. It does not
-declare another fixed context or append another `email` component. The
-`ciphertext` and `equality` member names are output layout, not additional
-cryptographic context segments.
+`SearchableEmail` is a scalar target that the application defines. It uses
+the context that the outer record supplies: `("users", "email")`. It does
+not declare a fixed context of its own. It does not add another `email` part
+to the context.
+
+The member names `ciphertext` and `equality` only describe the output
+layout. They do not add parts to the cryptographic
+context.
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -465,56 +645,93 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-The filter is an in-memory scan over persisted encrypted records, not a
-claim of database index use. It demonstrates the entire query contract:
-derive the term, compare it with the stored term, and open the matched
-ciphertext. An equality match is not authentication of the stored record;
-the decrypt operation authenticates its encrypted fields. Passthrough
-semantics are the same as in example 2.
+### What the query in example 3 shows
 
-Collection conversion is already supported by Stack's blanket
-`EncryptFrom<Vec<S>> for Vec<T>` implementation when `T: EncryptFrom<S>`
-and its context supports cloning. It collects every row's pending operations
-before dispatch: these two users require four data keys (name and email for
-each), issued through one batched `generate_keys` call. Equality terms use
-the current local index-key backend. This count concerns encryption work,
-not client initialization or authentication.
+The filter scans the stored encrypted records in memory. It does not claim
+that a database index is used. The filter shows the whole query contract:
 
-One logical `generate_keys` call is not an unlimited single HTTP request:
-the KMS client chunks batches according to its configured key-count limit.
-This four-key example fits in one normal request; larger collections may
-span several requests without changing the public call.
+1. Make the query term.
+2. Compare it with the stored term.
+3. Open the matching ciphertext.
 
-The matching collection decrypt implementation batches retrieval across
-rows, with one `retrieve_keys` call per keyset represented in the ciphertext.
-An empty collection requires no data-key call. Collection order is preserved
-by the conversion; no new whole-collection authentication is implied.
+An equality match does not authenticate the stored record. The decrypt
+operation authenticates the record's encrypted fields. Passthrough fields
+work as they do in example 2.
 
-This target-directed vector is a vector of independent output records. It
-is distinct from encrypting a plaintext vector into a single
-`StackCipherText` sequence tree, and from wrapping the vector in `OpaqueBlob`
-to encode/encrypt the whole collection as one value. Batching is a property
-of execution, not a change to the chosen layout.
+### How collection conversion batches key requests
 
-This example uses the common field context for all rows so one query term
-can search them. Adding a row id to that context would also scope the term
-to that row. Separating ciphertext row binding from column-wide search
-context is a further design question, not something these examples silently
-promise. Likewise, applications querying across keysets need the appropriate
-term per keyset; no cross-keyset comparison is implied.
+Stack Encrypt already supports collection conversion, through its blanket
+implementation `EncryptFrom<Vec<S>> for Vec<T>` when `T: EncryptFrom<S>` and
+the target's context can be cloned.
+
+The conversion collects every row's
+pending operations before sending any of them. The two users need four data
+keys, one each for name and email in each row. All four are issued through
+one batched `generate_keys` call. Equality terms use the current local
+backend for index keys.
+
+This count is about the encryption work only. It
+does not include setting up or authenticating the client.
+
+One logical `generate_keys` call is not always a single HTTP request. The
+KMS (key management service) client splits a batch into chunks, according
+to its configured limit on the number of keys. This example's four keys fit
+in one normal request. A larger collection may need several requests, with
+no change to the public call.
+
+The matching collection decrypt implementation also batches key retrieval
+across rows. It makes one `retrieve_keys` call for each keyset found in the
+ciphertexts. An empty collection needs no data-key call. The conversion
+keeps the collection's order. It does not add any authentication of the
+collection as a whole.
+
+### Three different ways to encrypt a vector
+
+This target-directed vector is a vector of separate output records. It is
+different from both of these:
+
+- encrypting a plaintext vector into a single `StackCipherText` sequence
+  tree;
+- wrapping the vector in `OpaqueBlob`, to encode and encrypt the whole
+  collection as one value.
+
+Batching is a property of how the work is run. It does not change the
+layout that was chosen.
+
+### Limits of the search context
+
+This example uses the same field context for every row, so that one query
+term can search all of them. Adding a row id to that context would also
+limit the term to that row. How to bind each ciphertext to its row while
+keeping a search context that covers the whole column is still an open
+design question. These examples do not promise it.
+
+In the same way, an application that queries across keysets needs a
+separate query term for each keyset. The examples do not imply any
+comparison across keysets.
 
 ### EQL targets: a concrete adapter boundary
 
-The example above is a generic searchable layout, **not an EQL payload**.
-For EQL, use the adapter's types, metadata, serialization, and query target.
-For example, today's `eql_bindings::v4::text::TextEq` already represents an
-email ciphertext plus equality term; `TextEqQuery` represents the query.
+The example above is a generic searchable layout. It is **not an EQL
+payload**. For EQL, use the adapter's types, metadata, serialization, and
+query target. Here, the adapter is the `eql-bindings` crate. The crate
+converts between Stack Encrypt values and the stored EQL format.
 
-The following separate field-level program uses existing APIs and avoids
-the proposed `Ciphertext` and passthrough attributes. It needs `eql-bindings`
-with its `stack-encrypt` feature, `stack-encrypt`, `serde_json`, `tempfile`,
-and `tokio`. It is marked `no_run` because it needs live credentials; it has
-been checked against source signatures here, not compiled or executed.
+For example, today's `eql_bindings::v4::text::TextEq` already contains an email
+ciphertext plus an equality term. `TextEqQuery` is the matching query type.
+
+The program below is a separate example for one field. It uses existing APIs
+and avoids the proposed `Ciphertext` and passthrough attributes. It needs:
+
+- `eql-bindings`, with its `stack-encrypt` feature;
+- `stack-encrypt`;
+- `serde_json`;
+- `tempfile`;
+- `tokio`.
+
+The program is marked `no_run` because it needs live credentials. The program
+has been checked against the source signatures. It has not been compiled or
+run.
 
 ```rust
 use eql_bindings::{
@@ -554,56 +771,76 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-`TextEq` includes its EQL version, identifier, ciphertext, and equality term.
-Its context is `NonEmpty<Identifier>`. The typed identifier comes from the
-application's expected table/column on both writes and reads; decryption
-checks it against the stored identifier before opening the ciphertext.
-The `v4` namespace is intentional: this Rust producer profile targets EQL
-v4, not the TypeScript EQL v3 integrations.
+`TextEq` includes its EQL version, its identifier, the ciphertext, and the
+equality term. Its context type is `NonEmpty<Identifier>`. The application
+supplies the typed identifier for the expected table and column, on both
+writes and reads. Decryption checks it against the stored identifier before
+opening the ciphertext.
 
-There is a gap before we can simply replace `SearchableEmail` with `TextEq`
-in the outer derive. That derive currently passes `CallerContext`; EQL's
-target needs `NonEmpty<Identifier>` and carries its identifier in the output.
-The context adaptation must be designed explicitly, including whether caller
-extensions are representable. The EQL example demonstrates what that adapter
-must preserve without inventing an implicit conversion or a nonexistent SQL
-client API. PostgreSQL DDL, parameter binding, and index engagement are a
-separate adapter example to add once that boundary is settled.
+The `v4` namespace is deliberate: this Rust producer profile targets EQL v4.
+The TypeScript integrations use EQL v3.
+
+### Gap before `TextEq` can replace `SearchableEmail`
+
+There is a gap before `TextEq` can replace `SearchableEmail` in the
+outer derive. That derive currently passes a `CallerContext`. The EQL target
+needs a `NonEmpty<Identifier>`, and stores its identifier in the output.
+
+The conversion between the two contexts must be designed explicitly. The
+design includes whether extensions that the caller adds to the context can
+be represented. The EQL example shows what that adapter must keep. It does
+not invent an implicit conversion, or an SQL client API that does not exist.
+
+PostgreSQL DDL (the statements that create tables and indexes), parameter
+binding, and whether queries use the index belong in a separate adapter
+example. That example is to be added once the boundary is settled.
 
 ## What to review across the three workflows
+
+Each row of this table is one design question. The second column gives the
+answer these examples chose.
 
 | Question | Concrete choice made by these examples |
 | --- | --- |
 | What is one encrypted unit? | One `OpaqueBlob` encoding in example 1; one selected field in examples 2 and 3 |
 | How is the layout selected? | Ordinary encrypt returns an opaque value; `EncryptInto` selects a declared output |
 | How is persistence exposed? | Canonical bytes for one ciphertext; Serde composed over a typed layout |
-| How is plaintext recovered? | Decrypt/decode into `OpaqueBlob<User>` and unwrap, or use the target's `DecryptInto` declaration |
-| How do indexes fit? | Additional field targets under the same layout/execution model |
+| How is plaintext recovered? | Decrypt and decode into `OpaqueBlob<User>` and unwrap, or use the target's `DecryptInto` declaration |
+| How do indexes fit? | Additional field targets under the same layout and execution model |
 | Who chooses context? | The application for a blob; the layout plus optional caller extensions for fields; an explicit identifier for EQL |
 | Do examples need plans or visitors? | No; those remain implementation and advanced composition mechanisms |
 | Is an encrypted output type generated automatically? | No; the layout examples deliberately define it |
 
-The principal unresolved choices exposed by the examples are the opaque
-ciphertext name and storage contract, the blob
-codec and timing contract, EQL context adaptation, and optional source-side output
-generation. None requires reintroducing public `encrypt_as`.
+### Main open questions
+
+The examples leave these questions open:
+
+- What is the opaque ciphertext called, and what is its storage contract?
+- What is the blob codec, and what is its timing contract?
+- How is an EQL context adapted?
+- Does a derive on the source type generate the output type?
+
+None of them requires bringing back a public `encrypt_as`.
 
 ## Source checks and validation limits
 
-The draft was checked against the existing
-[target traits and convenience methods](../../packages/stack-encrypt/src/target/operations.rs),
-[context composition](../../packages/stack-encrypt/src/target/context.rs),
-[derive implementation](../../packages/stack-encrypt-derive/src/encrypt.rs),
-[decrypt derive](../../packages/stack-encrypt-derive/src/decrypt.rs),
-[canonical leaf encoding](../../packages/stack-encrypt/src/cipher.rs), and
-[EQL targets](../../packages/eql/crates/eql-bindings/src/v4/text.rs).
+The draft was checked against the existing code:
 
-All four programs were parsed successfully by `rustfmt` using Rust edition
-2024. All local links resolve; code fences and whitespace were checked.
-These checks establish syntax and document integrity, not type correctness.
+- [target traits and convenience methods](../../packages/stack-encrypt/src/target/operations.rs);
+- [context composition](../../packages/stack-encrypt/src/target/context.rs);
+- [derive implementation](../../packages/stack-encrypt-derive/src/encrypt.rs);
+- [decrypt derive](../../packages/stack-encrypt-derive/src/decrypt.rs);
+- [canonical leaf encoding](../../packages/stack-encrypt/src/cipher.rs);
+- [EQL targets](../../packages/eql/crates/eql-bindings/src/v4/text.rs).
 
-The candidate APIs are not implemented by this document. The three proposed
-programs cannot yet be typechecked against the repository. No live encryption,
-database execution, or cryptographic compatibility tests are claimed. Once the surface is agreed
-and implemented, promote these programs to executable examples and verify
-storage round trips, matching queries, and context mismatches.
+`rustfmt` parsed all four programs without errors, using Rust edition 2024.
+All local links resolve. The code fences and whitespace were checked. These
+checks confirm the syntax and the document's integrity, not that the types
+are correct.
+
+This document does not implement the candidate APIs. The three proposed
+programs cannot yet be type-checked against the repository. No live
+encryption, database runs, or cryptographic compatibility tests are claimed.
+Once the API surface is agreed and implemented, turn these programs into
+executable examples. Then verify the storage round trips, the matching
+queries, and that a wrong context fails.

@@ -1,117 +1,178 @@
 # JSON tree: operation inventory and release contract
 
-Updated: 2026-10-27 against merged `next`
-`ffeed7adb3f7d8739cda53261046147852bffc82`. Companion to the
+Updated 27 October 2026 against merged `next`
+`ffeed7adb3f7d8739cda53261046147852bffc82`. This document accompanies the
 [API plan](2026-10-24-stack-encrypt-api-plan.md).
 
-The Go JSON feature is implemented through #1372/#1373/#1378/#1402. This
-inventory distinguishes current support from remaining requirements. The
-public Rust derive/facade example below remains proposed, not executable
-code for the current engine. The
+## Summary
+
+The Go JSON feature is implemented, through #1372, #1373, #1378, and #1402.
+This document lists every JSON operation the release needs, with what is
+supported now and what work remains. Each operation has an ID from J01 to
+J20, used in the table of operations below. Two operations still have
+gaps: J14 and J17. The SQL types and functions come from Encrypt Query
+Language (EQL).
+
+The Rust example in this document uses the proposed public derive and
+facade. That example is not executable code for the current engine. The
 [refreshed Go plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
-and its engine/Go findings document the exact source evidence.
+and its findings on the engine and Go give the exact source evidence.
 
-## Current names and policy
+## Terms used in this document
 
-| Role | Current public Go / dynamic / SQL name |
+| Term | Meaning |
+| --- | --- |
+| EQL | The SQL in `packages/eql` that stores and queries encrypted values |
+| Entry | The encrypted record for one node of a document. A document is stored as one entry for each object, array, and scalar in it |
+| Selector | A keyed pseudorandom value derived from a node's path, with every array position replaced by the wildcard. Every element of an array shares one selector |
+| Token | A value derived from a node's concrete path. The database uses it to find that node and the entries beneath it |
+| Needle | The JSON value that a containment query looks for |
+| EqAt | Equality of a scalar at a path: `EqAt` in Go, `eq_at` in the dynamic engine |
+| Containment projection | The set of selector and value pairs, one for each node, stored beside the entries. PostgreSQL's `jsonb @>` compares two of these sets to test containment |
+| Subtree read | A read that returns a node and every entry beneath it, through `eql_v4.json_tree_subtree`, and opens them as one value |
+| Cascaded tags | Each container's authentication tag covers the tags of its children, so a change anywhere below a node stops that node opening. Added by #1379 |
+| Sealed root | The default. The root entry's ciphertext is the whole document, and the root token finds no other entry |
+| A JSON document whose root is not sealed | The root is stored as an ordinary container entry (`sealed_root` false). Called "open root" in the code |
+| Walk budget | The most entries a subtree read returns, counted across all its tokens, before the database falls back to the root |
+| Root fallback | Past the walk budget, the database returns the sealed root alone. The client opens the whole document and picks out the requested values |
+| Wildcard bound | How many elements each `[*]` in a read path expands to. One extra probe at the bound detects a longer array |
+| Reads that Rust verifies against the original request | Prepared reads: Rust derives the request again when the rows are opened, and checks every row against it |
+| Post-cascade profile | The storage and search format as it is after the cascaded tags change in #1379 |
+| Facade | The proposed public Rust API of `stack-encrypt` |
+| AAD | Additional authenticated data (AAD): data that an authentication tag covers but the ciphertext does not contain |
+
+## Current names
+
+| Role | Current public name in Go, the dynamic engine, and SQL |
 | --- | --- |
 | Configured target | `JsonSearch` |
 | Encrypted document | `eql.JSONSearch`, `public.eql_v4_json_search` |
-| Containment / EqAt operand | `eql.JSONSearchQuery`, `eql_v4.query_json` |
-| Ordering operand | `eql.JSONSearchLeafQuery`, `eql_v4.query_json_leaf` |
+| Operand for containment and EqAt | `eql.JSONSearchQuery`, `eql_v4.query_json` |
+| Operand for ordering | `eql.JSONSearchLeafQuery`, `eql_v4.query_json_leaf` |
 | Encrypted entry | `eql.JSONEntry`, `public.eql_v4_json_entry` |
-| Prepared selector / subtree | `encrypt.JSONSelection`, `encrypt.JSONRead` |
+| Prepared selector and prepared subtree read | `encrypt.JSONSelection`, `encrypt.JSONRead` |
 | SQL capability values | `JSONSelector`, `JSONToken`, `JSONTokens` |
-| Singular plaintext result | `JSONValue{Found, JSON}` |
+| Result of opening one value | `JSONValue{Found, JSON}` |
 
-Handwritten Rust EQL adapters retain their `JsonTree*` names; the internal
-engine `JsonDocument` is not the Go ciphertext type. `eql.JSON` is the
-storage-only type. Do not use the old `query_json_tree` / `eql_v4_json_tree`
-domains in current recipes.
+The handwritten Rust EQL adapters keep their `JsonTree*` names. The
+internal engine type `JsonDocument` is not the Go ciphertext type.
+`eql.JSON` is the type for storage only. Do not use the old domains
+`query_json_tree` and `eql_v4_json_tree` in current recipes.
 
-A field's configured target options are resolved into native `JsonOptions`
-and reused for writes, queries and reads. The shipped profile uses column
-identity and keyset selection. Separate row binding and search scope remain
-accepted future API work, not supported EQL context inputs. Reject those
-unsupported declarations; do not append row IDs to the existing shared
-context. Queries do not gain row isolation merely because their returned
-ciphertexts authenticate.
+## Context and scope policy
 
-## Required inventory and current support
+The SDK resolves the target options configured for a field into native
+`JsonOptions`. The SDK uses the same options for writes, queries, and
+reads. The released profile uses column identity and keyset selection.
 
-| ID | Operation | Current behavior / remaining work |
-| --- | --- | --- |
-| J01 | Encrypt object/array/scalar/null | Implemented; raw JSON supports every root, typed adapters support declared structs/maps/slices |
-| J02 | Decrypt complete document | Implemented; raw JSON text or declared Go type |
-| J03 | Batch write/read | Implemented; shared executor and provider chunking |
-| J04 | Contains | Implemented `Contains`, `contains`, `@>` with `query_json`; generated needle guards apply |
-| J05 | Contained by | Implemented `ContainedBy`, `contained_by`, `<@` |
-| J06 | Scalar equality at path | Implemented `EqAt`, `eq_at`; value selectors, not ordering equality |
-| J07 | Four ordering predicates | Implemented runtime paths and `At.<Path>` accessors; ordered number/string paths only |
-| J08 | Inclusive range | Implemented `Between`, `between_at`, named lower/upper operands |
-| J09 | Sort | Selector plus explicit SQL; wildcard sort needs defined reduction, not an assumed first array element |
-| J10 | Path exists | Selector plus `json_tree_path_exists` |
-| J11 | Extract one match | Selector plus `->` / path-query-first; wildcard choice is unspecified |
-| J12 | Extract as encrypted text | `->>`; still encrypted entry JSON, not plaintext |
-| J13 | Enumerate all matches | SQL path query exists; bounded wildcard subtree is the supported grouped plaintext route |
-| J14 | Open extracted scalars | `JSONSelection.Open` handles one optional entry per document group. Multi-entry selector groups are refused; do not label them supported |
-| J15 | Prepare positional/wildcard read | Implemented `Subtree`, `subtree`; token list plus retained trusted request |
-| J16 | Fetch/open subtree | `json_tree_subtree(document, tokens, budget)`, `JSONRead.Open` / `OpenOne` |
-| J17 | Immediate children | `Children` prepares a concrete token; SQL returns child entries. Parent-bound child-scalar opening remains unimplemented |
-| J18 | Count children | `ChildCount` token and SQL nullable count; not authenticated completeness |
-| J19 | Budget/fallback | Implemented, with original requested selection applied after root fallback |
-| J20 | Stored-value comparisons | Existing document containment and entry ordering, within compatible column/keyset/profile |
+Separate row binding and search scope are accepted future API work. Row
+binding and search scope are not supported as EQL context inputs today.
+So:
 
-The comprehensive release requirement remains. Do not equate closed tracking
-issues with implementation of a parent-bound child opener, or feed child
-rows into an unrelated selector/subtree request. Complete that opener for
-the J17 plaintext-child requirement; until then, fetch and open the parent's
-subtree to inspect its children, documenting the different transfer/leakage
-cost. SQL all-match enumeration is distinct from the supported bounded
-subtree plaintext interface.
+- reject a declaration that asks for them;
+- do not add row IDs to the existing shared context.
+
+A query does not isolate rows only because the ciphertexts it returns
+authenticate.
+
+## Required operations and current support
+
+| ID | Operation | Current support | Limits and remaining work |
+| --- | --- | --- | --- |
+| J01 | Encrypt an object, array, scalar, or null | Implemented. Raw JSON supports every kind of root. Typed adapters support declared structs, maps, and slices | None listed |
+| J02 | Decrypt a complete document | Implemented, to raw JSON text or a declared Go type | None listed |
+| J03 | Write and read in batches | Implemented, with a shared executor and chunking by the provider | None listed |
+| J04 | Contains | Implemented: `Contains`, `contains`, and `@>` with `query_json` | Generated code checks the needle and refuses some shapes |
+| J05 | Contained by | Implemented: `ContainedBy`, `contained_by`, and `<@` | None listed |
+| J06 | Scalar equality at a path | Implemented: `EqAt`, `eq_at` | Compares value selectors, not ordering terms |
+| J07 | The four ordering predicates | Implemented in runtime paths and in `At.<Path>` accessors | Ordered number and string paths only |
+| J08 | Inclusive range | Implemented: `Between`, `between_at`, with named lower and upper operands | None listed |
+| J09 | Sort | A selector and explicit SQL | Sorting at a wildcard path needs a defined reduction. Do not assume the first array element |
+| J10 | Path exists | A selector and `json_tree_path_exists` | None listed |
+| J11 | Extract one match | A selector and `->`, or the first result of a path query | At a wildcard path, which element is returned is unspecified |
+| J12 | Extract as encrypted text | `->>` | The result is still encrypted entry JSON, not plaintext |
+| J13 | Enumerate all matches | An SQL path query | The supported way to get grouped plaintext is a subtree read with a wildcard bound |
+| J14 | Open extracted scalars | `JSONSelection.Open` opens one optional entry for each document group | Groups with more than one entry for a selector are refused. Do not label them supported |
+| J15 | Prepare a read at a position or wildcard | Implemented: `Subtree`, `subtree`. Returns a token list, and keeps the trusted request | None listed |
+| J16 | Fetch and open a subtree | `json_tree_subtree(document, tokens, budget)`, then `JSONRead.Open` or `OpenOne` | None listed |
+| J17 | Immediate children | `Children` prepares a concrete token. SQL returns the child entries | Opening child scalars bound to their parent is not implemented |
+| J18 | Count children | A `ChildCount` token. SQL returns a count that can be NULL | The count is not an authenticated proof of completeness |
+| J19 | Walk budget and root fallback | Implemented. After root fallback, the client applies the selection originally requested | None listed |
+| J20 | Comparisons between stored values | Existing document containment and entry ordering | Only within a compatible column, keyset, and profile |
+
+### Open requirements for J13 and J17
+
+The release still needs every operation in the table. Closed tracking
+issues do not mean an opener bound to the parent exists.
+
+For J17, build an opener for child scalars that is bound to their parent.
+Do not pass child rows to an unrelated selector or subtree request. Until
+the opener exists, fetch and open the parent's subtree to inspect its
+children. Document that this transfers different data and leaks
+differently.
+
+For J13, enumerating all matches in SQL is not the same as the supported
+interface. The supported interface returns plaintext from a bounded
+subtree read.
 
 ## Semantics that changed or are now implemented
 
-- #1379 randomizes stored entries, object ordinals and containment projection
-  order. `->` at a wildcard selects an unspecified element. Use all matches
-  with an explicit `EXISTS`, `MIN` or `MAX` rule for ordering/sorting.
-- Cascade authentication commits containers to their child ciphertext tags.
-  Nonempty standalone container entries fail `JsonNotALeaf`, also used for
-  alteration; empty container entries authenticate but fail `OpenedType`.
-  All ordinary containers need a subtree read. A requested sealed root can
-  still open as a complete document.
-- The dynamic engine now rejects positional selector/ordering/EqAt paths.
-  Concrete `[n]` positions belong to subtree reads; wildcard selectors address
-  a path class. Independent EqAt predicates need not match one array element;
-  one containment needle preserves their correlation.
-- The strict Rust parser now rejects duplicate keys and out-of-range integer
-  literals before key I/O. Typed Go encoding occurs first and follows
-  `encoding/json`, including invalid-UTF8 replacement. Raw JSON is checked
-  directly. Neither path promises byte-for-byte JSON text preservation.
-- SQL NULL, missing selection, JSON null and empty containers are distinct.
-  `JSONValue.Found` carries selection presence. `OpenOne` rejects wildcards;
-  plural subtree reads return requested values in document order.
-- Prepared reads retain the cipher, field definition, path and wildcard
-  bound. `Open(ctx, rows)` asks Rust to rederive and verify the request.
-  No serialized guest-local key handle is required. Rows cannot supply their
-  own expected path. Keep one group per database document.
-- Cascade strengthens verification beneath a returned root. It does not
-  authenticate the whole result set, absence, freshness or the intended
-  database row. Whole results/probes can still be withheld.
-- Wildcard bound defaults to 64 with boundary probes and an 8,192-token cap.
-  Walk budget independently defaults to 64; zero disables root fallback.
-  An open-root document cannot use sealed-root fallback. The budget is not
-  a universal response-size cap.
-- Header version remains 1 despite the changed cascade/AAD semantics. Freeze
-  the post-cascade profile explicitly; the unchanged header is not evidence
-  of compatibility with older prototype ciphertexts. Randomized query
-  projection order requires canonical semantic comparisons in parity tests.
+- **Random order.** #1379 randomises the stored order of entries, the
+  ordinals of object members, and the order of the containment
+  projection. `->` at a wildcard selects an unspecified element. For
+  ordering or sorting, use all matches with an explicit `EXISTS`, `MIN`,
+  or `MAX` rule.
+- **Cascaded tags.** Each container's tag covers its children's
+  ciphertext tags. A container entry with children, opened on its own,
+  fails with `JsonNotALeaf`. The same error is returned for an altered
+  entry. An empty container entry authenticates, but fails with
+  `OpenedType`. Every ordinary container needs a subtree read. A sealed
+  root that the caller asks for can still open as a complete document.
+- **No positional paths in queries.** The dynamic engine now rejects
+  positional paths for selectors, ordering, and EqAt. Concrete positions
+  such as `[n]` are for subtree reads. A wildcard selector addresses every
+  path that differs only in its array positions. Two separate EqAt
+  predicates can match different elements of one array. One containment
+  needle keeps them matched to the same element.
+- **Strict checks on JSON input.** The Rust parser now rejects duplicate
+  keys and out-of-range integer literals before key I/O, that is, before
+  any request to the key provider. For typed Go values, Go encodes first,
+  with `encoding/json`. That package replaces invalid UTF-8. The parser
+  checks raw JSON directly. Neither path promises to keep the JSON text
+  byte for byte.
+- **NULL, missing, null, and empty are different results.** SQL NULL, a
+  missing selection, JSON null, and an empty container are different. `JSONValue.Found` records
+  whether the selection was present. `OpenOne` rejects wildcards. Subtree
+  reads that return several values return the requested values in
+  document order.
+- **Reads that Rust verifies against the original request.** A prepared
+  read keeps the cipher, the field definition, the path, and the wildcard
+  bound. `Open(ctx, rows)` asks Rust to derive the request again and
+  verify it. No serialised key handle local to the guest is needed. Rows
+  cannot supply their own expected path. Keep one group for each database
+  document.
+- **What cascaded tags do not prove.** Cascaded tags make verification
+  stronger beneath the node at the top of a returned read. Cascaded tags
+  do not authenticate the whole result set, the absence of a value, freshness,
+  or that the row is the intended database row. The database can still
+  withhold whole results or probes.
+- **Defaults for reads.** The wildcard bound defaults to 64, with probes
+  at the bound and a cap of 8,192 tokens. The walk budget is separate, and
+  also defaults to 64. A walk budget of 0 turns off root fallback. A JSON
+  document whose root is not sealed cannot fall back to the sealed root.
+  The walk budget does not limit the size of every response.
+- **Header version.** The header version is still 1, although the cascade
+  changed what the AAD binds. Freeze the post-cascade profile explicitly.
+  The unchanged header does not show compatibility with older prototype
+  ciphertexts. The query projection order is now random, so parity tests
+  need to compare projections in a canonical form, by meaning.
 
 ## Current SQL recipes
 
-The examples assume `profile public.eql_v4_json_search`. Parameters are the
-SDK's generated query/selector/token values, never plaintext paths. Add the
-application's authorization and tenant predicates as usual.
+The examples assume a column declared as
+`profile public.eql_v4_json_search`. Each parameter is a query, selector,
+or token value that the SDK generates, never a plaintext path. Add the
+application's usual authorisation and tenant predicates.
 
 ```sql
 -- Contains / contained by / EqAt operands.
@@ -149,16 +210,18 @@ CROSS JOIN LATERAL eql_v4.json_tree_children(u.profile, $1::text) AS c(entry);
 SELECT id, eql_v4.json_tree_child_count(profile, $1::text) FROM users;
 ```
 
-Child count is zero for scalars/empty containers and NULL for a missing node
-or the sealed root. Do not convert NULL to zero. The former token/gates and
-`json_tree_subtree_at` recipes are removed. Current full Go programs and
-parameter binding examples live in
-[the JSON example](../../languages/golang/encrypt/example/json/main.go).
+The child count is 0 for a scalar or an empty container. The count is
+NULL for a missing node or for the sealed root. Do not convert NULL to 0.
+
+The earlier recipes with tokens and gates, and with
+`json_tree_subtree_at`, are removed.
+[The JSON example](../../languages/golang/encrypt/example/json/main.go)
+contains complete current Go programs and examples of binding parameters.
 
 ## Current dynamic grammar and results
 
-This is implemented data-plan syntax, without an illustrative versioned
-outer envelope:
+The example below shows the implemented syntax of a data plan. It leaves
+out a versioned outer envelope:
 
 ```json
 {
@@ -173,21 +236,34 @@ outer envelope:
 }
 ```
 
-Operations select the field through the ABI. Their named inputs include
-`{"json"}`, `{"path","json"}`, `{"path","low","high"}`, `{"path"}`
-and `{"path","wildcard_bound"}`. JSON values are UTF-8 JSON text. Query
-results identify `encoding` (`eql`, `text`, `text_array`, or scalar `bytes`),
-SQL domain and operands. Capabilities identify input shapes. Opening uses
-`json_open` / `se_json_open` with the original `selector` or `subtree`
-request and grouped encrypted rows. The general versioned definition/schema
-package remains required work; it is not the current runtime grammar.
+Operations select the field through the application binary interface
+(ABI) between the host and the guest. The named inputs of operations
+include:
 
-## Rust write/read example
+- `{"json"}`
+- `{"path","json"}`
+- `{"path","low","high"}`
+- `{"path"}`
+- `{"path","wildcard_bound"}`
 
-Proposed public code. `target(column = ...)` is illustrative declaration
-syntax for an explicit EQL column identity; the exact attribute spelling
-belongs to the forthcoming specification/naming pass. The options factory
-is typed Rust, not JSON hidden inside an attribute.
+JSON values are UTF-8 JSON text. Query results state the `encoding`
+(`eql`, `text`, `text_array`, or scalar `bytes`), the SQL domain, and the
+operands. Capabilities state the shapes of input.
+
+To open, call `json_open` or `se_json_open` with the original `selector`
+or `subtree` request and the grouped encrypted rows.
+
+A general versioned package of definitions and schemas is still required
+work. That package is not the current runtime grammar.
+
+## Proposed Rust write and read example
+
+The code below is proposed public code, not executable code for the
+current engine.
+`target(column = ...)` illustrates syntax that declares an explicit EQL
+column identity. The coming specification and naming pass decides the
+exact attribute spelling. The options factory is typed Rust, not JSON
+hidden inside an attribute.
 
 ```rust
 use eql_bindings::v4::json_tree::JsonTreeDocument;
@@ -241,39 +317,69 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-This example explicitly declares column-wide scope and no row binding by
-its fixed standalone definition; the normative schema must express that
-choice rather than silently replacing missing required tenant scope.
-For an output-derived `EncryptedUser` with `id: PrimaryKey<u64>` and
-`tenant_id: ScopeKey<u64>`, select those fields through the context/scope
-attributes described in the API plan. Obtain its JSON field handle from
-`EncryptedUser::definition()?.profile()` and require `TenantId` on query
-requests. Store/return both ID fields for decrypt. If caller input is used,
-use the agreed `_with_context` variants with a typed input separating
-binding and scope. No row ID is ever an index/query input implicitly.
+### Scope and row binding in the example
+
+The example's fixed standalone definition explicitly declares scope across
+the whole column, and no row binding. The normative schema must state that
+choice. The schema must not silently replace a required tenant scope that is
+missing.
+
+Take an `EncryptedUser` whose definition is derived on the encrypted
+output type, with `id: PrimaryKey<u64>` and `tenant_id: ScopeKey<u64>`.
+For that type:
+
+1. Select those fields through the context and scope attributes described
+   in the API plan.
+2. Get its JSON field handle from
+   `EncryptedUser::definition()?.profile()`, and require `TenantId` on
+   query requests.
+3. Store and return both ID fields for decryption.
+4. If the caller supplies input, use the agreed `_with_context` variants,
+   with a typed input that keeps binding and scope separate.
+
+A row ID is never an index or query input implicitly.
 
 ## Remaining work and release gates
 
-1. Capture the implemented wire grammar, errors, presence states and context
-   profile in the promised formal specification and conformance corpus.
-   General Rust definitions/caching and additional context roles can follow.
-2. Close the explicit J14/J17 scope gaps. The supported all-match plaintext
-   route is subtree reads; a parent-bound child opener is separate engine
-   work. Do not add generic raw-entry decryption as a shortcut.
-3. Replace the internal EQL serialize-to-Value/deserialize bridge with typed
-   conversion while preserving the frozen profile. This is an optimization,
-   not a missing Go JSON execution path.
-4. Run the existing Rust/guest/Go/PostgreSQL suites on the release candidate,
-   mapping tests to J01–J20. Include typed/raw inputs, numeric/null cases,
-   both root policies, wildcard bounds, fallback, cascade tampering and known
-   omission limitations. Inspect real SQL parameter casts and index use.
-5. Freeze post-cascade storage/search vectors and the matching EQL bundle.
-   Compare canonical projection semantics and cross-opening; ordinary
-   randomized bytes need not match. Replace temporary Go Vitamin C pins
-   before a final release. Opaque storage adoption is already done and is
-   a separate format from JSON-tree storage.
+1. Write down the implemented wire grammar, errors, presence states,
+   and context profile in the formal specification and the set of
+   conformance tests that were promised. General Rust definitions,
+   caching, and more context roles can come later.
+2. Close the stated scope gaps in J14 and J17. Subtree reads are the
+   supported way to get plaintext for all matches. An opener for children
+   bound to their parent is separate engine work. Do not add generic
+   decryption of raw entries as a shortcut.
+3. Replace the internal EQL bridge with typed conversion. The bridge
+   serialises to `Value` and deserialises again. Keep the frozen profile.
+   The change is an optimisation, not a missing execution path for Go
+   JSON.
+4. Run the existing Rust, guest, Go, and PostgreSQL suites on the release
+   candidate, and map the tests to J01 to J20. Include:
+   - typed and raw inputs;
+   - numeric and null cases;
+   - both root policies (sealed and not sealed);
+   - wildcard bounds;
+   - root fallback;
+   - tampering that the cascaded tags detect;
+   - the known limits on detecting omitted results.
 
-This refresh is source and documentation review, not a fresh runtime test
-run or a complete cryptographic audit. Final Rust example compilation,
-package extraction and stronger zeroization/constant-time work remain later
-API-plan activities; they must preserve the released Go/data contract.
+   Inspect the real SQL parameter casts and index use.
+5. Freeze the post-cascade storage and search vectors and the matching EQL
+   bundle. Compare projections by their canonical meaning, and test
+   cross-opening (one implementation opening another's ciphertexts).
+   Ordinary random bytes do not need to match. Replace the temporary Go
+   pins of Vitamin C before a final release. Opaque storage is already
+   adopted. Opaque storage is a separate format from JSON tree storage.
+
+## What this refresh did not check
+
+This refresh is a review of source and documentation, not a new runtime
+test run or a complete cryptographic audit.
+
+Later activities in the API plan include:
+
+- compiling the final Rust example;
+- extracting packages;
+- stronger zeroisation and constant-time work.
+
+These activities must keep the released Go and data contract.
