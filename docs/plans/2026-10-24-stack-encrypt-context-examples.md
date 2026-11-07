@@ -250,60 +250,51 @@ let query: TextEqQuery = "alice@example.com"
     .await?;
 ```
 
-## 9. Bindings stored for access intelligence
+## 9. Bindings stored inside the EQL payload, for access intelligence
 
 Access intelligence needs to know which value was read, and the facts
-about its writing: the row, the address it was written from, and when.
-Each of those is a binding, stored in the clear in the row. Encrypt reads
-them from the plaintext. A reader takes them from the row, so it needs to
-know none of them.
+about its writing: the address it was written from, and when. Each fact
+is a binding. If each one were its own column, a reader would have to
+select every one of them to decrypt the value. So the bindings travel
+inside the EQL payload instead, in an authenticated metadata field. One column then stores the value and its bindings, so `SELECT body` is
+enough to decrypt it.
 
-Each binding is in the descriptor, so ZeroKMS logs them at every key
-retrieval. That log is where the access record comes from. A binding is
-not in the query context, so queries are unchanged.
+The metadata is stored in the clear. It is part of the stored context, so
+the AAD and the descriptor cover it. A changed address fails to open.
+Each binding is in the descriptor, so ZeroKMS logs it at every key
+retrieval. That log is where the access record comes from.
+
+EQL has no such field today; the plan's [stored format
+work](2026-10-24-stack-encrypt-api-plan.md#authenticated-metadata-in-an-eql-payload)
+adds it.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(
-    struct = Note,
-    context = "notes",
-    scope(field = "tenant"),
-    bind(field = "id"),
-    bind(field = "written_from"),
-    bind(field = "written_at"),
-)]
+#[stash(struct = Note, context = "notes", bind(field = "id"))]
 struct EncryptedNote {
     #[stash(passthrough)]
-    tenant: u64,
-    #[stash(passthrough)]
-    id: Uuid,
-    #[stash(passthrough)]
-    written_from: IpAddr,
-    #[stash(passthrough)]
-    written_at: Timestamp,
-    body: Ciphertext,
+    id: Uuid,                     // the row's primary key column
+    #[stash(bind(field = "written_from", in = metadata))]
+    #[stash(bind(field = "written_at", in = metadata))]
+    body: TextSearch,             // one EQL column: ciphertext, terms, and the metadata
 }
 
-let note = Note { tenant, id: Uuid::new_v4(), written_from: request.ip(), written_at: now(), body };
+let note = Note { id: Uuid::new_v4(), written_from: request.ip(), written_at: now(), body };
 let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
 
-// The reader passes nothing. Every part comes from the row, and ZeroKMS
-// logs the whole context when it returns the key.
-let note = Note::decrypt_from(encrypted, &keyset).await?;
+// The payload stored in the `body` column, with the metadata in `m`:
+// {"v": 1, "i": {"t": "notes", "c": "body"}, "c": "...", "bf": [...],
+//  "m": {"written_from": "203.0.113.5", "written_at": "2026-11-07T10:15:00Z"}}
 
-// A reader that serves one tenant and one row checks both.
-let note = Note::decrypt_from_with_context(
-    encrypted,
-    &keyset,
-    Scope::new(session.tenant).bind(requested_id),
-)
-.await?;
+// `SELECT id, body FROM notes WHERE id = $1` is enough. The reader passes
+// nothing: the row ID comes from its column, and the address and the
+// time come from the payload. ZeroKMS logs all three with the key.
+let note = Note::decrypt_from(encrypted, &keyset).await?;
 ```
 
-Two limits apply. The descriptor has a length limit at ZeroKMS, so the
-bindings must stay short. And the descriptor is sent to ZeroKMS, so the
-address and the time leave the customer's system. For access
-intelligence that is the point. A customer should still know it.
+ZeroKMS today limits the length of a descriptor, and logs it in the
+clear. ZeroKMS version 2 is planned to remove the limit and to encrypt
+the access log.
 
 ## Scenarios that were removed
 

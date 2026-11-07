@@ -827,6 +827,9 @@ key retrieval, so a binding such as the writer's IP address is in the
 access log. The descriptor has a length limit. It is also sent to ZeroKMS, so the
 part leaves the customer's system.
 
+ZeroKMS version 2 is planned to remove the limit and to encrypt the
+access log.
+
 A post-seal part is added after sealing, by a database trigger that
 refines the stored tag. ZeroKMS verifies the refined tag and returns the
 original. The AAD binds the original. The design allows for this kind. The work
@@ -1021,6 +1024,28 @@ format version beside it.
   adds `OpaqueBlob`, and is in review.
 - **Finished when** Rust and Go each open blobs that the other wrote, and
   the conformance profiles cover it.
+
+#### Authenticated metadata in an EQL payload
+
+- **What to build.** An optional field, `m`, in every EQL payload type,
+  for authenticated metadata. It contains named bindings, stored in the clear inside the payload, such as the address a value was written from
+  and when. The
+  Rust declaration marks a binding as stored `in = metadata`, and the
+  derive writes it into the field's payload. The dynamic grammar has the
+  same form, so Go can declare it. The EQL bundle accepts the field in
+  every domain and ignores it in every operator.
+- **Why.** Access intelligence needs each value's writing facts bound to
+  it. As row columns, a reader would have to select every one of them to
+  decrypt the value. Inside the payload, one column stores the value and its bindings, so
+  `SELECT body` is enough. Scenario 9 of the [context
+  scenarios](2026-10-24-stack-encrypt-context-examples.md) shows it.
+- **Stored format.** The field is optional, so a payload without it is
+  unchanged. A payload with it is a new form beside the rc.3 form.
+- **Done already.** Nothing.
+- **Finished when** these are all true:
+  - scenario 9 encrypts, and is read back from one column;
+  - it fails to open when the metadata is changed;
+  - the EQL conformance profile covers the field in Rust and in Go.
 
 #### Typed text encodings and key tag extraction
 
