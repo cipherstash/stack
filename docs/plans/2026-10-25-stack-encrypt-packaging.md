@@ -315,7 +315,7 @@ combined trait.
 Keep these agreed spellings:
 
 - `.using(...)`
-- `definition()`
+- `encryption_plan()`
 - `encrypt`
 - `encrypt_with_context`
 - `encrypt_into`

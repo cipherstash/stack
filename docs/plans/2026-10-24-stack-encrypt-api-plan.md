@@ -606,41 +606,47 @@ operator named as text:
 Go has generated methods for the first two, such as
 `Fields.Profile.Elements.Visits.Match`.
 
-#### Query through a definition
+#### Query through a field marker
 
-In Rust, `definition()` returns the declaration of a derived record, built
-once, as data. It has one method for each field. That method returns the
-field's handle. `using` selects a field, and `query` takes an operator and a value.
-A program can also build a definition from a declaration that it reads at
-run time.
+The derive emits one marker for each field of a record, such as
+`EncryptedMember::EMAIL`. A marker names the field, its plaintext type,
+and its accessor. It is the value the plan builder takes to declare the
+field, and the value a query takes to select it.
+
+The derive also emits `encryption_plan()`. It builds the record's `Plan`
+through the plan builder, once, and keeps it. A query through a marker
+reaches that plan itself. Decided on 7 November 2026.
 
 ```rust
 use stack_encrypt::op;
 
-// Not on `next` yet: `definition()`, field handles, and `using`.
-// Today a query names a plan written by hand:
+// Not on `next` yet: field markers, `encryption_plan()`, and `using` for
+// a query. Today a query names a plan written by hand:
 // `cipher.query(op::Eq, value).on(&plan)`.
-let members = EncryptedMember::definition()?;
-
-let by_email = cipher
-    .using(&members.email())
+let by_email = keyset
+    .using(EncryptedMember::EMAIL)
     .query(op::Eq, "alice@example.com")
     .await?;
-let adults = cipher
-    .using(&members.age())
+let adults = keyset
+    .using(EncryptedMember::AGE)
     .query(op::Between, &(18, 65))
     .await?;
-
-let profiles = EncryptedProfile::definition()?;
-let ada = cipher
-    .using(&profiles.document())
+let ada = keyset
+    .using(EncryptedProfile::DOCUMENT)
     .query(op::Contains, &json!({ "name": "Ada" }))
     .await?;
+
+// The same plan, for the chain and the dynamic interface.
+let plan: &Plan = EncryptedMember::encryption_plan();
 ```
 
 ```sql
 SELECT id, profile FROM customers WHERE profile @> $1::eql_v4.query_json;
 ```
+
+Whether `using` comes before `query`, as above, or after it, is decided
+with the query design. A program can also build a `Plan` by hand, from a
+declaration it reads at run time, and select it with `using`.
 
 Below the definition, `stack_encrypt::dynamic::record` has the functions
 that take a declaration as a frame: `plan_with`, `encrypt_with`, `query`,
@@ -1047,18 +1053,38 @@ format version beside it.
   example](#query-a-json-document) compiles, and an order
   query on a path the target does not order is refused.
 
-#### Definitions, field handles, and queries
+#### Field markers and the encryption plan
 
-- **What to build.** A shared definition for each record type, built once
-  from its declaration, with a method for each field that returns its
-  handle. Queries select a field with `using`. Typed Rust option
-  factories, and the same options read from data in the dynamic interface.
+Decided on 7 November 2026, as difference six of the context artifact
+review.
+
+- **What to build.** The derive emits one marker for each field, as an
+  associated constant such as `EncryptedMember::EMAIL`, with the field's
+  name, its plaintext type, and its accessor. The marker is the `FieldRef`
+  the plan builder takes, and the handle a query takes. The derive also
+  emits `encryption_plan()`. It returns the record's `Plan`, built once
+  through the plan builder with the markers as its arguments. `using`
+  selects a plan or a marker, for encryption and for a query; `on` goes.
+  Typed Rust option factories, and the same options read from data in the
+  dynamic interface.
 - **Why.** A query must use the same declaration as the stored values. The
-  caller must not write a second plan by hand.
-- **Done already.** Queries work through a plan written by hand:
-  `cipher.query(op, value).on(&plan)`.
-- **Finished when** the [definition example](#query-through-a-definition) compiles, and tests show
-  that a query cannot run without its definition or its required context.
+  caller must not write a second plan by hand. One marker type serves the
+  builder and the query, so the derive lowers to the builder with no
+  second mechanism.
+- **Done already.** `FieldRef` and `pick` exist in `plan/field_ref.rs`.
+  The derive already lowers a structural record to the builder. Queries
+  work through a plan written by hand: `cipher.query(op, value).on(&plan)`.
+- **Cannot fail.** `build()` refuses a repeated name or a shared identity.
+  The derive sees every field, so it refuses those at compile time, and
+  `encryption_plan()` returns `&'static Plan`, not a `Result`. The
+  hand-written builder keeps the runtime check. The dynamic grammar needs
+  it.
+- **Later.** A compile-time duplicate-field check for the hand-written
+  builder, through a type-level list of markers, stays a follow-up, as the
+  artifact says.
+- **Finished when** the [marker example](#query-through-a-field-marker)
+  compiles, and tests show that a query cannot run without its plan or its
+  required context.
 
 #### Context from fields and from the caller
 
@@ -1331,7 +1357,6 @@ The lead who approves this plan decides each question.
 | Question | Options | Recommendation |
 | --- | --- | --- |
 | What is the name of the wrapper that authenticates a collection's order and length? | `Positioned<Vec<T>>`. Or a name chosen in the naming review | `Positioned`. Decide in the naming review |
-| Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should Stack Encrypt use refined tags? | Store a tag derived from the ZeroKMS key tag with a hash-based message authentication code (HMAC). Or keep the original tag | No recommendation yet. The protocol is not designed |
 | How does a declaration mark a binding in the context, in Rust and in the dynamic grammar? | A kind on each part of the declaration, in the derive, the plan builder, and the Go struct tag. The spelling depends on the context vocabulary and the field reference design, decided with the context artifact | Decide with differences three to seven of the context artifact |

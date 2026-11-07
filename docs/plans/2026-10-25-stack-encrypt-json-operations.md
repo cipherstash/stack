@@ -326,7 +326,7 @@ struct EncryptedProfile(JsonTreeDocument);
 async fn main() -> Result<(), Box<dyn Error>> {
     let client = StackCipher::new().await?;
     let keyset = client.default_keyset();
-    let _definition = EncryptedProfile::definition()?;
+    let _plan = EncryptedProfile::encryption_plan();
 
     let profile = JsonPlaintext::parse(
         r#"{"age":42,"name":"Alice","visits":[{"date":"2026-10-01"}]}"#,
@@ -366,7 +366,7 @@ For that type:
 1. Select those fields through the context and scope attributes described
    in the API plan.
 2. Get its JSON field handle from
-   `EncryptedUser::definition()?.profile()`, and require `TenantId` on
+   `EncryptedUser::PROFILE`, and require `TenantId` on
    query requests.
 3. Store and return both ID fields for decryption.
 4. If the caller supplies input, use the agreed `_with_context` variants,
