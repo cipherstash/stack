@@ -1287,6 +1287,28 @@ review.
   work through a plan written by hand: `cipher.query(op, value).on(&plan)`.
   `Answers` on a target type is today's compile-time lookup of the index
   for an operator. The marker's index list extends it to a record field.
+- **A hand-built plan gets the same handles.** A typed Rust program
+  that writes its plan by hand names the plaintext type once,
+  `Plan::<Member>::context("members")`, so every `pick!` is checked
+  against it. `build()` returns the plan and one marker per field, in
+  declaration order, of the same type the derive emits. So a hand-built
+  plan and a derived one query the same way, with the same compile-time
+  checks. The builder keeps the context review's shape,
+  `Plan::context(..).fields()`, with the field verbs after it. Decided on
+  7 November 2026, as area three of the query design review.
+
+  ```rust
+  // Not on `next` yet: markers from `build()`, and `Plan::<Member>`.
+  let (members, (email, age)) = Plan::<Member>::context("members")
+      .fields()
+      .encrypt_index(pick!(email), (Equality, Match::<EnglishSearch>::new()))
+      .encrypt_index(pick!(age), (Equality, Ore))
+      .build()?;
+
+  let q: TextEqQuery = email.eq("alice@example.com").encrypt(&keyset).await?;
+  email.gt("alice@example.com")   // error: no order index on this field
+  ```
+
 - **Cannot fail.** `build()` refuses a repeated field name or a shared context name.
   The derive sees every field, so it refuses those at compile time, and
   `encryption_plan()` returns `&'static Plan`, not a `Result`. The
@@ -1716,3 +1738,4 @@ changes a name, not a design.
 | `#[derive(Scalar)]` | The derive for a single-value newtype |
 | `caveats`, `refine`, `refine_tag` | The caveat list in an EQL payload, and the operations that add to it |
 | The declaration attributes `scope(..)` and `bind(..)` | How a declaration marks its parts |
+| `Plan::context(..).fields()`, `encrypt_index`, `pick!` | The hand-built plan builder. The query artifact's `EncryptionPlan::record(..)` and `.field(..)` are the alternative spellings |
