@@ -761,7 +761,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let email = "alice@example.com".to_owned();
 
     let encrypted: TextEq = email
-        .encrypt_into_with_context(&keyset, column.clone())
+        .encrypt_into_with_context(&keyset, &column)
         .await?;
 
     let directory = tempfile::tempdir()?;
@@ -771,13 +771,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let reader = StackCipher::new().await?;
     let query_keyset = reader.default_keyset();
     let query: TextEqQuery = email
-        .encrypt_into_with_context(&query_keyset, column.clone())
+        .encrypt_into_with_context(&query_keyset, &column)
         .await?;
     let loaded: TextEq = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(loaded.hm, query.hm);
 
     // Supply the expected column, so stored identifier metadata is checked too.
-    let restored: String = loaded.decrypt_into(&reader, column).await?;
+    let restored: String = loaded.decrypt_into(&reader, &column).await?;
     assert_eq!(restored, email);
     Ok(())
 }
@@ -789,6 +789,12 @@ the owned traits. `TextEq` implements only the structural declarations. So
 the program needs `stack_encrypt::target::legacy::{DecryptFrom,
 EncryptInto}`, or `keyset.encrypt_as`, as `eql-bindings` uses. This was
 checked by reading the source, not by compiling.
+
+The program passes the column by reference, as `&column`, so it does not
+clone it for each call. That is the target form. On `next`, every context
+is taken by value, so the program would need `column.clone()`. The [API
+plan](2026-10-24-stack-encrypt-api-plan.md#pass-context-by-reference)
+lists this as remaining work.
 
 `TextEq` includes its EQL version, its identifier, the ciphertext, and the
 equality term. Its context type is `NonEmpty<Identifier>`. The application

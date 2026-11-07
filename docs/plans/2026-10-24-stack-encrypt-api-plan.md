@@ -442,6 +442,10 @@ describes the descriptor and the AAD. The module documentation of
 - **Encryption takes ownership.** `encrypt` and `encrypt_into` take the
   plaintext and wipe it, including when they fail. A decrypted value is an
   ordinary owned value. The caller is responsible for wiping it.
+- **Context is passed by reference.** A method that takes a context
+  borrows it while the request runs. So a program can use one context for
+  a write, a query, and a read without cloning it. An owned context also
+  works.
 - **Context is explicit.** A target says whether the caller must supply a
   context, can supply one, or must not. Stack Encrypt does not use a type's
   `Default` implementation to decide.
@@ -641,6 +645,19 @@ Rename each parameter to `context`. This breaks the Rust API only. It does
 not change the stored format. Renaming Vitamin C's `IntoAad` trait is a
 follow-up in Vitamin C. The Go SDK and the dynamic interface have no public
 parameter named `aad`.
+
+#### Pass context by reference
+
+- **What to build.** Let every method that takes a context accept a
+  borrowed context, such as `&Identifier`. The request borrows the context
+  for as long as it runs. `eql-bindings` needs `IntoContext` for
+  `&Identifier`.
+- **Why.** On `next`, every context is taken by value. A program that uses
+  one column context for a write and a query must clone it for each call.
+- **Done already.** Stack Encrypt implements `IntoContext` for `&Label`.
+  The context inputs, such as `RequiredContext`, still need an owned value.
+- **Finished when** the public examples pass a context by reference, with
+  no clone, and compile.
 
 #### Remove the structural API
 
