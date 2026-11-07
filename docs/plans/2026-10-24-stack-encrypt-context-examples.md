@@ -295,11 +295,3 @@ let note = Note::decrypt_from(encrypted, &keyset).await?;
 ZeroKMS today limits the length of a descriptor, and logs it in the
 clear. ZeroKMS version 2 is planned to remove the limit and to encrypt
 the access log.
-
-## Scenarios that were removed
-
-Two earlier scenarios sealed a value that was also the context of another
-field, and stored no copy of it in the clear. A reader needed the
-plaintext before it could open anything, so the sealed copy protected
-nothing. Both are gone. A value the caller already knows is a
-caller-supplied part, as in scenarios 2, 6, and 7.
