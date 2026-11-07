@@ -475,18 +475,24 @@ single value because its borrow implements Vitamin C's `Scalar`. That is
 the same rule every built-in single value follows.
 
 ```rust
+use stack_encrypt::Scalar;
 use zeroize::Zeroize;
 
 /// One byte, sealed on its own.
-#[derive(Zeroize)]
+// Not on `next` yet: `#[derive(Scalar)]`. Today `Byte` needs `Encrypt`
+// and `Scalar` on `&Byte`, and `FromScalar` on `Byte`, by hand.
+#[derive(Zeroize, Scalar)]
 struct Byte(u8);
 
-// Not on `next` yet: a derive for a single-value type. Today `Byte` needs
-// `Encrypt` and `Scalar` on `&Byte`, and `FromScalar` on `Byte`, by hand.
 let bytes: Vec<Byte> = vec![0u8, 1, 255].into_iter().map(Byte).collect();
 let each: Vec<Ciphertext> = bytes.encrypt_into(&keyset).await?;
 let opened = Vec::<Byte>::decrypt_from(each, &keyset).await?;
 ```
+
+`#[derive(Scalar)]` works on a struct with one field, whose type is a
+built-in single value. The derive encrypts the struct as that field, and
+decrypts the field back into the struct. So `Byte` is sealed exactly as
+the `u8` inside it would be, if `u8` were a single value on its own.
 
 The user agreed this behaviour on 7 November 2026. It is what pull
 request #1501 built.
@@ -1097,11 +1103,11 @@ parameter named `aad`.
 
 #### A derive for a single-value type
 
-- **What to build.** A derive, or a `#[stash(scalar)]` attribute, for a
-  newtype around one built-in single value, such as `struct Byte(u8)` or
+- **What to build.** `#[derive(Scalar)]`, for a struct with one field
+  whose type is a built-in single value, such as `struct Byte(u8)` or
   `struct Token(String)`. It gives the type what `OpaqueEncode` and
   `OpaqueDecode` need: `Encrypt` and `Scalar` on its borrow, and
-  `FromScalar` on the type.
+  `FromScalar` on the type. Each one forwards to the field.
 - **Why.** A newtype is how a caller changes the rule for a value, such as
   encrypting a `Vec<u8>` byte by byte. On `next`, the three
   implementations are written by hand. `FromScalar` is not documented for
