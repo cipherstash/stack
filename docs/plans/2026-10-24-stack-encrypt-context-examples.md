@@ -2,7 +2,7 @@
 
 Date: 7 November 2026.
 
-This document lists nine ways a record can get its context, each as a
+This document lists ten ways a record can get its context, each as a
 code example with its use case. Together they are the acceptance matrix
 for the work item [Context from fields and from the
 caller](2026-10-24-stack-encrypt-api-plan.md#context-from-fields-and-from-the-caller)
@@ -295,3 +295,52 @@ let note = Note::decrypt_from(encrypted, &keyset).await?;
 ZeroKMS today limits the length of a descriptor, and logs it in the
 clear. ZeroKMS version 2 is planned to remove the limit and to encrypt
 the access log.
+
+## 10. The same bindings, in a type of our own instead of EQL
+
+The shape of scenario 9 does not depend on EQL. A target type of our
+own can store the ciphertext, its search terms, and its bindings as one
+value. It needs only the derives Stack Encrypt already has or plans.
+
+The bindings are passthrough fields of the target, stored in the clear inside
+it. They are part of the stored context. One column stores
+the whole value, through Serde, and the reader passes nothing.
+
+What EQL adds is the PostgreSQL side: a domain for the column, and the
+operators that run a search on it. A type of our own has neither, so a
+query compares the stored term in SQL that the application writes.
+
+```rust
+#[derive(Zeroize)]
+struct Written {
+    text: String,
+    from: IpAddr,
+    at: Timestamp,
+}
+
+/// One stored value: the ciphertext, a match term, and two bindings.
+#[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
+#[stash(plaintext = Written, bind(field = "from"), bind(field = "at"))]
+struct SealedNote {
+    ciphertext: Ciphertext,
+    terms: MatchTerm,
+    #[stash(passthrough)]
+    from: IpAddr,
+    #[stash(passthrough)]
+    at: Timestamp,
+}
+
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Note, context = "notes", bind(field = "id"))]
+struct EncryptedNote {
+    #[stash(passthrough)]
+    id: Uuid,
+    body: SealedNote,             // one column, stored as JSON through Serde
+}
+
+let note = Note { id: Uuid::new_v4(), body: Written { text, from: request.ip(), at: now() } };
+let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
+
+// `SELECT id, body FROM notes WHERE id = $1` is enough, as in scenario 9.
+let note = Note::decrypt_from(encrypted, &keyset).await?;
+```

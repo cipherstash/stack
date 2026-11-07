@@ -1039,6 +1039,10 @@ format version beside it.
   decrypt the value. Inside the payload, one column stores the value and its bindings, so
   `SELECT body` is enough. Scenario 9 of the [context
   scenarios](2026-10-24-stack-encrypt-context-examples.md) shows it.
+- **Without EQL.** The same shape works in a target type of our own, with
+  the bindings as passthrough fields of the target. Scenario 10 shows it.
+  That needs bindings declared on a target type, from the [record
+  derives](#record-derives) item, and no change to EQL.
 - **Stored format.** The field is optional, so a payload without it is
   unchanged. A payload with it is a new form beside the rc.3 form.
 - **Done already.** Nothing.
@@ -1199,7 +1203,7 @@ review.
   bytes.
 - **Scenarios.** The [context
   examples](2026-10-24-stack-encrypt-context-examples.md) are the
-  acceptance matrix: nine scenarios, from a static context alone to the
+  acceptance matrix: ten scenarios, from a static context alone to the
   bindings that access intelligence stores. Two earlier scenarios were removed, because
   each sealed a value that was also another field's context, so nothing
   could open without the plaintext.
@@ -1219,7 +1223,7 @@ review.
   compile time. `RequiredContext`, `OptionalContext`, and `NoCallerContext`
   (#1404) are the three states this keeps.
 - **Finished when** these are both true:
-  - all nine scenarios run as tests in Rust and Go, through the
+  - all ten scenarios run as tests in Rust and Go, through the
     builder;
   - a Rust call with an undeclared part fails to compile.
 
