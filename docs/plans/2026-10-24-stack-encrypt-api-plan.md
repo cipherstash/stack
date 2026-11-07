@@ -1023,6 +1023,10 @@ NEW.body := eql_v4.refine_tag(NEW.body, 'row_id', NEW.id::text);
   Rust first, and the dynamic grammar adopts it by an explicit change.
 - **Each element of a collection stands alone.** Each element has its own
   data key. Each element is authenticated on its own.
+- **Match text is analysed by one pipeline.** A typed configuration can
+  use any stage, including a customer's own. A serialised plan can name
+  only the closed dynamic subset, and every reader runs exactly the
+  stages it names.
 - **Order terms do not answer equality.** An order-revealing encryption
   (ORE) term does not answer an equality query. A field that needs both
   declares both indexes.
@@ -1072,9 +1076,11 @@ customer release.
 
 #### Configurable match options in Go
 
-- **What to build.** Match options that a Go program can set: the
-  tokeniser, the filters, and the n-gram length. Issue #1112 tracks the
-  part in the generator.
+- **What to build.** Match options that a Go program can set, as the
+  stages of the analyzer's dynamic subset: the tokeniser, the filters,
+  and the n-gram length. Issue #1112 tracks the part in the generator.
+  [Match configuration: one analyzer](#match-configuration-one-analyzer)
+  has the design.
 - **Why.** Today Go uses only the default match options.
 - **Done already.** Words of two letters can be searched (#1397).
 - **Finished when** a Go field can declare match options, and its queries
@@ -1710,6 +1716,63 @@ Decided on 7 November 2026, as area two of the query design review.
   - the dynamic enum is generated from the `op` types;
   - `Matches` has no type parameter;
   - a test shows that each operator's three faces name the same operator.
+
+#### Match configuration: one analyzer
+
+Decided on 7 November 2026, as area five of the query design review. The
+design is the query artifact's; the four adjustments below are the
+plan's.
+
+- **What to build.**
+  - An analyzer pipeline, typed first: `Words.downcase().stop(..).stem(..).ngrams(3)`,
+    built like an iterator chain. The order is checked by type, so a
+    stemmer after n-grams does not compile. Any type that implements
+    `Stage` can join, so a customer's own filter needs no change to the
+    crate.
+  - A closed dynamic subset, `StageSpec`: `Words`, `Whole`, `Downcase`,
+    `Stop`, `Stem`, `Ngrams`, `EdgeNgrams`, `Shingles`. A plan names its
+    stages, and every reader of the plan runs exactly those: Rust, the Go
+    verify path, and EQL. A typed stage joins the subset by an explicit
+    change. Until then a configuration that uses it is typed-only, and a
+    serialised plan that names it is refused with `NotPortable`.
+  - Case stated once, as whether `downcase()` is in the analyzer.
+  - Two types: `Match<O>`, with the options in the type, and
+    `Match<Dynamic>`, with the options in the value. Both derive terms
+    through one `sem::match_terms`. A stored field and its query agree by
+    type on the typed path, and by reading one plan entry on the dynamic
+    path.
+  - Versioned stop lists and stemmers, such as `english@1`. Changing a
+    list is a new id, never a silent change to stored terms.
+  - Refusals written once, in the `sem` functions, for both paths: empty
+    text, text that cannot be normalised, and invalid options.
+- **Stored format.** A declaration is data that a stored row depends on.
+  A rc.3 declaration, `{tokenizer, downcase, short_words}`, keeps loading,
+  mapped to the equivalent stage list. A conformance case shows that the
+  mapped list produces the same terms as rc.3, for both tokenisers. New
+  declarations may write `analyzer` instead.
+- **Short words.** The short-word channel (#1397) is a stage in the
+  analyzer, not a sibling index. A second filter is a second index only
+  if it answers a different operator. The privacy question about short
+  words stays open as it is.
+- **Go.** A struct tag's match options are the stages of the dynamic
+  subset. `stashgen` asks the engine which stages exist, and keeps no
+  list of its own. This is what [configurable match options in
+  Go](#configurable-match-options-in-go) builds.
+- **EQL.** EQL's match configuration has a tokeniser and token filters.
+  `EqlMatch` uses only stages that map onto them. Edge n-grams and
+  shingles stay Stack-only until EQL supports them.
+- **`expected_tokens` is dropped.** It is an optional prior for the
+  false-positive estimate in `op::Stats`, `None` by default, and a data
+  plan never declares one. `Stats::measured(rows, ..)` stays. Decided on
+  7 November 2026.
+- **Breaking.** Every hand-written `MatchConfig` changes shape. This lands
+  as a `!` commit with a changelog entry.
+- **Finished when** these are all true:
+  - the rc.3 mapping conformance case passes in Rust and Go;
+  - a `tests/ui` case shows a stemmer after n-grams fails to compile;
+  - a serialised plan naming a typed-only stage is refused with
+    `NotPortable`;
+  - EQL, Go, and Rust produce the same terms for the same stage list.
 
 ### 5. After the customer release
 
