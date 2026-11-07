@@ -31,11 +31,16 @@ log](2026-10-24-stack-encrypt-api-review.md).
 | Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](#context-and-aad) |
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
+| Field marker | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | Passthrough field | A field stored unencrypted next to the encrypted fields. It is not authenticated |
+| Planned | A value paired with a plan that is data, `Planned::new(&plan, value)`. Encrypted, queried, or decrypted with the keyset as the argument. See [A request: `Planned`](#a-request-planned) |
 | Query context | All the scopes of a context, declared and caller-supplied. Search terms derive under it. See [Query context and stored context](#query-context-and-stored-context) |
+| Query plan | A record plan narrowed to one field and one operator, `plan.query(field, op)`. A query value is encrypted under it. See [A query plan](#a-query-plan) |
+| QueryTerm | The result of a query on the dynamic path: the operand bytes and the EQL type they bind as, known at run time |
+| Request | A serialised `Planned`: the plan, the caller's context parts, and the value. The one thing a binding sends to the engine. A transport form, never stored |
 | Scope | A part of the context that narrows the data and the queries over it. The declaration supplies the first scopes, such as `users` and `email`; the caller adds more, such as a tenant ID, with `Scope::new(..)` |
 | Search term | A value stored next to a ciphertext, so that a query can find it without decrypting it. Equality, order, and match each use their own term |
 | Stored context | Every part of a value's context. The data key and the AAD derive under it |
@@ -235,7 +240,9 @@ SELECT id, email, age FROM members WHERE age > $1::eql_v4.query_integer_ord;
 
 The context `Identifier::for_column("members", "email")` is the same as the
 context that the record derive gives the `email` field of
-`EncryptedMember`. So the query matches the stored values.
+`EncryptedMember`. So the query matches the stored values. A field of a
+record is queried through its marker instead, so that the operator is
+checked at compile time. See [Query a record field](#query-a-record-field).
 
 A match query works in the same way, on a field with a match index. Its
 answer can include rows that do not match. So the caller decrypts the rows,
@@ -304,9 +311,10 @@ let opened = JsonPlaintext::decrypt_from(encrypted, &keyset).await?;
 
 #### Query a JSON document
 
-A JSON query works like a [scalar query](#query-a-field). An operand type
-encrypts into its EQL query type with `encrypt_into`, the same verb as
-every other value. A query needs two things from the field's declaration:
+A JSON query is a query on the document's field marker. The marker has
+one method for each kind of query, as a scalar field's marker has one
+method for each operator. A query needs two things from the field's
+declaration:
 
 - **The column context.** Each path's selector is derived under it, so the
   query must use the same context as the stored documents.
@@ -314,41 +322,34 @@ every other value. A query needs two things from the field's declaration:
   wildcard such as `[*]` expands. An order query on a path without order
   terms would find no rows, so Stack Encrypt refuses it.
 
-With the default options, the operand needs only the column. The caller
-passes it as the context, as a scalar query does:
+The marker carries both, so the query names only its kind and its
+values. The output type is the EQL query type, fixed by the marker.
+Decided on 7 November 2026.
 
 ```rust
-use eql_bindings::v4::json_tree::{JsonTreeLeafQuery, JsonTreeQuery};
-use stack_encrypt::json::{AtPath, Contains};
+use eql_bindings::v4::json_tree::{JsonTreeElementsQuery, JsonTreeLeafQuery, JsonTreeQuery};
 
-// Not on `next` yet: the public JSON operand types.
-let ada: JsonTreeQuery = Contains(json!({ "name": "Ada" }))
-    .encrypt_into_with_context(&keyset, Scope::new(&column))
+// Not on `next` yet: field markers and their query methods. The method
+// names are proposals.
+let ada: JsonTreeQuery = EncryptedProfile::DOCUMENT
+    .contains(json!({ "name": "Ada" }))
+    .encrypt(&keyset)
     .await?;
-```
-
-With custom options, the operand names the target type of the field. The
-target's declaration supplies the column and the options. An order query
-on a path that the target does not order is refused.
-
-```rust
-use eql_bindings::v4::json_tree::JsonTreeElementsQuery;
-use stack_encrypt::json::ElementMatch;
-
-// Not on `next` yet: the public JSON operand types.
-let ada: JsonTreeQuery = Contains::<EncryptedProfile>(json!({ "name": "Ada" }))
-    .encrypt_into(&keyset)
+let older: JsonTreeLeafQuery = EncryptedProfile::DOCUMENT
+    .at("$.age")
+    .gt(30)
+    .encrypt(&keyset)
     .await?;
-let older: JsonTreeLeafQuery = AtPath::<EncryptedProfile>::gt("$.age", 30)
-    .encrypt_into(&keyset)
+let adults: JsonTreeLeafQuery = EncryptedProfile::DOCUMENT
+    .at("$.age")
+    .between(18, 65)
+    .encrypt(&keyset)
     .await?;
-let adults: JsonTreeLeafQuery = AtPath::<EncryptedProfile>::between("$.age", 18, 65)
-    .encrypt_into(&keyset)
-    .await?;
-let home: JsonTreeElementsQuery = ElementMatch::<EncryptedProfile>::at("$.visits[*]")
+let home: JsonTreeElementsQuery = EncryptedProfile::DOCUMENT
+    .elements("$.visits[*]")
     .eq("place", "home")
     .gt("at", 15)
-    .encrypt_into(&keyset)
+    .encrypt(&keyset)
     .await?;
 ```
 
@@ -365,37 +366,31 @@ SELECT id FROM customers
 WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements);
 ```
 
-The kinds of JSON query, and what each one finds:
+The kinds of JSON query, the marker method for each, and what each finds:
 
-| Query | What it finds | EQL query type |
-| --- | --- | --- |
-| Containment | Rows whose document contains the given document, or is contained by it | `JsonTreeQuery` |
-| Comparison at a path | Rows where the value at an ordered path equals, orders against, or lies between the given values | `JsonTreeLeafQuery` |
-| Element match | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
-| Jsonpath predicate | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
-| Children and child count | The entries directly below one node, or how many there are | A node token |
+| Query | Marker method | What it finds | EQL query type |
+| --- | --- | --- | --- |
+| Containment | `contains(doc)`, `contained_by(doc)` | Rows whose document contains the given document, or is contained by it | `JsonTreeQuery` |
+| Comparison at a path | `at(path).eq(v)`, `.gt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path equals, orders against, or lies between the given values | `JsonTreeLeafQuery` |
+| Element match | `elements(path).eq(member, v).gt(member, v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
+| Jsonpath predicate | `predicate(text)` | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
+| Children and child count | `children(path)` | The entries directly below one node, or how many there are | A node token |
 
-The operand types are named `Contains`, `AtPath`, and `ElementMatch`,
-with `Predicate` for a jsonpath predicate and `Children` for the entries
-below a node. The user agreed these names on 7 November 2026.
+A path is text. So an order query on a path the options do not order is
+refused at run time, before any key is fetched. A scope chains on a JSON
+query as on a scalar one: `.contains(doc).scope(tenant)`.
 
-The operand types are not new. The dynamic interface already has one
-private input type for each operator, in `stack_encrypt::dynamic`:
+The engine already has one input type for each JSON operator, in
+`stack_encrypt::dynamic`. `DocumentInput` is for containment, `AtInput`
+for a comparison at a path, and `ElementsInput` for element match. The marker
+methods build those same inputs, so the typed form and the dynamic form
+share one set of input rules. The operand types `Contains`, `AtPath`,
+`ElementMatch`, `Predicate`, and `Children` that the plan proposed earlier
+are retired, replaced by these methods, on 7 November 2026.
 
-- `DocumentInput` for containment;
-- `AtInput` for a comparison at a path;
-- `ElementsInput` for element match.
-
-The dynamic parser reads the JSON object a binding sends into one of
-them. The engine then derives the operand from it. The static form makes
-those types public, with constructors. The parser reads into the same
-types, so both forms share one set of input rules.
-
-The public forms do not exist on `next`. Today a Rust program queries a
-JSON document [through a plan](#query-through-a-plan). A plan is part
-of the dynamic interface. The dynamic interface is still the right tool for a
-query known only at run time, such as a jsonpath predicate that a user
-types.
+A document encrypted straight into `JsonTreeDocument`, with no record,
+has no marker. It is queried through a [query plan](#a-query-plan), as any
+value under a plan that is data.
 
 #### Encrypt a whole value as one ciphertext
 
@@ -548,117 +543,179 @@ The output keys and the type names are part of the stored format, so they
 cannot change. The output keys are `c`, `eq`, `match`, `ore`, `ope`, and
 `passthrough`. The type names include `int64` and `string`.
 
-#### Query through a plan
+#### A request: `Planned`
 
-On `next`, a Rust program queries a JSON document through a plan. The plan
-is the declaration as data, so this is the dynamic interface with typed
-operators. `stack_encrypt::op` names the operator. `on` names the plan, and the plan
-supplies the column and the options:
+Anything encrypted under a plan that is data is a `Planned` value. That
+is a record under a record plan, or a query value under a [query
+plan](#a-query-plan).
+
+`Planned` is a plain struct, like `OpaqueBlob` and `Positioned`. It adds
+no method to any other type. The keyset is the argument. Decided on
+7 November 2026.
 
 ```rust
-use stack_encrypt::{json::JsonPath, op, NonEmpty};
+// Not on `next` yet: `Planned`. Today the chain does this:
+// `cipher.encrypt(&user).using(&plan)` and `cipher.query(op, v).on(&plan)`.
+let row = Planned::new(&plan, member).encrypt(&keyset).await?;
+let member: Member = Planned::new(&plan, row).decrypt(&keyset).await?;
 
-// Containment: documents that contain this document.
-let ada = keyset
-    .query(op::Contains, &json!({ "name": "Ada" }))
-    .on(&plan)
-    .await?;
-
-// A comparison at a path. `$.age` must be an ordered path.
-let older = keyset
-    .query(op::AtPath(op::Gt), &("$.age", 30))
-    .on(&plan)
-    .await?;
-let adults = keyset
-    .query(op::AtPath(op::Between), &("$.age", (18, 65)))
-    .on(&plan)
-    .await?;
-
-// The selector of a path, for `->` in SQL.
-let age = keyset
-    .json_selector(&JsonPath::parse("$.age")?, NonEmpty::new(column.clone())?)
+let row = Planned::new(&plan, member)
+    .encrypt_with_context(&keyset, Scope::new(tenant).bind(row_id))
     .await?;
 ```
 
-The query values convert to the EQL query types: `JsonTreeQuery` for
-containment, and `JsonTreeLeafQuery` for a comparison at a path.
+A serialised `Planned` is the one request every binding sends to the
+engine. It has three parts:
 
-A chain call that needs a scope or a binding takes it through the paired
-entry point, as the typed API does:
+- the plan, by reference to one the engine holds, or inline;
+- the caller's context parts, in declared order, with their types;
+- the value.
+
+The keyset stays outside, as the receiver, so a request never names a
+key.
+
+```json
+{
+  "plan":    "e3b0c442…",
+  "context": { "scope": [42], "bind": ["7f3c2a9e-…"] },
+  "value":   { "email": "alice@example.com", "age": 35 }
+}
+```
+
+The engine answers with the stored row, the query term, or the plaintext.
+The same shape is a conformance case, with the engine's expected answer
+beside it. `contexts()` works on a request before it runs, so a binding
+can show the exact context a request will use.
+
+A request is a transport form, never a storage form. The value in it is
+plaintext. So a request lives only in a wiped buffer, as the engine
+already reads it (`ProtectedRef<[u8]>`), and is never logged or written to
+disk. A binding that keeps a request, for a retry say, keeps it wiped.
+
+The request's shape is not part of the stored format. It can change
+with the dynamic grammar, and a change to it moves no stored byte.
+
+Below `Planned`, `stack_encrypt::dynamic::record` has the functions that
+take a declaration as a frame: `plan_with`, `encrypt_with`, `query`, and
+`decrypt_with`. `Planned` calls them. Each takes a `TargetResolver`. The
+resolver runs the EQL type that a field names.
+
+On `next`, each program writes its own resolver over `eql-bindings`. In
+the target state, `eql-bindings` provides it. See [A ready-made EQL
+resolver](#a-ready-made-eql-resolver).
+
+#### A query plan
+
+A query plan is derived from a record plan. It names one field and one
+operator, and so the index and the options the query runs under. It is refused where it is made if the field has no index for the
+operator.
+
+The record plan does not change. A field's indexes stay the only thing
+it declares about queries, so no declaration lists the queries a program
+might run.
 
 ```rust
-// Not on `next` yet: the paired chain entry points and `Scope`.
-let by_tenant = keyset
-    .query_with_context(op::Eq, "alice@example.com", Scope::new(tenant))
-    .on(&plan)
-    .await?;
-let user: User = keyset
-    .decrypt_with_context(encrypted, Scope::new(tenant).bind(row_id))
-    .using(&plan)
+// Not on `next` yet: query plans.
+let by_email = plan.query("email", Op::Eq)?;   // refused here if no index answers Eq
+
+let q: QueryTerm = Planned::new(&by_email, "alice@example.com")
+    .encrypt_with_context(&keyset, Scope::new(tenant))
     .await?;
 ```
 
-Three kinds of JSON query have no typed operator on `next`. They exist
-only as data, through `stack_encrypt::dynamic::query_term`, with the
-operator named as text:
+A query plan can be serialised beside its record plan, as
+`{"field": "email", "op": "eq"}`. The bytes a query sends to the engine do
+not change: the engine already receives the plan, the field, the
+operator, and the value. They are grouped differently.
 
-- element match: `"element_match"`;
-- jsonpath predicates: `"match"`;
-- children and child count: `"children"` and `"child_count"`.
+The result on the dynamic path is a `QueryTerm`: the operand bytes, and
+the EQL type they bind as, known at run time. A typed query returns the
+EQL query type instead, because its marker fixes it.
 
-Go has generated methods for the first two, such as
-`Fields.Profile.Elements.Visits.Match`.
-
-#### Query through a field marker
+#### Query a record field
 
 The derive emits one marker for each field of a record, such as
 `EncryptedMember::EMAIL`. A marker names the field, its plaintext type,
-and its accessor. It is the value the plan builder takes to declare the
-field, and the value a query takes to select it.
-
+its accessor, and the field's index list. It is the value the plan
+builder takes to declare the field, and the value a query starts from.
 The derive also emits `encryption_plan()`. It builds the record's `Plan`
-through the plan builder, once, and keeps it. A query through a marker
-reaches that plan itself. Decided on 7 November 2026.
+through the plan builder, once, and keeps it.
+
+A typed query starts from the marker, and has one method for each
+operator the field's indexes answer. A missing operator is a compile
+error: "no method named `gt`", with a message that names the field's
+indexes. Scopes chain on the query. A binding cannot, because the query
+builder has no `bind` method, so a query accepts scopes only, by type.
+The query ends with `encrypt(&keyset)`, and its output type is the EQL
+query type the marker fixes. Decided on 7 November 2026.
 
 ```rust
-use stack_encrypt::op;
-
-// Not on `next` yet: field markers, `encryption_plan()`, and `using` for
-// a query. Today a query names a plan written by hand:
+// Not on `next` yet: field markers, their query methods, and
+// `encryption_plan()`. Today a query names a plan written by hand:
 // `cipher.query(op::Eq, value).on(&plan)`.
-let by_email = keyset
-    .using(EncryptedMember::EMAIL)
-    .query(op::Eq, "alice@example.com")
+let by_email: TextEqQuery = EncryptedMember::EMAIL
+    .eq("alice@example.com")
+    .scope(tenant)
+    .encrypt(&keyset)
     .await?;
-let adults = keyset
-    .using(EncryptedMember::AGE)
-    .query(op::Between, &(18, 65))
-    .await?;
-let ada = keyset
-    .using(EncryptedProfile::DOCUMENT)
-    .query(op::Contains, &json!({ "name": "Ada" }))
+let adults: IntegerOrdQuery = EncryptedMember::AGE
+    .between(18, 65)
+    .encrypt(&keyset)
     .await?;
 
-// The same plan, for the chain and the dynamic interface.
+// error: `TextEq` has no order index, so the marker has no `gt`
+EncryptedMember::EMAIL.gt("alice@example.com")
+// error: the query builder has no `bind`
+EncryptedMember::EMAIL.eq("alice@example.com").bind(row_id)
+
+// The record's plan, for the dynamic interface.
 let plan: &Plan = EncryptedMember::encryption_plan();
 ```
 
 ```sql
-SELECT id, profile FROM customers WHERE profile @> $1::eql_v4.query_json;
+SELECT id, email, age FROM members WHERE email = $1::eql_v4.query_text_eq;
 ```
 
-Whether `using` comes before `query`, as above, or after it, is decided
-with the query design. A program can also build a `Plan` by hand, from a
-declaration it reads at run time, and select it with `using`.
+A chained scope is allowed on a query because a query has one field and
+one value, so a scope cannot mean anything else. The rule that no chain state
+offers context was about `.extend(..)` after `.fields()` on a record. There, a part added late looked per-field
+and was not.
 
-Below the definition, `stack_encrypt::dynamic::record` has the functions
-that take a declaration as a frame: `plan_with`, `encrypt_with`, `query`,
-and `decrypt_with`. Each takes a `TargetResolver`. The resolver runs the EQL
-type that a field names.
+A typed query lowers to a query plan and a `Planned` value, so the typed
+form and the dynamic form run the same engine function.
 
-On `next`, each program writes its own resolver over
-`eql-bindings`. In the target state, `eql-bindings` provides it. See [A
-ready-made EQL resolver](#a-ready-made-eql-resolver).
+#### The dynamic field handle
+
+A program whose plan is data uses the same builder through a field
+handle. The handle has every operator method. Each one is checked at run
+time against the plan, and returns `IndexNotDeclared` when no index
+answers it. The handle has no `bind` method either.
+
+```rust
+// Not on `next` yet: the dynamic field handle.
+let email = plan.field("email")?;
+let q: QueryTerm = email
+    .eq("alice@example.com")?        // refused here if no index answers Eq
+    .scope(tenant)
+    .encrypt(&keyset)
+    .await?;
+```
+
+Rust is the superset. The serialised plan is checked at run time, and a
+language generates its own type-checked builder over it where it can. Go
+has that today: `stashgen` generates one method per field for each
+operator the field's indexes answer, and asks the engine which operators
+those are.
+
+A TypeScript binding could get a generated `.d.ts`, and a Python
+binding generated `.pyi` stubs. Then an editor and a type checker show
+only the operators each field supports. A binding through NAPI or
+PyO3 exposes the dynamic path method for method:
+
+```ts
+const q = await plan.field("email").eq("alice@example.com").scope(tenant).encrypt(keyset);
+q.sqlType;   // "eql_v4.query_text_eq", from the plan, at run time
+```
 
 #### Call it from Go
 
@@ -723,7 +780,19 @@ visit, err := Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONRead
 
 A field has a query method only for the operators it supports, so an
 unsupported query does not compile. The generator asks the engine which
-operators each field supports. It does not keep its own copy of the rules.
+operators each field supports. It does not keep its own copy of the
+rules. These generated methods are Go's typed form over the dynamic plan. The
+engine checks the plan at run time, and the Go compiler checks the
+operators.
+
+Code that `stashgen` wrote for rc.3 compiles and runs against the next
+module without being generated again. The generated file builds its
+declaration through `gensupport` calls, and the module builds the frames
+it sends to the engine. So a change to the request's shape is a change
+inside the module. A program generates again only to adopt a new
+declaration, such as a scope or binding on a field. The generator keeps
+its output identical for unchanged input, so an upgrade alone does not
+change a committed `*_stash.go` file.
 
 Two parts of the target state are not in Go yet:
 
@@ -858,9 +927,7 @@ println!("{}", EncryptedUser::encryption_plan().contexts());
 //   search terms:   under the query context
 
 // For a call: the exact context, with the caller's values filled in.
-let call = keyset
-    .using(EncryptedUser::EMAIL)
-    .query_with_context(op::Eq, "alice@example.com", Scope::new(42_u64));
+let call = EncryptedUser::EMAIL.eq("alice@example.com").scope(42_u64);
 println!("{}", call.context());
 // query context:  users / email / 42u64
 ```
@@ -945,6 +1012,15 @@ NEW.body := eql_v4.refine_tag(NEW.body, 'row_id', NEW.id::text);
   and type, so the Go generator can require them when it generates the
   code. Its default stays "any part or none", because Go rc.3 callers use
   that, and the stored bytes are the same either way.
+- **`encrypt` or `encrypt_into`.** `encrypt_into` is for the case where
+  the caller names the output type. `encrypt` is for the case where a
+  marker or a plan fixes it: a query from a marker, or a `Planned` value.
+  `keyset.encrypt(value)` and `value.encrypt_into::<T>` follow this rule
+  on `next` today.
+- **Rust is the superset.** The plain serialised plan is checked at run
+  time by the engine. A language generates its own type-checked builder
+  over it where it can, as `stashgen` does for Go. A capability lands in
+  Rust first, and the dynamic grammar adopts it by an explicit change.
 - **Each element of a collection stands alone.** Each element has its own
   data key. Each element is authenticated on its own.
 - **Order terms do not answer equality.** An order-revealing encryption
@@ -1163,15 +1239,17 @@ caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
 
 #### Static JSON queries
 
-- **What to build.** Make the dynamic interface's input types public.
-  There is one for each kind of JSON query: containment, comparison at a
-  path, element match, jsonpath predicate, and reads of children. Give
-  each one constructors, and an `EncryptTarget` implementation that
-  encrypts it into its EQL query type. The target type of the field
-  supplies the column and the options. The dynamic parser keeps reading
-  into the same types, so there is one definition of each input.
-- **Names.** `Contains`, `AtPath`, `ElementMatch`, `Predicate`, and
-  `Children`, in `stack_encrypt::json`. Agreed on 7 November 2026.
+- **What to build.** One method for each kind of JSON query on a JSON
+  document's field marker. The methods are `contains` and `contained_by`;
+  `at(path)` with the comparison operators; `elements(path)` with its
+  member conditions; `predicate`; and `children`. Each method builds the input type the
+  dynamic interface already has for that operator, and `encrypt(&keyset)`
+  returns the EQL query type. The marker supplies the column and the
+  options. The dynamic parser keeps reading into the same input types, so
+  there is one definition of each input.
+- **Names.** The method names above are proposals. The operand types
+  `Contains`, `AtPath`, `ElementMatch`, `Predicate`, and `Children` that
+  this plan proposed earlier are retired, on 7 November 2026.
 - **Why.** On `next`, a Rust program needs a plan for any JSON query, and
   needs the dynamic interface for element match, predicates, and children.
   Go already has typed methods for these.
@@ -1179,9 +1257,10 @@ caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
   types in `stack_encrypt::dynamic::json_query`. Typed containment and
   comparison at a path, through a plan (`op::Contains`, `op::AtPath`). The
   EQL query types exist in `eql-bindings`.
-- **Finished when** the [static JSON query
-  example](#query-a-json-document) compiles, and an order
-  query on a path the target does not order is refused.
+- **Finished when** these are both true:
+  - the [JSON query example](#query-a-json-document) compiles;
+  - an order query on a path the options do not order is refused before
+    any key is fetched.
 
 #### Field markers and the encryption plan
 
@@ -1189,14 +1268,16 @@ Decided on 7 November 2026, as difference six of the context artifact
 review.
 
 - **What to build.** The derive emits one marker for each field, as an
-  associated constant such as `EncryptedMember::EMAIL`, with the field's
-  name, its plaintext type, and its accessor. The marker is the `FieldRef`
-  the plan builder takes, and the handle a query takes. The derive also
-  emits `encryption_plan()`. It returns the record's `Plan`, built once
-  through the plan builder with the markers as its arguments. `using`
-  selects a plan or a marker, for encryption and for a query; `on` goes.
-  Typed Rust option factories, and the same options read from data in the
-  dynamic interface.
+  associated constant such as `EncryptedMember::EMAIL`. The marker has
+  the field's name, its plaintext type, its accessor, and its index list. The marker
+  is the `FieldRef` the plan builder takes, and the value a query starts
+  from. The index list is what lets the marker offer one method per
+  operator, resolved at compile time. The derive also emits
+  `encryption_plan()`. It returns the record's `Plan`, built once through
+  the plan builder with the markers as its arguments. A query from a
+  marker lowers to a [query plan](#a-query-plan). Typed Rust option
+  factories, and the same options read from data in the dynamic
+  interface.
 - **Why.** A query must use the same declaration as the stored values. The
   caller must not write a second plan by hand. One marker type serves the
   builder and the query, so the derive lowers to the builder with no
@@ -1204,6 +1285,8 @@ review.
 - **Done already.** `FieldRef` and `pick` exist in `plan/field_ref.rs`.
   The derive already lowers a structural record to the builder. Queries
   work through a plan written by hand: `cipher.query(op, value).on(&plan)`.
+  `Answers` on a target type is today's compile-time lookup of the index
+  for an operator. The marker's index list extends it to a record field.
 - **Cannot fail.** `build()` refuses a repeated field name or a shared context name.
   The derive sees every field, so it refuses those at compile time, and
   `encryption_plan()` returns `&'static Plan`, not a `Result`. The
@@ -1212,9 +1295,49 @@ review.
 - **Later.** A compile-time duplicate-field check for the hand-written
   builder, through a type-level list of markers, stays a follow-up, as the
   artifact says.
-- **Finished when** the [marker example](#query-through-a-field-marker)
-  compiles, and tests show that a query cannot run without its plan or its
-  required context.
+- **Finished when** these are all true:
+  - the [marker example](#query-a-record-field) compiles;
+  - the compile-fail cases in `tests/ui` cover an operator the field's
+    indexes do not answer;
+  - tests show that a query cannot run without its plan or its required
+    context.
+
+#### A request: `Planned` and its serialised form
+
+Decided on 7 November 2026, as area one of the query design review.
+
+- **What to build.**
+  - `Planned::new(&plan, value)`, with `encrypt`, `encrypt_with_context`,
+    `decrypt`, and `decrypt_with_context`, for a record under a record
+    plan and a query value under a query plan.
+  - The request format: the plan by reference or inline, the context
+    parts in declared order with their types, and the value. The engine
+    reads it from a wiped buffer and answers with the row, the query term,
+    or the plaintext. The keyset is never in it.
+  - Query plans: `plan.query(field, op)`, refused where it is made if no
+    index answers the operator, and serialisable beside the record plan.
+  - The dynamic field handle, `plan.field(name)`, with every operator
+    method checked at run time.
+  - `QueryTerm` as the dynamic path's query result: the operand bytes and
+    the EQL type they bind as.
+  - `contexts()` on a request, before it runs.
+- **Why.** One shape for every binding. A binding then has no logic of
+  its own, so it cannot drift. The same shape is a conformance case. A plan
+  that is data is checked at run time, and a language adds its own typed
+  builder over it where it can.
+- **Rules.** A request is a transport form, never a storage form, because
+  its value is plaintext. It is never logged or written to disk. Its shape
+  is not part of the stored format.
+- **Done already.** The guest already sends the engine a plan frame, then
+  a value frame for each call, through `plan_with`, `encrypt_with`,
+  `query`, and `decrypt_with` in `dynamic::record`. The request names and
+  groups what those functions already receive.
+- **Finished when** these are all true:
+  - every case in the conformance corpus is a request with the engine's
+    expected answer beside it;
+  - a Go program generated for rc.3 runs against the module that sends
+    requests, without being generated again;
+  - the chain in `plan/chain.rs` is gone.
 
 #### Context from fields and from the caller
 
@@ -1300,11 +1423,17 @@ artifact review.
   - the typed API: `encrypt` with `encrypt_with_context`; `encrypt_into`
     with `encrypt_into_with_context`; `decrypt_from` with
     `decrypt_from_with_context`;
-  - the chain: `encrypt` with `encrypt_with_context`; `query` with
-    `query_with_context`; `decrypt` with `decrypt_with_context`. The
-    chain's `open` is renamed `decrypt`. No chain state offers
-    `.context(..)`, `.extend(..)`, `.scope(..)`, `.bind(..)`, or
-    `.keyset(..)`. The keyset is chosen before the chain starts.
+    - a value under a plan that is data: `Planned::new(&plan, value)` with
+    `encrypt` and `encrypt_with_context`, and `decrypt` with
+    `decrypt_with_context`. `Planned` replaces the chain in
+    `plan/chain.rs`: `cipher.encrypt(&user).using(&plan)`,
+    `cipher.query(op, v).on(&plan)`, and `cipher.open(..)` go, and with
+    them every chain state and its `.context(..)`, `.extend(..)`, and
+    `.keyset(..)`. The keyset is the argument of every verb.
+
+  A typed query from a marker chains its scopes, `.eq(v).scope(tenant)`,
+  because a query has one field and one value. Its builder has no `bind`
+  method.
 
   A query entry point accepts a `Scope` and nothing else, so a binding in
   a query does not compile. A part whose source is a row field is read
@@ -1318,11 +1447,11 @@ artifact review.
   mistakes the artifact describes.
 - **Done already.** The scalar pairs (#1404). The record pairs, in
   #1504. The chain's `encrypt`, `query`, and `open`, with `.extend(..)`
-  and `.context(..)` on several states.
+  and `.context(..)` on several states. `Planned` replaces them.
 - **Order of calls.** The keyset is chosen first. It is the receiver of
-  every entry point: `keyset.encrypt(..)`, `keyset.using(..)`. Whether
-  `using` comes before or after `query` is decided with the query design.
-  Difference seven of the context artifact review, 7 November 2026.
+  the scalar entry points, `keyset.encrypt(..)`, and the argument of every
+  other verb, `encrypt(&keyset)`. There is no `using` method. Difference
+  seven of the context artifact review, 7 November 2026.
 - **Rename.** `Scope<'a, K>` in `dynamic::record` and `CipherScope` in the
   owned API both mean the cipher a call runs under. Both are renamed in
   the naming review, so that `Scope` means a part of the context.
@@ -1330,7 +1459,7 @@ artifact review.
   - the examples in [Target state](#target-state) compile;
   - the compile-fail cases in `tests/ui` cover a binding in a query, and
     a scope after a bind;
-  - the chain has no `.context`, `.extend`, or `.keyset` state.
+    - `plan/chain.rs` is gone, and `Planned` runs every test it ran.
 
 #### Show the context
 
