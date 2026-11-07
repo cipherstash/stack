@@ -416,6 +416,26 @@ let values = Vec::<i32>::decrypt_from(column, &keyset).await?;
 let rows: Vec<EncryptedUser> = users.encrypt_into(&keyset).await?;
 ```
 
+That is the default, because it is the common case. A caller who needs
+the order and the length authenticated asks for it by type. This is the
+same way that `OpaqueBlob<T>` changes how a value is sealed. The wrapper seals each
+element under its position and the length of the `Vec`, as part of the
+context. An element that is swapped, dropped, or added then fails to open.
+
+```rust
+use stack_encrypt::Positioned;
+
+// Not on `next` yet: `Positioned`. The name is a proposal.
+let steps: Positioned<Vec<Ciphertext>> = Positioned(vec![1_i32, 3, 5])
+    .encrypt_into(&keyset)
+    .await?;
+let values = Positioned::<Vec<i32>>::decrypt_from(steps, &keyset).await?;
+```
+
+`Positioned` is a new stored form, so it does not change the data that
+Go rc.3 writes. ADR-0010 records that stricter authentication of a
+container is opt-in, by type.
+
 #### Encrypt a byte string
 
 A `Vec<u8>` is the exception to the collection rule. It encrypts as one
@@ -1041,6 +1061,20 @@ parameter named `aad`.
 - **Finished when** a released `zerokms-protocol` has both constructors,
   and the examples in this plan compile.
 
+#### Authenticate the order and length of a collection
+
+- **What to build.** A wrapper type, `Positioned<Vec<T>>`, that seals each
+  element under its position and the length of the collection. Opening
+  checks both, so a swapped, dropped, or added element fails. The dynamic
+  interface needs the same form, so that Go can declare it.
+- **Why.** The default collection does not authenticate order or length,
+  because a database returns rows in any order. Some callers store a
+  sequence whose order matters, such as the steps of a workflow. ADR-0010
+  says this is opt-in, by type. It does not exist yet.
+- **Done already.** Nothing. The default collection (#1501).
+- **Finished when** a test shows that each of swapping, dropping, and
+  adding an element fails to open, in Rust and in Go.
+
 #### Remove the structural API
 
 - **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as`, and
@@ -1079,6 +1113,7 @@ The lead who approves this plan decides each question.
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
+| What is the name of the wrapper that authenticates a collection's order and length? | `Positioned<Vec<T>>`. Or a name chosen in the naming review | `Positioned`. Decide in the naming review |
 | Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should Stack Encrypt use refined tags? | Store a tag derived from the ZeroKMS key tag with a hash-based message authentication code (HMAC). Or keep the original tag | No recommendation yet. The protocol is not designed |
