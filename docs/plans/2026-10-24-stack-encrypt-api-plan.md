@@ -468,6 +468,26 @@ let files: Vec<Ciphertext> = vec![vec![1u8, 2, 3], vec![], vec![9]]
 let opened = Vec::<Vec<u8>>::decrypt_from(files, &keyset).await?;
 ```
 
+To encrypt each byte of a `Vec<u8>` as its own ciphertext, name a type
+for one byte. A `Vec` of that type is an ordinary collection, so it
+encrypts into one `Ciphertext` for each element. The named type is a
+single value because its borrow implements Vitamin C's `Scalar`. That is
+the same rule every built-in single value follows.
+
+```rust
+use zeroize::Zeroize;
+
+/// One byte, sealed on its own.
+#[derive(Zeroize)]
+struct Byte(u8);
+
+// Not on `next` yet: a derive for a single-value type. Today `Byte` needs
+// `Encrypt` and `Scalar` on `&Byte`, and `FromScalar` on `Byte`, by hand.
+let bytes: Vec<Byte> = vec![0u8, 1, 255].into_iter().map(Byte).collect();
+let each: Vec<Ciphertext> = bytes.encrypt_into(&keyset).await?;
+let opened = Vec::<Byte>::decrypt_from(each, &keyset).await?;
+```
+
 The user agreed this behaviour on 7 November 2026. It is what pull
 request #1501 built.
 
@@ -1074,6 +1094,23 @@ parameter named `aad`.
 - **Done already.** Nothing. The default collection (#1501).
 - **Finished when** a test shows that each of swapping, dropping, and
   adding an element fails to open, in Rust and in Go.
+
+#### A derive for a single-value type
+
+- **What to build.** A derive, or a `#[stash(scalar)]` attribute, for a
+  newtype around one built-in single value, such as `struct Byte(u8)` or
+  `struct Token(String)`. It gives the type what `OpaqueEncode` and
+  `OpaqueDecode` need: `Encrypt` and `Scalar` on its borrow, and
+  `FromScalar` on the type.
+- **Why.** A newtype is how a caller changes the rule for a value, such as
+  encrypting a `Vec<u8>` byte by byte. On `next`, the three
+  implementations are written by hand. `FromScalar` is not documented for
+  that use.
+- **Done already.** `OpaqueEncode` and `OpaqueDecode` already accept any
+  type that meets those bounds. Vitamin C documents a hand-written
+  `Blob(Vec<u8>)` newtype.
+- **Finished when** the [byte example](#encrypt-a-byte-string) compiles
+  with the derive and no hand-written implementation.
 
 #### Remove the structural API
 
