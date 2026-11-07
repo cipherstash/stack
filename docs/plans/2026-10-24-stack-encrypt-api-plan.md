@@ -288,75 +288,15 @@ let opened = JsonPlaintext::decrypt_from(encrypted, &keyset).await?;
 
 #### Query a JSON document
 
-A JSON query does not need the dynamic interface. It needs two things from
-the field's declaration:
+A JSON query works like a [scalar query](#query-a-field). An operand type
+encrypts into its EQL query type with `encrypt_into`, the same verb as
+every other value. A query needs two things from the field's declaration:
 
 - **The column context.** Each path's selector is derived under it, so the
   query must use the same context as the stored documents.
 - **The options.** They say which paths have order terms, and how far a
   wildcard such as `[*]` expands. An order query on a path without order
   terms would find no rows, so Stack Encrypt refuses it.
-
-On `next`, Rust passes the declaration as a plan, and uses the typed
-operators in `stack_encrypt::op`:
-
-```rust
-use stack_encrypt::{json::JsonPath, op, NonEmpty};
-
-// Containment: documents that contain this document.
-let ada = cipher
-    .query(op::Contains, &json!({ "name": "Ada" }))
-    .on(&plan)
-    .await?;
-
-// A comparison at a path. `$.age` must be an ordered path.
-let older = cipher
-    .query(op::AtPath(op::Gt), &("$.age", 30))
-    .on(&plan)
-    .await?;
-let adults = cipher
-    .query(op::AtPath(op::Between), &("$.age", (18, 65)))
-    .on(&plan)
-    .await?;
-
-// The selector of a path, for `->` in SQL.
-let age = keyset
-    .json_selector(&JsonPath::parse("$.age")?, NonEmpty::new(column.clone())?)
-    .await?;
-```
-
-```sql
-SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json;
-
--- $1 is the selector of `$.age`. $2 and $3 are the bounds.
-SELECT id FROM customers
-WHERE (profile -> $1::text) >= $2::eql_v4.query_json_leaf
-  AND (profile -> $1::text) <= $3::eql_v4.query_json_leaf
-ORDER BY eql_v4.ord_term(profile -> $1::text);
-```
-
-The query values convert to the EQL query types: `JsonTreeQuery` for
-containment, and `JsonTreeLeafQuery` for a comparison at a path.
-
-Three kinds of JSON query have no typed Rust API on `next`. They exist
-only in the dynamic interface, in `stack_encrypt::dynamic`:
-
-| Query | What it finds | SQL |
-| --- | --- | --- |
-| Element match | Rows where one element of an array meets several conditions together | `eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)` |
-| Jsonpath predicate | Rows where a SQL/JSON path predicate is true | `profile @@ $1::eql_v4.query_json_predicate` |
-| Children and child count | The entries directly below one node, or how many there are | `eql_v4.json_tree_children(profile, $1::text)` |
-
-Go has typed methods for element match and jsonpath predicates, generated
-from the Go type, such as `Fields.Profile.Elements.Visits.Match`. So a
-static form of these queries is possible.
-
-#### Query a JSON document without a plan
-
-In the target state, a JSON query works like a [scalar
-query](#query-a-field). An operand type encrypts into its EQL query type
-with `encrypt_into`, the same verb as every other value. The program does
-not write a plan.
 
 With the default options, the operand needs only the column. The caller
 passes it as the context, as a scalar query does:
@@ -386,6 +326,9 @@ let ada: JsonTreeQuery = Contains::<EncryptedProfile>(json!({ "name": "Ada" }))
 let older: JsonTreeLeafQuery = AtPath::<EncryptedProfile>::gt("$.age", 30)
     .encrypt_into(&keyset)
     .await?;
+let adults: JsonTreeLeafQuery = AtPath::<EncryptedProfile>::between("$.age", 18, 65)
+    .encrypt_into(&keyset)
+    .await?;
 let home: JsonTreeElementsQuery = ElementMatch::<EncryptedProfile>::at("$.visits[*]")
     .eq("place", "home")
     .gt("at", 15)
@@ -393,12 +336,37 @@ let home: JsonTreeElementsQuery = ElementMatch::<EncryptedProfile>::at("$.visits
     .await?;
 ```
 
+```sql
+SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json;
+
+-- $1 is the selector of `$.age`. $2 and $3 are the bounds.
+SELECT id FROM customers
+WHERE (profile -> $1::text) >= $2::eql_v4.query_json_leaf
+  AND (profile -> $1::text) <= $3::eql_v4.query_json_leaf
+ORDER BY eql_v4.ord_term(profile -> $1::text);
+
+SELECT id FROM customers
+WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements);
+```
+
+The kinds of JSON query, and what each one finds:
+
+| Query | What it finds | EQL query type |
+| --- | --- | --- |
+| Containment | Rows whose document contains the given document, or is contained by it | `JsonTreeQuery` |
+| Comparison at a path | Rows where the value at an ordered path equals, orders against, or lies between the given values | `JsonTreeLeafQuery` |
+| Element match | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
+| Jsonpath predicate | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
+| Children and child count | The entries directly below one node, or how many there are | A node token |
+
 The names of the operand types are an [open
 question](#open-questions-and-decisions-to-be-made).
 
-The dynamic interface is still needed when the program learns the query
-only at run time, such as a jsonpath predicate that a user types. See
-[Query through a definition](#query-through-a-definition).
+None of the operand types exists on `next`. Today a Rust program queries
+a JSON document [through a plan](#query-through-a-plan). A plan is part
+of the dynamic interface. The dynamic interface stays the right tool for a
+query the program learns only at run time, such as a jsonpath predicate
+that a user types.
 
 #### Encrypt a whole value as one ciphertext
 
@@ -469,6 +437,52 @@ returns the query value, with its EQL type.
 The output keys and the type names are part of the stored format, so they
 cannot change. The output keys are `c`, `eq`, `match`, `ore`, `ope`, and
 `passthrough`. The type names include `int64` and `string`.
+
+#### Query through a plan
+
+On `next`, a Rust program queries a JSON document through a plan. The plan
+is the declaration as data, so this is the dynamic interface with typed
+operators. `stack_encrypt::op` names the operator. `on` names the plan, and the plan
+supplies the column and the options:
+
+```rust
+use stack_encrypt::{json::JsonPath, op, NonEmpty};
+
+// Containment: documents that contain this document.
+let ada = cipher
+    .query(op::Contains, &json!({ "name": "Ada" }))
+    .on(&plan)
+    .await?;
+
+// A comparison at a path. `$.age` must be an ordered path.
+let older = cipher
+    .query(op::AtPath(op::Gt), &("$.age", 30))
+    .on(&plan)
+    .await?;
+let adults = cipher
+    .query(op::AtPath(op::Between), &("$.age", (18, 65)))
+    .on(&plan)
+    .await?;
+
+// The selector of a path, for `->` in SQL.
+let age = keyset
+    .json_selector(&JsonPath::parse("$.age")?, NonEmpty::new(column.clone())?)
+    .await?;
+```
+
+The query values convert to the EQL query types: `JsonTreeQuery` for
+containment, and `JsonTreeLeafQuery` for a comparison at a path.
+
+Three kinds of JSON query have no typed operator on `next`. They exist
+only as data, through `stack_encrypt::dynamic::query_term`, with the
+operator named as text:
+
+- element match: `"element_match"`;
+- jsonpath predicates: `"match"`;
+- children and child count: `"children"` and `"child_count"`.
+
+Go has generated methods for the first two, such as
+`Fields.Profile.Elements.Visits.Match`.
 
 #### Query through a definition
 
@@ -851,7 +865,7 @@ format version beside it.
   plan (`op::Contains`, `op::AtPath`). The EQL query types exist in
   `eql-bindings`.
 - **Finished when** the [static JSON query
-  example](#query-a-json-document-without-a-plan) compiles, and an order
+  example](#query-a-json-document) compiles, and an order
   query on a path the target does not order is refused.
 
 #### Definitions, field handles, and queries
