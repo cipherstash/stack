@@ -868,6 +868,28 @@ can include the caller's values, such as a tenant ID or an IP address.
 The plan form shows placeholders instead, so it is the one to put in
 logs.
 
+The same output serves a unit test. A testing feature of the crate gives assertions over it. A developer can
+pin the context of a field or a call, and the build fails when it
+changes. The Go module has the same
+assertions, in a testing package.
+
+```rust
+// Not on `next` yet: the `testing` feature and `assert_context!`.
+#[cfg(test)]
+mod tests {
+    use stack_encrypt::testing::assert_context;
+
+    #[test]
+    fn email_is_scoped_to_the_tenant_and_bound_to_the_row() {
+        assert_context!(
+            EncryptedUser::EMAIL,
+            query = ["users", "email", scope::<u64>()],
+            stored = ["users", "email", scope::<u64>(), bind::<Uuid>()],
+        );
+    }
+}
+```
+
 #### Other rules
 
 - **Rust and Go behave the same.** Every built-in capability has the same
@@ -1263,9 +1285,18 @@ Decided on 7 November 2026.
   the AAD, so what a developer sees is what the engine uses. The dynamic
   interface has the same two forms. So `stashgen` can print a Go record's
   contexts. A Go call can show its context.
+- **Assertions for tests.** A `testing` feature of `stack-encrypt`, with
+  `assert_context!` over a field marker, a plan, or a prepared call. It
+  compares the query context and the stored context, with types, against
+  what the test states, and names the first part that differs. The Go
+  module has the same in a testing package, such as `encrypttest`, so a
+  Go test can pin a record's contexts the same way. Both read the same
+  output as `contexts()` and `context()`, so a test and a log never
+  disagree.
 - **Why.** A wrong context loses data silently. A query under the wrong
   context matches nothing and gives no error. A developer who cannot see
-  the context cannot find the mistake.
+  the context cannot find the mistake. A test that cannot state the
+  context cannot catch a change to it.
 - **Done already.** `Descriptor` renders a context as text, and
   `ContextMismatch` reports the stored descriptor. Neither shows the
   types, and neither is reachable from a plan or a call.
@@ -1273,7 +1304,9 @@ Decided on 7 November 2026.
   - a test pins the output of `contexts()` for each of the [context
     scenarios](2026-10-24-stack-encrypt-context-examples.md);
   - a conformance case shows that Rust and Go print the same context for
-    the same declaration.
+    the same declaration;
+  - the [context scenarios](2026-10-24-stack-encrypt-context-examples.md)
+    each carry an `assert_context!` test, in Rust and in Go.
 
 #### Name context parameters `context`
 
