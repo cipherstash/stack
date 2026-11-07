@@ -28,7 +28,7 @@ contract is under separate user review.
 | --- | --- |
 | Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
 | AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
-| Stored format | What is written to the database, as Go `v0.1.0-rc.3` writes it. See [the stored-format decision](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026) |
+| Stored format | What is written to the database, as Go `v0.1.0-rc.3` writes it. See [the stored-format decision](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3) |
 
 ## Update on 7 November 2026
 

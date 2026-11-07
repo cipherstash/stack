@@ -47,7 +47,7 @@ from now on, because the Go customer builds on Go `v0.1.0-rc.3`. The stored
 format is what is written to the database, such as ciphertext envelopes and
 search terms. The APIs can still change. This replaces the decision of 25
 October 2026 for stored data. See the [API
-plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
+plan](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3).
 
 ## Terms used in this document
 
@@ -140,7 +140,7 @@ ciphertext for the encoded collection instead.
 The latest recommendation applies the same rule to byte vectors. No wrapper
 or special case is needed to keep the prototype's behaviour. Pull request
 #1501 differs: it encrypts `Vec<u8>` and `[u8; N]` as one value. The [API
-plan](2026-10-24-stack-encrypt-api-plan.md#differences-between-merged-code-and-this-plan)
+plan](2026-10-24-stack-encrypt-api-plan.md#open-questions-and-decisions-to-be-made)
 records this as a question for the user. These calls
 need the proposed opaque ciphertext and support for targets that take no
 context.

@@ -51,7 +51,7 @@ From now on, a change that would alter the stored format must keep data
 written by rc.3 readable and searchable. Otherwise it must add a new,
 versioned format beside the rc.3 format. The Rust and Go code and APIs can
 still change in breaking ways. The [API
-plan](2026-10-24-stack-encrypt-api-plan.md#work-that-the-stored-format-decision-constrains)
+plan](2026-10-24-stack-encrypt-api-plan.md#changes-that-would-alter-the-stored-format)
 lists the planned work that this decision constrains.
 
 ### History: no backward compatibility with the prototype
@@ -235,8 +235,9 @@ discussion of batching). Vitamin C's trait definitions are in
 - **Text encodings, decided on 25 October 2026.** Text conversions must use
   the existing `Base64Text` and `Base85Text` wrappers from the EQL bindings.
   The
-  [persistence requirements](2026-10-24-stack-encrypt-api-plan.md#typed-encodings-and-extractable-zerokms-tags)
-  record the proposals and the limit on decoding Base85 in SQL.
+  [text encodings item](2026-10-24-stack-encrypt-api-plan.md#typed-text-encodings-and-key-tag-extraction)
+  in the API plan records the remaining work and the limit on decoding
+  Base85 in SQL.
 
 The follow-up of 25 October 2026 also set these directions:
 
@@ -1460,10 +1461,11 @@ Do not reuse that mapping unchanged, for three reasons:
 - A successful `to_vec` returns a vector with no guard.
 
 The
-[codec assessment](2026-10-24-stack-encrypt-api-plan.md#blob-codec-assessment-vitamin-c-frames)
-lists the work needed, and Borsh as the fallback codec. Neither the codec
-choice nor the `Zeroize` bound establishes constant-time behaviour, or
-cleanup after partial decoding.
+[opaque blobs](2026-10-24-stack-encrypt-api-plan.md#opaque-blobs) item in
+the API plan records the codec now chosen: Vitamin C's storage profile.
+Go rc.3 already writes that format. Neither the codec choice nor the `Zeroize`
+bound establishes constant-time behaviour, or cleanup after partial
+decoding.
 
 ### Priority update
 

@@ -33,7 +33,7 @@ Still open, or in progress:
 From 7 November 2026, the stored format of Go `v0.1.0-rc.3` must not
 break. So a new selector must produce the same context bytes as rc.3 for
 data that rc.3 can write. See the [API
-plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
+plan](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3).
 
 This document
 compares what happens to encryption context in each useful combination of

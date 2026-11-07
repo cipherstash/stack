@@ -22,7 +22,7 @@ in Rust, Go, and PostgreSQL tests.
 From 7 November 2026, the stored format of Go `v0.1.0-rc.3` must not
 break. The stored format is what is written to the database, such as JSON
 tree entries and their search terms. See the [API
-plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
+plan](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3).
 
 The Rust example in this document uses the proposed public derive and
 facade. That example is not executable code for the current engine. The

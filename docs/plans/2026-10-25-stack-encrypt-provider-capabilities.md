@@ -16,7 +16,7 @@ break. The stored format is what is written to the database, such as
 ciphertext envelopes and search terms. The refined-tag work in item 6
 below changes the stored tag, so it must keep rc.3 data readable. See the
 [API
-plan](2026-10-24-stack-encrypt-api-plan.md#stored-format-must-stay-compatible-from-7-november-2026).
+plan](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3).
 
 The user who requested this assessment asked for three things:
 
