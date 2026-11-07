@@ -422,8 +422,16 @@ A `Vec<u8>` is the exception to the collection rule. It encrypts as one
 value, into one `Ciphertext`, because a byte string is almost always one
 thing: a file, a key, or an image. A fixed-size array `[u8; N]` is a byte
 string too. `u8` on its own is not a value that encrypts, so a `Vec<u8>`
-cannot encrypt byte by byte. Go treats a `[]byte` field the same way, so
-the stored format is the same in both languages.
+cannot encrypt byte by byte.
+
+A Go `[]byte` field takes the same path. The Go SDK sends the bytes to
+the engine as one bytes value. The engine seals them with the same
+Vitamin C code that seals a Rust `Vec<u8>`. The dynamic interface and the
+Rust API share one engine, so they write the same bytes for the same
+declaration (ADR-0007).
+
+The byte string is not a special case of either language. It is a rule of
+the engine.
 
 A `Vec` of byte strings follows the collection rule. It encrypts into a
 `Vec<Ciphertext>`, one for each byte string, with no wrapper type.
