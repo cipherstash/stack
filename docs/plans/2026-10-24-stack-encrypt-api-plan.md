@@ -118,7 +118,7 @@ struct User {
 }
 
 // A searchable email: its ciphertext and an equality term.
-#[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String)]
 struct SearchableEmail {
     ciphertext: Ciphertext,
@@ -126,7 +126,7 @@ struct SearchableEmail {
 }
 
 // Not on `next` yet: the record derive and `passthrough`.
-#[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = User, context = "users")]
 struct EncryptedUser {
     #[stash(passthrough)]
@@ -140,6 +140,10 @@ struct EncryptedUser {
 let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
 let user = User::decrypt_from(encrypted, &cipher).await?;
 ```
+
+The derives need no Serde. A program that stores an encrypted value as
+JSON adds `Serialize` and `Deserialize` to the encrypted type. That is
+the same as for any other type.
 
 To tie every field to one row, the caller supplies the row ID as a context
 extension, and supplies it again to decrypt. The extension also changes the
@@ -176,7 +180,7 @@ struct Member {
 
 // Not on `next` yet in Rust: EQL types as fields of a derived record.
 // Go records do this today through the dynamic interface.
-#[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(struct = Member, context = "members")]
 struct EncryptedMember {
     #[stash(passthrough)]
@@ -272,8 +276,7 @@ fn profile_options() -> Result<JsonOptions, TermError> {
 }
 
 // Not on `next` yet: a JSON target with typed options.
-#[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(EncryptTarget, DecryptSource)]
 #[stash(
     plaintext = JsonPlaintext,
     transparent,
