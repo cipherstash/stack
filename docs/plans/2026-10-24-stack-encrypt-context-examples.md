@@ -7,6 +7,33 @@ Date: 24 October 2026. This design exploration goes with the
 **Everything introduced here is proposed syntax, not an implemented API.**
 None of the code below compiles against Stack Encrypt today.
 
+## Decisions on 7 November 2026
+
+The [API plan](2026-10-24-stack-encrypt-api-plan.md#context-from-fields-and-from-the-caller)
+records three decisions that change this document. The scenarios stay as
+the acceptance matrix for the Rust API. The prose and the attribute
+spellings will be rewritten after the plan builder's entry points are
+settled.
+
+- **The plan builder is the one mechanism.** The derive's attributes lower
+  to it, as the dynamic grammar does. A field's context comes from a
+  literal, from a row field carried unsealed, or from the caller on every
+  call. The directional selectors `encrypt(field = ..)` and
+  `decrypt(caller = ..)` do not survive as a mechanism of their own.
+- **Scenarios 3 and 8 are removed.** Each seals a value that is also the
+  context of another field. A reader must know the plaintext before it
+  can open anything, so the sealed copy protects nothing. A value the
+  caller already knows is a caller-supplied part on both sides. It is
+  not stored.
+- **Scenario 7 stays, renamed.** A caller-supplied part that is never
+  stored, such as a host or application ID, means the data opens only
+  where that part is known. The type name `PartiallyStoredUser` is wrong:
+  the record is fully stored, and only part of its context is not.
+- **Parts are separate and ordered.** Refinements, then binding parts.
+  "Extension" is now "refinement". A binding part is a new kind. See [Two
+  scopes of one
+  context](2026-10-24-stack-encrypt-api-plan.md#two-scopes-of-one-context).
+
 ## Implementation status on 7 November 2026
 
 This document was checked against `next` at commit `e4990e49b`. The

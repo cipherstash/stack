@@ -1038,22 +1038,41 @@ format version beside it.
 
 #### Context from fields and from the caller
 
-- **What to build.** The ways a record gets its context, as the nine
-  scenarios in the [context
-  examples](2026-10-24-stack-encrypt-context-examples.md) describe them. A
-  record can take context from one of its fields, from the caller, or from
-  both. A record can also store its context in the output. On decrypt, a
-  record can read its stored context, or check it against an expected context. The
-  same rules need a form in the dynamic interface and in Go.
+- **What to build.** One mechanism for where a field's context comes
+  from: the plan builder. The derive and the dynamic grammar lower to it.
+  A field's context comes from one of three sources:
+  - a literal, through `Plan::context(label)`, the only way to put a label
+    in a plan;
+  - a row field stored unsealed in the record, so the reader takes it
+    from the row, and `open` may state the label it expects;
+  - the caller, on every write, query, and read, as a refinement or a
+    binding part.
+
+  Parts are separate and ordered: the label, the field, the refinements,
+  then the binding parts. Grouping is available inside one part. Nothing
+  is read from the plaintext on one side and from the caller on the
+  other. Decided on 7 November 2026, with the context artifact.
 - **Why.** A program must never need to open a ciphertext to learn the
-  context that opens it.
-- **Done already.** The order in which context parts are joined is fixed
-  and tested in Rust and Go (#1491). The context inputs `RequiredContext`,
+  context that opens it. One mechanism keeps Rust and Go writing the same
+  bytes.
+- **Scenarios.** The [context
+  examples](2026-10-24-stack-encrypt-context-examples.md) are the
+  acceptance matrix. Scenarios 3 and 8 are removed. Each seals a value
+  that is also the context of another field. Nothing can open without the
+  plaintext, so the sealed copy protects nothing. Scenario 7 stays: a caller-supplied part
+  that is never stored, such as a host ID, so the data opens only on that
+  host. Its type name `PartiallyStoredUser` is wrong, because the record
+  is fully stored. Only part of the context is not.
+- **Done already.** The order in which parts are joined is fixed and
+  tested in Rust and Go (#1491). The context inputs `RequiredContext`,
   `NoCallerContext`, and `OptionalContext` exist (#1404). #1504 adds
   `ContextExtension` and `ExpectedContext`, and is in review.
   `ContextExtension` is renamed for the refinement vocabulary; its new
-  name is decided with the field reference design.
-- **Finished when** all nine scenarios run as tests in Rust and Go.
+  name is decided with the field reference design. The plan builder's
+  `.context(..)` and `.context_field(..)` and the derive's
+  `#[stash(context_field)]` are the forms this replaces.
+- **Finished when** scenarios 0, 1, 2, 4, 5, 6, and 7 run as tests in
+  Rust and Go, through the builder.
 
 #### Two scopes of one context
 
