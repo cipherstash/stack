@@ -299,16 +299,16 @@ the access log.
 ## 10. The same bindings, in a type of our own instead of EQL
 
 The shape of scenario 9 does not depend on EQL. A target type of our
-own can store the ciphertext, its search terms, and its bindings as one
-value. It needs only the derives Stack Encrypt already has or plans.
+own can store the ciphertext and its bindings as one value. It needs only the derives Stack Encrypt already has or plans.
 
 The bindings are passthrough fields of the target, stored in the clear inside
 it. They are part of the stored context. One column stores
 the whole value, through Serde, and the reader passes nothing.
 
 What EQL adds is the PostgreSQL side: a domain for the column, and the
-operators that run a search on it. A type of our own has neither, so a
-query compares the stored term in SQL that the application writes.
+operators that run a search on it. A type of our own has neither. Add a
+search term to it only if the application writes the SQL that compares
+the term.
 
 ```rust
 #[derive(Zeroize)]
@@ -318,12 +318,11 @@ struct Written {
     at: Timestamp,
 }
 
-/// One stored value: the ciphertext, a match term, and two bindings.
+/// One stored value: the ciphertext and two bindings.
 #[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
 #[stash(plaintext = Written, bind(field = "from"), bind(field = "at"))]
 struct SealedNote {
     ciphertext: Ciphertext,
-    terms: MatchTerm,
     #[stash(passthrough)]
     from: IpAddr,
     #[stash(passthrough)]
