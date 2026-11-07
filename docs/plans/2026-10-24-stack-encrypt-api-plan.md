@@ -836,6 +836,38 @@ item.
 The use case is access intelligence. Each value is bound to its row by a
 client-generated UUID. A query by column or by tenant still finds it.
 
+#### A developer can see the context
+
+Decided on 7 November 2026. A wrong context is silent: a query matches
+nothing, or a row opens somewhere it should not. So every declaration
+and every call can show the context it uses, before any key is fetched.
+
+```rust
+// Not on `next` yet: `contexts()` and `context()`.
+
+// For a declaration: each field, its query context, and its stored
+// context, with a placeholder for every part the caller supplies.
+println!("{}", EncryptedUser::encryption_plan().contexts());
+// email
+//   query context:  users / email / {tenant: u64}
+//   stored context: users / email / {tenant: u64} / {row: Uuid}
+//   search terms:   under the query context
+
+// For a call: the exact context, with the caller's values filled in.
+let call = keyset
+    .using(EncryptedUser::EMAIL)
+    .query_with_context(op::Eq, "alice@example.com", Scope::new(42_u64));
+println!("{}", call.context());
+// query context:  users / email / 42u64
+```
+
+The output shows each part's type, because `7u64`, `7i64`, the text `7`,
+and the bytes `37` are four different contexts. The descriptor that
+ZeroKMS logs is coarser, so it is not enough on its own. A call's context
+can include the caller's values, such as a tenant ID or an IP address.
+The plan form shows placeholders instead, so it is the one to put in
+logs.
+
 #### Other rules
 
 - **Rust and Go behave the same.** Every built-in capability has the same
@@ -1213,6 +1245,35 @@ artifact review.
   - the compile-fail cases in `tests/ui` cover a binding in a query, and
     a scope after a bind;
   - the chain has no `.context`, `.extend`, or `.keyset` state.
+
+#### Show the context
+
+Decided on 7 November 2026.
+
+- **What to build.** Two ways to see a context before any key is fetched:
+  - `contexts()` on a `Plan`, listing each field's query context and
+    stored context, with a typed placeholder for every caller-supplied
+    part. The derive's `encryption_plan()` gives it to every record, and
+    a hand-built plan has it too.
+  - `context()` on a prepared call. It gives the exact query context and
+    stored context the call will use, with the caller's values filled in.
+    Each part shows its type.
+
+  Both render through the same code that derives the key descriptor and
+  the AAD, so what a developer sees is what the engine uses. The dynamic
+  interface has the same two forms. So `stashgen` can print a Go record's
+  contexts. A Go call can show its context.
+- **Why.** A wrong context loses data silently. A query under the wrong
+  context matches nothing and gives no error. A developer who cannot see
+  the context cannot find the mistake.
+- **Done already.** `Descriptor` renders a context as text, and
+  `ContextMismatch` reports the stored descriptor. Neither shows the
+  types, and neither is reachable from a plan or a call.
+- **Finished when** these are both true:
+  - a test pins the output of `contexts()` for each of the [context
+    scenarios](2026-10-24-stack-encrypt-context-examples.md);
+  - a conformance case shows that Rust and Go print the same context for
+    the same declaration.
 
 #### Name context parameters `context`
 
