@@ -364,9 +364,9 @@ question](#open-questions-and-decisions-to-be-made).
 
 None of the operand types exists on `next`. Today a Rust program queries
 a JSON document [through a plan](#query-through-a-plan). A plan is part
-of the dynamic interface. The dynamic interface stays the right tool for a
-query the program learns only at run time, such as a jsonpath predicate
-that a user types.
+of the dynamic interface. The dynamic interface is still the right tool for a
+query known only at run time, such as a jsonpath predicate that a user
+types.
 
 #### Encrypt a whole value as one ciphertext
 
