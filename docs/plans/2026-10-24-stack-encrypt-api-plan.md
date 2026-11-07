@@ -286,10 +286,103 @@ let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await?;
 let opened = JsonPlaintext::decrypt_from(encrypted, &keyset).await?;
 ```
 
-A JSON query can test containment, compare the value at a path, match one
-element of an array, or run a jsonpath predicate. Each of
-these takes an operator and a path. So JSON queries use the [dynamic
-interface](#query-through-a-definition).
+#### Query a JSON document
+
+A JSON query does not need the dynamic interface. It needs two things from
+the field's declaration:
+
+- **The column context.** Each path's selector is derived under it, so the
+  query must use the same context as the stored documents.
+- **The options.** They say which paths have order terms, and how far a
+  wildcard such as `[*]` expands. An order query on a path without order
+  terms would find no rows, so Stack Encrypt refuses it.
+
+On `next`, Rust passes the declaration as a plan, and uses the typed
+operators in `stack_encrypt::op`:
+
+```rust
+use stack_encrypt::{json::JsonPath, op, NonEmpty};
+
+// Containment: documents that contain this document.
+let ada = cipher
+    .query(op::Contains, &json!({ "name": "Ada" }))
+    .on(&plan)
+    .await?;
+
+// A comparison at a path. `$.age` must be an ordered path.
+let older = cipher
+    .query(op::AtPath(op::Gt), &("$.age", 30))
+    .on(&plan)
+    .await?;
+let adults = cipher
+    .query(op::AtPath(op::Between), &("$.age", (18, 65)))
+    .on(&plan)
+    .await?;
+
+// The selector of a path, for `->` in SQL.
+let age = keyset
+    .json_selector(&JsonPath::parse("$.age")?, NonEmpty::new(column.clone())?)
+    .await?;
+```
+
+```sql
+SELECT id FROM customers WHERE profile @> $1::eql_v4.query_json;
+
+-- $1 is the selector of `$.age`. $2 and $3 are the bounds.
+SELECT id FROM customers
+WHERE (profile -> $1::text) >= $2::eql_v4.query_json_leaf
+  AND (profile -> $1::text) <= $3::eql_v4.query_json_leaf
+ORDER BY eql_v4.ord_term(profile -> $1::text);
+```
+
+The query values convert to the EQL query types: `JsonTreeQuery` for
+containment, and `JsonTreeLeafQuery` for a comparison at a path.
+
+Three kinds of JSON query have no typed Rust API on `next`. They exist
+only in the dynamic interface, in `stack_encrypt::dynamic`:
+
+| Query | What it finds | SQL |
+| --- | --- | --- |
+| Element match | Rows where one element of an array meets several conditions together | `eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)` |
+| Jsonpath predicate | Rows where a SQL/JSON path predicate is true | `profile @@ $1::eql_v4.query_json_predicate` |
+| Children and child count | The entries directly below one node, or how many there are | `eql_v4.json_tree_children(profile, $1::text)` |
+
+Go has typed methods for element match and jsonpath predicates, generated
+from the Go type, such as `Fields.Profile.Elements.Visits.Match`. So a
+static form of these queries is possible.
+
+#### Query a JSON document without a plan
+
+In the target state, a JSON query works like a [scalar
+query](#query-a-field). An operand type encrypts into its EQL query type.
+The target type of the field supplies the column and the options. So the
+program does not write a plan. An order query on a path that the target
+does not order is refused.
+
+```rust
+use eql_bindings::v4::json_tree::{JsonTreeElementsQuery, JsonTreeLeafQuery, JsonTreeQuery};
+use stack_encrypt::json::{AtPath, Contains, ElementMatch};
+
+// Not on `next` yet: JSON operand types. The names are a proposal.
+let ada: JsonTreeQuery = Contains(json!({ "name": "Ada" }))
+    .encrypt_into_for::<EncryptedProfile>(&keyset)
+    .await?;
+let older: JsonTreeLeafQuery = AtPath::gt("$.age", 30)
+    .encrypt_into_for::<EncryptedProfile>(&keyset)
+    .await?;
+let home: JsonTreeElementsQuery = ElementMatch::at("$.visits[*]")
+    .eq("place", "home")
+    .gt("at", 15)
+    .encrypt_into_for::<EncryptedProfile>(&keyset)
+    .await?;
+```
+
+The names and the way a query names its target are an [open
+question](#open-questions-and-decisions-to-be-made).
+
+The dynamic interface is still needed when the program learns the query
+only at run time, such as a jsonpath predicate that a user types. See
+[Query through a definition](#query-through-a-definition).
 
 #### Encrypt a whole value as one ciphertext
 
@@ -728,6 +821,23 @@ format version beside it.
 - **Finished when** the tests and the Go guest use the resolver from
   `eql-bindings`, and their own copies are deleted.
 
+#### Static JSON queries
+
+- **What to build.** A typed Rust operand type for each kind of JSON
+  query: containment, comparison at a path, element match, jsonpath
+  predicate, and reads of children. Each one encrypts into its EQL query
+  type. The target type of the field supplies the column and the
+  options.
+- **Why.** On `next`, a Rust program needs a plan for any JSON query, and
+  needs the dynamic interface for element match, predicates, and children.
+  Go already has typed methods for these.
+- **Done already.** Typed containment and comparison at a path, through a
+  plan (`op::Contains`, `op::AtPath`). The EQL query types exist in
+  `eql-bindings`.
+- **Finished when** the [static JSON query
+  example](#query-a-json-document-without-a-plan) compiles, and an order
+  query on a path the target does not order is refused.
+
 #### Definitions, field handles, and queries
 
 - **What to build.** A shared definition for each record type, built once
@@ -884,6 +994,7 @@ The lead who approves this plan decides each question.
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
+| How should a static JSON query name its target and operator? | Operand types such as `Contains` and `AtPath` that encrypt into the EQL query types for a named target type. Or query methods on the target type, such as `EncryptedProfile::query().at("$.age").gt(30)` | Operand types, to match scalar queries such as `TextEqQuery`. Decide the names in the naming review |
 | Should a `Vec<u8>` encrypt as one value, or as one value for each byte? | One value, as #1501 built it. Or one value for each byte, with `OpaqueBlob<Vec<u8>>` for a whole vector | First check whether Go rc.3 stores a byte string as one value. If it does, keep one value |
 | Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
