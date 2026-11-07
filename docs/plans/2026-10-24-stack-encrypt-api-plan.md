@@ -1189,11 +1189,28 @@ caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
 - **What to build.** The `EncryptTarget` and `DecryptSource` derives for
   records, with passthrough fields, renamed fields, nested records, and
   stored context.
-- **Why.** The derives give the [record example](#encrypt-a-record).
+- **Where the derive lives.** On the encrypted struct. That struct is
+  the declaration. Each field's type says how the field is stored, and a
+  field's indexes come from its target type, such as `SearchableEmail` or
+  `IntegerOrd`. The plaintext struct carries no attributes, so it can
+  come from another crate. Decided on 7 November 2026, as area four of
+  the query design review. The query artifact's derive on the plaintext
+  struct generates the encrypted struct. It is not planned. It could
+  return later as a convenience that produces this form.
+- **Two safety rules.** A plaintext field with no counterpart in the
+  encrypted struct is a compile error, so no field is dropped silently.
+  A field is stored in the clear only where `passthrough` is written on
+  it. Together they give what the artifact's "encrypted unless marked
+  plaintext" default gives, stated on the struct a developer reads.
+- **Why.** The derives give the [record example](#encrypt-a-record). The
+  encrypted struct is what goes in the row, so a developer reads the
+  stored shape, and adds `Serialize` or `sqlx` derives, in one place.
 - **Done already.** One value (#1404) and collections (#1501). #1504 adds
   the record derives, and is in review.
-- **Finished when** the public examples for mixed and searchable records
-  run as tests.
+- **Finished when** these are both true:
+  - the public examples for mixed and searchable records run as tests;
+  - a `tests/ui` case shows that a plaintext field with no counterpart
+    fails to compile.
 
 #### EQL types as fields
 
