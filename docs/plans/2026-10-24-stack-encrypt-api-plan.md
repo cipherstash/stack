@@ -1642,7 +1642,37 @@ parameter named `aad`.
   Cancellation and drop are tested (#1493, #1501).
 - **Finished when** the lifecycle conformance profile covers both cases.
 
-### 4. After the customer release
+### 4. The query engine
+
+#### One definition of each operator
+
+Decided on 7 November 2026, as area two of the query design review.
+
+- **What to build.** Each operator exists once, as its `op` type, such as
+  `op::Eq` and `op::Between`. One macro generates the dynamic enum and
+  its wire names from those types. A marker's query method, the dynamic
+  handle's method, and a query plan's operator all resolve to the same
+  type. So `eq`, `"eq"`, and `op::Eq` are three faces of one operator.
+- **The dynamic enum's name.** It is public, because a program building a
+  query plan writes it: `plan.query("email", Op::Eq)`. The engine's enum
+  is `OpSpec` today. The plan writes `Op`; the rename is for the naming
+  review.
+- **`Matches` loses its case parameter.** On `next`, `op::Matches<C>`
+  has a case parameter. The match index's configuration has a case too.
+  The two can disagree. A disagreement is refused at query time. The field's configuration
+  is now the only one, so case belongs to the index alone. `Matches`
+  becomes a plain operator, as the dynamic `"matches"` already is.
+- **An inverted range is let through.** `between(65, 18)` derives both
+  bounds and matches nothing, as commit `8b5fc57b6` decided. The engine
+  does not know which bound the caller meant. The `InvertedRange` error
+  asked for in #1279 predates that commit and is dropped.
+- **Stored format and wire.** Unchanged. A query sends the operator's wire name. That name does not change.
+- **Finished when** these are all true:
+  - the dynamic enum is generated from the `op` types;
+  - `Matches` has no type parameter;
+  - a test shows that each operator's three faces name the same operator.
+
+### 5. After the customer release
 
 - **Packaging and names.** Crate moves, the shared format crate, and the
   final names. The [packaging
@@ -1665,3 +1695,24 @@ The lead who approves this plan decides each question.
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
 | What names and crate layout should the final API use? | The proposal in the packaging document | Review the proposal after the customer release |
+
+### Names deferred to the naming review
+
+The naming review is the [packaging and names](#5-after-the-customer-release)
+item: a review of every public name, against the packaging document's
+proposal, after the customer release. These names are placeholders until
+then. Each one is used consistently in this plan so that the review
+changes a name, not a design.
+
+| Placeholder | What it names |
+| --- | --- |
+| `Planned`, `QueryTerm`, `Request` | A value under a plan, the dynamic query result, and the serialised request |
+| `Op` | The public dynamic operator enum, `OpSpec` today |
+| `Scope<'a, K>` and `CipherScope` | The cipher a call runs under; both renamed so that `Scope` means a part of the context |
+| `Positioned<Vec<T>>` | The wrapper that authenticates a collection's order and length |
+| `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker |
+| `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go |
+| `Base64Ciphertext`, `Base85Ciphertext` | Field targets that store a ciphertext as text |
+| `#[derive(Scalar)]` | The derive for a single-value newtype |
+| `caveats`, `refine`, `refine_tag` | The caveat list in an EQL payload, and the operations that add to it |
+| The declaration attributes `scope(..)` and `bind(..)` | How a declaration marks its parts |
