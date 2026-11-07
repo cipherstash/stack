@@ -58,9 +58,10 @@ use stack_encrypt::{kms::IdentifiedBy, StackCipher};
 
 let cipher = StackCipher::new().await?;
 let keyset = cipher.default_keyset();
-let tenant = cipher
-    .keyset(IdentifiedBy::Name("acme".to_string().into()))
-    .await?;
+// Not on `next` yet: the `IdentifiedBy::name` and `IdentifiedBy::uuid`
+// constructors. `name` checks the name, so it returns a `Result`.
+let tenant = cipher.keyset(IdentifiedBy::name("acme")?).await?;
+let by_id = cipher.keyset(IdentifiedBy::uuid(keyset_id)).await?;
 ```
 
 #### Encrypt and decrypt one value
@@ -658,6 +659,27 @@ parameter named `aad`.
   The context inputs, such as `RequiredContext`, still need an owned value.
 - **Finished when** the public examples pass a context by reference, with
   no clone, and compile.
+
+#### Constructors for `IdentifiedBy`
+
+- **What to build.** Two constructors that select a keyset:
+  - `IdentifiedBy::name(&str)`. It checks the name, so it returns a
+    `Result`;
+  - `IdentifiedBy::uuid(Uuid)`.
+- **Why.** On `next`, selecting a keyset by name needs
+  `IdentifiedBy::Name("acme".to_string().into())`. The `.into()` converts
+  the `String` into the `Name` type. That conversion does not check the
+  name. Only `Name::try_from(&str)` checks it: at most 64 characters, not
+  empty, and only `A-Z a-z 0-9 _ - /`.
+- **Where.** `IdentifiedBy` and `Name` are in the `zerokms-protocol` crate.
+  The `cipherstash-suite` repository publishes that crate. Rust allows inherent methods only in
+  the crate that defines the type. So the constructors go in
+  `zerokms-protocol`. Stack Encrypt re-exports `IdentifiedBy` from
+  `stack_encrypt::kms`, so callers get them through that path.
+- **Done already.** `StackCipher::keyset` takes `impl Into<IdentifiedBy>`,
+  and `IdentifiedBy` implements `From<Uuid>` and `From<Name>`.
+- **Finished when** a released `zerokms-protocol` has both constructors,
+  and the examples in this plan compile.
 
 #### Remove the structural API
 

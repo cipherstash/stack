@@ -176,10 +176,13 @@ execution or provider layer, not in the derive.
 ### Selecting the keyset by hand and by declaration
 
 The existing form, where the caller selects the keyset by hand, already
-fits the agreed API:
+fits the agreed API. This example uses the `IdentifiedBy::name`
+constructor that the [API
+plan](2026-10-24-stack-encrypt-api-plan.md#constructors-for-identifiedby)
+proposes:
 
 ```rust
-let tenant = cipher.keyset(IdentifiedBy::Name(user.tenant_id.clone().into())).await?;
+let tenant = cipher.keyset(IdentifiedBy::name(&user.tenant_id)?).await?;
 let encrypted: EncryptedUser = user.encrypt_into(&tenant).await?;
 ```
 
