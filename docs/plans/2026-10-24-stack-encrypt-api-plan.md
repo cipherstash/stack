@@ -23,9 +23,10 @@ log](2026-10-24-stack-encrypt-api-review.md).
 | Term | Meaning |
 | --- | --- |
 | AAD (additional authenticated data) | Data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](#context-and-aad) |
-| Binding | A part of the context that ties a ciphertext to its row, such as a row ID, and is not in the query scope. Passed as `Bind::new(..)` |
+| Binding | A part of the context that ties a ciphertext to its row, such as a row ID. It is in the stored context and not in the query context. Passed as `Bind::new(..)` |
 | Ciphertext | One encrypted value, as the Rust `Ciphertext` type. It is stored as bytes, or as Base64 text |
 | Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Rust and Go run the same cases. The files are in `conformance/stack-encrypt/v1/` |
+| Context name | The last declared scope of a field: its name by default, pinned when the Rust field is renamed. Two fields of one record never share one |
 | Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](#context-and-aad) |
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
@@ -33,8 +34,8 @@ log](2026-10-24-stack-encrypt-api-review.md).
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | Passthrough field | A field stored unencrypted next to the encrypted fields. It is not authenticated |
-| Query scope | The prefix of the stored context that search terms derive under. A query supplies it. See [Two scopes of one context](#two-scopes-of-one-context) |
-| Scope | A part of the context that narrows the data and the queries over it, such as a tenant ID. Passed as `Scope::new(..)`. See [Two scopes of one context](#two-scopes-of-one-context) |
+| Query context | All the scopes of a context, declared and caller-supplied. Search terms derive under it. See [Query context and stored context](#query-context-and-stored-context) |
+| Scope | A part of the context that narrows the data and the queries over it. The declaration supplies the first scopes, such as `users` and `email`; the caller adds more, such as a tenant ID, with `Scope::new(..)` |
 | Search term | A value stored next to a ciphertext, so that a query can find it without decrypting it. Equality, order, and match each use their own term |
 | Stored context | Every part of a value's context. The data key and the AAD derive under it |
 | Stored format | Everything Stack Encrypt writes to the database. See [The stored format stays compatible with Go rc.3](#the-stored-format-stays-compatible-with-go-rc3) |
@@ -152,10 +153,10 @@ the same as for any other type.
 To tie every field to one row, the caller supplies the row ID as a part of
 the context, and supplies it again to decrypt. The row ID is a binding
 part. It is in the stored context, so the key and the AAD depend on it. It
-is not in the query scope, so a query still finds the row across the
+is not in the query context, so a query still finds the row across the
 column.
 
-[Two scopes of one context](#two-scopes-of-one-context) gives the rule.
+[Query context and stored context](#query-context-and-stored-context) gives the rule.
 The API for declaring a binding is an [open
 question](#open-questions-and-decisions-to-be-made).
 
@@ -556,17 +557,17 @@ supplies the column and the options:
 use stack_encrypt::{json::JsonPath, op, NonEmpty};
 
 // Containment: documents that contain this document.
-let ada = cipher
+let ada = keyset
     .query(op::Contains, &json!({ "name": "Ada" }))
     .on(&plan)
     .await?;
 
 // A comparison at a path. `$.age` must be an ordered path.
-let older = cipher
+let older = keyset
     .query(op::AtPath(op::Gt), &("$.age", 30))
     .on(&plan)
     .await?;
-let adults = cipher
+let adults = keyset
     .query(op::AtPath(op::Between), &("$.age", (18, 65)))
     .on(&plan)
     .await?;
@@ -585,11 +586,11 @@ entry point, as the typed API does:
 
 ```rust
 // Not on `next` yet: the paired chain entry points and `Scope`.
-let by_tenant = cipher
+let by_tenant = keyset
     .query_with_context(op::Eq, "alice@example.com", Scope::new(tenant))
     .on(&plan)
     .await?;
-let user: User = cipher
+let user: User = keyset
     .decrypt_with_context(encrypted, Scope::new(tenant).bind(row_id))
     .using(&plan)
     .await?;
@@ -780,22 +781,33 @@ Sources: the module documentation of `packages/stack-encrypt/src/cipher.rs`
 describes the descriptor and the AAD. The module documentation of
 `packages/stack-encrypt/src/target/context.rs` describes the search terms.
 
-#### Two scopes of one context
+#### Query context and stored context
 
-Decided on 7 November 2026. A context has two scopes:
+Decided on 7 November 2026. Every part of a context is a scope or a
+binding. The declaration supplies the first scopes: the record name, then
+the field's context name. The caller supplies the rest.
 
-- **The stored context** is every part. The data key and the AAD derive
-  under it.
-- **The query scope** is a prefix of the stored context. Search terms
-  derive under it. A query supplies the query scope, and matches every row
-  stored under it.
+- **The query context** is all the scopes: the declared ones, then the
+  caller's. Search terms derive under it. A query supplies the caller's
+  scopes, and matches every row stored under the same query context.
+- **The stored context** is the query context followed by the bindings.
+  The data key and the AAD derive under it.
+
+A field's **context name** is the last declared scope. It is the field's
+name by default. It can be pinned when the Rust field is renamed, so that
+stored data keeps opening.
+
+The context name is always the last declared scope, so two fields of one
+record never share a context. If they did, they would share a key and an
+AAD, and a ciphertext copied between the two columns would open. ADR-0006
+records this.
 
 A part of the context is one of three kinds. The declaration says which,
-and fixes the order: the query scope first, then the bindings.
+and fixes the order: the scopes first, then the bindings.
 
-| Kind of part | Verb | Example | In the query scope | In the descriptor | In the AAD | Verified by |
+| Kind of part | Verb | Example | In the query context | In the descriptor | In the AAD | Verified by |
 | --- | --- | --- | --- | --- | --- | --- |
-| Scope | `scope` | A tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
+| Scope | `scope` | A record name, a field's context name, or a tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
 | Binding | `bind` | A row's UUID, or the IP address of the writer | No | Yes | Yes | ZeroKMS and the AEAD |
 | Post-seal part | None. The database adds it | A key the database generates after the insert | No | Through the refined tag | No | ZeroKMS only |
 
@@ -939,7 +951,7 @@ format version beside it.
 | Planned change | What it would alter |
 | --- | --- |
 | Refined tags | The tag stored in the envelope, and what the AAD binds |
-| Search terms under the query scope | A new form of search term, beside the rc.3 form, where terms derive under every part |
+| Search terms under the query context | A new form of search term, beside the rc.3 form, where terms derive under every part |
 | Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
@@ -1074,7 +1086,7 @@ review.
 - **Done already.** `FieldRef` and `pick` exist in `plan/field_ref.rs`.
   The derive already lowers a structural record to the builder. Queries
   work through a plan written by hand: `cipher.query(op, value).on(&plan)`.
-- **Cannot fail.** `build()` refuses a repeated name or a shared identity.
+- **Cannot fail.** `build()` refuses a repeated field name or a shared context name.
   The derive sees every field, so it refuses those at compile time, and
   `encryption_plan()` returns `&'static Plan`, not a `Result`. The
   hand-written builder keeps the runtime check. The dynamic grammar needs
@@ -1091,15 +1103,16 @@ review.
 - **What to build.** One mechanism for where a field's context comes
   from: the plan builder. The derive and the dynamic grammar lower to it.
   A field's context comes from one of three sources:
-  - a literal, through `Plan::context(label)`, the only way to put a label
-    in a plan;
+  - the declaration, through `Plan::context(record_name)`, the only way
+    to put the record name in a plan, with each field's context name
+    after it;
   - a row field stored unsealed in the record, so the reader takes it
-    from the row, and `open` may state the label it expects;
+    from the row. A reader may pass it on decrypt to check it;
   - the caller, on every write, query, and read, as a scope or a
     binding.
 
-  Parts are separate and ordered: the label, the field, the scopes, then
-  the bindings. Grouping is available inside one part. Nothing
+  Parts are separate and ordered: the declared scopes, the caller's
+  scopes, then the bindings. Grouping is available inside one part. Nothing
   is read from the plaintext on one side and from the caller on the
   other. Decided on 7 November 2026, with the context artifact.
 - **Why.** A program must never need to open a ciphertext to learn the
@@ -1133,16 +1146,16 @@ review.
     through the builder;
   - a Rust call with an undeclared part fails to compile.
 
-#### Two scopes of one context
+#### Query context and stored context
 
 - **What to build.** The binding kind of part, in the declaration and in
-  the dynamic grammar. Search terms derive under the query scope, and the
+  the dynamic grammar. Search terms derive under the query context, and the
   key and the AAD under the stored context. A binding can be a context
-  field stored in the row. The order is fixed: the query scope, then the
+  field stored in the row. The order is fixed: the scopes, then the
   bindings.
 - **Why.** Access intelligence needs each value bound to its row, and found
   by a column or tenant query. [Two scopes of one
-  context](#two-scopes-of-one-context) has the rule.
+  context](#query-context-and-stored-context) has the rule.
 - **Vocabulary.** The Rust chain's `.extend(..)` is removed; the context
   argument carries the scopes and bindings instead. Go `Extend` becomes
   `Scope`, with `Extend` as a deprecated alias until 0.1.0. `Bind` is added
@@ -1190,6 +1203,10 @@ artifact review.
 - **Done already.** The scalar pairs (#1404). The record pairs, in
   #1504. The chain's `encrypt`, `query`, and `open`, with `.extend(..)`
   and `.context(..)` on several states.
+- **Order of calls.** The keyset is chosen first. It is the receiver of
+  every entry point: `keyset.encrypt(..)`, `keyset.using(..)`. Whether
+  `using` comes before or after `query` is decided with the query design.
+  Difference seven of the context artifact review, 7 November 2026.
 - **Rename.** `Scope<'a, K>` in `dynamic::record` and `CipherScope` in the
   owned API both mean the cipher a call runs under. Both are renamed in
   the naming review, so that `Scope` means a part of the context.

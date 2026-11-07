@@ -29,10 +29,10 @@ settled.
   stored, such as a host or application ID, means the data opens only
   where that part is known. The type name `PartiallyStoredUser` is wrong:
   the record is fully stored, and only part of its context is not.
-- **Parts are separate and ordered.** Refinements, then binding parts.
-  "Extension" is now "refinement". A binding part is a new kind. See [Two
-  scopes of one
-  context](2026-10-24-stack-encrypt-api-plan.md#two-scopes-of-one-context).
+- **Parts are separate and ordered.** Scopes, then bindings. "Extension"
+  is now "scope". A binding is a new kind. See [Query
+  context and stored
+  context](2026-10-24-stack-encrypt-api-plan.md#query-context-and-stored-context).
 
 ## Implementation status on 7 November 2026
 
