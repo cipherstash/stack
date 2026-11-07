@@ -159,6 +159,10 @@ A field can use an EQL type from the `eql-bindings` crate as its target.
 The field is then stored as one EQL column, such as
 `public.eql_v4_text_eq`.
 
+Go records already do this through the dynamic interface. A field there
+names its EQL type, such as `"target": "TextEq"`, and the engine runs that
+type for the field. The Rust record derive does not support it yet.
+
 ```rust
 use eql_bindings::v4::{integer::IntegerOrd, text::TextEq};
 
@@ -169,7 +173,8 @@ struct Member {
     age: i32,
 }
 
-// Not on `next` yet: EQL types as fields of a record.
+// Not on `next` yet in Rust: EQL types as fields of a derived record.
+// Go records do this today through the dynamic interface.
 #[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
 #[stash(struct = Member, context = "members")]
 struct EncryptedMember {
@@ -599,13 +604,22 @@ format version beside it.
 #### EQL types as fields
 
 - **What to build.** EQL types such as `TextEq` and `JsonTreeDocument` as
-  targets of the record derive. Today they work only with the older
-  structural API, and need a `NonEmpty<Identifier>` context.
+  field types of the Rust record derive. In Rust today, an EQL type works
+  only on its own, through the older structural API, with a
+  `NonEmpty<Identifier>` context. The structural record derive gives each
+  field a `CallerContext`, and `NonEmpty<Identifier>` has no conversion
+  from it. So no Rust record can have an EQL field yet.
 - **Why.** This gives the [EQL field example](#store-a-field-as-an-eql-type)
   and the [JSON example](#encrypt-a-json-document).
-- **Done already.** Nothing.
-- **Finished when** a record with EQL fields encrypts, decrypts, and
-  queries through the new API.
+- **Done already.** The dynamic interface supports EQL fields, so Go
+  records use them today. A field there names its EQL type, and the engine
+  looks the type up by name through `eql-bindings` (the `TargetResolver`
+  in `dynamic/record.rs`). `Identifier` already gives the same context as
+  the `(table, column)` pair that a record derive builds.
+- **Finished when** these are all true:
+  - a Rust record with EQL fields encrypts, decrypts, and queries through
+    the new API;
+  - it writes the same bytes as a Go record with the same declaration.
 
 #### Definitions, field handles, and queries
 
