@@ -237,19 +237,28 @@ decrypts in one step.
 
 ```rust
 use eql_bindings::{v4::json_tree::JsonTreeDocument, Identifier};
+use serde_json::json;
 use stack_encrypt::json::JsonPlaintext;
 
 let column = Identifier::for_column("customers", "profile")?;
-let profile = JsonPlaintext::parse(r#"{"name":"Ada","age":35}"#)?;
 
-// Not on `next` yet: the new traits for EQL types. Today this needs
-// `target::legacy::EncryptInto`, a `serde_json::Value`, and an owned
-// context.
+// Not on `next` yet: the new traits for EQL types, and the public
+// `JsonPlaintext`. Today this needs `target::legacy::EncryptInto`, a
+// `serde_json::Value`, and an owned context.
+let profile: JsonPlaintext = json!({ "name": "Ada", "age": 35 }).into();
 let encrypted: JsonTreeDocument = profile
     .encrypt_into_with_context(&keyset, &column)
     .await?;
+
 let opened = JsonPlaintext::decrypt_from_with_context(encrypted, &keyset, &column).await?;
+let name = &opened.value()["name"]; // `opened` wipes the document when it is dropped
 ```
+
+`JsonPlaintext` contains a `serde_json::Value`. It wipes the value when it
+is dropped. It converts from a `serde_json::Value`, or parses JSON text with
+the strict checks on JSON input. A program can also encrypt a borrowed
+`&serde_json::Value`. Then the program is responsible for wiping it, as for
+any [borrowed value](#encrypt-borrowed-values).
 
 With the default options, no path has an order term. So a query cannot
 compare the order of the values at a path. To order some paths, declare a
@@ -794,6 +803,27 @@ parameter named `aad`.
 - **Done already.** Owned single values (#1404).
 - **Finished when** `keyset.encrypt("secret")` compiles, and a test shows
   that Stack Encrypt wipes its own copies of a borrowed value.
+
+#### A public `JsonPlaintext`
+
+- **What to build.** A public `stack_encrypt::json::JsonPlaintext`, with:
+  - `From<serde_json::Value>`;
+  - `parse(&str)`, with the strict checks on JSON input;
+  - `value()`, to read the document by reference.
+
+  Encryption into a JSON target accepts a `JsonPlaintext`, or a borrowed
+  `&serde_json::Value`. Decryption returns a `JsonPlaintext`.
+- **Why.** The new traits need a plaintext that can be wiped.
+  `serde_json::Value` does not implement `Zeroize`. Rust's orphan rule
+  stops this repository adding that, so a wrapper is needed. A program
+  that already has a `serde_json::Value` must not have to print it and
+  parse it again.
+- **Done already.** `stack_encrypt::dynamic::json::JsonPlaintext` wraps a
+  `serde_json::Value`, and wipes it when it is dropped. It is part of the
+  dynamic interface. It has only `value()`. The strict parser exists as
+  `stack_encrypt::json::parse_text`.
+- **Finished when** the JSON examples in this plan compile, and a test
+  shows that a dropped `JsonPlaintext` leaves no plaintext behind.
 
 #### Constructors for `IdentifiedBy`
 
