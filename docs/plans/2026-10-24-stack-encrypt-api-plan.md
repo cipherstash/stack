@@ -42,9 +42,10 @@ This section shows what a developer writes when every item in this plan is
 built. A comment marks each piece of code that does not compile on `next`
 today. [Remaining work](#remaining-work) says what each of those needs.
 
-### Rust
+### Rust with static types
 
-These examples use the `stack-encrypt` crate directly.
+These examples use the `stack-encrypt` crate directly, with a Rust type for
+each encrypted value.
 
 #### Connect and choose a keyset
 
@@ -185,29 +186,29 @@ struct EncryptedMember {
 }
 ```
 
-#### Query
+#### Query a field
 
-A query encrypts the search value with the same keyset and the same field
-declaration as the stored values. `definition()` returns the record's
-declaration, built once. It has one method for each field. That method
-returns the field's handle. The query value binds to SQL as a parameter.
+A query encrypts the search value into the query type of the field. It uses
+the same keyset and the same context as the stored value. Each EQL type has
+a query type, such as `TextEqQuery` for `TextEq` and `IntegerOrdQuery` for
+`IntegerOrd`. The query value binds to SQL as a parameter, and the SQL
+operator chooses the comparison.
 
 ```rust
-use stack_encrypt::op;
+use eql_bindings::v4::{integer::IntegerOrdQuery, text::TextEqQuery};
+use eql_bindings::Identifier;
 
-// Not on `next` yet: `definition()`, field handles, and `using`.
-// Today a query names a plan written by hand:
-// `cipher.query(op::Eq, value).on(&plan)`.
-let members = EncryptedMember::definition()?;
+let email = Identifier::for_column("members", "email")?;
+let age = Identifier::for_column("members", "age")?;
 
-let by_email = cipher
-    .using(&members.email())
-    .query(op::Eq, "alice@example.com")
+// Not on `next` yet: the new traits for EQL types, and a borrowed value
+// and context. Today this needs `target::legacy::EncryptInto`, an owned
+// value, and an owned context.
+let by_email: TextEqQuery = "alice@example.com"
+    .encrypt_into_with_context(&keyset, &email)
     .await?;
-let older = cipher.using(&members.age()).query(op::Gt, &30).await?;
-let adults = cipher
-    .using(&members.age())
-    .query(op::Between, &(18, 65))
+let older: IntegerOrdQuery = 30_i32
+    .encrypt_into_with_context(&keyset, &age)
     .await?;
 ```
 
@@ -216,16 +217,19 @@ SELECT id, email, age FROM members WHERE email = $1::eql_v4.query_text_eq;
 SELECT id, email, age FROM members WHERE age > $1::eql_v4.query_integer_ord;
 ```
 
-A match query (`op::Matches`) works in the same way on a field with a match
-index. Its answer can include rows that do not match. So the caller
-decrypts the rows, and checks each one.
+The context `Identifier::for_column("members", "email")` is the same as the
+context that the record derive gives the `email` field of
+`EncryptedMember`. So the query matches the stored values.
+
+A match query works in the same way, on a field with a match index. Its
+answer can include rows that do not match. So the caller decrypts the rows,
+and checks each one.
 
 #### Encrypt a JSON document
 
 A JSON field is stored as one encrypted document in a
 `public.eql_v4_json_search` column. Typed Rust options say which paths can
-be ordered. A query can test containment, compare the value at a path,
-match one element of an array, or run a jsonpath predicate.
+be ordered.
 
 ```rust
 use eql_bindings::v4::json_tree::JsonTreeDocument;
@@ -247,17 +251,13 @@ struct EncryptedProfile(JsonTreeDocument);
 
 let profile = JsonPlaintext::parse(r#"{"name":"Ada","age":35}"#)?;
 let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await?;
-
-let profiles = EncryptedProfile::definition()?;
-let needle = cipher
-    .using(&profiles.document())
-    .query(op::Contains, &json!({ "name": "Ada" }))
-    .await?;
+let opened = JsonPlaintext::decrypt_from(encrypted, &keyset).await?;
 ```
 
-```sql
-SELECT id, profile FROM customers WHERE profile @> $1::eql_v4.query_json;
-```
+A JSON query can test containment, compare the value at a path, match one
+element of an array, or run a jsonpath predicate. Each of
+these takes an operator and a path. So JSON queries use the [dynamic
+interface](#query-through-a-definition).
 
 #### Encrypt a whole value as one ciphertext
 
@@ -291,15 +291,95 @@ let values = Vec::<i32>::decrypt_from(column, &keyset).await?;
 let rows: Vec<EncryptedUser> = users.encrypt_into(&keyset).await?;
 ```
 
-### Go and the dynamic interface
+### The dynamic interface
 
-Go and other languages use the same engine through the dynamic interface.
+The dynamic interface takes a declaration and values as data, not as Rust
+types. A program uses it in two cases:
+
+- when it learns the declaration only at run time, such as a query that
+  chooses its operator and path from user input;
+- when it is written in another language, such as Go.
+
+The engine turns a declaration into the same plan that the Rust derive
+builds. So the dynamic interface writes the same bytes as the static API
+for the same declaration.
+
+#### A declaration as data
+
+A declaration names each field and its context. It also says how the field
+is stored: as a passthrough field, with the indexes it lists, or as an EQL
+type.
+
+```json
+{
+  "id":      { "context": ["users", "id"],    "outputs": ["passthrough"], "type": "int64" },
+  "email":   { "context": ["users", "email"], "target": "TextEq" },
+  "age":     { "context": ["users", "age"],   "outputs": ["c", "eq", "ore"], "type": "int32" },
+  "profile": { "context": ["users", "profile"],
+               "target": { "name": "JsonSearch",
+                           "options": { "sealed_root": true, "ordered": ["$.age"] } } }
+}
+```
+
+Each row crosses the boundary as one transport frame. A query names a field
+and an operator, such as `eq` or `contains`, and gives a value. The engine
+returns the query value, with its EQL type.
+
+The output keys and the type names are part of the stored format, so they
+cannot change. The output keys are `c`, `eq`, `match`, `ore`, `ope`, and
+`passthrough`. The type names include `int64` and `string`.
+
+#### Query through a definition
+
+In Rust, `definition()` returns the declaration of a derived record, built
+once, as data. It has one method for each field. That method returns the
+field's handle. `using` selects a field, and `query` takes an operator and a value.
+A program can also build a definition from a declaration that it reads at
+run time.
+
+```rust
+use stack_encrypt::op;
+
+// Not on `next` yet: `definition()`, field handles, and `using`.
+// Today a query names a plan written by hand:
+// `cipher.query(op::Eq, value).on(&plan)`.
+let members = EncryptedMember::definition()?;
+
+let by_email = cipher
+    .using(&members.email())
+    .query(op::Eq, "alice@example.com")
+    .await?;
+let adults = cipher
+    .using(&members.age())
+    .query(op::Between, &(18, 65))
+    .await?;
+
+let profiles = EncryptedProfile::definition()?;
+let ada = cipher
+    .using(&profiles.document())
+    .query(op::Contains, &json!({ "name": "Ada" }))
+    .await?;
+```
+
+```sql
+SELECT id, profile FROM customers WHERE profile @> $1::eql_v4.query_json;
+```
+
+Below the definition, `stack_encrypt::dynamic::record` has the functions
+that take a declaration as a frame: `plan_with`, `encrypt_with`, `query`,
+and `decrypt_with`. Each takes a `TargetResolver`. The resolver runs the EQL
+type that a field names.
+
+On `next`, each program writes its own resolver over
+`eql-bindings`. In the target state, `eql-bindings` provides it. See [A
+ready-made EQL resolver](#a-ready-made-eql-resolver).
+
+#### Call it from Go
+
 A Go program declares its records with struct tags. The `stashgen`
-generator reads the tags, and writes the encrypted type and its functions.
-This section shows how a customer uses the Go SDK today, on Go
-`v0.1.0-rc.3`.
-
-#### Declare a record
+generator reads the tags, and writes the encrypted type, its functions, and
+the declaration it sends to the engine. The examples show how a customer
+uses the Go SDK today, on Go `v0.1.0-rc.3`.
 
 The `context=` tag gives the record's context. The tag on each field says
 how the field is stored: as a passthrough field, as an EQL type, or with
@@ -328,8 +408,6 @@ type Settings struct {
 	Theme string   `json:"theme"`
 }
 ```
-
-#### Encrypt, query, and decrypt
 
 A `Cipher` is the client bound to one keyset. `Extend` adds a part to the
 context of every field, such as a tenant ID. The generated `Encrypt` and
@@ -365,31 +443,6 @@ Two parts of the target state are not in Go yet:
 - A Go program cannot open one child of a JSON node, bound to its parent.
 
 Both are in [Remaining work](#remaining-work).
-
-#### What crosses the boundary
-
-The generated code hands the engine a declaration as data. The engine
-turns it into the same plan that the Rust derive builds. So Go and Rust
-write the same bytes for the same declaration.
-
-```json
-{
-  "id":      { "context": ["users", "id"],    "outputs": ["passthrough"], "type": "int64" },
-  "email":   { "context": ["users", "email"], "target": "TextEq" },
-  "age":     { "context": ["users", "age"],   "outputs": ["c", "eq", "ore"], "type": "int32" },
-  "profile": { "context": ["users", "profile"],
-               "target": { "name": "JsonSearch",
-                           "options": { "sealed_root": true, "ordered": ["$.age"] } } }
-}
-```
-
-Each row crosses the boundary as one transport frame. A query names a field
-and an operator, such as `eq` or `contains`. The engine returns the query
-value, with its EQL type.
-
-The output keys and the type names are part of the stored format, so they
-cannot change. The output keys are `c`, `eq`, `match`, `ore`, `ope`, and
-`passthrough`. The type names include `int64` and `string`.
 
 ### Rules in the target state
 
@@ -606,9 +659,17 @@ format version beside it.
 - **What to build.** EQL types such as `TextEq` and `JsonTreeDocument` as
   field types of the Rust record derive. In Rust today, an EQL type works
   only on its own, through the older structural API, with a
-  `NonEmpty<Identifier>` context. The structural record derive gives each
-  field a `CallerContext`, and `NonEmpty<Identifier>` has no conversion
-  from it. So no Rust record can have an EQL field yet.
+  `NonEmpty<Identifier>` context. The EQL types do derive the structural
+  `EncryptFrom` and `DecryptInto`. A record still cannot use them as
+  fields.
+  A record with a `TextEq` field, built against `next` on 7 November 2026,
+  fails with three errors. `NonEmpty<Identifier>` and
+  `ExpectedContext<Identifier>` do not implement `From<CallerContext>`, and
+  the record derive gives each field a `CallerContext`.
+- **The smallest fix.** Convert a `CallerContext` of two parts into an
+  `Identifier`, with the table first and the column second. `Identifier`
+  already gives the same context as that pair, so the stored bytes do not
+  change.
 - **Why.** This gives the [EQL field example](#store-a-field-as-an-eql-type)
   and the [JSON example](#encrypt-a-json-document).
 - **Done already.** The dynamic interface supports EQL fields, so Go
@@ -621,6 +682,20 @@ format version beside it.
     the new API;
   - it writes the same bytes as a Go record with the same declaration.
 
+#### A ready-made EQL resolver
+
+- **What to build.** A `TargetResolver` in `eql-bindings`, behind its
+  `targets` feature. It runs the EQL type that a field of a dynamic
+  declaration names, for encryption, decryption, and queries.
+- **Why.** On `next`, every Rust program that uses
+  `stack_encrypt::dynamic::record` with EQL types writes its own resolver.
+  The EQL tests and the Go guest each have a copy.
+- **Done already.** The functions it calls exist in `eql-bindings`:
+  `encrypt_with`, `decrypt`, and `query` in `v4::targets` and
+  `encryption::targets`.
+- **Finished when** the tests and the Go guest use the resolver from
+  `eql-bindings`, and their own copies are deleted.
+
 #### Definitions, field handles, and queries
 
 - **What to build.** A shared definition for each record type, built once
@@ -631,7 +706,7 @@ format version beside it.
   caller must not write a second plan by hand.
 - **Done already.** Queries work through a plan written by hand:
   `cipher.query(op, value).on(&plan)`.
-- **Finished when** the [query example](#query) compiles, and tests show
+- **Finished when** the [definition example](#query-through-a-definition) compiles, and tests show
   that a query cannot run without its definition or its required context.
 
 #### Context from fields and from the caller
