@@ -1741,8 +1741,9 @@ description was not enough. It ran no test suite.
 
 #### Differences from the plan
 
-#1501 encrypts `Vec<u8>` as one value. The plan recommends encrypting it
-byte by byte. The API plan records this as a question for the user.
+#1501 encrypts `Vec<u8>` as one value. The plan had recommended encrypting
+it byte by byte. On 7 November 2026, the user agreed with #1501: a byte
+string is one value, and a `Vec` of byte strings is a collection.
 
 #### What the reconciliation of 27 October 2026 checked
 

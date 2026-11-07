@@ -416,6 +416,33 @@ let values = Vec::<i32>::decrypt_from(column, &keyset).await?;
 let rows: Vec<EncryptedUser> = users.encrypt_into(&keyset).await?;
 ```
 
+#### Encrypt a byte string
+
+A `Vec<u8>` is the exception to the collection rule. It encrypts as one
+value, into one `Ciphertext`, because a byte string is almost always one
+thing: a file, a key, or an image. A fixed-size array `[u8; N]` is a byte
+string too. `u8` on its own is not a value that encrypts, so a `Vec<u8>`
+cannot encrypt byte by byte. Go treats a `[]byte` field the same way, so
+the stored format is the same in both languages.
+
+A `Vec` of byte strings follows the collection rule. It encrypts into a
+`Vec<Ciphertext>`, one for each byte string, with no wrapper type.
+
+```rust
+let file: Ciphertext = std::fs::read("photo.jpg")?.encrypt_into(&keyset).await?;
+let photo = Vec::<u8>::decrypt_from(file, &keyset).await?;
+
+let key: Ciphertext = [7u8; 16].encrypt_into(&keyset).await?;
+
+let files: Vec<Ciphertext> = vec![vec![1u8, 2, 3], vec![], vec![9]]
+    .encrypt_into(&keyset)
+    .await?;
+let opened = Vec::<Vec<u8>>::decrypt_from(files, &keyset).await?;
+```
+
+The user agreed this behaviour on 7 November 2026. It is what pull
+request #1501 built.
+
 ### The dynamic interface
 
 The dynamic interface takes a declaration and values as data, not as Rust
@@ -777,7 +804,6 @@ format version beside it.
 | Separate row binding and search scope | The AAD, and the context that search terms are derived under |
 | Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
-| Byte vectors | Whether a byte string is one value, or one value for each byte |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
 
 #### Opaque blobs
@@ -1045,7 +1071,6 @@ The lead who approves this plan decides each question.
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
-| Should a `Vec<u8>` encrypt as one value, or as one value for each byte? | One value, as #1501 built it. Or one value for each byte, with `OpaqueBlob<Vec<u8>>` for a whole vector | First check whether Go rc.3 stores a byte string as one value. If it does, keep one value |
 | Should encryption and queries both select a definition with `using`? | `using` for both. Or keep `on` for queries | `using` for both, with both call orders. An earlier decision list calls this settled, but its own section calls it a proposal. Confirm it |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should Stack Encrypt use refined tags? | Store a tag derived from the ZeroKMS key tag with a hash-based message authentication code (HMAC). Or keep the original tag | No recommendation yet. The protocol is not designed |

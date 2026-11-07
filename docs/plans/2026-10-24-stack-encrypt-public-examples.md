@@ -137,13 +137,11 @@ for example:
 `keyset.encrypt(OpaqueBlob::new(vec![1_i32, 3_i32])).await?` produces one
 ciphertext for the encoded collection instead.
 
-The latest recommendation applies the same rule to byte vectors. No wrapper
-or special case is needed to keep the prototype's behaviour. Pull request
-#1501 differs: it encrypts `Vec<u8>` and `[u8; N]` as one value. The [API
-plan](2026-10-24-stack-encrypt-api-plan.md#open-questions-and-decisions-to-be-made)
-records this as a question for the user. These calls
-need the proposed opaque ciphertext and support for targets that take no
-context.
+A byte string is the one exception. `Vec<u8>` and `[u8; N]` encrypt as one
+value, as pull request #1501 built them. The user agreed this on 7 November
+2026. The [API plan](2026-10-24-stack-encrypt-api-plan.md#encrypt-a-byte-string)
+shows it. These calls need the proposed opaque ciphertext and support for
+targets that take no context.
 
 ### Status of each API surface
 
@@ -159,7 +157,7 @@ context.
 | `Ciphertext::to_bytes` / `from_bytes` | Proposed direct access to the canonical sealed-leaf encoding | Done (#1404). The envelope is unchanged |
 | `Ciphertext: Serialize + Deserialize` | Proposed: Base64 for human-readable formats, bytes for binary formats | Done (#1404) |
 | Encoded ciphertext field targets | Accepted; final names remain for the naming pass | Still open |
-| `Ciphertext` as an encryption or decryption target | Proposed single-value target | Done (#1404). `Vec<u8>` is one value, unlike the recommendation (#1501) |
+| `Ciphertext` as an encryption or decryption target | Proposed single-value target | Done (#1404). `Vec<u8>` is one value (#1501), agreed on 7 November 2026 |
 | Decrypt into `OpaqueBlob<T>`, then `into_inner()` | Proposed symmetric decoding path | Still open. In progress in #1503 |
 | Direct `decrypt` / `decrypt_with_context` | Accepted ordinary decrypt pair | Done for one value (#1404) |
 | `User::decrypt_from` / `decrypt_from_with_context` | Accepted destination-directed pair | Done for one value and `Vec` (#1404, #1501). Records are in #1504 |
