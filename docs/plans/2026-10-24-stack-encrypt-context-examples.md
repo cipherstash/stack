@@ -321,7 +321,7 @@ struct Written {
 /// One stored value: the ciphertext and two bindings.
 #[derive(EncryptTarget, DecryptSource, Serialize, Deserialize)]
 #[stash(plaintext = Written, bind(field = "from"), bind(field = "at"))]
-struct SealedNote {
+struct EncryptedNoteBody {
     ciphertext: Ciphertext,
     #[stash(passthrough)]
     from: IpAddr,
@@ -334,7 +334,7 @@ struct SealedNote {
 struct EncryptedNote {
     #[stash(passthrough)]
     id: Uuid,
-    body: SealedNote,             // one column, stored as JSON through Serde
+    body: EncryptedNoteBody,             // one column, stored as JSON through Serde
 }
 
 let note = Note { id: Uuid::new_v4(), body: Written { text, from: request.ip(), at: now() } };
