@@ -818,9 +818,16 @@ client-generated UUID. A query by column or by tenant still finds it.
   borrows it while the request runs. So a program can use one context for
   a write, a query, and a read without cloning it. An owned context also
   works.
-- **Context is explicit.** A target says whether the caller must supply a
-  context, can supply one, or must not. Stack Encrypt does not use a type's
-  `Default` implementation to decide.
+- **Context is explicit.** A declaration lists the parts the caller must
+  supply, each with its kind and type. A part that is not declared is
+  refused. A declaration can mark a part as optional. That is the rare
+  case, because a query that omits an optional part matches nothing and
+  gives no error. Stack Encrypt does not use a type's `Default`
+  implementation to decide. Decided on 7 November 2026.
+- **The dynamic grammar can declare required parts too,** with their kind
+  and type, so the Go generator can require them when it generates the
+  code. Its default stays "any part or none", because Go rc.3 callers use
+  that, and the stored bytes are the same either way.
 - **Each element of a collection stands alone.** Each element has its own
   data key. Each element is authenticated on its own.
 - **Order terms do not answer equality.** An order-revealing encryption
@@ -1071,8 +1078,17 @@ format version beside it.
   name is decided with the field reference design. The plan builder's
   `.context(..)` and `.context_field(..)` and the derive's
   `#[stash(context_field)]` are the forms this replaces.
-- **Finished when** scenarios 0, 1, 2, 4, 5, 6, and 7 run as tests in
-  Rust and Go, through the builder.
+- **Required parts.** A Rust declaration lists the parts the caller must
+  supply, with kind and type, as the artifact's `refined_by::<T>()` does,
+  extended to binding parts. An undeclared part is refused. Optional is
+  the marked case. The dynamic grammar can declare required parts; its
+  default stays "any", and the Go generator requires a declared part at
+  compile time. `RequiredContext`, `OptionalContext`, and `NoCallerContext`
+  (#1404) are the three states this keeps.
+- **Finished when** these are both true:
+  - scenarios 0, 1, 2, 4, 5, 6, and 7 run as tests in Rust and Go,
+    through the builder;
+  - a Rust call with an undeclared part fails to compile.
 
 #### Two scopes of one context
 
