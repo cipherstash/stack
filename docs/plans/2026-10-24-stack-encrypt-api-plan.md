@@ -228,12 +228,35 @@ and checks each one.
 #### Encrypt a JSON document
 
 A JSON field is stored as one encrypted document in a
-`public.eql_v4_json_search` column. Typed Rust options say which paths can
-be ordered.
+`public.eql_v4_json_search` column.
+
+The simplest form encrypts straight into `JsonTreeDocument`, with the
+default options. The context is the column. The default options order no
+paths. They also store the whole document in its root entry, so it
+decrypts in one step.
 
 ```rust
-use eql_bindings::v4::json_tree::JsonTreeDocument;
-use stack_encrypt::json::{JsonOptions, JsonPlaintext};
+use eql_bindings::{v4::json_tree::JsonTreeDocument, Identifier};
+use stack_encrypt::json::JsonPlaintext;
+
+let column = Identifier::for_column("customers", "profile")?;
+let profile = JsonPlaintext::parse(r#"{"name":"Ada","age":35}"#)?;
+
+// Not on `next` yet: the new traits for EQL types. Today this needs
+// `target::legacy::EncryptInto`, a `serde_json::Value`, and an owned
+// context.
+let encrypted: JsonTreeDocument = profile
+    .encrypt_into_with_context(&keyset, &column)
+    .await?;
+let opened = JsonPlaintext::decrypt_from_with_context(encrypted, &keyset, &column).await?;
+```
+
+With the default options, no path has an order term. So a query cannot
+compare the order of the values at a path. To order some paths, declare a
+named type with typed Rust options:
+
+```rust
+use stack_encrypt::json::JsonOptions;
 
 fn profile_options() -> Result<JsonOptions, TermError> {
     JsonOptions::new().ordering(["$.age", "$.visits[*].at"])
