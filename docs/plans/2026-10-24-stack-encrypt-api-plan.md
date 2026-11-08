@@ -1774,6 +1774,77 @@ plan's.
     `NotPortable`;
   - EQL, Go, and Rust produce the same terms for the same stage list.
 
+#### The engine's rules, and the order of the work
+
+Decided on 8 November 2026, as areas six and seven of the query design
+review. The rules are the query artifact's.
+
+- **Six rules.**
+  1. A query runs on the field's own index, with that index's
+     configuration. There is no default index and no `.via`. A query starts from the field's marker, so the rule is true by
+     construction.
+  2. A field declares at most one index per operator. `(Equality, Ore)`
+     is allowed, because they answer different operators. `(Ore, Ope)`,
+     `(Ore, OreBlock)`, and two match indexes are refused when the plan is
+     built. So the lookup returns zero or one index, on both paths.
+  3. An index declares its operators once. The typed lookup, the dynamic
+     lookup, and the plan validation all derive from that one
+     declaration. There is no second table in the dynamic path, and no
+     third in `eql-bindings`.
+  4. Refusals are part of deriving the term. They are written once, in
+     the `sem` functions, for both paths.
+  5. The typed path is strict at compile time. The dynamic path checks
+     the same rules at run time. Both lower to the same functions.
+  6. Rust is the superset. The dynamic path is a named subset.
+- **The dynamic plan's shape.** A field's indexes become a closed
+  `FieldIndexes` enum of the valid shapes, generated from the index
+  declarations: equality optional, at most one match index, at most one
+  of `Ore`, `Ope`, and `OreBlock`. Deserialising is validation. A plan
+  with two match indexes has no variant, so the boundary refuses it.
+  Order is canonicalised, so the two spellings `[ore, equality]` and
+  `[equality, ore]` name one shape.
+
+  `index_for(op)` is one match with no priority order. The wire keys
+  `c`, `eq`, `match`, `ore`, and `ope` do not change, so the stored
+  format is untouched. Until the enum lands, the dynamic plan keeps
+  `Vec<IndexSpec>`, with a one-table lookup over each index's declared
+  operators.
+- **`check_query` stays, for Go.** The Go SDK promises to refuse a bad
+  query before it resolves a keyset, and calls `dynamic::check_query` for
+  that. It becomes a thin call into the `sem` functions, with no cipher.
+  The typed path has no separate check step: a saving on the error path
+  alone does not justify a trait method.
+- **The order of the work.** Four steps, each shippable on its own, each
+  removing one copy of something:
+    1. One declaration per index and operator. `OpSpec` is generated from
+     the `op` types. Each index declares its operators and admitted
+     plaintexts once, and `index_for` reads them. Overlap is refused on
+     both paths. A test shows the typed and dynamic faces agree.
+    2. Derivation once, refusals once. The `sem` query functions, the
+     analyzer in place of `MatchCase`, and `Match<Dynamic>` arrive.
+     `check`, `verifier`, `admit`, `QueryToken`, `check_input`, and the
+     second tokenisation go. This is the `!` commit. It closes #1318 and
+     #1279, with #1279's `InvertedRange` item dropped.
+  3. Typed field markers with their index lists, the per-operator query
+     methods, `Planned`, and the removal of `DefaultIndex`, `.via`,
+     `PlanError::IndexOptions`, and `PlanError::MatchCase`.
+  4. `FieldIndexes` on the dynamic plan.
+- **Issues.** #1318 and #1279 are closed by steps 1 and 2. #1309, short
+  tokens, is a stage in the analyzer. #1326, the SSE investigation, is
+  independent: a future SSE index is one more index declaration.
+- **ADRs.** ADR-0009 describes `Supports`, `Answers`, `DefaultIndex`, and
+  `.via`. The `MatchConfig` documentation says a field and its query agree "by
+  construction". That is true only for one-value plans today. Both
+  are amended, not contradicted in silence.
+- **Finished when** these are all true:
+  - every index's operators appear in one declaration, and a test shows
+    the typed and dynamic lookups agree on every index;
+  - a plan with two match indexes, or with `Ore` and `Ope`, is refused on
+    both paths;
+  - `DefaultIndex`, `.via`, `MatchCase`, and `PlanError::IndexOptions`
+    are gone;
+  - ADR-0009 and the `MatchConfig` documentation are amended.
+
 ### 5. After the customer release
 
 - **Packaging and names.** Crate moves, the shared format crate, and the
@@ -1793,6 +1864,7 @@ The lead who approves this plan decides each question.
 | What is the name of the wrapper that authenticates a collection's order and length? | `Positioned<Vec<T>>`. Or a name chosen in the naming review | `Positioned`. Decide in the naming review |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | How does a declaration mark a binding in the context, in Rust and in the dynamic grammar? | A kind on each part of the declaration, in the derive, the plan builder, and the Go struct tag. The spelling depends on the context vocabulary and the field reference design, decided with the context artifact | Decide with differences three to seven of the context artifact |
+| Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should keysets be chosen from data, and should Stack Encrypt use ZeroKMS lock context? | Optional capabilities of a key provider. Or leave them out | Optional capabilities, after the customer release |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
