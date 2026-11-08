@@ -668,6 +668,27 @@ describe('the request seen by downstream handlers', () => {
   })
 })
 
+describe('clearing through an override that only names the cookie', () => {
+  it('keeps the override list non-empty so the old session is not forwarded', async () => {
+    // Next.js ignores an empty `x-middleware-override-headers`, which would let
+    // the original request cookie (the previous session) through untouched.
+    const session = JSON.stringify(sessionFor('user_A'))
+    const req = request(session)
+    const callerRes = NextResponse.next({
+      request: {
+        headers: new Headers({
+          cookie: `${CS_COOKIE_NAME}=${encodeURIComponent(session)}`,
+        }),
+      },
+    })
+
+    const res = await protectMiddleware('', req, callerRes)
+
+    expect(res.headers.get('x-middleware-override-headers')).toBe('cookie')
+    expect(res.headers.get('x-middleware-request-cookie')).toBe('')
+  })
+})
+
 describe('a CTS transport failure', () => {
   it("clears another user's session instead of throwing", async () => {
     vi.stubGlobal(

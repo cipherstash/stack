@@ -241,14 +241,13 @@ export function forwardCtsSession(req: NextRequest, response: NextResponse) {
     pairs.push(`${CS_COOKIE_NAME}=${encodeURIComponent(written.value)}`)
   }
 
+  // `cookie` always stays in the override list, set to an empty header when no
+  // cookie is left: Next.js ignores an empty override list, and dropping
+  // `cookie` from a list that named nothing else would forward the original
+  // request cookie, previous session included.
   const otherKeys = keys.filter((key) => key !== 'cookie')
-  if (pairs.length > 0) {
-    headers.set(`${REQUEST_HEADER_PREFIX}cookie`, pairs.join('; '))
-    headers.set(OVERRIDE_HEADERS, [...otherKeys, 'cookie'].join(','))
-  } else {
-    headers.delete(`${REQUEST_HEADER_PREFIX}cookie`)
-    headers.set(OVERRIDE_HEADERS, otherKeys.join(','))
-  }
+  headers.set(`${REQUEST_HEADER_PREFIX}cookie`, pairs.join('; '))
+  headers.set(OVERRIDE_HEADERS, [...otherKeys, 'cookie'].join(','))
 
   return response
 }
