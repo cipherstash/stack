@@ -13,8 +13,9 @@ plaintext, lock context, or the neutral provider split.
 
 From 7 November 2026, the stored format of Go `v0.1.0-rc.3` must not
 break. The stored format is what is written to the database, such as
-ciphertext envelopes and search terms. The refined-tag work in item 6
-below changes the stored tag, so it must keep rc.3 data readable. See the
+ciphertext envelopes and search terms. [Tag refinement](2026-11-07-stack-encrypt-tag-refinement.md) replaces
+the stored tag in place and adds a caveat list beside it. The list is
+additive, so a payload without caveats is the rc.3 form. See the
 [API
 plan](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3).
 
@@ -25,7 +26,8 @@ Dan asked for three things:
 - optional lock context support, without requiring future backends, such
   as AWS Key Management Service (KMS) or Vault, to emulate it.
 
-The JSON operation contract is under separate user review.
+The JSON operation contract is live, in use as the release candidate Go
+`v0.1.0-rc.3`.
 
 ## Summary of recommendations
 
@@ -58,96 +60,25 @@ The JSON operation contract is under separate user review.
 | Role | What it selects or binds | Example |
 | --- | --- | --- |
 | Key selection | The provider key domain used to encrypt and to derive index terms | A ZeroKMS keyset ID or name selected from `tenant_id` |
-| Ciphertext context | The application binding verified when a ciphertext is opened | The column, the tenant scope, and the row ID |
-| Search scope | The domain in which index and query terms compare | The column and the tenant ID |
+| Stored context | Every part of a value's context, under which the key and the AAD derive. Verified when a ciphertext is opened | The column, a tenant scope, and a row binding |
+| Query context | The scopes of a context, under which search terms derive and compare | The column and a tenant scope |
 | Provider policy | Conditions the provider applies when it generates or retrieves a key | ZeroKMS lock context that selects the `sub` claim of the authenticated JWT |
 
 These four roles are separate logical inputs, even where the protocol binds
 several of them into its tag or AAD:
 
-- A `ScopeKey<T>` does not select a ZeroKMS keyset by itself.
+- A scope does not select a ZeroKMS keyset by itself.
 - A keyset selector does not add its source field to the AAD.
-- Lock context is not another name for ciphertext context or for search
-  scope.
+- Lock context is not another name for the stored context or the query
+  context.
 
 For two roles to share a source value, the definition must declare it
 explicitly. The engine must not infer it from a name.
 
-## Current implementation
-
-### Update on 7 November 2026
-
-- Pull request #1501 batches an owned `Vec` collection. Encrypting makes
-  one `generate_keys` call. Decrypting makes one `retrieve_keys` call for
-  each keyset. A ciphertext from another keyset is refused before any key
-  is retrieved.
-- Pull request #1493 adds lifecycle conformance, including bounded
-  concurrency when the KMS client splits a batch into chunks.
-- Pull request #1501 moves the Rust crates to Vitamin C 0.9. The section
-  on `AsyncCipher` below describes 0.8.0, and was not checked against 0.9.
-- Pull request #1403 bumps `stack-kms` to 0.2.0, and `stack-auth` to
-  0.44.0. Neither bump adds lock context or routing.
-
-### Update on 27 October 2026
-
-#1379 makes verification of a JSON document whose root is not sealed load
-the index keyset as well as the data key. Settling a `Pending`, and the
-generic execution entry points, now require
-`DataKeySource + IndexKeySource`.
-
-The neutral provider split proposed below must keep that verification
-requirement for JSON. The split must still allow capabilities with data
-keys only, for operations that need no index key.
-
-#1379 does not implement keyset routing derived from plaintext, or the code
-that passes ZeroKMS lock context through.
-
-### What the code does now
-
-- [StackCipher::keyset](../../packages/stack-encrypt/src/cipher.rs) accepts
-  an `IdentifiedBy` universally unique identifier (UUID) or name. The method resolves the keyset and its
-  index key, and returns a `KeysetCipher` bound to that keyset. The client
-  has a keyset cache of limited size, and a policy for how fresh a name
-  resolution must be. `.default_keyset()` is already bound when the client
-  is initialised. Initialisation now requires both `DataKeySource` and
-  `IndexKeySource`.
-- Each sealed leaf contains the UUID of the resolved keyset. Decryption
-  through the client groups key retrieval by the UUIDs in the leaves. A
-  bound keyset can restrict which keyset is allowed. Names are a
-  convenience for lookup, not persistent key identities. See the
-  architecture decision record (ADR)
-  [ADR 0002](../../packages/stack-encrypt/docs/adr/0002-keyset-id-in-the-leaf-and-names-as-bounded-lookups.md).
-- [Pending dispatch](../../packages/stack-encrypt/src/target/pending.rs)
-  now uses one selected keyset for every key it generates. Dispatch groups
-  key retrievals by their stored keyset IDs. Dispatch builds the payloads
-  for generating and retrieving keys without lock context, and passes no
-  unverified request context.
-- The [key source traits](../../packages/stack-kms/src/key_source.rs) and
-  the [payloads](../../packages/stack-kms/src/payload.rs) already model
-  lists of ZeroKMS lock context, optional decryption policies, and
-  unverified context. These traits are abstractions specific to ZeroKMS,
-  used to inject a provider and for testing. They are not yet a neutral
-  contract for any KMS backend. The returned key types also follow the
-  existing integration with ZeroKMS and recipher.
-- The [TypeScript identity API](../../languages/typescript/packages/stack/src/identity/index.ts)
-  accepts `.withLockContext({ identityClaim: ["sub"] })`. Its
-  documentation says the server resolves the claim values from the
-  principal that authenticated. Encrypt and decrypt operations pass that
-  selector to protect-ffi. Audit metadata is passed separately, as
-  `unverifiedContext`.
-- The `Context` enum in the pinned `zerokms-protocol` 0.12.31 includes
-  `Tag`, `Value`, and `IdentityClaim`. Its `RetrievedKey` now exposes key
-  material only. `stack-kms::DataKey` contains the initialisation vector
-  (IV) and the key. `DataKey` does not contain the original
-  authentication tag that [tag
-  refinement](2026-11-07-stack-encrypt-tag-refinement.md) returns. To
-  support that flow, the protocol and the client need to return that tag
-  in their responses.
-
 ## 1. Keyset selection derived from plaintext
 
 Recommendation: add a key selection declaration to the existing target
-definition, beside the source selectors for context and scope. A useful
+definition, beside the declaration's scopes and bindings. A useful
 minimal portable form is an explicit selector, by ID or by name, over a
 plaintext field:
 
@@ -244,7 +175,7 @@ not cover facts about the provider that are not available locally.
 A query has no plaintext user record to inspect. So the same target
 policy must either expose a tenant routing input that the caller supplies,
 or use a keyset selected explicitly. One typed input can deliberately
-supply both the key route and the search scope. The declaration decides
+supply both the key route and the query context. The declaration decides
 both uses.
 
 Do not derive a keyset from the email address being searched for. To
@@ -302,20 +233,6 @@ document. The trait does not match Stack in three ways:
 - The trait requires `Sync` and `Send` futures. To support both native
   and WASM builds, Stack's provider traits use `MaybeSend`.
 
-### Original recommendation on AsyncCipher
-
-Keep Stack's orchestration of batches and providers, and Vitamin C's leaf
-cryptography. Do not implement `AsyncCipher` on `StackCipher` only so that
-the traits match. Do not encode provider policy secretly into AAD. Do not
-lose batching across records.
-
-An adapter configured explicitly could implement the trait for a
-restricted use, with the provider descriptor, key route, and policy
-already supplied. The public redesign does not need that adapter. If
-built, the adapter must state its limits. A general refactor would need a
-richer request contract. It would also need evidence that batching,
-metadata, and WASM behaviour still work.
-
 ### A smaller clean-up
 
 Each synchronous adapter now implements the half of `Cipher` that it does
@@ -327,24 +244,27 @@ question of whether the public Stack client implements the async trait.
 ## 3. Lock context as an optional provider policy
 
 Recommendation: pass lock context as its own typed ZeroKMS policy input.
-Do not pass it as the ordinary `encrypt_with_context` argument, or as a
-`SearchScope`. Proposed spelling:
+It is provider policy, not context, so it is not a `Scope` or a `Bind`.
+It is not a step after an entry point either. The plan's entry points
+come in pairs, `x` with `x_with_context`, and nothing is chained after
+them.
+
+So the lock context is set on the keyset before the call, and every call
+through that keyset carries it. Proposed spelling:
 
 ```rust
-use stack_encrypt::providers::zerokms::{LockContext, LockContextExt};
+use stack_encrypt::providers::zerokms::LockContext;
 
 let lock = LockContext::identity_claim("sub");
-let encrypted = user.encrypt_into(&tenant_keyset)
-    .with_lock_context(&lock)
-    .await?;
-let user = User::decrypt_from(encrypted, &tenant_keyset)
-    .with_lock_context(&lock)
-    .await?;
+let locked = tenant_keyset.with_lock_context(&lock);
+
+let encrypted: EncryptedUser = user.encrypt_into(&locked).await?;
+let user = User::decrypt_from(encrypted, &locked).await?;
 ```
 
-The module and method names illustrate the idea until the naming pass.
-The operation builder keeps its owned plaintext guards while the policy is
-attached. The extension is present for a provider with the required
+The module and method names illustrate the idea until the naming review.
+A keyset with a lock context is a keyset, so `Planned` and the marker
+queries take it without change. The extension is present for a provider with the required
 capability. A provider whose type is erased at runtime checks the same
 capability before key I/O.
 
@@ -395,8 +315,8 @@ derive search terms or see query results.
 
 If search needs authorisation, define that capability separately. The
 TypeScript query method accepts `withLockContext`. That does not prove
-that the new index path is protected. Do not imitate a lock by
-making search scope specific to a principal implicitly.
+that the new index path is protected. Do not imitate a lock by making the query context specific to a
+principal implicitly.
 
 ### Batching and caching with lock context
 

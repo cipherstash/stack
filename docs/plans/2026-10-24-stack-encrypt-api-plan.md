@@ -15,12 +15,21 @@ who approves its design. It has three parts:
 3. [Open questions and decisions to be
    made](#open-questions-and-decisions-to-be-made).
 
-Three documents go with it. The [context
-scenarios](2026-10-24-stack-encrypt-context-examples.md) are the
-acceptance matrix for how a record gets its context. [Tag refinement and
-caveats](2026-11-07-stack-encrypt-tag-refinement.md) designs the caveats
-on a key tag. The [review log](2026-10-24-stack-encrypt-api-review.md)
-keeps the history of each decision. The names this plan uses as
+Six documents go with it:
+
+- the [context scenarios](2026-10-24-stack-encrypt-context-examples.md),
+  the acceptance matrix for how a record gets its context;
+- [tag refinement and caveats](2026-11-07-stack-encrypt-tag-refinement.md),
+  the design of the caveats on a key tag;
+- [JSON operations](2026-10-25-stack-encrypt-json-operations.md), the
+  inventory of every JSON operation, with its SQL;
+- [packaging and names](2026-10-25-stack-encrypt-packaging.md), the
+  proposal the naming review judges;
+- [provider capabilities](2026-10-25-stack-encrypt-provider-capabilities.md),
+  the proposal for keyset routing and lock context after the customer
+  release;
+- the [decision record](2026-10-24-stack-encrypt-api-review.md), the 22
+  issues the October review found, with the decision on each. The names this plan uses as
 placeholders are listed in [Names deferred to the naming
 review](#names-deferred-to-the-naming-review), at the end.
 
@@ -29,18 +38,25 @@ review](#names-deferred-to-the-naming-review), at the end.
 | Term | Meaning |
 | --- | --- |
 | AAD (additional authenticated data) | Data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](#context-and-aad) |
+| ADR | An architecture decision record, in `packages/stack-encrypt/docs/adr/`. ADR-0007 says every binding runs the engine's one executor |
+| Analyzer | The pipeline that turns match text into tokens: a source, such as `Words`, then stages. A match index is configured by one analyzer |
 | Binding | A part of the context that ties a ciphertext to its row, such as a row ID. It is in the stored context and not in the query context. Passed as `Bind::new(..)` |
 | Caveat | A named, typed fact added to a stored value's key tag by tag refinement, such as `row_id` or `created_at`. ZeroKMS verifies it. See [Tag refinement](#tag-refinement) |
 | Ciphertext | One encrypted value, as the Rust `Ciphertext` type. It is stored as bytes, or as Base64 text |
 | Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Rust and Go run the same cases. The files are in `conformance/stack-encrypt/v1/` |
 | Context name | The last declared scope of a field: its name by default, pinned when the Rust field is renamed. Two fields of one record never share one |
 | Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](#context-and-aad) |
+| Descriptor | A context rendered as text, such as `users/age`. ZeroKMS derives the data key from it and logs it at every retrieval |
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
+| Executor | The one engine path that runs a plan: it derives each field's context, requests the keys in one batch, and seals or opens every value |
 | Field marker | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
+| `FieldRef` | The builder's reference to one field of the plaintext type: its name and its accessor. A field marker is a `FieldRef` with its indexes added |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
+| n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
+| PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a caveat use it |
 | Passthrough field | A field stored unencrypted next to the encrypted fields. It is not authenticated |
 | Plan | A record's declaration as data: each field, its context, and its indexes. The derive builds one through `encryption_plan()`; a program can build one by hand, or read one at run time. See [A request: `Planned`](#a-request-planned) |
 | Planned | A value paired with a plan that is data, `Planned::new(&plan, value)`. Encrypted, queried, or decrypted with the keyset as the argument. See [A request: `Planned`](#a-request-planned) |
@@ -50,10 +66,12 @@ review](#names-deferred-to-the-naming-review), at the end.
 | Request | A serialised `Planned`: the plan, the caller's context parts, and the value. The one thing a binding sends to the engine. A transport form, never stored |
 | Scope | A part of the context that narrows the data and the queries over it. The declaration supplies the first scopes, such as `users` and `email`; the caller adds more, such as a tenant ID, with `Scope::new(..)` |
 | Search term | A value stored next to a ciphertext, so that a query can find it without decrypting it. Equality, order, and match each use their own term |
+| Stage | One step of an analyzer that maps, drops, or expands tokens, such as `Downcase`, `Stop`, `Stem`, or `Ngrams`. A serialised plan may name only the closed set of stages |
 | Stored context | Every part of a value's context. The data key and the AAD derive under it |
 | Stored format | Everything Stack Encrypt writes to the database. See [The stored format stays compatible with Go rc.3](#the-stored-format-stays-compatible-with-go-rc3) |
 | Tag refinement | Replacing a stored key tag with an HMAC of it and a caveat, so ZeroKMS can verify the caveat when it returns the key. See [Tag refinement](#tag-refinement) |
 | Target | The encrypted type that a value is stored as, such as `Ciphertext`, an EQL type like `TextEq`, or a record type |
+| Vitamin C | CipherStash's Rust cryptography library, the `vitaminc-*` crates. It seals and opens leaves and derives the AAD; Stack Encrypt plans, batches, and stores |
 
 ## Target state
 
@@ -530,7 +548,9 @@ The byte string is not a special case of either language. It is a rule of
 the engine.
 
 A `Vec` of byte strings follows the collection rule. It encrypts into a
-`Vec<Ciphertext>`, one for each byte string, with no wrapper type.
+`Vec<Ciphertext>`, one for each byte string, with no wrapper type. The
+byte-string rule was decided on 7 November 2026 by Dan. It is what pull
+request #1501 built.
 
 ```rust
 let file: Ciphertext = std::fs::read("photo.jpg")?.encrypt_into(&keyset).await?;
@@ -569,8 +589,6 @@ let opened = Vec::<Byte>::decrypt_from(each, &keyset).await?;
 built-in single value. The derive encrypts the struct as that field, and
 decrypts the field back into the struct. So `Byte` is sealed exactly as
 the `u8` inside it would be, if `u8` were a single value on its own.
-
-Decided on 7 November 2026 by Dan. It is what pull request #1501 built.
 
 ### The dynamic interface
 
@@ -1150,12 +1168,34 @@ format version beside it.
   opaque value that is stored.
 - **Why.** Go rc.3 already writes opaque structs in this format, so Rust
   must read them.
+- **What the blob guarantees.**
+  - The stored bytes are one sealed leaf under one data key.
+  - The envelope contains what is needed to fetch the key again. The
+    caller never saves an initialisation vector or a key tag separately.
+  - A different context fails to open the blob.
+  - Stack Encrypt owns the matching encode and decode pair.
+  - The format's identifier and version are inside the encrypted payload,
+    so decoding never guesses a codec from unauthenticated metadata.
+  - The blob reuses the outer ciphertext envelope. Its payload is a new,
+    explicit format, and never reinterprets bytes sealed earlier.
+  - A change to the application's own type still needs explicit handling.
+    A codec version does not migrate it.
+- **Constant time is a requirement to investigate, not a property.**
+  Strings, lengths, enum variants, errors, allocations, and the Serde code
+  a user writes all add work that depends on the values. So arbitrary
+  `Serialize` and `Deserialize` cannot be constant time as a whole. Before any such claim, define three things. Which types are supported.
+  Which shape and length information is public. Which limits apply to
+  custom implementations.
+  Authentication finishes before the blob is decoded. Check: `serdect`,
+  already a dependency, for its exact guarantees and whether any of them
+  apply to the blob codec. Its guarantees for encoding bytes do not extend
+  to arbitrary objects.
 - **Done already.** Go writes and reads the format (#1369, #1370). #1503
   adds `OpaqueBlob`, and is in review.
 - **Finished when** Rust and Go each open blobs that the other wrote, and
   the conformance profiles cover it.
 
-#### Tag refinement
+#### Tag refinement: the work
 
 Decided on 7 November 2026. [Tag refinement and
 caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
@@ -1240,7 +1280,8 @@ caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
   renames the source field of an encrypted field
   (`stack-encrypt-derive/src/attrs.rs`).
 - **Finished when** these are both true:
-  - the public examples for mixed and searchable records run as tests;
+  - a mixed record, with passthrough and encrypted fields, and a searchable
+    record round-trip as tests;
   - a `tests/ui` case shows that a plaintext field with no counterpart
     fails to compile.
 
@@ -1473,7 +1514,7 @@ Decided on 7 November 2026, as area one of the query design review.
   to Go. The context contract and the conformance README say "scope"
   instead of "extension". The frozen vectors do not change, because no key
   on the wire names the operation.
-- **Done already.** Nothing. Today every part is in both scopes.
+- **Done already.** Nothing. Today every part is in both contexts.
 - **Finished when** these are all true, in Rust and in Go:
   - a record with a binding row ID encrypts;
   - a column query finds it;
@@ -1483,47 +1524,28 @@ Decided on 7 November 2026, as area one of the query design review.
 #### One context argument, and paired entry points
 
 Decided on 7 November 2026, as differences two and five of the context
-artifact review.
+artifact review. The rules are in the target state. See [the context
+argument](#other-rules) and [`Planned`](#a-request-planned). This item
+records only the work.
 
-- **What to build.** The context argument is one of three values, built
-  before the call: `Scope::new(..)`, `Bind::new(..)`, or
-  `Scope::new(..).bind(..)`. Several of one kind chain:
-  `Scope::new(tenant).scope(region).bind(id)`. The order is fixed by type:
-  after the first `bind`, `scope` is not offered. `Scope::new((a, b))` is
-  one grouped part. That is a different context from two parts.
-  Both layers take it through paired entry points:
-  - the typed API: `encrypt` with `encrypt_with_context`; `encrypt_into`
-    with `encrypt_into_with_context`; `decrypt_from` with
-    `decrypt_from_with_context`;
-  - a value under a plan that is data: `Planned::new(&plan, value)` with
-    `encrypt` and `encrypt_with_context`, and `decrypt` with
-    `decrypt_with_context`. `Planned` replaces the chain in
-    `plan/chain.rs`: `cipher.encrypt(&user).using(&plan)`,
-    `cipher.query(op, v).on(&plan)`, and `cipher.open(..)` go, and with
-    them every chain state and its `.context(..)`, `.extend(..)`, and
-    `.keyset(..)`. The keyset is the argument of every verb.
-
-  A typed query from a marker chains its scopes, `.eq(v).scope(tenant)`,
-  because a query has one field and one value. Its builder has no `bind`
-  method.
-
-  A query entry point accepts a `Scope` and nothing else, so a binding in
-  a query does not compile. A part whose source is a row field is read
-  from the plaintext on encrypt. On decrypt, a stored part may be passed,
-  and is then checked against the row before any key is fetched. That
-  check is what `ExpectedContext` does today; it stops being a public
-  type.
-- **Why.** The typed API already pairs its entry points (#1404). A
-  value for the context reads the same on both layers. A builder
-  state for the context, and a part added later in a chain, are the
-  mistakes the artifact describes.
-- **Done already.** The scalar pairs (#1404). The record pairs, in
-  #1504. The chain's `encrypt`, `query`, and `open`, with `.extend(..)`
-  and `.context(..)` on several states. `Planned` replaces them.
+- **What to build.** The `Scope` and `Bind` value types, with the order
+  fixed by type. The paired entry points on the typed API, and `Planned`
+  with `encrypt`, `encrypt_with_context`, `decrypt`, and
+  `decrypt_with_context`. `Planned` replaces the chain in `plan/chain.rs`,
+  and with it every chain state and its `.context(..)`, `.extend(..)`,
+  and `.keyset(..)`. A stored part passed on decrypt is checked against
+  the row before any key is fetched. That check is what `ExpectedContext`
+  does today. It stops being a public type.
+- **Why.** The typed API already pairs its entry points (#1404). A value
+  for the context reads the same on both layers. A builder state for the
+  context, and a part added later in a chain, are the mistakes the context
+  artifact describes.
+- **Done already.** The scalar pairs (#1404). The record pairs, in #1504.
+  The chain's `encrypt`, `query`, and `open`, with `.extend(..)` and
+  `.context(..)` on several states. `Planned` replaces them.
 - **Order of calls.** The keyset is chosen first. It is the receiver of
   the scalar entry points, `keyset.encrypt(..)`, and the argument of every
-  other verb, `encrypt(&keyset)`. There is no `using` method. Difference
-  seven of the context artifact review, 7 November 2026.
+  other verb, `encrypt(&keyset)`. There is no `using` method.
 - **Rename.** `Scope<'a, K>` in `dynamic::record` and `CipherScope` in the
   owned API both mean the cipher a call runs under. Both are renamed in
   the naming review, so that `Scope` means a part of the context.
@@ -1601,8 +1623,8 @@ parameter named `aad`.
   one column context for a write and a query must clone it for each call.
 - **Done already.** Stack Encrypt implements `IntoContext` for `&Label`.
   The context inputs, such as `RequiredContext`, still need an owned value.
-- **Finished when** the public examples pass a context by reference, with
-  no clone, and compile.
+- **Finished when** the examples in this plan pass a context by reference,
+  with no clone, and compile.
 
 #### Encrypt borrowed values
 
@@ -1918,5 +1940,6 @@ changes a name, not a design.
 | `caveats`, `refine`, `refine_tag` | The caveat list in an EQL payload, and the operations that add to it |
 | The declaration attributes `scope(..)` and `bind(..)` | How a declaration marks its parts |
 | `ContextExtension` | The caller-supplied context input of #1504, renamed for the scope vocabulary |
+| `TargetDefinition` | The packaging document's name for `Plan`, a record's declaration as data. One name is chosen |
 | `Plan::context(..).fields()`, `encrypt_index`, `pick!` | The hand-built plan builder. The query artifact's `EncryptionPlan::record(..)` and `.field(..)` are the alternative spellings |
 | `stack_encrypt::Cipher` | The packaging document's name for the execution handle. It is Vitamin C's `Cipher` trait too, so the review chooses another name or accepts the clash |

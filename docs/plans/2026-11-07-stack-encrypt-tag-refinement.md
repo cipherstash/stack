@@ -175,7 +175,7 @@ the equality term:
 {
   "v": 1,
   "i": {"t": "notes", "c": "body"},
-    "c": "…",
+  "c": "…",
   "hm": "…",
   "caveats": [
     {"n": "written_from", "v": "203.0.113.5"},

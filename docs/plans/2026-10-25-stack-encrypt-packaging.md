@@ -8,9 +8,9 @@ This recommendation for review accompanies the
 ## Status
 
 This document proposes boundaries and names. The proposals are not
-implemented APIs or accepted renames. The existing companion examples keep their
-working names until this proposal is accepted. The detailed JSON operation
-contract is under separate user review.
+implemented APIs or accepted renames. The naming review judges them after
+the customer release. The JSON operation contract is live, in use as the
+release candidate Go `v0.1.0-rc.3`.
 
 ## Summary of recommendations
 
@@ -30,69 +30,25 @@ contract is under separate user review.
 | AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
 | Stored format | What is written to the database, as Go `v0.1.0-rc.3` writes it. See [the stored-format decision](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3) |
 
-## Update on 7 November 2026
+## Facts this proposal relies on
 
-Pull request #1404 implements some names from the glossary below. They are
-`Ciphertext`, `EncryptInto`, `DecryptFrom`, `OpaqueEncode`, `OpaqueDecode`,
-and the traits `target::EncryptTarget` and `target::DecryptSource`. Pull request #1504 adds the derives with those names. Pull request #1503 adds `OpaqueBlob`. Both are in progress.
-
-These parts of the proposal are not implemented:
-
-- the `Cipher` rename, `TargetDefinition`, `PrimaryKey`, and `ScopeKey`;
-- the `encoding` module and the encoded ciphertext wrappers;
-- `.target::<T>()` on the plan builder, and the `provider` module;
-- the `stack-encrypt-format` crate, and the rename of `stack-kms`;
-- the retirement of `AsyncCipher`.
-
-`encrypt_as` is still public. The structural `decrypt_into` is still
-public, in `target::legacy`. `StackCipherText` remains for the tree API. The tree methods are `encrypt_tree` and `decrypt_tree`.
-
-Other changes that affect packaging:
-
-- Pull request #1501 moves the Rust crates to Vitamin C 0.9. It also
-  re-exports `Buffer`, `ProtectedRef`, and `AsProtectedRef` from the crate
-  root.
-- Pull request #1403 bumps `stack-kms` to 0.2.0 on crates.io. So the
-  proposed rename to `stack-zerokms` would now rename a published crate.
-  The rename also touches four other places. They are the crate's
-  release-plz version group (`release-plz.toml`, `release-plz.yml`), the
-  Go guest, the EQL encryption test crate, and the `stack_encrypt::kms`
-  re-export in `lib.rs`. It waits for the naming review.
-
-From 7 November 2026, the stored format must not break. Dan's exemption
-for prototypes below now applies to the APIs only. Moving codecs
-and adapters between crates must keep the bytes that Go rc.3 writes.
-
-## Update on 27 October 2026
-
-Go JSON and opaque storage are merged into `next`, through #1369, #1370,
-#1372, #1373, #1378, and #1402. #1397 adds match terms for short whole
-words.
-
-What remains before customers can use them is configuration and
-conformance work, and release readiness. That includes replacing the
-temporary Go module pins of Vitamin C. Rust stayed on Vitamin C 0.8.0
-from crates.io until #1501 moved it to 0.9. A customer release does not wait for crate extraction or for the
-final Rust facade (the proposed public Rust API).
-
-## Sources for this assessment
-
-This assessment is based on the current documentation branch and on the
-local Vitamin C 0.8.0 sources that were inspected:
-
-- Stack's
-  [cipher implementation notes](../../packages/stack-encrypt/src/cipher.rs)
-  explain the boundary of its existing batching.
-- The [EQL manifest](../../packages/eql/crates/eql-bindings/Cargo.toml)
-  shows that `eql-bindings`, the Rust crate for Encrypt Query Language
-  (EQL), sits downstream of the engine, with an optional dependency on
-  it.
-- The
-  [encoding wrappers](../../packages/eql/crates/eql-bindings/src/encoding.rs)
-  are the concrete candidates for extracting shared types.
-
-This is a design assessment at the source level. It is not an audit of
-every external consumer of Vitamin C.
+- `encrypt_as` is public on `next`. The structural `decrypt_into` is
+  public in `target::legacy`. `StackCipherText` remains for the tree API,
+  whose methods are `encrypt_tree` and `decrypt_tree`.
+- #1404 implements `Ciphertext`, `EncryptInto`, `DecryptFrom`,
+  `OpaqueEncode`, `OpaqueDecode`, `target::EncryptTarget`, and
+  `target::DecryptSource`. #1504 adds the derives with those names, and
+  #1503 adds `OpaqueBlob`; both are in progress. No crate has moved. No rename below is implemented.
+- #1501 moves the Rust crates to Vitamin C 0.9, and re-exports `Buffer`,
+  `ProtectedRef`, and `AsProtectedRef` from the crate root.
+- #1403 bumps `stack-kms` to 0.2.0 on crates.io. So the proposed rename to
+  `stack-zerokms` renames a published crate. The rename also touches the
+  crate's release-plz version group (`release-plz.toml`,
+  `release-plz.yml`), the Go guest, the EQL encryption test crate, and the
+  `stack_encrypt::kms` re-export in `lib.rs`. It waits for the naming
+  review.
+- From 7 November 2026, the stored format must not break. Moving codecs
+  and adapters between crates must keep the bytes that Go rc.3 writes.
 
 ## Ownership rule
 
@@ -260,9 +216,8 @@ Do not make Vitamin C depend on Stack to get the code to compile.
 ### Context encoding
 
 Keep the construction of canonical context bytes in `vitaminc-context`,
-where independent algorithms use it. Stack owns the semantic roles and
-the selection rules: `PrimaryKey`, `ScopeKey`, ciphertext context, query
-scope, and caller input capabilities. Stack reuses that canonical encoding
+where independent algorithms use it. Stack owns the semantic roles and the selection rules: scopes, bindings,
+the query context, the stored context, and the required parts. Stack reuses that canonical encoding
 instead of inventing a second encoding that is not compatible. Provider
 policy stays a separate role.
 
@@ -316,9 +271,9 @@ combined trait.
 | `EncryptInto`, `DecryptFrom` | Convenience traits for encryption directed by the target and decryption directed by the destination, with variants that take context |
 | `OpaqueEncode`, `OpaqueDecode` | Traits that represent a value as a single ciphertext |
 | `target::{EncryptTarget, DecryptSource}` | Declaration traits. The matching derives are re-exported at the crate root |
-| `target::TargetDefinition` | Validated, immutable definition shared by the static and dynamic paths |
-| `context::{PrimaryKey, ScopeKey}` | Wrappers that mark a field as eligible. Neither selects a context or a keyset automatically |
-| `encoding::{Base64Text, Base85Text}` | Validated encoding of arbitrary bytes. Owned in the format crate and re-exported here |
+| `target::TargetDefinition` | This document's name for the plan's `Plan`: a record's declaration as data, built once, shared by the static and dynamic paths. One name is chosen in the naming review |
+| `Scope`, `Bind` | The context argument's two kinds of part, as the plan has them. Neither selects a keyset |
+| `encoding::{Base64Text, Base85Text}` | Validated encoding of arbitrary bytes. The plan recommends a small Vitamin C encoding crate that Stack Encrypt and EQL re-export; the owner is an open question in the plan |
 | `encoding::{Base64Ciphertext, Base85Ciphertext}` | Validated, encoded representations of opaque ciphertext, and supported field targets. Valid encoding alone is not enough |
 | `plan::Plan` | Explicit low-level interface for composition. The output is selected with `.target::<T>()` |
 | `provider` | Neutral provider contracts and capability bounds |
@@ -446,7 +401,7 @@ Acceptance includes:
 - an EQL build of the wire types only, without the engine;
 - engine builds without ZeroKMS and without HTTP;
 - native and guest builds;
-- compiled public examples;
+- the plan's Rust examples compile;
 - the behaviour tests that moved;
 - shared fixtures for formats and operations across Rust, Go, and SQL.
 

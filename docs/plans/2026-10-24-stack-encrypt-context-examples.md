@@ -28,6 +28,9 @@ are illustrative.
   binding in the same way.
 - A caller passes its parts as `Scope::new(..)`, `Bind::new(..)`, or
   `Scope::new(..).bind(..)`. A query accepts a `Scope` only.
+- `SearchableEmail` is the target type from the plan's [record
+  example](2026-10-24-stack-encrypt-api-plan.md#encrypt-a-record): a
+  ciphertext and an equality term.
 - A stored part is read from the plaintext on encrypt. On decrypt, the
   reader takes it from the row. If the reader passes it as well, Stack
   Encrypt checks it against the row before it fetches any key.
@@ -74,7 +77,7 @@ let by_email = EncryptedUser::EMAIL
     .await?;
 ```
 
-## 3. A scope the caller supplies and the record stores
+## 3. A scope taken from the plaintext and stored in the row
 
 The tenant is a field of the plaintext, and the record stores it in the
 clear. The declaration marks that field as the stored copy, so encrypt

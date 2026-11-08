@@ -24,12 +24,17 @@ break. The stored format is what is written to the database, such as JSON
 tree entries and their search terms. See the [API
 plan](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3).
 
-The Rust example in this document uses the proposed public derive and
-facade. That example is not executable code for the current engine. The
-[refreshed Go plan](https://github.com/cipherstash/stack/blob/docs/go-json-tree-plan/docs/plans/2026-10-24-go-json-tree.md)
-and its findings on the engine and Go give the exact source evidence.
+The Rust examples for JSON are in the [API
+plan](2026-10-24-stack-encrypt-api-plan.md#encrypt-a-json-document). The
+Go JSON plan, "Go JSON tree", on the branch `docs/go-json-tree-plan`,
+gives the source evidence for the engine and Go.
 
 ## Terms used in this document
+
+The [API plan's terms table](2026-10-24-stack-encrypt-api-plan.md#terms)
+defines context, AAD, scope, binding, and the other shared terms. The
+terms below are specific to JSON.
+
 
 | Term | Meaning |
 | --- | --- |
@@ -50,9 +55,6 @@ and its findings on the engine and Go give the exact source evidence.
 | Reads that Rust verifies against the original request | Prepared reads: Rust derives the request again when the rows are opened, and checks every row against it |
 | Post-cascade format | The JSON storage and search format after #1379 added cascaded tags. Go rc.3 writes it, so it must stay compatible |
 | Conformance profile | A named, versioned set of test cases for one area, such as `eql-json-v1`. Each language runs the same cases. The files are in `conformance/stack-encrypt/v1/` |
-| Facade | The proposed public Rust API of `stack-encrypt` |
-| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
-| AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
 
 ## Current names
 
@@ -84,12 +86,16 @@ The API plan's [query context and stored
 context](2026-10-24-stack-encrypt-api-plan.md#query-context-and-stored-context)
 replace the earlier idea of a separate row binding and search scope. A
 binding, such as a row ID, is in the stored context and not in the query
-context. Today an EQL type takes its context from its column only. So
-until that work lands:
+context. Today an EQL type takes its context from its column only. So, as a
+limit of today's code and not a rule:
 
 - a declaration that asks for a scope or a binding on an EQL field is
   refused;
-- a row ID is never added to the shared context.
+- no row ID enters an EQL field's context.
+
+The plan's [EQL types as
+fields](2026-10-24-stack-encrypt-api-plan.md#eql-types-as-fields) item
+removes that limit.
 
 A query does not isolate rows only because the ciphertexts it returns
 authenticate.
@@ -114,7 +120,7 @@ authenticate.
 | J14 | Open extracted scalars | `JSONSelection.Open` opens one optional entry for each document group | Groups with more than one entry for a selector are refused. Do not label them supported |
 | J15 | Prepare a read at a position or wildcard | Implemented: `Subtree`, `subtree`. Returns a token list, and keeps the trusted request | None listed |
 | J16 | Fetch and open a subtree | `json_tree_subtree(document, tokens, budget)`, then `JSONRead.Open` or `OpenOne` | None listed |
-| J17 | Immediate children | `children(path)` prepares a concrete token. SQL returns the child entries | Opening child scalars bound to their parent is not implemented |
+| J17 | Immediate children | Go's `Children` prepares a concrete token. SQL returns the child entries. The Rust method `children(path)` is proposed, not built | Opening child scalars bound to their parent is not implemented |
 | J18 | Count children | A `ChildCount` token. SQL returns a count that can be NULL | The count is not an authenticated proof of completeness |
 | J19 | Walk budget and root fallback | Implemented. After root fallback, the client applies the selection originally requested | None listed |
 | J20 | Comparisons between stored values | Existing document containment and entry ordering | Only within a compatible column, keyset, and storage format |
@@ -123,7 +129,8 @@ authenticate.
 
 Status on 7 November 2026: no merged pull request changes J14 or J17. The
 `eql-json-v1` profile enrols tests for J01 to J08, J10, J11, J15, J16, and
-J19, with J21 and J22. Its requirement IDs are not the J numbers. I made this mapping from that conformance profile's contract. I did not check it test by test.
+J19, with J21 and J22. Its requirement IDs are not the J numbers. This mapping comes from the
+profile's contract, not from a check of each test.
 
 In J21, equality compares folded ordering terms, not exact values. In J22, the EQL reference documents five cases where the answer differs from `jsonb_path_match`.
 
@@ -301,71 +308,10 @@ or `subtree` request and the grouped encrypted rows.
 A general versioned package of definitions and schemas is still required
 work. That package is not the current runtime grammar.
 
-## Proposed Rust write and read example
+## Scopes and bindings on a JSON field
 
-The code below is proposed public code, not executable code for the
-current engine.
-`target(column = ...)` illustrates syntax that declares an explicit EQL
-column identity. The coming specification and naming pass decides the
-exact attribute spelling. The options factory is typed Rust, not JSON
-hidden inside an attribute.
-
-```rust
-use eql_bindings::v4::json_tree::JsonTreeDocument;
-use serde::{Deserialize, Serialize};
-use stack_encrypt::{DecryptFrom, DecryptSource, EncryptInto, EncryptTarget, StackCipher};
-use stack_encrypt::json::{JsonOptions, JsonPlaintext};
-use stack_encrypt::sem::TermError;
-use std::error::Error;
-use zeroize::Zeroize;
-
-fn profile_options() -> Result<JsonOptions, TermError> {
-    JsonOptions::new().ordering(["$.age", "$.visits[*].date"])
-}
-
-#[derive(Serialize, Deserialize, EncryptTarget, DecryptSource)]
-#[serde(transparent)]
-#[stash(
-    plaintext = JsonPlaintext,
-    transparent,
-    target(column = ("users", "profile"), options = profile_options)
-)]
-struct EncryptedProfile(JsonTreeDocument);
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let client = StackCipher::new().await?;
-    let keyset = client.default_keyset();
-    let _plan = EncryptedProfile::encryption_plan();
-
-    let profile = JsonPlaintext::parse(
-        r#"{"age":42,"name":"Alice","visits":[{"date":"2026-10-01"}]}"#,
-    )?;
-    let encrypted: EncryptedProfile = profile.encrypt_into(&keyset).await?;
-
-    // These bytes can instead be bound to the EQL PostgreSQL column.
-    let stored = serde_json::to_vec(&encrypted)?;
-    let loaded: EncryptedProfile = serde_json::from_slice(&stored)?;
-    let mut opened = JsonPlaintext::decrypt_from(loaded, &keyset).await?;
-    // The caller now owns the returned plaintext and its cleanup.
-    opened.zeroize();
-
-    let profiles = vec![
-        JsonPlaintext::parse(r#"{"age":42}"#)?,
-        JsonPlaintext::parse(r#"{"age":27}"#)?,
-    ];
-    let encrypted: Vec<EncryptedProfile> = profiles.encrypt_into(&keyset).await?;
-    let mut opened = Vec::<JsonPlaintext>::decrypt_from(encrypted, &keyset).await?;
-    assert_eq!(opened.len(), 2);
-    opened.zeroize();
-    Ok(())
-}
-```
-
-### Scopes and bindings in the example
-
-The example's declaration has no caller-supplied parts, so its query
-context is the column. Its stored context is the column too. The schema
+A JSON field declared with no caller-supplied parts has the column as its
+query context and as its stored context. The schema
 must state that choice. It must not add a tenant scope that the caller
 did not declare.
 
@@ -395,7 +341,7 @@ Then:
    The change is an optimisation, not a missing execution path for Go
    JSON.
 4. Run the existing Rust, guest, Go, and PostgreSQL suites on the release
-   candidate, and map the tests to J01 to J20. Include:
+   candidate, and map the tests to J01 to J22. Include:
    - typed and raw inputs;
    - numeric and null cases;
    - both root policies (sealed and not sealed);
@@ -412,16 +358,6 @@ Then:
    pins of Vitamin C before a final release. Opaque storage is already
    adopted. Opaque storage is a separate format from JSON tree storage.
 
-### Status of this work on 7 November 2026
-
-| Item | Status |
-| --- | --- |
-| 1. Specification and conformance | Partly done. #1492 adds the `eql-json-v1` conformance profile. That profile is experimental: it does not certify a whole SDK |
-| 2. J14 and J17 | Still open |
-| 3. Typed EQL conversion | Still open |
-| 4. Run the suites on the release candidate | Partly done. #1492 runs them in CI, including a job against PostgreSQL |
-| 5. Freeze the stored vectors and the EQL bundle | Still open. Go rc.3 already writes this format, so the frozen format must keep it readable |
-
 ## What this refresh did not check
 
 This refresh is a review of source and documentation, not a new runtime
@@ -429,7 +365,7 @@ test run or a complete cryptographic audit.
 
 Later activities in the API plan include:
 
-- compiling the final Rust example;
+- compiling the plan's Rust examples;
 - extracting packages;
 - stronger zeroisation and constant-time work.
 
