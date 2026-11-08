@@ -208,6 +208,13 @@ let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
 let user = User::decrypt_from(encrypted, &keyset).await?;
 ```
 
+`context = "users"` is the record's first scope. The derive adds each
+field's name as the next scope, so `users` then `email` is the declared
+context of the `email` field. `scope(..)` and `bind(..)` add the parts
+that come from the caller or the row. The word `context` is the same one
+the plan builder and Go's struct tag use for the record's name. Confirmed
+by Dan on 8 November 2026.
+
 The derives need no Serde. A program that stores an encrypted value as
 JSON adds `Serialize` and `Deserialize` to the encrypted type. That is
 the same as for any other type.
@@ -2164,4 +2171,5 @@ renames.
 | `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
+| `context = ".."` | The record's name, and its first scope. The derive adds each field's name as the next. Kept, because `Plan::context(..)` and Go's `context=` tag use the same word for the same thing |
 | `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes`, `StageSpec`, `Match<Dynamic>`, `NotPortable` | The dynamic interface names. Confirmed |

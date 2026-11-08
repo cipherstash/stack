@@ -33,6 +33,9 @@ are illustrative.
 
 ## How to read the examples
 
+- `context = "users"` is the record's first scope. The derive adds each
+  field's name as the next, so the declared scopes of `email` are `users`
+  then `email`.
 - `scope(tenant: u64)` declares a scope the caller supplies on every call.
   `bind(row: Uuid)` declares a binding the caller supplies.
 - `scope(field = "tenant")` declares a scope stored in the row, in the
