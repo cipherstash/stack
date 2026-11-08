@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: scalar, declaration, initial runtime, read, context, EQL/JSON, lifecycle, value/refusal/raw-frame and fresh artifact exchange slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. Python/TypeScript enrollment, released-version combinations and release gates remain. The complete contract is not frozen.
+Date: 2026-10-31. Status: scalar, declaration, initial runtime, read, context, EQL/JSON, lifecycle, value/refusal/raw-frame and fresh artifact exchange slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. Python/TypeScript enrollment, JSON Schema files, protocol version identifiers, released-version combinations (first, Go rc.3 data read by this checkout) and release gates remain. The complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -288,7 +288,7 @@ TypeScript runners and release gates remain open.
 
 Implemented `artifact-exchange-v1`
 ([exchange contract](../../conformance/stack-encrypt/exchange-contract.md),
-`conformance/stack-encrypt/v1/exchange.json`), run by
+`conformance/stack-encrypt/v1/artifact-exchange-v1.cases.json`), run by
 `mise run test:conformance:exchange` and at the end of `test:conformance`, and
 required in `tests-golang.yml`. In one run, Rust and Go each write fresh
 artifacts the other opens: every positive value-boundary case, a structural
@@ -299,9 +299,9 @@ against the Go generated code). Consumers compare decrypted values and derive
 their own query terms against the stored ones; ciphertext bytes are never
 compared. Producer caches are bypassed, a missing runner or guest and an empty
 fresh output fail the task, and the report records producer SDKs, engines,
-backends, guests, lockfiles and storage versions, with a placeholder for
-released-version combinations that stays empty until the compatibility policy
-names them.
+backends, guests, lockfiles and storage versions. Its released-version
+section lists the Go rc.3 combination the API plan requires as not yet run,
+and its rows stay empty until a lane runs a released artifact.
 
 Python and TypeScript are reported as not enrolled; no pair is claimed before
 both implementations exist. Fresh JSON document exchange, the remaining EQL

@@ -664,8 +664,8 @@ func exchangeSetup(t *testing.T, ctx context.Context) (exchangeCorpus, []valueCa
 	t.Helper()
 	root := filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1")
 	var corpus exchangeCorpus
-	readConformanceJSON(t, filepath.Join(root, "exchange.json"), &corpus)
-	if corpus.Version != 1 || corpus.Profile != exchangeProfile || corpus.Values.Corpus != "values.json" {
+	readConformanceJSON(t, filepath.Join(root, "artifact-exchange-v1.cases.json"), &corpus)
+	if corpus.Version != 1 || corpus.Profile != exchangeProfile || corpus.Values.Corpus != "record-values-v1.cases.json" {
 		t.Fatal("unsupported exchange corpus")
 	}
 	if corpus.EQL.Table != "profiles" || corpus.EQL.Schema != "eql_v4" {

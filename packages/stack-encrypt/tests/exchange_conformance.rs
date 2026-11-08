@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use stack_encrypt::dynamic::{self, record, NoTargets, OpSpec, Operand, Scope, ValueFrame};
 use stack_encrypt::{
-    CipherText, Ciphertext, KeysetCipher, Label, OpaqueBlob, PassthroughFrame, SealedValue,
-    StackCipherText,
+    AsProtectedRef as _, CipherText, Ciphertext, KeysetCipher, Label, OpaqueBlob, PassthroughFrame,
+    SealedValue, StackCipherText,
 };
 use zeroize::Zeroize;
 
@@ -218,7 +218,12 @@ impl Serialize for Declaration<'_> {
 }
 
 fn plan_of(fields: &[(String, serde_json::Value)]) -> record::Plan {
-    record::plan(&vitaminc_aead_frame::serde::to_vec(&Declaration(fields)).unwrap()).unwrap()
+    record::plan(
+        vitaminc_aead_frame::serde::to_vec(&Declaration(fields))
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 fn field_context(context: &[String], name: &str) -> Vec<String> {
@@ -756,7 +761,7 @@ async fn consume(
             .decrypt_with_context(ct, label.clone())
             .await
             .unwrap_or_else(|error| panic!("{what}: {error}"));
-        assert_eq!(opened.into_inner(), case.value, "{what}: opened blob");
+        assert_eq!(*opened.into_inner(), case.value, "{what}: opened blob");
     }
 }
 
@@ -829,10 +834,10 @@ async fn an_undeclared_record_field_is_refused() {
 
 /// The exchange corpus and the value corpus it draws on, checked for shape.
 fn corpora() -> (Corpus, ValuesCorpus) {
-    let corpus: Corpus = read(&root().join("exchange.json"));
+    let corpus: Corpus = read(&root().join("artifact-exchange-v1.cases.json"));
     assert_eq!(corpus.version, 1);
     assert_eq!(corpus.profile, PROFILE);
-    assert_eq!(corpus.values.corpus, "values.json");
+    assert_eq!(corpus.values.corpus, "record-values-v1.cases.json");
     assert_eq!(corpus.eql.table, "profiles");
     assert_eq!(corpus.eql.schema, "eql_v4");
     assert!(

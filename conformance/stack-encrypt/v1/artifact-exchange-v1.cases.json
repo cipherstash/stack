@@ -12,7 +12,7 @@
     "opaque-blobs"
   ],
   "values": {
-    "corpus": "values.json",
+    "corpus": "record-values-v1.cases.json",
     "profile": "record-values-v1",
     "context": ["conformance", "exchange"],
     "field": "value"

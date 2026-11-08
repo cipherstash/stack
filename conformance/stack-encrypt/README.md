@@ -42,6 +42,7 @@ these rules.
 | `record-values-v1.cases.json` | cases | `tests/value_conformance.rs` | `value_conformance_test.go` |
 | `record-query-refusals-v1.cases.json` | cases | `tests/query_refusal_conformance.rs` | `query_refusal_conformance_test.go` |
 | `record-raw-frames-v1.cases.json` | cases | `tests/raw_frame_conformance.rs` | `raw_frame_conformance_test.go` |
+| `artifact-exchange-v1.cases.json` | cases | `tests/exchange_conformance.rs`, run by `scripts/stack-exchange-conformance.mjs` | `exchange_conformance_test.go`, run by `scripts/stack-exchange-conformance.mjs` |
 | `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
 | `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
 | `lifecycle-v1.enrollment.json` | enrollment | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names |
@@ -91,8 +92,10 @@ terms, whole-value opaque blobs and EQL v4 rows. Decrypted values and the
 consumer's own derived query terms are compared, never ciphertext bytes.
 `mise run test:conformance:exchange` fails on a missing runner or guest and
 on an empty fresh output, and its report records the producer SDKs, engines,
-backends, guests and storage versions. Released-version combinations wait on
-the compatibility policy; Python and TypeScript are listed as not enrolled.
+backends, guests and storage versions. It lists the one released-version
+combination the API plan requires, Go rc.3 data read by this checkout, as not
+yet run; the others wait on the compatibility policy. Python and TypeScript
+are listed as not enrolled.
 
 ## Lifecycle, cleanup and key I/O
 
@@ -271,5 +274,6 @@ existing codecs.
 Both runners currently share the Rust engine. This checks host value conversion,
 native/WASI interoperability and regressions against frozen evidence; it cannot
 detect every bug shared by both paths. Independent SQL oracles exist for the
-EQL/JSON profiles; release-version matrices wait on the compatibility policy
-and have their placeholder in the exchange report.
+EQL/JSON profiles; the Go rc.3 combination the API plan requires is not yet
+run, and the rest of the release-version matrix waits on the compatibility
+policy. Both have their place in the exchange report.

@@ -180,15 +180,16 @@ lifecycle evidence is pending.
 ## Exchange checkpoint
 
 The [exchange contract](exchange-contract.md) defines `artifact-exchange-v1`
-over `v1/exchange.json`: in one run and a fresh directory, Rust writes and Go
+over `v1/artifact-exchange-v1.cases.json`: in one run and a fresh directory, Rust writes and Go
 opens, and Go writes and Rust opens, every positive value-boundary case, a
 structural record with a passthrough field and equality/order terms, three
 opaque blobs and the EQL v4 `profiles` rows. Consumers compare decrypted
 values and their own derived query terms; ciphertext bytes are never
 compared. The task fails on a missing runner or guest and on an empty fresh
 output, and its report records producer SDKs, engines, backends, guests,
-lockfiles and storage versions, with a placeholder for released-version
-combinations. No frozen artifact changes.
+lockfiles and storage versions, and lists the released-version combination
+the API plan requires (Go rc.3 data read by this checkout) as not yet run.
+No frozen artifact changes.
 
 | Direction | Kinds | Consumer evidence |
 |---|---|---|
@@ -198,4 +199,5 @@ combinations. No frozen artifact changes.
 
 Open: fresh JSON document exchange, the remaining EQL types, a SQL lane
 that stores one language's fresh rows through the other, and the
+a lane that runs the required Go rc.3 combination, and the other
 released-version rows once the compatibility policy is defined.

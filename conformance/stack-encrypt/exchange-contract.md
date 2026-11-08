@@ -9,7 +9,7 @@ directions between the runners that exist: native Rust and Go over WASI.
 Python and TypeScript have no runner; the report lists them as not
 enrolled, and their absence is a gap, not a pass.
 
-The corpus is [`v1/exchange.json`](v1/exchange.json). The runners are
+The corpus is [`v1/artifact-exchange-v1.cases.json`](v1/artifact-exchange-v1.cases.json). The runners are
 `packages/stack-encrypt/tests/exchange_conformance.rs`
 (`fresh_artifact_exchange`) and
 `languages/golang/encrypt/exchange_conformance_test.go`
@@ -30,9 +30,9 @@ mise run test:conformance:exchange
 
 | Kind | Producer writes | Consumer checks |
 |---|---|---|
-| `values` | One record per positive case of `v1/values.json` (the value-boundary corpus), under the plan that case declares, with context `conformance/exchange/value`: the sealed leaf and every declared index term; nothing for a SQL null | The record opens to the case's typed input. Every stored term equals the term the consumer's own query of the same value derives (`eq` for equality, `lt` for an order index), and the `equal_query` spelling derives the same equality term. An index the corpus lists as unanswered is present and not queried |
-| `record` | The rows of the corpus's one record: a passthrough `int64` id (held on the host by Go, lowered as a `passthrough` output by Rust), text, `uint32`, decimal, date and timestamp fields with equality and order terms, a SQL-null text field and a sealed-null `float32` field, under context `conformance/exchange/people` | The passthrough carried equals the corpus input; every sealed field opens to its input, a sealed null opens as null and a SQL null is absent from storage and opens as null; every stored term equals the consumer's derived query term |
-| `blobs` | A whole struct (`name`, `age`, `tags`, optional `nickname`) as one opaque ciphertext under `conformance/exchange/blob/value`: Rust through `OpaqueBlob<T>`, Go through the storage blob the generated opaque path writes (`vcffi.MarshalStorage` sealed as the one `bytes` field) | The ciphertext opens and decodes to the corpus value through the other SDK's opaque reader (`OpaqueBlob<T>` or `gensupport.Opaque`). A nil Go slice and an empty Rust `Vec` are one value; Rust's `Some` marker and Go's bare pointer are one value |
+| `values` | One record per positive case of `v1/record-values-v1.cases.json` (the value-boundary corpus), under the plan that case declares, with context `["conformance", "exchange"]`: the sealed leaf and every declared index term; nothing for a SQL null | The record opens to the case's typed input. Every stored term equals the term the consumer's own query of the same value derives (`eq` for equality, `lt` for an order index), and the `equal_query` spelling derives the same equality term. An index the corpus lists as unanswered is present and not queried |
+| `record` | The rows of the corpus's one record: a passthrough `int64` id (held on the host by Go, lowered as a `passthrough` output by Rust), text, `uint32`, decimal, date and timestamp fields with equality and order terms, a SQL-null text field and a sealed-null `float32` field, under context `["conformance", "exchange", "people"]` | The passthrough carried equals the corpus input; every sealed field opens to its input, a sealed null opens as null and a SQL null is absent from storage and opens as null; every stored term equals the consumer's derived query term |
+| `blobs` | A whole struct (`name`, `age`, `tags`, optional `nickname`) as one opaque ciphertext under `["conformance", "exchange", "blob"]`, field `value`: Rust through `OpaqueBlob<T>`, Go through the storage blob the generated opaque path writes (`vcffi.MarshalStorage` sealed as the one `bytes` field) | The ciphertext opens and decodes to the corpus value through the other SDK's opaque reader (`OpaqueBlob<T>` or `gensupport.Opaque`). A nil Go slice and an empty Rust `Vec` are one value; Rust's `Some` marker and Go's bare pointer are one value |
 | `eql-rows` | The EQL v4 `profiles` rows: every column of the committed fixture's plaintexts sealed afresh, Rust through eql-bindings' typed targets, Go through its generated code | Each column opens to the plaintext through the other side's typed target, and each equality column's stored `hm` equals the term the consumer's own equality query derives for that plaintext (the generated `*Eq` query in Go, the typed `*EqQuery` target in Rust) |
 
 Each kind runs Go to Rust and Rust to Go. Ciphertext bytes are never
@@ -130,13 +130,22 @@ into PostgreSQL in the same run is not wired yet.
 
 ## Released-version combinations
 
-Only this checkout has exchanged with itself. Supported released-version
-combinations follow the EQL v4 and Stack Encrypt compatibility policy,
-which is not written yet. The report carries the placeholder the matrix
-will take, with no rows:
+Only this checkout has exchanged with itself. The API plan
+(`docs/plans/2026-10-24-stack-encrypt-api-plan.md`, "The stored format
+stays compatible with Go rc.3") already fixes one combination: data that Go
+`v0.1.0-rc.3` wrote (the tag `languages/golang/v0.1.0-rc.3`, with the
+`eql-v4-install.sql` bundle attached to that release) must stay readable and
+searchable by the current Rust and Go. The report names it as required and
+not yet run. The other released-version combinations follow the EQL v4 and
+Stack Encrypt compatibility policy, which is not written yet:
 
 ```text
-released_versions: { status: "not defined",
+released_versions: { status: "rc.3 required, not yet run",
+  required: [ { producer: {sdk: "go", version: "languages/golang/v0.1.0-rc.3"},
+                consumer: {sdk: "rust and go", version: "this checkout"},
+                storage: {eql_bundle: "eql-v4-install.sql of languages/golang/v0.1.0-rc.3",
+                          schema: "eql_v4"},
+                result: "opens" } ],
   row_shape: { producer: {sdk, version}, consumer: {sdk, version},
                storage: {eql_bundle, schema: "eql_v4"},
                kinds: ["values", "record", "blobs", "eql-rows"],
@@ -144,13 +153,14 @@ released_versions: { status: "not defined",
   rows: [] }
 ```
 
-Rows are added when the policy names the combinations it supports and the
-released artifacts to run them against. No row is fabricated before then.
+`rows` holds results that a run produced. The rc.3 row joins it when a lane
+runs the released Go module against this checkout; no result is written
+before then.
 
 ## Scope and remaining work
 
 Match terms, JSON documents, EQL types outside the `profiles` fixture,
-context-field records and typed-extension contexts are not exchanged here;
+context-field records and caller-supplied scopes are not exchanged here;
 the earlier profiles cover them within one language or against frozen
 vectors. Python and TypeScript runners, their backends, and a SQL lane that
 stores one language's fresh rows through the other are open. No frozen

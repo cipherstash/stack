@@ -50,7 +50,7 @@ afterEach(() => {
 /** A plausible fresh artifact file, to mutate. */
 function artifacts(language) {
   const values = Object.fromEntries(
-    JSON.parse(read('conformance/stack-encrypt/v1/values.json'))
+    JSON.parse(read('conformance/stack-encrypt/v1/record-values-v1.cases.json'))
       .cases.filter((c) => !c.expected_error)
       .map((c) => [c.id, { c: 'ab', terms: {} }]),
   )

@@ -28,7 +28,8 @@ import {
 } from './stack-conformance-evidence.mjs'
 
 export const PROFILE = 'artifact-exchange-v1'
-export const CORPUS = 'conformance/stack-encrypt/v1/exchange.json'
+export const CORPUS =
+  'conformance/stack-encrypt/v1/artifact-exchange-v1.cases.json'
 
 /** The guests the Go runner needs, relative to the Go module. */
 export const GUESTS = [
@@ -87,7 +88,7 @@ export function checkCorpus(corpus) {
   if (corpus.version !== 1 || corpus.profile !== PROFILE)
     throw new Error('Unsupported exchange corpus')
   if (
-    corpus.values?.corpus !== 'values.json' ||
+    corpus.values?.corpus !== 'record-values-v1.cases.json' ||
     corpus.values?.profile !== 'record-values-v1'
   )
     throw new Error('The exchange reads the value-boundary corpus')
@@ -345,7 +346,9 @@ export function main(args = process.argv.slice(2)) {
     const report = {
       profile: PROFILE,
       corpus_sha256: hash(CORPUS),
-      values_corpus_sha256: hash('conformance/stack-encrypt/v1/values.json'),
+      values_corpus_sha256: hash(
+        'conformance/stack-encrypt/v1/record-values-v1.cases.json',
+      ),
       eql_fixture_sha256: hash(corpus.eql.fixture),
       commit: command('git', ['rev-parse', 'HEAD'], { capture: true }).trim(),
       toolchains,
@@ -393,8 +396,19 @@ export function main(args = process.argv.slice(2)) {
         status: 'no runner',
       })),
       released_versions: {
-        status: 'not defined',
-        note: 'Only this checkout exchanged with itself. Supported released-version combinations follow the EQL v4 and Stack Encrypt compatibility policy, which is not written yet; rows are added when it is.',
+        status: 'rc.3 required, not yet run',
+        note: 'Only this checkout exchanged with itself. The API plan requires data that Go v0.1.0-rc.3 wrote to stay readable and searchable; that combination is listed under required and joins rows when a lane runs it. Other combinations follow the EQL v4 and Stack Encrypt compatibility policy, which is not written yet.',
+        required: [
+          {
+            producer: { sdk: 'go', version: 'languages/golang/v0.1.0-rc.3' },
+            consumer: { sdk: 'rust and go', version: 'this checkout' },
+            storage: {
+              eql_bundle: 'eql-v4-install.sql of languages/golang/v0.1.0-rc.3',
+              schema: 'eql_v4',
+            },
+            result: 'opens',
+          },
+        ],
         row_shape: {
           producer: { sdk: '<name>', version: '<release>' },
           consumer: { sdk: '<name>', version: '<release>' },
