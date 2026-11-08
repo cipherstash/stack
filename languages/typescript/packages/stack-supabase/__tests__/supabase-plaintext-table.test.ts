@@ -9,6 +9,7 @@ import {
   createMockEncryptionClient,
   createMockSupabase,
   failingOperation,
+  fakeEnvelope,
   isFakeEnvelope,
 } from './helpers/supabase-mock'
 
@@ -181,7 +182,7 @@ describe.each([
 
   it('still encrypts and decrypts the encrypted table on the same instance', async () => {
     const { es, encryption, supabase } = await build([
-      { id: 1, email: 'a@example.com' },
+      { id: 1, email: fakeEnvelope('a@example.com', 'email') },
     ])
     const { data, error } = await es
       .from('users')
@@ -223,12 +224,12 @@ describe('plaintext table rows that carry ciphertext', () => {
     [
       'an embedded relation',
       [{ id: 1, users: { email: envelope } }],
-      '[0].users.email',
+      '[0].users',
     ],
     [
       'an embedded to-many relation',
       [{ id: 1, users: [{ email: 'x' }, { email: envelope }] }],
-      '[0].users[1].email',
+      '[0].users',
     ],
     [
       'an undeclared encrypted column',
@@ -249,6 +250,15 @@ describe('plaintext table rows that carry ciphertext', () => {
     // Never the ciphertext itself.
     expect(error?.message).not.toContain(envelope.c)
     expect(error?.encryptionError?.type).toBe('DecryptionError')
+  })
+
+  it('never names a key inside a jsonb document', async () => {
+    const rows = [{ id: 1, meta: { 'ssn-078-05-1120': envelope } }]
+    const { es } = await introspectedClient(rows)
+    const { error } = await es.from('audit_log').select('id, meta')
+
+    expect(error?.message).toContain('"[0].meta"')
+    expect(error?.message).not.toContain('ssn-078-05-1120')
   })
 
   it('refuses a single row the same way', async () => {

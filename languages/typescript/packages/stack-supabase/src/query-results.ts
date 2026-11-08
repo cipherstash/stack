@@ -118,15 +118,21 @@ function findEnvelope(value: unknown): Array<string | number> | null {
   return null
 }
 
-/** Render a chain the way a caller wrote the select, with the row index of an
- * array result first: `[0].users[1].email`. */
-function renderPath(chain: Array<string | number>): string {
-  if (chain.length === 0) return '(the whole row)'
-  return chain
-    .map((step, i) =>
-      typeof step === 'number' ? `[${step}]` : i === 0 ? step : `.${step}`,
-    )
+/**
+ * Name where an envelope sits without naming any data: the row index of an
+ * array result and the top-level column or relation that holds it, e.g.
+ * `[0].users`. Both come from the select string, so they are schema. Keys
+ * below that level can be a jsonb document's own keys — user data — and are
+ * never rendered, because the message reaches the logger.
+ */
+function renderLocation(chain: Array<string | number>): string {
+  const column = chain.findIndex((step) => typeof step === 'string')
+  const kept = column === -1 ? chain : chain.slice(0, column + 1)
+  if (kept.length === 0) return '(the whole row)'
+  return kept
+    .map((step) => (typeof step === 'number' ? `[${step}]` : `.${step}`))
     .join('')
+    .replace(/^\./, '')
 }
 
 /**
@@ -137,14 +143,14 @@ function renderPath(chain: Array<string | number>): string {
  * (`select('id, users(email)')`), or from a table declared with `{}` in declared
  * mode whose real columns are `eql_v3_*` domains. Passing those through would
  * hand the caller ciphertext typed as data — the hazard `assertTableIsModelled`
- * exists to prevent — so fail instead. The message names the path, never the
- * value.
+ * exists to prevent — so fail instead. The message names the column, never a
+ * value or a key inside one.
  */
 function assertNoCiphertext(data: unknown, ctx: DecryptContext): void {
   const chain = findEnvelope(data)
   if (chain === null) return
 
-  const message = `[supabase v3]: table "${ctx.tableName}" has no encrypted columns, but the result holds an encrypted value at "${renderPath(chain)}". It is not decrypted here: an embedded relation to an encrypted table is not supported (query that table directly), and in declared mode every encrypted column must be declared with a \`types.*\` factory.`
+  const message = `[supabase v3]: table "${ctx.tableName}" has no encrypted columns, but the result holds an encrypted value in "${renderLocation(chain)}". It is not decrypted here: an embedded relation to an encrypted table is not supported (query that table directly), and in declared mode every encrypted column must be declared with a \`types.*\` factory.`
   throw new EncryptionFailedError(message, {
     type: EncryptionErrorTypes.DecryptionError,
     message,

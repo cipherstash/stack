@@ -13,5 +13,5 @@ introspection and declared mode, without calling the encryption client.
 
 A row from such a table that still holds an encrypted value, from an embedded
 relation to an encrypted table or from an undeclared `eql_v3_*` column in
-declared mode, is refused with an error naming the field, rather than returned
+declared mode, is refused with an error naming the column, rather than returned
 as ciphertext.
