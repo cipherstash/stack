@@ -1,6 +1,6 @@
 # Record value-kind profile
 
-`record-values-v1` describes the cases in `v1/values.json`: every kind the
+`record-values-v1` describes the cases in `v1/record-values-v1.cases.json`: every kind the
 engine names, at its boundaries, through the record path with no EQL
 resolver. It is an experimental test contract for native Rust and Go WASI.
 Python and TypeScript runners remain pending.

@@ -200,7 +200,7 @@ fn plan(read: &Declaration) -> record::Plan {
 #[tokio::test]
 async fn shared_raw_frame_profile() {
     let corpus: Corpus = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/raw-frames.json"
+        "../../../conformance/stack-encrypt/v1/record-raw-frames-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(corpus.version, 1);
@@ -360,7 +360,7 @@ async fn shared_raw_frame_profile() {
 #[test]
 fn the_lenient_reader_agrees_with_the_codec_on_what_the_codec_accepts() {
     let corpus: Value = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/raw-frames.json"
+        "../../../conformance/stack-encrypt/v1/record-raw-frames-v1.cases.json"
     ))
     .unwrap();
     let mut compared = 0;

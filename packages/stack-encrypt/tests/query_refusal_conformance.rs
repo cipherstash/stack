@@ -296,7 +296,7 @@ async fn cipher() -> (StackCipher<CountingSource>, [Arc<AtomicUsize>; 3]) {
 #[tokio::test]
 async fn shared_query_refusal_profile() {
     let corpus: Corpus = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/query-refusals.json"
+        "../../../conformance/stack-encrypt/v1/record-query-refusals-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(corpus.version, 1);

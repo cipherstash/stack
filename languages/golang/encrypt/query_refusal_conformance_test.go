@@ -75,7 +75,7 @@ func TestQueryRefusalConformance(t *testing.T) {
 		Fields               map[string]refusalFieldSpec `json:"fields"`
 		Cases                []refusalCase               `json:"cases"`
 	}
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "query-refusals.json"), &corpus)
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-query-refusals-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "record-query-refusals-v1" || len(corpus.Cases) == 0 || len(corpus.Fields) == 0 {
 		t.Fatal("unsupported or empty refusal corpus")
 	}

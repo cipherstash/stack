@@ -93,7 +93,7 @@ func TestValueConformance(t *testing.T) {
 		Cases                []valueCase          `json:"cases"`
 		HostConversions      []hostConversionCase `json:"host_conversions"`
 	}
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "values.json"), &corpus)
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-values-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "record-values-v1" || len(corpus.Cases) == 0 || len(corpus.HostConversions) == 0 {
 		t.Fatal("unsupported or empty value corpus")
 	}

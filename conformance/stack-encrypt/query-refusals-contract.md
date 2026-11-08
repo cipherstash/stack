@@ -1,6 +1,6 @@
 # Record query-refusal profile
 
-`record-query-refusals-v1` describes the cases in `v1/query-refusals.json`:
+`record-query-refusals-v1` describes the cases in `v1/record-query-refusals-v1.cases.json`:
 what a query is refused for before any term exists, and the few inputs
 that look refusable and are not. It is an experimental test contract for
 native Rust and Go WASI under `NoTargets`. Python and TypeScript runners
@@ -112,7 +112,7 @@ table with them.
 
 The corpus covers scalar operators under `NoTargets`. Match options the
 index cannot use (an n-gram length of zero) are a declaration refusal, in
-`v1/declarations.json` (`match-invalid-ngram-zero`). JSON document
+`v1/record-declarations-v1.cases.json` (`match-invalid-ngram-zero`). JSON document
 operators against JSON fields, EQL target refusals, `target_limit` inputs and the match-case
 mismatch only the typed chain can express remain with their existing
 tests. The match-case mismatch goes away with the API plan's step 3,

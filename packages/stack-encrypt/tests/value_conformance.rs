@@ -135,7 +135,7 @@ fn row(input: &Input) -> ValueFrame {
 #[tokio::test]
 async fn shared_record_value_profile() {
     let corpus: Corpus = serde_json::from_str(include_str!(
-        "../../../conformance/stack-encrypt/v1/values.json"
+        "../../../conformance/stack-encrypt/v1/record-values-v1.cases.json"
     ))
     .unwrap();
     assert_eq!(corpus.version, 1);

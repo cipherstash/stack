@@ -39,6 +39,9 @@ these rules.
 | `record-contexts-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
 | `record-contexts-v1.expected.rust-native.json` | expected | `tests/context_conformance.rs` (writes it) | `context_conformance_test.go` |
 | `record-context-boundaries-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
+| `record-values-v1.cases.json` | cases | `tests/value_conformance.rs` | `value_conformance_test.go` |
+| `record-query-refusals-v1.cases.json` | cases | `tests/query_refusal_conformance.rs` | `query_refusal_conformance_test.go` |
+| `record-raw-frames-v1.cases.json` | cases | `tests/raw_frame_conformance.rs` | `raw_frame_conformance_test.go` |
 | `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
 | `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
 | `lifecycle-v1.enrollment.json` | enrollment | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names |
@@ -124,16 +127,16 @@ separate work. The EQL/JSON profiles are described below.
 
 Three profiles close the gaps the representative profiles left. The
 [value contract](values-contract.md) defines `record-values-v1` in
-`v1/values.json`: every kind at its edges, sealed and SQL nulls for the
+`v1/record-values-v1.cases.json`: every kind at its edges, sealed and SQL nulls for the
 fixed-width kinds, write refusals between kinds, frozen typed frames, and
 the Go-only host conversions the host refuses before the engine. The
 [query-refusal contract](query-refusals-contract.md) defines
-`record-query-refusals-v1` in `v1/query-refusals.json`: one plan, every
+`record-query-refusals-v1` in `v1/record-query-refusals-v1.cases.json`: one plan, every
 scalar operator against every field capability that does not answer it,
 the range shapes, other-kind values and nulls the contract lists, each refusal's
 class and diagnostic, no key I/O, and the stage at which the typed Rust
 chain refuses the same query. The [raw-frame contract](raw-frames-contract.md)
-defines `record-raw-frames-v1` in `v1/raw-frames.json`: stored batches as
+defines `record-raw-frames-v1` in `v1/record-raw-frames-v1.cases.json`: stored batches as
 transport bytes, so repeated keys and malformed leaves reach both decoders,
 and the table of error classes (transport, leaf, shape, authenticated,
 invalid declaration, unsupported host conversion). The runners are

@@ -1,6 +1,6 @@
 # Record raw-frame profile and error classes
 
-`record-raw-frames-v1` describes the cases in `v1/raw-frames.json`: stored
+`record-raw-frames-v1` describes the cases in `v1/record-raw-frames-v1.cases.json`: stored
 record batches supplied as transport bytes (`frame_hex`), so both runners
 hand the decoder the same bytes, including what no map-based tree encoder
 can write. It is an experimental test contract for native Rust and Go WASI.

@@ -34,7 +34,7 @@ func TestRawFrameConformance(t *testing.T) {
 		BoundaryError        *declarationError `json:"boundary_error"`
 		Cases                []rawFrameCase    `json:"cases"`
 	}
-	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "raw-frames.json"), &corpus)
+	readConformanceJSON(t, filepath.Join("..", "..", "..", "conformance", "stack-encrypt", "v1", "record-raw-frames-v1.cases.json"), &corpus)
 	if corpus.Version != 1 || corpus.Profile != "record-raw-frames-v1" || len(corpus.Cases) == 0 || corpus.BoundaryError == nil {
 		t.Fatal("unsupported or empty raw-frame corpus")
 	}
