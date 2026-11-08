@@ -71,6 +71,7 @@ decision.
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset. In Rust, `Keyset` is also the handle bound to one keyset, which encrypt and query calls take. Today `KeysetCipher` |
 | Leaf | One sealed value inside a stored record or document: the unit the AEAD encrypts, with its own data key and AAD |
 | Label | A named, typed fact added to a stored value's key tag after encryption, such as `row_id` or `written_by`. ZeroKMS verifies it and logs it. It restricts no reader. See [Labels](#labels) |
+| Key header | The Base64 field `h` of an EQL payload: the header version, the keyset ID, the IV, and the key tag, as the v4 JSON document stores them today. `label_tag` rewrites it. A bare `Ciphertext` keeps the same facts inside its envelope |
 | Key request item | One part of the stored context as a key request sends it to ZeroKMS beside the descriptor: a name and value, or a claim. The ZeroKMS protocol calls the list `context` |
 | Name scope | A declared scope that names the record or a field. A field's name scope is its last declared scope, pinned when the Rust field is renamed (ADR-0006). Two fields of one record never share one |
 | n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
@@ -1257,7 +1258,7 @@ format version beside it.
 | Planned change | What it would alter |
 | --- | --- |
 | Search terms under the query context | A new form of search term, beside the rc.3 form, where terms derive under every part |
-| A Base64 text encoding as a field target | How a ciphertext is written as text in a column |
+| A key header `h` beside a Base85 `c`, in EQL payloads | The shape of every scalar EQL payload. Payload version 2, beside rc.3's version 1 |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
 | Context parts as key request items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
@@ -1344,10 +1345,9 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
     computes `HMAC(tag, PAE(name, value))`, stores the result as the tag,
     and appends the label to the payload's list.
   - `eql_v4.label_tag(payload, name, value)`, the same in SQL, for a
-    trigger that labels with the generated primary key. The tag is
-    inside the ciphertext envelope, so this needs the envelope layout from
-    [key tag extraction](#typed-text-encodings-and-key-tag-extraction),
-    for writing as well as reading.
+    trigger that labels with the generated primary key. The tag is in the payload's key header `h`, so `label_tag` reads and
+    writes one Base64 field. [A key header beside a Base85
+    ciphertext](#a-key-header-beside-a-base85-ciphertext) defines it.
   - `label` and `labels` as operations of the dynamic interface, so Go
     can label a value before it writes the row, and read the labels.
   - `labels()` on a stored value, to read the list without decrypting.
@@ -1375,31 +1375,49 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   - a changed label, or a changed tag, is refused by ZeroKMS;
   - the conformance profile for EQL covers the `labels` list.
 
-#### Typed text encodings and key tag extraction
+#### A key header beside a Base85 ciphertext
+
+Decided by Dan on 8 November 2026. An EQL payload separates what
+retrieving the key needs from the ciphertext itself, as the v4 JSON
+document already does. A bare `Ciphertext` does not change: its envelope
+keeps the keyset ID, the IV, and the tag inside, and Serde writes it as
+Base64.
 
 - **What to build.**
-  - A `to_base64` method on `Ciphertext`. It returns the existing
-    `Base64Text` type, not `String`.
-  - One field target that stores a ciphertext as text, with the working
-    name `Base64Ciphertext`. It checks both the text and the envelope.
-  - A SQL and PL/pgSQL function that reads the ZeroKMS key tag from a stored
-    ciphertext. It must check the version and the lengths before it reads.
-  - The writing form of the same layout, so that `eql_v4.label_tag` can
-    put a labelled tag back into the envelope.
-- **Why.** Some columns store ciphertext as text. SQL needs to read the key
-  tag to label it.
-- **Base64 only.** `eql_v4.label_tag` must read the key tag and write it
-  back in PL/pgSQL. PostgreSQL decodes Base64 itself and has no Base85.
-  So there is no Base85 ciphertext target. Decided by Dan on 8 November
-  2026. Reading the tag does not authenticate it.
-- **Done already.** `Ciphertext` is stored as bytes, and Serde writes it as
-  Base64. `Ciphertext::key_tag` reads the tag in Rust (#1404).
-- **Tracked in.** Issue #1485 is open. It is exactly this item.
+  - A key header field `h` in every scalar EQL payload, in Base64. Its
+    layout is the JSON tree header's: the header version, the keyset
+    ID, the IV, and the key tag.
+  - The `c` field contains the ciphertext without that header, in Base85.
+    No SQL function decodes it. The JSON tree's node ciphertext is
+    the same type.
+  - This is payload version 2. Version 1, the rc.3 form, keeps Base64
+    `c` with the header inside, and stays readable.
+  - `eql_v4.label_tag` reads the tag from `h` with PostgreSQL's own
+    Base64 decoder, and writes the labelled tag back into `h`. It never
+    parses `c`. The same function serves a JSON document, whose tag is
+    already in `h`.
+  - A `to_base64` method on the bare `Ciphertext`, returning the existing
+    `Base64Text` type. One field target that stores a bare ciphertext as
+    text, with the working name `Base64Ciphertext`.
+- **Why.** Labelling must be a one-field update in SQL. With the tag in
+  `h`, PL/pgSQL never needs the envelope's layout, in either encoding.
+  The header also gives SQL the keyset ID without decoding anything
+  else, and Base85 saves about a quarter of Base64's overhead on `c`.
+- **Rule.** The tag moves into `h`. It is not copied. After labelling,
+  the base tag must be gone from the row. The chain is one-way only if
+  no one can read the base tag back.
+- **Done already.** The v4 JSON document has `h` with this layout and a
+  Base85 `c` (`eql-bindings`, `v4/json_tree.rs`). `Ciphertext::key_tag`
+  reads the tag of a bare ciphertext in Rust (#1404). `Base64Text` and
+  `Base85Text` exist in `eql_bindings::encoding`.
+- **Tracked in.** Issue #1485 is open. It asked for key tag extraction
+  from the envelope. This item replaces that with the header field.
 - **Finished when** these are all true:
-  - the methods and targets exist;
-  - Rust, Go, and SQL test vectors show the same key tag for the same
-    stored value;
-  - a tag that SQL writes back is the tag Rust reads.
+  - a version 2 scalar payload round-trips in Rust and Go, and a version
+    1 payload from the rc.3 vectors still decrypts;
+  - `eql_v4.label_tag` labels a scalar and a JSON document through `h`
+    alone, and Rust reads the tag it wrote;
+  - the conformance corpus has both versions.
 
 ### 3. The Rust API
 
@@ -2229,10 +2247,10 @@ The lead who approves this plan decides each question.
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
 | Should this plan ask ZeroKMS version 2 to derive the data key over the key request items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
-| Which change owns envelope version `0x02`: this plan's key request items, or #1524's key backend header? | One version 2 header that carries both. Or separate bytes | One header. Decide with the key-vendor work before either lands |
+| Which change owns envelope version `0x02`: this plan's key request items, or #1524's key backend header? | One version 2 header that carries both, shared with the EQL key header `h`. Or separate bytes | One header. Decide with the key-vendor work before either lands |
 | Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
-| Which crate should own `Base64Text`? | A small Vitamin C encoding crate. Or keep it in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
+| Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
 | What crate layout should the final API use? | The proposal in the packaging document | Review the layout proposal when the crate moves begin. The names are decided |
 
 ### Names decided in the naming review
@@ -2255,7 +2273,7 @@ renames.
 | `Op` | The public dynamic operator enum, today `OpSpec` |
 | The chain `Scope::new(..)`, `Bind::new(..)`, `Scope::new(..).bind(..)` | The caller-supplied context input. No separate type; `ContextExtension` from #1504 goes. A trait bound, `impl ContextParts`, names what an entry point accepts |
 | `JsonTreeDocument`, `JsonTreeQuery`, `JsonTreeLeafQuery`, `JsonTreeElementsQuery`, `JsonTreePredicateQuery` | Kept. The SQL domain `eql_v4_json_search` and the dynamic target `JsonSearch` are the other two names of the one stored type |
-| `Planned`, `Positioned<Vec<T>>`, `Claim`, `ResolvesClaims`, `#[derive(Scalar)]`, `Base64Ciphertext` | Confirmed. `Base85Ciphertext` is dropped: PL/pgSQL must read and write the key tag, and PostgreSQL decodes only Base64 |
+| `Planned`, `Positioned<Vec<T>>`, `Claim`, `ResolvesClaims`, `#[derive(Scalar)]`, `Base64Ciphertext` | Confirmed. `Base64Ciphertext` is the text form of a bare `Ciphertext`, which keeps its header inside. EQL payloads instead carry a Base64 key header `h` beside a Base85 `c`, as the JSON tree does. There is no `Base85Ciphertext` target |
 | `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |

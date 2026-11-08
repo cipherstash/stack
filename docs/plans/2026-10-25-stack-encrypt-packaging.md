@@ -103,7 +103,7 @@ them.
 | --- | --- |
 | `stack-encrypt` | The public Rust API; traversing and reconstructing values; target declarations and plans; context and scope roles; normalisation and adapters for searchable targets; plans; batching; JSON tree execution; and validating and executing dynamic definitions |
 | `stack-encrypt-derive` | Derive macros that generate the same declarations and plans a user can write by hand. `stack-encrypt` re-exports the derives |
-| `stack-encrypt-format` (new) | Pure data representations and codecs shared by the engine and the bindings: frame primitives and the required scalar representations, the stable format of stored blobs, parsing and encoding of the ciphertext envelope, and validated Base64 text. No key requests and no execution runtime |
+| `stack-encrypt-format` (new) | Pure data representations and codecs shared by the engine and the bindings: frame primitives and the required scalar representations, the stable format of stored blobs, parsing and encoding of the ciphertext envelope, and validated Base64 and Base85 text. No key requests and no execution runtime |
 | `stack-zerokms` (the current `stack-kms`, renamed) | The ZeroKMS protocol client, authentication integration, native keysets, request types for the key request items, and responses. Not the neutral abstraction over several providers |
 | `eql-bindings` | EQL storage and query types by version, JSON serialisation compatible with SQL, the catalog, and Stack target adapters. Stays downstream of the engine |
 | Vitamin C crates | Protected memory; randomness; AEAD and key operations on bytes; HMAC, PRF, and ORE algorithm primitives; and reusable canonical encoding of context |
@@ -308,7 +308,7 @@ combined trait.
 | `Query`, `Stored` | The two marker traits on term types: a value a query sends, and a stored index term. Today `op::QueryTerm` and `LabelledTarget` |
 | `Op` | The public dynamic operator enum, today `OpSpec` |
 | `Plan`, `Planned` on the wire | The two shapes a binding sends: a serialised `Plan` alone for checks, operator lists, and query plans, and a serialised `Planned` for encrypt, query, and decrypt. There is no `Request` type |
-| `encoding::Base64Text` | Validated Base64 encoding of arbitrary bytes. The plan recommends a small Vitamin C encoding crate that Stack Encrypt and EQL re-export; the owner is an open question in the plan. There is no Base85, because PL/pgSQL must read and write the key tag |
+| `encoding::{Base64Text, Base85Text}` | Validated encodings of arbitrary bytes. An EQL payload's key header `h` is Base64 and its ciphertext `c` is Base85; a bare ciphertext as text is Base64. The plan recommends a small Vitamin C encoding crate that Stack Encrypt and EQL re-export; the owner is an open question in the plan |
 | `encoding::Base64Ciphertext` | The validated, encoded representation of an opaque ciphertext, and a supported field target. Valid encoding alone is not enough |
 | `provider` | Neutral provider contracts and capability bounds |
 | `provider::zerokms` | The ZeroKMS adapter and the surface for its claims, including `Claim` and `ResolvesClaims` |

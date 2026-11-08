@@ -411,12 +411,20 @@ present only once a label has been added. A payload without it is the
 rc.3 form, so the change is additive. Every EQL type has the list,
 whether it stores a scalar or a JSON document. Each has one key tag.
 
-The tag itself stays where it is today: inside the ciphertext envelope,
-the `c` field of the payload. So `eql_v4.label_tag` reads the tag out of
-the envelope and writes the labelled tag back in. That needs the
-envelope's layout in SQL. The plan's [key tag
-extraction](2026-10-24-stack-encrypt-api-plan.md#typed-text-encodings-and-key-tag-extraction)
-item provides it.
+The tag lives in the payload's key header `h`, a Base64 field. The
+header also contains the header version, the keyset ID, and the IV. The v4 JSON
+document stores it that way today, and scalar payloads move to the same
+shape as payload version 2.
+
+So `eql_v4.label_tag` reads the tag from `h`
+with PostgreSQL's own Base64 decoder and writes the labelled tag back.
+It never parses the ciphertext `c`. The plan's [A key header beside a
+Base85
+ciphertext](2026-10-24-stack-encrypt-api-plan.md#a-key-header-beside-a-base85-ciphertext)
+item defines the shape.
+
+The tag moves into `h`. It is not copied. After labelling, the base tag
+is gone from the row. That is what makes the chain one-way.
 
 A bare `Ciphertext` is a raw envelope with no list. No list will be added
 to it. Labels are for EQL payloads. Decided by Dan on 8 November 2026.
@@ -444,13 +452,13 @@ let sealed: TextEq = sqlx::query_scalar("SELECT body FROM notes WHERE id = $1")
 let body: String = String::decrypt_from(sealed, &keyset).await?;
 ```
 
-The stored payload, after the trigger. The tag is inside `c`. `hm` is
-the equality term:
+The stored payload, after the trigger. The key header `h` contains the
+keyset ID, the IV, and the labelled tag. `hm` is the equality term:
 
 ```json
-{
-  "v": 1,
+{  "v": 2,
   "i": {"t": "notes", "c": "body"},
+  "h": "…",
   "c": "…",
   "hm": "…",
   "labels": [    {"n": "written_from", "v": "203.0.113.5"},
