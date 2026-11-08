@@ -27,7 +27,10 @@ Six documents go with it:
   proposal the naming review judges;
 - [provider capabilities](2026-10-25-stack-encrypt-provider-capabilities.md),
   the proposal for keyset routing and lock context after the customer
-  release;
+  release.
+
+The names this plan uses as placeholders are listed in [Names deferred to
+the naming review](#names-deferred-to-the-naming-review), at the end.
 
 ## Terms
 
