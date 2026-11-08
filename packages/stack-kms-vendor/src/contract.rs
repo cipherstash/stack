@@ -228,7 +228,7 @@ where
     let context = nonempty!("users").with("email");
 
     let sealed = keyset
-        .encrypt("alice@example.com".to_string(), context)
+        .encrypt_tree("alice@example.com".to_string(), context)
         .await
         .unwrap_or_else(|error| panic!("{mode}: sealing failed: {error}"));
     let leaf = single(&sealed);
@@ -311,7 +311,7 @@ pub async fn refuses_another_context<B: KeyVendorBackend>(
     let (cipher, _, _) = cipher_over(backend, key_ref, mode, |s| s).await;
     let sealed = cipher
         .default_keyset()
-        .encrypt("secret".to_string(), nonempty!("users").with("email"))
+        .encrypt_tree("secret".to_string(), nonempty!("users").with("email"))
         .await
         .expect("seal");
     let result = cipher
@@ -338,7 +338,7 @@ pub async fn refuses_another_key_backend<B: KeyVendorBackend>(
         .expect("a ZeroKMS cipher");
     let sealed = zerokms
         .default_keyset()
-        .encrypt("zerokms".to_string(), b"ctx")
+        .encrypt_tree("zerokms".to_string(), b"ctx")
         .await
         .expect("seal under ZeroKMS");
     let before = observer.unwraps();
@@ -358,7 +358,7 @@ pub async fn refuses_another_key_backend<B: KeyVendorBackend>(
     // And the other way: a ZeroKMS cipher refuses this vendor's leaf.
     let sealed = cipher
         .default_keyset()
-        .encrypt("vendor".to_string(), b"ctx")
+        .encrypt_tree("vendor".to_string(), b"ctx")
         .await
         .expect("seal under the vendor");
     assert!(matches!(
@@ -475,7 +475,7 @@ where
             for _ in 0..3 {
                 let _ = keyset.equality_term("v", context).await.expect("term");
                 let _ = keyset
-                    .encrypt("v".to_string(), context)
+                    .encrypt_tree("v".to_string(), context)
                     .await
                     .expect("seal");
             }
@@ -514,7 +514,7 @@ pub async fn keeps_batch_order<B: KeyVendorBackend>(backend: B, key_ref: &str, m
     let values: Vec<String> = (0..25).map(|n| format!("value-{n}")).collect();
     let sealed = cipher
         .default_keyset()
-        .encrypt(values.clone(), b"batch")
+        .encrypt_tree(values.clone(), b"batch")
         .await
         .unwrap_or_else(|error| panic!("{mode}: sealing a batch failed: {error}"));
     let opened: Vec<String> = cipher
@@ -547,7 +547,7 @@ where
     // data keys one per value. One throttle either way is retried.
     observer.throttle_next(1);
     let sealed = keyset
-        .encrypt("v".to_string(), b"ctx")
+        .encrypt_tree("v".to_string(), b"ctx")
         .await
         .unwrap_or_else(|error| panic!("{mode}: a throttled call must be retried: {error}"));
     let opened: String = cipher.decrypt(sealed, b"ctx").await.expect("open");
@@ -555,7 +555,7 @@ where
 
     if mode == KeyMode::Wrapped {
         observer.throttle_next(options.max_attempts as usize);
-        match keyset.encrypt("v".to_string(), b"ctx").await {
+        match keyset.encrypt_tree("v".to_string(), b"ctx").await {
             Err(Error::Kms(KmsError::Backend {
                 kind: BackendErrorKind::Throttled,
                 ..

@@ -47,7 +47,7 @@ async fn one_cipher_routes_between_zerokms_and_one_vendor() {
     // Naming no keyset is ZeroKMS's default keyset, and seals v1.
     let zerokms = cipher
         .default_keyset()
-        .encrypt("z".to_string(), context)
+        .encrypt_tree("z".to_string(), context)
         .await
         .unwrap();
     assert_eq!(leaf_backend(&zerokms), (KeyBackend::ZeroKms, None));
@@ -59,13 +59,13 @@ async fn one_cipher_routes_between_zerokms_and_one_vendor() {
         .await
         .unwrap();
     assert_eq!(acme.keyset_id(), wrapped.id());
-    let sealed_wrapped = acme.encrypt("w".to_string(), context).await.unwrap();
+    let sealed_wrapped = acme.encrypt_tree("w".to_string(), context).await.unwrap();
     assert_eq!(
         leaf_backend(&sealed_wrapped),
         (KeyBackend::Vendor(KeyVendor::Aws), Some(KeyMode::Wrapped))
     );
     let other = cipher.keyset(derived.id()).await.unwrap();
-    let sealed_derived = other.encrypt("d".to_string(), context).await.unwrap();
+    let sealed_derived = other.encrypt_tree("d".to_string(), context).await.unwrap();
     assert_eq!(
         leaf_backend(&sealed_derived),
         (KeyBackend::Vendor(KeyVendor::Aws), Some(KeyMode::Derived))
@@ -103,7 +103,7 @@ async fn a_vendor_leaf_relabelled_as_zerokms_is_refused() {
         .await
         .unwrap();
     let keyset = cipher.keyset(record.id()).await.unwrap();
-    let sealed = keyset.encrypt("v".to_string(), b"ctx").await.unwrap();
+    let sealed = keyset.encrypt_tree("v".to_string(), b"ctx").await.unwrap();
     let CipherText::Single(leaf) = sealed else {
         panic!("one leaf")
     };
@@ -192,7 +192,7 @@ async fn a_record_edited_in_its_bound_fields_does_not_unwrap() {
         .unwrap();
     match cipher
         .default_keyset()
-        .encrypt("v".to_string(), b"ctx")
+        .encrypt_tree("v".to_string(), b"ctx")
         .await
     {
         Err(Error::Kms(KmsError::Backend {

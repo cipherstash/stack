@@ -39,7 +39,7 @@
 //!   `HKDF-SHA256(root key, salt = iv, info = keyset id ‖ descriptor)`, and
 //!   the index key is derived from the root key under a separate label.
 //!
-//! See [`derive`] for the exact derivations and associated data.
+//! See [`derive`](mod@derive) for the exact derivations and associated data.
 
 #![deny(unsafe_code)]
 #![warn(clippy::unwrap_used)]
