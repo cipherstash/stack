@@ -2007,8 +2007,8 @@ let encrypted: EncryptedUser = user
     .await?;
 ```
 
-In Go, `WithLockContext` is a method on the cipher, beside `Scope` and
-`Bind`. It takes the same three kinds of item. The dynamic request has a
+In Go, `WithLockContext` is a cipher method like `Scope` and `Bind`. It
+takes the same three kinds of item. The dynamic request has a
 new optional `lock` field beside `context`. A request without it is the
 rc.3 form.
 
