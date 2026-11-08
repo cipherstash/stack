@@ -20,7 +20,7 @@ default = ["http"]
 http = ["stack-kms-vendor/http"]
 
 [dependencies]
-stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false }
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false }
 stack-kms-vendor = { path = "../stack-kms-vendor", version = "0.1.0" }
 
 vitaminc = { workspace = true, features = ["protected"] }
