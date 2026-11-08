@@ -62,9 +62,19 @@ const mintedFor = (token: CtsToken | undefined, sub: string) =>
 const ctsMintsForCaller = () =>
   vi.fn(async (_url: string, init: RequestInit) => {
     const { oidcToken } = JSON.parse(String(init.body))
-    const sub = ownerOfJwt(oidcToken)?.subject
+    const owner = ownerOfJwt(oidcToken)
+    const sub = owner?.subject ?? 'unknown'
+    // The minted token names the caller's issuer too, so a session kept across
+    // an issuer switch is told apart from the one that replaces it.
+    const accessToken = [
+      Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
+      Buffer.from(
+        JSON.stringify({ iss: owner?.issuer ?? ISSUER, sub: `CS|${sub}` }),
+      ).toString('base64url'),
+      '',
+    ].join('.')
     return new Response(
-      JSON.stringify(ctsTokenOf(sessionFor(sub ?? 'unknown'))),
+      JSON.stringify({ ...ctsTokenOf(sessionFor(sub)), accessToken }),
       {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -502,6 +512,16 @@ describe('issuer-aware ownership', () => {
       '',
     ].join('.')
 
+  /** The issuer of the bearer token the response writes, and of its owner. */
+  const issuerOfWritten = (res: NextResponse) => {
+    const raw = res.cookies.get(CS_COOKIE_NAME)?.value
+    const session = readCtsSession(raw)
+    return {
+      token: session && ownerOfJwt(session.accessToken)?.issuer,
+      owner: session?.owner?.issuer,
+    }
+  }
+
   it('does not reuse a session for the same sub from a different issuer', async () => {
     const minted = await setCtsToken(jwtFrom('https://idp-a.example', 'alice'))
     const cookie = minted.cookies.get(CS_COOKIE_NAME)?.value as string
@@ -513,7 +533,10 @@ describe('issuer-aware ownership', () => {
     )
 
     expect(fetch).toHaveBeenCalledTimes(1)
-    expect(writtenSession(res)).toBeTruthy()
+    expect(issuerOfWritten(res)).toEqual({
+      token: 'https://idp-b.example',
+      owner: 'https://idp-b.example',
+    })
   })
 
   it('reuses a session for the same issuer and sub', async () => {
@@ -543,7 +566,10 @@ describe('issuer-aware ownership', () => {
     )
 
     expect(fetch).toHaveBeenCalledTimes(1)
-    expect(writtenSession(res)).toBeTruthy()
+    expect(issuerOfWritten(res)).toEqual({
+      token: 'https://clerk.app.example',
+      owner: 'https://clerk.app.example',
+    })
   })
 })
 
@@ -666,6 +692,46 @@ describe('the request seen by downstream handlers', () => {
       ),
     ).toBe(true)
   })
+
+  it("does not forward another user's session from a caller's cookie override", async () => {
+    // The caller's response already overrides the forwarded cookie with a
+    // session for someone else. The middleware keeps the request's own session,
+    // so that is the one downstream handlers must see.
+    const own = JSON.stringify(sessionFor('user_A'))
+    const other = JSON.stringify(sessionFor('user_B'))
+    const callerRes = NextResponse.next({
+      request: {
+        headers: new Headers({
+          cookie: `${CS_COOKIE_NAME}=${encodeURIComponent(other)}; theme=dark`,
+        }),
+      },
+    })
+
+    const res = await protectMiddleware(
+      jwtWithSubject('user_A'),
+      requestWith({ [CS_COOKIE_NAME]: own }),
+      callerRes,
+    )
+
+    expect(writtenSession(res)).toBeUndefined()
+    expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBe(own)
+    expect(forwardedCookies(res)?.theme).toBe('dark')
+  })
+
+  it("forwards no session from a caller's cookie override when signed out", async () => {
+    const callerRes = NextResponse.next({
+      request: {
+        headers: new Headers({
+          cookie: `${CS_COOKIE_NAME}=${encodeURIComponent(JSON.stringify(sessionFor('user_B')))}`,
+        }),
+      },
+    })
+
+    const res = await protectMiddleware('', requestWith({}), callerRes)
+
+    expect(forwardedCookies(res)).toBeDefined()
+    expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBeUndefined()
+  })
 })
 
 describe('clearing through an override that only names the cookie', () => {
@@ -718,5 +784,56 @@ describe('a CTS transport failure', () => {
     const result = await getCtsToken(jwtWithSubject('user-1'))
 
     expect(result.success).toBe(false)
+  })
+
+  it('keeps the exception text out of the error and the log', async () => {
+    const oidcToken = jwtWithSubject('user-1')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        // A fetch wrapper may echo the request body, OIDC token included.
+        throw new Error(`request failed: ${String(init.body)}`)
+      }),
+    )
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    serverCookie(undefined)
+
+    const result = await getCtsToken(oidcToken)
+
+    expect(result.success).toBe(false)
+    expect(result.error).not.toContain(oidcToken)
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(oidcToken)
+    logged.mockRestore()
+  })
+})
+
+describe('an expired token from CTS', () => {
+  const ctsMintsExpired = () =>
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ accessToken: 'expired-token', expiry: 1 }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    )
+
+  it('is reported by getCtsToken as a failure', async () => {
+    vi.stubGlobal('fetch', ctsMintsExpired())
+    serverCookie(undefined)
+
+    const result = await getCtsToken(jwtWithSubject('user-1'))
+
+    expect(result.success).toBe(false)
+  })
+
+  it('is not written, and the stale session is cleared', async () => {
+    vi.stubGlobal('fetch', ctsMintsExpired())
+
+    const res = await protectMiddleware(
+      jwtWithSubject('user-2'),
+      request(JSON.stringify(sessionFor('user-1'))),
+    )
+
+    expect(writtenSession(res)).toBeNull()
   })
 })

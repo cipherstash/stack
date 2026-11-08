@@ -205,24 +205,34 @@ const REQUEST_HEADER_PREFIX = 'x-middleware-request-'
  * headers replaces the whole set, so every other header is carried across, and
  * an override the caller already put on `response` is extended, not replaced.
  *
- * Does nothing when `response` leaves the session cookie alone.
+ * When `response` leaves the session cookie alone, the request's own session
+ * is what was decided on. That is forwarded as-is unless the caller's own
+ * override on `response` replaces the forwarded cookie, in which case the
+ * request's session is put back in place of whatever session the override
+ * carries, so a downstream `getCtsToken()` reads the session this middleware
+ * kept and never one it did not check. Otherwise nothing is changed.
  */
 export function forwardCtsSession(req: NextRequest, response: NextResponse) {
-  const written = response.cookies.get(CS_COOKIE_NAME)
-  if (!written) return response
-
   const headers = response.headers
   const existing = headers.get(OVERRIDE_HEADERS)
-  const keys = existing
+  const existingKeys = existing
     ? existing
         .split(',')
         .map((key) => key.trim())
         .filter(Boolean)
-    : headerNames(req.headers)
+    : undefined
+
+  const written = response.cookies.get(CS_COOKIE_NAME)
+  if (!written && !existingKeys?.includes('cookie')) return response
+  const value = written
+    ? written.value
+    : (req.cookies.get(CS_COOKIE_NAME)?.value ?? '')
+
+  const keys = existingKeys ?? headerNames(req.headers)
 
   if (!existing) {
-    req.headers.forEach((value, key) => {
-      headers.set(`${REQUEST_HEADER_PREFIX}${key}`, value)
+    req.headers.forEach((headerValue, key) => {
+      headers.set(`${REQUEST_HEADER_PREFIX}${key}`, headerValue)
     })
   }
 
@@ -237,8 +247,8 @@ export function forwardCtsSession(req: NextRequest, response: NextResponse) {
     .split(';')
     .map((pair) => pair.trim())
     .filter((pair) => pair !== '' && pair.split('=', 1)[0] !== CS_COOKIE_NAME)
-  if (written.value !== '') {
-    pairs.push(`${CS_COOKIE_NAME}=${encodeURIComponent(written.value)}`)
+  if (value !== '') {
+    pairs.push(`${CS_COOKIE_NAME}=${encodeURIComponent(value)}`)
   }
 
   // `cookie` always stays in the override list, set to an empty header when no

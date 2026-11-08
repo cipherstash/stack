@@ -194,11 +194,13 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
         oidcToken,
       }),
     })
-  } catch (cause) {
+  } catch {
     // A transport failure (DNS, TLS, reset) rejects rather than resolving. It
     // is reported like a refusal, so the middleware's cleanup still runs and a
-    // request is not turned into a 500.
-    const error = `Failed to fetch CTS token: the CipherStash API could not be reached (${cause instanceof Error ? cause.message : String(cause)}).`
+    // request is not turned into a 500. The exception is not repeated: a fetch
+    // wrapper may put the request, OIDC token included, into its message.
+    const error =
+      'Failed to fetch CTS token: the CipherStash API could not be reached.'
     logger.error(
       `There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. ${error}`,
     )
@@ -239,9 +241,11 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
     body = undefined
   }
 
+  // An already-expired token is refused too: the cookie it would be written to
+  // reads as no session, so every later request would mint again.
   const ctsToken = parseCtsToken(body)
-  if (!ctsToken) {
-    const error = `Failed to fetch CTS token: the CipherStash API returned ${ctsResponse.status} without a valid token.`
+  if (!ctsToken || ctsToken.expiry * 1000 <= Date.now()) {
+    const error = `Failed to fetch CTS token: the CipherStash API returned ${ctsResponse.status} without a valid, unexpired token.`
     logger.error(
       `There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. ${error}`,
     )
