@@ -10,3 +10,5 @@ Harden the CipherStash session cookie (`__cipherstash_cts_session`).
 - An expired or malformed session cookie no longer passes through or throws: it is treated as no session and re-minted or cleared by the middleware, instead of returning a 500 on every matched route.
 - A successful CTS response is now validated before it is used. A 2xx body that is not a token (non-JSON, or the wrong shape) is reported as a failure instead of being written to the cookie or thrown out of the middleware.
 - `GetCtsTokenResponse` now uses `success: true` and `success: false` as literal discriminants, so checking `result.success` narrows `result.ctsToken` to a `CtsToken`.
+- When the middleware replaces or clears the session, the request forwarded to route handlers and server components is updated in the same request, so `getCtsToken()` there never sees the previous user's session. Next.js only does this itself from 14.2.10, and this package supports `^14`.
+- A CTS transport failure (DNS, TLS, connection reset) is reported as a failure instead of throwing, so the middleware still clears a stale session and does not return a 500.

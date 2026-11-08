@@ -108,7 +108,7 @@ export const protectMiddleware = async (
   res?: NextResponse,
 ) =>
   await syncCtsSession(
-    req.cookies.get(CS_COOKIE_NAME)?.value,
+    req,
     oidcToken
       ? {
           owner: ownerOfJwt(oidcToken),

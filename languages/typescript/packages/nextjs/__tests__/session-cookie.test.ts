@@ -11,7 +11,7 @@
  * fake CTS: the assertions are on the `Set-Cookie` the middleware emits.
  */
 import type { ClerkMiddlewareAuth } from '@clerk/nextjs/server'
-import { NextRequest, type NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('next/headers', () => ({ cookies: vi.fn() }))
@@ -182,6 +182,8 @@ describe('protectClerkMiddleware: a session is only reused for its own user', ()
         subject: 'user_B',
       }),
     ).toBe(true)
+    // The label and the bearer token itself must both be user B's.
+    expect(mintedFor(written ?? undefined, 'user_B')).toBe(true)
   })
 
   it("clears another user's session when the replacement cannot be minted", async () => {
@@ -322,10 +324,16 @@ describe('a malformed session cookie reads as no session', () => {
     expect(writtenSession(res)).toBeNull()
   })
 
-  it('protectMiddleware(jwt) re-mints when the access token is not a JWT', async () => {
+  it('protectMiddleware(jwt) re-mints an expired session', async () => {
     const res = await protectMiddleware(
       jwtWithSubject('user-1'),
-      request(JSON.stringify({ accessToken: 'opaque', expiry: 1 })),
+      request(
+        JSON.stringify({
+          accessToken: 'opaque',
+          expiry: 1,
+          owner: { issuer: ISSUER, subject: 'user-1' },
+        }),
+      ),
     )
 
     expect(
@@ -334,6 +342,24 @@ describe('a malformed session cookie reads as no session', () => {
         subject: 'user-1',
       }),
     ).toBe(true)
+  })
+
+  it('protectMiddleware(jwt) reuses an unexpired session with an opaque access token', async () => {
+    // Ownership is the recorded owner, so the CTS token's own format is
+    // irrelevant to reuse.
+    const res = await protectMiddleware(
+      jwtWithSubject('user-1'),
+      request(
+        JSON.stringify({
+          accessToken: 'opaque',
+          expiry: Math.floor(Date.now() / 1000) + 3600,
+          owner: { issuer: ISSUER, subject: 'user-1' },
+        }),
+      ),
+    )
+
+    expect(writtenSession(res)).toBeUndefined()
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
 
@@ -518,5 +544,158 @@ describe('issuer-aware ownership', () => {
 
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(writtenSession(res)).toBeTruthy()
+  })
+})
+
+describe('the request seen by downstream handlers', () => {
+  /** The cookies Next forwards to route handlers for this request, if overridden. */
+  const forwardedCookies = (res: Response) => {
+    const override = res.headers.get('x-middleware-override-headers')
+    if (override === null) return undefined
+    // A request header left out of the override list is deleted.
+    if (
+      !override
+        .split(',')
+        .map((key) => key.trim())
+        .includes('cookie')
+    ) {
+      return {} as Record<string, string>
+    }
+    const header = res.headers.get('x-middleware-request-cookie') ?? ''
+    return Object.fromEntries(
+      header
+        .split(';')
+        .map((pair) => pair.trim())
+        .filter(Boolean)
+        .map((pair) => {
+          const at = pair.indexOf('=')
+          return [pair.slice(0, at), decodeURIComponent(pair.slice(at + 1))]
+        }),
+    ) as Record<string, string>
+  }
+
+  const requestWith = (cookies: Record<string, string>) => {
+    const req = new NextRequest('https://app.example/dashboard', {
+      headers: { 'x-trace': 'abc' },
+    })
+    for (const [name, value] of Object.entries(cookies)) {
+      req.cookies.set(name, value)
+    }
+    return req
+  }
+
+  it("forwards the new session, not the previous user's, after a switch", async () => {
+    const previous = JSON.stringify(sessionFor('user_A'))
+
+    const res = await protectClerkMiddleware(
+      clerkAuth('user_B', jwtWithSubject('user_B')),
+      requestWith({ [CS_COOKIE_NAME]: previous, theme: 'dark' }),
+    )
+
+    const forwarded = forwardedCookies(res)
+    expect(forwarded).toBeDefined()
+    expect(forwarded?.[CS_COOKIE_NAME]).not.toBe(previous)
+    expect(
+      sessionBelongsTo(
+        readCtsSession(forwarded?.[CS_COOKIE_NAME]) as CtsSession,
+        { issuer: ISSUER, subject: 'user_B' },
+      ),
+    ).toBe(true)
+    expect(forwarded?.theme).toBe('dark')
+    // Overriding request headers replaces the whole set, so the rest must be
+    // carried across untouched.
+    expect(res.headers.get('x-middleware-request-x-trace')).toBe('abc')
+  })
+
+  it('forwards no session after a sign-out', async () => {
+    const res = await protectClerkMiddleware(
+      clerkAuth(null, null),
+      requestWith({
+        [CS_COOKIE_NAME]: JSON.stringify(sessionFor('user_A')),
+        theme: 'dark',
+      }),
+    )
+
+    const forwarded = forwardedCookies(res)
+    expect(forwarded).toBeDefined()
+    expect(forwarded?.[CS_COOKIE_NAME]).toBeUndefined()
+    expect(forwarded?.theme).toBe('dark')
+  })
+
+  it("forwards no session when another user's cannot be replaced", async () => {
+    vi.stubGlobal('fetch', ctsRefuses())
+
+    const res = await protectClerkMiddleware(
+      clerkAuth('user_B', jwtWithSubject('user_B')),
+      requestWith({ [CS_COOKIE_NAME]: JSON.stringify(sessionFor('user_A')) }),
+    )
+
+    expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBeUndefined()
+    expect(forwardedCookies(res)).toBeDefined()
+  })
+
+  it('leaves the request alone when the session is kept', async () => {
+    const res = await protectClerkMiddleware(
+      clerkAuth('user_A', jwtWithSubject('user_A')),
+      requestWith({ [CS_COOKIE_NAME]: JSON.stringify(sessionFor('user_A')) }),
+    )
+
+    expect(res.headers.get('x-middleware-override-headers')).toBeNull()
+  })
+
+  it("keeps a caller's own request header overrides when forwarding", async () => {
+    const headers = new Headers({ 'x-tenant': 't1' })
+    const callerRes = NextResponse.next({ request: { headers } })
+
+    const res = await protectMiddleware(
+      jwtWithSubject('user-2'),
+      requestWith({ [CS_COOKIE_NAME]: JSON.stringify(sessionFor('user-1')) }),
+      callerRes,
+    )
+
+    const keys = (res.headers.get('x-middleware-override-headers') ?? '').split(
+      ',',
+    )
+    expect(keys).toContain('x-tenant')
+    expect(keys).toContain('cookie')
+    expect(res.headers.get('x-middleware-request-x-tenant')).toBe('t1')
+    expect(
+      sessionBelongsTo(
+        readCtsSession(forwardedCookies(res)?.[CS_COOKIE_NAME]) as CtsSession,
+        { issuer: ISSUER, subject: 'user-2' },
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('a CTS transport failure', () => {
+  it("clears another user's session instead of throwing", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed')
+      }),
+    )
+
+    const res = await protectClerkMiddleware(
+      clerkAuth('user_B', jwtWithSubject('user_B')),
+      request(JSON.stringify(sessionFor('user_A'))),
+    )
+
+    expect(writtenSession(res)).toBeNull()
+  })
+
+  it('is reported by getCtsToken as a failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed')
+      }),
+    )
+    serverCookie(undefined)
+
+    const result = await getCtsToken(jwtWithSubject('user-1'))
+
+    expect(result.success).toBe(false)
   })
 })

@@ -182,16 +182,28 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
     process.env.CS_CTS_ENDPOINT ||
     'https://ap-southeast-2.aws.auth.viturhosted.net'
 
-  const ctsResponse = await fetch(`${ctsEndoint}/api/authorize`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      workspaceId,
-      oidcToken,
-    }),
-  })
+  let ctsResponse: Response
+  try {
+    ctsResponse = await fetch(`${ctsEndoint}/api/authorize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        workspaceId,
+        oidcToken,
+      }),
+    })
+  } catch (cause) {
+    // A transport failure (DNS, TLS, reset) rejects rather than resolving. It
+    // is reported like a refusal, so the middleware's cleanup still runs and a
+    // request is not turned into a 500.
+    const error = `Failed to fetch CTS token: the CipherStash API could not be reached (${cause instanceof Error ? cause.message : String(cause)}).`
+    logger.error(
+      `There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. ${error}`,
+    )
+    return { success: false, error }
+  }
 
   // `fetch` only rejects on a transport failure, so a CTS refusal RESOLVES:
   // a `402` carrying `cs_code: USAGE_LIMIT_EXCEEDED` arrives here as an

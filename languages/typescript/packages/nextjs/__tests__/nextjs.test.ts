@@ -14,7 +14,7 @@
  * `protectMiddleware` imports it from — mocking the barrel it is re-exported
  * through would not intercept the call.
  */
-import { type NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('next/headers', () => ({
@@ -68,16 +68,11 @@ const requestCookie = (value: string | undefined) => {
 }
 
 /** A `NextRequest` carrying (or not carrying) a CipherStash session cookie. */
-const requestWithSession = (sessionValue?: string) =>
-  ({
-    cookies: {
-      get: vi.fn((name: string) =>
-        name === CS_COOKIE_NAME && sessionValue !== undefined
-          ? { value: sessionValue }
-          : undefined,
-      ),
-    },
-  }) as unknown as NextRequest
+const requestWithSession = (sessionValue?: string) => {
+  const req = new NextRequest('https://app.example/')
+  if (sessionValue !== undefined) req.cookies.set(CS_COOKIE_NAME, sessionValue)
+  return req
+}
 
 beforeEach(() => {
   vi.mocked(setCtsToken).mockImplementation(

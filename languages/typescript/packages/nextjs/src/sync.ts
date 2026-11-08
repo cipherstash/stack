@@ -1,8 +1,10 @@
-import { NextResponse } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 import { logger } from '../../utils/logger'
 import { setCtsToken } from './cts'
 import {
+  CS_COOKIE_NAME,
   clearCtsSession,
+  forwardCtsSession,
   readCtsSession,
   type SessionOwner,
   sessionBelongsTo,
@@ -35,12 +37,25 @@ export type SessionIdentity = {
  *   for someone else): mint a session for this user. If there is no token to
  *   mint with, or CTS refuses, a stale cookie is cleared rather than kept.
  * - Signed out, with a session cookie: clear it.
+ *
+ * Whenever the cookie is written or cleared, the request forwarded to the rest
+ * of this request's handlers is updated to match, so a server component
+ * calling `getCtsToken()` never sees the session this call replaced.
  */
 export async function syncCtsSession(
-  rawSession: string | undefined,
+  req: NextRequest,
   identity: SessionIdentity | undefined,
   res?: NextResponse,
 ): Promise<NextResponse> {
+  return forwardCtsSession(req, await decide(req, identity, res))
+}
+
+async function decide(
+  req: NextRequest,
+  identity: SessionIdentity | undefined,
+  res: NextResponse | undefined,
+): Promise<NextResponse> {
+  const rawSession = req.cookies.get(CS_COOKIE_NAME)?.value
   const response = () => res ?? NextResponse.next()
 
   if (!identity) {

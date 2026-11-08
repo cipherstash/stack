@@ -1,5 +1,6 @@
 import { decodeJwt } from 'jose'
-import type { NextResponse } from 'next/server'
+import type { NextRequest, NextResponse } from 'next/server'
+import { logger } from '../../utils/logger'
 
 /**
  * The CipherStash session cookie: the one module that knows its name, its
@@ -153,9 +154,18 @@ export function writeCtsSession(
     ? { ...ctsTokenOf(token), owner }
     : ctsTokenOf(token)
 
+  const value = JSON.stringify(session)
+  // Browsers drop a cookie whose name and value exceed 4096 bytes, which would
+  // leave this session unset and mint a new one on every request.
+  if (CS_COOKIE_NAME.length + encodeURIComponent(value).length > 4096) {
+    logger.error(
+      'The CipherStash session is larger than browsers accept in one cookie, so it may not be stored and a new session will be fetched on later requests.',
+    )
+  }
+
   response.cookies.set({
     name: CS_COOKIE_NAME,
-    value: JSON.stringify(session),
+    value,
     expires: new Date(token.expiry * 1000),
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -168,5 +178,77 @@ export function writeCtsSession(
 /** Delete the session cookie on `response`. */
 export function clearCtsSession(response: NextResponse) {
   response.cookies.delete(CS_COOKIE_NAME)
+  return response
+}
+
+const OVERRIDE_HEADERS = 'x-middleware-override-headers'
+
+function headerNames(headers: Headers): string[] {
+  const names: string[] = []
+  headers.forEach((_value, key) => {
+    names.push(key)
+  })
+  return names
+}
+const REQUEST_HEADER_PREFIX = 'x-middleware-request-'
+
+/**
+ * Make the request the rest of this request's handlers see agree with the
+ * session cookie `response` writes or deletes.
+ *
+ * A `Set-Cookie` on the middleware response only reaches the browser. Next.js
+ * releases before 14.2.10 do not copy it into the request that route handlers
+ * and server components read, so without this a user switch would leave the
+ * previous user's session visible to `getCtsToken()` for the rest of the
+ * request. The forwarded request is changed through the same headers
+ * `NextResponse.next({ request: { headers } })` writes. Overriding request
+ * headers replaces the whole set, so every other header is carried across, and
+ * an override the caller already put on `response` is extended, not replaced.
+ *
+ * Does nothing when `response` leaves the session cookie alone.
+ */
+export function forwardCtsSession(req: NextRequest, response: NextResponse) {
+  const written = response.cookies.get(CS_COOKIE_NAME)
+  if (!written) return response
+
+  const headers = response.headers
+  const existing = headers.get(OVERRIDE_HEADERS)
+  const keys = existing
+    ? existing
+        .split(',')
+        .map((key) => key.trim())
+        .filter(Boolean)
+    : headerNames(req.headers)
+
+  if (!existing) {
+    req.headers.forEach((value, key) => {
+      headers.set(`${REQUEST_HEADER_PREFIX}${key}`, value)
+    })
+  }
+
+  const currentCookie = keys.includes('cookie')
+    ? (headers.get(`${REQUEST_HEADER_PREFIX}cookie`) ?? '')
+    : existing
+      ? ''
+      : (req.headers.get('cookie') ?? '')
+
+  // Work on the raw header so every other cookie is forwarded byte for byte.
+  const pairs = currentCookie
+    .split(';')
+    .map((pair) => pair.trim())
+    .filter((pair) => pair !== '' && pair.split('=', 1)[0] !== CS_COOKIE_NAME)
+  if (written.value !== '') {
+    pairs.push(`${CS_COOKIE_NAME}=${encodeURIComponent(written.value)}`)
+  }
+
+  const otherKeys = keys.filter((key) => key !== 'cookie')
+  if (pairs.length > 0) {
+    headers.set(`${REQUEST_HEADER_PREFIX}cookie`, pairs.join('; '))
+    headers.set(OVERRIDE_HEADERS, [...otherKeys, 'cookie'].join(','))
+  } else {
+    headers.delete(`${REQUEST_HEADER_PREFIX}cookie`)
+    headers.set(OVERRIDE_HEADERS, otherKeys.join(','))
+  }
+
   return response
 }

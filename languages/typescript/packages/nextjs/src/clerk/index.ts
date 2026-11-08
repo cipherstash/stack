@@ -1,6 +1,5 @@
 import type { ClerkMiddlewareAuth } from '@clerk/nextjs/server'
 import type { NextRequest } from 'next/server'
-import { CS_COOKIE_NAME } from '../session'
 import { syncCtsSession } from '../sync'
 
 /**
@@ -22,7 +21,7 @@ export const protectClerkMiddleware = async (
   // already verified, and are the `sub` and `iss` of the token `getToken()`
   // returns, which is what a session is labelled with when minted.
   return await syncCtsSession(
-    req.cookies.get(CS_COOKIE_NAME)?.value,
+    req,
     userId
       ? {
           owner:
