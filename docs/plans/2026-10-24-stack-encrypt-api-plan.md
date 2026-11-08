@@ -144,15 +144,18 @@ let secret: Ciphertext = keyset.encrypt("secret").await?;
 let plaintext: String = keyset.decrypt(secret).await?;
 
 let number: String = read_card_number()?;
-let card: Ciphertext = keyset
-    .encrypt_with_context(number, "users/42/card") // wipes `number`
+let card: Ciphertext = keyset    .encrypt_with_context(number, "card-number") // wipes `number`
     .await?;
 
 // Store the ciphertext as bytes, or as Base64 text through Serde.
 let bytes: Vec<u8> = card.to_bytes();
 let card = Ciphertext::from_bytes(&bytes)?;
-let number: String = keyset.decrypt_with_context(card, "users/42/card").await?;
+let number: String = keyset.decrypt_with_context(card, "card-number").await?;
 ```
+
+A plain string is a context. `Scope::new("card-number")` would mean the
+same thing. It is not needed here. The kind of a part matters only
+where there are search terms. A `Ciphertext` has none.
 
 A value encrypted with no context is bound to nothing but its keyset.
 Its ciphertext can be moved to any column or any row, and it still opens
