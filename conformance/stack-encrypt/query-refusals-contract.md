@@ -102,9 +102,11 @@ The binding checks every index's value refusals in `check_input`; the
 typed chain's `Supports::check` runs before the keyset for the match index
 alone, and the other indexes refuse the value when they derive its term.
 This profile pins the current stage as a documented difference. Moving the
-typed refusals earlier is the query-preparation consolidation tracked
-separately; when it lands, the `typed` entries change to `before_keyset`
-on purpose, and this table with them.
+typed refusals earlier is step 2 of "The engine's rules, and the order of
+the work" in the API plan (`docs/plans/2026-10-24-stack-encrypt-api-plan.md`),
+which runs every check that needs no key before a key is used. When it
+lands, the `typed` entries change to `before_keyset` on purpose, and this
+table with them.
 
 ## Scope and remaining work
 
@@ -113,5 +115,6 @@ index cannot use (an n-gram length of zero) are a declaration refusal, in
 `v1/declarations.json` (`match-invalid-ngram-zero`). JSON document
 operators against JSON fields, EQL target refusals, `target_limit` inputs and the match-case
 mismatch only the typed chain can express remain with their existing
-tests. The Go runner does not exercise generated query methods; those keep
+tests. The match-case mismatch goes away with the API plan's step 3,
+which removes `Matches`'s case parameter and `.via`. The Go runner does not exercise generated query methods; those keep
 their fixture tests. No existing test is removed.

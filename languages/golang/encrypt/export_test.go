@@ -224,7 +224,7 @@ func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.
 // OpenFrameForTest hands the guest a stored batch already in the transport
 // codec, so a test can send what the tree encoder refuses to write (a
 // repeated key, a malformed leaf). rows is the batch's record count. Cipher
-// validation, extension, context and production decoding are kept.
+// validation, scope, context and production decoding are kept.
 func (cph *Cipher) OpenFrameForTest(ctx context.Context, encoded []byte, rows int, plan *record.Plan) ([]record.Source, error) {
 	if cph == nil {
 		return nil, fmt.Errorf("%w: Open on a nil *Cipher", ErrEncoding)

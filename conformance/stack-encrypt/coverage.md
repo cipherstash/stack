@@ -136,7 +136,7 @@ Each runs in native Rust and Go WASI under `test:conformance`.
 |---|---|---|
 | `value_kinds.json` and its runners | `i8-*`, `u8-*`, `i16-*`, `u16-*`, `u32-*`, `i128-*`, `u128-*`, `f32-*`, `f64-*`, `bytes-*`, `decimal-*`, `date-*`, `timestamp-*`, `sealed-*`, `sql-*`, `*-given-*` | Typed Rust term comparisons and generated Go methods |
 | Native `dynamic/query.rs` refusal tests, Go `TestAQueryTheFieldDoesNotAnswerIsRefused` | Every `record-query-refusals-v1` case | Tree-notation inputs, the hand-built match options, generated query methods |
-| Native typed refusal tests in `tests/op.rs` | The `typed` entries | Case-sensitivity mismatch, batch and `via` forms |
+| Native typed refusal tests in `tests/op.rs` | The `typed` entries | Case-sensitivity mismatch, batch and `via` forms, which the API plan removes (its step 3) |
 | Native `a_stored_record_that_does_not_fit`, the read profile | `shape-*`, `authenticated-*`, `success-*` | Mutation vocabulary over real ciphertext |
 | Guest `test_frame` and `last_error` tests | `transport-*`, `leaf-*` | Plan-frame boundary cases, ABI status mapping |
 
