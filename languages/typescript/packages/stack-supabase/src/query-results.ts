@@ -35,7 +35,6 @@ export type RawSupabaseResult = {
 export type DecryptContext = EncryptionContext & {
   selectColumns: string | null
   resultMode: ResultMode
-  hasMutation: boolean
 }
 
 /**
@@ -86,26 +85,46 @@ function postprocessDecryptedRow(
 }
 
 /**
- * The path of the first EQL payload anywhere in `value`, or `null` if there is
- * none. Paths read the way a caller wrote the select: `users.email`, or
- * `users[1].email` inside an embedded to-many relation.
+ * An EQL payload as stored: {@link isEncryptedPayload} (the predicate model
+ * decryption uses) plus the `i: { t, c }` table/column identifier every stored
+ * envelope carries. The identifier check keeps a plaintext jsonb value that
+ * merely has `v`, `i` and `c` keys from failing a read.
  */
-function findEncryptedPayload(value: unknown, path: string): string | null {
-  if (isEncryptedPayload(value)) return path
+function isStoredEnvelope(value: unknown): boolean {
+  if (!isEncryptedPayload(value)) return false
+  const id = (value as { i: unknown }).i as { t?: unknown; c?: unknown } | null
+  return id !== null && typeof id.t === 'string' && typeof id.c === 'string'
+}
+
+/**
+ * The key/index chain to the first EQL payload in `value`, or `null` if there
+ * is none. The chain is built only on a hit, so the scan of a clean row — the
+ * usual case — allocates nothing per value.
+ */
+function findEnvelope(value: unknown): Array<string | number> | null {
+  if (isStoredEnvelope(value)) return []
+  if (value === null || typeof value !== 'object') return null
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      const found = findEncryptedPayload(value[i], `${path}[${i}]`)
-      if (found !== null) return found
+      const found = findEnvelope(value[i])
+      if (found !== null) return [i, ...found]
     }
     return null
   }
-  if (value !== null && typeof value === 'object') {
-    for (const [key, child] of Object.entries(value)) {
-      const found = findEncryptedPayload(child, path ? `${path}.${key}` : key)
-      if (found !== null) return found
-    }
+  for (const key in value) {
+    const found = findEnvelope((value as Record<string, unknown>)[key])
+    if (found !== null) return [key, ...found]
   }
   return null
+}
+
+/** Render a chain the way a caller wrote the select: `users[1].email`. */
+function renderPath(chain: Array<string | number>): string {
+  return chain
+    .map((step, i) =>
+      typeof step === 'number' ? `[${step}]` : i === 0 ? step : `.${step}`,
+    )
+    .join('')
 }
 
 /**
@@ -119,20 +138,17 @@ function findEncryptedPayload(value: unknown, path: string): string | null {
  * exists to prevent — so fail instead. The message names the path, never the
  * value.
  */
-function assertNoCiphertext(rows: unknown, ctx: DecryptContext): void {
-  const path = Array.isArray(rows)
-    ? rows.reduce<string | null>(
-        (found, row) => found ?? findEncryptedPayload(row, ''),
-        null,
-      )
-    : findEncryptedPayload(rows, '')
-  if (path === null) return
+function assertNoCiphertext(data: unknown, ctx: DecryptContext): void {
+  for (const row of Array.isArray(data) ? data : [data]) {
+    const chain = findEnvelope(row)
+    if (chain === null) continue
 
-  const message = `[supabase v3]: table "${ctx.tableName}" has no encrypted columns, but the result holds an encrypted value at "${path}". It is not decrypted here: an embedded relation to an encrypted table is not supported (query that table directly), and in declared mode every encrypted column must be declared with a \`types.*\` factory.`
-  throw new EncryptionFailedError(message, {
-    type: EncryptionErrorTypes.DecryptionError,
-    message,
-  })
+    const message = `[supabase v3]: table "${ctx.tableName}" has no encrypted columns, but the result holds an encrypted value at "${renderPath(chain)}". It is not decrypted here: an embedded relation to an encrypted table is not supported (query that table directly), and in declared mode every encrypted column must be declared with a \`types.*\` factory.`
+    throw new EncryptionFailedError(message, {
+      type: EncryptionErrorTypes.DecryptionError,
+      message,
+    })
+  }
 }
 
 /**
@@ -148,6 +164,14 @@ export async function decryptResults<T extends object, TData = T[]>(
   result: RawSupabaseResult,
   ctx: DecryptContext,
 ): Promise<EncryptedSupabaseResponse<TData>> {
+  const respond = (data: TData | null): EncryptedSupabaseResponse<TData> => ({
+    data,
+    error: null,
+    count: result.count ?? null,
+    status: result.status,
+    statusText: result.statusText,
+  })
+
   // If there's an error from Supabase, pass it through
   if (result.error) {
     return {
@@ -165,60 +189,21 @@ export async function decryptResults<T extends object, TData = T[]>(
   }
 
   // No data to decrypt
-  if (result.data === null || result.data === undefined) {
-    return {
-      data: null,
-      error: null,
-      count: result.count ?? null,
-      status: result.status,
-      statusText: result.statusText,
-    }
-  }
+  if (result.data === null || result.data === undefined) return respond(null)
 
-  // Determine if we need to decrypt
-  const hasSelect = ctx.selectColumns !== null
-  const hasMutationWithReturning = ctx.hasMutation && hasSelect
+  // No select means no row data to decrypt (e.g. insert without .select()).
+  if (ctx.selectColumns === null) return respond(result.data as TData)
 
-  if (hasSelect && !ctx.columns.hasEncryptedColumns) {
-    // A plaintext table (no encrypted columns) has nothing to decrypt, and is
-    // not registered with the encryption client either — both engines would
-    // refuse it as "a table this client was not initialized with" (see
-    // `tableHasEncryptedColumns`). Nor is there a `Date` to rebuild:
-    // `postprocessDecryptedRow` only touches encrypted columns. Return the rows
-    // as PostgREST sent them, once they are shown to hold no ciphertext.
+  // A plaintext table has nothing to decrypt and is not registered with the
+  // encryption client (see `tableHasEncryptedColumns`), so its rows are
+  // returned as sent — once they are shown to hold no ciphertext.
+  if (!ctx.columns.hasEncryptedColumns) {
     assertNoCiphertext(result.data, ctx)
-    return {
-      data: result.data as TData,
-      error: null,
-      count: result.count ?? null,
-      status: result.status,
-      statusText: result.statusText,
-    }
-  }
-
-  if (!hasSelect && !hasMutationWithReturning) {
-    // No select means no data to decrypt (e.g., insert without .select())
-    return {
-      data: result.data as TData,
-      error: null,
-      count: result.count ?? null,
-      status: result.status,
-      statusText: result.statusText,
-    }
+    return respond(result.data as TData)
   }
 
   // Decrypt based on result mode
   if (ctx.resultMode === 'single' || ctx.resultMode === 'maybeSingle') {
-    if (result.data === null) {
-      return {
-        data: null,
-        error: null,
-        count: result.count ?? null,
-        status: result.status,
-        statusText: result.statusText,
-      }
-    }
-
     // Single result — decrypt one model
     const decrypted = await withOpContext(
       // The table is passed for the WASM engine, which resolves date fields
@@ -242,31 +227,19 @@ export async function decryptResults<T extends object, TData = T[]>(
       )
     }
 
-    return {
-      // ONE row — `TData` is `T` on this path (`single`/`maybeSingle` narrow it),
-      // so no array wrapping and no cast pretending otherwise.
-      data: postprocessDecryptedRow(
+    // ONE row — `TData` is `T` on this path (`single`/`maybeSingle` narrow it),
+    // so no array wrapping and no cast pretending otherwise.
+    return respond(
+      postprocessDecryptedRow(
         decrypted.data as Record<string, unknown>,
         ctx,
       ) as TData,
-      error: null,
-      count: result.count ?? null,
-      status: result.status,
-      statusText: result.statusText,
-    }
+    )
   }
 
   // Array result — bulk decrypt
   const dataArray = result.data as Record<string, unknown>[]
-  if (dataArray.length === 0) {
-    return {
-      data: [] as TData,
-      error: null,
-      count: result.count ?? null,
-      status: result.status,
-      statusText: result.statusText,
-    }
-  }
+  if (dataArray.length === 0) return respond([] as TData)
 
   const decrypted = await withOpContext(
     // Table passed for the same reason as the single-row path above.
@@ -284,13 +257,9 @@ export async function decryptResults<T extends object, TData = T[]>(
     )
   }
 
-  return {
-    data: decrypted.data.map((row) =>
+  return respond(
+    decrypted.data.map((row) =>
       postprocessDecryptedRow(row as Record<string, unknown>, ctx),
     ) as TData,
-    error: null,
-    count: result.count ?? null,
-    status: result.status,
-    statusText: result.statusText,
-  }
+  )
 }

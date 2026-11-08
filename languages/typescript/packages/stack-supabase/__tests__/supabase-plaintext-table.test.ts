@@ -8,6 +8,7 @@ import type { IntrospectionData } from '../src/introspect'
 import {
   createMockEncryptionClient,
   createMockSupabase,
+  failingOperation,
   isFakeEnvelope,
 } from './helpers/supabase-mock'
 
@@ -31,28 +32,6 @@ import {
  * production did.
  */
 
-/** The wording each real engine uses: the native client's `unknownTableFailure`
- * for decrypts, the WASM client's `requireTable` for encrypts. */
-const notInitialized = (method: string, tableName: string) =>
-  method.toLowerCase().includes('decrypt')
-    ? '[eql/v3]: decryptModel received a table this client was not initialized with — pass one of the tables given to Encryption({ schemas })'
-    : `[eql/v3]: table "${tableName}" is not one this client was initialized with — pass a table given to Encryption({ schemas })`
-
-function failed(type: 'EncryptionError' | 'DecryptionError', message: string) {
-  const op = {
-    withLockContext: () => op,
-    audit: () => op,
-    then: (
-      onfulfilled?: ((value: unknown) => unknown) | null,
-      onrejected?: ((reason: unknown) => unknown) | null,
-    ) =>
-      Promise.resolve({
-        failure: { type, message },
-      }).then(onfulfilled, onrejected),
-  }
-  return op
-}
-
 /**
  * An `Encryption` stand-in that, like both real engines, only serves the tables
  * it was initialized with. Records what it was given so a test can assert the
@@ -73,12 +52,12 @@ function registryEnforcingFactory() {
       (input: unknown, table: AnyV3Table | undefined, ...rest: unknown[]) => {
         calls.push(`${method}:${table?.tableName ?? '<none>'}`)
         if (table && !registered.includes(table.tableName)) {
-          return failed(
-            method.toLowerCase().includes('decrypt')
+          return failingOperation({
+            type: /decrypt/i.test(method)
               ? 'DecryptionError'
               : 'EncryptionError',
-            notInitialized(method, table.tableName),
-          )
+            message: `[eql/v3]: table "${table.tableName}" is not one this client was initialized with`,
+          })
         }
         return inner[method](input, table, ...rest)
       }
@@ -157,9 +136,13 @@ describe.each([
     expect(encryption.registered).toEqual(['users'])
   })
 
-  it('reads every row of a plaintext table', async () => {
+  it.each([
+    ['', false],
+    [' with throwOnError', true],
+  ])('reads every row of a plaintext table%s', async (_label, throwOnError) => {
     const { es, encryption } = await build(auditRows)
-    const { data, error } = await es.from('audit_log').select('id, action')
+    const query = es.from('audit_log').select('id, action')
+    const { data, error } = await (throwOnError ? query.throwOnError() : query)
 
     expect(error).toBeNull()
     expect(data).toEqual(auditRows)
@@ -179,42 +162,21 @@ describe.each([
     expect(data).toEqual(auditRows[0])
   })
 
-  it('reads a plaintext table with throwOnError without throwing', async () => {
-    const { es } = await build(auditRows)
-    const { data } = await es
-      .from('audit_log')
-      .select('id, action')
-      .throwOnError()
-    expect(data).toEqual(auditRows)
-  })
-
-  it('inserts into a plaintext table and returns the row via .select()', async () => {
-    const { es, encryption, supabase } = await build([auditRows[0]])
+  it.each([
+    ['one row', auditRows[0]],
+    ['several rows', auditRows],
+  ])('inserts %s and returns them via .select()', async (_label, rows) => {
+    const { es, encryption, supabase } = await build([rows].flat())
     const { data, error } = await es
       .from('audit_log')
-      .insert({ id: 1, action: 'login' })
+      .insert(rows)
       .select('id, action')
 
     expect(error).toBeNull()
-    expect(data).toEqual([auditRows[0]])
-    // The row went to PostgREST exactly as written — no encrypt step ran.
-    expect(supabase.callsFor('insert')[0].args[0]).toEqual({
-      id: 1,
-      action: 'login',
-    })
+    expect(data).toEqual([rows].flat())
+    // The rows went to PostgREST exactly as written — no encrypt step ran.
+    expect(supabase.callsFor('insert')[0].args[0]).toEqual(rows)
     expect(encryption.calls).toEqual([])
-  })
-
-  it('bulk-inserts into a plaintext table', async () => {
-    const { es, supabase } = await build(auditRows)
-    const { data, error } = await es
-      .from('audit_log')
-      .insert(auditRows)
-      .select('id, action')
-
-    expect(error).toBeNull()
-    expect(data).toEqual(auditRows)
-    expect(supabase.callsFor('insert')[0].args[0]).toEqual(auditRows)
   })
 
   it('still encrypts and decrypts the encrypted table on the same instance', async () => {
@@ -296,8 +258,12 @@ describe('plaintext table rows that carry ciphertext', () => {
     expect(error?.message).toContain('"action"')
   })
 
-  it('leaves a plaintext jsonb value that is not an envelope alone', async () => {
-    const rows = [{ id: 1, meta: { v: 3, note: 'not ciphertext' } }]
+  it.each([
+    ['without the envelope keys', { v: 3, note: 'not ciphertext' }],
+    ['with v, i and c but no table/column identifier', { v: 1, i: {}, c: 'x' }],
+    ['with a null identifier', { v: 1, i: null, c: 'x' }],
+  ])('leaves a plaintext jsonb value %s alone', async (_label, meta) => {
+    const rows = [{ id: 1, meta }]
     const { es } = await introspectedClient(rows)
     const { data, error } = await es.from('audit_log').select('id, meta')
 

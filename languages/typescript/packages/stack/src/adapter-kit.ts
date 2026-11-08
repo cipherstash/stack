@@ -18,11 +18,10 @@
  * The full member list is small on purpose; every addition is an audit decision.
  */
 
-// Model → encrypted-PG-composite helpers used by the v2 Supabase mutation path.
-// The predicate model decryption uses to find ciphertext in a row. Adapters that
-// pass a row through WITHOUT decrypting it use the same one to refuse a row that
-// still carries ciphertext, so "what counts as an encrypted value" has one
-// spelling.
+// Model → encrypted-PG-composite helpers used by the v2 Supabase mutation path,
+// and `isEncryptedPayload`, the predicate model decryption uses to find
+// ciphertext in a row — for adapters that must refuse a row they pass through
+// undecrypted.
 export {
   bulkModelsToEncryptedPgComposites,
   isEncryptedPayload,

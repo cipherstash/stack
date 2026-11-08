@@ -29,8 +29,7 @@ const audit = encryptedTable(AUDIT, {})
 const sql = postgres(databaseUrl(), { prepare: false })
 
 beforeAll(async () => {
-  await sql.unsafe(`DROP TABLE IF EXISTS ${SECRETS}`)
-  await sql.unsafe(`DROP TABLE IF EXISTS ${AUDIT}`)
+  await sql.unsafe(`DROP TABLE IF EXISTS ${SECRETS}, ${AUDIT}`)
   // The encrypted table is not under test. It is here because introspection
   // mode refuses a database with no EQL v3 column at all, and this suite must
   // not depend on another suite's table still existing.
@@ -54,28 +53,28 @@ beforeAll(async () => {
 }, 300_000)
 
 afterAll(async () => {
-  await sql.unsafe(`DROP TABLE IF EXISTS ${SECRETS}`)
-  await sql.unsafe(`DROP TABLE IF EXISTS ${AUDIT}`)
+  await sql.unsafe(`DROP TABLE IF EXISTS ${SECRETS}, ${AUDIT}`)
   await sql.end()
 })
 
 describe.each([
   [
     'introspection mode',
+    'i',
     () =>
       encryptedSupabase(makePostgrestClient(), { databaseUrl: databaseUrl() }),
   ],
   [
     'declared mode',
+    'd',
     () =>
       encryptedSupabase(makePostgrestClient(), {
         schemas: { [SECRETS]: secrets, [AUDIT]: audit } as never,
       }),
   ],
-] as const)('plaintext table — %s', (mode, build) => {
+] as const)('plaintext table — %s', (mode, key, build) => {
   // biome-ignore lint/suspicious/noExplicitAny: the row type is not declared here
   let instance: any
-  const key = mode.startsWith('introspection') ? 'i' : 'd'
 
   beforeAll(async () => {
     instance = await build()

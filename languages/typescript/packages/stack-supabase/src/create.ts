@@ -423,12 +423,8 @@ async function construct(
 
   // 5. Build the raw (eqlVersion 3) encryption client from the merged tables.
   //    Pass only tables that carry at least one encrypted column: `Encryption`
-  //    requires a non-empty schema list, and a plaintext table gives it nothing
-  //    to do. The query builder passes the table to every model operation
-  //    (`decryptModel(row, table)` and friends), and both engines refuse a table
-  //    they were not initialized with — so the builder must never hand them a
-  //    plaintext table. It doesn't: `ColumnMap.hasEncryptedColumns` reads the
-  //    same predicate and short-circuits the encrypt and decrypt steps for it.
+  //    requires a non-empty schema list, and the query builder keeps plaintext
+  //    tables away from the client (see `tableHasEncryptedColumns`).
   const encryptionSchemas = [...synth.tables.values()].filter(
     tableHasEncryptedColumns,
   )
