@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -66,6 +68,16 @@ func JSONText(v any) ([]byte, error) {
 		return nil, fmt.Errorf("%w: the MarshalJSON or MarshalText of %s failed, in a %T", encrypt.ErrEncoding, marshalerErr.Type, v)
 	}
 	return nil, fmt.Errorf("%w: a %T does not write as JSON", encrypt.ErrEncoding, v)
+}
+
+// isGoString reports whether v is a Go string, a type defined over one, or
+// a pointer to either, that encoding/json writes as one JSON string: one
+// with no MarshalJSON or MarshalText of its own. A containment needle and
+// Match's vars refuse it, since JSON text in a Go string is the likely
+// mistake.
+func isGoString(v any) bool {
+	t := throughPointer(v)
+	return t != nil && t.Kind() == reflect.String && writesItself(v) == ""
 }
 
 // writesItself names the encoding/json interface v implements to write
@@ -179,7 +191,7 @@ func (f Field[T]) jsonOperand(v any) ([]byte, error) {
 func JSONQuery[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, operator string, needle any) (Q, error) {
 	// A Go string is one JSON string, and a document of members never
 	// contains one: it is almost always JSON text meant as the needle.
-	if t := throughPointer(needle); t != nil && t.Kind() == reflect.String && writesItself(needle) == "" {
+	if isGoString(needle) {
 		return nil, fmt.Errorf("%w: gensupport: %s: a %T needle is one JSON string, not JSON text; pass JSON text as json.RawMessage, or a map or struct", encrypt.ErrEncoding, f.name, needle)
 	}
 	if needle == nil {
@@ -239,6 +251,184 @@ func JSONBetweenAt[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt
 		return encrypt.JSONRange[Q]{}, err
 	}
 	return encrypt.JSONRange[Q]{Low: Q(term.Terms[0]), High: Q(term.Terms[1])}, nil
+}
+
+// JSONElementMatch derives element_match on a JSON field: the one operand
+// eql_v4.json_tree_element_match takes, which is true of a row where some
+// element of the array at path passes every predicate. path is an array
+// through its last wildcard ($.contacts[*]) that the field orders members
+// beneath ([record.TargetOptions.ElementArrays]).
+//
+// Refused before the engine is asked, each wrapping the sentinel the
+// engine's own refusal would: no predicates, a zero ElementPredicate, or a
+// predicate on the zero Path, which names no member
+// ([encrypt.ErrEncoding]); a member with a wildcard ([encrypt.ErrEncoding]);
+// a member whose full path the field does not order ([encrypt.ErrTerm]),
+// naming the member, the array and the members it orders. A member read
+// from the generated Paths is one the field orders; a member named at run
+// time, through the array accessor's Member, may not be. A value is
+// written as [JSONText] writes it. What the engine refuses past these, a
+// value that is not a number or a string say, is its [encrypt.Diagnostic].
+// opts.WildcardBound 0 sends no bound, and the engine's default, 64,
+// applies.
+func JSONElementMatch[Q ~[]byte, T, E any](ctx context.Context, f Field[T], c *encrypt.Cipher, path string, opts encrypt.JSONReadOptions, predicates []encrypt.ElementPredicate[E]) (Q, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if len(predicates) == 0 {
+		return nil, fmt.Errorf("%w: gensupport: %s: Match at %s needs at least one predicate: with none it is true of every row with an element", encrypt.ErrEncoding, f.name, path)
+	}
+	members := f.elementMembers(path)
+	list := make([]any, len(predicates))
+	for i, p := range predicates {
+		member, op, values := p.Member(), p.Op(), p.Values()
+		if op == "" {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: predicate %d is a zero ElementPredicate; make one with encrypt.AtPath and a path from the generated Paths, or with the array's Member", encrypt.ErrEncoding, f.name, path, i)
+		}
+		if member == "" {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: predicate %d names no member, as a zero encrypt.Path does; read the path from the generated Paths (%s)", encrypt.ErrEncoding, f.name, path, i, orderedMembers(members))
+		}
+		if strings.Contains(member, "[*]") {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: the member %q has a wildcard; a member names one field of each element (%s)", encrypt.ErrEncoding, f.name, path, member, orderedMembers(members))
+		}
+		if !slices.Contains(members, member) {
+			return nil, fmt.Errorf("%w: gensupport: %s: Match at %s: the member %q is not ordered, so no element carries a term to compare (%s); order its full path in the field's tag, ordered=", encrypt.ErrTerm, f.name, path, member, orderedMembers(members))
+		}
+		entry := vcvalue.Object{{Key: "member", Value: member}, {Key: "op", Value: op}}
+		// Each comparison gives its op its values: between the low and
+		// the high, every other op one.
+		keys := []string{"json"}
+		if op == "between" {
+			keys = []string{"low", "high"}
+		}
+		for j, key := range keys {
+			text, err := f.jsonOperand(values[j])
+			if err != nil {
+				return nil, err
+			}
+			entry = append(entry, vcvalue.Field{Key: key, Value: text})
+		}
+		list[i] = entry
+	}
+	input := vcvalue.Object{{Key: "path", Value: path}}
+	if opts.WildcardBound != 0 {
+		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
+	}
+	input = append(input, vcvalue.Field{Key: "predicates", Value: list})
+	term, err := f.jsonTerm(ctx, c, "element_match", "eql", 1, input)
+	if err != nil {
+		return nil, err
+	}
+	return Q(term.Terms[0]), nil
+}
+
+// JSONMatch derives match on a JSON field: the one operand
+// eql_v4.json_tree_match and `@@` take, a jsonpath predicate compiled into
+// a boolean tree of the other operators' operands. The predicate crosses
+// as it is: the engine parses and compiles it, and nothing here reads it.
+//
+// vars are the predicate's variables ($name), the jsonb that
+// jsonb_path_match takes third: any value [JSONText] writes as a JSON
+// object, such as a map, a struct or a json.RawMessage of one. They answer
+// as the same Go value bound as jsonb_path_match's vars through pgx or
+// database/sql answers over plaintext:
+//
+//   - A nil value (nil, or a nil map, slice, pointer or json.RawMessage)
+//     is SQL NULL there, and jsonb_path_match is NULL for every row. Match
+//     returns an empty operand, which binds as NULL, so `@@` and
+//     json_tree_match are NULL for every row too. The predicate is still
+//     compiled, so text the grammar does not read is still refused; a
+//     variable it names is not, as plaintext does not look for one.
+//   - A value that writes the JSON null (a json.RawMessage of null, or a
+//     pointer to a nil map) is refused as not an object, as plaintext
+//     refuses "vars" that are not an object.
+//   - Any other json.RawMessage crosses as it is, so an empty or
+//     whitespace-only one is refused by the engine as not JSON, as "{" is.
+//
+// A Go string or a non-nil pointer to one is refused, as [JSONQuery]
+// refuses a needle: it writes one JSON string, and JSON text in a Go string
+// is the likely mistake.
+//
+// What the engine refuses (text it does not read, a construct the index
+// cannot answer, a variable vars do not hold, vars that are not an
+// object, an ordering at a path the field does not order) is its
+// [encrypt.Diagnostic]. opts.WildcardBound 0 sends no bound, and the
+// engine's default, 64, applies.
+func JSONMatch[Q ~[]byte, T any](ctx context.Context, f Field[T], c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (Q, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	input := vcvalue.Object{{Key: "predicate", Value: predicate}}
+	if opts.WildcardBound != 0 {
+		input = append(input, vcvalue.Field{Key: "wildcard_bound", Value: opts.WildcardBound})
+	}
+	if isNilValue(vars) {
+		// SQL NULL vars: compile with none for what plaintext refuses
+		// before it reads vars, and answer with the empty operand.
+		if _, err := f.jsonTerm(ctx, c, "match", "eql", 1, input); err != nil && !isUnknownVariable(err) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if isGoString(vars) {
+		return nil, fmt.Errorf("%w: gensupport: %s: Match takes vars as a JSON object, and a %T is one JSON string; pass JSON text as json.RawMessage, or a map or struct", encrypt.ErrEncoding, f.name, vars)
+	}
+	text, err := f.jsonOperand(vars)
+	if err != nil {
+		return nil, err
+	}
+	input = append(input, vcvalue.Field{Key: "vars", Value: text})
+	term, err := f.jsonTerm(ctx, c, "match", "eql", 1, input)
+	if err != nil {
+		return nil, err
+	}
+	return Q(term.Terms[0]), nil
+}
+
+// isNilValue reports whether v is nil, or a nil map, slice, pointer or
+// interface value: what database/sql and pgx bind as SQL NULL.
+func isNilValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Pointer, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
+}
+
+// isUnknownVariable reports whether err is the engine's refusal of a
+// $name that vars do not hold.
+func isUnknownVariable(err error) bool {
+	var d *encrypt.Diagnostic
+	return errors.As(err, &d) && d.Reason() == "json_predicate_unknown_variable"
+}
+
+// orderedMembers says which members of an array's elements the field
+// orders.
+func orderedMembers(members []string) string {
+	if len(members) == 0 {
+		return "the field orders no member beneath this array"
+	}
+	return "the field orders " + strings.Join(members, ", ") + " beneath this array"
+}
+
+// elementMembers are the members the field orders beneath the array at
+// path, as its declaration's ordered paths give them.
+func (f Field[T]) elementMembers(path string) []string {
+	if f.plan == nil {
+		return nil
+	}
+	if pf := f.plan.Field(f.name); pf != nil {
+		for _, a := range pf.TargetOptions.ElementArrays() {
+			if a.Path == path {
+				return a.Members
+			}
+		}
+	}
+	return nil
 }
 
 // JSONSelect prepares `->` at a path on a JSON field: the selector to

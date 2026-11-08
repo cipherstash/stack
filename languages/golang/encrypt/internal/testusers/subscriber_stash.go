@@ -139,13 +139,22 @@ type SubscriberProfileField struct {
 	// At has one accessor per path the field orders, whose methods
 	// are the orderings there.
 	At SubscriberProfileFieldAt
+	// Elements has one accessor per array whose elements have ordered
+	// members, whose Match tests the members of one element together.
+	Elements SubscriberProfileFieldElements
 }
 
 func newSubscriberProfileField(f gensupport.Field[SubscriberProfile]) SubscriberProfileField {
-	return SubscriberProfileField{field: f, At: SubscriberProfileFieldAt{
-		Age:      SubscriberProfileFieldPath{field: f, path: "$.age"},
-		VisitsAt: SubscriberProfileFieldPath{field: f, path: "$.visits[*].at"},
-	}}
+	return SubscriberProfileField{
+		field: f,
+		At: SubscriberProfileFieldAt{
+			Age:      SubscriberProfileFieldPath{field: f, path: "$.age"},
+			VisitsAt: SubscriberProfileFieldPath{field: f, path: "$.visits[*].at"},
+		},
+		Elements: SubscriberProfileFieldElements{
+			Visits: SubscriberProfileFieldArray[SubscriberProfileFieldElementsVisits]{field: f, path: "$.visits[*]"},
+		},
+	}
 }
 
 // Encrypt seals one Profile document for an update of its stored column.
@@ -215,6 +224,108 @@ func (f SubscriberProfileField) Children(ctx context.Context, c *encrypt.Cipher,
 // empty container, NULL where the row has no node there or for the sealed root.
 func (f SubscriberProfileField) ChildCount(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
+}
+
+// Match derives the operand for a jsonpath predicate over the document, as
+// plaintext jsonb_path_match(col, predicate, vars) takes one: bind it as col @@
+// $1::eql_v4.query_json_predicate, or eql_v4.json_tree_match(col,
+// $1::eql_v4.query_json_predicate). vars are the predicate's variables ($name):
+// a map, a struct or a json.RawMessage that writes a JSON object, and an empty
+// map when there are none. A nil vars is SQL NULL, as pgx and database/sql bind
+// it over plaintext: the operand is empty, binds as NULL, and matches no row,
+// as jsonb_path_match does with NULL vars.
+//
+// The engine reads the predicate, and nothing in Go does: paths of .key,
+// ."quoted key" and [*] steps; ==, !=, <, <=, > and >= between a path and a
+// variable or a JSON literal; exists(path), and exists(path ? (@.m == $v && @.n
+// > $w)) for several members of one array element; &&, || and !(…). Anything
+// else is refused, before any term is derived, as an *encrypt.Diagnostic
+// wrapping encrypt.ErrEncoding whose Reason, Construct and At name the refusal
+// and the byte offset in predicate where it starts. An ordering at a path the
+// tag does not order, or a member of a filter of more than one condition that
+// it does not order, is refused wrapping encrypt.ErrTerm.
+//
+// The tree is evaluated inside eql_v4.json_tree_match, which engages no index:
+// every row the scan gives it is opened and tested. The per-operator methods
+// engage the GIN index for @> (EqAt, Contains) and a btree on an ordered path's
+// term (At.<Path>), so a query that needs an index writes those leaves with
+// them, or narrows the rows with one beside Match.
+//
+// A query returns jsonb_path_match's rows over the plaintext, and each row
+// answers as it does, true, false or NULL, save five cases. Lax mode's
+// unwrapping of an array the path names no [*] for is not applied: write [*].
+// Nor is its wrapping of a value that is not an array under [*]. A string
+// compared with a number is false under == and true under !=, where jsonpath
+// says unknown. Orderings, and filters of more than one condition, compare
+// folded ordering terms: text case- and accent-folded, numbers as float64, so
+// such a filter's == is of folded values; == elsewhere is exact. An ordering of
+// a JSON null is NULL where jsonpath says false, except under an odd number of
+// !, which returns the same rows; there the operand also asks that the node is
+// not null, which tells the database which rows hold null at the path.
+//
+// A filter of more than one condition reads each array to opts.WildcardBound
+// elements, 64 when it is 0. A row whose array is longer fails the query with
+// SQLSTATE 22023 (invalid_parameter_value) rather than answer over part of it:
+// raise the bound past the longest array.
+func (f SubscriberProfileField) Match(ctx context.Context, c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (eql.JSONSearchPredicateQuery, error) {
+	return gensupport.JSONMatch[eql.JSONSearchPredicateQuery](ctx, f.field, c, predicate, vars, opts)
+}
+
+// SubscriberProfileFieldElements names the arrays of Profile whose elements
+// have ordered members. Each accessor's Match tests the members of one element
+// together.
+type SubscriberProfileFieldElements struct {
+	Visits SubscriberProfileFieldArray[SubscriberProfileFieldElementsVisits] // $.visits[*]: at
+}
+
+// SubscriberProfileFieldElementsVisits is the array $.visits[*] of Profile, as
+// a type: Elements.Visits.Match takes an
+// encrypt.ElementPredicate[SubscriberProfileFieldElementsVisits], which
+// encrypt.AtPath makes from a member under SubscriberPaths.Profile.Visits.
+type SubscriberProfileFieldElementsVisits struct{}
+
+// SubscriberProfileFieldArray is one array of Profile whose elements have
+// ordered members. E is the array's own type, which the predicates its Match
+// takes carry.
+type SubscriberProfileFieldArray[E any] struct {
+	field gensupport.Field[SubscriberProfile]
+	path  string
+}
+
+// Match derives the operand that finds a row where one element of this array
+// passes every predicate: eql_v4.json_tree_element_match(col,
+// $1::eql_v4.query_json_elements). An EqAt and an ordering at the array's paths
+// can each be answered by a different element; Match is answered by one. Make
+// each predicate with encrypt.AtPath and a member of this array under
+// SubscriberPaths, so a member of another array, or a value of another type,
+// does not compile; or with Member, for a member named at run time. No
+// predicates, and a zero ElementPredicate, are refused before the engine is
+// asked.
+//
+// Each comparison is of the member's ordering term, so Eq is an equality of
+// folded values: text compares case- and accent-folded ("sibling" equals
+// "Sibling"), and integers past 2^53 can tie. EqAt at a member's full path is
+// exact, of any element.
+//
+// The operand reads each array to opts.WildcardBound elements, 64 when it is 0.
+// A row whose array is longer fails the query with SQLSTATE 22023
+// (invalid_parameter_value) rather than answer over part of it: raise the bound
+// past the longest array. The function filters the rows a scan gives it, so
+// narrow them with an indexed predicate first, such as @> on the same values.
+func (a SubscriberProfileFieldArray[E]) Match(ctx context.Context, c *encrypt.Cipher, opts encrypt.JSONReadOptions, predicates ...encrypt.ElementPredicate[E]) (eql.JSONSearchElementsQuery, error) {
+	return gensupport.JSONElementMatch[eql.JSONSearchElementsQuery](ctx, a.field, c, a.path, opts, predicates)
+}
+
+// Member is the comparisons of the member of this array's elements that member
+// names, for a filter whose members are known only at run time: relationship,
+// or address.city, written as the member is written below the array in the
+// field's ordered paths. Its values are not checked by the compiler, and Match
+// refuses a member the field does not order beneath this array, naming it, the
+// array and the members the field orders there, before the engine is asked.
+// Where the member is known when the program is written, use encrypt.AtPath and
+// SubscriberPaths.
+func (a SubscriberProfileFieldArray[E]) Member(member string) encrypt.MemberTest[E, any] {
+	return encrypt.AtPath(encrypt.NewPath[E, any](a.path, member))
 }
 
 // SubscriberProfileFieldAt names the declared ordered paths of Profile. Use an
@@ -362,6 +473,51 @@ func (f SubscriberPrefsField) ChildCount(ctx context.Context, c *encrypt.Cipher,
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
 }
 
+// Match derives the operand for a jsonpath predicate over the document, as
+// plaintext jsonb_path_match(col, predicate, vars) takes one: bind it as col @@
+// $1::eql_v4.query_json_predicate, or eql_v4.json_tree_match(col,
+// $1::eql_v4.query_json_predicate). vars are the predicate's variables ($name):
+// a map, a struct or a json.RawMessage that writes a JSON object, and an empty
+// map when there are none. A nil vars is SQL NULL, as pgx and database/sql bind
+// it over plaintext: the operand is empty, binds as NULL, and matches no row,
+// as jsonb_path_match does with NULL vars.
+//
+// The engine reads the predicate, and nothing in Go does: paths of .key,
+// ."quoted key" and [*] steps; ==, !=, <, <=, > and >= between a path and a
+// variable or a JSON literal; exists(path), and exists(path ? (@.m == $v && @.n
+// > $w)) for several members of one array element; &&, || and !(…). Anything
+// else is refused, before any term is derived, as an *encrypt.Diagnostic
+// wrapping encrypt.ErrEncoding whose Reason, Construct and At name the refusal
+// and the byte offset in predicate where it starts. An ordering at a path the
+// tag does not order, or a member of a filter of more than one condition that
+// it does not order, is refused wrapping encrypt.ErrTerm.
+//
+// The tree is evaluated inside eql_v4.json_tree_match, which engages no index:
+// every row the scan gives it is opened and tested. The per-operator methods
+// engage the GIN index for @> (EqAt, Contains) and a btree on an ordered path's
+// term (At.<Path>), so a query that needs an index writes those leaves with
+// them, or narrows the rows with one beside Match.
+//
+// A query returns jsonb_path_match's rows over the plaintext, and each row
+// answers as it does, true, false or NULL, save five cases. Lax mode's
+// unwrapping of an array the path names no [*] for is not applied: write [*].
+// Nor is its wrapping of a value that is not an array under [*]. A string
+// compared with a number is false under == and true under !=, where jsonpath
+// says unknown. Orderings, and filters of more than one condition, compare
+// folded ordering terms: text case- and accent-folded, numbers as float64, so
+// such a filter's == is of folded values; == elsewhere is exact. An ordering of
+// a JSON null is NULL where jsonpath says false, except under an odd number of
+// !, which returns the same rows; there the operand also asks that the node is
+// not null, which tells the database which rows hold null at the path.
+//
+// A filter of more than one condition reads each array to opts.WildcardBound
+// elements, 64 when it is 0. A row whose array is longer fails the query with
+// SQLSTATE 22023 (invalid_parameter_value) rather than answer over part of it:
+// raise the bound past the longest array.
+func (f SubscriberPrefsField) Match(ctx context.Context, c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (eql.JSONSearchPredicateQuery, error) {
+	return gensupport.JSONMatch[eql.JSONSearchPredicateQuery](ctx, f.field, c, predicate, vars, opts)
+}
+
 // SubscriberLabelsField provides document queries and reads for the Labels
 // field.
 type SubscriberLabelsField struct {
@@ -437,3 +593,65 @@ func (f SubscriberLabelsField) Children(ctx context.Context, c *encrypt.Cipher, 
 func (f SubscriberLabelsField) ChildCount(ctx context.Context, c *encrypt.Cipher, path string) (encrypt.JSONToken, error) {
 	return gensupport.JSONNodeToken(ctx, f.field, c, "child_count", path)
 }
+
+// Match derives the operand for a jsonpath predicate over the document, as
+// plaintext jsonb_path_match(col, predicate, vars) takes one: bind it as col @@
+// $1::eql_v4.query_json_predicate, or eql_v4.json_tree_match(col,
+// $1::eql_v4.query_json_predicate). vars are the predicate's variables ($name):
+// a map, a struct or a json.RawMessage that writes a JSON object, and an empty
+// map when there are none. A nil vars is SQL NULL, as pgx and database/sql bind
+// it over plaintext: the operand is empty, binds as NULL, and matches no row,
+// as jsonb_path_match does with NULL vars.
+//
+// The engine reads the predicate, and nothing in Go does: paths of .key,
+// ."quoted key" and [*] steps; ==, !=, <, <=, > and >= between a path and a
+// variable or a JSON literal; exists(path), and exists(path ? (@.m == $v && @.n
+// > $w)) for several members of one array element; &&, || and !(…). Anything
+// else is refused, before any term is derived, as an *encrypt.Diagnostic
+// wrapping encrypt.ErrEncoding whose Reason, Construct and At name the refusal
+// and the byte offset in predicate where it starts. An ordering at a path the
+// tag does not order, or a member of a filter of more than one condition that
+// it does not order, is refused wrapping encrypt.ErrTerm.
+//
+// The tree is evaluated inside eql_v4.json_tree_match, which engages no index:
+// every row the scan gives it is opened and tested. The per-operator methods
+// engage the GIN index for @> (EqAt, Contains) and a btree on an ordered path's
+// term (At.<Path>), so a query that needs an index writes those leaves with
+// them, or narrows the rows with one beside Match.
+//
+// A query returns jsonb_path_match's rows over the plaintext, and each row
+// answers as it does, true, false or NULL, save five cases. Lax mode's
+// unwrapping of an array the path names no [*] for is not applied: write [*].
+// Nor is its wrapping of a value that is not an array under [*]. A string
+// compared with a number is false under == and true under !=, where jsonpath
+// says unknown. Orderings, and filters of more than one condition, compare
+// folded ordering terms: text case- and accent-folded, numbers as float64, so
+// such a filter's == is of folded values; == elsewhere is exact. An ordering of
+// a JSON null is NULL where jsonpath says false, except under an odd number of
+// !, which returns the same rows; there the operand also asks that the node is
+// not null, which tells the database which rows hold null at the path.
+//
+// A filter of more than one condition reads each array to opts.WildcardBound
+// elements, 64 when it is 0. A row whose array is longer fails the query with
+// SQLSTATE 22023 (invalid_parameter_value) rather than answer over part of it:
+// raise the bound past the longest array.
+func (f SubscriberLabelsField) Match(ctx context.Context, c *encrypt.Cipher, predicate string, vars any, opts encrypt.JSONReadOptions) (eql.JSONSearchPredicateQuery, error) {
+	return gensupport.JSONMatch[eql.JSONSearchPredicateQuery](ctx, f.field, c, predicate, vars, opts)
+}
+
+// SubscriberPaths names the ordered members of the arrays of Subscriber's
+// documents, nested as the JSON nests them, for the element match:
+// encrypt.AtPath(SubscriberPaths.Profile.Visits.At) makes the predicates
+// SubscriberFields.Profile.Elements.Visits.Match takes. Each path's type names
+// its array and the member's Go type, so a predicate on another array's member,
+// or with a value of another type, does not compile.
+var SubscriberPaths = func() (paths struct {
+	Profile struct {
+		Visits struct {
+			At encrypt.Path[SubscriberProfileFieldElementsVisits, int64] // $.visits[*].at
+		}
+	}
+}) {
+	paths.Profile.Visits.At = encrypt.NewPath[SubscriberProfileFieldElementsVisits, int64]("$.visits[*]", "at")
+	return paths
+}()

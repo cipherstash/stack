@@ -27,7 +27,7 @@ var notes = []testusers.Note{
 }
 
 func TestContextFieldSealsEachRowUnderItsOwnContext(t *testing.T) {
-	c := deterministicClient(t)
+	c := contextFixtureClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
 
@@ -101,7 +101,7 @@ func TestContextFieldSealsEachRowUnderItsOwnContext(t *testing.T) {
 }
 
 func TestContextFieldQueriesNameTheContext(t *testing.T) {
-	c := deterministicClient(t)
+	c := contextFixtureClient(t)
 	ctx := context.Background()
 	cipher := c.DefaultKeyset()
 	encrypted, err := testusers.EncryptNote(ctx, cipher, notes)
@@ -185,9 +185,7 @@ func TestGeneratedCodeOpensTheRustContextFieldFixture(t *testing.T) {
 		t.Fatalf("seed: %v (%d bytes)", err, len(seedBytes))
 	}
 	c, err := encrypt.NewDeterministicClient(context.Background(), [32]byte(seedBytes))
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,4 +231,16 @@ func TestGeneratedCodeOpensTheRustContextFieldFixture(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A missing guest skips optional runs and fails required conformance.
+func contextFixtureClient(t *testing.T) *encrypt.Client {
+	t.Helper()
+	c, err := encrypt.NewDeterministicClient(context.Background(), testSeed)
+	skipMissingConformanceGuest(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
 }

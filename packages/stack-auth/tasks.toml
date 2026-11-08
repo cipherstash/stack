@@ -69,3 +69,7 @@ run = "mise x --env test -- cargo +nightly fuzz run jwt_decode --sanitizer none 
 ["mutants:stack-auth"]
 description = "Full mutation-testing sweep of stack-auth (cargo-mutants; ~15 min)"
 run = "mise x --env test -- cargo mutants -p stack-auth --jobs 4"
+
+["test:soak:stack-auth"]
+description = "Run the long seeded auth refresh cancellation soak (virtual time, no credentials)"
+run = "mise x --env test -- cargo nextest run --locked -p stack-auth --all-features --run-ignored ignored-only -E 'test(cancellation_soak_long)' --success-output final"

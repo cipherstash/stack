@@ -23,6 +23,7 @@
 
 mod common;
 
+use stack_encrypt::{AsProtectedRef as _, Protected};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -93,7 +94,7 @@ fn plaintext_json() -> Json {
 // ---- JSON <-> frames, for the subset the fixture uses ---------------------
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
-fn frame_of_json(value: &Json) -> Vec<u8> {
+fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
     vitaminc_aead_frame::serde::to_vec(value).expect("frames")
 }
 
@@ -395,7 +396,8 @@ async fn open_lowered(
 #[tokio::test]
 async fn the_chain_and_the_lowering_are_one_engine_today() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(&frame_of_json(&data_plan_json())).expect("the data plan parses");
+    let plan = record::plan(frame_of_json(&data_plan_json()).as_protected_ref())
+        .expect("the data plan parses");
 
     let typed = json_of_record(seal_typed(&cipher).await);
     let lowered = json_of_record(seal_lowered(&cipher, &plan).await);
@@ -421,14 +423,17 @@ async fn the_chain_and_the_lowering_are_one_engine_today() {
 /// The committed fixture: records each author sealed in an earlier run,
 /// opened by the other now, their terms the ones derived now. With
 /// `STACK_ENCRYPT_UPDATE_FIXTURES=1` the records are sealed afresh and
-/// written; the terms and the plaintext never change.
+/// written; the terms and the plaintext never change. Updates panic when
+/// `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
 async fn the_committed_fixture_opens_both_ways() {
+    let update = common::fixture_updates_requested_or_panic();
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(&frame_of_json(&data_plan_json())).expect("the data plan parses");
+    let plan = record::plan(frame_of_json(&data_plan_json()).as_protected_ref())
+        .expect("the data plan parses");
     let path = fixture_path();
 
-    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+    if update {
         let mut fixture = committed_fixture(&path);
         let entries = fixture.as_object_mut().expect("an object");
         let _ = entries.insert("_comment".into(), json!("Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
@@ -621,7 +626,12 @@ fn note_of_record(tree: StackCipherText) -> FieldValues {
                             let _ = values.insert(&name, id);
                         }
                         Err(_) => {
-                            let text = ValueFrame::from_bytes(&payload.0).expect("a value");
+                            let text = ValueFrame::from_bytes(
+                                Protected::new(payload.0.clone())
+                                    .as_protected_ref()
+                                    .as_deref(),
+                            )
+                            .expect("a value");
                             assert_eq!(text.kind(), Some(ValueKind::String), "the tenant is text");
                             let _ = values.insert(&name, text);
                         }
@@ -693,7 +703,8 @@ async fn open_note_lowered(
 #[tokio::test]
 async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(&frame_of_json(&note_plan_json())).expect("the data plan parses");
+    let plan = record::plan(frame_of_json(&note_plan_json()).as_protected_ref())
+        .expect("the data plan parses");
     assert_eq!(plan.context_field(), Some("tenant"));
 
     let typed = json_of_record(seal_note_typed(&cipher).await);
@@ -736,14 +747,16 @@ async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
 /// The committed context-field case, under the fixture's `context_field`
 /// key: sealed by each author in an earlier run, opened by the other now.
 /// With `STACK_ENCRYPT_UPDATE_FIXTURES=1` this test rewrites that key and
-/// nothing else in the file.
+/// nothing else in the file. Updates panic when `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
 async fn the_committed_context_field_case_opens_both_ways() {
+    let update = common::fixture_updates_requested_or_panic();
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(&frame_of_json(&note_plan_json())).expect("the data plan parses");
+    let plan = record::plan(frame_of_json(&note_plan_json()).as_protected_ref())
+        .expect("the data plan parses");
     let path = fixture_path();
 
-    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+    if update {
         let mut fixture = committed_fixture(&path);
         let _ = fixture.as_object_mut().expect("an object").insert(
             "context_field".into(),
@@ -812,7 +825,7 @@ async fn the_committed_context_field_case_opens_both_ways() {
 #[tokio::test]
 async fn the_fixture_records_are_bound_to_their_labels() {
     let cipher = deterministic_cipher(SEED).await;
-    let plan = record::plan(&frame_of_json(&data_plan_json())).expect("plan");
+    let plan = record::plan(frame_of_json(&data_plan_json()).as_protected_ref()).expect("plan");
     let sealed = seal_lowered(&cipher, &plan).await;
     let CipherText::Map(mut fields) = sealed else {
         panic!("a map");
@@ -836,4 +849,9 @@ async fn the_fixture_records_are_bound_to_their_labels() {
         }
         Ok(_) => panic!("a leaf under another field's label opened"),
     }
+}
+
+#[test]
+fn enrolled_fixture_tests_are_registered() {
+    common::assert_fixture_tests_registered("record_lowering");
 }

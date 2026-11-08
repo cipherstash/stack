@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 
 	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -60,8 +61,12 @@ type Bucket struct {
 // size the fetch at. None of it is secret: the server holds the filters and
 // the catalog holds the row count.
 type Stats struct {
-	// Rows is the rows the query scans, such as greatest(reltuples, 0)
-	// from pg_class.
+	// Rows is the rows the query scans, such as reltuples from pg_class
+	// read with a reltuples >= 0 filter. reltuples is -1 for a table never
+	// vacuumed or analysed: that is an unknown count, not an empty table,
+	// and a count of 0 would promise a fetch of exactly want. While the
+	// count is unknown, call no TargetLimit and page with a cursor, or run
+	// ANALYZE first.
 	Rows uint64
 	// Histogram is a measured histogram of the stored filters' set-bit
 	// counts. With none, the engine uses the index's declared prior, and
@@ -101,12 +106,14 @@ type Limit struct {
 func (l Limit) Rows() (uint64, bool) { return l.rows, l.bounded }
 
 // FetchOr is the rows to fetch, or page when no finite fetch can be
-// promised, for a caller that pages either way.
+// promised, for a caller that pages either way. Never more than
+// math.MaxInt64, the largest LIMIT PostgreSQL and database/sql take: a
+// larger page is cut to it.
 func (l Limit) FetchOr(page uint64) uint64 {
 	if l.bounded {
 		return l.rows
 	}
-	return page
+	return min(page, math.MaxInt64)
 }
 
 // QueryTerm derives the query term for one field of the plan, an operator

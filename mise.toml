@@ -40,6 +40,10 @@ golangci-lint = "2.14.0"
 # short name in mise's registry).
 "aqua:wasm-bindgen/wasm-pack" = "0.13.1"
 
+[tasks."test:conformance"]
+description = "Run shared Rust/Go cases (build the deterministic guest first)"
+run = "bash scripts/stack-conformance.sh"
+
 [tasks."test:doc"]
 description = "Run documentation tests"
 run = "mise x --env test -- cargo test --doc --all-features --workspace"
@@ -378,13 +382,21 @@ run = """
 #!/usr/bin/env bash
 set -euo pipefail
 : "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
-mise -C packages/eql run build
-psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f packages/eql/release/cipherstash-encrypt-v4.sql
+# The conformance task owns SQL setup and the JSON PostgreSQL tests.
+mise run test:conformance:eql:postgres
 cd languages/golang
+# The PostgreSQL tests, named once: the -run pattern and the check below
+# are both derived from this list.
+TESTS=(
+  TestEQLTypesRoundTripAndQueryInPostgres
+  TestEQLOrderMatchesPlaintextInPostgres
+  TestQueriesRunAgainstPostgres
+)
+pattern="^($(IFS='|'; echo "${TESTS[*]}"))$"
 # The tests skip without DATABASE_URL and without their guest builds; -v and
 # the grep turn either skip into a failure here, where both are provided.
 DATABASE_URL="$EQL_TEST_DATABASE_URL" CGO_ENABLED=0 go test -count=1 -v \
-  -run '^(TestEQLTypesRoundTripAndQueryInPostgres|TestEQLOrderMatchesPlaintextInPostgres|TestQueriesRunAgainstPostgres|TestJSONDocumentsQueryAndReadInPostgres|TestJSONTypedDocumentsInPostgres)$' ./encrypt \
+  -run "$pattern" ./encrypt \
   | tee "${TMPDIR:-/tmp}/go-test-postgres.log"
 if grep -q -- '--- SKIP' "${TMPDIR:-/tmp}/go-test-postgres.log"; then
   echo "error: a PostgreSQL test skipped; build the deterministic guests first" >&2
@@ -392,7 +404,7 @@ if grep -q -- '--- SKIP' "${TMPDIR:-/tmp}/go-test-postgres.log"; then
 fi
 # A -run pattern that matches no test (one renamed, say) prints "no tests
 # to run" and PASS, so each test has to be seen to pass by name.
-for test in TestEQLTypesRoundTripAndQueryInPostgres TestEQLOrderMatchesPlaintextInPostgres TestQueriesRunAgainstPostgres TestJSONDocumentsQueryAndReadInPostgres TestJSONTypedDocumentsInPostgres; do
+for test in "${TESTS[@]}"; do
   if ! grep -q -- "^--- PASS: $test " "${TMPDIR:-/tmp}/go-test-postgres.log"; then
     echo "error: $test did not run and pass; was it renamed?" >&2
     exit 1
@@ -417,3 +429,22 @@ cd languages/golang
 # if set, else the developer profile. See encrypt/example/README.md.
 CGO_ENABLED=0 go run ./encrypt/example
 """
+
+[tasks."test:conformance:eql"]
+description = "Required EQL/JSON profiles over native Rust and Go (build both deterministic guests first)"
+run = "node scripts/stack-eql-conformance.mjs fast"
+
+[tasks."test:conformance:eql:postgres"]
+description = "Build and install EQL v4 into disposable EQL_TEST_DATABASE_URL, then run required Rust/Go JSON PostgreSQL oracles"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+: "${EQL_TEST_DATABASE_URL:?set a disposable PostgreSQL database connection}"
+mise -C packages/eql run clean
+mise -C packages/eql run build
+node scripts/stack-eql-conformance.mjs postgres
+"""
+
+[tasks."test:conformance:lifecycle"]
+description = "Required native/Go lifecycle, cleanup and key-I/O evidence (Unix; build the normal and deterministic guests first)"
+run = "node scripts/stack-lifecycle-conformance.mjs"

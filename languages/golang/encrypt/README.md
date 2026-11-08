@@ -520,7 +520,7 @@ The EQL types the engine produces, and the Go field types each takes:
 | `Numeric` | `encrypt.Decimal` | none |
 | `NumericEq` | `encrypt.Decimal` | `=`, `<>` (`1.5 = 1.50`) |
 | `NumericOrd`, `NumericOrdOpe`, `NumericOrdOre` | `encrypt.Decimal` | `<`, `<=`, `>`, `>=`, `ORDER BY` |
-| `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
+| `JsonSearch` (`eql.JSONSearch`) | struct, map, slice, or `json.RawMessage` | containment, equality at a path, ordering at declared paths, several members of one array element, selection, subtree reads; see [Encrypted JSON documents](#encrypted-json-documents) |
 
 Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
 is sealed at the type's width, and opens back into the field's type. A type
@@ -657,6 +657,111 @@ compare them exactly. At a wildcard path, `->` returns an unspecified
 element of each row, so an ordering over every element is written over
 `eql_v4.json_tree_path_query(col, $sel)`, its matches (the stashgen README
 shows the SQL).
+
+#### Choosing a JSON query
+
+| To find rows where… | Use | Engages an index |
+|---|---|---|
+| the document contains a value, has a value at a path, or orders at one ordered path | `Contains`, `EqAt`, `At.<Path>.Lt` and the other orderings | yes: the GIN index for `@>`, a btree on the path's ordering term |
+| one element of an array passes several tests (a visit that is at home *and* after 15) | `Elements.<Array>.Match` | no |
+| a whole filter holds, written as a jsonpath predicate | `Match` | no |
+
+The last two are evaluated inside a function, which tests every row a scan
+gives it. On a large table, put an indexed condition beside them to narrow
+the rows first, such as
+`WHERE profile @> $1::eql_v4.query_json AND profile @@ $2::eql_v4.query_json_predicate`.
+
+#### Test several members of one array element
+
+At a wildcard path, an `EqAt` and an ordering are each answered by any
+element, so a row can pass both through different elements: a visit at home
+and another visit after 15. To require one element to pass every test, use
+`Match` on the array's accessor under `Elements`. A field has one for each
+array whose elements have an ordered member
+(`ordered=$.visits[*].at;$.visits[*].place`). The generated `Paths` names
+those members, nested as the JSON nests them, and `encrypt.AtPath` makes a
+predicate from one:
+
+```go
+q, err := users.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+	encrypt.AtPath(users.Paths.Profile.Visits.Place).Eq("home"),
+	encrypt.AtPath(users.Paths.Profile.Visits.At).Gt(15),
+)
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)`, q)
+```
+
+A path carries its array and the member's Go type from the document's
+struct, so a value of another type, or a predicate on another array's
+member, does not compile. For a filter built at run time, name the member
+with the array's `Member`:
+`users.Fields.Profile.Elements.Visits.Member("place").Eq("home")`. A member
+the field does not order is refused with `ErrTerm` before the engine is
+asked, and the error names it.
+
+Each comparison is of the member's ordering term, so `Eq` compares text
+case- and accent-folded (`"home"` equals `"Home"`), and integers past 2^53
+can tie; `EqAt` is exact. A row whose array is longer than
+`JSONReadOptions.WildcardBound` (64 by default) fails the query with SQLSTATE
+22023 rather than answer over part of the array: set the bound past your
+longest array.
+
+#### Filter with a jsonpath predicate (`jsonb_path_match`)
+
+`Match` on the field takes a whole filter as one parameter: a jsonpath
+predicate and its variables, the two arguments plaintext
+`jsonb_path_match(col, $1, $2)` takes. The engine parses the predicate and
+compiles it into a tree of the operands the methods above derive; the Go
+side reads none of it.
+
+```go
+q, err := users.Fields.Profile.Match(ctx, cipher,
+	`$."plan" == $plan && $."age" < $max`,
+	map[string]any{"plan": "pro", "max": 40}, encrypt.JSONReadOptions{})
+rows, err := db.QueryContext(ctx, `SELECT id FROM users WHERE profile @@ $1::eql_v4.query_json_predicate`, q)
+```
+
+`eql_v4.json_tree_match(profile, $1::eql_v4.query_json_predicate)` returns
+the same rows, for a client that calls functions rather than operators.
+
+The variables are a map, a struct, or a `json.RawMessage` that writes a JSON
+object. **Pass an empty map, `map[string]any{}`, when the predicate has
+none.** A nil `vars` does not mean "no variables": it binds as SQL `NULL`, as
+it does over plaintext, and the query matches no row.
+
+The predicate may use:
+
+- paths of `$` followed by `.key`, `."quoted key"` and `[*]` steps;
+- `==`, `!=`, `<`, `<=`, `>` and `>=` between a path and a variable or a JSON
+  literal;
+- `exists(path)`, and `exists(path ? (@.a == $x && @.b > $y))` to test
+  several members of one array element;
+- `&&`, `||` and `!(…)`.
+
+An ordering needs its path in the field's `ordered=`, and so does each member
+of an `exists` filter with more than one condition; one that is not ordered
+is refused with `ErrTerm`. Anything outside the grammar is refused as a
+`*Diagnostic` wrapping `ErrEncoding`. Its `Reason()`, `Construct()` and
+`At()` give the reason, the construct in the grammar's words and the byte
+offset in the predicate where it starts. None of them includes the
+predicate's text or the variables' values.
+
+Each row answers as `jsonb_path_match` does over its plaintext, except in
+five cases. The
+[stashgen reference](../cmd/stashgen/README.md#encrypted-json-documents)
+gives an example and a workaround for each:
+
+- Lax mode does not unwrap an array whose path has no `[*]`: write the `[*]`.
+- Nor does it wrap a value that is not an array under `[*]`: keep arrays as
+  arrays.
+- A string compared with a number is false under `==` and true under `!=`.
+- Orderings, and filters with more than one condition, compare folded terms:
+  text case- and accent-folded, numbers as `float64`.
+- An ordering of a JSON `null` is NULL where jsonpath says false. A `WHERE`
+  returns the same rows either way; only selecting the boolean itself shows
+  the difference.
+
+A filter with more than one condition reads each array to
+`JSONReadOptions.WildcardBound` elements, as the element match does.
 
 ## Building
 

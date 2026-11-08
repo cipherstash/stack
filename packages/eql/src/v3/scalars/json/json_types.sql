@@ -17,7 +17,9 @@ BEGIN
         AND VALUE ? 'v'
         AND VALUE ? 'i'
         AND VALUE ? 'c'
-        AND VALUE->>'v' = '{{eql_version}}'
+        -- `"v": null` makes the comparison NULL, and a CHECK that is NULL
+        -- passes, so COALESCE refuses it. A NULL value still passes.
+        AND COALESCE(VALUE->>'v' = '{{eql_version}}', VALUE IS NULL)
       );
   END IF;
 

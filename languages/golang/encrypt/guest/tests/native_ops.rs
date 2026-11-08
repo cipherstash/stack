@@ -35,7 +35,7 @@ use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,
     RetrieveKeyPayload,
 };
-use support::Tree;
+use support::{protect, Tree};
 use uuid::Uuid;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
@@ -240,8 +240,8 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     let eq = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(Tree::UInt32(42)),
-        &ctx,
+        &protect(&encode(Tree::UInt32(42))),
+        &protect(&ctx),
         TERM_EQUALITY,
     ))
     .expect("eq term");
@@ -255,8 +255,8 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     let ore = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(Tree::UInt32(42)),
-        &ctx,
+        &protect(&encode(Tree::UInt32(42))),
+        &protect(&ctx),
         TERM_ORE,
     ))
     .expect("ore term");
@@ -270,8 +270,8 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     let ope = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(Tree::UInt32(42)),
-        &ctx,
+        &protect(&encode(Tree::UInt32(42))),
+        &protect(&ctx),
         TERM_OPE,
     ))
     .expect("ope term");
@@ -285,8 +285,8 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     let m = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(s("alice smith")),
-        &encode(s("users/name")),
+        &protect(&encode(s("alice smith"))),
+        &protect(&encode(s("users/name"))),
         TERM_MATCH,
     ))
     .expect("match term");
@@ -302,15 +302,15 @@ fn guest_terms_match_the_native_sem_derivations() {
     // them apart even when their raw bytes are equal.
     let eq_text = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(s("ab")),
-        &encode(s("f")),
+        &protect(&encode(s("ab"))),
+        &protect(&encode(s("f"))),
         TERM_EQUALITY,
     ))
     .expect("text term");
     let eq_bytes = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(Tree::Bytes(b"ab".to_vec())),
-        &encode(s("f")),
+        &protect(&encode(Tree::Bytes(b"ab".to_vec()))),
+        &protect(&encode(s("f"))),
         TERM_EQUALITY,
     ))
     .expect("bytes term");
@@ -334,8 +334,8 @@ fn guest_terms_match_the_native_sem_derivations() {
     // one marker byte, eight bytes a plaintext byte.
     let ore_s = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(s("alice")),
-        &encode(s("users/name")),
+        &protect(&encode(s("alice"))),
+        &protect(&encode(s("users/name"))),
         TERM_ORE,
     ))
     .expect("string ore");
@@ -367,8 +367,8 @@ fn unsupported_term_inputs_are_encoding_errors() {
         assert_eq!(
             block_on(ops::term(
                 &cipher.default_keyset(),
-                &encode(value),
-                &ctx,
+                &protect(&encode(value)),
+                &protect(&ctx),
                 kind
             )),
             Err(STATUS_ENCODING),
@@ -378,8 +378,8 @@ fn unsupported_term_inputs_are_encoding_errors() {
     assert_eq!(
         block_on(ops::term(
             &cipher.default_keyset(),
-            &encode(Tree::UInt32(1)),
-            &encode(s("")),
+            &protect(&encode(Tree::UInt32(1))),
+            &protect(&encode(s(""))),
             TERM_EQUALITY
         )),
         Err(STATUS_ENCODING),
@@ -397,8 +397,8 @@ fn unsupported_term_inputs_are_encoding_errors() {
         assert_eq!(
             block_on(ops::term(
                 &cipher.default_keyset(),
-                &encode(Tree::UInt32(1)),
-                &context,
+                &protect(&encode(Tree::UInt32(1))),
+                &protect(&context),
                 TERM_EQUALITY
             )),
             Err(STATUS_ENCODING),
@@ -422,8 +422,8 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
 
     let record = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &source,
-        &plan(),
+        &protect(&source),
+        &protect(&plan()),
     ))
     .expect("encrypt records");
     // Three rows, two ciphertext fields each: still exactly one call.
@@ -432,7 +432,7 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     let pt = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &record,
-        &plan(),
+        &protect(&plan()),
         None,
     ))
     .expect("decrypt records");
@@ -462,8 +462,8 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
     let source = encode(row(29, "alice smith"));
     let record = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &source,
-        &plan(),
+        &protect(&source),
+        &protect(&plan()),
     ))
     .expect("encrypt record");
 
@@ -489,7 +489,7 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &forged,
-            &plan(),
+            &protect(&plan()),
             None
         )),
         Err(STATUS_ENCODING),
@@ -520,8 +520,8 @@ fn a_passthrough_source_value_is_refused_a_ciphertext_slot() {
         assert_eq!(
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
-                &source,
-                &plan
+                &protect(&source),
+                &protect(&plan)
             )),
             Err(STATUS_ENCODING)
         );
@@ -533,8 +533,8 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
     let cipher = cipher();
     let record = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &encode(row(34, "alice smith")),
-        &plan(),
+        &protect(&encode(row(34, "alice smith"))),
+        &protect(&plan()),
     ))
     .expect("encrypt record");
 
@@ -621,8 +621,8 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
     let cipher = cipher();
     let record = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &encode(row(34, "alice smith")),
-        &extended_plan(),
+        &protect(&encode(row(34, "alice smith"))),
+        &protect(&extended_plan()),
     ))
     .expect("encrypt record");
 
@@ -652,8 +652,8 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
 
     let guest_probe = block_on(ops::term(
         &cipher.default_keyset(),
-        &encode(Tree::UInt32(34)),
-        &encode(extended("age")),
+        &protect(&encode(Tree::UInt32(34))),
+        &protect(&encode(extended("age"))),
         TERM_EQUALITY,
     ))
     .expect("guest probe");
@@ -709,7 +709,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let opened = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &record,
-        &plan_with(extended("age")),
+        &protect(&plan_with(extended("age"))),
         None,
     ))
     .expect("open through the plan");
@@ -722,7 +722,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &record,
-            &plan_with(label("age")),
+            &protect(&plan_with(label("age"))),
             None
         )),
         Err(STATUS_AUTH),
@@ -756,8 +756,8 @@ fn a_structured_plan_context_is_validated_at_parse() {
         assert_eq!(
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
-                &source,
-                &plan_with(bad)
+                &protect(&source),
+                &protect(&plan_with(bad))
             )),
             Err(STATUS_ENCODING),
             "a plan context of {label} must be refused at parse"
@@ -773,14 +773,14 @@ fn a_structured_plan_context_is_validated_at_parse() {
     // Go `Context.With("")` extends one.
     let sealed = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &source,
-        &plan_with(Tree::Array(vec![label("f"), s("")])),
+        &protect(&source),
+        &protect(&plan_with(Tree::Array(vec![label("f"), s("")]))),
     ))
     .expect("a label extended by an empty part is never empty");
     assert!(block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &sealed,
-        &plan_with(Tree::Array(vec![label("f"), s("")])),
+        &protect(&plan_with(Tree::Array(vec![label("f"), s("")]))),
         None
     ))
     .is_ok());
@@ -796,8 +796,8 @@ fn record_shape_violations_are_encoding_errors() {
     assert_eq!(
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
-            &missing,
-            &plan()
+            &protect(&missing),
+            &protect(&plan())
         )),
         Err(STATUS_ENCODING)
     );
@@ -810,8 +810,8 @@ fn record_shape_violations_are_encoding_errors() {
     assert_eq!(
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
-            &extra,
-            &plan()
+            &protect(&extra),
+            &protect(&plan())
         )),
         Err(STATUS_ENCODING)
     );
@@ -823,8 +823,8 @@ fn record_shape_violations_are_encoding_errors() {
     assert_eq!(
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
-            &nested,
-            &plan()
+            &protect(&nested),
+            &protect(&plan())
         )),
         Err(STATUS_ENCODING),
         "a term-indexed field must be a scalar"
@@ -858,8 +858,8 @@ fn record_shape_violations_are_encoding_errors() {
         assert_eq!(
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
-                &encode(obj(vec![("f", Tree::UInt32(1))])),
-                &encode(bad_plan),
+                &protect(&encode(obj(vec![("f", Tree::UInt32(1))]))),
+                &protect(&encode(bad_plan)),
             )),
             Err(STATUS_ENCODING)
         );
@@ -891,8 +891,8 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     assert_eq!(
         block_on(ops::encrypt_record(
             &cipher.default_keyset(),
-            &source,
-            &bad_plan
+            &protect(&source),
+            &protect(&bad_plan)
         )),
         Err(STATUS_ENCODING)
     );
@@ -905,7 +905,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &source,
-            &bad_plan,
+            &protect(&bad_plan),
             None
         )),
         Err(STATUS_ENCODING)
@@ -923,14 +923,14 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     )]));
     let sealed = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &source,
-        &odd_plan,
+        &protect(&source),
+        &protect(&odd_plan),
     ))
     .expect("encrypt");
     let opened = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &sealed,
-        &odd_plan,
+        &protect(&odd_plan),
         None,
     ))
     .expect("decrypt");
@@ -963,14 +963,14 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
     // side and reads them back as one batch.
     let acme_rows = block_on(ops::encrypt_record(
         &acme,
-        &encode(row(29, "alice smith")),
-        &plan(),
+        &protect(&encode(row(29, "alice smith"))),
+        &protect(&plan()),
     ))
     .expect("encrypt acme row");
     let globex_rows = block_on(ops::encrypt_record(
         &globex,
-        &encode(row(34, "bob jones")),
-        &plan(),
+        &protect(&encode(row(34, "bob jones"))),
+        &protect(&plan()),
     ))
     .expect("encrypt globex row");
     let batch = {
@@ -989,7 +989,7 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
     let pt = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &batch,
-        &plan(),
+        &protect(&plan()),
         None,
     ))
     .expect("any opens the mixed batch");
@@ -1008,7 +1008,7 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
         block_on(ops::decrypt_record(
             Scope::Keyset(acme),
             &batch,
-            &plan(),
+            &protect(&plan()),
             None
         )),
         Err(STATUS_FOREIGN_KEYSET)
@@ -1027,15 +1027,15 @@ fn terms_derive_under_the_selected_keyset() {
 
     let acme_term = block_on(ops::term(
         &acme,
-        &encode(Tree::UInt32(42)),
-        &ctx,
+        &protect(&encode(Tree::UInt32(42))),
+        &protect(&ctx),
         TERM_EQUALITY,
     ))
     .expect("acme term");
     let globex_term = block_on(ops::term(
         &globex,
-        &encode(Tree::UInt32(42)),
-        &ctx,
+        &protect(&encode(Tree::UInt32(42))),
+        &protect(&ctx),
         TERM_EQUALITY,
     ))
     .expect("globex term");
@@ -1072,12 +1072,17 @@ fn term_validation_refuses_what_the_term_op_refuses() {
     ] {
         let value = encode(value);
         assert_eq!(
-            ops::validate::term(&value, &ctx, kind),
+            ops::validate::term(&protect(&value), &protect(&ctx), kind),
             Err(STATUS_ENCODING),
             "{label} must be refused by validation"
         );
         assert_eq!(
-            block_on(ops::term(&cipher.default_keyset(), &value, &ctx, kind)),
+            block_on(ops::term(
+                &cipher.default_keyset(),
+                &protect(&value),
+                &protect(&ctx),
+                kind
+            )),
             Err(STATUS_ENCODING),
             "{label} must be refused by the op too"
         );
@@ -1088,7 +1093,11 @@ fn term_validation_refuses_what_the_term_op_refuses() {
         ("raw bytes for a context", b"f".to_vec()),
     ] {
         assert_eq!(
-            ops::validate::term(&encode(Tree::UInt32(1)), &context, TERM_EQUALITY),
+            ops::validate::term(
+                &protect(&encode(Tree::UInt32(1))),
+                &protect(&context),
+                TERM_EQUALITY
+            ),
             Err(STATUS_ENCODING),
             "{label} must be refused by validation"
         );
@@ -1106,7 +1115,10 @@ fn term_validation_refuses_what_the_term_op_refuses() {
         (Tree::Int32(-1), TERM_OPE),
         (s("x"), TERM_ORE),
     ] {
-        assert_eq!(ops::validate::term(&encode(value), &ctx, kind), Ok(()));
+        assert_eq!(
+            ops::validate::term(&protect(&encode(value)), &protect(&ctx), kind),
+            Ok(())
+        );
     }
 }
 
@@ -1148,15 +1160,15 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
     ] {
         let source = encode(source);
         assert_eq!(
-            ops::validate::record(&source, &plan),
+            ops::validate::record(&protect(&source), &protect(&plan)),
             Err(STATUS_ENCODING),
             "{label} must be refused by validation"
         );
         assert_eq!(
             block_on(ops::encrypt_record(
                 &cipher.default_keyset(),
-                &source,
-                &plan
+                &protect(&source),
+                &protect(&plan)
             )),
             Err(STATUS_ENCODING),
             "{label} must be refused by the op too"
@@ -1171,19 +1183,28 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
         Tree::Passthrough(Box::new(Tree::UInt32(29))),
     )]));
     assert_eq!(
-        ops::validate::record(&passthrough, &ct_only),
+        ops::validate::record(&protect(&passthrough), &protect(&ct_only)),
         Err(STATUS_ENCODING)
     );
 
     // A malformed plan is refused with a well-formed source.
     assert_eq!(
-        ops::validate::record(&encode(row(1, "a")), &encode(obj(vec![]))),
+        ops::validate::record(
+            &protect(&encode(row(1, "a"))),
+            &protect(&encode(obj(vec![])))
+        ),
         Err(STATUS_ENCODING)
     );
 
-    assert_eq!(ops::validate::record(&encode(row(1, "a")), &plan), Ok(()));
     assert_eq!(
-        ops::validate::record(&encode(Tree::Array(vec![row(1, "a"), row(2, "b")])), &plan),
+        ops::validate::record(&protect(&encode(row(1, "a"))), &protect(&plan)),
+        Ok(())
+    );
+    assert_eq!(
+        ops::validate::record(
+            &protect(&encode(Tree::Array(vec![row(1, "a"), row(2, "b")]))),
+            &protect(&plan)
+        ),
         Ok(())
     );
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
@@ -1195,11 +1216,14 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
     let plan = plan();
     let record = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
-        &encode(row(29, "alice")),
-        &plan,
+        &protect(&encode(row(29, "alice"))),
+        &protect(&plan),
     ))
     .expect("encrypt record");
-    assert_eq!(ops::validate::record_tree(&record, &plan, None), Ok(()));
+    assert_eq!(
+        ops::validate::record_tree(&record, &protect(&plan), None),
+        Ok(())
+    );
 
     type Node = stack_encrypt::Node<Vec<u8>>;
     // The tree is not `Clone`; every variant decodes the record afresh.
@@ -1254,7 +1278,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
     ] {
         let tree = re_encode(tree);
         assert_eq!(
-            ops::validate::record_tree(&tree, &plan, None),
+            ops::validate::record_tree(&tree, &protect(&plan), None),
             Err(STATUS_ENCODING),
             "{label} must be refused by validation"
         );
@@ -1262,7 +1286,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
             block_on(ops::decrypt_record(
                 Scope::Client(&cipher),
                 &tree,
-                &plan,
+                &protect(&plan),
                 None
             )),
             Err(STATUS_ENCODING),
@@ -1281,8 +1305,8 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
 /// declaration it writes.
 #[test]
 fn plan_check_answers_without_a_cipher() {
-    assert_eq!(ops::plan_check(&plan()), Ok(()));
-    assert_eq!(ops::plan_check(&extended_plan()), Ok(()));
+    assert_eq!(ops::plan_check(&protect(&plan())), Ok(()));
+    assert_eq!(ops::plan_check(&protect(&extended_plan())), Ok(()));
 
     // match over an integer: a type that does not admit one of its indexes.
     let bad_index = encode(obj(vec![(
@@ -1293,7 +1317,7 @@ fn plan_check_answers_without_a_cipher() {
             ("type", s("uint32")),
         ]),
     )]));
-    assert_eq!(ops::plan_check(&bad_index), Err(STATUS_ENCODING));
+    assert_eq!(ops::plan_check(&protect(&bad_index)), Err(STATUS_ENCODING));
 
     // an indexed field with no declared type: every term derives from one
     // declared kind, so the plan is refused before any value arrives.
@@ -1304,7 +1328,10 @@ fn plan_check_answers_without_a_cipher() {
             ("outputs", Tree::Array(vec![s("c"), s("eq")])),
         ]),
     )]));
-    assert_eq!(ops::plan_check(&untyped_index), Err(STATUS_ENCODING));
+    assert_eq!(
+        ops::plan_check(&protect(&untyped_index)),
+        Err(STATUS_ENCODING)
+    );
 
     // a one-segment context is not a label a fields plan can seal under.
     let one_segment = encode(obj(vec![(
@@ -1314,11 +1341,17 @@ fn plan_check_answers_without_a_cipher() {
             ("outputs", Tree::Array(vec![s("c")])),
         ]),
     )]));
-    assert_eq!(ops::plan_check(&one_segment), Err(STATUS_ENCODING));
+    assert_eq!(
+        ops::plan_check(&protect(&one_segment)),
+        Err(STATUS_ENCODING)
+    );
 
     // not a plan at all.
-    assert_eq!(ops::plan_check(&encode(s("users"))), Err(STATUS_ENCODING));
-    assert_eq!(ops::plan_check(b"\xff\xff"), Err(STATUS_ENCODING));
+    assert_eq!(
+        ops::plan_check(&protect(&encode(s("users")))),
+        Err(STATUS_ENCODING)
+    );
+    assert_eq!(ops::plan_check(&protect(b"\xff\xff")), Err(STATUS_ENCODING));
 }
 
 /// `targets` is the fixed wire shape: `{"targets": [...]}`. The build
@@ -1457,8 +1490,8 @@ fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
     let term_of = |value: Tree, field: &str, kind: u32| {
         block_on(ops::term(
             &keyset,
-            &encode(value),
-            &encode(label(field)),
+            &protect(&encode(value)),
+            &protect(&encode(label(field))),
             kind,
         ))
         .expect("term")
@@ -1466,15 +1499,20 @@ fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
     let query = |input: Tree, field: &str, operator: &str| {
         let input = encode(input);
         assert_eq!(
-            ops::validate::query_term(&input, &plan(), field.as_bytes(), operator.as_bytes()),
+            ops::validate::query_term(
+                &protect(&input),
+                &protect(&plan()),
+                field.as_bytes(),
+                operator.as_bytes()
+            ),
             Ok(()),
             "{operator} on {field} validates"
         );
         query_term_entries(
             &block_on(ops::query_term(
                 &keyset,
-                &input,
-                &plan(),
+                &protect(&input),
+                &protect(&plan()),
                 field.as_bytes(),
                 operator.as_bytes(),
             ))
@@ -1546,14 +1584,21 @@ fn equality_text_that_does_not_normalize_is_a_term_failure_before_any_cipher() {
     )]));
     let input = encode(s("a\u{0378}bc"));
     assert_eq!(
-        ops::validate::query_term(&input, &plan, b"email", b"eq"),
+        ops::validate::query_term(&protect(&input), &protect(&plan), b"email", b"eq"),
         Err(STATUS_TERM),
         "validation"
     );
     let cipher = cipher();
     let keyset = cipher.default_keyset();
     assert_eq!(
-        block_on(ops::query_term(&keyset, &input, &plan, b"email", b"eq")).map(|_| ()),
+        block_on(ops::query_term(
+            &keyset,
+            &protect(&input),
+            &protect(&plan),
+            b"email",
+            b"eq"
+        ))
+        .map(|_| ()),
         Err(STATUS_TERM),
         "the op"
     );
@@ -1598,15 +1643,20 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
     ] {
         let input = encode(input);
         assert_eq!(
-            ops::validate::query_term(&input, &plan(), field.as_bytes(), operator.as_bytes()),
+            ops::validate::query_term(
+                &protect(&input),
+                &protect(&plan()),
+                field.as_bytes(),
+                operator.as_bytes()
+            ),
             Err(status),
             "{what}: validation"
         );
         assert_eq!(
             block_on(ops::query_term(
                 &keyset,
-                &input,
-                &plan(),
+                &protect(&input),
+                &protect(&plan()),
                 field.as_bytes(),
                 operator.as_bytes()
             )),
@@ -1615,7 +1665,12 @@ fn query_term_validation_refuses_what_the_query_op_refuses() {
         );
     }
     assert_eq!(
-        ops::validate::query_term(&encode(Tree::UInt32(1)), &plan(), b"\xff", b"eq"),
+        ops::validate::query_term(
+            &protect(&encode(Tree::UInt32(1))),
+            &protect(&plan()),
+            b"\xff",
+            b"eq"
+        ),
         Err(STATUS_ENCODING),
         "a field name that is not UTF-8"
     );
@@ -1631,8 +1686,14 @@ fn verify_answers_a_page_in_one_call() {
         Tree::Null,
         s("malice"),
     ]));
-    let out =
-        ops::verify(&encode(s("alice")), &values, &plan(), b"name", b"matches").expect("verify");
+    let out = ops::verify(
+        &protect(&encode(s("alice"))),
+        &protect(&values),
+        &protect(&plan()),
+        b"name",
+        b"matches",
+    )
+    .expect("verify");
     let Tree::Array(verified) = decode(&out) else {
         panic!("a list");
     };
@@ -1681,9 +1742,9 @@ fn verify_answers_a_page_in_one_call() {
     ] {
         assert_eq!(
             ops::verify(
-                &encode(input),
-                &encode(values),
-                &plan(),
+                &protect(&encode(input)),
+                &protect(&encode(values)),
+                &protect(&plan()),
                 field.as_bytes(),
                 operator.as_bytes()
             ),
@@ -1693,9 +1754,9 @@ fn verify_answers_a_page_in_one_call() {
     }
     assert_eq!(
         ops::verify(
-            &encode(s("al")),
-            &encode(Tree::Array(vec![])),
-            &plan(),
+            &protect(&encode(s("al"))),
+            &protect(&encode(Tree::Array(vec![]))),
+            &protect(&plan()),
             b"name",
             b"matches"
         ),
@@ -1713,8 +1774,8 @@ fn target_limit_sizes_a_fetch_from_the_terms_bytes() {
     let keyset = cipher.default_keyset();
     let out = block_on(ops::query_term(
         &keyset,
-        &encode(s("ali")),
-        &plan(),
+        &protect(&encode(s("ali"))),
+        &protect(&plan()),
         b"name",
         b"matches",
     ))
@@ -1731,8 +1792,8 @@ fn target_limit_sizes_a_fetch_from_the_terms_bytes() {
     let limit = |stats: &[u8], term: &[u8], field: &str, operator: &str| {
         ops::target_limit(
             term,
-            stats,
-            &plan(),
+            &protect(stats),
+            &protect(&plan()),
             field.as_bytes(),
             operator.as_bytes(),
             10,
@@ -1844,7 +1905,8 @@ fn the_catalog_lists_each_types_operators() {
                 ("input", "value"),
             ]),
             // A document's operators under the index's defaults: the
-            // orderings at a path only for a field that orders one.
+            // orderings at a path only for a field that orders one, and
+            // the compiled predicate, which needs none.
             "JsonSearch" => {
                 let json = |operator: &'static str, arity: &'static str, input: &'static str| {
                     vec![
@@ -1865,6 +1927,7 @@ fn the_catalog_lists_each_types_operators() {
                         json("subtree", "one", "path_bound"),
                         json("children", "one", "path"),
                         json("child_count", "one", "path"),
+                        json("match", "one", "predicate"),
                     ],
                     "{name}"
                 );
@@ -1914,8 +1977,8 @@ fn a_text_match_field_answers_matches_through_its_twin() {
     )]));
     let term = block_on(ops::query_term(
         &keyset,
-        &encode(s("Alice")),
-        &plan,
+        &protect(&encode(s("Alice"))),
+        &protect(&plan),
         b"name",
         b"matches",
     ))
@@ -1938,9 +2001,13 @@ fn a_text_match_field_answers_matches_through_its_twin() {
     );
 
     let verified = ops::verify(
-        &encode(s("ALICE")),
-        &encode(Tree::Array(vec![s("say alice"), s("alison"), Tree::Null])),
-        &plan,
+        &protect(&encode(s("ALICE"))),
+        &protect(&encode(Tree::Array(vec![
+            s("say alice"),
+            s("alison"),
+            Tree::Null,
+        ]))),
+        &protect(&plan),
         b"name",
         b"matches",
     )
@@ -1958,8 +2025,8 @@ fn a_text_match_field_answers_matches_through_its_twin() {
     };
     let limit = ops::target_limit(
         twin_bytes.as_slice(),
-        &encode(obj(vec![("rows", Tree::UInt64(1000))])),
-        &plan,
+        &protect(&encode(obj(vec![("rows", Tree::UInt64(1000))]))),
+        &protect(&plan),
         b"name",
         b"matches",
         10,
@@ -1973,8 +2040,8 @@ fn a_text_match_field_answers_matches_through_its_twin() {
     assert_eq!(
         block_on(ops::query_term(
             &keyset,
-            &encode(s("alice")),
-            &plan,
+            &protect(&encode(s("alice"))),
+            &protect(&plan),
             b"name",
             b"eq",
         ))
@@ -1986,7 +2053,8 @@ fn a_text_match_field_answers_matches_through_its_twin() {
 
 /// The operators of one field, each as `(operator, fidelity, arity, index)`.
 fn operators_of(plan: &[u8], field: &str) -> Vec<[String; 4]> {
-    let Tree::Array(items) = decode(&ops::operators(plan, field.as_bytes()).expect("operators"))
+    let Tree::Array(items) =
+        decode(&ops::operators(&protect(plan), field.as_bytes()).expect("operators"))
     else {
         panic!("operators are a list");
     };
@@ -2037,8 +2105,12 @@ fn a_fields_operators_are_the_queries_it_answers() {
             } else {
                 input.clone()
             };
-            let checked =
-                ops::validate::query_term(&encode(input), &plan(), field.as_bytes(), op.as_bytes());
+            let checked = ops::validate::query_term(
+                &protect(&encode(input)),
+                &protect(&plan()),
+                field.as_bytes(),
+                op.as_bytes(),
+            );
             if listed.iter().any(|l| l == op) {
                 assert_eq!(checked, Ok(()), "{field} {op} is listed and answered");
             } else {
@@ -2047,11 +2119,14 @@ fn a_fields_operators_are_the_queries_it_answers() {
         }
     }
     assert_eq!(
-        ops::operators(&plan(), b"phone"),
+        ops::operators(&protect(&plan()), b"phone"),
         Err(STATUS_ENCODING),
         "a field the plan lacks"
     );
-    assert_eq!(ops::operators(b"\xff", b"age"), Err(STATUS_ENCODING));
+    assert_eq!(
+        ops::operators(&protect(b"\xff"), b"age"),
+        Err(STATUS_ENCODING)
+    );
 }
 
 /// In the `eql` build a field that names an EQL type answers what the
@@ -2117,8 +2192,12 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         tenant_row("tenants/acme", 34),
         tenant_row("tenants/globex", 34),
     ]));
-    let record = block_on(ops::encrypt_record(&cipher.default_keyset(), &batch, &plan))
-        .expect("encrypt a batch of two tenants");
+    let record = block_on(ops::encrypt_record(
+        &cipher.default_keyset(),
+        &protect(&batch),
+        &protect(&plan),
+    ))
+    .expect("encrypt a batch of two tenants");
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
 
     // The same age under two tenants is two terms.
@@ -2139,7 +2218,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
     let opened = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &record,
-        &plan,
+        &protect(&plan),
         None,
     ))
     .expect("each record opens under the context it stores");
@@ -2162,7 +2241,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &record,
-            &plan,
+            &protect(&plan),
             Some(acme.clone()),
         )),
         Err(STATUS_CONTEXT_MISMATCH),
@@ -2174,24 +2253,31 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
         "refused before any key is retrieved"
     );
     assert_eq!(
-        ops::validate::record_tree(&record, &plan, Some(&acme)),
+        ops::validate::record_tree(&record, &protect(&plan), Some(&acme)),
         Err(STATUS_CONTEXT_MISMATCH),
         "and the boundary validation refuses it the same way"
     );
-    assert_eq!(ops::validate::record_tree(&record, &plan, None), Ok(()));
+    assert_eq!(
+        ops::validate::record_tree(&record, &protect(&plan), None),
+        Ok(())
+    );
 
     // One record stored under the expected context opens under it.
     let one = encode(tenant_row("tenants/acme", 35));
-    let record =
-        block_on(ops::encrypt_record(&cipher.default_keyset(), &one, &plan)).expect("encrypt one");
+    let record = block_on(ops::encrypt_record(
+        &cipher.default_keyset(),
+        &protect(&one),
+        &protect(&plan),
+    ))
+    .expect("encrypt one");
     assert_eq!(
-        ops::validate::record_tree(&record, &plan, Some(&acme)),
+        ops::validate::record_tree(&record, &protect(&plan), Some(&acme)),
         Ok(())
     );
     let opened = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &record,
-        &plan,
+        &protect(&plan),
         Some(acme),
     ))
     .expect("the expected context opens it");

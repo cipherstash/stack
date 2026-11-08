@@ -29,7 +29,7 @@ AS $$ SELECT {{ a.body }} $$;
 --!
 --! True when `{{ internal_schema }}.lo(r) <= {{ schema }}.{{ b.extractor }}(a) <= {{ internal_schema }}.hi(r)`.
 --! The range is one operand, so a statement cannot pair the low bound of one
---! query with the high bound of another (ADR-0009, decision 7):
+--! query with the high bound of another (Stack Encrypt ADR-0009, decision 7):
 --! `WHERE {{ schema }}.between(col, $1::{{ schema }}.{{ b.range }})`.
 --!
 --! @param a {{ b.column }} Encrypted column value

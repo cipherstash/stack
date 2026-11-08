@@ -1,7 +1,7 @@
 //! A document field's JSON operators and reads through the data plan, with
 //! the engine's own JSON index behind the target: what a binding names by
 //! operator (`contains`, `eq_at`, the orderings at a path, `selector`,
-//! `subtree`, `children`, `child_count`), the operand each derives and the
+//! `subtree`, `children`, `child_count`, `element_match`, `match`), the operand each derives and the
 //! type it binds as, the refusals made before anything is derived, and
 //! reads opened against the request that prepared them.
 //!
@@ -13,6 +13,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
 use base64ct::{Base64, Encoding};
@@ -51,7 +52,9 @@ impl TargetResolver for Documents {
             true,
             None,
         )
-        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
+        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")
+        .with_elements_query_sql_domain("eql_v4.query_json_elements")
+        .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
     }
 
     fn encrypt<'a, K: 'static>(
@@ -114,7 +117,13 @@ fn plan_of(target: Value) -> record::Plan {
     let wire = json!({
         "profile": {"context": ["users", "profile"], "type": "json", "null": "sql", "target": target}
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Documents).unwrap()
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Documents,
+    )
+    .unwrap()
 }
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -123,7 +132,12 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 
 /// A JSON value as a frame: what a binding sends as an input or a request.
 fn json_frame(value: &Value) -> ValueFrame {
-    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(value).unwrap()).unwrap()
+    ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(value)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 async fn term<K: Source>(
@@ -399,7 +413,8 @@ fn the_orderings_follow_the_resolved_options() {
             "selector",
             "subtree",
             "children",
-            "child_count"
+            "child_count",
+            "match"
         ]
     );
     let error = dynamic::check_query(
@@ -734,13 +749,14 @@ async fn rows_that_are_not_the_reads_are_refused() {
     // selector is derived under this field's column, so it is not the
     // one asked for.
     let two = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
                         "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}},
             "prefs": {"context": ["users", "prefs"], "type": "json", "null": "sql",
                       "target": "JsonSearch"}
         }))
-        .unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Documents,
     )
     .unwrap();
@@ -909,8 +925,13 @@ fn a_malformed_read_is_refused_before_any_key() {
     // A field that does not store a document has no reads.
     let wire =
         json!({"email": {"context": ["users", "email"], "type": "string", "outputs": ["c"]}});
-    let scalar =
-        record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Documents).unwrap();
+    let scalar = record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Documents,
+    )
+    .unwrap();
     let error = dynamic::check_json_open(
         &scalar,
         "email",
@@ -920,4 +941,1498 @@ fn a_malformed_read_is_refused_before_any_key() {
     )
     .unwrap_err();
     assert_eq!(error.reason(), Some(Reason::OperatorNotAnswered));
+}
+
+/// `element_match`: a predicate on one element of an array, its operand the
+/// members' subtree reads and their bounds, as the `subtree` operator and
+/// the orderings derive them. `json_tree_element_match` is modelled over
+/// the rows `JsonDocument::subtree` returns, as the subtree tests model
+/// `json_tree_subtree`; `packages/eql/tests/encryption` runs the SQL.
+mod element_match {
+    use super::*;
+
+    use proptest::prelude::*;
+    use proptest::test_runner::{Config, TestCaseError, TestRunner};
+
+    /// `profile`, ordering a contact's `relationship`, `calls`,
+    /// `address.postcode` and `["first name"]`, but not its `note`.
+    fn contacts() -> record::Plan {
+        plan_of(json!({
+            "name": "JsonSearch",
+            "options": {"ordered": [
+                "$.contacts[*].relationship",
+                "$.contacts[*].calls",
+                "$.contacts[*].address.postcode",
+                "$.contacts[*][\"first name\"]",
+            ]}
+        }))
+    }
+
+    fn input(bound: u32, predicates: Value) -> Value {
+        json!({"path": "$.contacts[*]", "wildcard_bound": bound, "predicates": predicates})
+    }
+
+    /// The operand's JSON, `eql_v4.query_json_elements`.
+    async fn operand<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        input: Value,
+    ) -> Value {
+        let term = term(keyset, plan, "element_match", input).await;
+        assert_eq!(term.encoding(), "eql", "an EQL operand");
+        assert_eq!(
+            term.domain(),
+            Some("eql_v4.query_json_elements"),
+            "bound as the target's element predicate domain"
+        );
+        match term.operand() {
+            Operand::One(bytes) => serde_json::from_slice(bytes).unwrap(),
+            other => panic!("one operand, got {other:?}"),
+        }
+    }
+
+    /// The one leaf operand an ordering at `path` derives for `json`.
+    async fn leaf<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        operator: &str,
+        path: &str,
+        json: &str,
+    ) -> Value {
+        let term = term(keyset, plan, operator, json!({"path": path, "json": json})).await;
+        match term.operand() {
+            Operand::One(bytes) => serde_json::from_slice(bytes).unwrap(),
+            other => panic!("{operator}: {other:?}"),
+        }
+    }
+
+    /// The tokens a `subtree` read of `path` at `bound` sends.
+    async fn tokens<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        path: &str,
+        bound: u32,
+    ) -> Value {
+        let term = term(
+            keyset,
+            plan,
+            "subtree",
+            json!({"path": path, "wildcard_bound": bound}),
+        )
+        .await;
+        match term.operand() {
+            Operand::TextList(tokens) => json!(tokens),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// What `json_tree_element_match(doc, operand)` answers: whether one
+    /// `k` has, for every member, the node its `k`-th token names at the
+    /// member's selector and inside its bounds, compared as the SQL
+    /// compares ordering terms (bytes); or `None` where a token names a
+    /// node at another selector, a probe's hit, which the SQL raises on.
+    pub(super) fn element_match(doc: &JsonDocument, operand: &Value) -> Option<bool> {
+        let members = operand["m"].as_array().unwrap();
+        let width = members[0]["t"].as_array().unwrap().len();
+        let term = |leaf: &Value| Base64::decode_vec(leaf["op"].as_str().unwrap()).unwrap();
+        let mut truncated = false;
+        let mut matched = false;
+        for k in 0..width {
+            let mut all = true;
+            for member in members {
+                let bounds: Vec<(&str, &Value)> = ["gt", "gte", "lt", "lte"]
+                    .into_iter()
+                    .filter_map(|key| member.get(key).map(|leaf| (key, leaf)))
+                    .collect();
+                let selector = tag(bounds[0].1["s"].as_str().unwrap());
+                let token = tag(member["t"][k].as_str().unwrap());
+                let Some((j, entry, _)) = doc.subtree(&[token]).into_iter().next() else {
+                    all = false;
+                    continue;
+                };
+                if entry.selector() != &selector {
+                    truncated = true;
+                    all = false;
+                    continue;
+                }
+                let node = serde_json::to_value(doc.node(j).unwrap()).unwrap();
+                if node.get("op").is_none() {
+                    all = false;
+                    continue;
+                }
+                let stored = term(&node);
+                all &= bounds.iter().all(|(key, leaf)| {
+                    let bound = term(leaf);
+                    match *key {
+                        "gt" => stored > bound,
+                        "gte" => stored >= bound,
+                        "lt" => stored < bound,
+                        _ => stored <= bound,
+                    }
+                });
+            }
+            matched |= all;
+        }
+        (!truncated).then_some(matched)
+    }
+
+    mod given_a_predicate_per_comparison {
+        use super::*;
+
+        /// Each `op` derives the bound the ordering of the same name
+        /// derives, under its own key; `eq` is `gte` and `lte` at one
+        /// value, and `between` is `between_at`'s two.
+        #[tokio::test]
+        async fn each_bound_is_the_orderings_leaf_operand() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let calls = "$.contacts[*].calls";
+            let operand = operand(
+                &keyset,
+                &plan,
+                input(
+                    2,
+                    json!([
+                        {"member": "calls", "op": "eq", "json": "5"},
+                        {"member": "calls", "op": "lt", "json": "5"},
+                        {"member": "calls", "op": "lte", "json": "5"},
+                        {"member": "calls", "op": "gt", "json": "5"},
+                        {"member": "calls", "op": "gte", "json": "5"},
+                        {"member": "calls", "op": "between", "low": "1", "high": "9"},
+                    ]),
+                ),
+            )
+            .await;
+            let m = operand["m"].as_array().unwrap();
+            assert_eq!(m.len(), 6, "one member per predicate: {operand}");
+            let at_five = leaf(&keyset, &plan, "gte_at", calls, "5").await;
+            assert_eq!(
+                leaf(&keyset, &plan, "lt_at", calls, "5").await,
+                at_five,
+                "a leaf operand is one term, whichever ordering asks"
+            );
+            let keys = |member: &Value| -> Vec<String> {
+                member.as_object().unwrap().keys().cloned().collect()
+            };
+            assert_eq!(keys(&m[0]), ["gte", "lte", "t"], "eq: {}", m[0]);
+            assert_eq!(m[0]["gte"], at_five, "eq's low bound is the value's");
+            assert_eq!(m[0]["lte"], m[0]["gte"], "eq is lo = hi");
+            for (member, key) in [(&m[1], "lt"), (&m[2], "lte"), (&m[3], "gt"), (&m[4], "gte")] {
+                assert_eq!(keys(member), [key, "t"], "{member}");
+                assert_eq!(member[key], at_five, "{key}: the value's leaf operand");
+            }
+            let between = term(
+                &keyset,
+                &plan,
+                "between_at",
+                json!({"path": calls, "low": "1", "high": "9"}),
+            )
+            .await;
+            let Operand::Range { lo, hi } = between.operand() else {
+                panic!("between_at is a range")
+            };
+            let json = |bytes: &[u8]| serde_json::from_slice::<Value>(bytes).unwrap();
+            assert_eq!(keys(&m[5]), ["gte", "lte", "t"], "between: {}", m[5]);
+            assert_eq!(m[5]["gte"], json(lo), "between's low bound is between_at's");
+            assert_eq!(
+                m[5]["lte"],
+                json(hi),
+                "between's high bound is between_at's"
+            );
+            assert_ne!(m[5]["gte"], m[5]["lte"], "two values, two terms");
+        }
+
+        /// Every member's tokens are the `subtree` read of its full path at
+        /// the bound, the default bound when the input names none: one per
+        /// element below it, then the probe, the element at the bound
+        /// itself, which every member shares.
+        #[tokio::test]
+        async fn each_member_reads_its_full_path_and_ends_with_the_probe() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let read = operand(
+                &keyset,
+                &plan,
+                input(
+                    3,
+                    json!([
+                        {"member": "relationship", "op": "eq", "json": "\"Sibling\""},
+                        {"member": "address.postcode", "op": "gte", "json": "3000"},
+                        {"member": "[\"first name\"]", "op": "lt", "json": "\"M\""},
+                    ]),
+                ),
+            )
+            .await;
+            let m = read["m"].as_array().unwrap();
+            for (member, path) in [
+                (&m[0], "$.contacts[*].relationship"),
+                (&m[1], "$.contacts[*].address.postcode"),
+                (&m[2], "$.contacts[*][\"first name\"]"),
+            ] {
+                assert_eq!(
+                    member["t"],
+                    tokens(&keyset, &plan, path, 3).await,
+                    "{path}: the subtree read's tokens"
+                );
+                assert_eq!(member["t"].as_array().unwrap().len(), 3 + 1, "{path}");
+            }
+            assert_eq!(m[0]["t"][3], m[1]["t"][3], "the probe is the element's");
+            assert_eq!(m[0]["t"][3], m[2]["t"][3], "the probe is the element's");
+            assert_ne!(m[0]["t"][0], m[1]["t"][0], "a field's token is its own");
+
+            let defaulted = operand(
+                &keyset,
+                &plan,
+                json!({"path": "$.contacts[*]", "predicates": [
+                    {"member": "calls", "op": "gt", "json": "1"}
+                ]}),
+            )
+            .await;
+            assert_eq!(
+                defaulted["m"][0]["t"],
+                tokens(&keyset, &plan, "$.contacts[*].calls", 64).await,
+                "no bound named is the subtree read's default"
+            );
+        }
+    }
+
+    mod given_documents {
+        use super::*;
+
+        fn sibling_with_more_than_five_calls(bound: u32) -> Value {
+            input(
+                bound,
+                json!([
+                    {"member": "relationship", "op": "eq", "json": "\"Sibling\""},
+                    {"member": "calls", "op": "gt", "json": "5"},
+                ]),
+            )
+        }
+
+        /// A Sibling with more than five calls. Two contacts each matching
+        /// half of it are not a match, one matching both is, and an array
+        /// longer than the bound is the probe's hit, not an answer.
+        #[tokio::test]
+        async fn one_element_must_satisfy_every_member() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let operand = operand(&keyset, &plan, sibling_with_more_than_five_calls(2)).await;
+            for (document, want, why) in [
+                (
+                    json!({"contacts": [
+                        {"relationship": "Sibling", "calls": 3},
+                        {"relationship": "Friend", "calls": 7}
+                    ]}),
+                    Some(false),
+                    "each half in another element",
+                ),
+                (
+                    json!({"contacts": [
+                        {"relationship": "Friend", "calls": 9},
+                        {"relationship": "Sibling", "calls": 7}
+                    ]}),
+                    Some(true),
+                    "both halves in the second element",
+                ),
+                (
+                    json!({"contacts": [{"relationship": "Sibling"}, {"calls": 8}]}),
+                    Some(false),
+                    "a field absent from an element satisfies none of its bounds",
+                ),
+                (json!({"contacts": []}), Some(false), "no element"),
+                (json!({"other": 1}), Some(false), "no array"),
+                (
+                    json!({"contacts": [
+                        {"relationship": "Friend", "calls": 1},
+                        {"relationship": "Friend", "calls": 1},
+                        {"relationship": "Sibling", "calls": 9}
+                    ]}),
+                    None,
+                    "three elements past a bound of two: the probe names a node",
+                ),
+            ] {
+                let doc = seal(&keyset, &plan, &document).await;
+                assert_eq!(element_match(&doc, &operand), want, "{why}: {document}");
+            }
+        }
+
+        /// Against plaintext jsonpath over random arrays: within the bound
+        /// the operand answers `exists($.contacts[*] ? (@.relationship ==
+        /// $r && @.calls <op> $n))`, and past it the probe names a node.
+        #[test]
+        fn answers_as_the_jsonpath_over_the_plaintext() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let cipher = runtime.block_on(common::stack_cipher());
+            let keyset = cipher.default_keyset();
+            let plan = contacts();
+            let bound = 3u32;
+            let names = ["Sibling", "Friend", "Parent"];
+            let contact = (0..names.len(), proptest::option::of(0u64..8));
+            let ops = prop::sample::select(vec!["eq", "lt", "lte", "gt", "gte", "between"]);
+            let strategy = (
+                prop::collection::vec(contact, 0..=4),
+                0..names.len(),
+                ops,
+                0u64..8,
+                0u64..8,
+            );
+            let mut runner = TestRunner::new(Config {
+                cases: 48,
+                ..Config::default()
+            });
+            runner
+                .run(&strategy, |(contacts, wanted, op, n, m)| {
+                    let document = json!({"contacts": contacts
+                        .iter()
+                        .map(|(name, calls)| match calls {
+                            Some(calls) => json!({"relationship": names[*name], "calls": calls}),
+                            None => json!({"relationship": names[*name]}),
+                        })
+                        .collect::<Vec<_>>()});
+                    let (low, high) = (n.min(m), n.max(m));
+                    let calls = match op {
+                        "between" => json!({
+                            "member": "calls", "op": op,
+                            "low": low.to_string(), "high": high.to_string()
+                        }),
+                        _ => json!({"member": "calls", "op": op, "json": n.to_string()}),
+                    };
+                    let predicates = json!([
+                        {"member": "relationship", "op": "eq", "json": json!(names[wanted]).to_string()},
+                        calls,
+                    ]);
+                    let (doc, operand) = runtime.block_on(async {
+                        (
+                            seal(&keyset, &plan, &document).await,
+                            operand(&keyset, &plan, input(bound, predicates)).await,
+                        )
+                    });
+                    let holds = |calls: u64| match op {
+                        "eq" => calls == n,
+                        "lt" => calls < n,
+                        "lte" => calls <= n,
+                        "gt" => calls > n,
+                        "gte" => calls >= n,
+                        _ => (low..=high).contains(&calls),
+                    };
+                    let within = contacts.len() <= usize::try_from(bound).unwrap();
+                    let want = within.then(|| {
+                        contacts
+                            .iter()
+                            .any(|(name, calls)| *name == wanted && calls.is_some_and(holds))
+                    });
+                    let got = element_match(&doc, &operand);
+                    if got != want {
+                        return Err(TestCaseError::fail(format!(
+                            "{document} {op} {n} {m}: got {got:?}, want {want:?}"
+                        )));
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+    }
+
+    mod given_an_input_it_cannot_answer {
+        use super::*;
+
+        /// The refusals made before anything is derived, each by its
+        /// reason, or the index's term error by name.
+        #[test]
+        fn is_refused_with_its_reason() {
+            let plan = contacts();
+            let check = |input: &Value| {
+                dynamic::check_query(
+                    &plan,
+                    "profile",
+                    OpSpec::ElementMatch,
+                    json_frame(input),
+                    &Documents,
+                )
+            };
+            let reason = |input: &Value| -> String {
+                let error = check(input).unwrap_err();
+                match (&error, error.reason()) {
+                    (_, Some(reason)) => reason.as_str().to_owned(),
+                    (dynamic::Error::Cipher(stack_encrypt::Error::Term(term)), None) => {
+                        format!("{term:?}")
+                            .split(['(', ' ', '{'])
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned()
+                    }
+                    (other, None) => panic!("neither a reason nor a term error: {other:?}"),
+                }
+            };
+            let calls = |op: &str| json!([{"member": "calls", "op": op, "json": "1"}]);
+            let one = |predicate: Value| input(2, json!([predicate]));
+            let deep_member = |steps: usize| {
+                one(json!({"member": vec!["a"; steps].join("."), "op": "gt", "json": "1"}))
+            };
+            for (input, want) in [
+                (input(2, json!([])), "json_no_predicates"),
+                (
+                    json!({"path": "$.contacts", "predicates": calls("gt")}),
+                    "json_path_no_wildcard",
+                ),
+                (
+                    json!({"path": "$.contacts[0]", "predicates": calls("gt")}),
+                    "json_path_no_wildcard",
+                ),
+                (
+                    json!({"path": "$.contacts[1].tags[*]", "predicates": calls("gt")}),
+                    "JsonOrderingAtPosition",
+                ),
+                (
+                    one(json!({"member": "note", "op": "eq", "json": "\"x\""})),
+                    "JsonPathNotOrdered",
+                ),
+                (
+                    one(json!({"member": "address", "op": "gt", "json": "1"})),
+                    "JsonPathNotOrdered",
+                ),
+                (
+                    one(json!({"member": "address[0].postcode", "op": "gt", "json": "1"})),
+                    "JsonOrderingAtPosition",
+                ),
+                (
+                    one(json!({"member": "phones[*]", "op": "gt", "json": "1"})),
+                    "json_path_wildcard",
+                ),
+                (input(2, calls("ne")), "json_unknown_predicate_op"),
+                (input(2, calls("between_at")), "json_unknown_predicate_op"),
+                (input(0, calls("gt")), "json_wildcard_bound_zero"),
+                (one(json!({"member": "calls", "op": "gt"})), "json_input"),
+                (
+                    one(json!({"member": "calls", "op": "eq", "low": "1", "high": "2"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "gt", "json": "1", "low": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "gt", "json": "1", "high": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "low": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "high": "1"})),
+                    "json_input",
+                ),
+                (
+                    one(
+                        json!({"member": "calls", "op": "between", "json": "1", "low": "1", "high": "2"}),
+                    ),
+                    "json_input",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "gt", "json": "1", "extra": 1})),
+                    "json_input",
+                ),
+                (json!({"path": "$.contacts[*]"}), "json_input"),
+                (
+                    one(json!({"member": "calls", "op": "eq", "json": "true"})),
+                    "JsonLeafNotOrdered",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "low": "1", "high": "null"})),
+                    "JsonLeafNotOrdered",
+                ),
+                (
+                    one(json!({"member": "calls", "op": "between", "low": "[1]", "high": "2"})),
+                    "JsonLeafNotOrdered",
+                ),
+                (
+                    one(json!({"member": "", "op": "gt", "json": "1"})),
+                    "JsonPath",
+                ),
+                (
+                    json!({"path": "secret", "predicates": calls("gt")}),
+                    "JsonPath",
+                ),
+                // The path has two steps, so a member of 125 is a full path
+                // of 127, as deep as a document goes, and one of 126 deeper.
+                (deep_member(125), "JsonPathNotOrdered"),
+                (deep_member(126), "JsonTooDeep"),
+            ] {
+                assert_eq!(reason(&input), want, "{input}");
+            }
+            // A member that does not parse is refused at an offset into the
+            // member's own text, whichever form it starts with.
+            for (member, at) in [("a.b[", 4), ("[\"a\"].", 6), ("a..b", 2), ("[x]", 1)] {
+                let error =
+                    check(&one(json!({"member": member, "op": "gt", "json": "1"}))).unwrap_err();
+                let dynamic::Error::Cipher(stack_encrypt::Error::Term(
+                    stack_encrypt::sem::TermError::JsonPath(error),
+                )) = error
+                else {
+                    panic!("{member}: not a path error: {error:?}")
+                };
+                assert_eq!(error.at, at, "{member}: {error}");
+            }
+            for input in [
+                input(1, calls("gte")),
+                input(2, calls("gte")),
+                input(
+                    2,
+                    json!([
+                        {"member": "relationship", "op": "eq", "json": "\"a\""},
+                        {"member": "calls", "op": "between", "low": "1", "high": "2"},
+                    ]),
+                ),
+            ] {
+                assert!(check(&input).is_ok(), "{input}");
+            }
+        }
+    }
+
+    mod given_the_fields_type {
+        use super::*;
+
+        /// A resolver whose `JsonSearch` names no element predicate domain:
+        /// what a host presents that has not been taught the operand.
+        struct Unnamed;
+
+        impl TargetResolver for Unnamed {
+            fn targets(&self) -> Vec<TargetDescriptor> {
+                let mut targets = Documents.targets();
+                targets[0].elements_query_sql_domain = None;
+                targets
+            }
+            fn encrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                options: Option<&TargetOptions>,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: ValueFrame,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                Documents.encrypt(name, options, keyset, label, plaintext)
+            }
+            fn decrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                cipher: &'a StackCipher<K>,
+                label: &Label,
+                bytes: &[u8],
+            ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+                Documents.decrypt(name, cipher, label, bytes)
+            }
+            fn query<'a, K: 'static>(
+                &self,
+                name: &str,
+                index: &IndexSpec,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: ValueFrame,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                Documents.query(name, index, keyset, label, plaintext)
+            }
+        }
+
+        fn names(plan: &record::Plan, resolver: &impl TargetResolver) -> Vec<&'static str> {
+            dynamic::field_operators(plan, "profile", resolver)
+                .unwrap()
+                .into_iter()
+                .map(|(op, _)| op.name())
+                .collect()
+        }
+
+        /// Answered, through the JSON index, on a field that orders a path
+        /// and whose type names the operand's domain; its input is
+        /// `path_predicates`.
+        #[test]
+        fn lists_it_when_a_path_is_ordered_and_the_domain_named() {
+            let plan = contacts();
+            assert!(
+                names(&plan, &Documents).contains(&"element_match"),
+                "listed"
+            );
+            let (_, index) = dynamic::field_operators(&plan, "profile", &Documents)
+                .unwrap()
+                .into_iter()
+                .find(|(op, _)| *op == OpSpec::ElementMatch)
+                .unwrap();
+            assert!(
+                matches!(index, IndexSpec::Json(_)),
+                "the JSON index answers it: {index:?}"
+            );
+            assert_eq!(
+                OpSpec::parse("element_match"),
+                Some(OpSpec::ElementMatch),
+                "the wire name parses"
+            );
+            assert_eq!(
+                OpSpec::ElementMatch.input(),
+                "path_predicates",
+                "its input shape"
+            );
+            assert_eq!(
+                OpSpec::ElementMatch.fidelity(),
+                OpSpec::BetweenAt.fidelity(),
+                "compared as the orderings compare"
+            );
+        }
+
+        #[test]
+        fn does_not_list_it_without_an_ordered_path() {
+            let names = names(&plan_of(json!("JsonSearch")), &Documents);
+            assert!(
+                !names.contains(&"element_match"),
+                "no ordering term to compare: {names:?}"
+            );
+        }
+
+        #[test]
+        fn does_not_answer_it_when_the_type_names_no_domain() {
+            let wire = json!({
+                "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                            "target": {"name": "JsonSearch", "options": {"ordered": ["$.a[*].b"]}}}
+            });
+            let plan = record::plan_with(
+                dynamic::frame::serde::to_vec(&wire)
+                    .unwrap()
+                    .as_protected_ref(),
+                &Unnamed,
+            )
+            .unwrap();
+            let names = names(&plan, &Unnamed);
+            assert!(names.contains(&"lt_at"), "the orderings still: {names:?}");
+            assert!(!names.contains(&"element_match"), "{names:?}");
+            let error = dynamic::check_query(
+                &plan,
+                "profile",
+                OpSpec::ElementMatch,
+                json_frame(&json!({"path": "$.a[*]", "predicates": [
+                    {"member": "b", "op": "gt", "json": "1"}
+                ]})),
+                &Unnamed,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.reason(),
+                Some(Reason::OperatorNotAnswered),
+                "{error:?}"
+            );
+        }
+    }
+}
+
+/// `match`: a jsonpath predicate compiled to one operand, a tree of the
+/// other operators' operands. `json_tree_match` is modelled over sealed
+/// documents (`evaluate`), as the element predicate's tests model
+/// `json_tree_element_match`, and held to an oracle of jsonpath's own
+/// semantics over the plaintext; `packages/eql/tests/encryption` runs the
+/// SQL against PostgreSQL's `jsonb_path_match`.
+mod compiled_match {
+    use super::*;
+
+    use proptest::prelude::*;
+    use proptest::test_runner::{Config, TestCaseError, TestRunner};
+    use stack_encrypt::json::{JsonPath, JsonQuery};
+
+    /// `profile`, ordering `$.age`, `$.name` and every contact's `calls`
+    /// and `relationship`.
+    fn people() -> record::Plan {
+        plan_of(json!({
+            "name": "JsonSearch",
+            "options": {"ordered": [
+                "$.age",
+                "$.name",
+                "$.contacts[*].calls",
+                "$.contacts[*].relationship",
+            ]}
+        }))
+    }
+
+    /// The bound every test reads its element leaves to.
+    const BOUND: u32 = 4;
+
+    fn input(predicate: &str, vars: Value) -> Value {
+        json!({"predicate": predicate, "vars": vars.to_string(), "wildcard_bound": BOUND})
+    }
+
+    /// The operand's JSON, `eql_v4.query_json_predicate`.
+    async fn operand<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        predicate: &str,
+        vars: Value,
+    ) -> Value {
+        let term = term(keyset, plan, "match", input(predicate, vars)).await;
+        assert_eq!(term.encoding(), "eql", "an EQL operand");
+        assert_eq!(
+            term.domain(),
+            Some("eql_v4.query_json_predicate"),
+            "bound as the target's compiled predicate domain"
+        );
+        match term.operand() {
+            Operand::One(bytes) => serde_json::from_slice(bytes).unwrap(),
+            other => panic!("one operand, got {other:?}"),
+        }
+    }
+
+    /// The one operand `operator` derives for `input`, as JSON.
+    async fn one<K: Source>(
+        keyset: &KeysetCipher<'_, K>,
+        plan: &record::Plan,
+        operator: &str,
+        input: Value,
+    ) -> Value {
+        match term(keyset, plan, operator, input).await.operand() {
+            Operand::One(bytes) => serde_json::from_slice(bytes).unwrap(),
+            Operand::Text(text) => json!(text),
+            other => panic!("{operator}: {other:?}"),
+        }
+    }
+
+    fn needle(value: &Value) -> JsonQuery {
+        serde_json::from_value(value.clone()).unwrap()
+    }
+
+    /// What `json_tree_match(doc, operand)` answers, as the SQL evaluates
+    /// each node: `and`, `or` and `not` in three-valued logic; `contains`
+    /// as `@>` over the stored projection; `exists` as some entry at the
+    /// selector; `cmp` as the first entry at the selector against each
+    /// bound, compared as the SQL compares ordering terms (bytes), NULL with
+    /// no entry or no term; `elements` as `json_tree_element_match`.
+    fn evaluate(doc: &JsonDocument, node: &Value) -> Option<bool> {
+        let (kind, argument) = node.as_object().unwrap().iter().next().unwrap();
+        let children = || argument.as_array().unwrap().iter();
+        match kind.as_str() {
+            "and" => children()
+                .try_fold(Some(true), |answer, child| {
+                    match (answer, evaluate(doc, child)) {
+                        (_, Some(false)) => Err(()),
+                        (Some(true), Some(true)) => Ok(Some(true)),
+                        _ => Ok(None),
+                    }
+                })
+                .unwrap_or(Some(false)),
+            "or" => children()
+                .try_fold(Some(false), |answer, child| {
+                    match (answer, evaluate(doc, child)) {
+                        (_, Some(true)) => Err(()),
+                        (Some(false), Some(false)) => Ok(Some(false)),
+                        _ => Ok(None),
+                    }
+                })
+                .unwrap_or(Some(true)),
+            "not" => evaluate(doc, argument).map(|answer| !answer),
+            "contains" => Some(needle(argument).matches(doc.selector_set())),
+            "exists" => {
+                let selector = tag(argument.as_str().unwrap());
+                Some(doc.entries().iter().any(|e| e.selector() == &selector))
+            }
+            "cmp" => {
+                let bounds = argument.as_object().unwrap();
+                let selector = tag(bounds.values().next().unwrap()["s"].as_str().unwrap());
+                let entry = doc.entries().iter().find(|e| e.selector() == &selector)?;
+                let stored = entry.ordering_term()?;
+                Some(bounds.iter().all(|(key, leaf)| {
+                    let bound = Base64::decode_vec(leaf["op"].as_str().unwrap()).unwrap();
+                    match key.as_str() {
+                        "gt" => stored > bound.as_slice(),
+                        "gte" => stored >= bound.as_slice(),
+                        "lt" => stored < bound.as_slice(),
+                        _ => stored <= bound.as_slice(),
+                    }
+                }))
+            }
+            "elements" => Some(
+                super::element_match::element_match(doc, argument)
+                    .expect("every array within the bound"),
+            ),
+            other => panic!("not a node: {other}"),
+        }
+    }
+
+    mod given_a_predicate {
+        use super::*;
+
+        /// Each leaf is the operand its operator derives for the same path
+        /// and value: `exists` the selector, `contains` `eq_at`'s needle,
+        /// `cmp` the ordering's leaf operand, `elements` `element_match`'s
+        /// operand; and an ordering carries its guard, a node there, and
+        /// under a `!` the `null` needle too.
+        #[tokio::test]
+        async fn each_leaf_is_its_operators_operand() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = people();
+            let tree = operand(
+                &keyset,
+                &plan,
+                "$.age >= $min && $.name == \"ann\" \
+                 && exists($.contacts[*] ? (@.relationship == $r && @.calls > 5))",
+                json!({"min": 18, "r": "sibling"}),
+            )
+            .await;
+            let leaves = tree["and"].as_array().unwrap();
+            assert_eq!(leaves.len(), 4, "{tree}");
+            let selector = one(&keyset, &plan, "selector", json!({"path": "$.age"})).await;
+            assert_eq!(leaves[0], json!({"exists": selector}), "the node is there");
+            let gte = json!({"cmp": {"gte": one(&keyset, &plan, "gte_at", json!({"path": "$.age", "json": "18"})).await}});
+            assert_eq!(leaves[1], gte, "the ordering's own leaf operand");
+            let ann = one(
+                &keyset,
+                &plan,
+                "eq_at",
+                json!({"path": "$.name", "json": "\"ann\""}),
+            )
+            .await;
+            assert!(
+                needle(&leaves[2]["contains"]) == needle(&ann),
+                "{}",
+                leaves[2]
+            );
+            let elements = one(
+                &keyset,
+                &plan,
+                "element_match",
+                json!({"path": "$.contacts[*]", "wildcard_bound": BOUND, "predicates": [
+                    {"member": "relationship", "op": "eq", "json": "\"sibling\""},
+                    {"member": "calls", "op": "gt", "json": "5"},
+                ]}),
+            )
+            .await;
+            assert_eq!(
+                leaves[3],
+                json!({"elements": elements}),
+                "element_match's operand"
+            );
+
+            // Under a `!`, the ordering is also not a `null`: eq_at's own
+            // needle for `null` at the path.
+            let negated = operand(&keyset, &plan, "!($.age >= $min)", json!({"min": 18})).await;
+            let guarded = negated["not"]["and"].as_array().unwrap();
+            assert_eq!(guarded.len(), 3, "{negated}");
+            assert_eq!(guarded[0], json!({"exists": selector}), "the node is there");
+            let null = one(
+                &keyset,
+                &plan,
+                "eq_at",
+                json!({"path": "$.age", "json": "null"}),
+            )
+            .await;
+            assert!(
+                needle(&guarded[1]["not"]["contains"]) == needle(&null),
+                "and is not a null: {}",
+                guarded[1]
+            );
+            assert_eq!(guarded[2], gte, "the ordering's own leaf operand");
+        }
+
+        /// `||`, `!` and the operators' guards keep their structure, and an
+        /// ordering at a wildcard is an element predicate of one member.
+        #[tokio::test]
+        async fn the_boolean_structure_is_the_predicates() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = people();
+            let tree = operand(
+                &keyset,
+                &plan,
+                "!(exists($.name)) || $.contacts[*].calls < 2",
+                json!({}),
+            )
+            .await;
+            let either = tree["or"].as_array().unwrap();
+            assert!(either[0]["not"]["exists"].is_string(), "{tree}");
+            let m = either[1]["elements"]["m"].as_array().unwrap();
+            assert_eq!(m.len(), 1, "one member: {tree}");
+            assert!(m[0]["lt"].is_object(), "its bound: {tree}");
+            assert_eq!(
+                m[0]["t"].as_array().unwrap().len(),
+                usize::try_from(BOUND).unwrap() + 1,
+                "read to the input's bound, then the probe"
+            );
+        }
+    }
+
+    mod given_documents {
+        use super::*;
+
+        /// A document generated to the shape the predicates read: each
+        /// field absent, `null` or a value of the one type its path holds.
+        fn document() -> impl Strategy<Value = Value> {
+            let names = prop::sample::select(vec!["ann", "bob", "cat"]);
+            let field = |values: BoxedStrategy<Value>| {
+                prop_oneof![
+                    1 => Just(None),
+                    1 => Just(Some(Value::Null)),
+                    3 => values.prop_map(Some),
+                ]
+            };
+            let contact = (
+                proptest::option::of(names.clone()),
+                proptest::option::of(0u64..6),
+            )
+                .prop_map(|(relationship, calls)| {
+                    let mut contact = serde_json::Map::new();
+                    if let Some(relationship) = relationship {
+                        contact.insert("relationship".into(), json!(relationship));
+                    }
+                    if let Some(calls) = calls {
+                        contact.insert("calls".into(), json!(calls));
+                    }
+                    Value::Object(contact)
+                });
+            (
+                field((0u64..6).prop_map(|n| json!(n)).boxed()),
+                field(names.clone().prop_map(|n| json!(n)).boxed()),
+                field(any::<bool>().prop_map(|b| json!(b)).boxed()),
+                proptest::option::of(prop::collection::vec(names, 0..3)),
+                proptest::option::of(prop::collection::vec(contact, 0..=3)),
+            )
+                .prop_map(|(age, name, ok, tags, contacts)| {
+                    let mut document = serde_json::Map::new();
+                    for (key, value) in [("age", age), ("name", name), ("ok", ok)] {
+                        if let Some(value) = value {
+                            document.insert(key.into(), value);
+                        }
+                    }
+                    if let Some(tags) = tags {
+                        document.insert("tags".into(), json!(tags));
+                    }
+                    if let Some(contacts) = contacts {
+                        document.insert("contacts".into(), json!(contacts));
+                    }
+                    Value::Object(document)
+                })
+        }
+
+        /// A jsonpath predicate in the subset `match` reads, as text and as
+        /// what jsonpath answers of it over a plaintext document.
+        #[derive(Clone, Debug)]
+        enum Plain {
+            /// `path op value`.
+            Compare(&'static str, &'static str, Value),
+            /// `exists(path)`.
+            Exists(&'static str),
+            /// `exists(base ? (@member op value && …))`.
+            Filter(&'static str, Vec<(&'static str, &'static str, Value)>),
+            And(Box<Plain>, Box<Plain>),
+            Or(Box<Plain>, Box<Plain>),
+            Not(Box<Plain>),
+        }
+
+        impl Plain {
+            fn text(&self) -> String {
+                match self {
+                    Plain::Compare(path, op, value) => format!("{path} {op} {value}"),
+                    Plain::Exists(path) => format!("exists({path})"),
+                    Plain::Filter(base, conditions) => {
+                        let conditions: Vec<String> = conditions
+                            .iter()
+                            .map(|(member, op, value)| format!("@{member} {op} {value}"))
+                            .collect();
+                        format!("exists({base} ? ({}))", conditions.join(" && "))
+                    }
+                    Plain::And(a, b) => format!("({} && {})", a.text(), b.text()),
+                    Plain::Or(a, b) => format!("({} || {})", a.text(), b.text()),
+                    Plain::Not(a) => format!("!({})", a.text()),
+                }
+            }
+
+            /// What jsonpath answers, in lax mode over a document with no
+            /// array where a path names none: `None` for unknown.
+            fn answer(&self, document: &Value) -> Option<bool> {
+                match self {
+                    Plain::Compare(path, op, value) => {
+                        let items = JsonPath::parse(path).unwrap();
+                        some_item(
+                            items
+                                .select(document)
+                                .into_iter()
+                                .map(|item| compare(item, op, value)),
+                        )
+                    }
+                    Plain::Exists(path) => {
+                        Some(!JsonPath::parse(path).unwrap().select(document).is_empty())
+                    }
+                    Plain::Filter(base, conditions) => Some(
+                        JsonPath::parse(base)
+                            .unwrap()
+                            .select(document)
+                            .into_iter()
+                            .any(|element| {
+                                conditions.iter().all(|(member, op, value)| {
+                                    let item = match member.strip_prefix('.') {
+                                        Some(key) => element.get(key),
+                                        None => Some(element),
+                                    };
+                                    item.and_then(|item| compare(item, op, value)) == Some(true)
+                                })
+                            }),
+                    ),
+                    Plain::And(a, b) => match (a.answer(document), b.answer(document)) {
+                        (Some(false), _) | (_, Some(false)) => Some(false),
+                        (Some(true), Some(true)) => Some(true),
+                        _ => None,
+                    },
+                    Plain::Or(a, b) => match (a.answer(document), b.answer(document)) {
+                        (Some(true), _) | (_, Some(true)) => Some(true),
+                        (Some(false), Some(false)) => Some(false),
+                        _ => None,
+                    },
+                    Plain::Not(a) => a.answer(document).map(|answer| !answer),
+                }
+            }
+        }
+
+        /// jsonpath's `any`: true when one comparison is, else unknown
+        /// when one is, else false (and false over no items).
+        fn some_item(answers: impl Iterator<Item = Option<bool>>) -> Option<bool> {
+            let mut answer = Some(false);
+            for one in answers {
+                match one {
+                    Some(true) => return Some(true),
+                    None => answer = None,
+                    Some(false) => {}
+                }
+            }
+            answer
+        }
+
+        /// One jsonpath comparison: `null` equals only `null` and orders
+        /// below nothing; two numbers, two strings or two booleans compare;
+        /// anything else is unknown.
+        fn compare(item: &Value, op: &str, value: &Value) -> Option<bool> {
+            use std::cmp::Ordering;
+            let order = match (item, value) {
+                (Value::Null, Value::Null) => Some(Ordering::Equal),
+                (Value::Null, _) | (_, Value::Null) => {
+                    return Some(match op {
+                        "==" => false,
+                        "!=" => true,
+                        _ => false,
+                    })
+                }
+                (Value::Number(a), Value::Number(b)) => {
+                    a.as_f64().unwrap().partial_cmp(&b.as_f64().unwrap())
+                }
+                (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+                (Value::Bool(a), Value::Bool(b)) if matches!(op, "==" | "!=") => Some(a.cmp(b)),
+                _ => return None,
+            }?;
+            Some(match op {
+                "==" => order.is_eq(),
+                "!=" => order.is_ne(),
+                "<" => order.is_lt(),
+                "<=" => order.is_le(),
+                ">" => order.is_gt(),
+                _ => order.is_ge(),
+            })
+        }
+
+        /// The predicates: each comparison `match` compiles, on paths of
+        /// every shape the documents hold, and `&&`, `||` and `!` over them.
+        fn predicate() -> impl Strategy<Value = Plain> {
+            let ordering = prop::sample::select(vec!["<", "<=", ">", ">="]);
+            let any_op = prop::sample::select(vec!["==", "!=", "<", "<=", ">", ">="]);
+            let equality = prop::sample::select(vec!["==", "!="]);
+            let name = prop::sample::select(vec!["ann", "bob", "cat"]).prop_map(|n| json!(n));
+            let number = (0u64..6).prop_map(|n| json!(n));
+            let leaf = prop_oneof![
+                (any_op.clone(), number.clone()).prop_map(|(op, n)| Plain::Compare("$.age", op, n)),
+                (any_op, name.clone()).prop_map(|(op, n)| Plain::Compare("$.name", op, n)),
+                (equality.clone(), any::<bool>()).prop_map(|(op, b)| Plain::Compare(
+                    "$.ok",
+                    op,
+                    json!(b)
+                )),
+                (
+                    equality,
+                    prop::sample::select(vec!["$.age", "$.name", "$.ok"])
+                )
+                    .prop_map(|(op, path)| Plain::Compare(path, op, Value::Null)),
+                prop::sample::select(vec!["$.age", "$.name", "$.tags", "$.tags[*]", "$.contacts"])
+                    .prop_map(Plain::Exists),
+                name.clone()
+                    .prop_map(|n| Plain::Compare("$.tags[*]", "==", n)),
+                (
+                    prop::sample::select(vec!["==", "<", "<=", ">", ">="]),
+                    number.clone()
+                )
+                    .prop_map(|(op, n)| Plain::Compare(
+                        "$.contacts[*].calls",
+                        op,
+                        n
+                    )),
+                name.clone()
+                    .prop_map(|n| Plain::Filter("$.tags[*]", vec![("", "==", n)])),
+                name.clone()
+                    .prop_map(|n| Plain::Filter("$.contacts[*]", vec![(".relationship", "==", n)])),
+                (name, ordering, number).prop_map(|(n, op, m)| Plain::Filter(
+                    "$.contacts[*]",
+                    vec![(".relationship", "==", n), (".calls", op, m)]
+                )),
+            ];
+            leaf.prop_recursive(3, 12, 2, |inner| {
+                prop_oneof![
+                    (inner.clone(), inner.clone())
+                        .prop_map(|(a, b)| Plain::And(Box::new(a), Box::new(b))),
+                    (inner.clone(), inner.clone())
+                        .prop_map(|(a, b)| Plain::Or(Box::new(a), Box::new(b))),
+                    inner.prop_map(|a| Plain::Not(Box::new(a))),
+                ]
+            })
+        }
+
+        /// Over random documents and predicates, the compiled operand is
+        /// true of exactly the documents jsonpath is true of over the
+        /// plaintext, so a WHERE returns jsonpath's rows. Its answer is
+        /// jsonpath's (true, false or unknown: `None`, SQL NULL), save
+        /// that it may be unknown where jsonpath says false: an ordering
+        /// over a JSON `null` under an even number of `!` sends no `null`
+        /// needle, and is NULL there, which picks the same rows.
+        #[test]
+        fn picks_jsonpaths_rows_over_the_plaintext() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let cipher = runtime.block_on(common::stack_cipher());
+            let keyset = cipher.default_keyset();
+            let plan = people();
+            let mut runner = TestRunner::new(Config {
+                cases: 256,
+                ..Config::default()
+            });
+            runner
+                .run(&(document(), predicate()), |(document, predicate)| {
+                    let text = predicate.text();
+                    let (doc, tree) = runtime.block_on(async {
+                        (
+                            seal(&keyset, &plan, &document).await,
+                            operand(&keyset, &plan, &text, json!({})).await,
+                        )
+                    });
+                    let (got, want) = (evaluate(&doc, &tree), predicate.answer(&document));
+                    let same_rows = (got == Some(true)) == (want == Some(true));
+                    let same_answer = got == want || (want == Some(false) && got.is_none());
+                    if !(same_rows && same_answer) {
+                        return Err(TestCaseError::fail(format!(
+                            "{text} over {document}: got {got:?}, want {want:?}"
+                        )));
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+
+        /// The three-valued cases a hand-written WHERE has: an ordering is
+        /// unknown of a node with no ordering term (a boolean), and so is
+        /// `!` of it, where an absent path is false; an ordering of a
+        /// `null` is false under an odd number of `!`, where the `null`
+        /// needle is sent, and unknown elsewhere, which matches no row as
+        /// false does; `!=` is true of a `null`; and `== null` finds only a
+        /// `null`.
+        #[tokio::test]
+        async fn unknown_null_and_absent_answer_as_jsonpath_does() {
+            let cipher = common::stack_cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = people();
+            for (document, predicate, want) in [
+                (json!({"age": true}), "$.age < 3", None),
+                (json!({"age": true}), "!($.age < 3)", None),
+                (
+                    json!({"age": true}),
+                    "!($.age < 3) || exists($.age)",
+                    Some(true),
+                ),
+                (
+                    json!({"age": true}),
+                    "!($.age < 3) && $.age == 1",
+                    Some(false),
+                ),
+                (json!({"age": null}), "$.age < 3", None),
+                (json!({"age": null}), "!(!($.age < 3))", None),
+                (json!({"age": null}), "$.age < 3 || $.age == 1", None),
+                (json!({"age": null}), "!($.age < 3)", Some(true)),
+                (
+                    json!({"age": null}),
+                    "!($.age < 3 || $.age == 1)",
+                    Some(true),
+                ),
+                (
+                    json!({"age": null}),
+                    "!($.age < 3) && exists($.age)",
+                    Some(true),
+                ),
+                (
+                    json!({"age": null}),
+                    "!(!($.age < 3) && exists($.age))",
+                    None,
+                ),
+                (json!({}), "$.age < 3", Some(false)),
+                (json!({}), "!($.age < 3)", Some(true)),
+                (json!({"age": null}), "$.age != 3", Some(true)),
+                (json!({}), "$.age != 3", Some(false)),
+                (json!({"age": null}), "$.age != null", Some(false)),
+                (json!({"age": 1}), "$.age != null", Some(true)),
+                (json!({"age": null}), "$.age == null", Some(true)),
+                (json!({}), "$.age == null", Some(false)),
+                (json!({"age": 1}), "$.age == null", Some(false)),
+            ] {
+                let doc = seal(&keyset, &plan, &document).await;
+                let tree = operand(&keyset, &plan, predicate, json!({})).await;
+                assert_eq!(evaluate(&doc, &tree), want, "{predicate} over {document}");
+            }
+        }
+    }
+
+    mod given_an_input_it_cannot_answer {
+        use super::*;
+
+        fn check(input: &Value) -> Result<(), dynamic::Error> {
+            dynamic::check_query(
+                &people(),
+                "profile",
+                OpSpec::Match,
+                json_frame(input),
+                &Documents,
+            )
+        }
+
+        /// Shared native/Go predicate refusals preserve structured diagnostics.
+        #[test]
+        fn shared_predicate_refusals() {
+            let cases: Value = serde_json::from_str(include_str!(
+                "../../../conformance/stack-encrypt/v1/eql-json-v1.cases.json"
+            ))
+            .unwrap();
+            assert_eq!(cases["version"], 1);
+            assert_eq!(cases["profile"], "eql-json-v1");
+            for case in cases["predicate_refusals"].as_array().unwrap() {
+                let predicate = case["predicate"].as_str().unwrap();
+                assert_eq!(
+                    predicate.find(case["at_text"].as_str().unwrap()),
+                    Some(case["at"].as_u64().unwrap() as usize)
+                );
+                let request = match case.get("vars") {
+                    Some(vars) => input(predicate, vars.clone()),
+                    None => json!({"predicate": predicate}),
+                };
+                let error = check(&request).unwrap_err();
+                let payload = stack_encrypt::ErrorPayload::payload(&error);
+                assert_eq!(
+                    error.reason().map(Reason::as_str),
+                    case["reason"].as_str(),
+                    "{}",
+                    case["id"]
+                );
+                assert_eq!(payload["at"], case["at"], "{}", case["id"]);
+                assert_eq!(payload["construct"], case["construct"], "{}", case["id"]);
+                assert_eq!(error.field(), Some("profile"));
+                let rendered = format!("{error} {payload:?}");
+                assert!(
+                    !rendered.contains("secret") && !rendered.contains(predicate),
+                    "{}: the error holds the caller's text: {rendered}",
+                    case["id"]
+                );
+            }
+        }
+
+        /// A refusal names its reason, the construct and its offset in the
+        /// caller's text, and the field; the input's own shape is refused
+        /// as the other operators refuse theirs.
+        #[test]
+        fn is_refused_with_its_reason_and_offset() {
+            for (predicate, vars, reason, at) in [
+                ("$.age + 1 > 2", json!({}), "json_predicate_unsupported", 6),
+                ("$.age >", json!({}), "json_predicate_syntax", 7),
+                (
+                    "$.age > $n",
+                    json!({}),
+                    "json_predicate_unknown_variable",
+                    8,
+                ),
+                (
+                    "$.age > $n",
+                    json!({"n": [1]}),
+                    "json_predicate_value_type",
+                    8,
+                ),
+                (
+                    "$.tags[*] != \"a\"",
+                    json!({}),
+                    "json_predicate_not_equal_at_wildcard",
+                    10,
+                ),
+                ("$.tags[0] == \"a\"", json!({}), "json_path_position", 6),
+            ] {
+                let error = check(&input(predicate, vars)).unwrap_err();
+                assert_eq!(
+                    error.reason().map(Reason::as_str),
+                    Some(reason),
+                    "{predicate}"
+                );
+                assert_eq!(error.field(), Some("profile"), "{predicate}");
+                let payload = stack_encrypt::ErrorPayload::payload(&error);
+                assert_eq!(payload["at"], json!(at), "{predicate}: {payload:?}");
+                assert!(payload["construct"].is_string(), "{predicate}: {payload:?}");
+            }
+            for (input, reason) in [
+                (json!({"predicate": "$.a == 1", "vars": "[]"}), "json_input"),
+                (json!({"predicate": "$.a == 1", "vars": "{"}), "json_syntax"),
+                (
+                    json!({"predicate": "$.a == 1", "wildcard_bound": 0}),
+                    "json_wildcard_bound_zero",
+                ),
+                (json!({"predicate": "$.a == 1", "other": 1}), "json_input"),
+                (json!({"vars": "{}"}), "json_input"),
+            ] {
+                let error = check(&input).unwrap_err();
+                assert_eq!(error.reason().map(Reason::as_str), Some(reason), "{input}");
+            }
+            let error = check(&input("$.height > 1", json!({}))).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    dynamic::Error::Cipher(stack_encrypt::Error::Term(
+                        stack_encrypt::sem::TermError::JsonPathNotOrdered
+                    ))
+                ),
+                "an ordering at a path the field does not order: {error:?}"
+            );
+            assert!(
+                check(&json!({"predicate": "$.a == 1"})).is_ok(),
+                "vars may be absent"
+            );
+        }
+    }
+
+    mod given_the_fields_type {
+        use super::*;
+
+        /// A resolver whose `JsonSearch` names no compiled predicate
+        /// domain: what a host presents that has not been taught the
+        /// operand.
+        struct Unnamed;
+
+        impl TargetResolver for Unnamed {
+            fn targets(&self) -> Vec<TargetDescriptor> {
+                let mut targets = Documents.targets();
+                targets[0].predicate_query_sql_domain = None;
+                targets
+            }
+            fn encrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                options: Option<&TargetOptions>,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: ValueFrame,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                Documents.encrypt(name, options, keyset, label, plaintext)
+            }
+            fn decrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                cipher: &'a StackCipher<K>,
+                label: &Label,
+                bytes: &[u8],
+            ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
+                Documents.decrypt(name, cipher, label, bytes)
+            }
+            fn query<'a, K: 'static>(
+                &self,
+                name: &str,
+                index: &IndexSpec,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: ValueFrame,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                Documents.query(name, index, keyset, label, plaintext)
+            }
+        }
+
+        fn names(plan: &record::Plan, resolver: &impl TargetResolver) -> Vec<&'static str> {
+            dynamic::field_operators(plan, "profile", resolver)
+                .unwrap()
+                .into_iter()
+                .map(|(op, _)| op.name())
+                .collect()
+        }
+
+        /// Answered through the JSON index whenever the type names the
+        /// domain, an ordered path or none, as the last operator; its input
+        /// is `predicate` and it is exact.
+        #[test]
+        fn lists_it_when_the_domain_is_named() {
+            for plan in [people(), plan_of(json!("JsonSearch"))] {
+                assert_eq!(names(&plan, &Documents).last(), Some(&"match"));
+            }
+            assert_eq!(
+                OpSpec::parse("match"),
+                Some(OpSpec::Match),
+                "the wire name parses"
+            );
+            assert_eq!(OpSpec::Match.input(), "predicate", "its input shape");
+            assert_eq!(OpSpec::Match.fidelity(), dynamic::Fidelity::Exact);
+            let (_, index) = dynamic::field_operators(&people(), "profile", &Documents)
+                .unwrap()
+                .into_iter()
+                .find(|(op, _)| *op == OpSpec::Match)
+                .unwrap();
+            assert!(matches!(index, IndexSpec::Json(_)), "{index:?}");
+        }
+
+        #[test]
+        fn does_not_answer_it_when_the_type_names_no_domain() {
+            let wire = json!({
+                "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
+                            "target": "JsonSearch"}
+            });
+            let plan = record::plan_with(
+                dynamic::frame::serde::to_vec(&wire)
+                    .unwrap()
+                    .as_protected_ref(),
+                &Unnamed,
+            )
+            .unwrap();
+            let names = names(&plan, &Unnamed);
+            assert!(names.contains(&"eq_at"), "the others still: {names:?}");
+            assert!(!names.contains(&"match"), "{names:?}");
+            let error = dynamic::check_query(
+                &plan,
+                "profile",
+                OpSpec::Match,
+                json_frame(&input("$.a == 1", json!({}))),
+                &Unnamed,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.reason(),
+                Some(Reason::OperatorNotAnswered),
+                "{error:?}"
+            );
+        }
+
+        /// A type's own list, which a host reads from its descriptors, has
+        /// `match` only when the type names the domain: a host that has not
+        /// been taught the operand sees no new operator.
+        #[test]
+        fn a_types_operators_name_it_only_with_the_domain() {
+            assert!(
+                Documents.targets()[0].operators().contains(&OpSpec::Match),
+                "named"
+            );
+            let unnamed = Unnamed.targets()[0].operators();
+            assert!(!unnamed.contains(&OpSpec::Match), "{unnamed:?}");
+            assert!(unnamed.contains(&OpSpec::EqAt), "{unnamed:?}");
+        }
+    }
 }

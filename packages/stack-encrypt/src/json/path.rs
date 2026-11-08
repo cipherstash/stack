@@ -264,6 +264,12 @@ impl JsonPath {
         current
     }
 
+    /// The path of these steps, from the root down.
+    #[cfg(feature = "dynamic")]
+    pub(crate) fn of(segments: Vec<Segment>) -> Self {
+        Self { segments }
+    }
+
     /// This path with one more step.
     pub(crate) fn then(&self, segment: Segment) -> Self {
         let mut segments = Vec::with_capacity(self.segments.len() + 1);

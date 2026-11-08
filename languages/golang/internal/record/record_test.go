@@ -220,3 +220,31 @@ func TestWireGivesATargetItsOptions(t *testing.T) {
 		t.Fatal("json is a kind")
 	}
 }
+
+// Ordered paths group by the array their last wildcard names, each one a
+// member of an element of it; a path with no member below a wildcard, or
+// one that crosses another array, is none.
+func TestElementArraysGroupOrderedPathsByTheirLastWildcard(t *testing.T) {
+	o := &TargetOptions{Ordered: []string{
+		"$.age",
+		"$.extra.contacts[*].relationship",
+		"$.tags[*]",
+		"$.extra.contacts[*].calls",
+		"$.orders[*].lines[*].sku",
+		"$.orders[*].lines[*].qty.units",
+		"$.visits[*].stops[2]",
+		"$.m[*][*].x",
+		`$["a b"][*].c`,
+	}}
+	want := []ElementArray{
+		{Path: "$.extra.contacts[*]", Members: []string{"relationship", "calls"}},
+		{Path: "$.orders[*].lines[*]", Members: []string{"sku", "qty.units"}},
+		{Path: "$.m[*][*]", Members: []string{"x"}},
+	}
+	if got := o.ElementArrays(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ElementArrays = %+v, want %+v", got, want)
+	}
+	if got := (*TargetOptions)(nil).ElementArrays(); got != nil {
+		t.Fatalf("nil options: %+v", got)
+	}
+}

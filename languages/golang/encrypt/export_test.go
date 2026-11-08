@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/tetratelabs/wazero/api"
 )
 
 // The test-only ways to give a client a token. The public API takes tokens
@@ -81,9 +83,9 @@ var ErrDeterministicGuestNotBuilt = errors.New("encrypt: deterministic guest not
 // name the build they run against (NewDeterministicEQLClient is the other),
 // so each build keeps its own coverage.
 func NewDeterministicClient(ctx context.Context, seed [32]byte) (*Client, error) {
-	wasm, err := os.ReadFile(deterministicGuestPath)
+	wasm, err := DeterministicGuest()
 	if err != nil {
-		return nil, ErrDeterministicGuestNotBuilt
+		return nil, err
 	}
 	return deterministicClient(ctx, wasm, seed)
 }
@@ -183,3 +185,65 @@ var (
 	WantDiagnostic = wantDiagnostic
 	WantCode       = wantCode
 )
+
+// CheckFrameForTest reaches the engine parser without host Plan validation or
+// lowering, so the shared grammar can include malformed declarations. The
+// checker has no cipher, credentials or usable transport.
+func (k *Checker) CheckFrameForTest(ctx context.Context, encoded []byte) error {
+	return k.checkFrame(ctx, encoded)
+}
+
+// DeterministicGuest reads the named test build without embedding it.
+func DeterministicGuest() ([]byte, error) {
+	wasm, err := os.ReadFile(deterministicGuestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrDeterministicGuestNotBuilt
+	}
+	return wasm, err
+}
+
+// OpenTreeForTest accepts stored shapes that record.Sealed cannot express,
+// while preserving Cipher validation, extension, context and production decoding.
+func (cph *Cipher) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan) ([]record.Source, error) {
+	if cph == nil {
+		return nil, fmt.Errorf("%w: Open on a nil *Cipher", ErrEncoding)
+	}
+	p, err := cph.plan(plan)
+	if err != nil {
+		return nil, err
+	}
+	return cph.client.openTree(ctx, cph.keyset, cph.context, p, tree)
+}
+
+// OpenTreeForTest deliberately bypasses host plan validation to observe the
+// uninitialised guest's preflight, including plans the host refuses earlier.
+func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.Plan, expected string) ([]record.Source, error) {
+	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, plan, tree)
+}
+
+// ObserveEncryptPlansForTest copies the actual plan buffer at the WASM call
+// boundary. Install and restore only while this test's client is idle.
+func ObserveEncryptPlansForTest(c *Client, observe func([]byte)) func() {
+	original := c.inst.encryptRecord
+	c.inst.encryptRecord = &observedEncryptCall{Function: original, module: c.inst.module, observe: observe}
+	return func() { c.inst.encryptRecord = original }
+}
+
+type observedEncryptCall struct {
+	api.Function
+	module  api.Module
+	observe func([]byte)
+}
+
+func (f *observedEncryptCall) Call(ctx context.Context, params ...uint64) ([]uint64, error) {
+	// se_encrypt_record(source_ptr, source_len, plan_ptr, plan_len, opts_ptr, opts_len).
+	if len(params) != 6 {
+		return nil, fmt.Errorf("unexpected encrypt ABI: %d arguments", len(params))
+	}
+	plan, ok := f.module.Memory().Read(uint32(params[2]), uint32(params[3]))
+	if !ok {
+		return nil, errors.New("plan outside guest memory")
+	}
+	f.observe(append([]byte(nil), plan...))
+	return f.Function.Call(ctx, params...)
+}

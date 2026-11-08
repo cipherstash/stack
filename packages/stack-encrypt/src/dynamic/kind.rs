@@ -173,7 +173,7 @@ fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
 /// // A JavaScript number is a float; against a `uint64` field it is 34.
 /// let value = read(ValueKind::UInt64, 34.0f64)?;
 /// assert_eq!(value.kind(), Some(ValueKind::UInt64));
-/// assert_eq!(value.risky_ref(), ValueFrame::of(34u64)?.risky_ref());
+/// assert_eq!(value, ValueFrame::of(34u64)?);
 /// assert!(read(ValueKind::UInt64, 34.5f64).is_err());
 /// // Against an `int8` field, 34 is the 8-bit integer; 300 does not fit.
 /// assert_eq!(read(ValueKind::Int8, 34i64)?.kind(), Some(ValueKind::Int8));

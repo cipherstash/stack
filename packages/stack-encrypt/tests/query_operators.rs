@@ -16,6 +16,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::path::PathBuf;
 
 use common::frames::{frame, object};
@@ -76,7 +77,7 @@ fn stats_cases() -> Vec<(Json, Stats)> {
 }
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
-fn frame_of_json(value: &Json) -> Vec<u8> {
+fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
     vitaminc_aead_frame::serde::to_vec(value).expect("frames")
 }
 
@@ -267,7 +268,8 @@ async fn data_term(
 async fn derived() -> Json {
     let cipher = deterministic_cipher(SEED).await;
     let keyset = cipher.default_keyset();
-    let plan = record::plan(&frame_of_json(&plan_json())).expect("the plan parses");
+    let plan =
+        record::plan(frame_of_json(&plan_json()).as_protected_ref()).expect("the plan parses");
 
     let mut terms = Vec::new();
     for (field, operator, input) in queries() {
@@ -317,8 +319,8 @@ async fn derived() -> Json {
         };
         let typed = typed_match(&cipher, input).await;
         for (stats_json, stats) in stats_cases() {
-            let read =
-                Stats::from_frame(frame_of_value(&stats_json).risky_ref()).expect("stats read");
+            let read = Stats::from_frame(frame_of_value(&stats_json).as_protected_ref())
+                .expect("stats read");
             assert_eq!(read, stats, "the wire form reads as the typed stats");
             let limit =
                 dynamic::target_limit(&plan, "name", OpSpec::Matches, bytes, 10, &read, &NoTargets)
@@ -362,12 +364,14 @@ fn fixture_path() -> PathBuf {
 }
 
 /// The committed fixture is what this run derives. With
-/// `STACK_ENCRYPT_UPDATE_FIXTURES=1` it is written first.
+/// `STACK_ENCRYPT_UPDATE_FIXTURES=1` it is written first. Updates panic when
+/// `STACK_CONFORMANCE_REQUIRED=1`.
 #[tokio::test]
 async fn the_committed_query_fixture_is_what_the_engine_derives() {
+    let update = common::fixture_updates_requested_or_panic();
     let now = derived().await;
     let path = fixture_path();
-    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+    if update {
         let mut text = serde_json::to_string_pretty(&now).expect("serialise");
         text.push('\n');
         std::fs::write(&path, text).expect("write the fixture");
@@ -393,4 +397,9 @@ async fn the_fixture_pins_both_outcomes() {
         .collect();
     assert!(limits.iter().any(|limit| limit.is_u64()));
     assert!(limits.iter().any(|limit| limit.is_null()));
+}
+
+#[test]
+fn enrolled_fixture_tests_are_compiled_and_enabled() {
+    common::assert_fixture_tests_registered("query_operators");
 }

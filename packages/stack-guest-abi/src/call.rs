@@ -99,6 +99,7 @@ pub fn take_last_error() -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::status::{STATUS_ENCODING, STATUS_INTERNAL};
+    use crate::value::HostValue;
 
     /// A paused operation is not a failure: it records no error, and clears
     /// one recorded on the way to the pause.
@@ -111,7 +112,6 @@ mod tests {
         assert_eq!(paused, Err(STATUS_NEEDS_IO));
         assert!(!last_error::is_set());
     }
-    use crate::value::HostValue;
 
     /// A packed result, read the way the Go host reads it.
     #[derive(Debug, PartialEq)]

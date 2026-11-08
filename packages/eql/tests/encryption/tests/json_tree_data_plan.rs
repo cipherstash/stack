@@ -18,6 +18,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::collections::BTreeMap;
 
 use eql_bindings::encryption::targets::{self as eql_targets, Target};
@@ -122,7 +123,13 @@ fn plan() -> record::Plan {
             }
         }
     });
-    record::plan_with(&dynamic::frame::serde::to_vec(&wire).unwrap(), &Eql).unwrap()
+    record::plan_with(
+        dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
+        &Eql,
+    )
+    .unwrap()
 }
 
 fn frame<T: Encrypt>(value: T) -> ValueFrame {
@@ -131,18 +138,12 @@ fn frame<T: Encrypt>(value: T) -> ValueFrame {
 
 /// The documents a batch carries, as values.
 fn documents() -> Vec<Value> {
-    vec![
-        json!({"name": "Alice", "age": 34, "visits": [{"at": 3, "where": "x"}, {"at": 1}], "tags": ["a", "b"]}),
-        json!({"name": "Bob", "age": 7.5, "nested": {"deep": [[1, 2], {}]}, "none": null}),
-        json!([1, "two", {"three": 3}]),
-        json!("a scalar root"),
-        json!(18446744073709551615u64),
-        json!(-9223372036854775808i64),
-        json!(-926_809.505_100_808_3),
-        Value::Null,
-        json!({}),
-        json!([]),
-    ]
+    conformance_cases()["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|text| serde_json::from_str(text.as_str().unwrap()).unwrap())
+        .collect()
 }
 
 /// The EQL value a sealed row stores for `profile`, parsed.
@@ -406,7 +407,7 @@ async fn a_document_does_not_open_under_another_column() {
     .await
     .unwrap();
     let other = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {
                 "context": ["users", "other"],
                 "type": "json",
@@ -417,7 +418,8 @@ async fn a_document_does_not_open_under_another_column() {
                 }
             }
         }))
-        .unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Eql,
     )
     .unwrap();
@@ -443,12 +445,9 @@ async fn text_that_is_not_a_document_is_refused_before_any_key() {
     let (cipher, calls) = common::cipher().await;
     let keyset = cipher.default_keyset();
     let plan = plan();
-    for (text, code) in [
-        (r#"{"secret": 1, "secret": 2}"#, "json_duplicate_key"),
-        ("99999999999999999999", "json_integer_range"),
-        (r#"{"secret": "#, "json_syntax"),
-        ("", "json_syntax"),
-    ] {
+    for case in conformance_cases()["invalid_documents"].as_array().unwrap() {
+        let text = case["text"].as_str().unwrap();
+        let code = case["reason"].as_str().unwrap();
         let source = BTreeMap::from([("profile", text)]);
         let error = match record::encrypt_with(&keyset, frame(&source), &plan, &Eql) {
             Err(error) => error,
@@ -497,7 +496,12 @@ fn input(entries: &[(&str, Value)]) -> ValueFrame {
         .iter()
         .map(|(k, v)| ((*k).to_owned(), v.clone()))
         .collect();
-    ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(&object).unwrap()).unwrap()
+    ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(&object)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 /// The data path's term for one operator and input on `profile`.
@@ -566,10 +570,11 @@ fn a_document_field_answers_the_json_operators() {
         ]
     );
     let unordered = record::plan_with(
-        &dynamic::frame::serde::to_vec(&json!({
+        (dynamic::frame::serde::to_vec(&json!({
             "profile": {"context": ["users", "profile"], "target": "JsonSearch"}
         }))
-        .unwrap(),
+        .unwrap())
+        .as_protected_ref(),
         &Eql,
     )
     .unwrap();
@@ -913,8 +918,12 @@ async fn open(
     request: Value,
     groups: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<Value>>, stack_encrypt::Error> {
-    let request =
-        ValueFrame::from_bytes(&dynamic::frame::serde::to_vec(&request).unwrap()).unwrap();
+    let request = ValueFrame::from_bytes(
+        dynamic::frame::serde::to_vec(&request)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap();
     let rows = frame(&groups);
     let opened = dynamic::json_open(keyset, plan, "profile", request, rows, &Eql)
         .unwrap()
@@ -1153,4 +1162,14 @@ async fn the_engine_and_the_table_agree_on_which_targets_take_json_options() {
         );
         assert_eq!(engine, !refused, "{}", target.name);
     }
+}
+
+fn conformance_cases() -> Value {
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../../../conformance/stack-encrypt/v1/eql-json-v1.cases.json"
+    ))
+    .unwrap();
+    assert_eq!(cases["version"], 1);
+    assert_eq!(cases["profile"], "eql-json-v1");
+    cases
 }

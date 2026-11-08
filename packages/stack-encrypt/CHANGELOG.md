@@ -9,6 +9,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- Repeated plan-chain `.extend(..)` calls now append parts in order, matching
+  Go's `Cipher.Extend`, instead of replacing earlier extensions.
+  `.extend(())` adds nothing, and grouped `NonEmpty` parts retain their grouping.
+  Records written using the previous replacement behavior must still be opened
+  with the final extension alone. Queries using repeated extensions now derive
+  different terms and silently miss those old rows: they return no error. Keep
+  the final extension alone for both reads and queries of old data, or re-encrypt
+  and re-index it under the appended context. This does not migrate stored data.
+- **stack-encrypt requires the vitaminc 0.9 crates (vitaminc-protected
+  0.9.1), clww-ore 0.7 and ore-rs 0.11.** If your crate names a vitaminc type that stack-encrypt takes
+  or returns, move it to vitaminc 0.9 too. No sealed bytes, terms, or stored
+  formats change. Two parts of this crate's API change:
+  - The re-exported frame codec, `stack_encrypt::dynamic::frame`, now writes
+    into a `vitaminc_protected::Buffer`, not a `Vec<u8>`. A `Buffer` wipes each
+    allocation it outgrows. `serde::to_vec` returns a `Buffer`, and
+    `FrameWriter` writes into one. `Buffer` is re-exported as
+    `stack_encrypt::Buffer`. `ValueFrame::into_inner` still returns
+    `Protected<Vec<u8>>`.
+  - The frame readers take a `ProtectedRef<'_, [u8]>` in place of a
+    `&[u8]`: `dynamic::context`, `record::plan`, `record::plan_with`,
+    `ValueFrame::from_bytes`, `ValueFrame::check`, `IndexSpec::from_frame`,
+    and `op::Stats::from_frame`. Pass a `Buffer` or a `ValueFrame` with
+    `.as_protected_ref()`, and a `Protected<Vec<u8>>` with
+    `.as_protected_ref().as_deref()`. Bytes that arrive as a plain `Vec<u8>`
+    or `&[u8]` go into a `Protected` first. The `Protected` wipes them. So a caller
+    never reads the bytes with `risky_ref` to pass them to a reader. This
+    needs vitaminc-protected 0.9.1. `AsProtectedRef` and `ProtectedRef` are
+    re-exported from the crate root, and `ValueFrame` now implements
+    `AsProtectedRef<'_, [u8]>`.
+  - `ValueFrame::of` no longer names a repeated map key outside a
+    passthrough. `ValueFrame::of` returns `DecodeError::Source` in place of
+    `DecodeError::DuplicateKey(key)`, and the source error is
+    `FrameWriteError::DuplicateKey`.
+    The vitaminc 0.9 writer does not copy the key out of the frame, because
+    the key is plaintext. A record source still reports `Reason::RepeatedKey`
+    for the field.
+
+### Added
+
+- **Owned collections: `EncryptInto` encrypts a `Vec<S>` into a `Vec<T>`,
+  and `DecryptFrom` decrypts it back** (#1482). `Vec<T>` implements
+  `EncryptTarget<Vec<S>>` and `DecryptSource<Vec<P>>` for any owned element
+  target. For example, `vec![29i32, 34].encrypt_into::<Vec<Ciphertext>, _>(&keyset)`
+  needs no caller context, and `Vec::<i32>::decrypt_from(ciphertexts, &keyset)`
+  decrypts the result.
+  - A collection uses its element target's `ContextInput`. A collection of a
+    `RequiredContext` target must be given a context, and a collection of a
+    `NoCallerContext` target cannot be given one. `Default` does not change
+    either rule.
+  - Each element is encrypted under its own data key and authenticated on
+    its own. An element's position and the number of elements are not
+    authenticated. That suits the common case of storing each element in its
+    own database row. A query can return rows in any order, or only some of
+    them.
+  - A collection makes one logical batch of key requests, in element order.
+    That is one `generate_keys` call to encrypt it, and one `retrieve_keys`
+    call for each keyset to decrypt it. An empty collection makes no call. The key
+    source can still split a logical batch into several requests to its
+    provider.
+  - The plaintext `Vec` is wiped before the pending request is returned, even
+    when the context is refused. The elements do not need to implement
+    `Clone`.
+  - If an element fails after earlier elements were decrypted, the earlier
+    plaintexts are wiped before the error is returned. If an element's
+    conversion panics, they are wiped before the panic unwinds.
+  - A `Vec<u8>` is not a collection of bytes. A `Vec<u8>` is one byte
+    string, as the next entry describes.
+  - `keyset.encrypt` still takes a single value, and `encrypt_tree` is still
+    the structural path.
+- **Byte strings encrypt as one value: `Vec<u8>` and `[u8; N]` encrypt into
+  one `Ciphertext`, and a `Vec<Vec<u8>>` encrypts into a `Vec<Ciphertext>`.** So
+  `keyset.encrypt(vec![1u8, 2, 3])` and
+  `Vec::<u8>::decrypt_from(ciphertext, &keyset)` now compile. The structural
+  API and the Go SDK already encrypted byte strings this way.
+  - `OpaqueEncode` is now implemented for every owned `Zeroize` type whose
+    borrow is a Vitamin C `plaintext::Scalar`. A `Scalar` is a type that
+    Vitamin C encrypts as a single value. `OpaqueDecode` is implemented for
+    every `Zeroize` type that implements `FromScalar`.
+  - Before this change, both traits were implemented for a list of types
+    kept by hand. That list did not include the byte strings that Vitamin C
+    treats as single values.
+  - Your own type becomes an `OpaqueEncode` type if its borrow implements
+    `Scalar` and the type implements `Zeroize`.
+  - `u8` alone, and a `Vec` of any type other than `u8`, still do not encrypt
+    into one `Ciphertext`.
+- **`ValueFrame` implements `PartialEq`, comparing frames in constant time.**
+  Two frames are equal when their bytes are. So `34u32` and `34u64` are not
+  equal. Two maps with their keys in a different order are not equal either. Frames
+  of different lengths are unequal at once. The frame is now held in an
+  `Equatable<Protected<Vec<u8>>>`. Until vitaminc-protected implements
+  `ConstantTimeEq` for `Vec<u8>` (cipherstash/vitaminc#602), the bytes are
+  compared through `TimingSafeEq`.
+
+## [0.3.0] - 2026-10-27
+
+### Breaking
+
+- **`KeysetCipher::encrypt` and `decrypt` are the owned scalar API.**
+  `keyset.encrypt(value)` consumes an `OpaqueEncode` value (`bool`, the fixed-width
+  integers except `u8`, `f32`, `f64`, `String`), wipes it, and returns one
+  opaque `Ciphertext`; `keyset.decrypt::<T>(ciphertext)` opens it to an `OpaqueDecode` type.
+  `encrypt_with_context` and `decrypt_with_context` bind a context. The
+  previous structural forms, which take any `Encrypt` value and a context and
+  return a `StackCipherText`, are renamed `encrypt_tree` and `decrypt_tree`.
+  `Ciphertext`'s bytes are the unchanged `SealedValue` v1 envelope, so
+  stored values open through either API.
+  Nullable `Option<T>` values remain on `encrypt_tree` / `decrypt_tree` in this
+  slice, including Vitamin C's padded-null encoding for fixed-width types.
+- **The root `EncryptInto` and `DecryptFrom` are new owned conversion
+  traits** over `EncryptTarget` / `DecryptSource`. The borrowed traits they
+  replace, and that `#[derive(EncryptFrom, DecryptInto)]` types use, are
+  `stack_encrypt::target::legacy::{EncryptInto, DecryptFrom}`; import one
+  pair or the other, not both.
 - **`OpSpec`, `Operand` and the query term's wire form grow for documents**
   (#1350). `OpSpec` gains twelve operators and `Operand` gains `Text` and
   `TextList`; a binding that matches on either adds the arms. The query
@@ -506,6 +619,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry byte is not 0 or 1, which clww-ore's comparator already refuses
   (`TermBytesError::MalformedCllwCiphertext`).
 
+- **stack-encrypt requires stack-kms 0.2 and stack-auth 0.44.** It
+  re-exports `stack_kms::{diagnostic, ErrorPayload}` and stack-kms as
+  `stack_encrypt::kms`, so a crate that names a stack-kms or stack-auth type
+  stack-encrypt takes or returns moves to those versions with it.
 - **stack-encrypt requires the vitaminc 0.8 crates, clww-ore 0.6 and
   ore-rs 0.10.** A crate that names a vitaminc type stack-encrypt takes or
   returns moves to 0.8 with it. What changes for a caller:

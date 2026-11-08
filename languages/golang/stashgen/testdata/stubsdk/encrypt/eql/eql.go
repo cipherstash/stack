@@ -19,3 +19,22 @@ type TextSearch []byte
 
 // TextSearchQuery is the query value for TextSearch.
 type TextSearchQuery []byte
+
+// JSONSearch is an encrypted JSON document.
+type JSONSearch []byte
+
+// JSONSearchQuery is the query value for JSONSearch.
+type JSONSearchQuery []byte
+
+// JSONSearchLeafQuery is an ordering's operand at a path of a JSONSearch.
+type JSONSearchLeafQuery []byte
+
+// JSONSearchElementsQuery is the element match's operand on a JSONSearch.
+type JSONSearchElementsQuery []byte
+
+// JSONSearchPredicateQuery is a compiled jsonpath predicate's operand on a
+// JSONSearch.
+type JSONSearchPredicateQuery []byte
+
+// JSONEntry is one encrypted entry of a JSONSearch document.
+type JSONEntry []byte

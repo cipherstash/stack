@@ -1,0 +1,47 @@
+error[E0277]: the trait bound `RequiredContext<u64>: AllowsNoContext` is not satisfied
+  --> tests/ui/scalar_required_context.rs:19:19
+   |
+19 |     let _ = 42i32.encrypt_into::<Required, _>(keyset);
+   |                   ^^^^^^^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<u64>`
+   |
+help: the following other types implement trait `AllowsNoContext`
+  --> src/target/input.rs
+   |
+   | impl AllowsNoContext for NoCallerContext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoCallerContext`
+...
+   | impl<C> AllowsNoContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+note: required by a bound in `stack_encrypt::EncryptInto::encrypt_into`
+  --> src/target/conversion.rs
+   |
+   |     fn encrypt_into<'a, T, K: 'static>(self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+   |        ------------ required by a bound in this associated function
+...
+   |         T::ContextInput: AllowsNoContext,
+   |                          ^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+
+error[E0277]: the trait bound `RequiredContext<u64>: AllowsNoContext` is not satisfied
+  --> tests/ui/scalar_required_context.rs:20:31
+   |
+20 |     let _ = i32::decrypt_from(encrypted, keyset);
+   |             ----------------- ^^^^^^^^^ the trait `AllowsNoContext` is not implemented for `RequiredContext<u64>`
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the following other types implement trait `AllowsNoContext`
+  --> src/target/input.rs
+   |
+   | impl AllowsNoContext for NoCallerContext {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoCallerContext`
+...
+   | impl<C> AllowsNoContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from`
+  --> src/target/conversion.rs
+   |
+   |     fn decrypt_from<'a, S, K: 'static>(
+   |        ------------ required by a bound in this associated function
+...
+   |         S::ContextInput: AllowsNoContext,
+   |                          ^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`

@@ -69,8 +69,8 @@ incremental = true
 # but cannot subtract them, and `stack-kms` / `stack-encrypt` need stack-auth
 # without `http`. Consumers that want the default transport re-enable it with
 # `features = ["http"]`.
-stack-auth = { path = "./packages/stack-auth", version = "0.43.0", default-features = false }
-stack-profile = { path = "./packages/stack-profile", version = "0.43.0" }
+stack-auth = { path = "./packages/stack-auth", version = "0.44.0", default-features = false }
+stack-profile = { path = "./packages/stack-profile", version = "0.44.0" }
 
 # Suite crates, from crates.io; Cargo.lock holds the exact versions.
 # cts-common and zerokms-protocol take caret requirements because the
@@ -82,15 +82,15 @@ cts-common = { version = "0.43.0", default-features = false }
 zerokms-protocol = "0.12.31"
 recipher = "=0.3.1"
 # The two order-preserving schemes Stack Encrypt's order terms encrypt
-# through. Both implement vitaminc-ore's `OrderScheme` against vitaminc 0.8:
+# through. Both implement vitaminc-ore's `OrderScheme` against vitaminc 0.9:
 # `clww-ore` (cllw-ore renamed) for CLWW ORE and OPE, and ore-rs's
 # `BlockOre` for block ORE, which routes a value to its 6-bit fixed-width
 # engine (up to ten bytes) or its chained one (wider, or variable length),
 # the terms EQL v4's `_ord_ore` domains store.
 # vitaminc is a plain dependency of both from here, not a feature. Both are
 # pinned exactly: a new release can change every stored order term.
-clww-ore = { version = "=0.6.0", default-features = false }
-ore-rs = { version = "=0.10.0", default-features = false }
+clww-ore = { version = "=0.7.0", default-features = false }
+ore-rs = { version = "=0.11.0", default-features = false }
 
 # External dependencies, with the suite's feature lists.
 base64 = "0.22.0"
@@ -139,18 +139,18 @@ web-time = "1.1"
 zeroize = { version = "1.8.1", features = ["derive"] }
 # This is needed because lock_api 0.4.6 was breaking things and the branch forces the use of 0.4.12
 temp-env = { git = "https://github.com/cipherstash/temp-env", branch = "main" }
-vitaminc = { version = "0.8.0", features = ["random", "protected", "encrypt"] }
-vitaminc-aead = "0.8.0"
+vitaminc = { version = "0.9.0", features = ["random", "protected", "encrypt"] }
+vitaminc-aead = "0.9.0"
 # The transport frame and ciphertext codec every language binding carries
 # across its FFI boundary. Optional in stack-encrypt (the `dynamic` feature).
-vitaminc-aead-frame = "0.8.0"
-vitaminc-encrypt = "0.8.0"
-vitaminc-hmac = "0.8.0"
+vitaminc-aead-frame = "0.9.0"
+vitaminc-encrypt = "0.9.0"
+vitaminc-hmac = "0.9.0"
 # Normalized equality terms (Unicode 16 NFC text, one integer encoding for
 # every width), which `vitaminc-prf`'s `normalize` feature derives over.
-vitaminc-normalize = "0.8.0"
+vitaminc-normalize = "0.9.0"
 # The text order key: the system ADR-0002's fold, pinned to Unicode 16,
 # which text ORE and OPE terms are derived over (ADR-0009).
-vitaminc-ore = "0.8.0"
-vitaminc-prf = { version = "0.8.0", features = ["normalize"] }
-vitaminc-protected = "0.8.0"
+vitaminc-ore = "0.9.0"
+vitaminc-prf = { version = "0.9.0", features = ["normalize"] }
+vitaminc-protected = "0.9.1"

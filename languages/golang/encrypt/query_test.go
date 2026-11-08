@@ -28,8 +28,8 @@ import (
 // declaration, the term each query by operator derives (each equal to the
 // typed Rust query chain's), a page of verified values and a few fetch
 // limits. These tests derive, verify and size the same queries through the
-// deterministic test build of the guest and compare. Skipped when that build
-// is absent.
+// deterministic test build of the guest and compare. A missing build skips
+// ordinary tests, but fails when STACK_CONFORMANCE_REQUIRED=1.
 
 type queryFixture struct {
 	KeySource struct {
@@ -129,9 +129,7 @@ func queryFixtureClient(t *testing.T, f queryFixture) *encrypt.Client {
 		t.Fatalf("seed: %v (%d bytes)", err, len(seed))
 	}
 	c, err := encrypt.NewDeterministicClient(context.Background(), [32]byte(seed))
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +302,20 @@ func TestTargetLimitIsTheRustFixtures(t *testing.T) {
 	}
 }
 
+// An unbounded limit pages, and a page past the largest LIMIT PostgreSQL
+// takes is cut to it rather than bound as a value database/sql refuses.
+func TestAnUnboundedLimitCutsThePageToTheLargestSQLLimit(t *testing.T) {
+	var unbounded encrypt.Limit
+	if got := unbounded.FetchOr(50); got != 50 {
+		t.Fatalf("FetchOr(50) = %d, want 50", got)
+	}
+	for _, page := range []uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
+		if got := unbounded.FetchOr(page); got != math.MaxInt64 {
+			t.Fatalf("FetchOr(%d) = %d, want %d", page, got, uint64(math.MaxInt64))
+		}
+	}
+}
+
 // A query the field does not answer is refused as a mistyped value is: an
 // encoding error that names the field and the rule. The typed path's own
 // refusals are term errors.
@@ -459,7 +471,8 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 			}
 		case target.Name == "JsonSearch":
 			// A document's operators, under the index's defaults: no
-			// ordering without an ordered path. Each through the JSON index.
+			// ordering without an ordered path, and the compiled predicate,
+			// which needs none. Each through the JSON index.
 			var names []string
 			for _, op := range target.Operators {
 				if op.Index != record.JSONIndex || op.Fidelity != record.Exact {
@@ -467,7 +480,7 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 				}
 				names = append(names, op.Name)
 			}
-			if want := []string{"contains", "contained_by", "eq_at", "selector", "subtree", "children", "child_count"}; !slices.Equal(names, want) {
+			if want := []string{"contains", "contained_by", "eq_at", "selector", "subtree", "children", "child_count", "match"}; !slices.Equal(names, want) {
 				t.Fatalf("JsonSearch answers %v, want %v", names, want)
 			}
 		case len(target.Operators) != 0:

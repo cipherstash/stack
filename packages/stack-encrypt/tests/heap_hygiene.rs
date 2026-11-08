@@ -29,6 +29,10 @@
 //! first zeroes the stack below it ([`scrub_stack`]); otherwise residue from
 //! earlier work (a hash's block buffer after a PRF over a marked key name)
 //! would reach a heap block and be blamed on the operation that boxed it.
+//! For the same reason the spy never copies what it looks for onto the
+//! stack: it runs on every free, from inside the watched operation, and a
+//! copy left in its dead frame would be picked up the same way by a future
+//! built later at that depth (see [`holds_key`]).
 //!
 //! Unix only: the spy scans a freed block with libc's `memmem`, not as a
 //! Rust slice (see [`holds_mark`]).
@@ -36,6 +40,7 @@
 
 mod common;
 
+use stack_encrypt::AsProtectedRef as _;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -94,14 +99,23 @@ unsafe fn holds_mark(ptr: *const u8, len: usize) -> bool {
 /// Whether the `len` bytes at `ptr` hold the data key in [`KEY`], read as
 /// [`holds_mark`] reads.
 ///
+/// The key is searched for where [`KEY`] holds it, under the lock, and never
+/// copied out. This runs on every free during a watch, at whatever depth
+/// the operation freed from; a copy in this frame would stay on the dead
+/// stack, and a future the operation builds there next (a `JoinAll` whose
+/// unused variant space the build leaves as it found it) would carry the
+/// key into its box, which the spy would then report as the operation's.
+///
 /// # Safety
 ///
 /// `ptr` must point to `len` allocated bytes.
 unsafe fn holds_key(ptr: *const u8, len: usize) -> bool {
     BUSY.with(|busy| busy.set(true));
-    let key = KEY.lock().map(|key| *key).unwrap_or(None);
+    let found = KEY
+        .lock()
+        .is_ok_and(|key| key.as_ref().is_some_and(|key| find(ptr, len, key)));
     BUSY.with(|busy| busy.set(false));
-    key.is_some_and(|key| find(ptr, len, &key))
+    found
 }
 
 /// [`holds_mark`] for any `needle`.
@@ -227,7 +241,7 @@ fn plan() -> record::Plan {
             spec("doc", &["c"], None),
             spec("id", &["passthrough"], None),
         ])
-        .risky_ref(),
+        .as_protected_ref(),
     )
     .unwrap()
 }
@@ -325,6 +339,85 @@ fn a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap() {
     });
 }
 
+/// A valid first row is followed by an authenticated value of the wrong type.
+/// The failed batch returns no output and releases its decoded prefix cleanly.
+#[test]
+fn a_late_read_type_failure_leaves_no_plaintext_on_the_heap() {
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let writer =
+        record::plan(object(vec![spec("value", &["c"], None)]).as_protected_ref()).unwrap();
+    let reader =
+        record::plan(object(vec![spec("value", &["c"], Some("string"))]).as_protected_ref())
+            .unwrap();
+    let source = frame(vec![
+        object(vec![("value", frame(marked("first-row")))]),
+        object(vec![("value", frame(true))]),
+    ]);
+    let sealed = rt.block_on(async { record::encrypt(&keyset, source, &writer).unwrap().await });
+    let sealed = sealed.unwrap();
+    watched("late authenticated read type failure", || {
+        let result = rt.block_on(async {
+            record::decrypt(Scope::Client(&cipher), sealed, &reader, None)
+                .unwrap()
+                .await
+        });
+        assert!(matches!(
+            result,
+            Err(stack_encrypt::Error::Plan(
+                stack_encrypt::plan::PlanError::FieldType { .. }
+            ))
+        ));
+    });
+}
+
+/// The owned collection conversion: a column of owned strings is held by
+/// the conversion's guard, handed to each element's declaration by
+/// reference, and wiped before the pending is returned. Nothing it frees
+/// may still hold a value.
+#[test]
+fn an_owned_column_encrypted_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::{Ciphertext, EncryptInto};
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = vec![marked("first"), marked("second"), marked("third")];
+    watched("Vec<String> -> Vec<Ciphertext>", || {
+        let sealed: Vec<Ciphertext> = rt
+            .block_on(async { column.encrypt_into(&keyset).await })
+            .unwrap();
+        assert_eq!(sealed.len(), 3);
+    });
+}
+
+/// A column whose later element fails after its key arrived, here with a
+/// type the destination does not accept: the element recovered before it is
+/// wiped rather than dropped as it is.
+#[test]
+fn a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap() {
+    use stack_encrypt::DecryptFrom;
+    let rt = runtime();
+    let cipher = rt.block_on(common::stack_cipher());
+    let keyset = cipher.default_keyset();
+    let column = rt.block_on(async {
+        vec![
+            keyset.encrypt(marked("first-row")).await.unwrap(),
+            keyset.encrypt(true).await.unwrap(),
+        ]
+    });
+    watched(
+        "late type failure in Vec<Ciphertext> -> Vec<String>",
+        || {
+            let result = rt.block_on(async { Vec::<String>::decrypt_from(column, &keyset).await });
+            assert!(matches!(
+                result,
+                Err(stack_encrypt::Error::OpenedType { .. })
+            ));
+        },
+    );
+}
+
 #[test]
 fn a_query_term_leaves_no_plaintext_on_the_heap() {
     let rt = runtime();
@@ -412,7 +505,9 @@ impl stack_encrypt::dynamic::TargetResolver for Documents {
             true,
             None,
         )
-        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")]
+        .with_leaf_query_sql_domain("eql_v4.query_json_leaf")
+        .with_elements_query_sql_domain("eql_v4.query_json_elements")
+        .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
     }
     fn encrypt<'a, K: 'static>(
         &self,
@@ -456,7 +551,9 @@ fn a_json_operators_input_leaves_no_plaintext_on_the_heap() {
                     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
     });
     let plan = record::plan_with(
-        &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+        stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+            .unwrap()
+            .as_protected_ref(),
         &Documents,
     )
     .unwrap();
@@ -568,8 +665,9 @@ mod json_index {
     use stack_encrypt::json::{
         JsonDocument, JsonNode, JsonOptions, JsonPath, JsonQuery, JsonSubtree,
     };
+    use stack_encrypt::target::legacy::DecryptFrom;
     use stack_encrypt::target::{json_document, AeadContext, Borrowed, CallerContext};
-    use stack_encrypt::{op, DecryptFrom, Plan, StackCipher};
+    use stack_encrypt::{op, Plan, StackCipher};
     use stack_kms::{
         DataKey, DataKeySource, DataKeyWithTag, DeterministicSource, GenerateKeyPayload,
         IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
@@ -580,8 +678,13 @@ mod json_index {
     /// [`KEY`] so the spy can look for it.
     struct Recorded(DeterministicSource);
 
+    /// Written into [`KEY`] in place, not built on the stack and moved in,
+    /// for the reason [`holds_key`] reads it in place.
     fn record(key: &DataKey) {
-        *KEY.lock().unwrap() = Some(*key.key());
+        KEY.lock()
+            .unwrap()
+            .get_or_insert([0; 32])
+            .copy_from_slice(key.key());
     }
 
     impl DataKeySource for Recorded {
@@ -815,10 +918,12 @@ mod json_index {
         let keyset = cipher.default_keyset();
         let wire = json!({
             "profile": {"context": ["users", "profile"], "type": "json", "null": "sql",
-                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}}
+                        "target": {"name": "JsonSearch", "options": {"ordered": ["$.age", "$.visits[*].at"]}}}
         });
         let plan = record::plan_with(
-            &stack_encrypt::dynamic::frame::serde::to_vec(&wire).unwrap(),
+            stack_encrypt::dynamic::frame::serde::to_vec(&wire)
+                .unwrap()
+                .as_protected_ref(),
             &Documents,
         )
         .unwrap();
@@ -826,6 +931,12 @@ mod json_index {
         let mark = marked("operand");
         let quoted = format!("{mark:?}");
         let document = format!(r#"{{{quoted}: [{quoted}], "name": {quoted}}}"#);
+        // Every leaf kind, with a literal and a variable carrying the mark.
+        let predicate = format!(
+            "$.name == {quoted} && $.name != $v && $.age > {quoted} && \
+             exists($.visits[*] ? (@.at == $v && @.at < {quoted})) && $.visits[*].at >= $v"
+        );
+        let vars = format!(r#"{{"v": {quoted}}}"#);
         let inputs = [
             (
                 OpSpec::Contains,
@@ -851,6 +962,35 @@ mod json_index {
                     ("path", frame("$.age")),
                     ("low", frame(quoted.as_str())),
                     ("high", frame(quoted.as_str())),
+                ]),
+            ),
+            (
+                OpSpec::ElementMatch,
+                object(vec![
+                    ("path", frame("$.visits[*]")),
+                    (
+                        "predicates",
+                        frame(vec![
+                            object(vec![
+                                ("member", frame("at")),
+                                ("op", frame("eq")),
+                                ("json", frame(quoted.as_str())),
+                            ]),
+                            object(vec![
+                                ("member", frame("at")),
+                                ("op", frame("between")),
+                                ("low", frame(quoted.as_str())),
+                                ("high", frame(quoted.as_str())),
+                            ]),
+                        ]),
+                    ),
+                ]),
+            ),
+            (
+                OpSpec::Match,
+                object(vec![
+                    ("predicate", frame(predicate.as_str())),
+                    ("vars", frame(vars.as_str())),
                 ]),
             ),
         ];

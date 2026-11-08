@@ -10,6 +10,149 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.1.0-rc.3] - 2026-11-02
+
+### Upgrading from rc.2
+
+The new JSON queries need the SQL types and functions in this release's EQL
+v4 bundle: `Match` binds an `eql_v4.query_json_predicate`, and
+`Elements.<Array>.Match` an `eql_v4.query_json_elements`, which
+`eql_v4.json_tree_match` and `eql_v4.json_tree_element_match` read. A
+database with the rc.2 bundle has none of them, and PostgreSQL refuses the
+query because the type does not exist. Install the `eql-v4-install.sql`
+attached to this release (`psql -f eql-v4-install.sql`).
+
+Re-running it keeps your columns and data, since the column types live in
+`public`. But it drops the `eql_v4` and `eql_v4_internal` schemas with
+`CASCADE` and creates them again, and it issues no `GRANT`. That removes
+every index built on an `eql_v4` function (`eql_v4.ord_term(col)` and the
+like) and every grant on those schemas and their functions. After it runs,
+and before the application sends queries:
+
+1. If the application connects as a role other than the one that installed
+   EQL, grant it access again: `USAGE` on the schema `eql_v4` and `EXECUTE`
+   on all its functions, and the same for `eql_v4_internal`, which equality,
+   ordering and JSON queries reach. Any `ALTER DEFAULT PRIVILEGES` in those schemas went
+   with them too. Without this the application's queries fail with
+   `permission denied for schema eql_v4`. EQL's
+   [permissions reference](../../packages/eql/docs/reference/permissions.md)
+   lists the statements; its examples name `eql_v3`, so write `eql_v4`.
+2. Re-create the indexes, then run `ANALYZE`.
+
+### Added
+
+- **Bind a whole jsonpath filter on a `JsonSearch` field as one parameter
+  (#1443).** Every `JsonSearch` field gets
+  `Fields.<Field>.Match(ctx, cipher, predicate, vars, opts)`, which takes
+  what plaintext `jsonb_path_match(col, $1, $2)` takes: a jsonpath predicate
+  and its variables (any value `encoding/json` writes as an object, or a
+  `json.RawMessage` of one; an empty map when there are none). A nil `vars`
+  (nil, or a nil map, slice or pointer) is not "no variables": it is SQL
+  `NULL`, as pgx and `database/sql` bind it over plaintext, so the operand
+  is empty, binds as `NULL`, and matches no row. `vars` that write the JSON `null` are refused
+  as not an object, as plaintext refuses them. It returns an
+  `eql.JSONSearchPredicateQuery` for
+  `col @@ $1::eql_v4.query_json_predicate` or
+  `eql_v4.json_tree_match(col, $1::eql_v4.query_json_predicate)`. The engine
+  parses the predicate and compiles it into a tree of the operands `EqAt`,
+  `Selector`, `At.<Path>` and `Elements.<Array>.Match` derive; the Go side
+  reads none of it. The grammar is paths of `.key`, `."quoted key"` and
+  `[*]`; `==`, `!=`, `<`, `<=`, `>`, `>=` against a variable or a JSON
+  literal; `exists(path)` and `exists(path ? (@.a == $x && @.b > $y))`; and
+  `&&`, `||`, `!(…)`. A construct it cannot answer is refused as an
+  `*encrypt.Diagnostic` wrapping `encrypt.ErrEncoding`, never compiled to a
+  tree that drops a leaf; an ordering at a path the tag does not order is
+  `encrypt.ErrTerm`. Each row answers as `jsonb_path_match` does over its
+  plaintext, save five documented cases (lax array unwrapping and wrapping,
+  a string compared with a number, folded ordering terms, and an ordering
+  of a `null` that is NULL rather than false outside an odd number of `!`,
+  which returns the same rows). The tree is
+  evaluated inside a function, so no index engages: `EqAt`, `Contains` and
+  `At.<Path>` stay the indexed form. The embedded EQL guest names the
+  `eql_v4.query_json_predicate` domain, so `Checker.Operators` lists `match`
+  (input `predicate`) on every `JsonSearch` field, and the guest reports a
+  refused predicate as a malformed input rather than an internal failure.
+
+- **`Diagnostic.Construct` and `Diagnostic.At` (#1443).** A refused `Match`
+  predicate names the construct in the grammar's words (`` `like_regex` ``,
+  `a position (`[2]`)`) and the byte offset in the predicate where it
+  starts. Neither carries text from the predicate.
+
+- **Test several members of one array element of a `JsonSearch` field
+  (#1442).** A field whose `ordered=` paths name members beneath an array's
+  wildcard (`$.contacts[*].relationship;$.contacts[*].calls`) gets
+  `Fields.<Field>.Elements.<Array>.Match`, one accessor per array, named as
+  `At` names a path (`Elements.Contacts`). `Match(ctx, cipher, opts,
+  predicates...)` returns an `eql.JSONSearchElementsQuery` for
+  `eql_v4.json_tree_element_match(col, $1::eql_v4.query_json_elements)`,
+  which finds a row where one element passes every predicate. An `EqAt` and
+  an ordering at the array's paths can each be answered by a different
+  element. The generated `Paths` names each array's ordered members, nested
+  as the JSON nests them (`Paths.Profile.Contacts.Relationship`), and
+  `encrypt.AtPath(path)` makes the predicates: `Eq`, `Lt`, `Lte`, `Gt`,
+  `Gte` and `Between`. A path's type, `encrypt.Path[E, T]`, carries its
+  array and the member's Go type from the document's struct (`any` for a
+  `json.RawMessage`), so a value of another type, or a predicate on another
+  array's member, does not compile. `Paths` holds only fields, so no JSON
+  key is reserved. For a member named at run time, the array accessor's
+  `Member("relationship")` makes the same predicates with `any` values.
+  Each comparison is of the member's ordering term, so `Eq` compares text
+  case- and accent-folded and integers past 2^53 can tie; `EqAt` stays
+  exact. A member named at run time that the field does not order is
+  refused before the engine is asked, with `encrypt.ErrTerm`, naming the
+  member and the array; no predicates, a zero `ElementPredicate` and a
+  member with a wildcard are refused with `encrypt.ErrEncoding`. An array
+  whose members `Paths` cannot name (a key with no Go name, or one name for
+  two paths) gets no accessor and a notice, as two arrays with one
+  accessor name do. A row whose array is
+  longer than `JSONReadOptions.WildcardBound` (64 by default) fails the
+  query with SQLSTATE 22023. An `ElementPredicate` prints and logs its
+  member and comparison, never its values. The embedded EQL guest now names
+  the `eql_v4.query_json_elements` domain, so `Checker.Operators` lists
+  `element_match` (input `path_predicates`) on a field that orders a path.
+
+### Fixed
+
+- **`Cipher.Seal` refuses an unknown key in every row.** A row
+  (`record.Source`) that left out a `null=sql` field and carried a key the
+  plan does not name had the expected number of keys, so the unknown key was
+  dropped without a word. It is now refused, as it always was when the
+  counts differed, with an `ErrEncoding` diagnostic naming the key
+  (`unknown_field`). Code that passed such a row now gets the error.
+
+- **An unbounded `Limit` cuts its page to the largest SQL `LIMIT`.**
+  `Limit.FetchOr` returned any page it was given, so a page of 2^63 or more
+  reached `database/sql` as a `uint64` it refuses. It now returns at most
+  `math.MaxInt64`. The `Stats.Rows` doc no longer suggests
+  `greatest(reltuples, 0)`: `reltuples` is -1 for a table never analysed,
+  an unknown count rather than an empty table, so read it with a
+  `reltuples >= 0` filter and page while the count is unknown.
+
+- **A refused request from the guest wipes its bearer token.** A request
+  with no method or URL was refused without wiping its headers, which carry
+  the bearer token, or its body. It now wipes both, as every other refusal
+  there does.
+
+### Breaking
+
+- **Every `encrypt/eql` type prints and logs redacted (#1443).** `String`,
+  `Format` (every verb, `%#v` included) and `LogValue` write the type's
+  name and `[redacted]` (`eql.TextEq{[redacted]}`, `eql.TextEq{}` when
+  empty), never the bytes: a stored value holds ciphertext and terms, and a
+  query value terms. Before, each type was a bare `[]byte` to `fmt` and
+  `slog`: `%s` and `%q` gave its JSON, and `fmt.Sprint(v)`, `%v` and `%x`
+  its bytes as numbers or hex. They now give the redacted text, with no
+  error. A caller that printed or logged the JSON with `%s` calls the new
+  `Reveal()` at that call (`slog.Debug("stored", "email", v.Reveal())`),
+  which returns the JSON as a string; code that reads the JSON converts the
+  value, `string(v)` or `json.RawMessage(v)`, or calls `v.MarshalJSON()`.
+  `Value` is unchanged. Generated by eql-codegen for every type.
+
+## [0.1.0-rc.2] - 2026-10-26
+
+rc.1 and rc.2 were tagged without sections of their own, so this section
+holds every change up to rc.2.
+
 ### Added
 
 - **A two-letter word is searchable in `TextMatch`, `TextSearch` and

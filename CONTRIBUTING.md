@@ -95,8 +95,12 @@ mise run wasm:auth-guest:build
 mise run go:test
 ```
 
-For EQL v4 PostgreSQL coverage, set `EQL_TEST_DATABASE_URL` and run
-`mise run go:test:postgres`. Go examples that connect to ZeroKMS need
+For EQL v4 PostgreSQL coverage, set `EQL_TEST_DATABASE_URL` to a disposable
+database and run `mise run go:test:postgres`. The task builds the EQL v4 bundle
+from this tree and installs it into that database, so it replaces the EQL there.
+It needs `psql`, the Rust test tools (`mise install --env test`) and both
+deterministic guests. It refuses to run while a fixture-update variable, such as
+`STACK_ENCRYPT_UPDATE_FIXTURES`, is set. Go examples that connect to ZeroKMS need
 CipherStash credentials. The [Go module guide](languages/golang/README.md)
 links to the SDK, generator, credentials, examples and release notes. Commit
 generated `*_stash.go` files when changing Go model tags; CI checks for drift.

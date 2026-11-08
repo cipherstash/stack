@@ -50,8 +50,8 @@ func run(ctx context.Context) error {
 	defer client.Close()
 	cipher := client.DefaultKeyset()
 	customers := []Customer{
-		{ID: 1, Profile: Profile{Name: "Ada", Age: 35, Visits: []Visit{{At: 10}, {At: 20}}}},
-		{ID: 2, Profile: Profile{Name: "Bea", Age: 28, Visits: []Visit{{At: 30}}}},
+		{ID: 1, Profile: Profile{Name: "Ada", Age: 35, Visits: []Visit{{At: 10, Place: "home"}, {At: 20, Place: "work"}}}},
+		{ID: 2, Profile: Profile{Name: "Bea", Age: 28, Visits: []Visit{{At: 30, Place: "home"}}}},
 	}
 	sealed, err := Encrypt(ctx, cipher, customers)
 	if err != nil {
@@ -100,6 +100,47 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("find older customer: %w", err)
 	}
 	fmt.Printf("customer older than 30: %d\n", olderID)
+
+	// Test two members of one visit together: a visit at home after 15.
+	// Ada has a visit at home and a visit after 15, but not one visit that
+	// is both, so only Bea's row matches. Match compares ordering terms, so
+	// "Home" would equal "home": text compares case- and accent-folded.
+	// Paths names each visit's members with their Go types, so a value of
+	// another type, or a member of another array, does not compile.
+	homeLate, err := Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+		encrypt.AtPath(Paths.Profile.Visits.Place).Eq("home"),
+		encrypt.AtPath(Paths.Profile.Visits.At).Gt(15),
+	)
+	if err != nil {
+		return fmt.Errorf("prepare visit match: %w", err)
+	}
+	var homeLateID int64
+	if err := conn.QueryRowContext(ctx,
+		`SELECT id FROM customers WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)`,
+		homeLate,
+	).Scan(&homeLateID); err != nil {
+		return fmt.Errorf("find a visit at home after 15: %w", err)
+	}
+	fmt.Printf("customer with a visit at home after 15: %d\n", homeLateID)
+
+	// The same test and an age ordering as one jsonpath predicate and its
+	// variables, bound as one parameter. The engine compiles the predicate
+	// into the operands above, so the age is the ordering's term and the
+	// filter is the visit match. The tree is evaluated in a function, which
+	// engages no index: the per-operator queries above are the fast path.
+	predicate, err := Fields.Profile.Match(ctx, cipher,
+		`$."age" < $max && exists($."visits"[*] ? (@."place" == $place && @."at" > $after))`,
+		map[string]any{"max": 30, "place": "home", "after": 15}, encrypt.JSONReadOptions{})
+	if err != nil {
+		return fmt.Errorf("prepare predicate: %w", err)
+	}
+	var matchedID int64
+	if err := conn.QueryRowContext(ctx,
+		`SELECT id FROM customers WHERE profile @@ $1::eql_v4.query_json_predicate`, predicate,
+	).Scan(&matchedID); err != nil {
+		return fmt.Errorf("find by predicate: %w", err)
+	}
+	fmt.Printf("customer under 30 with a visit at home after 15: %d\n", matchedID)
 
 	// Read only the visit times of one row. The database returns encrypted
 	// entries; Open checks them against the prepared read and returns JSON text.

@@ -186,10 +186,14 @@ export function resolveLockContext(input: LockContextInput): Context {
  * import { OidcFederationStrategy } from "@cipherstash/auth"
  *
  * // Authenticate the client as the end user (replaces the old identify() flow).
+ * // `create()` returns a `Result` — unwrap it before passing the strategy.
+ * const strategy = OidcFederationStrategy.create(workspaceCrn, () => getJwt())
+ * if (strategy.failure) throw new Error(strategy.failure.error.message)
+ *
  * const client = await Encryption({
  *   schemas,
  *   config: {
- *     authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getJwt()),
+ *     authStrategy: strategy.data,
  *   },
  * })
  *

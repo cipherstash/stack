@@ -111,8 +111,13 @@ func TestQueriesRunAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// reltuples is -1, an unknown count, until the table is analysed; the
+	// filter gives no row while it is.
+	if _, err := conn.ExecContext(ctx, `ANALYZE profiles`); err != nil {
+		t.Fatal(err)
+	}
 	var rows uint64
-	if err := conn.QueryRowContext(ctx, `SELECT greatest(reltuples, 0)::bigint FROM pg_class WHERE oid = 'profiles'::regclass`).Scan(&rows); err != nil {
+	if err := conn.QueryRowContext(ctx, `SELECT reltuples::bigint FROM pg_class WHERE oid = 'profiles'::regclass AND reltuples >= 0`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	limit, err := q.TargetLimit(ctx, 10, encrypt.Stats{Rows: rows})

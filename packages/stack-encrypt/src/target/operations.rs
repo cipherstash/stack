@@ -165,6 +165,21 @@ impl<T, K> fmt::Debug for Decryption<T, K> {
 impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     Encryption<'s, S, T, K, Ctx, M>
 {
+    /// A description built from its execution closure. This constructor is
+    /// crate-internal, because it gives a closure the source and the cipher
+    /// together, and the public constructors never do that. The collection
+    /// declarations use it to run an element's description once for each
+    /// element.
+    pub(crate) fn from_build<F>(build: F) -> Self
+    where
+        F: for<'a, 'k> FnOnce(M::Source, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K>
+            + MaybeSend
+            + 's,
+    {
+        Self {
+            build: Box::new(build),
+        }
+    }
     /// A description whose output is already known — metadata a record
     /// carries, or a declaration rejected before any key request.
     pub fn ready(result: Result<T, Error>) -> Self
@@ -396,9 +411,7 @@ where
         + MaybeSend
         + 's,
 {
-    Encryption {
-        build: Box::new(choose),
-    }
+    Encryption::from_build(choose)
 }
 
 /// A description that only checks the borrowed source, yielding `()` or the
@@ -462,6 +475,32 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S
         ),
     }
 }
+/// Encrypt a supported scalar as one opaque ciphertext, permitting empty context.
+///
+/// This operation borrows its source. The owned [`EncryptInto`](super::EncryptInto)
+/// conversions supply a [`Protected`](vitaminc_protected::Protected) owner and
+/// wipe it after planning. Calling [`KeysetCipher::run`] directly leaves source
+/// cleanup with the caller; this operation alone does not wipe that borrow.
+/// Mapping the encrypted output preserves the scalar's optional-context policy;
+/// it does not turn this into an EQL ciphertext or term operation. A wrapper may
+/// require caller context with [`RequiredContext`](super::RequiredContext), or
+/// declare a nonempty context with [`Encryption::under`].
+pub fn scalar_ciphertext<'s, S: crate::OpaqueEncode, K: 'static>(
+) -> Encryption<'s, S, crate::Ciphertext, K, super::OptionalContext<super::ScalarContext>> {
+    Encryption {
+        build: Box::new(
+            move |source, cipher, context: super::OptionalContext<super::ScalarContext>| {
+                super::core::encrypt_opaque(
+                    crate::scalar::ScalarRef(source),
+                    cipher,
+                    context.piece(),
+                )
+                .try_map(crate::Ciphertext::from_tree)
+            },
+        ),
+    }
+}
+
 /// Carry the plaintext through unchanged: the output is the source itself,
 /// and the context the description is handed is ignored.
 ///
@@ -785,16 +824,44 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     where
         I: IntoIterator<Item = Self>,
     {
+        match Self::openings(items) {
+            Err(error) => Decryption::failed(error),
+            Ok(opens) => Decryption::open(Box::new(move |cipher| {
+                Pending::collect(cipher, opens.into_iter().map(|open| open(cipher)))
+            })),
+        }
+    }
+    /// The same as [`all`](Self::all), but for recovered plaintext. When an
+    /// item fails after its key arrived, `all` drops the items recovered
+    /// before it. This function wipes them. The owned `Vec<S>` conversions
+    /// decrypt through this function.
+    pub(crate) fn all_wiping<I>(items: I) -> Decryption<Vec<T>, K>
+    where
+        I: IntoIterator<Item = Self>,
+        T: zeroize::Zeroize,
+    {
+        match Self::openings(items) {
+            Err(error) => Decryption::failed(error),
+            Ok(opens) => Decryption::open(Box::new(move |cipher| {
+                Pending::collect_wiping(cipher, opens.into_iter().map(|open| open(cipher)))
+            })),
+        }
+    }
+    /// The openings of `items`, up to the first description that fails. If a
+    /// description fails, this returns its error, and the descriptions after
+    /// it are never built.
+    fn openings<I>(items: I) -> Result<Vec<Open<T, K>>, Error>
+    where
+        I: IntoIterator<Item = Self>,
+    {
         let mut opens = Vec::new();
         for item in items {
             match item.inner {
-                Opening::Failed(error) => return Decryption::failed(error),
+                Opening::Failed(error) => return Err(error),
                 Opening::Open(open) => opens.push(open),
             }
         }
-        Decryption::open(Box::new(move |cipher| {
-            Pending::collect(cipher, opens.into_iter().map(|open| open(cipher)))
-        }))
+        Ok(opens)
     }
     /// An absent item recovers as `None` without I/O.
     fn optional(item: Option<Self>) -> Decryption<Option<T>, K>
@@ -808,7 +875,7 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     }
     /// Execute under a scope. A [`KeysetCipher`] scope refuses a leaf from any
     /// other keyset; a [`StackCipher`] scope opens leaves from any.
-    fn open_in<'a>(self, scope: impl CipherScope<'a, K>) -> Pending<'a, T, K> {
+    pub(super) fn open_in<'a>(self, scope: impl CipherScope<'a, K>) -> Pending<'a, T, K> {
         let pending = match self.inner {
             Opening::Failed(error) => return Pending::failed(scope, error),
             Opening::Open(open) => open(scope.cipher()),
@@ -967,7 +1034,7 @@ impl<K: 'static> StackCipher<K> {
 /// Source-side call syntax for [`KeysetCipher::encrypt_as`], implemented for
 /// every type: `value.encrypt_into(&keyset)`. Targets implement
 /// [`EncryptFrom`], never these methods.
-pub trait EncryptInto: Sized {
+pub trait LegacyEncryptInto: Sized {
     /// Encrypt into `T` with its default context — `()` for a declaration
     /// that carries its own contexts.
     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
@@ -1002,11 +1069,11 @@ pub trait EncryptInto: Sized {
         cipher.encrypt_as(source, context.into())
     }
 }
-impl<T> EncryptInto for T {}
+impl<T> LegacyEncryptInto for T {}
 /// Source-side call syntax for `decrypt_as`, implemented for every type:
 /// `stored.decrypt_into(&cipher, ctx)`. Targets implement [`DecryptInto`],
 /// never these methods.
-pub trait DecryptFrom: Sized + 'static {
+pub trait LegacyDecryptFrom: Sized + 'static {
     /// Recover `P` through `cipher`, which may be a [`KeysetCipher`] (refusing
     /// foreign leaves) or a [`StackCipher`] (opening any).
     fn decrypt_into<'a, P: 'static, K: 'static>(
@@ -1044,7 +1111,7 @@ pub trait DecryptFrom: Sized + 'static {
         source.decrypt_into(cipher, context.into())
     }
 }
-impl<T: 'static> DecryptFrom for T {}
+impl<T: 'static> LegacyDecryptFrom for T {}
 
 // The leaf declarations below keep `Clone` on purpose. An `EncryptFrom`
 // declaration runs in the `Borrowed` mode (`encrypt_as` hands it `&S`), and an

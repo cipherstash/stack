@@ -1039,7 +1039,7 @@ The existing Go package has never been released, so these are removed, not depre
 - `EncryptRecord`, `EncryptRecords`, `DecryptRecord` and `DecryptRecords`, on `Cipher` and on `Client`.
 - `EncryptedRecord` and `EncryptedField`: a generated type replaces them.
 - `Cipher.Term`: the query methods of a field entry replace it.
-- `RecordOption`, `WithPlan` and `ExtendContext`: `Cipher.Extend` replaces the last.
+- `RecordOption`, `WithPlan` and `ExtendContext`: `Cipher.Extend` replaces the `ExtendContext` function.
 - `WithGuest`: the import of `encrypt/eql` chooses the guest build.
 - `TermKind`: `Index` replaces it, for generated code.
 - `Plan`, `FieldPlan`, `NewPlan` and `Plan.Validate`: the generator replaces them.

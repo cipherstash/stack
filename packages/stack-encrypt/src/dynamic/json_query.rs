@@ -16,6 +16,8 @@
 //! | `selector` | `{"path"}` | text: the selector `->` takes |
 //! | `subtree` | `{"path", "wildcard_bound"?}` | text array: the tokens `json_tree_subtree` takes |
 //! | `children`, `child_count` | `{"path"}`: a path with no wildcard | text: the node's token |
+//! | `element_match` | `{"path", "wildcard_bound"?, "predicates"}`: an array's elements, by a path with a wildcard, and predicates on fields of an element at ordered paths | EQL: per predicate, the field's read tokens and its bounds (`eql_v4.query_json_elements`), compared as the orderings compare, so its `eq` is of folded values |
+//! | `match` | `{"predicate", "vars"?, "wildcard_bound"?}`: a jsonpath predicate in the subset below, and its variables as one JSON object | EQL: the predicate as a boolean tree of the operands above (`eql_v4.query_json_predicate`), which `json_tree_match` and `@@` evaluate |
 //!
 //! Every JSON value in an input is UTF-8 JSON text, parsed by
 //! [`parse_text`](crate::json::parse_text)'s rules. A path is JSONPath text
@@ -31,6 +33,151 @@
 //! (`json_tree_path_query`). Two `eq_at` predicates on one row need not
 //! hold of the same array element; one containment query of a document
 //! holding both does.
+//!
+//! # Element predicates
+//!
+//! `element_match` asks whether some one element of an array satisfies
+//! every predicate, which two `eq_at` or ordering operands cannot: the
+//! jsonpath `exists($.contacts[*] ? (@.relationship == "Sibling" &&
+//! @.calls > 5))`. Its input names the array's elements by a path with a
+//! wildcard (`$.contacts[*]`), and each predicate a field of an element by
+//! a `member` path relative to it (`relationship`, `address.postcode`,
+//! `["first name"]`), an `op` and its value:
+//!
+//! ```json
+//! {"path": "$.contacts[*]", "wildcard_bound": 16, "predicates": [
+//!   {"member": "relationship", "op": "eq", "json": "\"Sibling\""},
+//!   {"member": "calls", "op": "gt", "json": "5"},
+//!   {"member": "age", "op": "between", "low": "18", "high": "40"}
+//! ]}
+//! ```
+//!
+//! `op` is `eq`, `lt`, `lte`, `gt` or `gte`, with `json`, or `between`,
+//! with `low` and `high`, inclusive. Each member's full path, the path and
+//! the member joined, must be one the field orders. The operand holds, per
+//! predicate, the tokens of a `subtree` read of the full path at the bound,
+//! and the bounds as the orderings derive them: `gt` the leaf operand
+//! `gt_at` derives, `between` the two `between_at` derives as `gte` and
+//! `lte`, and `eq` one leaf operand as both `gte` and `lte`. So equality
+//! here is the ordering term's: text compares case- and accent-folded, and
+//! numbers as float64, so integers past 2^53 can tie. Exact equality at a
+//! path is `eq_at`, of any element.
+//!
+//! Refused before anything is derived, each by its reason: a path with no
+//! wildcard ([`Reason::JsonPathNoWildcard`]), a `wildcard_bound` of `0`,
+//! whose operand could never be true ([`Reason::JsonWildcardBoundZero`]),
+//! an empty list of predicates ([`Reason::JsonNoPredicates`]), an `op`
+//! that is none of the six ([`Reason::JsonUnknownPredicateOp`]), a
+//! predicate whose keys do not fit its `op` ([`Reason::JsonInput`]), a
+//! wildcard in a member ([`Reason::JsonPathWildcard`]); and by the index's
+//! own refusals, a position in the path or a member
+//! ([`TermError::JsonOrderingAtPosition`]), a member whose full path the
+//! field does not order ([`TermError::JsonPathNotOrdered`]), a value that
+//! is not a number or a string ([`TermError::JsonLeafNotOrdered`]), and a
+//! member that is not a path ([`TermError::JsonPath`], at an offset into
+//! the member's own text). The
+//! database refuses a row whose array is longer than the bound, as a
+//! subtree read of it opens to a refusal: each member's tokens end with
+//! the probe, and `json_tree_element_match` raises when it names a node.
+//!
+//! # Compiled predicates
+//!
+//! `match` takes what plaintext `jsonb_path_match(col, $1, $2)` takes: a
+//! jsonpath predicate and its variables, `vars` the JSON text of one object
+//! (`{}` when absent). It compiles the predicate into one operand, a tree
+//! of `and`, `or` and `not` over the operands the operators above derive,
+//! each leaf derived by its operator's own code:
+//!
+//! ```json
+//! {"predicate": "$.age >= $min && exists($.contacts[*] ? (@.relationship == $r && @.calls > 5))",
+//!  "vars": "{\"min\": 18, \"r\": \"Sibling\"}", "wildcard_bound": 16}
+//! ```
+//!
+//! The grammar is the subset of SQL/JSON path predicates the terms answer,
+//! as PostgreSQL reads it: a path is `$` and steps `.key`, `."quoted key"`
+//! (JSON's escapes) and `[*]`; a value is a variable (`$v`, `$"v"`) or a
+//! JSON literal (a string, a number, `true`, `false`, `null`); predicates
+//! are comparisons of a path with a value (`==`, `!=` or `<>`, `<`, `<=`,
+//! `>`, `>=`, either side first), `exists(path)` and `exists(path ? (…))`
+//! with a filter of comparisons on `@` and `@.member` joined by `&&`, and
+//! `&&`, `||`, `!(…)` and parentheses over them. Each maps onto operands
+//! this way:
+//!
+//! | jsonpath | operand |
+//! |---|---|
+//! | `P == v`, `P == null` | `eq_at`'s containment needle |
+//! | `P != v`, `P != null` | `selector` and not that needle: a node there that is not the value |
+//! | `P < v` … `P >= v` | `selector` and the ordering's leaf: a node there whose leaf compares; under an odd number of `!`, also not the `null` needle |
+//! | `P < v` … `P >= v`, `P` with a wildcard | `element_match` on the array through `P`'s last wildcard, the rest of `P` its member |
+//! | `exists(P)` | `selector` |
+//! | `exists(P ? (@.m == v))`, `exists(P ? (@ == v))` | `eq_at` at `P.m` or `P` |
+//! | `exists(P ? (@.m op v && …))` | `element_match` on `P`'s elements, one predicate per condition |
+//!
+//! So the tree is true of exactly the rows `jsonb_path_match` is true of
+//! over the plaintext, and answers as it does, true, false or NULL
+//! (unknown) as SQL's three-valued logic combines them. An absent path is
+//! false under every comparison, `!=` is true of a `null`, and an ordering
+//! is unknown of a node with no ordering term (a boolean, a container), as
+//! jsonpath's comparison of two kinds is. A JSON `null` is false under an
+//! ordering in jsonpath. The tree says so only where it changes the rows,
+//! under an odd number of `!`, by sending the `null` needle, which tells
+//! the database which rows hold `null` at the path. Elsewhere it sends no
+//! needle and an ordering of a `null` is NULL, which `and` and `or` cannot
+//! turn into true, so the rows are the same. The tree's answer
+//! and jsonpath's part in four places, each a property of the stored
+//! document or of the ordering terms rather than of the predicate:
+//!
+//! - A path is read as written: lax mode unwraps an array the path names
+//!   no `[*]` for (`$.tags == "a"` over `{"tags": ["a"]}` is true), and
+//!   the tree does not. Write `[*]`.
+//! - Lax mode also wraps a value that is not an array where the path names
+//!   `[*]`: `$.tags[*] == "a"` over `{"tags": "a"}`, `exists($.tags[*])`
+//!   over a scalar `tags` and `exists($.items[*] ? (@.sku == "x"))` over
+//!   `{"items": {"sku": "x"}}` are all true to jsonpath. The tree finds
+//!   only array elements at `[*]`, since `$.tags[*]` and `$.tags` have
+//!   different selectors, so each is false here. Keep an array an array.
+//! - A comparison of a string with a number, or of a boolean with a
+//!   string or a number, is unknown to jsonpath. The terms do not record
+//!   a value's kind, so the tree answers it false under `==` (and in a
+//!   filter, as jsonpath's filter does), true under `!=`, and by the
+//!   ordering terms under an ordering. Keep one kind of value at a path.
+//! - An ordering compares the ordering terms, as the orderings do: text
+//!   case- and accent-folded, numbers as float64. So does every condition
+//!   of a filter of more than one, `element_match`'s, whose equality is
+//!   therefore of folded values; `==` elsewhere is exact.
+//!
+//! An ordering at a path the field does not order is refused, as the
+//! orderings refuse it.
+//!
+//! Refused, each at the byte of the caller's text where the construct
+//! starts and naming the construct by the grammar's words and never the
+//! text ([`Error::Predicate`]): text the grammar does not read
+//! ([`Reason::JsonPredicateSyntax`]); arithmetic, `like_regex`, `starts
+//! with`, `is unknown`, a method (`.size()`), a mode word (`strict`,
+//! `lax`), `.*`, `.**`, a slice, `last`, a comparison of two paths or two
+//! values, a filter outside `exists`, and `||`, `!`, `!=` or `exists`
+//! inside a filter ([`Reason::JsonPredicateUnsupported`]); a variable
+//! `vars` does not hold ([`Reason::JsonPredicateUnknownVariable`]); a
+//! value of a type its comparison cannot take, an object or array
+//! anywhere, and under an ordering or in a filter of more than one
+//! condition anything but a number or a string
+//! ([`Reason::JsonPredicateValueType`]); `!=` at a path with a wildcard
+//! ([`Reason::JsonPredicateNotEqualAtWildcard`]); nesting past 32 levels or
+//! a path deeper than a document ([`Reason::JsonPredicateTooDeep`]); a
+//! position (`[2]`, [`Reason::JsonPathPosition`]); a filter on a path with
+//! no wildcard ([`Reason::JsonPathNoWildcard`]); and a wildcard in a
+//! filter's member ([`Reason::JsonPathWildcard`]). The leaves' operators
+//! refuse their own inputs as they would alone: an ordering at a path the
+//! field does not order ([`TermError::JsonPathNotOrdered`]). A
+//! `wildcard_bound` of `0` is [`Reason::JsonWildcardBoundZero`], and `vars`
+//! that are not an object [`Reason::JsonInput`].
+//!
+//! The operand reveals what its leaves reveal when sent one by one, and
+//! the boolean shape of the filter; an ordering under an odd number of `!`
+//! sends the `null` needle too, one leaf more than the ordering alone
+//! sends. `json_tree_match` evaluates the
+//! tree inside a function, which engages no index, so a predicate written
+//! out per operator is the fast path.
 //!
 //! # Reads
 //!
@@ -76,6 +223,10 @@ pub(super) enum Binds {
     Text,
     /// `text[]`.
     TextArray,
+    /// The target's element predicate domain (`eql_v4.query_json_elements`).
+    Elements,
+    /// The target's compiled predicate domain (`eql_v4.query_json_predicate`).
+    Predicate,
 }
 
 /// What a JSON operator's operand binds as, or `None` for an operator
@@ -90,6 +241,8 @@ pub(super) fn binds(op: OpSpec) -> Option<Binds> {
         }
         OpSpec::Selector | OpSpec::Children | OpSpec::ChildCount => Some(Binds::Text),
         OpSpec::Subtree => Some(Binds::TextArray),
+        OpSpec::ElementMatch => Some(Binds::Elements),
+        OpSpec::Match => Some(Binds::Predicate),
         OpSpec::Eq
         | OpSpec::Matches
         | OpSpec::Lt
@@ -108,12 +261,15 @@ pub(super) fn domain(target: &super::TargetDescriptor, binds: Binds) -> Option<S
         Binds::Leaf => target.leaf_query_sql_domain.clone(),
         Binds::Text => Some("text".to_owned()),
         Binds::TextArray => Some("text[]".to_owned()),
+        Binds::Elements => target.elements_query_sql_domain.clone(),
+        Binds::Predicate => target.predicate_query_sql_domain.clone(),
     }
 }
 
 /// UTF-8 JSON text in an input: a text or bytes leaf, held in a buffer
-/// wiped on drop.
-struct JsonText(Zeroizing<Vec<u8>>);
+/// wiped on drop. Also how `match` holds its predicate's text, whose
+/// literals are values.
+pub(super) struct JsonText(pub(super) Zeroizing<Vec<u8>>);
 
 impl<'de> Deserialize<'de> for JsonText {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -135,7 +291,8 @@ impl<'de> Deserialize<'de> for JsonText {
 }
 
 /// A document parsed from an input, wiped when it drops.
-struct Parsed(Value);
+#[derive(PartialEq)]
+pub(super) struct Parsed(pub(super) Value);
 
 impl Drop for Parsed {
     fn drop(&mut self) {
@@ -144,7 +301,7 @@ impl Drop for Parsed {
 }
 
 impl JsonText {
-    fn parse(&self) -> Result<Parsed, Error> {
+    pub(super) fn parse(&self) -> Result<Parsed, Error> {
         parse_text(&self.0)
             .map(Parsed)
             .map_err(|error| Error::Source {
@@ -155,7 +312,7 @@ impl JsonText {
 }
 
 /// The reason a JSON text refusal is reported with.
-fn json_reason(error: crate::json::JsonTextError) -> Reason {
+pub(super) fn json_reason(error: crate::json::JsonTextError) -> Reason {
     use crate::json::JsonTextError as E;
     match error {
         E::Syntax { .. } => Reason::JsonSyntax,
@@ -199,14 +356,77 @@ struct ReadInput {
     wildcard_bound: Option<u32>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ElementsInput {
+    path: String,
+    #[serde(default)]
+    wildcard_bound: Option<u32>,
+    predicates: Vec<PredicateInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PredicateInput {
+    member: String,
+    op: String,
+    #[serde(default)]
+    json: Option<JsonText>,
+    #[serde(default)]
+    low: Option<JsonText>,
+    #[serde(default)]
+    high: Option<JsonText>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MatchInput {
+    predicate: JsonText,
+    #[serde(default)]
+    vars: Option<JsonText>,
+    #[serde(default)]
+    wildcard_bound: Option<u32>,
+}
+
+/// How a predicate of `element_match` compares its field with one value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Compare {
+    Eq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
+/// A predicate's bounds, as its input gives them.
+#[derive(PartialEq)]
+pub(super) enum Bounds {
+    /// One value, compared by the predicate's `op`.
+    One(Compare, Parsed),
+    /// `between`: the low bound then the high, both inclusive.
+    Between(Parsed, Parsed),
+}
+
+/// One predicate of `element_match`, checked: the full path of the
+/// element's field, which the field orders, and its bounds.
+#[derive(PartialEq)]
+pub(super) struct Predicate {
+    pub(super) path: JsonPath,
+    pub(super) bounds: Bounds,
+}
+
 /// An operator's input, read from its frame and checked: everything
-/// [`derive`] would refuse before it derives anything.
-enum Input {
+/// [`derive`] would refuse before it derives anything. `match`'s is its
+/// predicate compiled to a tree of the other operators' inputs.
+#[derive(PartialEq)]
+pub(super) enum Input {
     Document(Parsed),
     At(JsonPath, Parsed),
     Between(JsonPath, Parsed, Parsed),
     Path(JsonPath),
     Read(JsonPath, u32),
+    Elements(u32, Vec<Predicate>),
+    Predicate(Box<super::json_predicate::Node>),
 }
 
 fn read_frame<T: for<'de> Deserialize<'de>>(input: &ValueFrame) -> Result<T, Error> {
@@ -280,8 +500,132 @@ fn read_input(op: OpSpec, options: &JsonOptions, input: &ValueFrame) -> Result<I
                 read.wildcard_bound.unwrap_or(JsonSubtreeKey::DEFAULT_BOUND),
             ))
         }
+        OpSpec::ElementMatch => read_elements(options, input),
+        OpSpec::Match => read_match(options, input),
         _ => Err(Error::Internal),
     }
+}
+
+/// The wildcard bound an input names, or the default: never `0`, which
+/// would send the probe alone, so an element predicate could never be true.
+fn wildcard_bound(bound: Option<u32>) -> Result<u32, Error> {
+    match bound.unwrap_or(JsonSubtreeKey::DEFAULT_BOUND) {
+        0 => Err(Error::bad_source(Reason::JsonWildcardBoundZero)),
+        bound => Ok(bound),
+    }
+}
+
+/// `match`'s input: a jsonpath predicate, its variables as one JSON object
+/// (the `vars` jsonb `jsonb_path_match` takes, `{}` when absent) and the
+/// bound its element-scoped leaves are read to. The predicate is compiled
+/// here, so every refusal it can meet is met before anything is derived.
+fn read_match(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+    let input: MatchInput = read_frame(input)?;
+    let bound = wildcard_bound(input.wildcard_bound)?;
+    let vars = match &input.vars {
+        Some(vars) => vars.parse()?,
+        None => Parsed(Value::Object(serde_json::Map::new())),
+    };
+    if !vars.0.is_object() {
+        return Err(Error::bad_source(Reason::JsonInput));
+    }
+    let text = std::str::from_utf8(&input.predicate.0)
+        .map_err(|_| Error::bad_source(Reason::JsonInput))?;
+    Ok(Input::Predicate(Box::new(super::json_predicate::compile(
+        text, &vars.0, options, bound,
+    )?)))
+}
+
+/// `element_match`'s input: an array's elements, by a path with a wildcard
+/// and no position, and one or more predicates on their fields.
+fn read_elements(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Error> {
+    let elements: ElementsInput = read_frame(input)?;
+    let base = path(&elements.path)?;
+    if base.is_positional() {
+        return Err(Error::bad_source(Reason::JsonPathNoWildcard));
+    }
+    if base.names_a_position() {
+        return Err(term(TermError::JsonOrderingAtPosition));
+    }
+    let bound = wildcard_bound(elements.wildcard_bound)?;
+    if elements.predicates.is_empty() {
+        return Err(Error::bad_source(Reason::JsonNoPredicates));
+    }
+    let predicates = elements
+        .predicates
+        .iter()
+        .map(|predicate| read_predicate(options, &base, predicate))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Input::Elements(bound, predicates))
+}
+
+/// One predicate of `element_match`: its member's full path below `base`,
+/// which the field must order, and the bounds its `op` takes.
+fn read_predicate(
+    options: &JsonOptions,
+    base: &JsonPath,
+    predicate: &PredicateInput,
+) -> Result<Predicate, Error> {
+    let compare = match predicate.op.as_str() {
+        "eq" => Some(Compare::Eq),
+        "lt" => Some(Compare::Lt),
+        "lte" => Some(Compare::Lte),
+        "gt" => Some(Compare::Gt),
+        "gte" => Some(Compare::Gte),
+        "between" => None,
+        _ => return Err(Error::bad_source(Reason::JsonUnknownPredicateOp)),
+    };
+    let path = member_path(options, base, &predicate.member)?;
+    let value = |text: &JsonText| -> Result<Parsed, Error> {
+        let value = text.parse()?;
+        leaf(&value.0)?;
+        Ok(value)
+    };
+    let bounds = match (compare, &predicate.json, &predicate.low, &predicate.high) {
+        (Some(compare), Some(json), None, None) => Bounds::One(compare, value(json)?),
+        (None, None, Some(low), Some(high)) => Bounds::Between(value(low)?, value(high)?),
+        _ => return Err(Error::bad_source(Reason::JsonInput)),
+    };
+    Ok(Predicate { path, bounds })
+}
+
+/// A member's full path: `base` and then the member's steps, read as a
+/// path relative to an element (`name`, `address.city`, `["a b"]`). A
+/// member names one field of each element, so it has no wildcard of its
+/// own, and the full path is an ordering's: no position, and ordered. A
+/// member that does not parse is refused at an offset into the member's
+/// own text.
+fn member_path(options: &JsonOptions, base: &JsonPath, member: &str) -> Result<JsonPath, Error> {
+    let prefix = if member.starts_with('[') { "$" } else { "$." };
+    let relative = JsonPath::parse(&format!("{prefix}{member}")).map_err(|error| {
+        let error = crate::json::JsonPathError {
+            at: error.at.saturating_sub(prefix.len()),
+            ..error
+        };
+        Error::Cipher(TermError::JsonPath(error).into())
+    })?;
+    member_of(options, base, relative)
+}
+
+/// A member's full path, from the steps already parsed: the checks
+/// [`member_path`] makes past parsing, which `match` makes of the members
+/// of an element-scoped filter.
+pub(super) fn member_of(
+    options: &JsonOptions,
+    base: &JsonPath,
+    relative: JsonPath,
+) -> Result<JsonPath, Error> {
+    if !relative.is_positional() {
+        return Err(Error::bad_source(Reason::JsonPathWildcard));
+    }
+    let full = relative
+        .segments()
+        .iter()
+        .fold(base.clone(), |at, segment| at.then(segment.clone()));
+    if full.segments().len() > crate::json::MAX_DEPTH {
+        return Err(term(TermError::JsonTooDeep));
+    }
+    ordered_path_of(options, full)
 }
 
 /// `eq_at`'s input: a scalar at a path read through a selector.
@@ -324,7 +668,11 @@ fn read_between(options: &JsonOptions, input: &ValueFrame) -> Result<Input, Erro
 /// position as the wildcard), so the data plan's own,
 /// [`Reason::JsonPathPosition`], is what refuses one there.
 fn ordered_path(options: &JsonOptions, text: &str) -> Result<JsonPath, Error> {
-    let path = path(text)?;
+    ordered_path_of(options, path(text)?)
+}
+
+/// [`ordered_path`] of a path already parsed.
+pub(super) fn ordered_path_of(options: &JsonOptions, path: JsonPath) -> Result<JsonPath, Error> {
     if path.names_a_position() {
         Err(term(TermError::JsonOrderingAtPosition))
     } else if options.orders(&path) {
@@ -335,7 +683,7 @@ fn ordered_path(options: &JsonOptions, text: &str) -> Result<JsonPath, Error> {
 }
 
 /// A leaf the index orders: a number or a string.
-fn leaf(value: &Value) -> Result<(), Error> {
+pub(super) fn leaf(value: &Value) -> Result<(), Error> {
     match value {
         Value::Number(_) | Value::String(_) => Ok(()),
         _ => Err(term(TermError::JsonLeafNotOrdered)),
@@ -368,7 +716,7 @@ fn terms<'a, K: 'static>(
     )
 }
 
-fn eql<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, crate::Error> {
+pub(super) fn eql<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, crate::Error> {
     serde_json::to_vec(value).map_err(|error| crate::Error::Other(Box::new(error)))
 }
 
@@ -381,8 +729,21 @@ pub(super) fn derive<'a, K: 'static>(
     op: OpSpec,
     input: &ValueFrame,
 ) -> Result<Pending<'a, Operand, K>, Error> {
+    derive_input(keyset, label, options, op, read_input(op, options, input)?)
+}
+
+/// Derive an operand for an input already read and checked: what
+/// [`derive`] does past reading, and what `match` does for each of its
+/// leaves.
+pub(super) fn derive_input<'a, K: 'static>(
+    keyset: &'a KeysetCipher<'_, K>,
+    label: &Label,
+    options: &JsonOptions,
+    op: OpSpec,
+    input: Input,
+) -> Result<Pending<'a, Operand, K>, Error> {
     let column = || NonEmpty::from(label.clone());
-    Ok(match read_input(op, options, input)? {
+    Ok(match input {
         Input::Document(document) => terms(keyset, options, label, document.0.clone())
             .try_map(|terms| eql(&JsonQuery::of_terms(terms)).map(Operand::One)),
         Input::At(path, value) if op == OpSpec::EqAt => {
@@ -421,7 +782,107 @@ pub(super) fn derive<'a, K: 'static>(
             let key = keyset.json_subtree_key_now(&path, options, bound, column())?;
             Pending::ready(keyset, Ok(Operand::TextList(key.tokens())))
         }
+        Input::Elements(bound, predicates) => elements(keyset, label, options, bound, &predicates)?,
+        Input::Predicate(node) => super::json_predicate::derive(keyset, label, options, *node)?,
     })
+}
+
+/// One member of an `element_match` operand: the tokens of a read of the
+/// member's full path, probes included, and its bounds, each a leaf
+/// operand. `eql_v4.query_json_elements` holds a list of them as `{"m"}`.
+#[derive(serde::Serialize)]
+struct MemberOperand {
+    t: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gt: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gte: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lt: Option<JsonLeafQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lte: Option<JsonLeafQuery>,
+}
+
+/// `element_match`'s operand, `eql_v4.query_json_elements`.
+#[derive(serde::Serialize)]
+struct ElementsOperand {
+    m: Vec<MemberOperand>,
+}
+
+impl MemberOperand {
+    /// The member reading `tokens` that compares as `compare`, with the
+    /// leaf operands of its values in order: one for a comparison, the
+    /// low's then the high's for `between` (`compare` `None`). Equality is
+    /// both inclusive bounds at its one value.
+    fn new(tokens: Vec<String>, compare: Option<Compare>, leaves: Vec<JsonLeafQuery>) -> Self {
+        let mut member = Self {
+            t: tokens,
+            gt: None,
+            gte: None,
+            lt: None,
+            lte: None,
+        };
+        let mut leaves = leaves.into_iter();
+        match compare {
+            Some(Compare::Eq) => {
+                member.gte = leaves.next();
+                member.lte = member.gte.clone();
+            }
+            Some(Compare::Lt) => member.lt = leaves.next(),
+            Some(Compare::Lte) => member.lte = leaves.next(),
+            Some(Compare::Gt) => member.gt = leaves.next(),
+            Some(Compare::Gte) => member.gte = leaves.next(),
+            None => {
+                member.gte = leaves.next();
+                member.lte = leaves.next();
+            }
+        }
+        member
+    }
+}
+
+/// `element_match`'s operand: for each predicate, the tokens of a subtree
+/// read of its full path at `bound`, as `subtree` derives them, and the
+/// leaf operand of each of its values, as the orderings derive them. The
+/// reads share the path and the bound, so the `k`-th token of every member
+/// names a field of one element, and each member's last names the element
+/// at the bound: the probe.
+fn elements<'a, K: 'static>(
+    keyset: &'a KeysetCipher<'_, K>,
+    label: &Label,
+    options: &JsonOptions,
+    bound: u32,
+    predicates: &[Predicate],
+) -> Result<Pending<'a, Operand, K>, Error> {
+    let mut members = Vec::with_capacity(predicates.len());
+    for predicate in predicates {
+        let tokens = keyset
+            .json_subtree_key_now(
+                &predicate.path,
+                options,
+                bound,
+                NonEmpty::from(label.clone()),
+            )?
+            .tokens();
+        let leaf = |value: &Parsed| {
+            terms(
+                keyset,
+                options,
+                label,
+                predicate.path.holding(value.0.clone()),
+            )
+            .map(|terms| JsonLeafQuery::of_leaf(&terms))
+        };
+        let (compare, leaves) = match &predicate.bounds {
+            Bounds::One(compare, value) => (Some(*compare), vec![leaf(value)]),
+            Bounds::Between(low, high) => (None, vec![leaf(low), leaf(high)]),
+        };
+        members.push(
+            Pending::all(keyset, leaves)
+                .map(move |leaves| MemberOperand::new(tokens, compare, leaves)),
+        );
+    }
+    Ok(Pending::all(keyset, members).try_map(|m| eql(&ElementsOperand { m }).map(Operand::One)))
 }
 
 /// A read to open, as the request that prepared it names it: the

@@ -46,6 +46,7 @@ type genFile struct {
 	declVar         string // "declaration"
 	codecVar        string // "codec"
 	fieldsVar       string // "Fields"
+	pathsVar        string // "Paths"
 	fieldTypePrefix string // "" or the -name
 	// The kind each EncryptInto field of another integer width seals as:
 	// the EQL type's own kind, which gensupport converts the value to.
@@ -57,7 +58,7 @@ type genFile struct {
 	notices         []string
 	printsPlaintext bool
 	unexported      []string
-	unqueried       []string // stderr notices: indexes no generated method queries
+	unqueried       []string // stderr notices about one field: an index no generated method queries, an array with no Elements accessor
 	redact          bool
 	redactRecv      string
 
@@ -108,6 +109,13 @@ type genField struct {
 	fieldType  string        // "EmailField"
 	pathType   string        // the type with its package path, for model checks
 	jsonPaths  []jsonPath    // a document field's ordered paths, each with its accessor
+	jsonArrays []jsonArray   // a document field's arrays with ordered members, each with its accessor
+	// orderedType is the Go type, as the generated file writes it, of the
+	// value at an ordered path of a document field whose Go type the
+	// generator reads: "int64" at $.visits[*].at of a struct with an int64
+	// At there. "any" where the type names none, as a json.RawMessage
+	// does, and for a field with no reader (nil).
+	orderedType func(path string) string
 	// holdsStruct is set for a document field (KindJSONValue) whose type
 	// holds a struct: its Contains refuses a needle of that type.
 	holdsStruct bool
@@ -273,12 +281,12 @@ func (r *reader) build(collected *collected, typeName string, valueNamed *types.
 	f.shapeName = lowerFirst(baseName) + "Shape"
 	f.shapeSource = f.typeExpr + "{}"
 	if req.Name != "" {
-		f.encryptFn, f.decryptFn, f.fieldsVar = "Encrypt"+req.Name, "Decrypt"+req.Name, req.Name+"Fields"
+		f.encryptFn, f.decryptFn, f.fieldsVar, f.pathsVar = "Encrypt"+req.Name, "Decrypt"+req.Name, req.Name+"Fields", req.Name+"Paths"
 		f.declVar, f.codecVar = lowerFirst(req.Name)+"Declaration", lowerFirst(req.Name)+"Codec"
 		f.fieldTypePrefix = req.Name
 		f.paramName = "values"
 	} else {
-		f.encryptFn, f.decryptFn, f.fieldsVar = "Encrypt", "Decrypt", "Fields"
+		f.encryptFn, f.decryptFn, f.fieldsVar, f.pathsVar = "Encrypt", "Decrypt", "Fields", "Paths"
 		f.declVar, f.codecVar = "declaration", "codec"
 		f.paramName = f.pkgName
 	}
@@ -728,6 +736,7 @@ func (r *reader) buildFields(c *collected) error {
 		// What encoding/json cannot carry both ways is refused here, when
 		// the code is generated.
 		holdsStruct, structElems := false, false
+		var docGoType types.Type
 		if eqlType := r.eqlType(field.EQLType); field.Verb == VerbEncryptInto && eqlType != nil && eqlType.wire == record.JSON {
 			doc, docType := &field.GoType, cf.typ
 			if doc.Kind == KindPointer && doc.Elem != nil {
@@ -741,6 +750,7 @@ func (r *reader) buildFields(c *collected) error {
 				_, isStruct := docType.Underlying().(*types.Struct)
 				structElems = holdsStruct && !isStruct
 				*doc = GoType{Name: doc.Name, Kind: KindJSONValue}
+				docGoType = docType
 			}
 		}
 		// A json.RawMessage is a document only where it names an EQL type
@@ -778,6 +788,9 @@ func (r *reader) buildFields(c *collected) error {
 			continue
 		}
 		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ), holdsStruct: holdsStruct, structElems: structElems}
+		if docGoType != nil {
+			g.orderedType = func(path string) string { return r.memberTypeExpr(docGoType, path) }
+		}
 		g.valueExpr = g.typeExpr
 		if pointer {
 			g.valueExpr = field.GoType.Name
@@ -1506,4 +1519,155 @@ func valueBaseName(f *genFile) string {
 		name = name[i+1:]
 	}
 	return name
+}
+
+// memberTypeExpr is the Go type, as the generated file writes it, of the
+// value at path in a document of Go type doc: the type encoding/json reads
+// the member into, past any pointers. "any" where the generator cannot
+// tell or cannot write one: a path the type does not hold, a step into a
+// type that writes itself (MarshalJSON), an interface or an anonymous
+// struct, an unexported type of another package, or a type whose package
+// name another import of the file already has.
+func (r *reader) memberTypeExpr(doc types.Type, path string) string {
+	t, ok := memberGoType(doc, path)
+	if !ok || !r.writable(t) {
+		return "any"
+	}
+	return r.typeExpr(types.Unalias(t))
+}
+
+// memberGoType walks a tag-spelled path ($, then .key, [*] and [n] steps)
+// through t as encoding/json reads a document into it: a key selects the
+// struct field that writes that member, or a map's element, and an index
+// or wildcard a slice's or array's element.
+func memberGoType(t types.Type, path string) (types.Type, bool) {
+	rest, ok := strings.CutPrefix(path, "$")
+	if !ok || strings.ContainsAny(rest, `"'`) {
+		return nil, false
+	}
+	for rest != "" {
+		t = derefAll(t)
+		if own, _ := ownCodec(t); own {
+			return nil, false
+		}
+		switch rest[0] {
+		case '[':
+			end := strings.IndexByte(rest, ']')
+			if end < 0 {
+				return nil, false
+			}
+			rest = rest[end+1:]
+			switch u := t.Underlying().(type) {
+			case *types.Slice:
+				t = u.Elem()
+			case *types.Array:
+				t = u.Elem()
+			default:
+				return nil, false
+			}
+		case '.':
+			rest = rest[1:]
+			end := strings.IndexAny(rest, ".[")
+			if end < 0 {
+				end = len(rest)
+			}
+			key := rest[:end]
+			rest = rest[end:]
+			switch u := t.Underlying().(type) {
+			case *types.Struct:
+				if t, ok = jsonMember(u, key, map[types.Type]bool{}); !ok {
+					return nil, false
+				}
+			case *types.Map:
+				t = u.Elem()
+			default:
+				return nil, false
+			}
+		default:
+			return nil, false
+		}
+	}
+	return derefAll(t), true
+}
+
+// jsonMember is the type of the field of u that encoding/json writes as
+// the member key: one tagged with that name, or untagged and named so, or
+// one an untagged embedded struct promotes.
+func jsonMember(u *types.Struct, key string, embedding map[types.Type]bool) (types.Type, bool) {
+	for i := range u.NumFields() {
+		fld := u.Field(i)
+		tag := reflect.StructTag(u.Tag(i)).Get("json")
+		if tag == "-" {
+			continue
+		}
+		name, _, _ := strings.Cut(tag, ",")
+		if fld.Embedded() && name == "" {
+			et := derefAll(fld.Type())
+			if st, ok := et.Underlying().(*types.Struct); ok && !embedding[et] {
+				if own, _ := ownCodec(et); !own {
+					embedding[et] = true
+					if t, ok := jsonMember(st, key, embedding); ok {
+						return t, true
+					}
+					continue
+				}
+			}
+		}
+		if !fld.Exported() {
+			continue
+		}
+		if name == "" {
+			name = fld.Name()
+		}
+		if name == key {
+			return fld.Type(), true
+		}
+	}
+	return nil, false
+}
+
+// derefAll is t past every pointer.
+func derefAll(t types.Type) types.Type {
+	for {
+		p, ok := t.Underlying().(*types.Pointer)
+		if !ok {
+			return t
+		}
+		t = p.Elem()
+	}
+}
+
+// writable reports whether the generated file can write t: a type built
+// of basic types and of named types that are exported or in the file's
+// own package, whose package names clash with no other import of the file.
+func (r *reader) writable(t types.Type) bool {
+	switch u := types.Unalias(t).(type) {
+	case *types.Basic:
+		return u.Kind() != types.UnsafePointer && u.Info()&types.IsUntyped == 0
+	case *types.Named:
+		obj := u.Obj()
+		if pkg := obj.Pkg(); pkg != nil && pkg.Path() != r.outPath() {
+			if !obj.Exported() {
+				return false
+			}
+			if other, taken := r.imports.paths[pkg.Name()]; taken && other != pkg.Path() {
+				return false
+			}
+		}
+		for i := range u.TypeArgs().Len() {
+			if !r.writable(u.TypeArgs().At(i)) {
+				return false
+			}
+		}
+		return true
+	case *types.Pointer:
+		return r.writable(u.Elem())
+	case *types.Slice:
+		return r.writable(u.Elem())
+	case *types.Array:
+		return r.writable(u.Elem())
+	case *types.Map:
+		return r.writable(u.Key()) && r.writable(u.Elem())
+	}
+	return false
 }

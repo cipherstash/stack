@@ -171,6 +171,11 @@ async fn the_derivations_are_pinned_under_the_deterministic_source() {
         "sealed_root": vectors(&JsonOptions::default()).await,
         "open_root": vectors(&JsonOptions { sealed_root: false, ..JsonOptions::new() }).await,
     });
+    assert!(
+        std::env::var("STACK_CONFORMANCE_REQUIRED").as_deref() != Ok("1")
+            || std::env::var_os("STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS").is_none(),
+        "required conformance must not regenerate JSON tree vectors"
+    );
     if update_requested(std::env::var_os("STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS").as_deref()) {
         std::fs::write(
             fixture_path(),
@@ -212,4 +217,23 @@ async fn the_deterministic_source_seals_the_same_tags_twice() {
     let one = vectors(&JsonOptions::default()).await;
     let two = vectors(&JsonOptions::default()).await;
     assert_eq!(one, two, "a pin needs a run that repeats");
+}
+
+#[test]
+fn required_checks_refuse_json_vector_updates() {
+    for value in ["", "0", "1"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "the_derivations_are_pinned_under_the_deterministic_source",
+                "--nocapture",
+            ])
+            .env("STACK_CONFORMANCE_REQUIRED", "1")
+            .env("STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS", value)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr)
+            .contains("required conformance must not regenerate JSON tree vectors"));
+    }
 }

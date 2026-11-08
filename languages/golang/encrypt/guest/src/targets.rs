@@ -114,9 +114,19 @@ fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescrip
         Some(options) => descriptor.with_match_options(options),
         None => descriptor,
     };
-    // A document's orderings at a path bind as its leaf operand.
-    match target.leaf_query_sql_domain() {
+    // A document's orderings at a path bind as its leaf operand, its
+    // element predicate (`element_match`) as its elements operand, and its
+    // compiled predicate (`match`) as its predicate operand.
+    let descriptor = match target.leaf_query_sql_domain() {
         Some(domain) => descriptor.with_leaf_query_sql_domain(domain),
+        None => descriptor,
+    };
+    let descriptor = match target.elements_query_sql_domain() {
+        Some(domain) => descriptor.with_elements_query_sql_domain(domain),
+        None => descriptor,
+    };
+    match target.predicate_query_sql_domain() {
+        Some(domain) => descriptor.with_predicate_query_sql_domain(domain),
         None => descriptor,
     }
 }
@@ -171,6 +181,8 @@ fn convert(error: eql_bindings::encryption::targets::TargetError) -> TargetError
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "eql")]
+    use stack_encrypt::AsProtectedRef as _;
 
     #[cfg(not(feature = "eql"))]
     #[test]
@@ -266,6 +278,65 @@ mod tests {
             resolver().resolve("Nope"),
             Err(TargetError::Unknown { .. })
         ));
+    }
+
+    /// The JSON document's query domains this guest names, and so the JSON
+    /// operators the Go SDK is offered: the leaf operand, for the orderings
+    /// at a path; the element predicate, for `element_match`; and the
+    /// compiled predicate, for `match`. Every operator a field lists is one
+    /// the Go SDK's operator list (`parseOperatorName`) and stashgen read.
+    #[cfg(feature = "eql")]
+    #[test]
+    fn a_document_names_the_leaf_element_and_predicate_domains() {
+        use stack_encrypt::dynamic::{self, record, OpSpec};
+        let targets = resolver().targets();
+        let document = targets
+            .iter()
+            .find(|t| t.name == "JsonSearch")
+            .expect("JsonSearch");
+        assert_eq!(
+            document.leaf_query_sql_domain.as_deref(),
+            Some("eql_v4.query_json_leaf")
+        );
+        assert_eq!(
+            document.elements_query_sql_domain.as_deref(),
+            Some("eql_v4.query_json_elements")
+        );
+        assert_eq!(
+            document.predicate_query_sql_domain.as_deref(),
+            Some("eql_v4.query_json_predicate")
+        );
+        assert!(
+            document.operators().contains(&OpSpec::Match),
+            "the type lists match: {:?}",
+            document.operators()
+        );
+        // The operators a field answers: the orderings and `element_match`
+        // only where it orders a path, and `match` on every field.
+        let field_operators = |ordered: &[&str]| {
+            let wire = serde_json::json!({
+                "profile": {
+                    "context": ["users", "profile"],
+                    "type": "json",
+                    "null": "sql",
+                    "target": {"name": "JsonSearch", "options": {"ordered": ordered}}
+                }
+            });
+            let frame = dynamic::frame::serde::to_vec(&wire).expect("plan frame");
+            let plan = record::plan_with(frame.as_protected_ref(), &resolver()).expect("plan");
+            dynamic::field_operators(&plan, "profile", &resolver())
+                .expect("operators")
+                .into_iter()
+                .map(|(op, _)| op)
+                .collect::<Vec<_>>()
+        };
+        let ordered = field_operators(&["$.contacts[*].relationship"]);
+        for present in [OpSpec::ElementMatch, OpSpec::Match] {
+            assert!(ordered.contains(&present), "{present:?}: {ordered:?}");
+        }
+        let unordered = field_operators(&[]);
+        assert!(unordered.contains(&OpSpec::Match), "{unordered:?}");
+        assert!(!unordered.contains(&OpSpec::ElementMatch), "{unordered:?}");
     }
 
     #[cfg(feature = "eql")]

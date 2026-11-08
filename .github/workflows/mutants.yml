@@ -64,6 +64,11 @@ env:
 jobs:
   mutants:
     name: Mutants gate
+    # Not on the release PR (next into main). Every line of its diff arrived
+    # through a PR into next, which this gate already mutated; the release
+    # diff yields thousands of mutants, hours of runner time, and cannot
+    # finish inside the timeout, so it would only spend money and fail.
+    if: github.event_name != 'pull_request' || !(github.head_ref == 'next' && github.base_ref == 'main')
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 120
     permissions:

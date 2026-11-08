@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -280,6 +282,66 @@ func TestKeysetAccessorsAnswerOnlyForAForeignKeyset(t *testing.T) {
 	none := &guest.Diagnostic{Fields: map[string]any{}}
 	if none.Field() != "" || none.Reason() != "" {
 		t.Error("Field or Reason answered for an error that gives none")
+	}
+}
+
+// A refused predicate's construct and offset read as they were decoded,
+// the offset in whatever integer width the transport carried it, or as a
+// float holding a whole number. An error with neither, or an offset that
+// is negative, fractional, past int or not a number, gives none.
+func TestConstructAndAtReadARefusedPredicate(t *testing.T) {
+	d := &guest.Diagnostic{Fields: map[string]any{"construct": "`like_regex`", "at": uint64(4)}}
+	if d.Construct() != "`like_regex`" {
+		t.Errorf("Construct() = %q", d.Construct())
+	}
+	for _, good := range []any{
+		int(4), int8(4), int16(4), int32(4), int64(4),
+		uint(4), uint8(4), uint16(4), uint32(4), uint64(4),
+		float32(4), float64(4),
+	} {
+		d := &guest.Diagnostic{Fields: map[string]any{"at": good}}
+		if at, ok := d.At(); !ok || at != 4 {
+			t.Errorf("At() of %#v = %d, %v", good, at, ok)
+		}
+	}
+	if at, ok := (&guest.Diagnostic{Fields: map[string]any{"at": uint32(0)}}).At(); !ok || at != 0 {
+		t.Errorf("an offset of 0: %d, %v", at, ok)
+	}
+	for _, bad := range []any{nil, "4", true, int32(-1), int64(-4), float64(-1), float64(4.5), float32(0.5), math.NaN(), math.Inf(1), float64(1 << 53), uint64(1) << 63} {
+		d := &guest.Diagnostic{Fields: map[string]any{"at": bad}}
+		if _, ok := d.At(); ok {
+			t.Errorf("At read %#v", bad)
+		}
+	}
+	none := &guest.Diagnostic{Fields: map[string]any{}}
+	if _, ok := none.At(); ok || none.Construct() != "" {
+		t.Error("Construct or At answered for an error that gives none")
+	}
+}
+
+// A float offset is read only up to math.MaxInt: where int is 32 bits, a
+// whole float past 2^31-1 is refused rather than overflowing the int it
+// converts to. The bound is tested at a 32-bit limit on every platform, and
+// At at the platform's own int, which CI also runs under GOARCH=386.
+func TestAFloatOffsetIsReadOnlyUpToMaxInt(t *testing.T) {
+	for _, tc := range []struct {
+		f  float64
+		ok bool
+	}{
+		{0, true},
+		{math.MaxInt32, true},
+		{math.MaxInt32 + 1, false},
+		{3e9, false},
+		{1 << 53, false},
+	} {
+		n, ok := guest.WholeFloatUpTo(tc.f, math.MaxInt32)
+		if ok != tc.ok || (ok && n != int64(tc.f)) {
+			t.Errorf("WholeFloatUpTo(%v, MaxInt32) = %d, %v; want ok %v", tc.f, n, ok, tc.ok)
+		}
+	}
+	at, ok := (&guest.Diagnostic{Fields: map[string]any{"at": float64(3e9)}}).At()
+	if want := 3e9 <= math.MaxInt; ok != want || (ok && int64(at) != 3e9) {
+		t.Errorf("At() of 3e9 = %d, %v; want ok %v where int is %d bits", at, ok, want, strconv.IntSize)
 	}
 }
 

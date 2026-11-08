@@ -232,9 +232,10 @@ macro_rules! chain_options {
             /// each field's `<context>/<field>` becomes
             /// `(<context>/<field>)/<parts>`, as a derived record's caller
             /// context does. The same parts must be given to read it back.
-            /// A second call replaces the first.
+            /// Further calls append in order, nesting to the left. A grouped
+            /// `NonEmpty` remains one part; `.extend(())` adds nothing.
             pub fn extend(mut self, parts: impl Into<DeclaredContext>) -> Self {
-                self.common.extend = parts.into();
+                self.common.extend.append(parts.into());
                 self
             }
         }
@@ -269,7 +270,7 @@ impl<K: 'static> StackCipher<K> {
     ///
     /// This is the fluent spelling of the cipher-directed and
     /// target-directed entry points on [`KeysetCipher`]
-    /// ([`encrypt`](KeysetCipher::encrypt), [`encrypt_as`](KeysetCipher::encrypt_as),
+    /// ([`encrypt_tree`](KeysetCipher::encrypt_tree), [`encrypt_as`](KeysetCipher::encrypt_as),
     /// [`run`](KeysetCipher::run)), which stay; see the [`plan`](crate::plan)
     /// module for the whole chain.
     pub fn encrypt<'a, S: ?Sized>(&'a self, value: &'a S) -> EncryptBuilder<'a, S, K> {
@@ -325,7 +326,7 @@ pub struct EncryptBuilder<'a, S: ?Sized, K> {
 
 impl<'a, S: ?Sized, K: 'static> EncryptBuilder<'a, S, K> {
     /// Encrypt under `context`: one tree, sealed under that label, as
-    /// `keyset.encrypt(&value, label)` does. Text is parsed as a
+    /// `keyset.encrypt_tree(&value, label)` does. Text is parsed as a
     /// [`Label`] (`"documents/v2/body"` is three segments), and text that
     /// is not one is refused when the chain is awaited.
     pub fn context(self, context: impl IntoLabel) -> EncryptWithContext<'a, S, K> {

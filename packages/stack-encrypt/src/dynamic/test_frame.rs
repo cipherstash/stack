@@ -13,7 +13,7 @@ use vitaminc_aead::plaintext::{
     Sink, SourceError,
 };
 use vitaminc_aead::{to_frame, DecodeError, Decrypt, Encrypt, Frame};
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::Controlled;
 
 /// A value as a test spells it: each scalar at its own width, a logical
 /// scalar under its type. Equality is structural and variable-time, which
@@ -77,7 +77,7 @@ impl PartialEq for Tree {
 impl Tree {
     /// The tree's frame, written by vitaminc's own frame writer, which
     /// refuses a repeated key.
-    pub(crate) fn to_frame(&self) -> Result<Protected<Vec<u8>>, FrameWriteError> {
+    pub(crate) fn to_frame(&self) -> Result<vitaminc_protected::Buffer, FrameWriteError> {
         to_frame(self)
     }
 
@@ -105,10 +105,10 @@ pub(crate) enum ReadError {
 
 /// The frame bytes of `value`, written by hand: an object's entries in
 /// order, a repeated key included.
-pub(crate) fn frame_of(value: &Tree) -> Vec<u8> {
+pub(crate) fn frame_of(value: &Tree) -> vitaminc_protected::Protected<Vec<u8>> {
     let mut out = Vec::new();
     write(value, &mut out);
-    out
+    vitaminc_protected::Protected::new(out)
 }
 
 fn write(value: &Tree, out: &mut Vec<u8>) {
@@ -138,7 +138,7 @@ fn write(value: &Tree, out: &mut Vec<u8>) {
 /// read back.
 pub(crate) fn value_of<T: serde::Serialize>(answer: &T) -> Tree {
     let frame = vitaminc_aead_frame::serde::to_vec(answer).expect("frames");
-    Tree::from_frame(&frame).expect("a value")
+    Tree::from_frame(frame.risky_ref()).expect("a value")
 }
 
 fn scalar<S: Sink>(sink: S, ty: Option<Logical>, value: &Tree) -> Result<S::Ok, S::Error> {
@@ -383,13 +383,19 @@ mod tests {
         for (at, tree) in variants.iter().enumerate() {
             let frame = tree.to_frame().expect("frames");
             assert_eq!(&Tree::from_frame(frame.risky_ref()).expect("reads"), tree);
-            assert_eq!(&Tree::from_frame(&frame_of(tree)).expect("reads"), tree);
+            assert_eq!(
+                &Tree::from_frame(frame_of(tree).risky_ref()).expect("reads"),
+                tree
+            );
             for (other_at, other) in variants.iter().enumerate() {
                 assert_eq!(tree == other, at == other_at, "{tree:?} vs {other:?}");
             }
         }
         let array = Tree::Array(variants.clone());
-        assert_eq!(Tree::from_frame(&frame_of(&array)).expect("reads"), array);
+        assert_eq!(
+            Tree::from_frame(frame_of(&array).risky_ref()).expect("reads"),
+            array
+        );
         let object = Tree::Object(
             variants
                 .into_iter()
@@ -397,7 +403,10 @@ mod tests {
                 .map(|(at, tree)| (at.to_string(), tree))
                 .collect(),
         );
-        assert_eq!(Tree::from_frame(&frame_of(&object)).expect("reads"), object);
+        assert_eq!(
+            Tree::from_frame(frame_of(&object).risky_ref()).expect("reads"),
+            object
+        );
     }
 
     /// A logical type over anything but a scalar is not a value, and bytes

@@ -27,7 +27,9 @@ impl Serialize for RawBytes<'_> {
 
 /// The frame bytes of `v`.
 pub(crate) fn frame(v: &V) -> Vec<u8> {
-    let scalar = |r: Result<Vec<u8>, _>| r.expect("a scalar frames");
+    let scalar = |r: Result<stack_encrypt::Buffer, _>| {
+        stack_encrypt::Controlled::risky_unwrap(r.expect("a scalar frames"))
+    };
     let container = |tag: u8, len: usize| {
         let mut out = vec![tag];
         out.extend_from_slice(&u32::try_from(len).expect("short").to_le_bytes());

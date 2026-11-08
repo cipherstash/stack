@@ -18,6 +18,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
 // The step loop, driven hermetically: the guest's init pauses on its
@@ -299,6 +300,31 @@ func TestAMalformedStepIsRefused(t *testing.T) {
 	for _, raw := range [][]byte{nil, {0xff}, marshalStep(t, map[string]any{"handle": uint64(1)})} {
 		if _, err := decodeStep(raw); !errors.Is(err, errMalformedStep) {
 			t.Errorf("decodeStep(%x): %v, want errMalformedStep", raw, err)
+		}
+	}
+}
+
+// A request with no method or no URL is refused, and the bearer token and
+// body it carried are wiped: the step never holds it, so its wipe cannot.
+func TestARefusedRequestIsWiped(t *testing.T) {
+	for _, missing := range []string{"method", "url"} {
+		headers := []byte("authorization: Bearer stub-token")
+		body := []byte("wrapped key")
+		var obj vcvalue.Object
+		if missing != "method" {
+			obj = append(obj, vcvalue.Field{Key: "method", Value: "POST"})
+		}
+		if missing != "url" {
+			obj = append(obj, vcvalue.Field{Key: "url", Value: "https://zerokms.example/keys"})
+		}
+		obj = append(obj, vcvalue.Field{Key: "headers", Value: headers}, vcvalue.Field{Key: "body", Value: body})
+		if _, ok := decodeRequest(obj); ok {
+			t.Fatalf("a request with no %s was accepted", missing)
+		}
+		for name, b := range map[string][]byte{"headers": headers, "body": body} {
+			if !bytes.Equal(b, make([]byte, len(b))) {
+				t.Errorf("a request with no %s left its %s unwiped: %q", missing, name, b)
+			}
 		}
 	}
 }

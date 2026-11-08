@@ -27,7 +27,7 @@ import (
 // testusers.ValueKinds — the same context, identities and indexes as tags —
 // writes each value as the same frame, opens the Rust record, and derives
 // the same term bytes through the guest built over the same source.
-// Skipped when the deterministic test build of the guest is absent.
+// Skipped when the test guest is absent, unless conformance is required.
 
 type valueKindsFixture struct {
 	KeySource struct {
@@ -152,9 +152,7 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 		t.Fatalf("seed: %v (%d bytes)", err, len(seedBytes))
 	}
 	c, err := encrypt.NewDeterministicClient(context.Background(), [32]byte(seedBytes))
-	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
-		t.Skip(err)
-	}
+	skipMissingConformanceGuest(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -26,18 +26,10 @@ func jsonPlan() *record.Plan {
 	}}}
 }
 
-var jsonDocuments = []string{
-	`{"name":"Alice","age":34,"visits":[{"at":3},{"at":1}]}`,
-	`[1,"two",{"three":3}]`,
-	`"a scalar root"`,
-	`null`,
-	`18446744073709551615`,
-	`{}`,
-}
-
 func TestJSONDocumentsRoundTripThroughTheGuest(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
+	jsonDocuments := jsonConformanceCases(t).Documents
 	rows := make([]record.Source, len(jsonDocuments))
 	for i, doc := range jsonDocuments {
 		rows[i] = record.Source{"profile": []byte(doc)}
@@ -93,7 +85,7 @@ func TestJSONDocumentsRoundTripThroughTheGuest(t *testing.T) {
 func TestJSONDocumentsDoNotOpenUnderAnotherColumn(t *testing.T) {
 	c := deterministicEQLClient(t)
 	ctx := context.Background()
-	sealed, err := c.DefaultKeyset().Seal(ctx, jsonPlan(), []record.Source{{"profile": []byte(jsonDocuments[0])}})
+	sealed, err := c.DefaultKeyset().Seal(ctx, jsonPlan(), []record.Source{{"profile": []byte(jsonConformanceCases(t).Documents[0])}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +100,8 @@ func TestJSONDocumentsDoNotOpenUnderAnotherColumn(t *testing.T) {
 // the engine's code and without the text.
 func TestJSONTextThatIsNotADocumentIsErrEncoding(t *testing.T) {
 	c := deterministicEQLClient(t)
-	for text, code := range map[string]string{
-		`{"secret":1,"secret":2}`: "json_duplicate_key",
-		`99999999999999999999`:    "json_integer_range",
-		`{"secret":`:              "json_syntax",
-	} {
+	for _, tc := range jsonConformanceCases(t).InvalidDocuments {
+		text, code := tc.Text, tc.Reason
 		_, err := c.DefaultKeyset().Seal(context.Background(), jsonPlan(), []record.Source{{"profile": []byte(text)}})
 		if !errors.Is(err, encrypt.ErrEncoding) {
 			t.Fatalf("%s: %v, want ErrEncoding", text, err)
@@ -154,7 +143,7 @@ func TestJSONOperatorsDeriveTaggedTerms(t *testing.T) {
 		"contains": "json", "contained_by": "json", "eq_at": "path_json",
 		"lt_at": "path_json", "lte_at": "path_json", "gt_at": "path_json", "gte_at": "path_json",
 		"between_at": "path_pair", "selector": "path", "subtree": "path_bound",
-		"children": "path", "child_count": "path",
+		"children": "path", "child_count": "path", "element_match": "path_predicates", "match": "predicate",
 	}
 	if !reflect.DeepEqual(inputs, want) {
 		t.Fatalf("operators = %v", inputs)

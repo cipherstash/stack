@@ -55,7 +55,6 @@ pub fn request_headers(headers: &[(String, String)]) -> Vec<u8> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use futures::executor::block_on;
     use stack_auth::{
         AccessKeyStrategy, AuthStrategy, HttpRequest, HttpResponse, HttpTransport, RequestError,
     };
@@ -90,8 +89,8 @@ mod tests {
     /// `user-agent` is Go's default with a bare nginx 403, before CTS sees
     /// it. Every request this guest hands the host must name the library
     /// and the host, once, and keep the headers stack-auth built.
-    #[test]
-    fn every_request_identifies_itself() {
+    #[tokio::test]
+    async fn every_request_identifies_itself() {
         let capture = Arc::new(Capture::default());
         let strategy = AccessKeyStrategy::builder(
             "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap(),
@@ -101,7 +100,7 @@ mod tests {
         .transport(Arc::clone(&capture))
         .build()
         .unwrap();
-        let _ = block_on((&strategy).get_token());
+        let _ = (&strategy).get_token().await;
 
         let seen = capture.0.lock().unwrap();
         assert_eq!(seen.len(), 1, "one access-key exchange");

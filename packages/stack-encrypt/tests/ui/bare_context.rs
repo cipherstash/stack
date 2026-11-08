@@ -6,7 +6,8 @@
 //! plaintext-derived record, a leaf opened directly — so the proof cannot be
 //! skipped by passing the raw value.
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+
+use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 

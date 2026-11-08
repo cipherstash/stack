@@ -752,11 +752,17 @@ exact pin would stop the suite sharing one `cts-common` with it.
   `tests/ui` binary, doctests, rustdoc, the node bindings and
   `stack-auth-wasm`), `tests-golang.yml` (WASI checks, the guests, the Go
   module on Linux, macOS and Windows, its PostgreSQL tests against the EQL v4
-  bundle built from the tree — `mise run go:test:postgres` locally — and the
-  live tests), `crap-crates.yml`,
+  bundle built from the tree — `mise run go:test:postgres` locally, which also
+  runs the Rust and Go EQL/JSON conformance lane and so needs `psql` and the
+  `MISE_ENV=test` cargo tools — and the live tests), `crap-crates.yml`,
   `mutants.yml`, `fuzz.yml`, `miri.yml` and `udeps.yml`.
   `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
   `mise.toml` or the five crate `tasks.toml` files loses its last CI caller.
+- **Auth refresh cancellation soak:** `tests-auth-refresh.yml` runs a short,
+  seeded, virtual-time soak on every PR and the long run on auth changes and
+  Version Packages PRs. `release-plz.yml` also requires the long run before
+  `release-crates` can publish. Run it locally with `mise run
+  test:soak:stack-auth`; it needs no credentials or live services.
 
 ### Fuzzing
 

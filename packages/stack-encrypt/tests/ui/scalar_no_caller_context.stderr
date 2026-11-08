@@ -1,0 +1,39 @@
+error[E0277]: the trait bound `NoCallerContext: AcceptsContext` is not satisfied
+  --> tests/ui/scalar_no_caller_context.rs:17:19
+   |
+17 |     let _ = 42i32.encrypt_into_with_context::<Fixed, _>(keyset, ());
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `AcceptsContext` is not implemented for `NoCallerContext`
+   |
+help: the following other types implement trait `AcceptsContext`
+  --> src/target/input.rs
+   |
+   | impl<C> AcceptsContext for RequiredContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<C>`
+...
+   | impl<C> AcceptsContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+
+error[E0277]: the trait bound `NoCallerContext: AcceptsContext` is not satisfied
+  --> tests/ui/scalar_no_caller_context.rs:18:44
+   |
+18 |     let _ = i32::decrypt_from_with_context(Fixed, keyset, ());
+   |             ------------------------------ ^^^^^ the trait `AcceptsContext` is not implemented for `NoCallerContext`
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the following other types implement trait `AcceptsContext`
+  --> src/target/input.rs
+   |
+   | impl<C> AcceptsContext for RequiredContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RequiredContext<C>`
+...
+   | impl<C> AcceptsContext for OptionalContext<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `OptionalContext<C>`
+note: required by a bound in `stack_encrypt::DecryptFrom::decrypt_from_with_context`
+  --> src/target/conversion.rs
+   |
+   |     fn decrypt_from_with_context<'a, S, K: 'static>(
+   |        ------------------------- required by a bound in this associated function
+...
+   |         S::ContextInput: AcceptsContext,
+   |                          ^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from_with_context`

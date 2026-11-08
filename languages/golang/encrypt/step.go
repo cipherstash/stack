@@ -143,7 +143,12 @@ func decodeRequest(item any) (ioRequest, bool) {
 			return ioRequest{}, false
 		}
 	}
-	return r, r.method != "" && r.url != ""
+	if r.method == "" || r.url == "" {
+		wipe(r.headers)
+		wipe(r.body)
+		return ioRequest{}, false
+	}
+	return r, true
 }
 
 // performStep performs every request of a step, in order, and encodes the

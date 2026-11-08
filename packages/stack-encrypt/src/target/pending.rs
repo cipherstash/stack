@@ -340,6 +340,39 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         scope: impl CipherScope<'a, K>,
         items: impl IntoIterator<Item = Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
+        Self::collect_releasing(scope, items, drop)
+    }
+
+    /// The same as [`collect`](Self::collect), but for a collection of
+    /// recovered plaintext. `collect` drops the items recovered before a
+    /// failure. This function wipes them.
+    ///
+    /// The wipe applies when a later item fails at fulfilment, after its key
+    /// arrived. That failure can be an authentication failure, a type
+    /// failure, or a panic in the item's conversion. The items recovered
+    /// before it are wiped before the error is returned, or before the panic
+    /// unwinds. A failure before fulfilment recovers nothing, so there is
+    /// nothing to wipe.
+    pub(crate) fn collect_wiping(
+        scope: impl CipherScope<'a, K>,
+        items: impl IntoIterator<Item = Pending<'a, T, K>>,
+    ) -> Pending<'a, Vec<T>, K>
+    where
+        T: zeroize::Zeroize,
+    {
+        Self::collect_releasing(scope, items, |mut recovered| {
+            zeroize::Zeroize::zeroize(&mut recovered)
+        })
+    }
+
+    /// The collection builder that `collect` and `collect_wiping` both use.
+    /// When an item fails or panics, `release` receives the items fulfilled
+    /// before it. When every item succeeds, `release` is not called.
+    fn collect_releasing(
+        scope: impl CipherScope<'a, K>,
+        items: impl IntoIterator<Item = Pending<'a, T, K>>,
+        release: impl FnOnce(Vec<T>) + MaybeSend + 'a,
+    ) -> Pending<'a, Vec<T>, K> {
         let items = items.into_iter();
         let cipher = scope.cipher();
         let mut keyset = scope.keyset();
@@ -365,11 +398,42 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             requests,
             failed: None,
             fulfil: Box::new(move |responses| {
-                fulfils
-                    .into_iter()
-                    .map(|fulfil| fulfil(responses))
-                    .collect()
+                // Held in a guard so that an item whose fulfilment panics
+                // releases the prefix during the unwind, as an error does.
+                let mut recovered = Recovered {
+                    items: Vec::with_capacity(fulfils.len()),
+                    release: Some(release),
+                };
+                for fulfil in fulfils {
+                    recovered.items.push(fulfil(responses)?);
+                }
+                Ok(recovered.keep())
             }),
+        }
+    }
+}
+
+/// The items a collection has recovered so far. If this guard is dropped
+/// before [`keep`](Self::keep) is called, by an early return or an unwind, it
+/// passes the items to `release`.
+struct Recovered<T, R: FnOnce(Vec<T>)> {
+    items: Vec<T>,
+    release: Option<R>,
+}
+
+impl<T, R: FnOnce(Vec<T>)> Recovered<T, R> {
+    /// Returns the items as the output, without releasing them. Call this
+    /// when every item has succeeded.
+    fn keep(mut self) -> Vec<T> {
+        self.release = None;
+        std::mem::take(&mut self.items)
+    }
+}
+
+impl<T, R: FnOnce(Vec<T>)> Drop for Recovered<T, R> {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            release(std::mem::take(&mut self.items));
         }
     }
 }

@@ -57,7 +57,12 @@ func (k *Checker) engineCheck(ctx context.Context, plan *record.Plan) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	_, err = k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
+	return k.checkFrame(ctx, encoded)
+}
+
+// checkFrame is the common engine boundary for lowered plans and raw-frame tests.
+func (k *Checker) checkFrame(ctx context.Context, encoded []byte) error {
+	_, err := k.c.call(ctx, func(ctx context.Context, inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.planCheck, buf(encoded))
 	})
 	return err
@@ -258,7 +263,7 @@ func parseOperators(value any) ([]record.Operator, error) {
 				op.Index, err = parseOperatorIndex(s)
 			case "input":
 				switch s {
-				case "value", "pair", "json", "path_json", "path_pair", "path", "path_bound":
+				case "value", "pair", "json", "path_json", "path_pair", "path", "path_bound", "path_predicates", "predicate":
 					op.Input = s
 				default:
 					return nil, fmt.Errorf("operator %d: unknown input %q", i, s)
@@ -282,14 +287,14 @@ func parseOperators(value any) ([]record.Operator, error) {
 // of the names the engine's OpSpec::parse accepts, the scalar operators
 // (eq, lt, lte, gt, gte, between, matches) and a document's (contains,
 // contained_by, eq_at, the orderings at a path, between_at, selector,
-// subtree, children, child_count). The catalog (se_targets) and se_query_term are
-// read through this, parseFidelity and parseOperatorIndex, so the two
-// readers refuse the same values.
+// subtree, children, child_count, element_match, match). The catalog
+// (se_targets) and se_query_term are read through this, parseFidelity and
+// parseOperatorIndex, so the two readers refuse the same values.
 func parseOperatorName(s string) (string, error) {
 	switch s {
 	case "eq", "lt", "lte", "gt", "gte", "between", "matches",
 		"contains", "contained_by", "eq_at", "lt_at", "lte_at", "gt_at", "gte_at", "between_at",
-		"selector", "subtree", "children", "child_count":
+		"selector", "subtree", "children", "child_count", "element_match", "match":
 		return s, nil
 	}
 	return "", fmt.Errorf("unknown operator %q", s)

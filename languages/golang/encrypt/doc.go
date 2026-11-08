@@ -242,6 +242,48 @@
 // A selection or a subtree read opens values as JSON text ([JSONValue],
 // [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
 //
+// Two queries at an array's paths can each be answered by a different
+// element. To test several members of one element together, use Match on
+// the array's accessor under Elements, which a field has for each array
+// whose elements have an ordered member. The generated Paths names those
+// members, nested as the JSON nests them, and [AtPath] makes a predicate
+// from one:
+//
+//	q, err := customers.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+//		encrypt.AtPath(customers.Paths.Profile.Visits.Place).Eq("home"),
+//		encrypt.AtPath(customers.Paths.Profile.Visits.At).Gt(15),
+//	)
+//	// WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)
+//
+// A [Path] carries its array and the member's Go type, so a value of
+// another type, or a predicate on another array's member, does not
+// compile. For a filter built at run time, the array accessor's Member
+// names the member as text: Visits.Member("place").Eq("home").
+//
+// Each comparison is of the member's ordering term, so [MemberTest.Eq]
+// compares text case- and accent-folded, and integers past 2^53 can tie. A row whose
+// array is longer than [JSONReadOptions.WildcardBound] (64 by default)
+// fails the query with SQLSTATE 22023.
+//
+// A whole filter binds as one parameter with the field's Match: a jsonpath
+// predicate and its variables, as plaintext jsonb_path_match takes them.
+// The engine parses the predicate and compiles it into a tree of the
+// operands above; nothing in Go reads it.
+//
+//	q, err := customers.Fields.Profile.Match(ctx, cipher,
+//		`$."name" == $name && $."age" < $max`,
+//		map[string]any{"name": "Alice", "max": 40}, encrypt.JSONReadOptions{})
+//	// WHERE profile @@ $1::eql_v4.query_json_predicate
+//
+// Pass an empty map when the predicate has no variables. A nil vars binds
+// as SQL NULL, as it does over plaintext, and matches no row.
+//
+// A predicate the engine cannot answer is refused as a [Diagnostic]
+// wrapping [ErrEncoding], whose Reason, Construct and At name the refusal
+// and the byte offset in the predicate where it starts. The tree is
+// evaluated inside eql_v4.json_tree_match, so no index engages: a query
+// that needs one writes its leaves with EqAt, Contains and At.<Path>.
+//
 // # Cancellation
 //
 // Every call takes a [context.Context], and a call whose context is

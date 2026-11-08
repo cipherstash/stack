@@ -6,10 +6,12 @@ package main
 
 // Visit is one visit stored inside a customer's encrypted profile.
 type Visit struct {
-	At int64 `json:"at"`
+	At    int64  `json:"at"`
+	Place string `json:"place"`
 }
 
-// Profile is a typed JSON document. Its Age is searchable by order.
+// Profile is a typed JSON document. Its Age, and each visit's At and Place,
+// are searchable by order.
 type Profile struct {
 	Name   string  `json:"name"`
 	Age    int64   `json:"age"`
@@ -20,5 +22,5 @@ type Profile struct {
 type Customer struct {
 	_       struct{} `stash:"context=customers"`
 	ID      int64    `stash:"id,passthrough"`
-	Profile Profile  `stash:"profile,encrypt_into=JsonSearch(ordered=$.age)"`
+	Profile Profile  `stash:"profile,encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at;$.visits[*].place)"`
 }

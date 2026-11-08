@@ -1633,6 +1633,8 @@ mod document_families {
                 DocumentRole::Stored,
                 DocumentRole::Query,
                 DocumentRole::LeafQuery,
+                DocumentRole::ElementsQuery,
+                DocumentRole::PredicateQuery,
                 DocumentRole::Entry,
             ] {
                 assert_eq!(
@@ -1645,7 +1647,10 @@ mod document_families {
             for domain in family.domains {
                 let schema = match domain.role {
                     DocumentRole::Stored | DocumentRole::Entry => "public.eql_v4_",
-                    DocumentRole::Query | DocumentRole::LeafQuery => "eql_v4.query_",
+                    DocumentRole::Query
+                    | DocumentRole::LeafQuery
+                    | DocumentRole::ElementsQuery
+                    | DocumentRole::PredicateQuery => "eql_v4.query_",
                 };
                 assert!(
                     domain.sql_domain.starts_with(schema),
@@ -1676,6 +1681,16 @@ mod document_families {
                 DocumentRole::LeafQuery,
                 "JsonSearchLeafQuery",
                 "eql_v4.query_json_leaf",
+            ),
+            (
+                DocumentRole::ElementsQuery,
+                "JsonSearchElementsQuery",
+                "eql_v4.query_json_elements",
+            ),
+            (
+                DocumentRole::PredicateQuery,
+                "JsonSearchPredicateQuery",
+                "eql_v4.query_json_predicate",
             ),
             (DocumentRole::Entry, "JsonEntry", "public.eql_v4_json_entry"),
         ] {

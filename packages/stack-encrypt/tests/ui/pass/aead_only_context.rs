@@ -4,7 +4,8 @@
 //! record then accepts exactly what the canonical `StackCipherText` path
 //! accepts. `tests/ui/aead_context_with_term.rs` pins the record such a
 //! context cannot declare.
-use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
+use stack_encrypt::target::{AeadContext};
+use stack_encrypt::target::legacy::{EncryptInto, DecryptFrom};
 use stack_encrypt::{ContextPiece, DecryptInto, EncryptFrom, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 

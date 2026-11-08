@@ -14,14 +14,15 @@
 //!
 //! ```
 //! use stack_encrypt::dynamic::{ValueFrame, ValueKind};
+//! use stack_encrypt::AsProtectedRef;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let frame = ValueFrame::of("alice")?;
 //! assert_eq!(frame.kind(), Some(ValueKind::String));
 //!
 //! // The same value, as a binding would hand it over.
-//! let from_host = ValueFrame::from_bytes(frame.risky_ref())?;
-//! assert_eq!(from_host.risky_ref(), frame.risky_ref());
+//! let from_host = ValueFrame::from_bytes(frame.as_protected_ref())?;
+//! assert_eq!(from_host, frame);
 //! # Ok(())
 //! # }
 //! ```
@@ -37,7 +38,10 @@ use vitaminc_aead::plaintext::{
     TimeUnit, Width,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
-use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
+use vitaminc_protected::{
+    AsProtectedRef, Buffer, Controlled, Equatable, OpaqueDebug, Protected, ProtectedRef,
+    TimingSafeEq,
+};
 
 use super::ValueKind;
 use crate::plan::IntoLabel;
@@ -58,6 +62,9 @@ use crate::{Label, LabelError};
 /// `Debug` ([`OpaqueDebug`]) names the type and masks the frame, which is
 /// plaintext.
 ///
+/// Two frames compare with `==` in constant time. See the [`PartialEq`
+/// impl](#impl-PartialEq-for-ValueFrame) for what equal means.
+///
 /// # The value model
 ///
 /// A frame can carry any of vitaminc's scalars. The engine admits a subset,
@@ -72,7 +79,7 @@ use crate::{Label, LabelError};
 /// sink adapter that holds these rules, so a frame from a host and a frame
 /// opened from a ciphertext are read the same way.
 #[derive(OpaqueDebug)]
-pub struct ValueFrame(Protected<Vec<u8>>);
+pub struct ValueFrame(Equatable<Protected<Vec<u8>>>);
 
 /// Why [`ValueFrame::from_bytes`] or [`ValueFrame::check`] refused its bytes.
 #[derive(Debug, thiserror::Error)]
@@ -90,11 +97,18 @@ impl ValueFrame {
     ///
     /// # Errors
     ///
-    /// [`DecodeError::Expected`] for a scalar outside the model (a uuid, a
-    /// logical type this build does not know, a date, decimal or timestamp
-    /// outside vitaminc's range), [`DecodeError::DuplicateKey`] for a map with a
-    /// repeated key, and [`DecodeError::Source`] for a source that fails or
-    /// a value deeper or longer than a frame carries.
+    /// - [`DecodeError::Expected`] for a scalar outside the model. That is a
+    ///   uuid, a logical type this build does not know, or a date, decimal, or
+    ///   timestamp outside vitaminc's range.
+    /// - [`DecodeError::DuplicateKey`] for a map inside a passthrough that
+    ///   repeats a key.
+    /// - [`DecodeError::Source`] for a source that fails, or for a value
+    ///   deeper or longer than a frame allows.
+    /// - [`DecodeError::Source`] for a map outside a passthrough that repeats a
+    ///   key. The error wraps the frame writer's
+    ///   [`FrameWriteError::DuplicateKey`]. That error does not name the key,
+    ///   because the key is plaintext. The writer does not copy plaintext out
+    ///   of the frame.
     pub fn of<P: Encrypt>(value: P) -> Result<Self, DecodeError> {
         write(|writer| value.visit(Modeled::new(writer)))
     }
@@ -114,7 +128,15 @@ impl ValueFrame {
     /// bytes are not exactly one frame, and
     /// [`FromFrameError::Value`] as
     /// [`of`](Self::of) refuses a value.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, FromFrameError> {
+    pub fn from_bytes(
+        bytes: vitaminc_protected::ProtectedRef<'_, [u8]>,
+    ) -> Result<Self, FromFrameError> {
+        Self::from_clear(bytes.risky_ref())
+    }
+
+    /// [`from_bytes`](Self::from_bytes) over bytes held in the clear, such as
+    /// a passthrough field's frame, which is not secret by contract.
+    pub(super) fn from_clear(bytes: &[u8]) -> Result<Self, FromFrameError> {
         let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
         Self::of(frame).map_err(FromFrameError::Value)
     }
@@ -133,22 +155,31 @@ impl ValueFrame {
     /// # Errors
     ///
     /// As [`from_bytes`](Self::from_bytes).
-    pub fn check(bytes: &[u8]) -> Result<Frame<'_>, FromFrameError> {
-        let frame = Frame::parse(bytes).map_err(FromFrameError::Frame)?;
+    pub fn check(
+        bytes: vitaminc_protected::ProtectedRef<'_, [u8]>,
+    ) -> Result<Frame<'_>, FromFrameError> {
+        let frame = Frame::parse(bytes.risky_ref()).map_err(FromFrameError::Frame)?;
         frame.visit(Check).map_err(FromFrameError::Value)?;
         Ok(frame)
     }
 
     /// A frame this module's writers wrote from frames already in the value
     /// model: the record a decrypt assembles. Checked to be one frame.
-    pub(super) fn from_written(buffer: Protected<Vec<u8>>) -> Result<Self, crate::Error> {
+    pub(super) fn from_written(buffer: Buffer) -> Result<Self, crate::Error> {
         let _ = Frame::parse(buffer.risky_ref()).map_err(|_| crate::Error::ResponseShape)?;
-        Ok(Self(buffer))
+        Ok(Self::from_buffer(buffer))
+    }
+
+    /// The frame in a [`Buffer`] that a writer has finished writing. The bytes
+    /// move into the frame's [`Protected`] without being copied. While the
+    /// writer wrote, the `Buffer` wiped each allocation it outgrew.
+    fn from_buffer(buffer: Buffer) -> Self {
+        Self(Equatable::from(Protected::from(buffer)))
     }
 
     /// The null, as a frame: what an absent value opens to.
     pub(super) fn null() -> Self {
-        Self(Protected::new(vec![vitaminc_aead::tags::NULL]))
+        Self(Equatable::new(vec![vitaminc_aead::tags::NULL]))
     }
 
     /// A typed null of `ty`, as a frame: the leaf alone. Walked into the
@@ -157,7 +188,7 @@ impl ValueFrame {
     /// typed null of its own types only ([`model_null`]), so `ty` is one of
     /// those a [`ValueKind`] names.
     pub(super) fn typed_null(ty: FixedType) -> Self {
-        let mut leaf = Protected::new(Vec::new());
+        let mut leaf = Equatable::new(Vec::new());
         vitaminc_aead::leaf::write_typed_null(ty, leaf.risky_inner_mut());
         Self(leaf)
     }
@@ -182,7 +213,7 @@ impl ValueFrame {
 
     /// The frame bytes, still protected.
     pub fn into_inner(self) -> Protected<Vec<u8>> {
-        self.0
+        Protected::new(self.0.risky_unwrap())
     }
 
     /// The frame, for walking.
@@ -286,9 +317,9 @@ impl MapSink for Check {
 fn write(
     f: impl FnOnce(FrameWriter<'_>) -> Result<(), DecodeError>,
 ) -> Result<ValueFrame, DecodeError> {
-    let mut buffer = Protected::new(Vec::new());
-    f(FrameWriter::new(buffer.risky_inner_mut()))?;
-    Ok(ValueFrame(buffer))
+    let mut buffer = Buffer::new();
+    f(FrameWriter::new(&mut buffer))?;
+    Ok(ValueFrame::from_buffer(buffer))
 }
 
 /// Walks the frame in place: no scalar leaves the buffer except to go
@@ -304,6 +335,16 @@ impl Encrypt for &ValueFrame {
 }
 
 /// Walks the frame, then drops it, which wipes it.
+/// A frame lends its bytes, so it can be passed to a frame reader, such as
+/// [`record::plan`](super::record::plan), without reading it through
+/// [`risky_ref`](ValueFrame::risky_ref). The frame still wipes its bytes
+/// when it drops.
+impl<'a> AsProtectedRef<'a, [u8]> for ValueFrame {
+    fn as_protected_ref(&'a self) -> ProtectedRef<'a, [u8]> {
+        self.0.as_protected_ref().as_deref()
+    }
+}
+
 impl Encrypt for ValueFrame {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (&self).visit(sink)
@@ -325,7 +366,35 @@ impl Decrypt for ValueFrame {
 /// original does.
 impl Clone for ValueFrame {
     fn clone(&self) -> Self {
-        Self(Protected::new(self.0.risky_ref().to_vec()))
+        Self(Equatable::new(self.0.risky_ref().to_vec()))
+    }
+}
+
+/// Two frames are equal when their bytes are. The bytes are compared in
+/// constant time, so the comparison does not reveal where two frames first
+/// differ. Frames of different lengths are unequal at once, which reveals
+/// only their lengths. A ciphertext's length already shows those.
+///
+/// This compares frames, not values. A frame records each scalar's width and
+/// type, so `34u32` and `34u64` are not equal, and neither are `0.0` and
+/// `-0.0`, or a typed null and a plain one. A map is equal to another only
+/// when its keys are written in the same order.
+///
+/// ```
+/// use stack_encrypt::dynamic::ValueFrame;
+///
+/// assert_eq!(ValueFrame::of(34u64)?, ValueFrame::of(34u64)?);
+/// assert_ne!(ValueFrame::of(34u64)?, ValueFrame::of(34u32)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+impl PartialEq for ValueFrame {
+    fn eq(&self, other: &Self) -> bool {
+        // The frame is held in an `Equatable`, which would compare it itself,
+        // but vitaminc-protected 0.9.1 has no `ConstantTimeEq` for `Vec<u8>`.
+        // Until it does, compare the bytes through `TimingSafeEq`, which uses
+        // `subtle`, and derive `PartialEq` once the impl is released.
+        let (ours, theirs) = (self.0.risky_ref(), other.0.risky_ref());
+        TimingSafeEq::ts_eq(ours.as_slice(), theirs.as_slice()).into()
     }
 }
 
@@ -441,12 +510,34 @@ pub(super) struct FieldFault {
     pub(super) error: DecodeError,
 }
 
-/// A frame writer's refusal as a decode error. A repeated key is reported
-/// where the key is known ([`Modeled::entry`]). A value the model does not
-/// hold, or a repeated key, inside a passthrough subtree reaches here wrapped
-/// as the writer's source error ([`ModelOnly`] can only return the writer's
-/// error type), and is unwrapped, so it is refused as the same `Expected` or
-/// `DuplicateKey` a sealed value is.
+/// Whether `error` is the frame writer's refusal of a repeated map key. That
+/// error does not name the key (see [`decode_error`]).
+pub(super) fn is_unnamed_repeated_key(error: &DecodeError) -> bool {
+    matches!(
+        error,
+        DecodeError::Source(source)
+            if matches!(
+                source.inner().downcast_ref::<FrameWriteError>(),
+                Some(FrameWriteError::DuplicateKey)
+            )
+    )
+}
+
+/// Converts a frame writer's refusal into a decode error.
+///
+/// Inside a passthrough subtree, [`ModelOnly`] can only return the writer's
+/// error type. So a value outside the model, or a repeated key, arrives
+/// wrapped as the writer's source error. This function unwraps it, and the
+/// caller gets the same `Expected` or `DuplicateKey` error a sealed value
+/// gives.
+///
+/// Outside a passthrough, the writer finds a repeated key when the map ends,
+/// by comparing it with the keys already in the frame. The writer then
+/// returns its own [`FrameWriteError::DuplicateKey`]. That error does not
+/// name the key.
+/// Naming the key would copy plaintext out of the frame, into memory that is
+/// freed without being wiped. [`is_unnamed_repeated_key`] recognises this
+/// error.
 fn decode_error(error: FrameWriteError) -> DecodeError {
     match error {
         FrameWriteError::Source(error) => match error.inner().downcast_ref::<DecodeError>() {
@@ -553,9 +644,6 @@ impl MapSink for Modeled<FrameMap<'_>> {
                 inner: writer,
                 field,
             }),
-            Err(FrameWriteError::DuplicateKey) => {
-                Err(Modeled { inner: (), field }.fault(DecodeError::duplicate_key(key)))
-            }
             Err(error) => Err(Modeled { inner: (), field }.written(error)),
         }
     }
@@ -736,7 +824,7 @@ type Finish<T> = fn(bool, Vec<(Option<String>, ValueFrame)>) -> Result<T, Decode
 /// keeps a repeated key for `finish` to refuse.
 pub struct Children<T> {
     map: bool,
-    children: Vec<(Option<String>, Protected<Vec<u8>>)>,
+    children: Vec<(Option<String>, Buffer)>,
     finish: Finish<T>,
 }
 
@@ -750,21 +838,20 @@ impl<T> Children<T> {
     }
 
     fn next(&mut self, key: Option<&str>) -> Modeled<FrameWriter<'_>> {
-        self.children
-            .push((key.map(str::to_owned), Protected::new(Vec::new())));
+        self.children.push((key.map(str::to_owned), Buffer::new()));
         let buffer = match self.children.last_mut() {
             Some((_, buffer)) => buffer,
             // Pushed on the line above.
             None => unreachable!(),
         };
-        Modeled::new(FrameWriter::new(buffer.risky_inner_mut()))
+        Modeled::new(FrameWriter::new(buffer))
     }
 
     fn finish(self) -> Result<T, DecodeError> {
         let children = self
             .children
             .into_iter()
-            .map(|(key, buffer)| (key, ValueFrame(buffer)))
+            .map(|(key, buffer)| (key, ValueFrame::from_buffer(buffer)))
             .collect();
         (self.finish)(self.map, children)
     }
@@ -1195,7 +1282,7 @@ impl SeqSink for NotARow<'_> {
 /// names the entry's key in any refusal.
 pub(super) struct RowMap<O> {
     out: O,
-    entries: Vec<(String, Protected<Vec<u8>>)>,
+    entries: Vec<(String, Buffer)>,
 }
 
 impl<O> RowMap<O> {
@@ -1216,24 +1303,20 @@ impl<O: PutRow> MapSink for RowMap<O> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<Modeled<FrameWriter<'_>>, DecodeError> {
-        self.entries
-            .push((key.to_owned(), Protected::new(Vec::new())));
+        self.entries.push((key.to_owned(), Buffer::new()));
         let buffer = match self.entries.last_mut() {
             Some((_, buffer)) => buffer,
             // Pushed on the line above.
             None => unreachable!(),
         };
-        Ok(Modeled::in_field(
-            FrameWriter::new(buffer.risky_inner_mut()),
-            key,
-        ))
+        Ok(Modeled::in_field(FrameWriter::new(buffer), key))
     }
 
     fn end(self) -> Result<O::Ok, DecodeError> {
         let row = self
             .entries
             .into_iter()
-            .map(|(key, buffer)| (key, ValueFrame(buffer)))
+            .map(|(key, buffer)| (key, ValueFrame::from_buffer(buffer)))
             .collect();
         Ok(self.out.put(Some(row)))
     }
@@ -1243,6 +1326,46 @@ impl<O: PutRow> MapSink for RowMap<O> {
 mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
+
+    mod equality {
+        use super::*;
+
+        #[test]
+        fn frames_with_the_same_bytes_are_equal() {
+            let frame = ValueFrame::of("alice").unwrap();
+            assert_eq!(frame, frame.clone());
+            assert_eq!(
+                frame,
+                ValueFrame::from_bytes(frame.as_protected_ref()).unwrap()
+            );
+        }
+
+        #[test]
+        fn frames_with_different_bytes_of_the_same_length_are_not_equal() {
+            let (a, b) = (
+                ValueFrame::of("alice").unwrap(),
+                ValueFrame::of("alicf").unwrap(),
+            );
+            assert_eq!(a.risky_ref().len(), b.risky_ref().len());
+            assert_ne!(a, b);
+        }
+
+        #[test]
+        fn frames_of_different_lengths_are_not_equal() {
+            assert_ne!(
+                ValueFrame::of("alice").unwrap(),
+                ValueFrame::of("alice!").unwrap()
+            );
+        }
+
+        #[test]
+        fn the_same_number_at_two_widths_is_not_equal() {
+            assert_ne!(
+                ValueFrame::of(34u32).unwrap(),
+                ValueFrame::of(34u64).unwrap()
+            );
+        }
+    }
 
     fn s(value: &str) -> Tree {
         Tree::String(value.into())
@@ -1326,8 +1449,15 @@ mod tests {
             let written = ValueFrame::of(TypedNull(ty)).expect("in the model");
             assert_eq!(written.risky_ref(), null.risky_ref(), "{ty:?} written");
             let bytes = typed_null_frame(ty);
-            assert!(ValueFrame::check(&bytes).is_ok(), "{ty:?} checks");
-            let read = ValueFrame::from_bytes(&bytes).expect("reads");
+            assert!(
+                ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                    .is_ok(),
+                "{ty:?} checks"
+            );
+            let read = ValueFrame::from_bytes(
+                Protected::new(bytes.to_vec()).as_protected_ref().as_deref(),
+            )
+            .expect("reads");
             assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
             let opened = TypedNull(ty).visit(Opening).expect("opens");
             assert_eq!(opened.risky_ref(), null.risky_ref(), "{ty:?} opened");
@@ -1346,8 +1476,10 @@ mod tests {
         ));
         let bytes = typed_null_frame(uuid);
         for refused in [
-            ValueFrame::check(&bytes).map(drop),
-            ValueFrame::from_bytes(&bytes).map(drop),
+            ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
+            ValueFrame::from_bytes(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
         ] {
             assert!(
                 matches!(
@@ -1380,8 +1512,15 @@ mod tests {
             let written = ValueFrame::of(Hidden(TypedNull(ty))).expect("in the model");
             assert_eq!(written.risky_ref(), null.risky_ref(), "{ty:?} written");
             let bytes = hidden_typed_null_frame(ty);
-            assert!(ValueFrame::check(&bytes).is_ok(), "{ty:?} checks");
-            let read = ValueFrame::from_bytes(&bytes).expect("reads");
+            assert!(
+                ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                    .is_ok(),
+                "{ty:?} checks"
+            );
+            let read = ValueFrame::from_bytes(
+                Protected::new(bytes.to_vec()).as_protected_ref().as_deref(),
+            )
+            .expect("reads");
             assert_eq!(read.risky_ref(), null.risky_ref(), "{ty:?} read");
         }
         assert!(matches!(
@@ -1390,8 +1529,10 @@ mod tests {
         ));
         let bytes = hidden_typed_null_frame(uuid_null());
         for refused in [
-            ValueFrame::check(&bytes).map(drop),
-            ValueFrame::from_bytes(&bytes).map(drop),
+            ValueFrame::check(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
+            ValueFrame::from_bytes(Protected::new(bytes.to_vec()).as_protected_ref().as_deref())
+                .map(drop),
         ] {
             assert!(
                 matches!(
@@ -1460,7 +1601,7 @@ mod tests {
         ] {
             let frame = ValueFrame::of(Raw(None, Physical::Int(int))).expect("in the model");
             assert_eq!(frame.risky_ref()[0], tag);
-            let back = ValueFrame::from_bytes(frame.risky_ref()).expect("in the model");
+            let back = ValueFrame::from_bytes(frame.as_protected_ref()).expect("in the model");
             assert_eq!(
                 back.risky_ref(),
                 frame.risky_ref(),
@@ -1526,7 +1667,7 @@ mod tests {
     fn check_refuses_what_from_bytes_refuses_without_a_copy() {
         let good = every_variant();
         let bytes = ValueFrame::of(&good).expect("frames");
-        let checked = ValueFrame::check(bytes.risky_ref()).expect("checks");
+        let checked = ValueFrame::check(bytes.as_protected_ref()).expect("checks");
         assert_eq!(checked.as_bytes().as_ptr(), bytes.risky_ref().as_ptr());
         assert_eq!(checked.as_bytes(), bytes.risky_ref());
         let hidden = vitaminc_aead::to_frame(Hidden(vitaminc_aead::plaintext::Raw(
@@ -1541,16 +1682,24 @@ mod tests {
         .expect("frames");
         for refused in [hidden.risky_ref(), uuid.risky_ref()] {
             assert!(matches!(
-                ValueFrame::check(refused),
+                ValueFrame::check(
+                    Protected::new(refused.to_vec())
+                        .as_protected_ref()
+                        .as_deref()
+                ),
                 Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
             assert!(matches!(
-                ValueFrame::from_bytes(refused),
+                ValueFrame::from_bytes(
+                    Protected::new(refused.to_vec())
+                        .as_protected_ref()
+                        .as_deref()
+                ),
                 Err(super::FromFrameError::Value(DecodeError::Expected(_)))
             ));
         }
         assert!(matches!(
-            ValueFrame::check(&[]),
+            ValueFrame::check(Protected::new(Vec::new()).as_protected_ref().as_deref()),
             Err(super::FromFrameError::Frame(_))
         ));
     }
@@ -1610,19 +1759,21 @@ mod tests {
             ValueFrame::of(hidden),
             Err(DecodeError::Expected(_))
         ));
+        // A repeated key is refused when its map ends, unnamed: the writer
+        // copies no key out of the frame to say which one.
         let repeated = Tree::Object(vec![("k".into(), Tree::Null), ("k".into(), Tree::Null)]);
         assert!(matches!(
             ValueFrame::of(&repeated),
-            Err(DecodeError::DuplicateKey(key)) if key == "k"
+            Err(ref error) if super::is_unnamed_repeated_key(error)
         ));
         assert!(matches!(
-            ValueFrame::from_bytes(&[]),
+            ValueFrame::from_bytes(Protected::new(Vec::new()).as_protected_ref().as_deref()),
             Err(super::FromFrameError::Frame(_))
         ));
         let uuid = vitaminc_aead::to_frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])))
             .expect("frames");
         assert!(matches!(
-            ValueFrame::from_bytes(uuid.risky_ref()),
+            ValueFrame::from_bytes(uuid.as_protected_ref()),
             Err(super::FromFrameError::Value(DecodeError::Expected(_)))
         ));
     }

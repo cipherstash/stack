@@ -39,7 +39,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	for i, row := range rows {
 		source[i], err = sourceRow(p, row)
 		if err != nil {
-			return nil, fmt.Errorf("%w: row %d: %v", ErrEncoding, i, err)
+			return nil, fmt.Errorf("%w: row %d: %w", ErrEncoding, i, err)
 		}
 		if cph.context != "" {
 			// The cipher names the context every row is under: a value
@@ -225,18 +225,17 @@ func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 
 // sourceRow renders one row for the guest: the context field first, when
 // the plan has one, then the plan's fields, in plan order, each with its
-// value. Fail closed in both directions: a field with no value and a value
-// with no field are both refused before anything is sent.
+// value. Unknown fields and missing required values are refused before anything
+// is sent; SQL-null fields may be omitted.
 func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 	expected := len(p.Fields)
 	if p.ContextField != "" {
 		expected++
 	}
-	if len(row) != expected {
-		for name := range row {
-			if p.Field(name) == nil && name != p.ContextField {
-				return nil, fmt.Errorf("the plan has no field %q", name)
-			}
+	// Counts can match even when an unknown key replaces an omitted SQL-null field.
+	for name := range row {
+		if p.Field(name) == nil && name != p.ContextField {
+			return nil, sourceDiagnostic("unknown_field", name, fmt.Sprintf("the plan has no field %q", name))
 		}
 	}
 	out := make(vcvalue.Object, 0, expected)
@@ -257,7 +256,7 @@ func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
 			continue
 		}
 		if !ok {
-			return nil, fmt.Errorf("no value for field %q", f.Name)
+			return nil, sourceDiagnostic("field_missing", f.Name, fmt.Sprintf("no value for field %q", f.Name))
 		}
 		out = append(out, vcvalue.Field{Key: f.Name, Value: v})
 	}
@@ -406,6 +405,11 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, 
 		}
 		trees[i] = tree
 	}
+	return c.openTree(ctx, sel, expected, p, trees)
+}
+
+// openTree owns the shared transport, opening and typed-row validation path.
+func (c *Client) openTree(ctx context.Context, sel KeysetSelector, expected string, p *record.Plan, trees []any) ([]record.Source, error) {
 	encodedTree, err := marshalCipherText(trees)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
@@ -431,14 +435,31 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, expected string, 
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
 	items, ok := decoded.([]any)
-	if !ok || len(items) != len(records) {
-		return nil, fmt.Errorf("%w: %d records came back as %T", ErrInternal, len(records), decoded)
+	if !ok || len(items) != len(trees) {
+		return nil, fmt.Errorf("%w: %d records came back as %T", ErrInternal, len(trees), decoded)
+	}
+	order := make([]string, 0, len(p.Fields)+1)
+	if p.ContextField != "" {
+		order = append(order, p.ContextField)
+	}
+	for _, f := range p.Fields {
+		if f.HasCiphertext() {
+			order = append(order, f.Name)
+		}
 	}
 	sources := make([]record.Source, len(items))
 	for i, item := range items {
 		obj, ok := item.(vcvalue.Object)
 		if !ok {
 			return nil, fmt.Errorf("%w: record %d decrypted as %T", ErrInternal, i, item)
+		}
+		if len(obj) != len(order) {
+			return nil, fmt.Errorf("%w: record %d has %d fields, expected %d", ErrInternal, i, len(obj), len(order))
+		}
+		for j, f := range obj {
+			if f.Key != order[j] {
+				return nil, fmt.Errorf("%w: record %d field %d is %q, expected %q", ErrInternal, i, j, f.Key, order[j])
+			}
 		}
 		src := make(record.Source, len(obj))
 		for _, f := range obj {
@@ -506,4 +527,11 @@ func indexWord(o record.Output) string {
 		return "ope"
 	}
 	return string(o)
+}
+
+// The adapter reports the same source semantics as the engine, even when it
+// can refuse the row before encoding it. Seal preserves this diagnostic chain.
+func sourceDiagnostic(reason, field, message string) error {
+	return &Diagnostic{Code: "stack_encrypt::dynamic_source", Message: message,
+		Fields: map[string]any{"reason": reason, "field": field}}
 }

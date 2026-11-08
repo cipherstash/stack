@@ -19,6 +19,61 @@ use stack_kms::{
 };
 use uuid::Uuid;
 
+/// Fixture regeneration is an explicit maintenance operation, never evidence
+/// for a required conformance run. Check before deriving or writing any fixture.
+///
+/// # Panics
+/// Panics if updates are requested while `STACK_CONFORMANCE_REQUIRED=1`.
+pub fn fixture_updates_requested_or_panic() -> bool {
+    let update = std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some();
+    assert!(
+        !update || std::env::var("STACK_CONFORMANCE_REQUIRED").as_deref() != Ok("1"),
+        "conformance checks must not update frozen fixtures"
+    );
+    update
+}
+
+/// Check the compiled libtest inventory, including ignored tests, rather than
+/// trusting source declarations that may be disabled by `cfg`.
+pub fn assert_fixture_tests_registered(binary: &str) {
+    let index: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../conformance/stack-encrypt/v1/fixture-enrollment.json"
+    ))
+    .expect("fixture enrollment index");
+    let profile = index["profiles"]
+        .as_array()
+        .expect("profiles")
+        .iter()
+        .find(|profile| profile["rust_binary"] == binary)
+        .expect("binary is enrolled");
+    let inventory = |ignored: bool| {
+        let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        command.arg("--list").arg("--format=terse");
+        if ignored {
+            command.arg("--ignored");
+        }
+        let output = command.output().expect("list compiled tests");
+        assert!(output.status.success(), "listing failed: {output:?}");
+        String::from_utf8(output.stdout)
+            .expect("UTF-8 inventory")
+            .lines()
+            .filter_map(|line| line.strip_suffix(": test").map(str::to_owned))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let registered = inventory(false);
+    let ignored = inventory(true);
+    for requirement in profile["requirements"].as_array().expect("requirements") {
+        for test in requirement["rust_tests"].as_array().expect("Rust tests") {
+            let name = test.as_str().expect("test name");
+            assert!(
+                registered.contains(name),
+                "{binary}::{name} is not compiled"
+            );
+            assert!(!ignored.contains(name), "{binary}::{name} is ignored");
+        }
+    }
+}
+
 /// A cipher over the deterministic fake source. The fake index key is
 /// deterministic per keyset, so two separately built ciphers stand in for the
 /// write path and a query path in another process.
@@ -292,3 +347,20 @@ pub mod frames {
         }
     }
 }
+
+/// Canonical hex helpers for shared conformance artifacts.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+pub fn unhex(text: &str) -> Vec<u8> {
+    assert!(
+        text.is_ascii() && text.len().is_multiple_of(2),
+        "invalid hex"
+    );
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex byte"))
+        .collect()
+}
+#[cfg(feature = "dynamic")]
+pub mod conformance;

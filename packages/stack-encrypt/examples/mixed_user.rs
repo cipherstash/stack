@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // in the whole Vec (here: 3 rows x 2 encrypted fields = 6 data keys).
     let ciphertext = cipher
         .default_keyset()
-        .encrypt(users, record.clone())
+        .encrypt_tree(users, record.clone())
         .await?;
 
     println!("what the stored ciphertext reveals:");

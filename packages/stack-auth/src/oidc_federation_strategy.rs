@@ -1660,8 +1660,9 @@ mod tests {
         );
         assert_eq!(strategy.cached_jwts(), 0);
 
-        // The abandoned exchange's permit is still owed; the fresh call takes it.
-        gate.add_permits(1);
+        // The cancelled caller's exchange finishes in its owned task. The
+        // pending entry was removed, so the fresh engine also exchanges.
+        gate.add_permits(2);
         let token = (&*strategy)
             .get_token()
             .await
@@ -1713,9 +1714,8 @@ mod tests {
             1,
             "its token is cached all the same"
         );
-        // The abandoned exchange died with the cancelled call; the survivor,
-        // next in line on the engine, made its own and took the permit.
-        assert_eq!(cts.exchanges(), 2);
+        // The survivor shares the exchange that outlived the first caller.
+        assert_eq!(cts.exchanges(), 1);
     }
 
     /// The remembered account refusal is forgotten after its window, so the

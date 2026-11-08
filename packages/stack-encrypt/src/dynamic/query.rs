@@ -154,12 +154,95 @@ pub enum OpSpec {
     /// `"child_count"`: the same token, which `json_tree_child_count`
     /// takes.
     ChildCount,
+    /// `"element_match"`: a predicate on one element of an array, each
+    /// member a field of the element at an ordered path with its bounds,
+    /// which `json_tree_element_match` takes. True of a row where some one
+    /// element satisfies every member.
+    ElementMatch,
+    /// `"match"`: a jsonpath predicate and its variables, compiled to a
+    /// tree of the other operators' operands, which `json_tree_match` and
+    /// `@@` take: the one-parameter form of `jsonb_path_match`. Its input
+    /// is `{"predicate", "vars"?, "wildcard_bound"?}`, `vars` the JSON text
+    /// of the object `jsonb_path_match` takes. It reads the subset of
+    /// SQL/JSON path predicates the index's terms answer: comparisons of a
+    /// path (`$.a.b`, `$.a[*].b`, `$."a b"`) with a variable or a literal,
+    /// `exists(path)`, `exists(path[*] ? (@.x == $v && @.y > $w))`, `&&`,
+    /// `||`, `!` and parentheses; and refuses anything else at the byte
+    /// it starts ([`Error::Predicate`](super::Error::Predicate)). The text
+    /// is PostgreSQL's [SQL/JSON path language](https://www.postgresql.org/docs/current/functions-json.html#FUNCTIONS-SQLJSON-PATH).
+    /// It is true of jsonpath's rows, and its answer is jsonpath's,
+    /// three-valued, save that an ordering of a JSON `null` is unknown
+    /// rather than false except under an odd number of `!` (which picks
+    /// the same rows, and keeps a `null` needle out of the operand), a
+    /// path is read as written (lax mode's unwrapping of an array the path
+    /// names no `[*]` for, and its wrapping of a value that is not an
+    /// array where it does, are not applied), a comparison of two kinds
+    /// of value is decided by the terms where jsonpath answers unknown,
+    /// and an ordering or a filter of more than one condition compares by
+    /// the ordering terms, as `element_match` does.
+    ///
+    /// ```
+    /// use serde_json::json;
+    /// use stack_encrypt::dynamic::{check_query, frame, record, OpSpec, Reason, ValueFrame};
+    /// use stack_encrypt::AsProtectedRef;
+    /// # use stack_encrypt::dynamic::{TargetDescriptor, TargetError, TargetOptions, TargetResolver, ValueKind};
+    /// # use stack_encrypt::target::IndexSpec;
+    /// # use stack_encrypt::{KeysetCipher, Label, Pending, StackCipher};
+    /// # /// A host whose `JsonSearch` names the compiled predicate's domain.
+    /// # struct Documents;
+    /// # impl TargetResolver for Documents {
+    /// #     fn targets(&self) -> Vec<TargetDescriptor> {
+    /// #         vec![TargetDescriptor::new(
+    /// #             "JsonSearch", "json", "", Some(ValueKind::Json), "public.eql_v4_json_search",
+    /// #             vec!["json".to_owned()], Some("JsonSearchQuery".to_owned()),
+    /// #             Some("eql_v4.query_json".to_owned()), true, None,
+    /// #         )
+    /// #         .with_predicate_query_sql_domain("eql_v4.query_json_predicate")]
+    /// #     }
+    /// #     fn encrypt<'a, K: 'static>(&self, _: &str, _: Option<&TargetOptions>,
+    /// #         _: &'a KeysetCipher<'_, K>, _: &Label, _: ValueFrame,
+    /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
+    /// #     fn decrypt<'a, K: 'static>(&self, _: &str, _: &'a StackCipher<K>, _: &Label, _: &[u8],
+    /// #     ) -> Result<Pending<'a, ValueFrame, K>, TargetError> { unreachable!() }
+    /// #     fn query<'a, K: 'static>(&self, _: &str, _: &IndexSpec, _: &'a KeysetCipher<'_, K>,
+    /// #         _: &Label, _: ValueFrame,
+    /// #     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> { unreachable!() }
+    /// # }
+    /// // A document field that orders `$.age`.
+    /// let declaration = frame::serde::to_vec(&json!({"profile": {
+    ///     "context": ["users", "profile"], "type": "json", "null": "sql",
+    ///     "target": {"name": "JsonSearch", "options": {"ordered": ["$.age"]}}
+    /// }}))?;
+    /// let plan = record::plan_with(declaration.as_protected_ref(), &Documents)?;
+    /// // What `jsonb_path_match(col, $1, $2)` takes: the predicate, and its
+    /// // variables as the JSON text of one object.
+    /// let input = |predicate: &str| -> ValueFrame {
+    ///     let input = json!({"predicate": predicate, "vars": r#"{"min": 18, "r": "sibling"}"#});
+    ///     ValueFrame::from_bytes(frame::serde::to_vec(&input).unwrap().as_protected_ref()).unwrap()
+    /// };
+    /// let check = |predicate: &str| {
+    ///     check_query(&plan, "profile", OpSpec::Match, input(predicate), &Documents)
+    /// };
+    ///
+    /// check("$.age >= $min && !(exists($.retired))")?;
+    /// check(r#"$.name == "ann" || $."first name" != null"#)?;
+    /// check("exists($.contacts[*] ? (@.relationship == $r))")?;
+    ///
+    /// // Refused at the byte the construct starts, by name, never quoting
+    /// // the text.
+    /// let error = check(r#"$.email like_regex "@""#).unwrap_err();
+    /// assert_eq!(error.reason(), Some(Reason::JsonPredicateUnsupported));
+    /// let error = check("$.age + 1 > $min").unwrap_err();
+    /// assert!(error.to_string().contains("at byte 6"), "{error}");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    Match,
 }
 
 impl OpSpec {
     /// Every operator, in declaration order: the order a catalog lists them
     /// in.
-    pub const ALL: [OpSpec; 19] = [
+    pub const ALL: [OpSpec; 21] = [
         OpSpec::Eq,
         OpSpec::Lt,
         OpSpec::Lte,
@@ -179,6 +262,8 @@ impl OpSpec {
         OpSpec::Subtree,
         OpSpec::Children,
         OpSpec::ChildCount,
+        OpSpec::ElementMatch,
+        OpSpec::Match,
     ];
 
     /// The operator a name names, or `None` for a name that is not one.
@@ -209,6 +294,8 @@ impl OpSpec {
             OpSpec::Subtree => "subtree",
             OpSpec::Children => "children",
             OpSpec::ChildCount => "child_count",
+            OpSpec::ElementMatch => "element_match",
+            OpSpec::Match => "match",
         }
     }
 
@@ -222,8 +309,10 @@ impl OpSpec {
     /// The shape of the operator's input, as a catalog names it: `value`
     /// (one value of the field's kind), `pair` (two, low then high),
     /// `json` (`{"json"}`), `path_json` (`{"path", "json"}`), `path_pair`
-    /// (`{"path", "low", "high"}`), `path` (`{"path"}`) or `path_bound`
-    /// (`{"path", "wildcard_bound"?}`).
+    /// (`{"path", "low", "high"}`), `path` (`{"path"}`), `path_bound`
+    /// (`{"path", "wildcard_bound"?}`), `path_predicates` (`{"path",
+    /// "wildcard_bound"?, "predicates"}`) or `predicate` (`{"predicate",
+    /// "vars"?, "wildcard_bound"?}`).
     pub fn input(self) -> &'static str {
         match self {
             OpSpec::Between => "pair",
@@ -234,6 +323,8 @@ impl OpSpec {
             OpSpec::BetweenAt => "path_pair",
             OpSpec::Selector | OpSpec::Children | OpSpec::ChildCount => "path",
             OpSpec::Subtree => "path_bound",
+            OpSpec::ElementMatch => "path_predicates",
+            OpSpec::Match => "predicate",
             OpSpec::Eq | OpSpec::Lt | OpSpec::Lte | OpSpec::Gt | OpSpec::Gte | OpSpec::Matches => {
                 "value"
             }
@@ -248,6 +339,19 @@ impl OpSpec {
     /// opens what the rows hold; see [`json_open`]). Equality at a wildcard
     /// path matches when any element does, and an ordering compared through
     /// `col -> sel` at one sees an unspecified element of each row.
+    ///
+    /// The orderings at a path (`lt_at` … `between_at`) and `element_match`
+    /// compare ordering terms, and `exact` is of the terms: the server
+    /// answers the comparison of the terms without false positives, and the
+    /// terms order text case- and accent-folded and numbers as float64. So
+    /// two values the plaintext tells apart can compare equal, and
+    /// `element_match`'s `eq`, which is `gte` and `lte` at one value, is an
+    /// equality of folded values, where `eq_at` is exact on the value.
+    /// `match` is exact on the terms its leaves are: its equalities are
+    /// `eq_at`'s save inside an element-scoped filter of more than one
+    /// condition, which is `element_match`'s, and its orderings are the
+    /// orderings' ([`OpSpec::Match`] says where its answer and jsonpath's
+    /// part).
     pub fn fidelity(self) -> Fidelity {
         match self {
             OpSpec::Matches => Fidelity::Probabilistic,
@@ -281,13 +385,19 @@ impl OpSpec {
         let declared = |wanted: fn(&IndexSpec) -> bool| indexes.iter().find(|index| wanted(index));
         if self.is_json() {
             // A document field's JSON index answers the document operators;
-            // the orderings at a path only when it orders some path.
+            // the orderings at a path, and the element predicates built of
+            // them, only when it orders some path.
             if kind != ValueKind::Json {
                 return None;
             }
             let ordering = matches!(
                 self,
-                OpSpec::LtAt | OpSpec::LteAt | OpSpec::GtAt | OpSpec::GteAt | OpSpec::BetweenAt
+                OpSpec::LtAt
+                    | OpSpec::LteAt
+                    | OpSpec::GtAt
+                    | OpSpec::GteAt
+                    | OpSpec::BetweenAt
+                    | OpSpec::ElementMatch
             );
             return indexes.iter().find(|index| match index {
                 IndexSpec::Json(options) => !ordering || !options.ordered.is_empty(),
@@ -317,7 +427,9 @@ impl OpSpec {
             | OpSpec::Selector
             | OpSpec::Subtree
             | OpSpec::Children
-            | OpSpec::ChildCount => None,
+            | OpSpec::ChildCount
+            | OpSpec::ElementMatch
+            | OpSpec::Match => None,
         }
         .filter(|index| admits(kind, index))
     }
@@ -387,7 +499,8 @@ impl Fidelity {
 /// lists them: none for a type the engine does not produce or that has no
 /// query twin, and otherwise every operator of one value that one of the
 /// type's indexes answers for its plaintext kind, `matches` only when the
-/// type's match options are known. The match index answers under those
+/// type's match options are known, and a JSON operator only when the type
+/// names the domain its operand binds as. The match index answers under those
 /// options. See the [module docs](self#which-operators-a-field-answers).
 pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(OpSpec, IndexSpec)> {
     let Some(kind) = target
@@ -408,10 +521,16 @@ pub(super) fn target_operators(target: &TargetDescriptor) -> Vec<(OpSpec, IndexS
         )
         .collect();
     // `between` through an EQL type is not answered yet; `between_at` on a
-    // document is (its bounds are two leaf operands).
+    // document is (its bounds are two leaf operands). A JSON operator is
+    // listed only when the type names the SQL type its operand binds as,
+    // as a field's list has it.
     OpSpec::ALL
         .into_iter()
         .filter(|op| !op.takes_pair())
+        .filter(|op| {
+            super::json_query::binds(*op)
+                .is_none_or(|binds| super::json_query::domain(target, binds).is_some())
+        })
         .filter_map(|op| {
             op.answered_by(kind, &indexes)
                 .map(|index| (op, index.clone()))
@@ -667,10 +786,12 @@ fn answers(
 /// ```
 /// use stack_encrypt::dynamic::{field_operators, record, NoTargets, OpSpec};
 /// use stack_encrypt::target::IndexSpec;
+/// use stack_encrypt::AsProtectedRef;
 ///
-/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
-/// }))?)?;
+/// }))?;
+/// let plan = record::plan(declaration.as_protected_ref())?;
 ///
 /// let operators = field_operators(&plan, "age", &NoTargets)?;
 /// assert_eq!(operators[0], (OpSpec::Eq, IndexSpec::Equality));
@@ -1071,14 +1192,15 @@ where
 /// ```
 /// use stack_encrypt::dynamic::{query_term, record, NoTargets, OpSpec, Operand};
 /// use stack_encrypt::kms::FakeDataKeySource;
-/// use stack_encrypt::{op, Ore, Plan, StackCipher};
+/// use stack_encrypt::{op, AsProtectedRef, Ore, Plan, StackCipher};
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 /// let keyset = cipher.default_keyset();
-/// let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
+/// let declaration = vitaminc_aead_frame::serde::to_vec(&serde_json::json!({
 ///     "age": { "context": ["users", "age"], "outputs": ["c", "ore"], "type": "uint32" },
-/// }))?)?;
+/// }))?;
+/// let plan = record::plan(declaration.as_protected_ref())?;
 ///
 /// let term = query_term(&keyset, &plan, "age", OpSpec::Lt, 40u32, &NoTargets)?.await?;
 ///
@@ -1350,8 +1472,8 @@ impl Stats {
     /// [`Error::Source`] with [`Reason::NotStats`] for anything else: not a
     /// frame, not an object, no `rows`, a key given twice or not one of the
     /// three, or a value of another type.
-    pub fn from_frame(bytes: &[u8]) -> Result<Self, Error> {
-        let wire: StatsWire = vitaminc_aead_frame::serde::from_slice(bytes)
+    pub fn from_frame(bytes: vitaminc_protected::ProtectedRef<'_, [u8]>) -> Result<Self, Error> {
+        let wire: StatsWire = vitaminc_aead_frame::serde::from_slice(bytes.risky_ref())
             .map_err(|_| Error::bad_source(Reason::NotStats))?;
         let stats = match wire.histogram {
             Some(histogram) => Stats::measured(wire.rows, histogram),
@@ -1403,6 +1525,7 @@ mod tests {
     use super::*;
     use crate::dynamic::test_frame::Tree;
     use crate::dynamic::test_frame::{frame_of, value_of};
+    use vitaminc_protected::AsProtectedRef as _;
 
     fn operator_value(operator: OpSpec, index: &IndexSpec) -> Tree {
         value_of(&OperatorEntry::new(operator, index))
@@ -1410,7 +1533,11 @@ mod tests {
 
     /// Statistics as a binding sends them.
     fn stats_frame(value: &Tree) -> Result<Stats, Error> {
-        Stats::from_frame(&crate::dynamic::test_frame::frame_of(value))
+        Stats::from_frame(
+            crate::dynamic::test_frame::frame_of(value)
+                .as_protected_ref()
+                .as_deref(),
+        )
     }
     use crate::dynamic::{record, NoTargets, TargetError};
     use crate::op::{self, Probabilistic as _};
@@ -1457,16 +1584,20 @@ mod tests {
             "match".into(),
             Tree::Object(vec![("downcase".into(), Tree::Bool(false))]),
         )]);
-        record::plan(&frame_of(&Tree::Object(vec![
-            field("email", "string", vec![text("c"), text("eq")]),
-            field("name", "string", vec![text("c"), text("match")]),
-            field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
-            field("score", "int64", vec![text("ope")]),
-            field("nickname", "string", vec![text("c"), text("ore")]),
-            field("handle", "string", vec![text("c"), case_sensitive]),
-            field("ratio", "float32", vec![text("c"), text("ore")]),
-            field("rating", "float64", vec![text("c"), text("ope")]),
-        ])))
+        record::plan(
+            frame_of(&Tree::Object(vec![
+                field("email", "string", vec![text("c"), text("eq")]),
+                field("name", "string", vec![text("c"), text("match")]),
+                field("age", "uint32", vec![text("c"), text("ope"), text("ore")]),
+                field("score", "int64", vec![text("ope")]),
+                field("nickname", "string", vec![text("c"), text("ore")]),
+                field("handle", "string", vec![text("c"), case_sensitive]),
+                field("ratio", "float32", vec![text("c"), text("ore")]),
+                field("rating", "float64", vec![text("c"), text("ope")]),
+            ]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .expect("the plan parses")
     }
 
@@ -1864,11 +1995,15 @@ mod tests {
     async fn block_ore_refuses_text_it_has_no_term_for_before_any_term() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = record::plan(&frame_of(&Tree::Object(vec![field(
-            "title",
-            "string",
-            vec![text("c"), text("ore_block")],
-        )])))
+        let plan = record::plan(
+            frame_of(&Tree::Object(vec![field(
+                "title",
+                "string",
+                vec![text("c"), text("ore_block")],
+            )]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .expect("the plan parses");
         let one = |text: &str| ValueFrame::of(text).expect("a value");
         let two = |lo: &str, hi: &str| ValueFrame::of(vec![lo, hi]).expect("a value");
@@ -1927,11 +2062,15 @@ mod tests {
                 ]),
             )
         };
-        let plan = record::plan(&frame_of(&Tree::Object(vec![
-            ("context_field".into(), text("tenant")),
-            one("tenant", "string", "passthrough"),
-            one("email", "string", "eq"),
-        ])))
+        let plan = record::plan(
+            frame_of(&Tree::Object(vec![
+                ("context_field".into(), text("tenant")),
+                one("tenant", "string", "passthrough"),
+                one("email", "string", "eq"),
+            ]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .unwrap();
         let error = query_term(&keyset, &plan, "email", OpSpec::Eq, text("a"), &NoTargets)
             .map(drop)
@@ -2083,7 +2222,9 @@ mod tests {
             ..MatchOptions::default()
         };
         let context = crate::dynamic::context(
-            &vitaminc_aead_frame::serde::to_vec(&("users", "name")).expect("frames"),
+            vitaminc_aead_frame::serde::to_vec(&("users", "name"))
+                .expect("frames")
+                .as_protected_ref(),
         )
         .expect("context");
         let field = FieldPlan::new(
@@ -2312,13 +2453,17 @@ mod tests {
         use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let plan = record::plan(&frame_of(&Tree::Object(vec![
-            field("tiny", "int16", vec![text("c"), text("ore")]),
-            field("huge", "int128", vec![text("c"), text("ope")]),
-            field("day", "date", vec![text("c"), text("eq")]),
-            field("at", "timestamp", vec![text("c"), text("eq")]),
-            field("price", "decimal", vec![text("c"), text("eq")]),
-        ])))
+        let plan = record::plan(
+            frame_of(&Tree::Object(vec![
+                field("tiny", "int16", vec![text("c"), text("ore")]),
+                field("huge", "int128", vec![text("c"), text("ope")]),
+                field("day", "date", vec![text("c"), text("eq")]),
+                field("at", "timestamp", vec![text("c"), text("eq")]),
+                field("price", "decimal", vec![text("c"), text("eq")]),
+            ]))
+            .as_protected_ref()
+            .as_deref(),
+        )
         .expect("the plan parses");
         let frame = |ty: Option<Logical>, value: Physical<'_>| {
             ValueFrame::of(Raw(ty, value)).expect("a value")
@@ -2389,7 +2534,9 @@ mod tests {
         let stored = |value: &ValueFrame, name: &'static str| {
             let keyset = &keyset;
             let ctx = super::super::context(
-                &vitaminc_aead_frame::serde::to_vec(&("users", name)).expect("frames"),
+                vitaminc_aead_frame::serde::to_vec(&("users", name))
+                    .expect("frames")
+                    .as_protected_ref(),
             )
             .expect("context");
             let value = value.clone();
@@ -2811,7 +2958,7 @@ mod tests {
 
     fn match_type_plan() -> Plan {
         record::plan_with(
-            &frame_of(&Tree::Object(vec![(
+            frame_of(&Tree::Object(vec![(
                 "name".into(),
                 Tree::Object(vec![
                     (
@@ -2820,7 +2967,9 @@ mod tests {
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )])),
+            )]))
+            .as_protected_ref()
+            .as_deref(),
             &MatchType,
         )
         .unwrap()
@@ -2992,7 +3141,7 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let plan = record::plan_with(
-            &frame_of(&Tree::Object(vec![(
+            frame_of(&Tree::Object(vec![(
                 "email".into(),
                 Tree::Object(vec![
                     (
@@ -3001,7 +3150,9 @@ mod tests {
                     ),
                     ("target".into(), text("Some")),
                 ]),
-            )])),
+            )]))
+            .as_protected_ref()
+            .as_deref(),
             &OneType,
         )
         .unwrap();
@@ -3053,8 +3204,7 @@ mod wire_bytes {
     use vitaminc_aead_frame::serde::to_vec;
 
     fn hex<T: Serialize>(value: &T) -> String {
-        to_vec(value)
-            .expect("frames")
+        crate::Controlled::risky_ref(&to_vec(value).expect("frames"))
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect()
@@ -3174,7 +3324,7 @@ mod wire_bytes {
         assert_eq!(written, PINNED);
     }
 
-    const PINNED: [&str; 156] = [
+    const PINNED: [&str; 170] = [
         "0a020000006571",
         "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
         "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0500000076616c7565",
@@ -3195,6 +3345,8 @@ mod wire_bytes {
         "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0a000000706174685f626f756e64",
         "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0400000070617468",
         "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0d000000656c656d656e745f6d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a0f000000706174685f70726564696361746573",
+        "f105000000080000006f70657261746f720a050000006d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a02000000657105000000696e7075740a09000000707265646963617465",
         "0a050000006d61746368",
         "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
         "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
@@ -3215,6 +3367,8 @@ mod wire_bytes {
         "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0a000000706174685f626f756e64",
         "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
         "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0d000000656c656d656e745f6d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0f000000706174685f70726564696361746573",
+        "f105000000080000006f70657261746f720a050000006d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000707265646963617465",
         "f101000000050000006d61746368f10400000009000000746f6b656e697a65720a080000007374616e6461726408000000646f776e6361736502010000006b070400000000000000010000006d070002000000000000",
         "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
         "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
@@ -3235,6 +3389,8 @@ mod wire_bytes {
         "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0a000000706174685f626f756e64",
         "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
         "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0d000000656c656d656e745f6d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0f000000706174685f70726564696361746573",
+        "f105000000080000006f70657261746f720a050000006d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000707265646963617465",
         "f101000000050000006d61746368f10400000009000000746f6b656e697a6572f101000000050000006e6772616d07040000000000000008000000646f776e6361736503010000006b070300000000000000010000006d070001000000000000",
         "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
         "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0500000076616c7565",
@@ -3255,6 +3411,8 @@ mod wire_bytes {
         "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0a000000706174685f626f756e64",
         "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
         "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0d000000656c656d656e745f6d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a0f000000706174685f70726564696361746573",
+        "f105000000080000006f70657261746f720a050000006d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a050000006d6174636805000000696e7075740a09000000707265646963617465",
         "0a030000006f7265",
         "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
         "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0500000076616c7565",
@@ -3275,6 +3433,8 @@ mod wire_bytes {
         "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0a000000706174685f626f756e64",
         "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0400000070617468",
         "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0d000000656c656d656e745f6d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a0f000000706174685f70726564696361746573",
+        "f105000000080000006f70657261746f720a050000006d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f726505000000696e7075740a09000000707265646963617465",
         "0a030000006f7065",
         "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
         "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0500000076616c7565",
@@ -3295,6 +3455,8 @@ mod wire_bytes {
         "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0a000000706174685f626f756e64",
         "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0400000070617468",
         "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0d000000656c656d656e745f6d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a0f000000706174685f70726564696361746573",
+        "f105000000080000006f70657261746f720a050000006d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a030000006f706505000000696e7075740a09000000707265646963617465",
         "0a040000006a736f6e",
         "f105000000080000006f70657261746f720a02000000657108000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
         "f105000000080000006f70657261746f720a020000006c7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0500000076616c7565",
@@ -3315,6 +3477,8 @@ mod wire_bytes {
         "f105000000080000006f70657261746f720a070000007375627472656508000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0a000000706174685f626f756e64",
         "f105000000080000006f70657261746f720a080000006368696c6472656e08000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0400000070617468",
         "f105000000080000006f70657261746f720a0b0000006368696c645f636f756e7408000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0400000070617468",
+        "f105000000080000006f70657261746f720a0d000000656c656d656e745f6d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a0f000000706174685f70726564696361746573",
+        "f105000000080000006f70657261746f720a050000006d6174636808000000666964656c6974790a0500000065786163740500000061726974790a030000006f6e6505000000696e6465780a040000006a736f6e05000000696e7075740a09000000707265646963617465",
         "f106000000080000006f70657261746f720a02000000657108000000666964656c6974790a05000000657861637405000000696e6465780a02000000657106000000646f6d61696e0008000000656e636f64696e670a050000006279746573040000007465726d0b03000000010203",
         "f106000000080000006f70657261746f720a070000006265747765656e08000000666964656c6974790a05000000657861637405000000696e6465780a030000006f706506000000646f6d61696e0a1000000065716c5f76342e71756572795f696e7408000000656e636f64696e670a0300000065716c040000007465726df0020000000b01000000040b020000000506",
         "f106000000080000006f70657261746f720a070000006d61746368657308000000666964656c6974790a0d00000070726f626162696c697374696305000000696e6465780a050000006d6174636806000000646f6d61696e0008000000656e636f64696e670a050000006279746573040000007465726d0b00000000",

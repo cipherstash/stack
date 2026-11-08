@@ -34,7 +34,8 @@ use stack_encrypt::dynamic::{admits, Scope, ValueFrame, ValueKind};
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::StackCipherText as Node;
 use stack_encrypt::{
-    CipherText, Label, PassthroughFrame, SealedValue, StackCipher, StackCipherText,
+    AsProtectedRef as _, CipherText, Label, PassthroughFrame, Protected, SealedValue, StackCipher,
+    StackCipherText,
 };
 use vitaminc_aead::plaintext::{Float, Int, Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::FrameWriter;
@@ -217,19 +218,19 @@ fn refreeze_order_terms(stored: &mut Json, resealed: &Json) {
 // ---- a plan as JSON ---------------------------------------------------------
 
 /// A plan written as JSON, as frame bytes: what a binding sends.
-fn frame_of_json(value: &Json) -> Vec<u8> {
+fn frame_of_json(value: &Json) -> vitaminc_protected::Buffer {
     vitaminc_aead_frame::serde::to_vec(value).expect("frames")
 }
 
 fn plan_of(json: &Json) -> DataPlan {
-    record::plan(&frame_of_json(json)).expect("the frozen plan parses")
+    record::plan(frame_of_json(json).as_protected_ref()).expect("the frozen plan parses")
 }
 
 // ---- sealing and opening ----------------------------------------------------
 
 async fn seal(
     cipher: &StackCipher<DeterministicSource>,
-    source: &[u8],
+    source: vitaminc_protected::ProtectedRef<'_, [u8]>,
     plan: &DataPlan,
 ) -> StackCipherText {
     let source = ValueFrame::from_bytes(source).expect("the source is a value");
@@ -289,7 +290,7 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
     for case in cases {
         let name = case["name"].as_str().expect("a name");
         let plan = plan_of(&case["plan"]);
-        let source = unhex(case["source"].as_str().expect("hex"));
+        let source = Protected::new(unhex(case["source"].as_str().expect("hex")));
         let stored = &case["stored"];
 
         let opened = open(&cipher, node_of_json(stored), &plan, expected_of(case)).await;
@@ -299,7 +300,8 @@ async fn every_frozen_row_opens_and_seals_as_it_did() {
             "{name}: the frozen row opens to what it opened to"
         );
 
-        let resealed = json_of_node(seal(&cipher, &source, &plan).await);
+        let resealed =
+            json_of_node(seal(&cipher, source.as_protected_ref().as_deref(), &plan).await);
         assert_eq!(
             without_order_terms(&resealed),
             without_order_terms(stored),
@@ -332,7 +334,7 @@ struct Case {
     name: &'static str,
     about: &'static str,
     plan: Json,
-    source: Vec<u8>,
+    source: vitaminc_protected::Buffer,
     expected_context: Option<&'static str>,
 }
 
@@ -385,8 +387,8 @@ impl Value {
         }
     }
 
-    fn frame(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
+    fn frame(&self) -> vitaminc_protected::Buffer {
+        let mut bytes = vitaminc_protected::Buffer::new();
         self.write(FrameWriter::new(&mut bytes)).expect("frames");
         bytes
     }
@@ -588,7 +590,7 @@ async fn write_stored_rows_v1() {
     let mut written = Vec::new();
     for case in cases() {
         let plan = plan_of(&case.plan);
-        let stored = seal(&cipher, &case.source, &plan).await;
+        let stored = seal(&cipher, case.source.as_protected_ref(), &plan).await;
         let stored_json = json_of_node(stored);
         let expected = case
             .expected_context
@@ -598,7 +600,7 @@ async fn write_stored_rows_v1() {
             "name": case.name,
             "about": case.about,
             "plan": case.plan,
-            "source": hex(&case.source),
+            "source": hex(vitaminc_protected::Controlled::risky_ref(&case.source)),
             "expected_context": case.expected_context,
             "stored": stored_json,
             "opened": hex(&opened),

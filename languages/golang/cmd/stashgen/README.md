@@ -178,6 +178,8 @@ The field's `Fields` entry has a method per operation:
 | `Selector(ctx, c, path)` | `encrypt.JSONSelection`: `Selector()` and `Open` | `col -> $1::text` |
 | `Subtree(ctx, c, path, opts)` | `encrypt.JSONRead`: `Tokens()`, `Open` and `OpenOne` | `eql_v4.json_tree_subtree(col, $1::text[], 64)` |
 | `Children(ctx, c, path)`, `ChildCount(ctx, c, path)` | `encrypt.JSONToken` | `eql_v4.json_tree_children(col, $1::text)`, `eql_v4.json_tree_child_count(col, $1::text)` |
+| `Elements.Visits.Match(ctx, c, opts, predicates...)` | `eql.JSONSearchElementsQuery` | `eql_v4.json_tree_element_match(col, $1::eql_v4.query_json_elements)` |
+| `Match(ctx, c, predicate, vars, opts)` | `eql.JSONSearchPredicateQuery` | `col @@ $1::eql_v4.query_json_predicate`, or `eql_v4.json_tree_match(col, $1::eql_v4.query_json_predicate)` |
 
 `At` has one accessor per ordered path, named for its keys (`$.visits[*].at` is `At.VisitsAt`, `$.a.1` is `At.A1`); two paths with one name, or one path given twice, stop `stashgen`.
 An ordering compares the value `->` extracts at its path, and EQL's `<` compares ordering terms alone, so take the selector from the same accessor (`At.Age.Selector`) rather than spelling the path again.
@@ -193,6 +195,112 @@ SELECT id FROM customers ORDER BY (
 ```
 
 with `$1` from `At.VisitsAt.Selector(ctx, c)` and `$2` from `At.VisitsAt.Gt(ctx, c, v)`; for the latest visit, order by `ORDER BY 1 DESC NULLS LAST` inside and `DESC` outside.
+
+Two queries at a wildcard path, an `EqAt` and an ordering say, can each be answered by a different element.
+To test several members of one element together, use `Match` under `Elements`.
+`Elements` has one accessor per array whose elements have an ordered member, named for the array's keys as `At` names a path: with `ordered=$.visits[*].at;$.visits[*].place`, `$.visits[*]` is `Elements.Visits`, with the members `at` and `place`.
+A root array (`ordered=$[*].name`) is `Elements.Root`.
+An ordered path that ends at its wildcard (`$.tags[*]`), or has none, gives no accessor, and a field without one has no `Elements`.
+Two arrays whose keys give one name (`$.a_b[*]` and `$.aB[*]` are both `AB`), and an array whose keys give no name, get no accessor: `stashgen` still writes the field and its `At`, and prints a notice naming the ordered paths, which the generated file repeats in a comment.
+
+The generated `Paths` names each accessor's members, nested as the JSON nests them: `$.visits[*].place` is `Paths.Profile.Visits.Place`.
+`encrypt.AtPath` makes a predicate from one, with `Eq`, `Lt`, `Lte`, `Gt`, `Gte` or `Between` (inclusive).
+
+```go
+// rows with one visit that is at home and after 15
+q, err := customers.Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+	encrypt.AtPath(customers.Paths.Profile.Visits.Place).Eq("home"),
+	encrypt.AtPath(customers.Paths.Profile.Visits.At).Gt(15),
+)
+```
+
+```sql
+SELECT id FROM customers WHERE eql_v4.json_tree_element_match(profile, $1::eql_v4.query_json_elements)
+```
+
+A path is an `encrypt.Path[E, T]`.
+`E` is a type `stashgen` writes for the array (`ProfileFieldElementsVisits`), and `Match` takes only `encrypt.ElementPredicate[E]` of its own array, so a predicate on another array's member does not compile.
+`T` is the member's Go type in the document's struct, read as `encoding/json` reads the document (through pointers, promoted fields, maps and slices), so a value of another type does not compile either.
+It is `any` where the type names none: a `json.RawMessage` document, a path the struct does not hold, or a member inside a type with its own `MarshalJSON`.
+`Paths` holds only fields, and its paths' methods are the SDK's, so any JSON key can name a member.
+With `-name Customer`, it is `CustomerPaths`, as `Fields` is `CustomerFields`.
+
+For a filter built at run time, from text such as `visits:(place = "home" AND at > 15)`, name the member with the array's `Member`, written as it is below the array in the tag (`place`, or `address.city`):
+
+```go
+visits := customers.Fields.Profile.Elements.Visits
+q, err := visits.Match(ctx, cipher, encrypt.JSONReadOptions{}, visits.Member("place").Eq("home"), visits.Member("at").Gt(15))
+```
+
+Its values are `any`, as the orderings take them.
+A member the field does not order is refused before the engine is asked, with `encrypt.ErrTerm`, naming the member, the array and the members it orders; no predicates, a zero `ElementPredicate`, and a member with a wildcard, are refused with `encrypt.ErrEncoding`.
+`Paths` names each key on its own, so an array whose members it cannot name gets no accessor and the same notice: a key that gives no Go name there (`$.a.1[*].x`, whose `1` `At` joins to `A1X`), or one name for two paths (`$.a[*].b` beside `$.a[*].b.c`, or `$.x.a_b[*].m` beside `$.x.aB.n[*].o`).
+Each comparison is of the member's ordering term, so `Eq` is an equality of folded values: text compares case- and accent-folded (`"home"` equals `"Home"`), and integers past 2^53 can tie.
+`EqAt` at the member's full path is exact, of any element.
+`Match` reads each array to `opts.WildcardBound` elements, 64 when it is 0, and a row whose array is longer fails the query with SQLSTATE 22023 rather than answer over part of it: set the bound past the longest array.
+The function runs on each row a scan gives it, so narrow the rows first with an indexed predicate, such as `@>` on the same values.
+
+`Match` on the field itself takes a whole filter as one parameter: a jsonpath predicate and its variables, the two things plaintext `jsonb_path_match(col, $1, $2)` takes.
+It is generated on every `JsonSearch` field, ordered paths or none: the engine reads the predicate when `Match` is called, and refuses what the field cannot answer then.
+
+```go
+q, err := entities.Fields.CustomFieldValues.Match(ctx, cipher,
+	`$."extra"."country" == $val && $."weight" < $max`,
+	map[string]any{"val": "nz", "max": 9.5}, encrypt.JSONReadOptions{})
+```
+
+```sql
+SELECT id FROM entity WHERE custom_field_values @@ $1::eql_v4.query_json_predicate
+-- or, the same rows
+SELECT id FROM entity WHERE eql_v4.json_tree_match(custom_field_values, $1::eql_v4.query_json_predicate)
+```
+
+`vars` are any value `encoding/json` writes as a JSON object (a map, a struct, or a `json.RawMessage` of one), and an empty map when the predicate has none; a Go string is refused, as it is for a `Contains` needle.
+A nil `vars` (`nil`, or a nil map, slice or pointer) does not mean "no variables".
+pgx and `database/sql` bind it as SQL `NULL`, and `jsonb_path_match` with `NULL` vars is `NULL` for every row, so `Match` does the same: it returns an empty operand, which binds as `NULL`, and the query matches no row.
+The predicate is still compiled, so text the grammar does not read is still refused. `vars` that write the JSON `null`, such as `json.RawMessage("null")` or a pointer to a nil map, are refused as `json_input`, as plaintext refuses vars that are not an object.
+The Go side reads nothing of the predicate: the engine parses it and compiles it into a tree of the operands the methods above derive, one leaf per comparison.
+The grammar is the subset of SQL/JSON path that the stored terms can answer, as PostgreSQL reads it:
+
+- paths: `$`, then `.key`, `."quoted key"` and `[*]` steps;
+- values: a variable (`$v`, `$"v"`) or a JSON literal (a string, a number, `true`, `false`, `null`);
+- comparisons: `==`, `!=` (or `<>`), `<`, `<=`, `>`, `>=` between a path and a value, either side first;
+- `exists(path)`, and `exists(path ? (@.m == $v && @.n > $w))`, conditions on `@` or `@.member` joined by `&&`;
+- `&&`, `||`, `!(…)`, parentheses and `/* */` comments. Keywords are read in any case.
+
+An ordering (`<` and the rest) needs its path in `ordered=`, and so does every member of a filter of more than one condition, which compiles to the element match above.
+Anything else is refused before any term is derived, as an `*encrypt.Diagnostic` wrapping `encrypt.ErrEncoding`.
+`Construct()` names the construct in the grammar's own words (`` `like_regex` ``, `a position (`[2]`)`), and `At()` is the byte offset in the predicate where it starts; neither says anything of the predicate's text or the variables' values.
+`Reason()` says why:
+
+- `json_predicate_syntax`: text the grammar does not read.
+- `json_predicate_unsupported`: a jsonpath construct the stored terms cannot answer, such as `like_regex`, arithmetic, a method, `.**`, or a filter outside `exists`.
+- `json_predicate_unknown_variable`: a `$name` that `vars` does not hold.
+- `json_predicate_value_type`: an object or array as a value, or anything but a number or a string under an ordering or in a filter of more than one condition.
+- `json_predicate_not_equal_at_wildcard`: `!=` at a path with `[*]`.
+- `json_predicate_too_deep`: more than 32 levels of nesting, or a path deeper than a document.
+- `json_path_position`: a position (`[2]`) in a path.
+- `json_path_no_wildcard`: a filter on a path with no `[*]`.
+- `json_path_wildcard`: a `[*]` in a filter's member.
+- `json_syntax`: JSON text that does not parse, a literal in the predicate (`1e999`) or `vars` (`{`, or an empty or whitespace-only `json.RawMessage`); with `At()` for a literal, without it for `vars`.
+- `json_input`: `vars` that are not a JSON object (`[1]`, `1`, `null`).
+
+An ordering at a path the tag does not order is `encrypt.ErrTerm` with the code `stack_encrypt::json_path_not_ordered`.
+
+A query returns the rows `jsonb_path_match` returns over the plaintext, and each row answers as it does, true, false or NULL, save five cases:
+
+- Lax mode's unwrapping of an array the path names no `[*]` for is not applied: `$.tags == "a"` over `{"tags": ["a"]}` is false here. Write `[*]`.
+- Nor is its wrapping of a value that is not an array under `[*]`: `$.tags[*] == "a"` over `{"tags": "a"}` is false here. Keep an array an array.
+- A string compared with a number, which jsonpath calls unknown, is false under `==` and true under `!=`. Keep one kind of value at a path.
+- Orderings, and filters of more than one condition, compare the folded ordering terms: text case- and accent-folded, numbers as float64. So `exists($.c[*] ? (@.r == "sibling" && @.n > 5))` finds a `"Sibling"`; `==` anywhere else is exact.
+- An ordering of a JSON `null` is NULL where jsonpath says false, unless it sits under an odd number of `!`. Both pick the same rows, so a `WHERE` is unaffected; a `SELECT` of the boolean itself can show NULL. Under an odd number of `!`, where the rows would differ, the operand also asks that the node is not `null` (a `null` needle, which tells the database which rows hold `null` at that path); elsewhere it sends none.
+
+A filter of more than one condition reads each array to `opts.WildcardBound` elements, 64 when it is 0; a row whose array is longer fails the query with SQLSTATE 22023, as the element match does.
+
+`Match` costs an index: `eql_v4.json_tree_match` evaluates the tree inside a function, so it filters every row a scan gives it and no index engages.
+The per-operator form engages the GIN index for `@>` (`EqAt`, `Contains`) and a btree on an ordered path's term (`At.<Path>`).
+Where a query needs an index, write those leaves with the per-operator methods, or put one beside `Match` to narrow the rows: `WHERE col @> $1::eql_v4.query_json AND col @@ $2::eql_v4.query_json_predicate`.
+
 `OpenOne` reads one value and refuses a read whose path has a wildcard before anything is opened; open a wildcard read with `Open`.
 A needle and a value are Go values: a `json.RawMessage` of JSON text crosses as it is, and anything else is marshalled with `encoding/json`.
 `EqAt` and the orderings take a scalar: a string, a number, a bool, or `nil` for JSON `null`.
@@ -253,6 +361,7 @@ For `-type User`, the file `user_stash.go` holds:
   `encrypt_into=TextMatch` answers `Matches`, which returns an `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand, with `Verify` and `TargetLimit`.
   The query of `Matches` carries `Verify` and `TargetLimit`, because its answer can hold rows that do not match; an exact operator's query carries neither.
   See the encrypt package's README for each method's result and the query with `database/sql`.
+- `Paths`, when a `JsonSearch` field orders members of an array's elements: those members, nested as the JSON nests them, for `encrypt.AtPath` and the array's `Match` (see [Encrypted JSON documents](#encrypted-json-documents)).
 - `String` and `LogValue` on `EncryptedUser`, which print the passthrough fields and hide the sealed ones.
 - A copy of the fields of `User`, so a change to them stops the build.
 
@@ -263,7 +372,7 @@ Generated code uses no reflection, and no function in it panics.
 | Flag | Meaning |
 |---|---|
 | `-type T` | The struct that carries the `stash` tags. Required. |
-| `-name N` | Write `EncryptN`, `DecryptN` and `NFields`. A package holds one `Encrypt`; the second struct in a package needs a name. |
+| `-name N` | Write `EncryptN`, `DecryptN` and `NFields` (and `NPaths`). A package holds one `Encrypt`; the second struct in a package needs a name. |
 | `-for P.F` | `T` declares the tags for `F`, a type in another package. Each field of `T` names a field of `F` with the same name and type, and every exported field of `F` is named. |
 | `-model Name=R` | A model `R` for separate columns: one field for each column, each tagged with the output it holds, `stash:"email"` or `stash:"email,equality"`. Writes `EncryptName` and `DecryptName`. Any number. |
 | `-model Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` in your package declares them. |
