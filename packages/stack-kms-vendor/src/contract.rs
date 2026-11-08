@@ -585,7 +585,7 @@ pub async fn uses_vendor_batches<B: KeyVendorBackend>(backend: B, key_ref: &str,
     let before = observer.batches();
     let sealed = cipher
         .default_keyset()
-        .encrypt(values.clone(), b"batch")
+        .encrypt_tree(values.clone(), b"batch")
         .await
         .unwrap_or_else(|error| panic!("{mode}: sealing in vendor batches failed: {error}"));
     assert_eq!(

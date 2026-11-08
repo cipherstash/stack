@@ -3560,7 +3560,7 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
- "vitaminc",
+ "vitaminc 0.9.0",
  "web-time",
  "zeroize",
 ]
