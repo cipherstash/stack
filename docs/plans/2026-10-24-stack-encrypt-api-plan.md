@@ -15,17 +15,14 @@ who approves its design. It has three parts:
 3. [Open questions and decisions to be
    made](#open-questions-and-decisions-to-be-made).
 
-Five documents go with it:
+Three documents go with it:
 
 - the [context scenarios](2026-10-24-stack-encrypt-context-examples.md),
   the acceptance matrix for how a record gets its context;
 - [tag refinement and caveats](2026-11-07-stack-encrypt-tag-refinement.md),
   the design of the caveats on a key tag;
 - [packaging and names](2026-10-25-stack-encrypt-packaging.md), the
-  proposal the naming review judges;
-- [provider capabilities](2026-10-25-stack-encrypt-provider-capabilities.md),
-  the proposal for keyset routing and lock context after the customer
-  release.
+  proposal the naming review judges.
 
 The names this plan uses as placeholders are listed in [Names deferred to
 the naming review](#names-deferred-to-the-naming-review), at the end.
@@ -51,6 +48,7 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | `FieldRef` | The builder's reference to one field of the plaintext type: its name and its accessor. A field marker is a `FieldRef` with its indexes added |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
+| Lock context | A ZeroKMS policy applied when a data key is generated or retrieved, such as a claim of the authenticated JSON Web Token. A property of the key provider, not a part of the context. See [Lock context](#lock-context) |
 | n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a caveat use it |
@@ -1083,8 +1081,8 @@ NEW.body := eql_v4.refine_tag(NEW.body, 'row_id', NEW.id::text);
 
 The work is in the order that the customer needs it. The Go customer
 release comes first, then the stored format, then the Rust API, then the
-query engine. The crate moves and the key provider work come after the
-customer release.
+query engine. The crate moves, keyset selection, and lock context come
+after the customer release.
 
 ### 1. The Go customer release
 
@@ -1911,10 +1909,72 @@ review. The rules are the query artifact's.
 - **Packaging and names.** Crate moves, the shared format crate, and the
   final names. The [packaging
   document](2026-10-25-stack-encrypt-packaging.md) has the proposal.
-- **Key providers.** Choosing keysets from data, and ZeroKMS lock context,
-  as optional capabilities of a key provider. The [provider capabilities
-  document](2026-10-25-stack-encrypt-provider-capabilities.md) has the
-  proposal.
+- **Keyset selection and lock context.** Two optional features of the
+  ZeroKMS key provider, proposed below. Neither is part of the API
+  redesign. Nothing in the redesign depends on them, and no merged pull
+  request implements either.
+
+#### Choose the keyset from the data
+
+Today the caller resolves a keyset by hand and passes it to every call,
+as [Connect and choose a keyset](#connect-and-choose-a-keyset) shows.
+The proposal lets a declaration name the plaintext field that contains
+the keyset, so a record selects its own keyset:
+
+```rust
+// Proposed. `tenant_id` holds the keyset's name. `id(field = "..")`
+// selects by UUID instead.
+#[stash(struct = User, context = "users", keyset(name(field = "tenant_id")))]
+struct EncryptedUser { /* .. */ }
+
+// The call takes the client, and the record selects the keyset.
+let encrypted: EncryptedUser = user.encrypt_into(&cipher).await?;
+let encrypted: Vec<EncryptedUser> = users.encrypt_into(&cipher).await?;
+```
+
+Rules for the proposal:
+
+- A missing, unknown, unauthorised, or disabled keyset is an error. There
+  is no fallback to the default keyset.
+- The selector resolves before any key is fetched. A batch is split by
+  resolved keyset. The results keep the order of the input.
+- A keyset selector selects a keyset. It does not add its field to the
+  context. A scope does not select a keyset.
+- Where the business tenant ID is not the keyset's name, the application
+  supplies an explicit mapping. The declaration never carries code.
+- A query has no record to read, so the caller supplies the keyset, or a
+  typed input that the declaration maps to one. No query term compares
+  across keysets: a search over several keysets is one term per keyset.
+- Decryption uses the keyset ID stored with the ciphertext, as today. It
+  never resolves a name again.
+- If the caller passes a keyset and the record selects one, the two must
+  match, or the call is refused. Neither wins silently.
+
+#### Lock context
+
+Lock context is a ZeroKMS policy applied when a data key is generated or
+retrieved. A claim of the authenticated JSON Web Token (JWT) is one
+example. The API for it is not designed.
+
+An earlier proposal set it on the keyset before the call, through a
+method such as `with_lock_context`. On 8 November 2026 Dan rejected that
+spelling. The open question below records the decision as pending.
+Whatever the API, the design must follow these rules:
+
+- Lock context is a property of the key provider, not a part of the
+  context. It is neither a `Scope` nor a `Bind`. It changes no search
+  term.
+- The caller names the claim. ZeroKMS resolves its value from the
+  principal that authenticated. The application never decodes a JWT and
+  asserts a claim itself.
+- The policy is sent on both key generation and key retrieval. A missing
+  claim is an error. The call is not retried without the lock.
+- A declaration can require a lock context, so a caller cannot leave it
+  out. A call can add a policy. A call cannot weaken a policy the
+  declaration requires.
+- Lock context does not protect search. Search terms derive from the
+  index key, and the index key is loaded without any data key. So a lock
+  on the data key does not restrict who can search.
 
 ## Open questions and decisions to be made
 
@@ -1925,7 +1985,8 @@ The lead who approves this plan decides each question.
 | What is the name of the wrapper that authenticates a collection's order and length? | `Positioned<Vec<T>>`. Or a name chosen in the naming review | `Positioned`. Decide in the naming review |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
-| Should keysets be chosen from data, and should Stack Encrypt use ZeroKMS lock context? | Optional capabilities of a key provider. Or leave them out | Optional capabilities, after the customer release |
+| Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration, after the customer release |
+| What is the API for ZeroKMS lock context? | Not designed. Setting it on the keyset before the call was rejected on 8 November 2026 | Design it after the customer release, under the rules in [Lock context](#lock-context) |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
 | What names and crate layout should the final API use? | The proposal in the packaging document | Review the proposal after the customer release |
