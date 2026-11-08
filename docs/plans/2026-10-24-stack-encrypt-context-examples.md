@@ -1,6 +1,6 @@
 # Context scenarios for the Stack Encrypt API
 
-Date: 7 November 2026.
+Date: 8 November 2026.
 
 This document lists eight ways a record can get its context, each as a
 code example with its use case. Together they are the acceptance matrix

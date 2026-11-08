@@ -46,7 +46,7 @@ The stored value is a JSON object with three parts:
 - one encrypted entry for each object, array, and scalar;
 - the containment projection `q`.
 
-The entries The entries are stored in a random order,
+The entries are stored in a random order,
 and the order says nothing about the document. By default the root entry
 is sealed: its ciphertext is the whole document, so a reader can open the
 document in one step.
@@ -184,7 +184,7 @@ can open a part of the document without the whole.
 
 The SDK derives one token for each concrete path to read. A wildcard such as `$.items[*]` expands to one token per element, up
 to a bound, plus one probe token at the bound. The bound is 64 by
-default. The list is capped at 8,192 tokens. The second argument is the walk budget.
+default. The list is capped at 8,192 tokens.
 
 ```sql
 SELECT c.id, w.entry
@@ -194,7 +194,8 @@ CROSS JOIN LATERAL eql_v4.json_tree_subtree(c.profile, $1::text[], $2::integer) 
 
 The signature is `eql_v4.json_tree_subtree(e public.eql_v4_json_search,
 tokens text[], budget integer DEFAULT 64) RETURNS SETOF
-public.eql_v4_json_entry`. Its rules:
+public.eql_v4_json_entry`. The bound limits the tokens the SDK sends. The
+budget limits the rows the database returns. Its rules:
 
 - A read that would return more than `budget` rows, counted over every
   token, returns the sealed root alone instead. The client then opens the
@@ -215,8 +216,7 @@ place in the list, on every row.
 ## Children and child count
 
 `eql_v4.json_tree_children(e, token)` returns the entries directly below
-one node, one row per child. The rows are in ordinal order: position
-order for an array, random order for an object. `eql_v4.json_tree_child_count(e,
+one node, one row per child. Array children come back in position order. Object children come back in no fixed order. `eql_v4.json_tree_child_count(e,
 token)` returns how many there are. The operand is one token for a
 concrete path. Neither takes a wildcard.
 
@@ -260,13 +260,13 @@ why no index serves it.
 - **Return plaintext of every match.** `json_tree_path_query` returns
   encrypted entries. The supported way to grouped plaintext for a path
   through an array is a subtree read with a wildcard bound.
-- **Open a container entry on its own.** Each container's tag covers
-  its children's tags, so a container returned without its subtree
+- **Open a container entry on its own.** Each container's node tag covers
+  its children's node tags, so a container returned without its subtree
   fails to open. Read the subtree.
 
 ## What is authenticated
 
-A node's tag covers its children's tags. So a subtree read proves that
+A node's authentication tag covers its children's tags. So a subtree read proves that
 the rows beneath the returned node are the ones sealed there, each in
 its place. A read does not prove four things:
 

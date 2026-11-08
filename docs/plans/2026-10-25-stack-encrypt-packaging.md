@@ -63,8 +63,8 @@ JSON operation contract is live, in use as the release candidate Go
   whose methods are `encrypt_tree` and `decrypt_tree`.
 - #1404 implements `Ciphertext`, `EncryptInto`, `DecryptFrom`,
   `OpaqueEncode`, `OpaqueDecode`, `target::EncryptTarget`, and
-  `target::DecryptSource`. #1504 adds the derives with those names, and
-  #1503 adds `OpaqueBlob`; both are in progress. No crate has moved. No rename below is implemented.
+  `target::DecryptSource`. #1504 adds the derives with those names. #1503 adds `OpaqueBlob`. Both
+are open for review. No crate has moved. No rename below is implemented.
 - #1501 moves the Rust crates to Vitamin C 0.9, and re-exports `Buffer`,
   `ProtectedRef`, and `AsProtectedRef` from the crate root.
 - #1403 bumps `stack-kms` to 0.2.0 on crates.io. So the proposed rename to
@@ -86,9 +86,11 @@ An ordinary Stack Encrypt user should not have to import Vitamin C
 encryption traits to implement an application type.
 
 Moving code should remove duplicate abstractions. Moving code should not
-keep both public surfaces under new names. Dan's compatibility
-exemption for prototypes applies to this API, but not to the stored format
-since 7 November 2026. Before deleting
+keep both public surfaces under new names.
+
+Dan's rule of 7 November 2026 applies. Code and APIs may change in ways
+that break callers, because this is a prototype. The stored format may
+not. Before deleting
 dependencies upstream, review the other consumers of Vitamin C that use
 them.
 
@@ -297,11 +299,10 @@ combined trait.
 | `EncryptInto`, `DecryptFrom` | Convenience traits for encryption directed by the target and decryption directed by the destination, with variants that take context |
 | `OpaqueEncode`, `OpaqueDecode` | Traits that represent a value as a single ciphertext |
 | `target::{EncryptTarget, DecryptSource}` | Declaration traits. The matching derives are re-exported at the crate root |
-| `target::TargetDefinition` | This document's name for the plan's `Plan`: a record's declaration as data, built once, shared by the static and dynamic paths. One name is chosen in the naming review |
+| `target::TargetDefinition`, or the plan's `Plan` | A record's declaration as data, built once, shared by the static and dynamic paths. The builder's output is selected with `.target::<T>()`. One spelling is chosen in the naming review |
 | `Scope`, `Bind` | The context argument's two kinds of part, as the plan has them. Neither selects a keyset |
 | `encoding::{Base64Text, Base85Text}` | Validated encoding of arbitrary bytes. The plan recommends a small Vitamin C encoding crate that Stack Encrypt and EQL re-export; the owner is an open question in the plan |
 | `encoding::{Base64Ciphertext, Base85Ciphertext}` | Validated, encoded representations of opaque ciphertext, and supported field targets. Valid encoding alone is not enough |
-| `plan::Plan` | Explicit low-level interface for composition. The output is selected with `.target::<T>()` |
 | `provider` | Neutral provider contracts and capability bounds |
 | `provider::zerokms` | The ZeroKMS adapter and the surface for its claims, including `Claim` and `ResolvesClaims` |
 | `dynamic` | Loading versioned definitions, discovering capabilities, and executing through the common engine |
@@ -326,7 +327,8 @@ the public `decrypt_into`.
 
 ### Definition, layout, seal, and open
 
-Use `TargetDefinition` for the configured public contract. Use `Layout`
+Recommendation: use `TargetDefinition` for the configured public
+contract. Use `Layout`
 only for the advanced internal concept of composition, where that
 distinction is needed. A layout does not name a plaintext document or a
 stored ciphertext.
@@ -400,14 +402,15 @@ must not redefine stored SQL formats or dynamic discriminants by accident.
 ## Implementation order and acceptance
 
 1. Specify and validate the Go JSON and opaque storage contracts. Both
-   are now implemented. Freeze the post-cascade JSON and search semantics
+   are now implemented. Freeze the JSON and search semantics after the cascade
    and the exact fixtures. "Post-cascade" means as they are after #1379.
    That change made each container's tag cover the tags of its children.
-   Replace the temporary Go module pins of Vitamin C for a final release.
+   Replace the temporary Go module pins of Vitamin C for the final Go
+   v0.1.0 release.
 2. Complete the outstanding Go match configuration, and close the gaps in
    JSON reads and conformance. Short whole-word matching is implemented in
    EQL. Its leakage and its compatibility with the stored format still need explicit
-   acceptance for the release.
+   acceptance for that release.
 3. Set up the shared format crate. Move the
    value model, traversal, and the normalisation and index adapters that
    depend on it into Stack. Keep the frozen encodings and an acyclic
@@ -415,7 +418,7 @@ must not redefine stored SQL formats or dynamic discriminants by accident.
 4. Complete the neutral provider extraction and the renaming of the
    protocol package. Then retire Vitamin C's surface for asynchronous
    application execution. The policy and routing contracts that Go needs
-   must already have been handled before the release.
+   must be handled before the final Go v0.1.0 release.
 5. Complete the public Rust trait and derive names, imports, and
    executable examples. These changes must not rename the released Go API
    or reinterpret stored data. The changes must not require customers to
@@ -431,8 +434,8 @@ Acceptance includes:
 - the behaviour tests that moved;
 - shared fixtures for formats and operations across Rust, Go, and SQL.
 
-Full improvements to timing and memory clean-up remain follow-up work,
-under the accepted priority that puts the format first. Record only the
+Full improvements to timing and memory clean-up remain follow-up work. Dan's priority of 7 November 2026 puts the stored
+format first. Record only the
 guarantees that are true.
 
 This document does not claim any implementation changes, tests of the

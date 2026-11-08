@@ -125,7 +125,7 @@
 // Each integer seals at its own width. Equality applies to every one but a
 // bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
 // bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no
-// order index, since over so few values its order terms would show which
+// order index, since over so few values its ordering terms would show which
 // rows hold which value.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a

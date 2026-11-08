@@ -63,10 +63,13 @@ thinking on each, so nothing is lost.
 
 ## Terms
 
+The plan's terms table defines every other term used here.
+
 | Term | Meaning |
 | --- | --- |
-| Bind | A part of the stored context whose value the client knows. The data key and the AAD derive under it. A reader must present the same value |
-| Claim | A bind whose value the key provider resolves from the caller's verified token, such as `sub`. The client names it and never sees the value |
+| Binding | The plan's term: a part of the stored context that is not in the query context, such as a row ID. The data key and the AAD derive under it. A reader must present the same value |
+| Bind | Tying a data key to a binding. The mechanism, where "binding" is the part. A bind is access control |
+| Claim | A binding whose value the key provider resolves from the caller's verified token, such as `sub`. The client names it and never sees the value |
 | Label | A named, typed fact added to a stored value's key tag after encryption. ZeroKMS verifies it when it returns the key, and logs it. It restricts nothing |
 | Descriptor | The string a key request names its key under. ZeroKMS derives the data key from it. Today Stack Encrypt renders the whole stored context into it |
 | Key context | The list of items a key request sends to the provider beside the descriptor: each scope, binding, and claim as one item. The provider folds the items into the key tag. The ZeroKMS protocol's field for this list is still named `context`, and its older name was lock context; ZeroKMS version 2 drops that name |
@@ -82,8 +85,7 @@ These facts were verified in the Vitur server, in
   keyset's authority key.** Nothing else goes in. The descriptor is
   padded to a 512-byte block. That block is the source of the
   descriptor size limit (`client.rs`, `generate_key_material`).
-- **The key tag is an HMAC over the IV, the descriptor, and each lock
-  context item in order.** An identity claim goes in as its name and
+- **The key tag is an HMAC over the IV, the descriptor, and each key context item in order.** An identity claim goes in as its name and
   the value ZeroKMS resolved from the caller's token (`tag_key.rs`,
   `create_tag`).
 - **On retrieve, ZeroKMS resolves the items again from the reader's
@@ -104,18 +106,22 @@ descriptor part cannot be skipped, because the key is derived from it.
 
 | | Bind | Claim | Label |
 | --- | --- | --- | --- |
-| Who supplies the value | The client, from the caller or the row | ZeroKMS, from the caller's token | The client, a trigger, or ZeroKMS |
+| Who supplies the value | The client, from the caller or the row | ZeroKMS, from the caller's token | The client or a trigger. ZeroKMS itself, in version 2 |
 | Who sets the rule | The client, at write time | The client, at write time | ZeroKMS policy, at any time |
 | Can the rule change later | No. Lose the value, lose the data | No. Lose the claim, lose the data | Yes. A policy can be added, changed, or removed |
 | Can the rule be overridden | No | No | Yes, by changing the policy |
-| Affects search terms | A scope does. A binding does not | No | No |
+| Affects search terms | No | No | No |
 | Good for | Tenant isolation, a value that must stay in its row | Per-user secrets that no one else may read | Access intelligence, and any rule an operator may need to change |
+
+A scope, the other kind of context part, does affect search terms. It is
+not a bind, and the plan's context rules cover it.
 
 A bind and a claim are the same mechanism with a different source of the
 value. Both are strict by construction. A label is a record, and ZeroKMS
-may later apply a policy to it. The two routes reach the same outcome
-with different threat models and trade-offs. So the API must keep a
-developer from choosing the strict one by accident.
+may later apply a policy to it.
+
+Both routes end with a verified fact on a stored value. They differ in whether any reader is restricted. So the API
+must keep a developer from choosing the strict one by accident.
 
 ### Guards for the developer
 
@@ -129,10 +135,9 @@ developer from choosing the strict one by accident.
    to this part cannot be read without it, by anyone, ever, including a
    migration. For a claim it adds: deleting the user deletes access to
    the data.
-3. **A label is the default suggestion for identity facts.** Where the
-   documentation shows `sub`, it shows it as a label first, written by
-   ZeroKMS at generate time. The claim is the stricter option, with its
-   cost spelled out.
+3. **A label is the default suggestion for identity facts.** Where the documentation shows `sub`, it shows it as a label first. In
+   ZeroKMS version 2, ZeroKMS writes that label itself. The claim is the
+   stricter option, with its cost spelled out.
 
 ## Binds move from the descriptor to key context items
 
@@ -167,8 +172,8 @@ Two things the move changes, for ZeroKMS to know:
   do](#what-zerokms-must-do) asks version 2 of ZeroKMS to close that gap.
 - The ZeroKMS protocol says the items "should never include sensitive
   information". A tenant ID or row ID reaches ZeroKMS as an item instead
-  of inside the descriptor, so nothing new is sent. The plan states the
-  rule rather than assuming it.
+  of inside the descriptor, so nothing new is sent. This document records the protocol's rule, so
+  a reader does not have to assume it.
 
 ## Claims
 
@@ -215,7 +220,10 @@ let encrypted: EncryptedNote = note
     .await?;
 ```
 
-The context chain already uses typestate to refuse a scope after a bind.
+The context chain will use typestate to refuse a scope after a bind. The
+plan's [One context argument, and paired entry
+points](2026-10-24-stack-encrypt-api-plan.md#one-context-argument-and-paired-entry-points)
+item builds it.
 The same mechanism marks a declaration that contains a claim, and the
 entry points accept it only for a keyset whose provider implements
 `ResolvesClaims`. A dynamic declaration with a claim part is refused at
@@ -251,8 +259,10 @@ when it has a use.
 ## Labels
 
 A label adds a named, typed fact to the key tag of a stored value, after
-encryption. The value is then tied to its row and to the facts of its
-writing. Its context, its AAD, and its queries do not change. ZeroKMS
+encryption. The row and the facts of its writing are then recorded on the value.
+ZeroKMS can verify the record.
+
+Its context, its AAD, and its queries do not change. ZeroKMS
 verifies the labels when it returns the key, and logs them. That log is
 where access intelligence comes from now, and where policy over labels
 comes later.
@@ -326,8 +336,8 @@ has the analysis and the open points.
 ### Labelling in Rust and SQL
 
 In Rust, `label` adds a label to an EQL value. It returns the labelled
-value, so calls chain. A JSON document has one tag in its header, so it
-labels the same way. Decryption is unchanged.
+value, so calls chain. A JSON document has one key tag in its header, so it labels the same
+way. Decryption is unchanged.
 
 ```rust
 let sealed: TextEq = body.encrypt_into_with_context(&keyset, Scope::new(&column)).await?;
@@ -395,7 +405,7 @@ value, and the Go methods call them.
 An optional `labels` list is added to the EQL payload. The list is
 present only once a label has been added. A payload without it is the
 rc.3 form, so the change is additive. Every EQL type has the list,
-whether it stores a scalar or a JSON document. Each has one tag.
+whether it stores a scalar or a JSON document. Each has one key tag.
 
 The tag itself stays where it is today: inside the ciphertext envelope,
 the `c` field of the payload. So `eql_v4.label_tag` reads the tag out of
@@ -409,12 +419,11 @@ to it. Labels are for EQL payloads. Decided by Dan on 8 November 2026.
 
 ### Example: access intelligence for a notes table
 
-ZeroKMS labels the value with the writer's `sub` at generate time. The
-client adds two labels before the insert. The trigger adds the primary
-key.
+The client adds two labels before the insert. The trigger adds the
+primary key. In ZeroKMS version 2, ZeroKMS would add `written_by` as
+well.
 
-A reader selects one column and decrypts. ZeroKMS logs all four
-labels when it returns the key. No reader is restricted.
+A reader selects one column and decrypts. ZeroKMS logs all three labels when it returns the key. No reader is restricted.
 
 ```rust
 let sealed: TextEq = note.body
@@ -440,9 +449,7 @@ the equality term:
   "i": {"t": "notes", "c": "body"},
   "c": "…",
   "hm": "…",
-  "labels": [
-    {"n": "written_by",   "v": "auth0|5f3a…"},
-    {"n": "written_from", "v": "203.0.113.5"},
+  "labels": [    {"n": "written_from", "v": "203.0.113.5"},
     {"n": "created_at",   "v": "2026-11-07T10:15:00Z"},
     {"n": "row_id",       "v": "7f3c2a9e-…"}
   ]

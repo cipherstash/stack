@@ -1,6 +1,6 @@
 # Stack Encrypt API plan
 
-Date: 7 November 2026. Checked against `next` at commit `e4990e49b`.
+Date: 8 November 2026. Checked against `next` at commit `e4990e49b`.
 
 Stack Encrypt encrypts each value under its own data key from ZeroKMS,
 CipherStash's key service. It also makes the search terms that let
@@ -50,6 +50,7 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | --- | --- |
 | AAD (additional authenticated data) | Data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](#context-and-aad) |
 | ADR | An architecture decision record, in `packages/stack-encrypt/docs/adr/`. ADR-0007 says every binding runs the engine's one executor |
+| Access intelligence | The record of who retrieved which key, and for which value, built from ZeroKMS's log of key retrievals. Labels are what make the record useful |
 | Analyzer | The pipeline that turns match text into tokens: a source, such as `Words`, then stages. A match index is configured by one analyzer |
 | Binding | A part of the context that ties a ciphertext to its row, such as a row ID. It is in the stored context and not in the query context. Passed as `Bind::new(..)` |
 | Claim | A binding whose value the key provider resolves from the caller's verified token, such as `sub`. The client names it and never sees the value. See [Claims the key provider resolves](#claims-the-key-provider-resolves) |
@@ -57,22 +58,25 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Rust and Go run the same cases. The files are in `conformance/stack-encrypt/v1/` |
 | Context name | The last declared scope of a field: its name by default, pinned when the Rust field is renamed. Two fields of one record never share one |
 | Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](#context-and-aad) |
-| Descriptor | A context rendered as text, such as `users/age`. ZeroKMS derives the data key from it and logs it at every retrieval |
+| Descriptor | The string a key request names its key under. ZeroKMS derives the data key from it. Today the whole context is rendered into it, such as `users/age`. Under envelope version 2 it is the context name only |
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
 | Executor | The one engine path that runs a plan: it derives each field's context, requests the keys in one batch, and seals or opens every value |
 | Field marker | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
 | `FieldRef` | The builder's reference to one field of the plaintext type: its name and its accessor. A field marker is a `FieldRef` with its indexes added |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
+| Key tag | The HMAC ZeroKMS returns with a data key. A reader must present it to get the key again. Stack Encrypt binds it into every leaf's AAD |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
+| Leaf | One sealed value inside a stored record or document: the unit the AEAD encrypts, with its own data key and AAD |
 | Label | A named, typed fact added to a stored value's key tag after encryption, such as `row_id` or `written_by`. ZeroKMS verifies it and logs it. It restricts no reader. See [Labels](#labels) |
 | Key context | The list of items a key request sends to the provider beside the descriptor. Stack Encrypt will send each scope, binding, and claim as one item, and the provider folds them into the key tag |
 | n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
-| PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a caveat use it |
+| PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a label use it |
 | Passthrough field | A field stored unencrypted next to the encrypted fields. It is not authenticated |
 | Plan | A record's declaration as data: each field, its context, and its indexes. The derive builds one through `encryption_plan()`; a program can build one by hand, or read one at run time. See [A request: `Planned`](#a-request-planned) |
 | Planned | A value paired with a plan that is data, `Planned::new(&plan, value)`. Encrypted, queried, or decrypted with the keyset as the argument. See [A request: `Planned`](#a-request-planned) |
+| Query artifact, context artifact | Two design documents Dan wrote as Claude artifacts, one on queries and one on context. This plan compared them with itself on 8 November 2026 and records every decision. Dan deletes the artifacts after this plan merges |
 | Query context | All the scopes of a context, declared and caller-supplied. Search terms derive under it. See [Query context and stored context](#query-context-and-stored-context) |
 | Query plan | A record plan narrowed to one field and one operator, `plan.query(field, op)`. A query value is encrypted under it. See [A query plan](#a-query-plan) |
 | QueryTerm | The result of a query on the dynamic path: the operand bytes and the EQL type they bind as, known at run time |
@@ -337,8 +341,7 @@ SELECT id, email, age FROM members WHERE email = $1::eql_v4.query_text_eq;
 ```
 
 A chained scope is allowed on a query because a query has one field and
-one value, so a scope cannot mean anything else. The rule that no chain state
-offers context was about `.extend(..)` after `.fields()` on a record. There, a part added late looked per-field
+one value, so a scope cannot mean anything else. The rule that no chain state offers context, in [One context argument, and paired entry points](#one-context-argument-and-paired-entry-points), was about `.extend(..)` after `.fields()` on a record. There, a part added late looked per-field
 and was not.
 
 A typed query lowers to a [query plan](#a-query-plan) and a `Planned`
@@ -348,7 +351,9 @@ function.
 #### Encrypt a JSON document
 
 A JSON field is stored as one encrypted document in a
-`public.eql_v4_json_search` column.
+`public.eql_v4_json_search` column. That column type, the Rust type
+`JsonTreeDocument`, and the dynamic target `JsonSearch` are three names
+for the one stored type.
 
 The simplest form encrypts straight into `JsonTreeDocument`, with the
 default options. The context is the column. The default options order no
@@ -381,7 +386,7 @@ the strict checks on JSON input. A program can also encrypt a borrowed
 `&serde_json::Value`. Then the program is responsible for wiping it, as for
 any [borrowed value](#encrypt-borrowed-values).
 
-With the default options, no path has an order term. So a query cannot
+With the default options, no path has an ordering term. So a query cannot
 compare the order of the values at a path. To order some paths, declare a
 named type with typed Rust options:
 
@@ -416,7 +421,7 @@ declaration:
 
 - **The column context.** Each path's selector is derived under it, so the
   query must use the same context as the stored documents.
-- **The options.** They say which paths have order terms, and how far a
+- **The options.** They say which paths have ordering terms, and how far a
   wildcard such as `[*]` expands. An order query on a path without order
   terms would find no rows, so Stack Encrypt refuses it.
 
@@ -468,8 +473,8 @@ The kinds of JSON query, the marker method for each, and what each finds:
 
 | Query | Marker method | What it finds | EQL query type |
 | --- | --- | --- | --- |
-| Containment | `contains(doc)`, `contained_by(doc)` | Rows whose document contains the given document, or is contained by it | `JsonTreeQuery` |
-| Comparison at a path | `at(path).eq(v)`, `.gt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path equals, orders against, or lies between the given values | `JsonTreeLeafQuery` |
+| Containment | `contains(doc)`, `contained_by(doc)`, and `at(path).eq(v)` | Rows whose document contains the given document, or is contained by it. Equality of a scalar at a path is containment of a one-entry document, so `at(path).eq(v)` lowers to it | `JsonTreeQuery` |
+| Comparison at a path | `at(path).gt(v)`, `.lt(v)`, `.between(a, b)`, and the rest | Rows where the value at an ordered path orders against, or lies between, the given values | `JsonTreeLeafQuery` |
 | Element match | `elements(path).eq(member, v).gt(member, v)` | Rows where one element of an array meets several conditions together | `JsonTreeElementsQuery` |
 | Jsonpath predicate | `predicate(text)` | Rows where a SQL/JSON path predicate is true | `JsonTreePredicateQuery` |
 | Children and child count | `children(path)` | The entries directly below one node, or how many there are | A node token |
@@ -895,8 +900,9 @@ such as `users/age`. The caller can supply the rest, such as a row ID.
 Stack Encrypt uses the context in three ways:
 
 1. **To derive the data key.** Stack Encrypt sends the context to ZeroKMS
-   as a text descriptor, such as `users/age`. ZeroKMS needs the same
-   descriptor to derive the key again.
+   with each key request. Today the whole context is rendered into a text
+   descriptor, such as `users/age`. Under the planned envelope version 2, the context name is the
+   descriptor. Each part is a key context item. ZeroKMS needs the same request to derive the key again.
 2. **To build the AAD of each ciphertext.** The AAD is data that
    encryption checks without encrypting it. Stack Encrypt builds it from
    the context and the place of the value in its record. The AAD also
@@ -939,7 +945,7 @@ records this.
 A part of the context is one of two kinds. The declaration says which,
 and fixes the order: the scopes first, then the bindings.
 
-| Kind of part | Verb | Example | In the query context | In the descriptor | In the AAD | Verified by |
+| Kind of part | Verb | Example | In the query context | Sent to ZeroKMS | In the AAD | Verified by |
 | --- | --- | --- | --- | --- | --- | --- |
 | Scope | `scope` | A record name, a field's context name, or a tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
 | Binding | `bind` | A row's UUID | No | Yes | Yes | ZeroKMS and the AEAD |
@@ -955,12 +961,14 @@ Go.
 
 A part is a scope unless the declaration marks it as a binding, because
 that is what Go rc.3 writes. A binding can be stored in the row as a context field,
-so the reader takes it from the row. ZeroKMS logs the descriptor at every key retrieval, so every scope and
-binding is in the access log. The descriptor has a length limit. It is also sent to ZeroKMS, so the
-part leaves the customer's system.
+so the reader takes it from the row.
 
-ZeroKMS version 2 is planned to remove the limit and to encrypt the
-access log.
+Every scope and binding is sent to ZeroKMS, so each part leaves the
+customer's system, and ZeroKMS logs it at every key retrieval. Today the parts travel in the descriptor. The descriptor has a length
+limit. Under envelope
+version 2 they travel as [key context
+items](#context-parts-as-key-context-items), with no limit. ZeroKMS
+version 2 is planned to encrypt the access log.
 
 A [label](2026-11-08-stack-encrypt-key-policy.md#labels) is not a part
 of the context. ZeroKMS verifies it. It is in neither the query context
@@ -1026,8 +1034,10 @@ mod tests {
 #### Labels
 
 A label adds a named fact to the ZeroKMS key tag of a stored value,
-after encryption. The value is then tied to its row and to the facts of
-its writing. Its context, its AAD, and its queries do not change.
+after encryption. The row and the facts of its writing are then recorded on the value.
+ZeroKMS can verify the record.
+
+Its context, its AAD, and its queries do not change.
 ZeroKMS verifies the labels when it returns the key, and logs them.
 That log is where access intelligence comes from.
 
@@ -1091,7 +1101,7 @@ NEW.body := eql_v4.label_tag(NEW.body, 'row_id', NEW.id::text);
   use any stage, including a customer's own. A serialised plan can name
   only the closed dynamic subset, and every reader runs exactly the
   stages it names.
-- **Order terms do not answer equality.** An order-revealing encryption
+- **Ordering terms do not answer equality.** An order-revealing encryption
   (ORE) term does not answer an equality query. A field that needs both
   declares both indexes.
 
@@ -1110,7 +1120,7 @@ release leaves behind.
 #### Finish the specification around the conformance profiles
 
 - **What to build.** JSON Schema files for declarations, requests, and
-  responses. Protocol version identifiers. A release compatibility matrix.
+  responses. Protocol version identifiers. A compatibility matrix of releases.
   Tests that exchange new JSON values between languages.
 - **Why.** The specification lets another language implement the dynamic
   interface and get the same results.
@@ -1194,9 +1204,7 @@ format version beside it.
 
 #### Context parts as key context items
 
-Decided on 8 November 2026. [Binds move from the descriptor to lock
-context
-items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-key-context-items)
+Decided on 8 November 2026. [Binds move from the descriptor to key context items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-key-context-items)
 has the design.
 
 - **What to build.** New values send each scope and binding to ZeroKMS
@@ -1292,7 +1300,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   - the example in the key policy document round-trips through a
     trigger, in Rust and in Go;
   - a changed label, or a changed tag, is refused by ZeroKMS;
-  - the EQL conformance profile covers the `labels` list.
+  - the conformance profile for EQL covers the `labels` list.
 
 #### Typed text encodings and key tag extraction
 
@@ -1301,9 +1309,10 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
     existing `Base64Text` and `Base85Text` types, not `String`.
   - Field targets that store a ciphertext as text. Their working names are
     `Base64Ciphertext` and `Base85Ciphertext`. Each one checks both the text
-    and the envelope.
-  - A SQL and PL/pgSQL function that reads the ZeroKMS key tag from a stored
+    and the envelope.  - A SQL and PL/pgSQL function that reads the ZeroKMS key tag from a stored
     ciphertext. It must check the version and the lengths before it reads.
+  - The writing form of the same layout, so that `eql_v4.label_tag` can
+    put a labelled tag back into the envelope.
 - **Why.** Some columns store ciphertext as text. SQL needs to read the key
   tag to label it.
 - **Limits.** PostgreSQL can decode Base64, but not Base85. So SQL can read
@@ -1311,8 +1320,11 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   does not authenticate it.
 - **Done already.** `Ciphertext` is stored as bytes, and Serde writes it as
   Base64. `Ciphertext::key_tag` reads the tag in Rust (#1404).
-- **Finished when** the methods and targets exist, and Rust, Go, and SQL
-  test vectors show the same key tag for the same stored value.
+- **Finished when** these are all true:
+  - the methods and targets exist;
+  - Rust, Go, and SQL test vectors show the same key tag for the same
+    stored value;
+  - a tag that SQL writes back is the tag Rust reads.
 
 ### 3. The Rust API
 
@@ -1798,7 +1810,7 @@ parameter named `aad`.
 - **Why.** Plaintext must not stay in freed memory.
 - **Done already.** Collections wipe the values decoded before a failure.
   Cancellation and drop are tested (#1493, #1501).
-- **Finished when** the lifecycle conformance profile covers both cases.
+- **Finished when** the conformance profile for the lifecycle covers both cases.
 
 ### 4. The query engine
 
@@ -1881,7 +1893,7 @@ plan's.
 - **Breaking.** Every hand-written `MatchConfig` changes shape. This lands
   as a `!` commit with a changelog entry.
 - **Finished when** these are all true:
-  - the rc.3 mapping conformance case passes in Rust and Go;
+  - the conformance case for the rc.3 mapping passes in Rust and Go;
   - a `tests/ui` case shows a stemmer after n-grams fails to compile;
   - a serialised plan naming a typed-only stage is refused with
     `NotPortable`;
@@ -2065,7 +2077,7 @@ The lead who approves this plan decides each question.
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
-| Should ZeroKMS version 2 derive the data key over the key context items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
+| Should this plan ask ZeroKMS version 2 to derive the data key over the key context items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
 | Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
@@ -2089,9 +2101,12 @@ changes a name, not a design.
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go |
 | `Base64Ciphertext`, `Base85Ciphertext` | Field targets that store a ciphertext as text |
 | `#[derive(Scalar)]` | The derive for a single-value newtype |
-| `labels`, `label`, `label_tag` | The label list in an EQL payload, and the operations that add to it |
+| `labels`, `label`, `label_tag` | The label list in an EQL payload, and the operations that add to it. `stack_encrypt::Label` is today the descriptor path type, `users/email`, exported at the crate root, so the review renames one of the two |
 | `Claim`, `ResolvesClaims`, `bind(claim = ..)` | The provider's claim type, the trait that gates it, and the declaration attribute |
-| The declaration attributes `scope(..)` and `bind(..)` | How a declaration marks its parts |
+| The declaration attributes `scope(..)`, `bind(..)`, and `keyset(name(field = ..))` | How a declaration marks its parts, and how it selects a keyset |
+| `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes` | The dynamic query plan, the dynamic field handle, its refusal, and the per-field index list |
+| `StageSpec`, `Match<Dynamic>`, `NotPortable` | The serialised analyzer subset, the dynamic match type, and the refusal of a stage outside the subset |
+| `JsonTreeElementsQuery`, `JsonTreePredicateQuery` | The EQL query types for element match and jsonpath predicate |
 | `ContextExtension` | The caller-supplied context input of #1504, renamed for the scope vocabulary |
 | `TargetDefinition` | The packaging document's name for `Plan`, a record's declaration as data. One name is chosen |
 | `Plan::context(..).fields()`, `encrypt_index`, `pick!` | The hand-built plan builder. The query artifact's `EncryptionPlan::record(..)` and `.field(..)` are the alternative spellings |
