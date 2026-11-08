@@ -33,9 +33,9 @@ are illustrative.
 
 ## How to read the examples
 
-- `context = "users"` is the record's first scope. The derive adds each
-  field's name as the next, so the declared scopes of `email` are `users`
-  then `email`.
+- `scope = "users"` is the record's name and its first scope. The derive
+  adds each field's name as the next, so the declared scopes of `email`
+  are `users` then `email`.
 - `scope(tenant: u64)` declares a scope the caller supplies on every call.
   `bind(row: Uuid)` declares a binding the caller supplies.
 - `scope(field = "tenant")` declares a scope stored in the row, in the
@@ -58,7 +58,7 @@ record that has no tenant and no row binding, such as a settings table.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Settings, context = "settings")]
+#[stash(struct = Settings, scope = "settings")]
 struct EncryptedSettings {
     theme: Ciphertext,
 }
@@ -75,7 +75,7 @@ A query for one tenant matches only that tenant's rows.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users", scope(tenant: u64))]
+#[stash(struct = User, scope = "users", scope(tenant: u64))]
 struct EncryptedUser {
     email: SearchableEmail,
 }
@@ -103,7 +103,7 @@ tenant passes it as well, to check that the row belongs to that tenant.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users", scope(field = "tenant"))]
+#[stash(struct = User, scope = "users", scope(field = "tenant"))]
 struct EncryptedUser {
     #[stash(passthrough)]
     tenant: u64,
@@ -128,7 +128,7 @@ because a binding is not in the query context.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users", bind(field = "id"))]
+#[stash(struct = User, scope = "users", bind(field = "id"))]
 struct EncryptedUser {
     #[stash(passthrough)]
     id: Uuid,
@@ -153,7 +153,7 @@ the context.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users", scope(field = "tenant"), bind(field = "id"))]
+#[stash(struct = User, scope = "users", scope(field = "tenant"), bind(field = "id"))]
 struct EncryptedUser {
     #[stash(passthrough)]
     tenant: u64,
@@ -189,7 +189,7 @@ as well to check it.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users", scope(field = "tenant"), bind(row: Uuid))]
+#[stash(struct = User, scope = "users", scope(field = "tenant"), bind(row: Uuid))]
 struct EncryptedUser {
     #[stash(passthrough)]
     tenant: u64,
@@ -222,7 +222,7 @@ matches nothing.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Secret, context = "secrets", scope(host: String))]
+#[stash(struct = Secret, scope = "secrets", scope(host: String))]
 struct EncryptedSecret {
     value: Ciphertext,
 }
@@ -245,7 +245,7 @@ stored identifier differs, the value is refused before any key is
 fetched.
 
 Inside a record, the derive supplies the identifier from the record's
-name and the field's context name, so none of this is written by hand.
+name scope and the field's name scope. None of this is written by hand.
 
 ```rust
 use eql_bindings::{v4::text::{TextEq, TextEqQuery}, Identifier};

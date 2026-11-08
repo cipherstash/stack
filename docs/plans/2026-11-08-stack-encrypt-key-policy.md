@@ -39,7 +39,7 @@ thinking on each, so nothing is lost.
 - [How ZeroKMS works today](#how-zerokms-works-today)
 - [Three mechanisms, and when to use each](#three-mechanisms-and-when-to-use-each)
   - [Guards for the developer](#guards-for-the-developer)
-- [Binds move from the descriptor to key context items](#binds-move-from-the-descriptor-to-key-context-items)
+- [Binds move from the descriptor to key request items](#binds-move-from-the-descriptor-to-key-request-items)
   - [A new envelope version](#a-new-envelope-version)
 - [Claims](#claims)
   - [Declaring a claim](#declaring-a-claim)
@@ -72,7 +72,7 @@ The plan's terms table defines every other term used here.
 | Claim | A binding whose value the key provider resolves from the caller's verified token, such as `sub`. The client names it and never sees the value |
 | Label | A named, typed fact added to a stored value's key tag after encryption. ZeroKMS verifies it when it returns the key, and logs it. It restricts nothing |
 | Descriptor | The string a key request names its key under. ZeroKMS derives the data key from it. Today Stack Encrypt renders the whole stored context into it |
-| Key context | The list of items a key request sends to the provider beside the descriptor: each scope, binding, and claim as one item. The provider folds the items into the key tag. The ZeroKMS protocol's field for this list is still named `context`, and its older name was lock context; ZeroKMS version 2 drops that name |
+| Key request item | One part of the stored context as a key request sends it beside the descriptor: a name and value, or a claim. The ZeroKMS protocol's field for the list is `context`, and its older name was lock context; ZeroKMS version 2 drops that name |
 | Key tag | The HMAC ZeroKMS returns with a data key. A reader must present it to get the key again. Stack Encrypt binds it into every leaf's AAD |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other |
 
@@ -85,7 +85,7 @@ These facts were verified in the Vitur server, in
   keyset's authority key.** Nothing else goes in. The descriptor is
   padded to a 512-byte block. That block is the source of the
   descriptor size limit (`client.rs`, `generate_key_material`).
-- **The key tag is an HMAC over the IV, the descriptor, and each key context item in order.** An identity claim goes in as its name and
+- **The key tag is an HMAC over the IV, the descriptor, and each key request item in order.** An identity claim goes in as its name and
   the value ZeroKMS resolved from the caller's token (`tag_key.rs`,
   `create_tag`).
 - **On retrieve, ZeroKMS resolves the items again from the reader's
@@ -97,8 +97,8 @@ These facts were verified in the Vitur server, in
   semantics over claims. It is the earlier policy-engine design. This
   plan retires it.
 
-So a key context item is enforced by a check. The descriptor is
-enforced by derivation. If ZeroKMS skipped the check, a key context item
+So a key request item is enforced by a check. The descriptor is
+enforced by derivation. If ZeroKMS skipped the check, a key request item
 would not stop decryption, because the key does not depend on it. A
 descriptor part cannot be skipped, because the key is derived from it.
 
@@ -139,13 +139,13 @@ must keep a developer from choosing the strict one by accident.
    ZeroKMS version 2, ZeroKMS writes that label itself. The claim is the
    stricter option, with its cost spelled out.
 
-## Binds move from the descriptor to key context items
+## Binds move from the descriptor to key request items
 
 Today Stack Encrypt renders the whole stored context into the descriptor
-string, frozen, and sends an empty key context. Decided on 8 November
-2026: new values send the context's parts as key context items instead.
+string, frozen, and sends no key request items. Decided on 8 November
+2026: new values send the context's parts as key request items instead.
 Each scope and binding becomes a name-and-value item. The descriptor
-shrinks to the context name, such as the table and column.
+shrinks to the name scopes, such as the table and column.
 
 This removes the 512-byte limit on a context, and it gives ZeroKMS the
 parts as structure instead of one string it logs and cannot parse.
@@ -161,7 +161,7 @@ today, and binds it into the leaf AAD. The new form is version `0x02`.
 
 On decrypt, the engine reads the byte and sends the request in the form
 the value was written with. Version 1 renders the descriptor as rc.3
-did. Version 2 sends the context name and the items. Go rc.3 data stays
+did. Version 2 sends the name scopes and the items. Go rc.3 data stays
 readable without re-encryption. The rc.3 rendering code stays until the
 last version 1 value is gone.
 
@@ -204,7 +204,7 @@ pub trait ResolvesClaims: DataKeySource { type Claim; }
 ```rust
 // Declared on the type. The caller cannot leave it out.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Note, context = "notes", bind(claim = sub))]
+#[stash(struct = Note, scope = "notes", bind(claim = sub))]
 struct EncryptedNote {
     body: Ciphertext,
 }
@@ -464,8 +464,8 @@ that work.
 
 ### Needed for this redesign
 
-- Accept the context name as the descriptor and the parts as key
-  context items. ZeroKMS does this today.
+- Accept the name scopes as the descriptor and the parts as key request
+  items. ZeroKMS does this today.
 - Resolve `sub` and custom claims from the verified token. ZeroKMS does
   this today.
 - The retrieve-key request includes the stored tag and the label list.
@@ -475,7 +475,7 @@ that work.
 
 ### For ZeroKMS version 2
 
-- Derive the data key over the key context items as well as the
+- Derive the data key over the key request items as well as the
   descriptor. Then a bind or a claim is enforced by derivation, not by a
   check that could be skipped. A reader with a different claim value
   gets a different key, and the leaf fails to open.
@@ -530,7 +530,7 @@ AAD, whoever wrote it. The read path has one rule. Still to settle:
 
 ### Enforcement by derivation or by check
 
-Today a descriptor part is enforced by key derivation and a key context
+Today a descriptor part is enforced by key derivation and a key request
 item by a tag check. The version 2 request above closes that gap. Until
 then, the honest difference between a bind and a label is who can change
 the rule, not who enforces it. Still to settle: whether version 2 should

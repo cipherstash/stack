@@ -59,9 +59,8 @@ decision.
 | Cipher | The Rust connection to ZeroKMS, with credentials and the key provider: `Cipher::new()`. `cipher.keyset(..)` resolves a `Keyset`, and `cipher.decrypt(..)` opens values from any keyset it holds. Today `StackCipher` |
 | Ciphertext | One encrypted value, as the Rust `Ciphertext` type. It is stored as bytes, or as Base64 text |
 | Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Rust and Go run the same cases. The files are in `conformance/stack-encrypt/v1/` |
-| Context name | The last declared scope of a field: its name by default, pinned when the Rust field is renamed. Two fields of one record never share one |
 | Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](#context-and-aad) |
-| Descriptor | The string a key request names its key under. ZeroKMS derives the data key from it. Today the whole context is rendered into it, such as `users/age`. Under envelope version 2 it is the context name only |
+| Descriptor | The string a key request names its key under. ZeroKMS derives the data key from it. Today the whole context is rendered into it, such as `users/age`. Under envelope version 2 it is the name scopes only: the record name and the field name |
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
 | Executor | The one engine path that runs a plan: it derives each field's context, requests the keys in one batch, and seals or opens every value |
@@ -72,7 +71,8 @@ decision.
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset. In Rust, `Keyset` is also the handle bound to one keyset, which encrypt and query calls take. Today `KeysetCipher` |
 | Leaf | One sealed value inside a stored record or document: the unit the AEAD encrypts, with its own data key and AAD |
 | Label | A named, typed fact added to a stored value's key tag after encryption, such as `row_id` or `written_by`. ZeroKMS verifies it and logs it. It restricts no reader. See [Labels](#labels) |
-| Key context | The list of items a key request sends to the provider beside the descriptor. Stack Encrypt will send each scope, binding, and claim as one item, and the provider folds them into the key tag |
+| Key request item | One part of the stored context as a key request sends it to ZeroKMS beside the descriptor: a name and value, or a claim. The ZeroKMS protocol calls the list `context` |
+| Name scope | A field's own name as its last declared scope, pinned when the Rust field is renamed (ADR-0006). Two fields of one record never share one |
 | n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a label use it |
@@ -192,9 +192,10 @@ struct SearchableEmail {
     equality: EqualityTerm,
 }
 
-// Not on `next` yet: the record derive and `passthrough`.
+// Not on `next` yet: the record derive, `passthrough`, and `scope =`,
+// which is `context =` today.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     #[stash(passthrough)]
     id: u64,
@@ -208,12 +209,12 @@ let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
 let user = User::decrypt_from(encrypted, &keyset).await?;
 ```
 
-`context = "users"` is the record's first scope. The derive adds each
-field's name as the next scope, so `users` then `email` is the declared
-context of the `email` field. `scope(..)` and `bind(..)` add the parts
-that come from the caller or the row. The word `context` is the same one
-the plan builder and Go's struct tag use for the record's name. Confirmed
-by Dan on 8 November 2026.
+`scope = "users"` is the record's name and its first scope. The derive
+adds each field's name as the next scope, so `users` then `email` are the
+declared scopes of the `email` field. `scope(..)` and `bind(..)` add the
+parts that come from the caller or the row. The attribute, the plan
+builder's `Plan::scope(..)`, and Go's `scope=` tag use one word for it.
+Decided by Dan on 8 November 2026.
 
 The derives need no Serde. A program that stores an encrypted value as
 JSON adds `Serialize` and `Deserialize` to the encrypted type. That is
@@ -262,7 +263,7 @@ struct Member {
 // Not on `next` yet in Rust: EQL types as fields of a derived record.
 // Go records do this today through the dynamic interface.
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Member, context = "members")]
+#[stash(struct = Member, scope = "members")]
 struct EncryptedMember {
     #[stash(passthrough)]
     id: u64,
@@ -807,14 +808,14 @@ generator reads the tags, and writes the encrypted type, its functions, and
 the declaration it sends to the engine. The examples show how a customer
 uses the Go SDK today, on Go `v0.1.0-rc.3`.
 
-The `context=` tag gives the record's context. The tag on each field says
+The `scope=` tag gives the record's name, its first scope. The tag on each field says
 how the field is stored: as a passthrough field, as an EQL type, or with
 the indexes it names.
 
 ```go
 //go:generate go tool stashgen -type User
 type User struct {
-	_     struct{} `stash:"context=users"`
+	_     struct{} `stash:"scope=users"`
 	ID    int64    `stash:"id,passthrough"`
 	Email string   `stash:"email,encrypt_into=TextEq"`
 	Name  string   `stash:"name,encrypt_into=TextMatch"`
@@ -823,14 +824,14 @@ type User struct {
 
 //go:generate go tool stashgen -type Customer
 type Customer struct {
-	_       struct{} `stash:"context=customers"`
+	_       struct{} `stash:"scope=customers"`
 	ID      int64    `stash:"id,passthrough"`
 	Profile Profile  `stash:"profile,encrypt_into=JsonSearch(ordered=$.age;$.visits[*].at)"`
 }
 
 //go:generate go tool stashgen -type Settings
 type Settings struct {
-	_     struct{} `stash:"context=settings,opaque"` // sealed as one blob
+	_     struct{} `stash:"scope=settings,opaque"` // sealed as one blob
 	Theme string   `json:"theme"`
 }
 ```
@@ -930,8 +931,8 @@ Stack Encrypt uses the context in three ways:
 
 1. **To derive the data key.** Stack Encrypt sends the context to ZeroKMS
    with each key request. Today the whole context is rendered into a text
-   descriptor, such as `users/age`. Under the planned envelope version 2, the context name is the
-   descriptor. Each part is a key context item. ZeroKMS needs the same request to derive the key again.
+   descriptor, such as `users/age`. Under the planned envelope version 2, the name scopes are the
+   descriptor. Each part is a key request item. ZeroKMS needs the same request to derive the key again.
 2. **To build the AAD of each ciphertext.** The AAD is data that
    encryption checks without encrypting it. Stack Encrypt builds it from
    the context and the place of the value in its record. The AAD also
@@ -954,7 +955,7 @@ describes the descriptor and the AAD. The module documentation of
 
 Decided on 7 November 2026. Every part of a context is a scope or a
 binding. The declaration supplies the first scopes: the record name, then
-the field's context name. The caller supplies the rest.
+the field's name scope. The caller supplies the rest.
 
 - **The query context** is all the scopes: the declared ones, then the
   caller's. Search terms derive under it. A query supplies the caller's
@@ -962,11 +963,11 @@ the field's context name. The caller supplies the rest.
 - **The stored context** is the query context followed by the bindings.
   The data key and the AAD derive under it.
 
-A field's **context name** is the last declared scope. It is the field's
-name by default. It can be pinned when the Rust field is renamed, so that
+A field's **name scope** is its last declared scope: the field's name by
+default. It can be pinned when the Rust field is renamed, so that
 stored data keeps opening.
 
-The context name is always the last declared scope, so two fields of one
+The name scope is always the last declared scope, so two fields of one
 record never share a context. If they did, they would share a key and an
 AAD, and a ciphertext copied between the two columns would open. ADR-0006
 records this.
@@ -976,7 +977,7 @@ and fixes the order: the scopes first, then the bindings.
 
 | Kind of part | Verb | Example | In the query context | Sent to ZeroKMS | In the AAD | Verified by |
 | --- | --- | --- | --- | --- | --- | --- |
-| Scope | `scope` | A record name, a field's context name, or a tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
+| Scope | `scope` | A record name, a field's name scope, or a tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
 | Binding | `bind` | A row's UUID | No | Yes | Yes | ZeroKMS and the AEAD |
 
 The words were decided on 7 November 2026. A caller scopes a value with a
@@ -995,8 +996,8 @@ so the reader takes it from the row.
 Every scope and binding is sent to ZeroKMS, so each part leaves the
 customer's system, and ZeroKMS logs it at every key retrieval. Today the parts travel in the descriptor. The descriptor has a length
 limit. Under envelope
-version 2 they travel as [key context
-items](#context-parts-as-key-context-items), with no limit. ZeroKMS
+version 2 they travel as [key request
+items](#context-parts-as-key-request-items), with no limit. ZeroKMS
 version 2 is planned to encrypt the access log.
 
 A [label](2026-11-08-stack-encrypt-key-policy.md#labels) is not a part
@@ -1229,16 +1230,17 @@ format version beside it.
 | Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
-| Context parts as key context items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
+| Context parts as key request items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
 
-#### Context parts as key context items
+#### Context parts as key request items
 
-Decided on 8 November 2026. [Binds move from the descriptor to key context items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-key-context-items)
+Decided on 8 November 2026. [Binds move from the descriptor to key request items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-key-request-items)
 has the design.
 
 - **What to build.** New values send each scope and binding to ZeroKMS
-  as a key context item. Each item is a name with a value. The descriptor shrinks to
-  the context name. The `SealedValue` format version becomes `0x02` for
+  as a key request item. Each item is a name with a value. The descriptor shrinks to the name scopes: the record name and the field
+  name.
+  The `SealedValue` format version becomes `0x02` for
   these values. On decrypt, the engine reads the version byte and sends
   the request in the form the value was written with.
 - **Why.** The descriptor is one string of at most 512 bytes. ZeroKMS
@@ -1488,7 +1490,7 @@ review.
   declaration order, of the same type the derive emits. So a hand-built
   plan and a derived one query the same way, with the same compile-time
   checks. The builder keeps the context review's shape,
-  `Plan::context(..).fields()`, with the field verbs after it. Decided on
+  `Plan::scope(..).fields()`, with the field verbs after it. Decided on
   7 November 2026, as area three of the query design review.
 
   ```rust
@@ -1503,7 +1505,7 @@ review.
   email.gt("alice@example.com")   // error: no order index on this field
   ```
 
-- **Cannot fail.** `build()` refuses a repeated field name or a shared context name.
+- **Cannot fail.** `build()` refuses a repeated field name or a shared name scope.
   The derive sees every field, so it refuses those at compile time, and
   `encryption_plan()` returns `&'static Plan`, not a `Result`. The
   hand-written builder keeps the runtime check. The dynamic grammar needs
@@ -1558,9 +1560,8 @@ Decided on 7 November 2026, as area one of the query design review.
 - **What to build.** One mechanism for where a field's context comes
   from: the plan builder. The derive and the dynamic grammar lower to it.
   A field's context comes from one of three sources:
-  - the declaration, through `Plan::context(record_name)`, the only way
-    to put the record name in a plan, with each field's context name
-    after it;
+  - the declaration, through `Plan::scope(record_name)`, the only way
+    to put the record name in a plan, with each field's name scope after it;
   - a row field stored unsealed in the record, so the reader takes it
     from the row. A reader may pass it on decrypt to check it;
   - the caller, on every write, query, and read, as a scope or a
@@ -1840,8 +1841,9 @@ table.
   - The ZeroKMS unit of work `Request` is made crate-private with
     `Pending::request`, built on stack-kms's `GenerateKeyPayload` and
     `RetrieveKeyPayload`. There is no public request type. A binding
-    sends a serialised `Plan` or `Planned`.
-  - `OpSpec` becomes `Op`.
+    sends a serialised `Plan` or `Planned`.  - `OpSpec` becomes `Op`.
+  - `context = ".."` becomes `scope = ".."`, `Plan::context(..)` becomes
+    `Plan::scope(..)`, and Go's `context=` tag becomes `scope=`.
   - The marker trait `op::QueryTerm` becomes `Query`, and
     `LabelledTarget` becomes `Stored`. `dynamic::QueryTerm` stays.
   - `ContextExtension` is removed. `EncryptionPlan` is never added.
@@ -2068,7 +2070,7 @@ the keyset, so a record selects its own keyset:
 ```rust
 // Proposed. `tenant_id` holds the keyset's name. `id(field = "..")`
 // selects by UUID instead.
-#[stash(struct = User, context = "users", keyset(name(field = "tenant_id")))]
+#[stash(struct = User, scope = "users", keyset(name(field = "tenant_id")))]
 struct EncryptedUser { /* .. */ }
 
 // The call takes the client, and the record selects the keyset.
@@ -2123,7 +2125,7 @@ The plan's rules:
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
-#[stash(struct = Note, context = "notes", bind(claim = sub))]
+#[stash(struct = Note, scope = "notes", bind(claim = sub))]
 struct EncryptedNote {
     body: Ciphertext,
 }
@@ -2141,7 +2143,7 @@ The lead who approves this plan decides each question.
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
-| Should this plan ask ZeroKMS version 2 to derive the data key over the key context items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
+| Should this plan ask ZeroKMS version 2 to derive the data key over the key request items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
 | Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
@@ -2159,7 +2161,7 @@ renames.
 | `Cipher`, `Keyset` | The connection, today `StackCipher`, and the handle bound to one keyset, today `KeysetCipher`. Decrypt through a `Cipher` opens values from any keyset it holds. The clash with Vitamin C's `Cipher` trait is accepted. Go renames to match: `encrypt.Client` becomes `Cipher`, with `NewCipher`, and the keyset-bound `encrypt.Cipher` becomes `Keyset`. A Go program regenerates once |
 | `CipherRef<'c, K>` | One borrowed value for both paths, a connection and an optional keyset ID, built by `From<&Cipher>` and `From<&Keyset>`. Replaces the `CipherScope` trait and the `dynamic::Scope` enum. A design decision, not only a name |
 | `Plan` | A record's declaration as data. `TargetDefinition` is dropped |
-| `Plan::context(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | The hand-built plan builder, as settled on 4 October 2026. `EncryptionPlan::record(..).field(..)` is dropped |
+| `Plan::scope(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | The hand-built plan builder, as settled on 4 October 2026. `EncryptionPlan::record(..).field(..)` is dropped |
 | `Label`, `label`, `labels`, `label_tag` | The key tag fact and its operations. The old context path type of that name, a field's declared scopes as `users/email`, is removed: those are `Scope` parts. Go's `ContextLabel()` goes with it |
 | No `Request` type | A binding sends a serialised `Plan` alone for a check, an operator list, or a query plan, and a serialised `Planned` for encrypt, query, and decrypt. The ZeroKMS unit of work that is `Request` today becomes crate-private, built on stack-kms's payload types |
 | `Query`, `Stored` | Two marker traits on the term types. `Query` marks a value a query sends, today `op::QueryTerm`. `Stored` marks a stored index term, today `LabelledTarget`. `EqualityTerm` and the order terms implement both; `MatchTerms` only `Stored`; `MatchQuery` only `Query`. `QueryToken` stays the run-time guard |
@@ -2171,5 +2173,5 @@ renames.
 | `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
-| `context = ".."` | The record's name, and its first scope. The derive adds each field's name as the next. Kept, because `Plan::context(..)` and Go's `context=` tag use the same word for the same thing |
+| `scope = ".."`, `Plan::scope(..)`, Go `scope=` | The record's name is its first scope, so the attribute, the builder, and the Go tag all say `scope`. Today they say `context = ".."`, `Plan::context(..)`, and `context=`. Decided by Dan on 8 November 2026 |
 | `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes`, `StageSpec`, `Match<Dynamic>`, `NotPortable` | The dynamic interface names. Confirmed |

@@ -104,7 +104,7 @@ them.
 | `stack-encrypt` | The public Rust API; traversing and reconstructing values; target declarations and definitions; context and scope roles; normalisation and adapters for searchable targets; plans; batching; JSON tree execution; and validating and executing dynamic definitions |
 | `stack-encrypt-derive` | Derive macros that generate the same declarations and definitions a user can write by hand. `stack-encrypt` re-exports the derives |
 | `stack-encrypt-format` (new) | Pure data representations and codecs shared by the engine and the bindings: frame primitives and the required scalar representations, the stable format of stored blobs, parsing and encoding of the ciphertext envelope, and validated Base64 and Base85 text. No key requests and no execution runtime |
-| `stack-zerokms` (the current `stack-kms`, renamed) | The ZeroKMS protocol client, authentication integration, native keysets, request types for the key context, and responses. Not the neutral abstraction over several providers |
+| `stack-zerokms` (the current `stack-kms`, renamed) | The ZeroKMS protocol client, authentication integration, native keysets, request types for the key request items, and responses. Not the neutral abstraction over several providers |
 | `eql-bindings` | EQL storage and query types by version, JSON serialisation compatible with SQL, the catalog, and Stack target adapters. Stays downstream of the engine |
 | Vitamin C crates | Protected memory; randomness; AEAD and key operations on bytes; HMAC, PRF, and ORE algorithm primitives; and reusable canonical encoding of context |
 
@@ -303,7 +303,7 @@ combined trait.
 | `EncryptInto`, `DecryptFrom` | Convenience traits for encryption directed by the target and decryption directed by the destination, with variants that take context |
 | `OpaqueEncode`, `OpaqueDecode` | Traits that represent a value as a single ciphertext |
 | `target::{EncryptTarget, DecryptSource}` | Declaration traits. The matching derives are re-exported at the crate root |
-| `Plan` | A record's declaration as data, built once, shared by the static and dynamic paths. Built by `Plan::context(..).fields(..)`. Decided on 8 November 2026; `TargetDefinition` is dropped |
+| `Plan` | A record's declaration as data, built once, shared by the static and dynamic paths. Built by `Plan::scope(..).fields(..)`. Decided on 8 November 2026; `TargetDefinition` is dropped |
 | `Scope`, `Bind` | The context argument's two kinds of part, as the plan has them. Neither selects a keyset. The chain they build is the context input; there is no separate type |
 | `Query`, `Stored` | The two marker traits on term types: a value a query sends, and a stored index term. Today `op::QueryTerm` and `LabelledTarget` |
 | `Op` | The public dynamic operator enum, today `OpSpec` |
