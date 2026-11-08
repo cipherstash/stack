@@ -2116,7 +2116,11 @@ review. The rules are the query artifact's.
   3. Typed field markers with their index lists, the per-operator query
      methods, `Planned`, and the removal of `DefaultIndex`, `.via`,
      `PlanError::IndexOptions`, and `PlanError::MatchCase`.
-  4. `FieldIndexes` on the dynamic plan.
+  4. `FieldIndexes` on the dynamic plan. The dynamic path then shares
+     the typed derivation itself, through `Index<ValueFrame>`
+     implementations per index kind. Both paths run the one executor
+     that ADR-0007 asks for. Dan closed this question on 8 November
+     2026.
 - **Issues.** #1318 and #1279 are closed by steps 1 and 2. #1309, short
   tokens, is a stage in the analyzer. The searchable-encryption investigation is
   independent: a future SSE index is one more index declaration.
@@ -2244,13 +2248,11 @@ The lead who approves this plan decides each question.
 | Question | Options | Recommendation |
 | --- | --- | --- |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
-| Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
 | Should this plan ask ZeroKMS version 2 to derive the data key over the key request items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
 | Which change owns envelope version `0x02`: this plan's key request items, or #1524's key backend header? | One version 2 header that carries both, shared with the EQL key header `h`. Or separate bytes | One header. Decide with the key-vendor work before either lands |
-| Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
-| Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
+| Which Vitamin C crate should own `Base64Text` and `Base85Text`? | A new Vitamin C types crate that also holds key types. Or a small encoding crate | Vitamin C owns them, decided by Dan on 8 November 2026. The crate is to be confirmed, probably the types crate |
 | What crate layout should the final API use? | The proposal in the packaging document | Review the layout proposal when the crate moves begin. The names are decided |
 
 ### Names decided in the naming review

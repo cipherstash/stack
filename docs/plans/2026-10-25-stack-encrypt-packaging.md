@@ -308,7 +308,7 @@ combined trait.
 | `Query`, `Stored` | The two marker traits on term types: a value a query sends, and a stored index term. Today `op::QueryTerm` and `LabelledTarget` |
 | `Op` | The public dynamic operator enum, today `OpSpec` |
 | `Plan`, `Planned` on the wire | The two shapes a binding sends: a serialised `Plan` alone for checks, operator lists, and query plans, and a serialised `Planned` for encrypt, query, and decrypt. There is no `Request` type |
-| `encoding::{Base64Text, Base85Text}` | Validated encodings of arbitrary bytes. An EQL payload's key header `h` is Base64 and its ciphertext `c` is Base85; a bare ciphertext as text is Base64. The plan recommends a small Vitamin C encoding crate that Stack Encrypt and EQL re-export; the owner is an open question in the plan |
+| `encoding::{Base64Text, Base85Text}` | Validated encodings of arbitrary bytes. An EQL payload's key header `h` is Base64 and its ciphertext `c` is Base85; a bare ciphertext as text is Base64. Vitamin C owns them, decided on 8 November 2026, re-exported by Stack Encrypt and EQL. Which Vitamin C crate is still to be confirmed, probably a types crate that also holds key types |
 | `encoding::Base64Ciphertext` | The validated, encoded representation of an opaque ciphertext, and a supported field target. Valid encoding alone is not enough |
 | `provider` | Neutral provider contracts and capability bounds |
 | `provider::zerokms` | The ZeroKMS adapter and the surface for its claims, including `Claim` and `ResolvesClaims` |
