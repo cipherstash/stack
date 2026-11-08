@@ -149,6 +149,13 @@ function extractWorkspaceIdFromCrn(crn: string): string {
   return match[1]
 }
 
+/**
+ * The workspace ID to mint sessions for, read from `suppliedCrn` or else the
+ * `CS_WORKSPACE_CRN` environment variable.
+ *
+ * @throws When neither is set, or the CRN is not of the form
+ *   `crn:<region>:<workspace id>`.
+ */
 export function loadWorkSpaceId(suppliedCrn?: string): string {
   if (suppliedCrn) {
     return extractWorkspaceIdFromCrn(suppliedCrn)
@@ -163,7 +170,14 @@ export function loadWorkSpaceId(suppliedCrn?: string): string {
   return extractWorkspaceIdFromCrn(process.env.CS_WORKSPACE_CRN)
 }
 
-// Can be used independently of the Next.js middleware
+/**
+ * Exchange `oidcToken` for a CTS session token through CTS `/api/authorize`.
+ * Writes no cookie, so it can be used outside the Next.js middleware.
+ *
+ * Never throws for a CTS refusal, an unreachable CTS, or a success body that is
+ * not an unexpired token: each is returned as `{ success: false }`, with
+ * `authCode` set when CTS attached a refusal code.
+ */
 export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
   const workspaceId = loadWorkSpaceId()
 

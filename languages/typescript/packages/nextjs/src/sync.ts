@@ -50,6 +50,11 @@ export async function syncCtsSession(
   return forwardCtsSession(req, await decide(req, identity, res))
 }
 
+/**
+ * The session decision {@link syncCtsSession} makes, before the forwarded
+ * request is brought in line with it: returns `res` (or a pass-through
+ * response) with the session cookie kept, written or deleted.
+ */
 async function decide(
   req: NextRequest,
   identity: SessionIdentity | undefined,

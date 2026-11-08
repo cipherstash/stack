@@ -89,6 +89,11 @@ export const getCtsToken = async (oidcToken?: string): GetCtsTokenResponse => {
   return { success: true, ctsToken: ctsTokenOf(session) }
 }
 
+/**
+ * Delete the CipherStash session cookie, on `res` or on a new pass-through
+ * response. Use it when a user signs out on a route the middleware does not
+ * cover.
+ */
 export const resetCtsToken = (res?: NextResponse) =>
   clearCtsSession(res ?? NextResponse.next())
 

@@ -39,6 +39,7 @@ export type SessionOwner = { issuer: string; subject: string }
  */
 export type CtsSession = CtsToken & { owner?: SessionOwner }
 
+/** Whether `value` is a string with at least one character. */
 const nonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value !== ''
 
@@ -64,6 +65,11 @@ export function parseCtsToken(value: unknown): CtsToken | undefined {
   return { accessToken, expiry }
 }
 
+/**
+ * Validate a cookie's recorded owner: an object with a non-empty string
+ * `issuer` and `subject`. Anything else is `undefined`, leaving the session
+ * unowned.
+ */
 function parseOwner(value: unknown): SessionOwner | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const { issuer, subject } = value as Record<string, unknown>
@@ -183,6 +189,7 @@ export function clearCtsSession(response: NextResponse) {
 
 const OVERRIDE_HEADERS = 'x-middleware-override-headers'
 
+/** The names of every header in `headers`, lower-cased as `Headers` stores them. */
 function headerNames(headers: Headers): string[] {
   const names: string[] = []
   headers.forEach((_value, key) => {
