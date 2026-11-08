@@ -1,7 +1,7 @@
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { EncryptionFactory, Introspector } from '../src/create'
 import { makeEncryptedSupabase } from '../src/create'
 import type { IntrospectionData } from '../src/introspect'
@@ -253,12 +253,24 @@ describe('plaintext table rows that carry ciphertext', () => {
   })
 
   it('never names a key inside a jsonb document', async () => {
-    const rows = [{ id: 1, meta: { 'ssn-078-05-1120': envelope } }]
-    const { es } = await introspectedClient(rows)
-    const { error } = await es.from('audit_log').select('id, meta')
+    const { logger } = await import('@cipherstash/stack/adapter-kit')
+    const logged = vi.spyOn(logger, 'error').mockImplementation(() => {})
+    try {
+      const rows = [{ id: 1, meta: { 'ssn-078-05-1120': envelope } }]
+      const { es } = await introspectedClient(rows)
+      const { error } = await es.from('audit_log').select('id, meta')
 
-    expect(error?.message).toContain('"[0].meta"')
-    expect(error?.message).not.toContain('ssn-078-05-1120')
+      expect(error?.message).toContain('"[0].meta"')
+      expect(error?.message).not.toContain('ssn-078-05-1120')
+      // The message reaches the logger too, so the log must not carry it either.
+      expect(logged).toHaveBeenCalled()
+      for (const args of logged.mock.calls) {
+        expect(args.join(' ')).toContain('"[0].meta"')
+        expect(args.join(' ')).not.toContain('ssn-078-05-1120')
+      }
+    } finally {
+      logged.mockRestore()
+    }
   })
 
   it('refuses a single row the same way', async () => {
