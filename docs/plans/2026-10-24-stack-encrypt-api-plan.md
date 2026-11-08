@@ -28,6 +28,22 @@ Three documents go with it:
 The names this plan uses as placeholders are listed in [Names deferred to
 the naming review](#names-deferred-to-the-naming-review), at the end.
 
+## Contents
+
+- [Terms](#terms)
+- [Target state](#target-state)
+  - [Rust with static types](#rust-with-static-types)
+  - [The dynamic interface](#the-dynamic-interface)
+  - [Rules in the target state](#rules-in-the-target-state)
+- [Remaining work](#remaining-work)
+  - [1. The Go module](#1-the-go-module)
+  - [2. The stored format](#2-the-stored-format)
+  - [3. The Rust API](#3-the-rust-api)
+  - [4. The query engine](#4-the-query-engine)
+  - [5. Packaging, and two key provider features](#5-packaging-and-two-key-provider-features)
+- [Open questions and decisions to be made](#open-questions-and-decisions-to-be-made)
+  - [Names deferred to the naming review](#names-deferred-to-the-naming-review)
+
 ## Terms
 
 | Term | Meaning |
@@ -50,7 +66,7 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
 | Label | A named, typed fact added to a stored value's key tag after encryption, such as `row_id` or `written_by`. ZeroKMS verifies it and logs it. It restricts no reader. See [Labels](#labels) |
-| Lock context | The ZeroKMS protocol's list of items beside the descriptor of a key request. ZeroKMS folds them into the key tag. Stack Encrypt will send scopes, bindings, and claims as these items |
+| Key context | The list of items a key request sends to the provider beside the descriptor. Stack Encrypt will send each scope, binding, and claim as one item, and the provider folds them into the key tag |
 | n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a caveat use it |
@@ -1174,17 +1190,17 @@ format version beside it.
 | Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
-| Context parts as lock context items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
+| Context parts as key context items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
 
-#### Context parts as lock context items
+#### Context parts as key context items
 
 Decided on 8 November 2026. [Binds move from the descriptor to lock
 context
-items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-lock-context-items)
+items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-key-context-items)
 has the design.
 
 - **What to build.** New values send each scope and binding to ZeroKMS
-  as a lock context item. Each item is a name with a value. The descriptor shrinks to
+  as a key context item. Each item is a name with a value. The descriptor shrinks to
   the context name. The `SealedValue` format version becomes `0x02` for
   these values. On decrypt, the engine reads the version byte and sends
   the request in the form the value was written with.
@@ -2047,7 +2063,7 @@ The lead who approves this plan decides each question.
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
-| Should ZeroKMS version 2 derive the data key over the lock context items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
+| Should ZeroKMS version 2 derive the data key over the key context items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
 | Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |

@@ -23,6 +23,29 @@ context](2026-10-24-stack-encrypt-api-plan.md#query-context-and-stored-context)
 section gives the context model that binds and claims extend. None of
 the code below is on `next` today.
 
+## Contents
+
+- [Terms](#terms)
+- [How ZeroKMS works today](#how-zerokms-works-today)
+- [Three mechanisms, and when to use each](#three-mechanisms-and-when-to-use-each)
+  - [Guards for the developer](#guards-for-the-developer)
+- [Binds move from the descriptor to key context items](#binds-move-from-the-descriptor-to-key-context-items)
+  - [A new envelope version](#a-new-envelope-version)
+- [Claims](#claims)
+  - [Declaring a claim](#declaring-a-claim)
+  - [Which token](#which-token)
+  - [Other provider facts](#other-provider-facts)
+- [Labels](#labels)
+  - [How it works](#how-it-works)
+  - [Rules for labels](#rules-for-labels)
+  - [ZeroKMS can write a label](#zerokms-can-write-a-label)
+  - [Labelling in Rust and SQL](#labelling-in-rust-and-sql)
+  - [Go, and labelling many values](#go-and-labelling-many-values)
+  - [The labels list in the payload](#the-labels-list-in-the-payload)
+  - [Example: access intelligence for a notes table](#example-access-intelligence-for-a-notes-table)
+- [What ZeroKMS must do](#what-zerokms-must-do)
+- [Open questions](#open-questions)
+
 ## Terms
 
 | Term | Meaning |
@@ -31,7 +54,7 @@ the code below is on `next` today.
 | Claim | A bind whose value the key provider resolves from the caller's verified token, such as `sub`. The client names it and never sees the value |
 | Label | A named, typed fact added to a stored value's key tag after encryption. ZeroKMS verifies it when it returns the key, and logs it. It restricts nothing |
 | Descriptor | The string a key request names its key under. ZeroKMS derives the data key from it. Today Stack Encrypt renders the whole stored context into it |
-| Lock context | The ZeroKMS protocol's list of items beside the descriptor: a tag, a name and value, or an identity claim. ZeroKMS folds the items into the key tag |
+| Key context | The list of items a key request sends to the provider beside the descriptor: each scope, binding, and claim as one item. The provider folds the items into the key tag. The ZeroKMS protocol's field for this list is still named `context`, and its older name was lock context; ZeroKMS version 2 drops that name |
 | Key tag | The HMAC ZeroKMS returns with a data key. A reader must present it to get the key again. Stack Encrypt binds it into every leaf's AAD |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other |
 
@@ -57,8 +80,8 @@ These facts were verified in the Vitur server, in
   semantics over claims. It is the earlier policy-engine design. This
   plan retires it.
 
-So a lock context item is enforced by a check. The descriptor is
-enforced by derivation. If ZeroKMS skipped the check, a lock context item
+So a key context item is enforced by a check. The descriptor is
+enforced by derivation. If ZeroKMS skipped the check, a key context item
 would not stop decryption, because the key does not depend on it. A
 descriptor part cannot be skipped, because the key is derived from it.
 
@@ -96,18 +119,18 @@ developer from choosing the strict one by accident.
    ZeroKMS at generate time. The claim is the stricter option, with its
    cost spelled out.
 
-## Binds move from the descriptor to lock context items
+## Binds move from the descriptor to key context items
 
 Today Stack Encrypt renders the whole stored context into the descriptor
-string, frozen, and sends an empty lock context. Decided on 8 November
-2026: new values send the context's parts as lock context items instead.
+string, frozen, and sends an empty key context. Decided on 8 November
+2026: new values send the context's parts as key context items instead.
 Each scope and binding becomes a name-and-value item. The descriptor
 shrinks to the context name, such as the table and column.
 
 This removes the 512-byte limit on a context, and it gives ZeroKMS the
 parts as structure instead of one string it logs and cannot parse.
 
-### Stored format
+### A new envelope version
 
 A key generated under a descriptor must be retrieved under the same
 descriptor. So this is a stored-format change, under the plan's
@@ -127,7 +150,7 @@ Two things the move changes, for ZeroKMS to know:
 - Under version 2, a context part is enforced by the tag check, not by
   key derivation. Under version 1 it was both. [What ZeroKMS must
   do](#what-zerokms-must-do) asks version 2 of ZeroKMS to close that gap.
-- The protocol says lock context items "should never include sensitive
+- The ZeroKMS protocol says the items "should never include sensitive
   information". A tenant ID or row ID reaches ZeroKMS as an item instead
   of inside the descriptor, so nothing new is sent. The plan states the
   rule rather than assuming it.
@@ -144,7 +167,7 @@ A claim is on the stored-context side of the plan's rule, with the
 bindings. The client never sees the value, so no search term can derive
 from it. A claim is never a scope.
 
-### API
+### Declaring a claim
 
 The claim type belongs to the provider, and a capability trait gates it
 at compile time:
@@ -277,16 +300,46 @@ The reader passes nothing. The tag and the labels are in the row.
 
 At generate time, ZeroKMS can resolve a claim and label the tag with it
 before returning. `written_by = sub` is the example. The request lists
-the claims to label with. That list is separate from the lock context
+the claims to label with. That list is separate from the key context
 items to bind with, so the two intents are separate on the wire.
 
-The client stores the returned tag and the label. The chain is
-unchanged. The author of one link is the server. The value is more trustworthy than a
-client-written label, because the client never had the chance to assert
-it. This is the recommended way to record who wrote a value for access
-intelligence, and it restricts no reader.
+The value is more trustworthy than a client-written label, because the
+client never had the chance to assert it. This is the recommended way to
+record who wrote a value for access intelligence.
 
-### API
+**The response returns two tags: the base tag and the labelled tag.**
+The client binds the base tag into the leaf AAD. It stores the labelled
+tag with the label, as it does for a label it writes itself. So every
+label is outside the AAD, whoever wrote it.
+
+The read path has one rule. ZeroKMS returns the base tag, and the
+client rebuilds the AAD from it.
+
+A server-written label is still not a bind. Dan asked on 8 November
+2026 whether it becomes one, since the client could bind the labelled
+tag into the AAD instead. It does not, for two reasons.
+
+- **Nothing about the reader is checked against a label.** The labelled
+  tag and the label's value are stored in the row in the clear. A reader
+  presents them as they are. ZeroKMS recomputes the chain from the base
+  tag and the stored labels. The check passes for any reader whose key
+  context items resolve. A bind is different: ZeroKMS resolves a claim
+  from the reader's token, or the reader supplies a value, and ZeroKMS
+  compares that with the tag. A label asks nothing of the reader.
+- **Binding the labelled tag into the AAD would add tamper evidence,
+  not access control.** It would stop a label being stripped or altered
+  without the AEAD failing. ZeroKMS already refuses a chain it cannot
+  reproduce, so that evidence is redundant. It would also break the
+  single rule above. The client would have to know which labels were
+  applied before encryption and which after, to rebuild the AAD.
+  Returning the base tag keeps every label the same.
+
+One privacy consequence to state: a server-written `written_by` puts the
+writer's `sub` in the row in the clear, beside the ciphertext. That is
+the point of the label for access intelligence. It must be a choice the
+declaration makes, never a default.
+
+### Labelling in Rust and SQL
 
 In Rust, `label` adds a label to an EQL value. It returns the labelled
 value, so calls chain. A JSON document has one tag in its header, so it
@@ -353,7 +406,7 @@ for _, l := range rows[0].Body.Labels() {
 The dynamic interface has `label` and `labels` as operations on a stored
 value, and the Go methods call them.
 
-### Stored format
+### The labels list in the payload
 
 An optional `labels` list is added to the EQL payload. The list is
 present only once a label has been added. A payload without it is the
@@ -421,7 +474,7 @@ For binds and claims:
 
 - Accept the context name as the descriptor and the parts as lock
   context items, as it does today. No change for the first release.
-- **Version 2 derives the data key over the lock context items as well
+- **Version 2 derives the data key over the key context items as well
   as the descriptor.** Then a bind or a claim is enforced by derivation,
   not by a check that could be skipped. A reader with a different claim
   value gets a different key, and the leaf fails to open.
@@ -438,7 +491,7 @@ For labels:
 - The response returns the original tag with the key material. Today's
   pinned protocol returns key material only.
 - The generate-key request includes a list of claims to label with. The
-  response returns the labelled tag and the label.
+  response returns the base tag, the labelled tag, and the label.
 - Policy over labels comes later. A policy can be changed. A bind
   cannot.
 

@@ -5,6 +5,32 @@ Dated 25 October 2026, with implementation updates on 27 October 2026 and
 This recommendation for review accompanies the
 [implementation plan](2026-10-24-stack-encrypt-api-plan.md).
 
+## Contents
+
+- [Status](#status)
+- [Summary of recommendations](#summary-of-recommendations)
+- [Terms used in this document](#terms-used-in-this-document)
+- [Facts this proposal relies on](#facts-this-proposal-relies-on)
+- [Ownership rule](#ownership-rule)
+- [Proposed packages](#proposed-packages)
+  - [Crates that stay as they are](#crates-that-stay-as-they-are)
+  - [Modules, not more crates](#modules-not-more-crates)
+  - [Why the format crate is needed](#why-the-format-crate-is-needed)
+- [Dependency direction](#dependency-direction)
+  - [Providers as optional features](#providers-as-optional-features)
+- [What moves out of Vitamin C](#what-moves-out-of-vitamin-c)
+  - [Frames and codecs](#frames-and-codecs)
+  - [Normalisation and index adapters](#normalisation-and-index-adapters)
+  - [Context encoding](#context-encoding)
+- [Retire AsyncCipher](#retire-asynccipher)
+- [Recommended public glossary](#recommended-public-glossary)
+  - [Spellings already agreed](#spellings-already-agreed)
+  - [Definition, layout, seal, and open](#definition-layout-seal-and-open)
+  - [Ciphertext types in the format crate](#ciphertext-types-in-the-format-crate)
+- [JSON names by role](#json-names-by-role)
+  - [Notes on the JSON names](#notes-on-the-json-names)
+- [Implementation order and acceptance](#implementation-order-and-acceptance)
+
 ## Status
 
 This document proposes boundaries and names. The proposals are not
@@ -73,7 +99,7 @@ them.
 | `stack-encrypt` | The public Rust API; traversing and reconstructing values; target declarations and definitions; context and scope roles; normalisation and adapters for searchable targets; plans; batching; JSON tree execution; and validating and executing dynamic definitions |
 | `stack-encrypt-derive` | Derive macros that generate the same declarations and definitions a user can write by hand. `stack-encrypt` re-exports the derives |
 | `stack-encrypt-format` (new) | Pure data representations and codecs shared by the engine and the bindings: frame primitives and the required scalar representations, the stable format of stored blobs, parsing and encoding of the ciphertext envelope, and validated Base64 and Base85 text. No key requests and no execution runtime |
-| `stack-zerokms` (the current `stack-kms`, renamed) | The ZeroKMS protocol client, authentication integration, native keysets, request types for lock context, and responses. Not the neutral abstraction over several providers |
+| `stack-zerokms` (the current `stack-kms`, renamed) | The ZeroKMS protocol client, authentication integration, native keysets, request types for the key context, and responses. Not the neutral abstraction over several providers |
 | `eql-bindings` | EQL storage and query types by version, JSON serialisation compatible with SQL, the catalog, and Stack target adapters. Stays downstream of the engine |
 | Vitamin C crates | Protected memory; randomness; AEAD and key operations on bytes; HMAC, PRF, and ORE algorithm primitives; and reusable canonical encoding of context |
 

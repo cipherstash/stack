@@ -19,6 +19,18 @@ The code below is proposed. None of it compiles on `next` today. The
 rules are decided; the attribute spellings, such as `scope(tenant: u64)`,
 are illustrative.
 
+## Contents
+
+- [How to read the examples](#how-to-read-the-examples)
+- [1. A static context only](#1-a-static-context-only)
+- [2. A scope the caller supplies and does not store](#2-a-scope-the-caller-supplies-and-does-not-store)
+- [3. A scope taken from the plaintext and stored in the row](#3-a-scope-taken-from-the-plaintext-and-stored-in-the-row)
+- [4. A binding stored in the row](#4-a-binding-stored-in-the-row)
+- [5. A stored scope and a stored binding](#5-a-stored-scope-and-a-stored-binding)
+- [6. A stored part and a caller-supplied part together](#6-a-stored-part-and-a-caller-supplied-part-together)
+- [7. A scope the caller supplies on every call and never stores](#7-a-scope-the-caller-supplies-on-every-call-and-never-stores)
+- [8. An EQL type, with its column as the context](#8-an-eql-type-with-its-column-as-the-context)
+
 ## How to read the examples
 
 - `scope(tenant: u64)` declares a scope the caller supplies on every call.
