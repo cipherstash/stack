@@ -9,11 +9,11 @@ The small Protect.js application, storing encrypted data in DynamoDB and Postgre
 _Avoid_: sample app, demo app, test app
 
 **Run**:
-One Migrator's attempt to upgrade a fresh copy of the Fixture App, followed by the Oracle's verdict on it.
+One configured execution of the harness pipeline on a fresh Fixture App, ending in a Run Report; setup or agent failures may prevent the Migrator or Oracle from running.
 _Avoid_: trial, attempt, episode
 
 **Legacy Data**:
-Records the unmigrated Fixture App writes before a Migrator starts, distinct from Mutation Data. The Oracle copy remains immutable for no-rewrite checks; the Migrator copy may be changed during exploration.
+Records the unmigrated Fixture App writes before a Migrator starts, distinct from Mutation Data. The Oracle copy is expected to remain unchanged, and a no-rewrite failure detects any change; the Migrator copy may be changed during exploration.
 _Avoid_: seed data, fixtures, old data
 
 **Iteration**:
@@ -29,11 +29,11 @@ The deterministic checks that decide whether a Run passed. No agent takes part, 
 _Avoid_: grader, judge, evaluator
 
 **App Host**:
-The restricted process in which the Oracle installs and runs a migrated Fixture App, with access to the npm registry, CipherStash services and only its own Run's Oracle stores, while Protected Resources remain outside it.
+The restricted process in which the Oracle installs and runs a migrated Fixture App, with access to the npm registry, CipherStash services and only its own Run's Oracle Stores, while Protected Resources remain outside it.
 _Avoid_: runner, worker, sandbox
 
 **Editor**:
-The agent that revises the guide from an Iteration's exported Oracle results, Friction Logs, diffs and transcripts.
+The agent that revises the guide from eligible Run Reports in Iteration Results.
 _Avoid_: improver, reviewer, author
 
 **Reference Migration**:
@@ -65,7 +65,7 @@ The typed review artifact containing claims that need tests, skill drift, and ev
 _Avoid_: Needs-test List
 
 **Run Report**:
-The harness-produced record of a Run's outcomes, Oracle results, manifest, diff, Friction Log and transcript.
+The harness-produced record of a Run's outcomes, Oracle results, Run Manifest, diff, Friction Log and transcript.
 _Avoid_: run output
 
 **Fake Editor**:
@@ -77,13 +77,37 @@ A deliberately incorrect migrated Fixture App used to establish a specific Oracl
 _Avoid_: fake migration
 
 **Protected Resources**:
-The checkout, Oracle source and assertions, snapshots, Reference Migration, other Runs' workspaces and credentials, and host-side model credentials excluded from agent and App Host access. Assigned application credentials are not protected from the process that needs them, but never belong in Editor evidence.
+The source checkout (not explicitly exported copies), Oracle source and assertions, snapshots, Reference Migration, raw artifacts, other Runs' workspaces and credentials, and host-side model credentials excluded from restricted processes. Assigned application credentials are not protected from the process that needs them, but never belong in Editor evidence.
 _Avoid_: hidden Oracle evidence, hidden set
 
 **Iteration Results**:
-The exported, redacted Run evidence and edit disposition for one Iteration.
+The exported, redacted Run Reports and evidence catalog for one Iteration, extended with edit disposition after the Editor finishes.
 _Avoid_: iteration output
 
 **Loop Summary**:
 The human-review artifact aggregating Iteration Results, pass rates, friction, kept/reverted edits and the Review List across a Loop.
 _Avoid_: loop report
+
+**Clean Iteration**:
+A complete Iteration in which every Run Slot passes and no Friction Log contains actionable friction.
+_Avoid_: clean round
+
+**Store Set**:
+One Run's dedicated DynamoDB Local instance and Postgres database, assigned either to its Migrator or its App Host.
+_Avoid_: database pair
+
+**Migrator Stores**:
+The Store Set assigned to a Migrator for exploration and application verification.
+_Avoid_: agent databases
+
+**Oracle Stores**:
+The separate Store Set accessed by the harness and App Host for deterministic Oracle checks.
+_Avoid_: acceptance databases
+
+**Run Manifest**:
+The reproducibility metadata attached to a Run Report, identifying Stack, guide, Fixture App and agent configuration.
+_Avoid_: run metadata
+
+**Migrator Environment**:
+The OS-restricted execution environment for a Migrator's commands, separate from its host-side model broker.
+_Avoid_: Migrator sandbox
