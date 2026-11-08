@@ -3,13 +3,13 @@ status: proposed
 date: 2026-11-09
 ---
 
-# Test migration guide usability with isolated agent Runs
+# Test upgrade guide usability with isolated agent Runs
 
 Compatibility tests establish supported encryption operations but cannot show
-whether a reader can follow the Protect.js migration guide. We will use a local
+whether a reader can follow the Protect.js upgrade guide. We will use a local
 Migration Harness: a Migrator upgrades a fresh Fixture App, a deterministic Oracle
 checks it through a restricted App Host, and an Editor revises the guide from
-Iteration Results. The [implementation plan](../../../../docs/plans/migration-harness.md)
+Iteration Results. The [implementation plan](../../../../docs/plans/2026-11-09-migration-harness.md)
 retains the reviewed requirements from [issue #1540](https://github.com/cipherstash/stack/issues/1540);
 terms follow the [context glossary](../../CONTEXT.md).
 
@@ -25,7 +25,7 @@ Test at whole Run and Iteration boundaries using swappable agent commands. Prese
 Legacy Data for no-rewrite checks and use distinct Mutation Data for updates.
 A Reference Migration proves the Oracle is passable; failures still require
 diagnosis before guide edits. Require valid Friction Logs and two consecutive
-clean Iterations on the same guide revision before declaring convergence.
+Clean Iterations on the same guide revision before declaring convergence.
 
 ## Considered Options
 
