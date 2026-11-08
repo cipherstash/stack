@@ -1236,7 +1236,7 @@ format version beside it.
 | Planned change | What it would alter |
 | --- | --- |
 | Search terms under the query context | A new form of search term, beside the rc.3 form, where terms derive under every part |
-| Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
+| A Base64 text encoding as a field target | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
 | Context parts as key request items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
@@ -1345,20 +1345,20 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
 
 #### Typed text encodings and key tag extraction
 
-- **What to build.**
-  - `to_base64` and `to_base85` methods on `Ciphertext`. They return the
-    existing `Base64Text` and `Base85Text` types, not `String`.
-  - Field targets that store a ciphertext as text. Their working names are
-    `Base64Ciphertext` and `Base85Ciphertext`. Each one checks both the text
-    and the envelope.  - A SQL and PL/pgSQL function that reads the ZeroKMS key tag from a stored
+- **What to build.**  - A `to_base64` method on `Ciphertext`. It returns the existing
+    `Base64Text` type, not `String`.
+  - One field target that stores a ciphertext as text, with the working
+    name `Base64Ciphertext`. It checks both the text and the envelope.
+  - A SQL and PL/pgSQL function that reads the ZeroKMS key tag from a stored
     ciphertext. It must check the version and the lengths before it reads.
   - The writing form of the same layout, so that `eql_v4.label_tag` can
     put a labelled tag back into the envelope.
 - **Why.** Some columns store ciphertext as text. SQL needs to read the key
   tag to label it.
-- **Limits.** PostgreSQL can decode Base64, but not Base85. So SQL can read
-  the key tag from Base85 text only if we supply a decoder. Reading the tag
-  does not authenticate it.
+- **Base64 only.** `eql_v4.label_tag` must read the key tag and write it
+  back in PL/pgSQL. PostgreSQL decodes Base64 itself and has no Base85.
+  So there is no Base85 ciphertext target. Decided by Dan on 8 November
+  2026. Reading the tag does not authenticate it.
 - **Done already.** `Ciphertext` is stored as bytes, and Serde writes it as
   Base64. `Ciphertext::key_tag` reads the tag in Rust (#1404).
 - **Finished when** these are all true:
@@ -2156,7 +2156,7 @@ The lead who approves this plan decides each question.
 | Should this plan ask ZeroKMS version 2 to derive the data key over the key request items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
 | Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
-| Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
+| Which crate should own `Base64Text`? | A small Vitamin C encoding crate. Or keep it in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
 | What crate layout should the final API use? | The proposal in the packaging document | Review the layout proposal when the crate moves begin. The names are decided |
 
 ### Names decided in the naming review
@@ -2179,7 +2179,7 @@ renames.
 | `Op` | The public dynamic operator enum, today `OpSpec` |
 | The chain `Scope::new(..)`, `Bind::new(..)`, `Scope::new(..).bind(..)` | The caller-supplied context input. No separate type; `ContextExtension` from #1504 goes. A trait bound, `impl ContextParts`, names what an entry point accepts |
 | `JsonTreeDocument`, `JsonTreeQuery`, `JsonTreeLeafQuery`, `JsonTreeElementsQuery`, `JsonTreePredicateQuery` | Kept. The SQL domain `eql_v4_json_search` and the dynamic target `JsonSearch` are the other two names of the one stored type |
-| `Planned`, `Positioned<Vec<T>>`, `Claim`, `ResolvesClaims`, `#[derive(Scalar)]`, `Base64Ciphertext`, `Base85Ciphertext` | Confirmed |
+| `Planned`, `Positioned<Vec<T>>`, `Claim`, `ResolvesClaims`, `#[derive(Scalar)]`, `Base64Ciphertext` | Confirmed. `Base85Ciphertext` is dropped: PL/pgSQL must read and write the key tag, and PostgreSQL decodes only Base64 |
 | `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
