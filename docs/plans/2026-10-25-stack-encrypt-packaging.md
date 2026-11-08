@@ -305,10 +305,9 @@ combined trait.
 | `target::{EncryptTarget, DecryptSource}` | Declaration traits. The matching derives are re-exported at the crate root |
 | `Plan` | A record's declaration as data, built once, shared by the static and dynamic paths. Built by `Plan::context(..).fields(..)`. Decided on 8 November 2026; `TargetDefinition` is dropped |
 | `Scope`, `Bind` | The context argument's two kinds of part, as the plan has them. Neither selects a keyset. The chain they build is the context input; there is no separate type |
-| `ContextName` | The descriptor path type, `users/email`, today `Label`. Renamed so that `Label` is the key tag fact |
 | `Query`, `Stored` | The two marker traits on term types: a value a query sends, and a stored index term. Today `op::QueryTerm` and `LabelledTarget` |
 | `Op` | The public dynamic operator enum, today `OpSpec` |
-| `Request`, `KeyRequest` | The wire form `{plan, context, value}`, and the crate-private ZeroKMS unit of work, today `Request` |
+| `Plan`, `Planned` on the wire | The two shapes a binding sends: a serialised `Plan` alone for checks, operator lists, and query plans, and a serialised `Planned` for encrypt, query, and decrypt. There is no `Request` type |
 | `encoding::{Base64Text, Base85Text}` | Validated encoding of arbitrary bytes. The plan recommends a small Vitamin C encoding crate that Stack Encrypt and EQL re-export; the owner is an open question in the plan |
 | `encoding::{Base64Ciphertext, Base85Ciphertext}` | Validated, encoded representations of opaque ciphertext, and supported field targets. Valid encoding alone is not enough |
 | `provider` | Neutral provider contracts and capability bounds |
