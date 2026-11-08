@@ -966,6 +966,12 @@ the field's name scope. The caller supplies the rest.
 - **The stored context** is the query context followed by the bindings.
   The data key and the AAD derive under it.
 
+The kind of a part is not in the derivation. Two contexts with the same
+parts in the same order give the same key, the same AAD, and the same
+descriptor, whatever their kinds. The kind decides only which parts are
+in the query context. rc.3 data has no kinds. This rule is what keeps it
+deriving the same way. Decided by Dan on 8 November 2026.
+
 A field's **name scope** is its last declared scope: the field's name by
 default. It can be pinned when the Rust field is renamed, so that
 stored data keeps opening.
@@ -1240,8 +1246,9 @@ format version beside it.
 Decided on 8 November 2026. [Binds move from the descriptor to key request items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-key-request-items)
 has the design.
 
-- **What to build.** New values send each scope and binding to ZeroKMS
-  as a key request item. Each item is a name with a value. The descriptor shrinks to the name scopes: the record name and the field
+- **What to build.** New values send each scope and binding to ZeroKMS  as a key request item. Each item is a name with a value, never the
+  part's kind, because [the kind is not in the
+  derivation](#query-context-and-stored-context). The descriptor shrinks to the name scopes: the record name and the field
   name.
   The `SealedValue` format version becomes `0x02` for
   these values. On decrypt, the engine reads the version byte and sends

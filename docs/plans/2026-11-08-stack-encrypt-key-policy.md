@@ -147,6 +147,10 @@ string, frozen, and sends no key request items. Decided on 8 November
 Each scope and binding becomes a name-and-value item. The descriptor
 shrinks to the name scopes, such as the table and column.
 
+The item never carries the part's kind. The plan's rule is that the kind
+is not in the derivation. So a scope and a binding with the same value
+are the same item.
+
 This removes the 512-byte limit on a context, and it gives ZeroKMS the
 parts as structure instead of one string it logs and cannot parse.
 
