@@ -1,11 +1,14 @@
 # EQL v4: encrypted JSON documents
 
 A `public.eql_v4_json_search` column stores one encrypted JSON document.
-Without the key, PostgreSQL can test containment, extract an entry by path,
-compare the value at a path, read a subtree, and count children. This page
-gives the SQL for each. Every parameter in it is a value the SDK derives from
-the column and the path: a query, a selector, or a list of tokens. No
-plaintext path reaches the database.
+PostgreSQL holds no key of any kind. It can still test containment, extract
+an entry by path, compare the value at a path, read a subtree, and count
+children. It does so by comparing values the SDK derived under the keyset's
+index key.
+
+This page gives the SQL for each. Every parameter in it is such a value: a
+query, a selector, or a list of tokens. The database cannot derive a
+selector or a token itself, and no plaintext path reaches it.
 
 For what the stored document and each query reveal, read [What an encrypted
 JSON tree reveals](json-tree-leakage.md). For the element and predicate
@@ -111,8 +114,8 @@ SELECT id, profile ->> $1::text AS entry_text FROM customers;
 Every element of an array shares its array's selector. So at a path that
 runs through an array, such as `$.tags[*]`, `->` returns one of the
 elements, and which one is not specified. The entries are stored in a
-random order since #1379. For every element, use `eql_v4.json_tree_path_query`. It returns one
-row per match:
+random order. For every element, use `eql_v4.json_tree_path_query`. It
+returns one row per match:
 
 ```sql
 SELECT id, x.entry
@@ -257,9 +260,9 @@ why no index serves it.
 - **Return plaintext of every match.** `json_tree_path_query` returns
   encrypted entries. The supported way to grouped plaintext for a path
   through an array is a subtree read with a wildcard bound.
-- **Open a container entry on its own.** Since #1379 each container's tag
-  covers its children's tags, so a container returned without its
-  subtree fails to open. Read the subtree.
+- **Open a container entry on its own.** Each container's tag covers
+  its children's tags, so a container returned without its subtree
+  fails to open. Read the subtree.
 
 ## What is authenticated
 
