@@ -123,9 +123,9 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 /// Every built-in [`OpaqueEncode`] type is one. The trait is sealed, as
 /// `OpaqueEncode` is.
 ///
-/// A successful decrypt returns an ordinary owned value, and nothing wipes
-/// it when it is dropped: `Zeroize` is the bound, not a drop guard. To have
-/// a whole value wiped on drop, decrypt to `OpaqueBlob<Zeroizing<T>>`.
+/// A successful scalar decrypt returns an ordinary owned value, and nothing
+/// wipes it when it is dropped: `Zeroize` is the bound, not a drop guard. A
+/// decrypted `OpaqueBlob<T>` is the exception: it wipes its value on drop.
 pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
 // The bridge from an owned `S` to its borrow's walk: `OpaqueEncode`'s

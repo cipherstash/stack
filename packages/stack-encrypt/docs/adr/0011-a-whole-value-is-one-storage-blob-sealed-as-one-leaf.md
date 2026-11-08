@@ -68,14 +68,17 @@ required to encrypt and to decrypt. On encrypt the owned source is guarded,
 encoded into the self-wiping `Buffer` the profile returns, planned, and wiped
 before the pending is returned; an encoding refusal wipes it too and
 requests no key. On decrypt the opened bytes are held `Protected` until the
-reader returns. The returned `OpaqueBlob<T>` is an ordinary owned value
-and is **not wiped on drop**; `OpaqueBlob<Zeroizing<T>>` is the opt-in
-drop-guarded result. A `Zeroizing<T>` serializes as its `T`, so it stores
-the same blob, and no new adapter is needed. The guard sits inside the blob
-because `OpaqueDecode`'s blanket impl over Vitamin C's `FromScalar` leaves
-no room for a `Zeroizing<_>` impl in this crate: Rust's coherence rules
-allow Vitamin C to add `FromScalar` for `Zeroizing` later. A drop-guarded
-scalar (`Zeroizing<String>`) needs that impl in Vitamin C.
+reader returns. The returned `OpaqueBlob<T>` holds its value in a
+`Zeroizing<T>`, so it **is wiped on drop**, and `into_inner` returns that
+`Zeroizing<T>` rather than a bare `T`, so the value stays guarded once it
+leaves the wrapper. A blob is already an explicit wrapper, so wiping it
+costs the caller nothing they did not ask for. A scalar decrypt still
+returns an ordinary owned value: an opt-in drop guard for a scalar
+(`Zeroizing<String>`) cannot be added here, because `OpaqueDecode`'s
+blanket impl over Vitamin C's `FromScalar` leaves no room for a
+`Zeroizing<_>` impl in this crate. Rust's coherence rules allow Vitamin C
+to add `FromScalar` for `Zeroizing` later, so that impl belongs in
+Vitamin C.
 
 ## What is not claimed
 

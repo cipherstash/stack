@@ -220,8 +220,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! The scalar API accepts owned [`OpaqueEncode`] values. It wipes the owned source
 //! before returning the pending request, including on planning failure. A
 //! successful decrypt returns an ordinary owned value: the caller is then
-//! responsible for its cleanup. A whole value decrypted as
-//! `OpaqueBlob<Zeroizing<T>>` is wiped on drop. Copy types may still have copies held by the
+//! responsible for its cleanup. A whole value decrypted as an
+//! [`OpaqueBlob<T>`](crate::OpaqueBlob) is wiped on drop. Copy types may still have copies held by the
 //! caller, and this is not a guarantee about every compiler-generated copy.
 //!
 //! For target-directed conversion, import [`EncryptInto`] and [`DecryptFrom`]:

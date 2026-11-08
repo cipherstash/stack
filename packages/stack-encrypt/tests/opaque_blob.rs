@@ -62,7 +62,7 @@ async fn a_struct_round_trips_as_one_ciphertext() {
 
     let ct = keyset.encrypt(OpaqueBlob::new(ada())).await.unwrap();
     let opened: OpaqueBlob<Profile> = keyset.decrypt(ct).await.unwrap();
-    assert_eq!(opened.into_inner(), ada());
+    assert_eq!(*opened.into_inner(), ada());
 
     let ct = keyset
         .encrypt_with_context(OpaqueBlob::new(ada()), ("users", "profile"))
@@ -83,10 +83,10 @@ async fn a_struct_round_trips_as_one_ciphertext() {
         OpaqueBlob::<Profile>::decrypt_from_with_context(ct2, &keyset, ("users", "profile"))
             .await
             .unwrap();
-    assert_eq!(opened.into_inner(), ada());
+    assert_eq!(*opened.into_inner(), ada());
     let ct3: Ciphertext = OpaqueBlob::new(ada()).encrypt_into(&keyset).await.unwrap();
     assert_eq!(
-        OpaqueBlob::<Profile>::decrypt_from(ct3, &keyset)
+        *OpaqueBlob::<Profile>::decrypt_from(ct3, &keyset)
             .await
             .unwrap()
             .into_inner(),
@@ -128,7 +128,7 @@ async fn a_blob_is_one_bytes_leaf_of_the_structural_writer() {
         .decrypt_with_context::<OpaqueBlob<Profile>>(Ciphertext::from(leaf), "users/profile")
         .await
         .unwrap();
-    assert_eq!(opened.into_inner(), ada());
+    assert_eq!(*opened.into_inner(), ada());
 
     // OpaqueBlob writer -> structural reader of the bytes.
     let ct = keyset
@@ -141,7 +141,7 @@ async fn a_blob_is_one_bytes_leaf_of_the_structural_writer() {
         .unwrap();
     assert_eq!(&bytes[..4], &HEADER);
     assert_eq!(
-        OpaqueBlob::<Profile>::decode(&bytes).unwrap().into_inner(),
+        *OpaqueBlob::<Profile>::decode(&bytes).unwrap().into_inner(),
         ada()
     );
 }
@@ -164,10 +164,10 @@ fn the_blob_this_crate_writes_is_pinned() {
 #[tokio::test]
 async fn a_go_written_blob_opens_in_rust() {
     let with_nickname = OpaqueBlob::<Profile>::decode(&unhex(GO_BLOB_SOME)).unwrap();
-    assert_eq!(with_nickname.into_inner(), ada());
+    assert_eq!(*with_nickname.into_inner(), ada());
     let without = OpaqueBlob::<Profile>::decode(&unhex(GO_BLOB_NONE)).unwrap();
     assert_eq!(
-        without.into_inner(),
+        *without.into_inner(),
         Profile {
             nickname: None,
             ..ada()
@@ -189,7 +189,7 @@ async fn a_go_written_blob_opens_in_rust() {
         .decrypt_with_context::<OpaqueBlob<Profile>>(Ciphertext::from(leaf), ("users", "value"))
         .await
         .unwrap();
-    assert_eq!(opened.into_inner(), ada());
+    assert_eq!(*opened.into_inner(), ada());
 }
 
 /// One fixed data key, IV and key tag for every request, so a ciphertext
@@ -267,7 +267,7 @@ async fn a_pinned_blob_ciphertext_opens() {
         .decrypt_with_context::<OpaqueBlob<Profile>>(ct.clone(), "users/profile")
         .await
         .unwrap();
-    assert_eq!(opened.into_inner(), ada());
+    assert_eq!(*opened.into_inner(), ada());
     // Under no context, or the wrong one, it never reaches the blob.
     assert!(matches!(
         keyset.decrypt::<OpaqueBlob<Profile>>(ct.clone()).await,
@@ -557,12 +557,22 @@ impl Zeroize for Witness {
     }
 }
 
-/// The drop witness for both halves of the result contract: a decrypted
-/// `OpaqueBlob<T>` is an ordinary value that nothing wipes on drop, and a
-/// decrypted `OpaqueBlob<Zeroizing<T>>` is wiped exactly once when it is
-/// dropped, through `T::zeroize`.
+/// `zeroize` wipes the value when it is called, not only when the wrapper
+/// is dropped: the inner `Zeroizing` would wipe at drop anyway, so this is
+/// the only place an explicit wipe is visible.
+#[test]
+fn zeroize_wipes_the_value_at_once() {
+    let mut blob = OpaqueBlob::new(String::from("secret"));
+    blob.zeroize();
+    assert!(blob.get().is_empty());
+}
+
+/// The drop witness for the result contract: a decrypted `OpaqueBlob<T>`
+/// is wiped exactly once when it is dropped, through `T::zeroize`, and
+/// `into_inner` hands over the guard, so the value it returns is wiped
+/// when that is dropped and not before.
 #[tokio::test]
-async fn only_a_zeroizing_result_is_wiped_on_drop() {
+async fn a_decrypted_blob_is_wiped_on_drop_and_into_inner_keeps_it_guarded() {
     let cipher = common::stack_cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
@@ -574,48 +584,18 @@ async fn only_a_zeroizing_result_is_wiped_on_drop() {
     // Encrypting wiped the source; count from here.
     let before = WITNESS_WIPES.load(Ordering::SeqCst);
 
-    let plain: OpaqueBlob<Witness> = keyset.decrypt(ct.clone()).await.unwrap();
-    assert_eq!(plain.get().value, "secret");
-    drop(plain);
+    let opened: OpaqueBlob<Witness> = keyset.decrypt(ct.clone()).await.unwrap();
+    assert_eq!(opened.get().value, "secret");
     assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before);
-
-    let guarded: OpaqueBlob<Zeroizing<Witness>> = keyset.decrypt(ct).await.unwrap();
-    assert_eq!(guarded.get().value, "secret");
-    assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before);
-    drop(guarded);
+    drop(opened);
     assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before + 1);
-}
 
-/// `OpaqueBlob<Zeroizing<T>>` is the opt-in drop guard: a `Zeroizing<T>`
-/// serializes as its `T`, so the guarded and the unguarded blob store the
-/// same bytes and each opens the other's ciphertext.
-#[tokio::test]
-async fn zeroizing_inside_the_blob_is_the_opt_in_drop_guard() {
-    let cipher = common::stack_cipher().await;
-    let keyset = cipher.default_keyset();
-
-    assert_eq!(
-        OpaqueBlob::new(Zeroizing::new(ada()))
-            .encode()
-            .unwrap()
-            .risky_ref(),
-        OpaqueBlob::new(ada()).encode().unwrap().risky_ref(),
-    );
-
-    let ct = keyset
-        .encrypt(OpaqueBlob::new(Zeroizing::new(ada())))
-        .await
-        .unwrap();
-    let guarded: OpaqueBlob<Zeroizing<Profile>> = keyset.decrypt(ct.clone()).await.unwrap();
-    assert_eq!(**guarded.get(), ada());
-    // The same ciphertext opens unguarded too: the guard is the caller's
-    // choice of result type, not part of the stored value.
-    let plain: OpaqueBlob<Profile> = keyset.decrypt(ct).await.unwrap();
-    assert_eq!(plain.into_inner(), ada());
-
-    let ct = keyset.encrypt(OpaqueBlob::new(ada())).await.unwrap();
-    let guarded: OpaqueBlob<Zeroizing<Profile>> = keyset.decrypt(ct).await.unwrap();
-    assert_eq!(*guarded.into_inner(), ada());
+    let opened: OpaqueBlob<Witness> = keyset.decrypt(ct).await.unwrap();
+    let inner: Zeroizing<Witness> = opened.into_inner();
+    assert_eq!(inner.value, "secret");
+    assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before + 1);
+    drop(inner);
+    assert_eq!(WITNESS_WIPES.load(Ordering::SeqCst), before + 2);
 }
 
 /// Schema evolution is serde's: a default for a new field, an alias for a
@@ -645,7 +625,7 @@ async fn schema_evolution_follows_serde() {
         .unwrap()
         .into_inner();
     assert_eq!(
-        later,
+        *later,
         ProfileV2 {
             name: "Ada Lovelace".into(),
             age: 36,
@@ -766,7 +746,7 @@ async fn a_blob_of_bytes_is_still_a_blob() {
         .unwrap();
     assert_eq!(&bytes[..4], &HEADER);
     assert_eq!(
-        keyset
+        *keyset
             .decrypt::<OpaqueBlob<Raw>>(ct)
             .await
             .unwrap()

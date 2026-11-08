@@ -96,10 +96,7 @@ miette = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror = { workspace = true }
 uuid = { workspace = true }
-# `serde`: a `Zeroizing<T>` serializes as its `T`, so
-# `OpaqueBlob<Zeroizing<T>>` stores the same blob as `OpaqueBlob<T>` and is
-# wiped when it is dropped.
-zeroize = { workspace = true, features = ["serde"] }
+zeroize = { workspace = true }
 # `value::{Date, Timestamp}` to and from chrono's types (the `chrono`
 # feature), and `value::Decimal` to and from rust_decimal's (`rust_decimal`).
 chrono = { version = "0.4.44", optional = true, default-features = false }

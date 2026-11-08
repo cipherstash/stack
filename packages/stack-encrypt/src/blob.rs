@@ -209,12 +209,13 @@
 //! On decrypt, the opened bytes are held `Protected` while the reader runs,
 //! and wiped when it returns, whether it returned a value or a refusal. The
 //! reader borrows text and bytes from that buffer rather than copying them.
-//! The value it returns is an ordinary owned `OpaqueBlob<T>`: the caller
-//! owns it, and **nothing wipes it on drop**. `T: Zeroize` is the bound
-//! that makes wiping possible, not a guard that performs it. To have the
-//! result wiped when it is dropped, decrypt to `OpaqueBlob<Zeroizing<T>>`
-//! (a `Zeroizing<T>` serializes as its `T`, so the stored blob is the same),
-//! or give `T` a `Drop` of its own.
+//! The value it returns is an `OpaqueBlob<T>`, which holds its `T` in a
+//! [`Zeroizing`] and **wipes it when it is dropped**. [`into_inner`] hands
+//! the guard over rather than a bare `T`, so the value stays guarded after
+//! it leaves the wrapper; `Zeroizing<T>` derefs to `T`. A caller who moves
+//! the `T` out of the guard (with `mem::take`, say) owns its cleanup.
+//!
+//! [`into_inner`]: OpaqueBlob::into_inner
 //!
 //! One limit is a property of serde, and is stated rather than solved: a
 //! derived `Deserialize` that has read some fields and then refuses a later
@@ -259,7 +260,7 @@ use serde::Serialize;
 use vitaminc_aead_frame::serde::PathSegment;
 use vitaminc_aead_frame::storage::{self, ErrorKind};
 use vitaminc_protected::{Buffer, Controlled, Protected};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::scalar::sealed;
 use crate::target::Pending;
@@ -282,28 +283,32 @@ pub const VERSION: u8 = storage::VERSION;
 /// module docs give the format, its errors, what it reveals and what is
 /// cleaned up.
 ///
-/// `Debug` prints no plaintext. The wrapper is an ordinary owned value:
-/// it is not wiped on drop (decrypt to `OpaqueBlob<Zeroizing<T>>` for
-/// that), and it has no serde impls of its own, so that a blob is never
-/// written by accident where a `T` was meant.
+/// The value is held in a [`Zeroizing`], so the wrapper wipes it when it
+/// is dropped, and [`into_inner`] returns the `Zeroizing<T>` rather than a
+/// bare `T`. `Zeroizing<T>` derefs to `T`, so `opened.into_inner().name`
+/// reads a field and the value is still wiped when the guard is dropped.
+///
+/// `Debug` prints no plaintext. The wrapper has no serde impls of its own,
+/// so that a blob is never written by accident where a `T` was meant.
 ///
 /// [`into_inner`]: OpaqueBlob::into_inner
 #[derive(Clone, PartialEq, Eq, Default)]
-pub struct OpaqueBlob<T>(T);
+pub struct OpaqueBlob<T: Zeroize>(Zeroizing<T>);
 
-impl<T> OpaqueBlob<T> {
+impl<T: Zeroize> OpaqueBlob<T> {
     /// Wrap a value to encrypt it whole.
-    pub const fn new(value: T) -> Self {
-        Self(value)
+    pub fn new(value: T) -> Self {
+        Self(Zeroizing::new(value))
     }
 
-    /// The value.
-    pub fn into_inner(self) -> T {
+    /// The value, still guarded: it is wiped when the returned
+    /// `Zeroizing<T>` is dropped.
+    pub fn into_inner(self) -> Zeroizing<T> {
         self.0
     }
 
     /// A borrow of the value.
-    pub const fn get(&self) -> &T {
+    pub fn get(&self) -> &T {
         &self.0
     }
 
@@ -313,13 +318,13 @@ impl<T> OpaqueBlob<T> {
     }
 }
 
-impl<T> From<T> for OpaqueBlob<T> {
+impl<T: Zeroize> From<T> for OpaqueBlob<T> {
     fn from(value: T) -> Self {
-        Self(value)
+        Self::new(value)
     }
 }
 
-impl<T> fmt::Debug for OpaqueBlob<T> {
+impl<T: Zeroize> fmt::Debug for OpaqueBlob<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("OpaqueBlob(***)")
     }
@@ -331,7 +336,7 @@ impl<T: Zeroize> Zeroize for OpaqueBlob<T> {
     }
 }
 
-impl<T: Serialize> OpaqueBlob<T> {
+impl<T: Serialize + Zeroize> OpaqueBlob<T> {
     /// The value as a storage blob: the plaintext the ciphertext seals,
     /// starting with [`HEADER`]. Returned in a [`Buffer`], and wiped when it
     /// is dropped. Encrypting does this itself; it is here for a caller that
@@ -341,11 +346,11 @@ impl<T: Serialize> OpaqueBlob<T> {
     ///
     /// [`BlobError::Unwritable`] for a value the profile cannot hold.
     pub fn encode(&self) -> Result<Buffer, BlobError> {
-        storage::to_vec(&self.0).map_err(BlobError::Unwritable)
+        storage::to_vec(&*self.0).map_err(BlobError::Unwritable)
     }
 }
 
-impl<T: DeserializeOwned> OpaqueBlob<T> {
+impl<T: DeserializeOwned + Zeroize> OpaqueBlob<T> {
     /// Read a value from a storage blob: what decrypting does to the opened
     /// bytes. The caller's `bytes` are borrowed and not wiped; the opened
     /// buffer decrypting reads from is.
@@ -356,7 +361,7 @@ impl<T: DeserializeOwned> OpaqueBlob<T> {
     /// or a well-formed blob that is not a `T`.
     pub fn decode(bytes: &[u8]) -> Result<Self, BlobError> {
         storage::from_slice::<T>(bytes)
-            .map(Self)
+            .map(Self::new)
             .map_err(|error| BlobError::reading(error, bytes))
     }
 }

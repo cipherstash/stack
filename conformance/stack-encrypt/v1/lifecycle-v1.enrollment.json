@@ -122,7 +122,7 @@
         "opaque": [
           "the_owned_source_is_wiped_before_await_or_discard",
           "an_encoding_refusal_wipes_the_source_and_requests_no_key",
-          "only_a_zeroizing_result_is_wiped_on_drop"
+          "a_decrypted_blob_is_wiped_on_drop_and_into_inner_keeps_it_guarded"
         ]
       }
     },

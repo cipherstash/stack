@@ -5,7 +5,7 @@
 //! described in the crate's quick start. Initialization fails without credentials.
 use serde::{Deserialize, Serialize};
 use stack_encrypt::{BlobError, Ciphertext, Error, OpaqueBlob, StackCipher};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 /// An ordinary application struct. `Serialize` and `Deserialize` give it a
 /// storage encoding; `Zeroize` lets the library wipe the owned source once
@@ -53,21 +53,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stored = encrypted.to_bytes();
     let restored = Ciphertext::from_bytes(&stored)?;
 
-    // Decrypt to the wrapper and take the value out. The result is an
-    // ordinary owned value: nothing wipes it on drop.
+    // Decrypt to the wrapper and take the value out. `into_inner` returns
+    // a `Zeroizing<Profile>`, which derefs to the `Profile` and wipes it
+    // when `profile` goes out of scope.
     let opened: OpaqueBlob<Profile> = keyset
         .decrypt_with_context(restored.clone(), ("users", "profile"))
         .await?;
     let profile = opened.into_inner();
     assert_eq!(profile.name, "Ada Lovelace");
-
-    // Or decrypt to `OpaqueBlob<Zeroizing<T>>`, the opt-in drop guard: the
-    // value is wiped when `guarded` goes out of scope.
-    let guarded: OpaqueBlob<Zeroizing<Profile>> = keyset
-        .decrypt_with_context(restored.clone(), ("users", "profile"))
-        .await?;
-    assert_eq!(guarded.get().age, 36);
-    drop(guarded);
+    assert_eq!(profile.age, 36);
 
     // Schema evolution is serde's: the blob written as a `Profile` reads
     // into the later `ProfileV2`.

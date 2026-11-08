@@ -143,12 +143,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Aead`); and a blob opened as a scalar or a scalar as a blob is
   `OpenedType`. No message or payload names a
   value; a mismatch's payload names the declared field.
-- **`OpaqueBlob<Zeroizing<T>>` as the opt-in drop-guarded result**:
-  `keyset.decrypt::<OpaqueBlob<Zeroizing<T>>>(ct)` returns the opened value
-  wiped on drop. A `Zeroizing<T>` serializes as its `T` (zeroize's `serde`
-  feature, now enabled), so it stores the same blob as `OpaqueBlob<T>`. A
-  plain `P` is still an ordinary owned value that nothing wipes on drop;
-  `Zeroize` is the bound, not a guard.
+- **A decrypted `OpaqueBlob<T>` is wiped on drop.** It holds its value in a
+  `Zeroizing<T>`, and `into_inner` returns that `Zeroizing<T>`, which derefs
+  to `T`, so the value stays guarded after it leaves the wrapper. A
+  decrypted scalar is still an ordinary owned value that nothing wipes on
+  drop; `Zeroize` is the bound, not a guard.
 - **`From<SealedValue> for Ciphertext`, and back.** The bytes are the same:
   a `CipherText::Single` leaf from `encrypt_tree` opens through the owned
   API, and an owned `Ciphertext` hands its leaf to the structural API.
