@@ -238,8 +238,9 @@ document. The trait does not match Stack in three ways:
 Vitamin C's `Cipher` trait has a `seal` method and an `open` method.
 Stack implements it twice: `MintedKeys` only seals, and `BoundKeys` only
 opens. Each type still has to provide the other method, and that method
-only returns an error. The final pass on dependencies and packaging
-should consider a fix. One option splits the trait into a sealing
+only returns an error.
+
+The final pass on dependencies and packaging should consider a fix. One option splits the trait into a sealing
 capability and an opening capability. Another changes the internal
 adapter in some other way. Decide this separately from whether the
 public Stack client implements the async trait.
