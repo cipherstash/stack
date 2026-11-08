@@ -72,18 +72,18 @@ decision.
 | Leaf | One sealed value inside a stored record or document: the unit the AEAD encrypts, with its own data key and AAD |
 | Label | A named, typed fact added to a stored value's key tag after encryption, such as `row_id` or `written_by`. ZeroKMS verifies it and logs it. It restricts no reader. See [Labels](#labels) |
 | Key request item | One part of the stored context as a key request sends it to ZeroKMS beside the descriptor: a name and value, or a claim. The ZeroKMS protocol calls the list `context` |
-| Name scope | A field's own name as its last declared scope, pinned when the Rust field is renamed (ADR-0006). Two fields of one record never share one |
+| Name scope | A declared scope that names the record or a field. A field's name scope is its last declared scope, pinned when the Rust field is renamed (ADR-0006). Two fields of one record never share one |
 | n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a label use it |
 | Passthrough field | A field stored unencrypted next to the encrypted fields. It is not authenticated |
-| Plan | A record's declaration as data: each field, its context, and its indexes. The derive builds one through `encryption_plan()`; a program can build one by hand, or read one at run time. See [A request: `Planned`](#a-request-planned) |
-| Planned | A value paired with a plan that is data, `Planned::new(&plan, value)`, with the context parts a call supplies. Encrypted, queried, or decrypted with the keyset as the argument. Its serialisation is what a binding sends for an operation. See [A request: `Planned`](#a-request-planned) |
+| Plan | A record's declaration as data: each field, its context, and its indexes. The derive builds one through `encryption_plan()`; a program can build one by hand, or read one at run time. See [A value under a plan: `Planned`](#a-value-under-a-plan-planned) |
+| Planned | A value paired with a plan that is data, `Planned::new(&plan, value)`, with the context parts a call supplies. Encrypted, queried, or decrypted with the keyset as the argument. Its serialisation is what a binding sends for an operation. See [A value under a plan: `Planned`](#a-value-under-a-plan-planned) |
 | Query artifact, context artifact | Two design documents Dan wrote as Claude artifacts, one on queries and one on context. This plan compared them with itself on 8 November 2026 and records every decision. Dan deletes the artifacts after this plan merges |
 | Query context | All the scopes of a context, declared and caller-supplied. Search terms derive under it. See [Query context and stored context](#query-context-and-stored-context) |
 | Query plan | A record plan narrowed to one field and one operator, `plan.query(field, op)`. A query value is encrypted under it. See [A query plan](#a-query-plan) |
 | QueryTerm | The result of a query on the dynamic path: the operand bytes and the EQL type they bind as, known at run time |
-| Request | A serialised `Planned`: the plan, the caller's context parts, and the value. The one thing a binding sends to the engine. A transport form, never stored |
+| Serialised `Planned` | A `Planned` as a binding sends it: the plan, the caller's context parts, and the value. A transport form, never stored. For a check, a binding sends a serialised `Plan` alone. See [A value under a plan: `Planned`](#a-value-under-a-plan-planned) |
 | Scope | A part of the context that narrows the data and the queries over it. The declaration supplies the first scopes, such as `users` and `email`; the caller adds more, such as a tenant ID, with `Scope::new(..)` |
 | Search term | A value stored next to a ciphertext, so that a query can find it without decrypting it. Equality, order, and match each use their own term |
 | Stage | One step of an analyzer that maps, drops, or expands tokens, such as `Downcase`, `Stop`, `Stem`, or `Ngrams`. A serialised plan may name only the closed set of stages |
@@ -502,7 +502,8 @@ The kinds of JSON query, the marker method for each, and what each finds:
 A path is text. So an order query on a path the options do not order is
 refused at run time, before any key is fetched.
 
-Two limits of the SQL stay. Sorting rows by a path through an array
+Two limits of the SQL stay, from the reference page's sections on
+comparing a value at a path and on what the SQL cannot do. Sorting rows by a path through an array
 needs a rule the application chooses, such as `MIN` or `MAX` over the
 matches. The supported way to the plaintext of every match at such a
 path is a subtree read with a wildcard bound. The [EQL v4 reference
@@ -510,8 +511,8 @@ page](../../packages/eql/docs/reference/json-tree.md) gives the SQL for
 each query. A scope chains on a JSON
 query as on a scalar one: `.contains(doc).scope(tenant)`.
 
-The engine already has one input type for each JSON operator, in
-`stack_encrypt::dynamic`. `DocumentInput` is for containment, `AtInput`
+The engine already has one private input type for each JSON operator,
+in `stack_encrypt::dynamic`. `DocumentInput` is for containment, `AtInput`
 for a comparison at a path, and `ElementsInput` for element match. The marker
 methods build those same inputs, so the typed form and the dynamic form
 share one set of input rules. The operand types `Contains`, `AtPath`,
@@ -667,14 +668,14 @@ type.
 Each row crosses the boundary as one transport frame. A query names a
 field and an operator, such as `eq` or `contains`, and gives a value. In
 the target state that is a [query plan](#a-query-plan) and a
-[request](#a-request-planned). The engine returns the query value, with
+[serialised `Planned`](#a-value-under-a-plan-planned). The engine returns the query value, with
 its EQL type.
 
 The output keys and the type names are part of the stored format, so they
 cannot change. The output keys are `c`, `eq`, `match`, `ore`, `ope`, and
 `passthrough`. The type names include `int64` and `string`.
 
-#### A request: `Planned`
+#### A value under a plan: `Planned`
 
 Anything encrypted under a plan that is data is a `Planned` value. That
 is a record under a record plan, or a query value under a [query
@@ -726,7 +727,7 @@ engine already reads it (`ProtectedRef<[u8]>`), and is never logged or
 written to disk. A binding that keeps one, for a retry say, keeps it
 wiped.
 
-The request's shape is not part of the stored format. It can change
+The serialised `Planned`'s shape is not part of the stored format. It can change
 with the dynamic grammar, and a change to it moves no stored byte.
 
 Below `Planned`, `stack_encrypt::dynamic::record` has the functions that
@@ -885,11 +886,11 @@ renames its own call sites with it.
 
 The generated file builds its
 declaration through `gensupport` calls, and the module builds the frames
-it sends to the engine. So a change to the request's shape is a change
-inside the module. A program generates again only to adopt a new
-declaration, such as a scope or binding on a field. The generator keeps
-its output identical for unchanged input, so an upgrade alone does not
-change a committed `*_stash.go` file.
+it sends to the engine. So a change to the serialised `Planned`'s shape is a change inside the
+module. A program generates again only to adopt a new
+declaration, such as a scope or binding on a field. The generator keeps its output identical for unchanged input. So an
+upgrade alone does not change a committed `*_stash.go` file, apart from
+the one regeneration the handle rename needs.
 
 Two parts of the target state are not in Go yet:
 
@@ -1013,8 +1014,9 @@ A [label](2026-11-08-stack-encrypt-key-policy.md#labels) is not a part
 of the context. ZeroKMS verifies it. It is in neither the query context
 nor the AAD.
 
-The use case is access intelligence. Each value is bound to its row by a
-client-generated UUID, and a query by column or by tenant still finds it.
+The use case is access control: a value that must stay in its row. Each
+value is bound to its row by a client-generated UUID, and a query by
+column or by tenant still finds it.
 The facts of a row's writing, such as the address it came from, are
 labels, not bindings.
 
@@ -1099,6 +1101,11 @@ NEW.body := eql_v4.label_tag(NEW.body, 'row_id', NEW.id::text);
 ```
 
 #### Other rules
+
+- **One context argument.** The caller's parts arrive in one chain,
+  `Scope::new(..)`, `Bind::new(..)`, or `Scope::new(..).bind(..)`, through
+  the `_with_context` entry point. No chain state offers context. The
+  entry points accept the chain through a trait bound, `impl ContextParts`.
 
 - **Rust and Go behave the same.** Every built-in capability has the same
   meaning and the same stored bytes in Rust and in Go. The conformance
@@ -1345,7 +1352,8 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
 
 #### Typed text encodings and key tag extraction
 
-- **What to build.**  - A `to_base64` method on `Ciphertext`. It returns the existing
+- **What to build.**
+  - A `to_base64` method on `Ciphertext`. It returns the existing
     `Base64Text` type, not `String`.
   - One field target that stores a ciphertext as text, with the working
     name `Base64Ciphertext`. It checks both the text and the envelope.
@@ -1495,7 +1503,7 @@ review.
   for an operator. The marker's index list extends it to a record field.
 - **A hand-built plan gets the same handles.** A typed Rust program
   that writes its plan by hand names the plaintext type once,
-  `Plan::<Member>::context("members")`, so every `pick!` is checked
+  `Plan::<Member>::scope("members")`, so every `pick!` is checked
   against it. `build()` returns the plan and one marker per field, in
   declaration order, of the same type the derive emits. So a hand-built
   plan and a derived one query the same way, with the same compile-time
@@ -1505,7 +1513,7 @@ review.
 
   ```rust
   // Not on `next` yet: markers from `build()`, and `Plan::<Member>`.
-  let (members, (email, age)) = Plan::<Member>::context("members")
+  let (members, (email, age)) = Plan::<Member>::scope("members")
       .fields()
       .encrypt_index(pick!(email), (Equality, Match::<EnglishSearch>::new()))
       .encrypt_index(pick!(age), (Equality, Ore))
@@ -1530,13 +1538,15 @@ review.
   - tests show that a query cannot run without its plan or its required
     context.
 
-#### A request: `Planned` and its serialised form
+#### `Planned` and its serialised form
 
 Decided on 7 November 2026, as area one of the query design review.
 
-- **What to build.**  - `Planned::new(&plan, value)`, with `encrypt`, `encrypt_with_context`,
+- **What to build.**
+  - `Planned::new(&plan, value)`, with `encrypt`, `encrypt_with_context`,
     `decrypt`, and `decrypt_with_context`. It serves a record under a
-    record plan and a query value under a query plan.  - Two wire shapes. A serialised `Plan` alone serves a check, an
+    record plan and a query value under a query plan.
+  - Two wire shapes. A serialised `Plan` alone serves a check, an
     operator list, or a query plan. A serialised `Planned` serves
     encrypt, query, and decrypt. It contains the plan by reference or
     inline, the context parts in declared order with their types, and
@@ -1545,8 +1555,10 @@ Decided on 7 November 2026, as area one of the query design review.
   - Query plans: `plan.query(field, op)`, refused where it is made if no
     index answers the operator, and serialisable beside the record plan.
   - The dynamic field handle, `plan.field(name)`, with every operator
-    method checked at run time.  - `QueryTerm` as the dynamic path's query result. It contains the operand
-    bytes and the EQL type they bind as.  - `contexts()` on a `Plan` and on a `Planned`, before either runs.
+    method checked at run time.
+  - `QueryTerm` as the dynamic path's query result. It contains the operand
+    bytes and the EQL type they bind as.
+  - `contexts()` on a `Plan` and on a `Planned`, before either runs.
 - **Why.** One shape for every binding. A binding then has no logic of
   its own, so it cannot drift. The same shape is a conformance case. A plan
   that is data is checked at run time, and a language adds its own typed
@@ -1556,13 +1568,14 @@ Decided on 7 November 2026, as area one of the query design review.
   is not part of the stored format.
 - **Done already.** The guest already sends the engine a plan frame, then
   a value frame for each call, through `plan_with`, `encrypt_with`,
-  `query`, and `decrypt_with` in `dynamic::record`. The request names and
-  groups what those functions already receive.
+  `query`, and `decrypt_with` in `dynamic::record`. The serialised `Planned` names and groups what those functions already
+receive.
 - **Finished when** these are all true:
-  - every case in the conformance corpus is a request with the engine's
-    expected answer beside it;
+  - every case in the conformance corpus is a serialised `Plan` or
+    `Planned` with the engine's expected answer beside it;
   - a Go program generated for rc.3 runs against the module that sends
-    requests, without being generated again;
+    serialised `Planned` values, apart from the one regeneration the
+    handle rename needs;
   - the chain in `plan/chain.rs` is gone.
 
 #### Context from fields and from the caller
@@ -1617,7 +1630,7 @@ Decided on 7 November 2026, as area one of the query design review.
   key and the AAD under the stored context. A binding can be a context
   field stored in the row. The order is fixed: the scopes, then the
   bindings.
-- **Why.** Access intelligence needs each value bound to its row, and
+- **Why.** Access control needs each value bound to its row, and still
   found by a column or tenant query. The facts of a row's writing are
   [labels](2026-11-08-stack-encrypt-key-policy.md#labels), not bindings. [Query context and stored
   context](#query-context-and-stored-context) has the rule.
@@ -1638,7 +1651,7 @@ Decided on 7 November 2026, as area one of the query design review.
 
 Decided on 7 November 2026, as differences two and five of the context
 artifact review. The rules are in the target state. See [the context
-argument](#other-rules) and [`Planned`](#a-request-planned). This item
+argument](#other-rules) and [`Planned`](#a-value-under-a-plan-planned). This item
 records only the work.
 
 - **What to build.** The `Scope` and `Bind` value types, with the order
@@ -1715,8 +1728,9 @@ Decided on 7 November 2026.
 
 #### Name context parameters `context`
 
-These public methods in `packages/stack-encrypt/src/cipher.rs` take a
-context through a parameter named `aad`:
+These public methods on today's types in
+`packages/stack-encrypt/src/cipher.rs` take a context through a parameter
+named `aad`:
 
 - `KeysetCipher::encrypt_tree`;
 - `KeysetCipher::decrypt_tree`;
@@ -1738,7 +1752,9 @@ parameter named `aad`.
   `&Identifier`.
 - **Why.** On `next`, every context is taken by value. A program that uses
   one column context for a write and a query must clone it for each call.
-- **Done already.** Stack Encrypt implements `IntoContext` for `&Label`.
+- **Done already.** Stack Encrypt implements `IntoContext` for `&Label`,
+  the old context path type that [Apply the naming
+  review](#apply-the-naming-review) removes.
   The context inputs, such as `RequiredContext`, still need an owned value.
 - **Finished when** the examples in this plan pass a context by reference,
   with no clone, and compile.
@@ -1796,7 +1812,8 @@ parameter named `aad`.
   the crate that defines the type. So the constructors go in
   `zerokms-protocol`. Stack Encrypt re-exports `IdentifiedBy` from
   `stack_encrypt::kms`, so callers get them through that path.
-- **Done already.** `StackCipher::keyset` takes `impl Into<IdentifiedBy>`,
+- **Done already.** Today's `StackCipher::keyset` takes
+  `impl Into<IdentifiedBy>`,
   and `IdentifiedBy` implements `From<Uuid>` and `From<Name>`.
 - **Finished when** a released `zerokms-protocol` has both constructors,
   and the examples in this plan compile.
@@ -1851,7 +1868,8 @@ table.
   - The ZeroKMS unit of work `Request` is made crate-private with
     `Pending::request`, built on stack-kms's `GenerateKeyPayload` and
     `RetrieveKeyPayload`. There is no public request type. A binding
-    sends a serialised `Plan` or `Planned`.  - `OpSpec` becomes `Op`.
+    sends a serialised `Plan` or `Planned`.
+  - `OpSpec` becomes `Op`.
   - `context = ".."` becomes `scope = ".."`, `Plan::context(..)` becomes
     `Plan::scope(..)`, and Go's `context=` tag becomes `scope=`.
   - The marker trait `op::QueryTerm` becomes `Query`, and
@@ -1872,8 +1890,9 @@ table.
   the helpers in `target::legacy`. Remove the context path type `Label`
   and `IntoLabel`: a plan's context is its declared `Scope` parts, and the
   guest sends parts, not a path. Move EQL, Go, and the guest to the new
-  API in the same change. Rename the plan builder's output method to
-  `target`.
+  API in the same change. Rename the plan builder's output method, `build()` today, to `target`.
+  The removal of `Label` is also listed in [Apply the naming
+  review](#apply-the-naming-review); it happens once, here.
 - **Why.** Two APIs for the same job make the right one hard to find.
 - **Done already.** The new API exists beside the old one. Issue #1488
   tracks the removal.
@@ -1922,8 +1941,7 @@ Decided on 7 November 2026, as area two of the query design review.
 #### Match configuration: one analyzer
 
 Decided on 7 November 2026, as area five of the query design review. The
-design is the query artifact's; the four adjustments below are the
-plan's.
+design is the query artifact's; the adjustments below are the plan's.
 
 - **What to build.**
   - An analyzer pipeline, typed first: `Words.downcase().stop(..).stem(..).ngrams(3)`,
@@ -2018,8 +2036,8 @@ review. The rules are the query artifact's.
   alone does not justify a trait method.
 - **The order of the work.** Four steps, each shippable on its own, each
   removing one copy of something:
-  1. One declaration per index and operator. `OpSpec` is generated from
-     the `op` types. Each index declares its operators and admitted
+  1. One declaration per index and operator. `Op`, `OpSpec` today, is
+     generated from the `op` types. Each index declares its operators and admitted
      plaintexts once, and `index_for` reads them. Overlap is refused on
      both paths. A test shows the typed and dynamic faces agree.
   2. Derivation once, refusals once. The `sem` query functions, the
@@ -2171,7 +2189,7 @@ renames.
 | `Cipher`, `Keyset` | The connection, today `StackCipher`, and the handle bound to one keyset, today `KeysetCipher`. Decrypt through a `Cipher` opens values from any keyset it holds. The clash with Vitamin C's `Cipher` trait is accepted. Go renames to match: `encrypt.Client` becomes `Cipher`, with `NewCipher`, and the keyset-bound `encrypt.Cipher` becomes `Keyset`. A Go program regenerates once |
 | `CipherRef<'c, K>` | One borrowed value for both paths, a connection and an optional keyset ID, built by `From<&Cipher>` and `From<&Keyset>`. Replaces the `CipherScope` trait and the `dynamic::Scope` enum. A design decision, not only a name |
 | `Plan` | A record's declaration as data. `TargetDefinition` is dropped |
-| `Plan::scope(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | The hand-built plan builder, as settled on 4 October 2026. `EncryptionPlan::record(..).field(..)` is dropped |
+| `Plan::scope(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | The hand-built plan builder, as settled on 4 October 2026, with `scope` for `context` from 8 November 2026. `EncryptionPlan::record(..).field(..)` is dropped |
 | `Label`, `label`, `labels`, `label_tag` | The key tag fact and its operations. The old context path type of that name, a field's declared scopes as `users/email`, is removed: those are `Scope` parts. Go's `ContextLabel()` goes with it |
 | No `Request` type | A binding sends a serialised `Plan` alone for a check, an operator list, or a query plan, and a serialised `Planned` for encrypt, query, and decrypt. The ZeroKMS unit of work that is `Request` today becomes crate-private, built on stack-kms's payload types |
 | `Query`, `Stored` | Two marker traits on the term types. `Query` marks a value a query sends, today `op::QueryTerm`. `Stored` marks a stored index term, today `LabelledTarget`. `EqualityTerm` and the order terms implement both; `MatchTerms` only `Stored`; `MatchQuery` only `Query`. `QueryToken` stays the run-time guard |
@@ -2183,5 +2201,6 @@ renames.
 | `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
+| `stack-kms` to `stack-zerokms` | Not decided. The crate rename is part of the crate layout question, which stays open |
 | `scope = ".."`, `Plan::scope(..)`, Go `scope=` | The record's name is its first scope, so the attribute, the builder, and the Go tag all say `scope`. Today they say `context = ".."`, `Plan::context(..)`, and `context=`. Decided by Dan on 8 November 2026 |
 | `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes`, `StageSpec`, `Match<Dynamic>`, `NotPortable` | The dynamic interface names. Confirmed |

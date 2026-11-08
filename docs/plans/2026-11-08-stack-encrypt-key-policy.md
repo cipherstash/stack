@@ -106,7 +106,7 @@ descriptor part cannot be skipped, because the key is derived from it.
 
 | | Bind | Claim | Label |
 | --- | --- | --- | --- |
-| Who supplies the value | The client, from the caller or the row | ZeroKMS, from the caller's token | The client or a trigger. ZeroKMS itself, in version 2 |
+| Who supplies the value | The client, from the caller or the row | ZeroKMS, from the caller's token | The client or a trigger. ZeroKMS itself, if the version 2 work adopts it |
 | Who sets the rule | The client, at write time | The client, at write time | ZeroKMS policy, at any time |
 | Can the rule change later | No. Lose the value, lose the data | No. Lose the claim, lose the data | Yes. A policy can be added, changed, or removed |
 | Can the rule be overridden | No | No | Yes, by changing the policy |
@@ -120,7 +120,8 @@ A bind and a claim are the same mechanism with a different source of the
 value. Both are strict by construction. A label is a record, and ZeroKMS
 may later apply a policy to it.
 
-Both routes end with a verified fact on a stored value. They differ in whether any reader is restricted. So the API
+A bind or a claim, and a label, all end with a verified fact on a stored
+value. They differ in whether any reader is restricted. So the API
 must keep a developer from choosing the strict one by accident.
 
 ### Guards for the developer
@@ -135,8 +136,8 @@ must keep a developer from choosing the strict one by accident.
    to this part cannot be read without it, by anyone, ever, including a
    migration. For a claim it adds: deleting the user deletes access to
    the data.
-3. **A label is the default suggestion for identity facts.** Where the documentation shows `sub`, it shows it as a label first. In
-   ZeroKMS version 2, ZeroKMS writes that label itself. The claim is the
+3. **A label is the default suggestion for identity facts.** Where the documentation shows `sub`, it shows it as a label first. ZeroKMS may write that label itself, if the version 2 work adopts it
+   ([Still to explore](#still-to-explore)). The claim is the
    stricter option, with its cost spelled out.
 
 ## Binds move from the descriptor to key request items
@@ -181,7 +182,7 @@ Two things the move changes, for ZeroKMS to know:
 
 ## Claims
 
-A claim is a bind whose value the key provider resolves. The client
+A claim is a binding whose value the key provider resolves. The client
 names the claim. ZeroKMS reads its value from the token it verified, and
 folds the name and the value into the key tag. On read, ZeroKMS resolves
 the claim again from the reader's token. A reader with a different value
@@ -283,8 +284,7 @@ The write path:
    the leaf AAD and stores the tag with the ciphertext.
 2. The stored tag can be labelled in three places:
    - in Rust, after encryption;
-   - in the database, by a trigger, once the primary key is known;
-   - by ZeroKMS, at generate time.
+   - in the database, by a trigger, once the primary key is known;   - by ZeroKMS, at generate time, if the version 2 work adopts it.
 3. Labelling is HMAC chaining, in the style of Macaroons:
    `tag' = HMAC(tag, PAE(name, value))`. The label is appended to the
    payload's label list. Then `tag'` replaces the stored tag, inside the
@@ -508,8 +508,7 @@ for two reasons.
 - **Nothing about the reader is checked against a label.** The labelled
   tag and the label's value are stored in the row in the clear. A reader
   presents them as they are. ZeroKMS recomputes the chain from the base
-  tag and the stored labels. The check passes for any reader whose key
-  context items resolve. A bind is different: ZeroKMS resolves a claim
+  tag and the stored labels. The check passes for any reader whose key request items resolve. A bind is different: ZeroKMS resolves a claim
   from the reader's token, or the reader supplies a value, and ZeroKMS
   compares that with the tag. A label asks nothing of the reader.
 - **Binding the labelled tag into the AAD would add tamper evidence,

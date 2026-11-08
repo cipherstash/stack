@@ -1,7 +1,7 @@
 # Stack Encrypt packaging and public names
 
-Dated 25 October 2026, with implementation updates on 27 October 2026 and
-7 November 2026. The last check was against `next` at commit `e4990e49b`.
+Dated 25 October 2026, with updates on 27 October, 7 November, and 8
+November 2026. The last check was against `next` at commit `e4990e49b`.
 This recommendation for review accompanies the
 [implementation plan](2026-10-24-stack-encrypt-api-plan.md).
 
@@ -74,8 +74,8 @@ are open for review. No crate has moved. No rename below is implemented.
   `stack-zerokms` renames a published crate. The rename also touches the
   crate's release-plz version group (`release-plz.toml`,
   `release-plz.yml`), the Go guest, the EQL encryption test crate, and the
-  `stack_encrypt::kms` re-export in `lib.rs`. It waits for the naming
-  review.
+  `stack_encrypt::kms` re-export in `lib.rs`. The naming review of 8 November 2026 did not decide it. It belongs to the crate layout question. The plan keeps that question
+  open.
 - From 7 November 2026, the stored format must not break. Moving codecs
   and adapters between crates must keep the bytes that Go rc.3 writes.
 
@@ -101,8 +101,8 @@ them.
 
 | Package | Responsibility |
 | --- | --- |
-| `stack-encrypt` | The public Rust API; traversing and reconstructing values; target declarations and definitions; context and scope roles; normalisation and adapters for searchable targets; plans; batching; JSON tree execution; and validating and executing dynamic definitions |
-| `stack-encrypt-derive` | Derive macros that generate the same declarations and definitions a user can write by hand. `stack-encrypt` re-exports the derives |
+| `stack-encrypt` | The public Rust API; traversing and reconstructing values; target declarations and plans; context and scope roles; normalisation and adapters for searchable targets; plans; batching; JSON tree execution; and validating and executing dynamic definitions |
+| `stack-encrypt-derive` | Derive macros that generate the same declarations and plans a user can write by hand. `stack-encrypt` re-exports the derives |
 | `stack-encrypt-format` (new) | Pure data representations and codecs shared by the engine and the bindings: frame primitives and the required scalar representations, the stable format of stored blobs, parsing and encoding of the ciphertext envelope, and validated Base64 text. No key requests and no execution runtime |
 | `stack-zerokms` (the current `stack-kms`, renamed) | The ZeroKMS protocol client, authentication integration, native keysets, request types for the key request items, and responses. Not the neutral abstraction over several providers |
 | `eql-bindings` | EQL storage and query types by version, JSON serialisation compatible with SQL, the catalog, and Stack target adapters. Stays downstream of the engine |
@@ -125,7 +125,7 @@ policy.
 
 Put the formal dynamic contract, its schemas, and its conformance fixtures
 beside Stack Encrypt. The implementation of the dynamic contract uses the
-same definition types and validation as static Rust.
+same plan types and validation as static Rust.
 
 ### Modules, not more crates
 
@@ -312,7 +312,7 @@ combined trait.
 | `encoding::Base64Ciphertext` | The validated, encoded representation of an opaque ciphertext, and a supported field target. Valid encoding alone is not enough |
 | `provider` | Neutral provider contracts and capability bounds |
 | `provider::zerokms` | The ZeroKMS adapter and the surface for its claims, including `Claim` and `ResolvesClaims` |
-| `dynamic` | Loading versioned definitions, discovering capabilities, and executing through the common engine |
+| `dynamic` | Loading versioned plans, discovering capabilities, and executing through the common engine |
 
 ### Spellings already agreed
 
@@ -360,8 +360,11 @@ and `JSONEntry`, configured through `JsonSearch`. In SQL, the names are
 `eql_v4_json_entry`. The prepared Go objects are `encrypt.JSONSelection`
 and `JSONRead`.
 
-The table below is still a proposed glossary for the Rust facade. Its
-`JsonTree*` names describe the handwritten Rust adapters, not the
+The naming review of 8 November 2026 kept the current `JsonTree*` names.
+The table below is the proposal the review rejected. It stays here for
+the record.
+
+Its `JsonTree*` names describe the handwritten Rust adapters, not the
 registered Go target. The working Go and SQL surface does not need
 renaming to match this glossary. Do not rename it for that reason. Later
 Rust renames must keep the frozen dynamic IDs.
@@ -381,30 +384,9 @@ Rust renames must keep the frozen dynamic IDs.
 
 ### Notes on the JSON names
 
-`JsonContainmentQuery` can still be the physical operand of an equality
-at a path, where the agreed SQL recipe uses containment. An operation and
-its wire operand do not need the same name.
-
-`JsonWalkRequest` describes the real role better than "key" does. The
-type contains sensitive capability and request state, not the data
-encryption key. The separate review of the JSON contract decides the
-exact behaviour of each operation.
-
-Rename the internal target index `Json` to `JsonTreeIndex`. Keep the
-internal engine type `JsonDocument` out of the ordinary facade. If adapter
-authors need public access to it, give it a name that states its role,
-such as `EncryptedJsonTree`.
-
-`EncryptedJson` always means the stored form
-that is compatible with EQL. `EncryptedJson` never means some other JSON
-serialisation of encrypted nodes. An application's `EncryptedUser` stays
-its own declared record layout.
-
-The dynamic identifiers of targets and operations are explicitly
-versioned contract identifiers. They are not Rust type names serialised
-into JSON. Choose their exact spellings in the interoperability
-specification, and use the same glossary in Go. A Rust rename on its own
-must not redefine stored SQL formats or dynamic discriminants by accident.
+The review kept `JsonTreeQuery` as the operand for both containment and
+equality at a path. An operation and its wire operand do not need the
+same name. The internal engine types keep their names too.
 
 ## Implementation order and acceptance
 
@@ -427,9 +409,11 @@ must not redefine stored SQL formats or dynamic discriminants by accident.
    application execution. The policy and routing contracts that Go needs
    must be handled before the final Go v0.1.0 release.
 5. Complete the public Rust trait and derive names, imports, and
-   executable examples. The Go handle rename from the naming review is the one rename of the
-   released Go API in this work. Nothing else here renames it or
-   reinterprets stored data. The changes must not require customers to
+   executable examples. The naming review renames four things in the released Go API. `Client`
+   becomes `Cipher`. The keyset-bound `Cipher` becomes `Keyset`. The
+   `context=` tag becomes `scope=`. `Extend` becomes `Scope`. And
+   `ContextLabel()` goes. Nothing
+   else here renames it or reinterprets stored data. The changes must not require customers to
    re-encrypt or reindex.
 
 Acceptance includes:

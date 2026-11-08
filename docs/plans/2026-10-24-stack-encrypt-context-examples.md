@@ -16,8 +16,8 @@ the bindings. Search terms derive under the query context, and the data
 key and the AAD derive under the stored context.
 
 The code below is proposed. None of it compiles on `next` today. The
-rules are decided; the attribute spellings, such as `scope(tenant: u64)`,
-are illustrative.
+rules are decided. The attribute verbs `scope(..)` and `bind(..)` are
+confirmed. The form inside them, such as `tenant: u64`, is illustrative.
 
 ## Contents
 
