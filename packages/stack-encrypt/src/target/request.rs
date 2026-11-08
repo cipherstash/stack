@@ -12,10 +12,14 @@
 //! sibling's key material are unit-testable on their own.
 
 use super::context::AeadContext;
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use stack_kms::{DataKey, DataKeyWithTag, Iv, KeyBackend};
+use stack_kms::{DataKey, DataKeyWithTag, Iv, KeyBackend, KeyMode};
 use uuid::Uuid;
+use vitaminc_hmac::HmacSha256Prf;
+
+use crate::cipher::VendorHeader;
 
 use crate::keyset::KeysetState;
 use crate::{Descriptor, Error};
@@ -43,6 +47,10 @@ pub(super) enum RequestKind {
         /// The key backend the leaf names. The settle refuses a request
         /// whose backend is not the cipher's, before any key call.
         backend: KeyBackend,
+        /// The key mode the leaf names (a v2 leaf); `None` for a v1 leaf.
+        /// Passed to the key backend, which refuses a mode that is not its
+        /// keyset's.
+        mode: Option<KeyMode>,
     },
     /// The loaded state of the keyset `keyset_id`, its index-key PRF: from
     /// the cipher's keyset cache, or loaded from ZeroKMS and cached on a
@@ -56,6 +64,11 @@ pub(super) enum RequestKind {
     /// place a pending reaches ZeroKMS, so the keyset is asked for as a
     /// request and answered beside the document's data key.
     LoadKeyset { keyset_id: Uuid },
+    /// Load the index key of `keyset_id` inside the settle, for a term
+    /// derived through a keyset whose handle holds no index key. Every such
+    /// request of one settle shares one load per keyset, and the key drops
+    /// when the settle ends.
+    IndexKeyForSettle { keyset_id: Uuid },
 }
 
 impl Request {
@@ -121,7 +134,15 @@ impl Request {
             descriptor,
             keyset_id: leaf.keyset_id(),
             backend: leaf.key_backend(),
+            mode: leaf.key_mode(),
         })
+    }
+
+    /// Ask the settle for the index key of `keyset_id`. Crate-internal: a
+    /// term derived through a keyset whose handle holds no index key pushes
+    /// it, and reads the PRF back with [`Responses::index_prf`].
+    pub(crate) fn index_key(keyset_id: Uuid) -> Self {
+        Self(RequestKind::IndexKeyForSettle { keyset_id })
     }
 
     /// [`generate_data_key`](Self::generate_data_key) over a descriptor that
@@ -151,6 +172,7 @@ impl Request {
             descriptor,
             keyset_id,
             backend: KeyBackend::ZeroKms,
+            mode: None,
         })
     }
 
@@ -166,13 +188,14 @@ impl Request {
         self.0
     }
 
-    /// The keyset a retrieve or keyset request names; `None` for a generate
-    /// request, which mints under the pending's keyset.
+    /// The keyset a retrieve, keyset or index-key request names; `None` for
+    /// a generate request, which mints under the pending's keyset.
     pub(super) fn retrieve_keyset(&self) -> Option<Uuid> {
         match &self.0 {
             RequestKind::GenerateDataKey { .. } => None,
             RequestKind::RetrieveDataKey { keyset_id, .. }
-            | RequestKind::LoadKeyset { keyset_id } => Some(*keyset_id),
+            | RequestKind::LoadKeyset { keyset_id }
+            | RequestKind::IndexKeyForSettle { keyset_id } => Some(*keyset_id),
         }
     }
 }
@@ -186,6 +209,8 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize, usize) {
             RequestKind::GenerateDataKey { .. } => generate += 1,
             RequestKind::RetrieveDataKey { .. } => retrieve += 1,
             RequestKind::LoadKeyset { .. } => keyset += 1,
+            // An index key is shared by every term of the settle, not drawn.
+            RequestKind::IndexKeyForSettle { .. } => {}
         }
     }
     (generate, retrieve, keyset)
@@ -209,6 +234,14 @@ pub struct Responses {
     generated: Queue<DataKeyWithTag>,
     retrieved: Queue<DataKey>,
     keysets: Queue<KeysetAnswer>,
+    /// The PRF of each keyset whose index key this settle loaded. Shared by
+    /// every fulfilment of the settle, and dropped (the key wiped) when the
+    /// last view of the responses drops, at the end of the settle.
+    prfs: Arc<HashMap<Uuid, Arc<HmacSha256Prf>>>,
+    /// The v2 header the generated keys are sealed under: the key vendor
+    /// backend and the key mode of the pending's keyset. `None` seals v1
+    /// (ZeroKMS).
+    seal_header: Option<VendorHeader>,
 }
 
 /// One kind's responses, drawn front first. A response is handed out as a
@@ -261,6 +294,8 @@ impl Responses {
             generated: Queue::new(generated),
             retrieved: Queue::new(retrieved),
             keysets: Queue::new(Vec::new()),
+            prfs: Arc::default(),
+            seal_header: None,
         }
     }
 
@@ -269,6 +304,43 @@ impl Responses {
     pub(super) fn with_keysets(mut self, keysets: Vec<KeysetAnswer>) -> Self {
         self.keysets = Queue::new(keysets);
         self
+    }
+
+    /// Add what a settle loaded beside the data keys: the index-key PRFs and
+    /// the header of the leaves it seals.
+    pub(super) fn with_settle(
+        mut self,
+        prfs: HashMap<Uuid, Arc<HmacSha256Prf>>,
+        seal_header: Option<VendorHeader>,
+    ) -> Self {
+        self.prfs = Arc::new(prfs);
+        self.seal_header = seal_header;
+        self
+    }
+
+    /// The PRF of `keyset`'s index key, loaded for this settle. A
+    /// fulfilment reads it only if its pending pushed
+    /// [`Request::index_key`] for that keyset; otherwise it is
+    /// [`Error::ResponseShape`].
+    pub(crate) fn index_prf(&self, keyset: Uuid) -> Result<&HmacSha256Prf, Error> {
+        self.prfs
+            .get(&keyset)
+            .map(|prf| &**prf)
+            .ok_or(Error::ResponseShape)
+    }
+
+    /// [`index_prf`](Self::index_prf), shared: for a fulfilment that hands
+    /// the PRF to a value it builds and drops inside the settle (a JSON
+    /// read's selectors). Nothing built with it may outlive the fulfilment,
+    /// or the index key outlives the settle.
+    pub(crate) fn index_prf_shared(&self, keyset: Uuid) -> Result<Arc<HmacSha256Prf>, Error> {
+        self.prfs.get(&keyset).cloned().ok_or(Error::ResponseShape)
+    }
+
+    /// The v2 header to seal the generated keys' leaves under, or `None`
+    /// for a v1 leaf.
+    pub(crate) fn seal_header(&self) -> Option<VendorHeader> {
+        self.seal_header
     }
 
     /// The next generated data key, in [`Request::generate_data_key`] order.
@@ -311,6 +383,8 @@ impl Responses {
             generated: self.generated.split_front(generated),
             retrieved: self.retrieved.split_front(retrieved),
             keysets: self.keysets.split_front(keysets),
+            prfs: Arc::clone(&self.prfs),
+            seal_header: self.seal_header,
         })
     }
 
@@ -472,8 +546,10 @@ mod tests {
                 descriptor,
                 keyset_id,
                 backend,
+                mode,
             } => {
                 assert_eq!(backend, stack_kms::KeyBackend::ZeroKms);
+                assert_eq!(mode, None);
                 assert_eq!(keyset_id, ks());
                 assert_eq!(iv, Iv::default());
                 assert_eq!(tag, vec![7, 8, 9]);
@@ -639,7 +715,9 @@ mod tests {
             outcome: Ok(Arc::new(KeysetState {
                 id: Uuid::from_u128(id),
                 name: None,
-                prf: vitaminc_hmac::HmacSha256Prf::new(vitaminc_protected::Protected::new([1; 32])),
+                prf: Some(vitaminc_hmac::HmacSha256Prf::new(
+                    vitaminc_protected::Protected::new([1; 32]),
+                )),
                 retention: crate::keyset::Retention::UntilEvicted,
             })),
         }

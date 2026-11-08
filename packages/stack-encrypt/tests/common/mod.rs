@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use stack_encrypt::StackCipher;
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
-    IndexKey, IndexKeySource, KeyBackend, RetrieveKeyPayload, UnverifiedContext,
+    IndexKey, IndexKeySource, KeyBackend, RetrieveKeyPayload, SelectedKeyset, UnverifiedContext,
 };
 use uuid::Uuid;
 
@@ -171,6 +171,99 @@ impl<S: IndexKeySource + Sync> IndexKeySource for CountingSource<S> {
         self.load_calls.fetch_add(1, AtomicOrdering::SeqCst);
         self.inner.load_index_key(keyset_id).await
     }
+}
+
+/// A key source whose keysets load their index key inside each settle, as
+/// a key vendor backend's do ([`SelectedKeyset::PerSettle`]), over the keys
+/// of a [`DeterministicSource`] seeded with [`PER_SETTLE_SEED`]. A cipher
+/// over it holds no index key between settles, so it derives every term
+/// inside the settle that needs it, under the index key that source gives
+/// a cipher that holds it ([`deterministic_cipher`]): the two derive the
+/// same terms and open each other's ciphertexts.
+pub struct PerSettleSource {
+    inner: DeterministicSource,
+    settle_loads: Arc<AtomicUsize>,
+}
+
+/// The seed of the [`DeterministicSource`] under a [`PerSettleSource`].
+pub const PER_SETTLE_SEED: [u8; 32] = [11; 32];
+
+impl PerSettleSource {
+    pub fn new() -> Self {
+        Self {
+            inner: DeterministicSource::new(PER_SETTLE_SEED),
+            settle_loads: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// The counter of index keys loaded for one settle.
+    pub fn settle_loads(&self) -> Arc<AtomicUsize> {
+        self.settle_loads.clone()
+    }
+}
+
+impl DataKeySource for PerSettleSource {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+        self.inner
+            .generate_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, stack_kms::Error> {
+        self.inner
+            .retrieve_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn load_settle_index_key(&self, keyset_id: Uuid) -> Result<IndexKey, stack_kms::Error> {
+        self.settle_loads.fetch_add(1, AtomicOrdering::SeqCst);
+        let (_, key) = self
+            .inner
+            .load_index_key(Some(IdentifiedBy::Uuid(keyset_id)))
+            .await?;
+        Ok(key)
+    }
+}
+
+impl IndexKeySource for PerSettleSource {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        self.inner.load_index_key(keyset_id).await
+    }
+
+    async fn select_keyset(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<SelectedKeyset, stack_kms::Error> {
+        let (keyset_id, _) = self.inner.load_index_key(keyset_id).await?;
+        Ok(SelectedKeyset::PerSettle { keyset_id })
+    }
+}
+
+/// A cipher over [`PerSettleSource`], with its counter of index keys
+/// loaded for one settle, zeroed once the cipher is built.
+pub async fn per_settle_cipher() -> (StackCipher<PerSettleSource>, Arc<AtomicUsize>) {
+    let source = PerSettleSource::new();
+    let settle_loads = source.settle_loads();
+    let cipher = StackCipher::builder()
+        .kms(source)
+        .init()
+        .await
+        .expect("build cipher");
+    settle_loads.store(0, AtomicOrdering::SeqCst);
+    (cipher, settle_loads)
 }
 
 /// A cipher over [`CountingSource`], with its counter of keyset lookups,

@@ -72,10 +72,15 @@ pub const DEFAULT_NAME_TTL: Duration = Duration::from_secs(5 * 60);
 /// What the cipher holds per loaded keyset: its resolved id, the name it was
 /// loaded under if any, the PRF keyed by its index key, and how long the
 /// cache may keep that PRF.
+///
+/// `prf` is `None` for a keyset whose key backend loads the index key inside
+/// each settle ([`SelectedKeyset::PerSettle`](stack_kms::SelectedKeyset)).
+/// Such a state holds no key material, so the cache may keep it until it is
+/// evicted, and a term built through it is derived inside the settle.
 pub(crate) struct KeysetState {
     pub(crate) id: Uuid,
     pub(crate) name: Option<String>,
-    pub(crate) prf: HmacSha256Prf,
+    pub(crate) prf: Option<HmacSha256Prf>,
     pub(crate) retention: Retention,
 }
 
@@ -703,12 +708,17 @@ impl<'k, K> KeysetCipher<'k, K> {
     }
 
     /// The PRF index terms are derived from, keyed by this keyset's index
-    /// key.
+    /// key, or `None` when this handle holds no index key.
+    ///
+    /// A keyset in a key vendor backend holds no index key between settles
+    /// (ADR-0009: no index key outlives the settle that needed it), so its
+    /// handle returns `None`, and this crate's term types derive their terms
+    /// inside the settle instead. A ZeroKMS keyset always returns `Some`.
     ///
     /// Public so that other crates can implement their own term types
     /// against this cipher (see [`crate::sem`]).
-    pub fn prf(&self) -> &HmacSha256Prf {
-        &self.state.prf
+    pub fn prf(&self) -> Option<&HmacSha256Prf> {
+        self.state.prf.as_ref()
     }
 
     /// The keyset's loaded state, shared: for a value that must derive
@@ -736,7 +746,7 @@ mod tests {
         Arc::new(KeysetState {
             id: Uuid::from_u128(id),
             name: name.map(str::to_owned),
-            prf: HmacSha256Prf::new(Protected::new([id as u8; 32])),
+            prf: Some(HmacSha256Prf::new(Protected::new([id as u8; 32]))),
             retention: Retention::UntilEvicted,
         })
     }
@@ -1550,7 +1560,7 @@ mod tests {
         Arc::new(KeysetState {
             id: Uuid::from_u128(id),
             name: None,
-            prf: HmacSha256Prf::new(Protected::new([id as u8; 32])),
+            prf: Some(HmacSha256Prf::new(Protected::new([id as u8; 32]))),
             retention,
         })
     }
@@ -1649,7 +1659,7 @@ mod tests {
         let named = Arc::new(KeysetState {
             id: Uuid::from_u128(1),
             name: Some("acme".into()),
-            prf: HmacSha256Prf::new(Protected::new([1u8; 32])),
+            prf: Some(HmacSha256Prf::new(Protected::new([1u8; 32]))),
             retention: Retention::Until(end),
         });
         let resolution = cache.resolution();

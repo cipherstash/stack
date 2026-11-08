@@ -187,8 +187,68 @@ use zeroize::{Zeroize, Zeroizing};
 use stack_kms::MaybeSend;
 
 use crate::target::core::Term;
-use crate::target::{DecryptField, Decryptable, Decryption};
+use crate::target::{DecryptField, Decryptable, Decryption, Request};
 use crate::{Error, KeysetCipher, Pending};
+
+/// Derive a term through `cipher`'s PRF.
+///
+/// When the handle holds the PRF (a ZeroKMS keyset), the term is derived
+/// now and the pending carries no requests. When it holds none (a keyset in
+/// a key vendor backend, whose index key lasts one settle), the pending asks
+/// the settle for the keyset's index key and `derive` runs inside the
+/// settle, over the PRF the settle loaded. Either way `derive` sees the same
+/// PRF, so the term is the same.
+fn derive_term<'a, K, T, F>(cipher: &'a KeysetCipher<'_, K>, derive: F) -> Pending<'a, T, K>
+where
+    T: MaybeSend + 'a,
+    F: FnOnce(&HmacSha256Prf) -> Result<T, TermError> + MaybeSend + 'a,
+{
+    with_prf(cipher, move |prf| derive(prf).map_err(Error::from))
+}
+
+/// [`derive_term`] for any derivation through the keyset's PRF, failing
+/// with any [`Error`]: the JSON terms, selectors and read keys use it.
+pub(crate) fn with_prf<'a, K, T, F>(cipher: &'a KeysetCipher<'_, K>, derive: F) -> Pending<'a, T, K>
+where
+    T: MaybeSend + 'a,
+    F: FnOnce(&HmacSha256Prf) -> Result<T, Error> + MaybeSend + 'a,
+{
+    match cipher.prf() {
+        Some(prf) => Pending::ready(cipher, derive(prf)),
+        None => {
+            let keyset = cipher.keyset_id();
+            Pending::request(cipher, vec![Request::index_key(keyset)], move |responses| {
+                derive(responses.index_prf(keyset)?)
+            })
+        }
+    }
+}
+
+/// An equality term of `value` under `context`, through [`derive_term`].
+/// A value derived inside the settle is normalized now, because it may
+/// borrow; the normalized form is owned.
+fn equality_pending<'a, K, T>(
+    cipher: &'a KeysetCipher<'_, K>,
+    value: T,
+    context: Context<'_>,
+) -> Pending<'a, EqualityTerm, K>
+where
+    T: Encrypt,
+{
+    match cipher.prf() {
+        Some(prf) => Pending::ready(cipher, equality(prf, value, context).map_err(Error::from)),
+        None => {
+            let normalized = match normalized(value) {
+                Ok(normalized) => normalized,
+                Err(error) => return Pending::ready(cipher, Err(Error::from(error))),
+            };
+            let context = context.into_owned();
+            derive_term(cipher, move |prf| {
+                equality_of_normalized(prf, normalized, context)
+            })
+        }
+    }
+}
 
 // The version suffix (`/v1`, `/v2`) versions the *derivation* (domain +
 // input framing), not the crate. Any change to the bytes a term derives from must bump it: a changed
@@ -648,8 +708,7 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = equality(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        equality_pending(cipher, source, context)
     }
 }
 
@@ -1333,9 +1392,18 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term =
-            match_term(cipher.prf(), source.as_ref(), context, O::options()).map_err(Error::from);
-        Pending::ready(cipher, term)
+        match cipher.prf() {
+            Some(prf) => Pending::ready(
+                cipher,
+                match_term(prf, source.as_ref(), context, O::options()).map_err(Error::from),
+            ),
+            None => {
+                let text = zeroize::Zeroizing::new(source.as_ref().to_owned());
+                derive_term(cipher, move |prf| {
+                    match_term(prf, &text, context, O::options())
+                })
+            }
+        }
     }
 }
 
@@ -2002,8 +2070,7 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        derive_term(cipher, move |prf| ore(prf, source, context))
     }
 }
 
@@ -2026,8 +2093,7 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ope(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        derive_term(cipher, move |prf| ope(prf, source, context))
     }
 }
 
@@ -2050,8 +2116,7 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore_block(cipher.prf(), source, context).map_err(Error::from);
-        Pending::ready(cipher, term)
+        derive_term(cipher, move |prf| ore_block(prf, source, context))
     }
 }
 
@@ -2121,8 +2186,7 @@ impl<K> KeysetCipher<'_, K> {
     where
         T: Encrypt,
     {
-        let term = equality(self.prf(), value, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        equality_pending(self, value, descriptor.into_prf_context())
     }
 
     /// Generate a match (full-text) term for `text` under the field
@@ -2166,8 +2230,10 @@ impl<K> KeysetCipher<'_, K> {
         normalized: Normalized,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, EqualityTerm, K> {
-        let term = equality_of_normalized(self.prf(), normalized, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+        let context = descriptor.into_prf_context().into_owned();
+        derive_term(self, move |prf| {
+            equality_of_normalized(prf, normalized, context)
+        })
     }
 
     /// [`match_terms`](Self::match_terms) under runtime options, for the
@@ -2186,8 +2252,17 @@ impl<K> KeysetCipher<'_, K> {
     where
         O: MatchConfig + MaybeSend,
     {
-        let term = match_term(self.prf(), text, descriptor.into_prf_context(), options);
-        Pending::ready(self, term.map_err(Error::from))
+        let context = descriptor.into_prf_context().into_owned();
+        match self.prf() {
+            Some(prf) => Pending::ready(
+                self,
+                match_term(prf, text, context, options).map_err(Error::from),
+            ),
+            None => {
+                let text = zeroize::Zeroizing::new(text.to_owned());
+                derive_term(self, move |prf| match_term(prf, &text, context, options))
+            }
+        }
     }
 
     /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
@@ -2201,26 +2276,30 @@ impl<K> KeysetCipher<'_, K> {
     /// wipes it; pass a `String` for borrowed text. Returns the raw CLLW
     /// ciphertext; the target-directed path wraps the same bytes in
     /// [`OreTerm`].
-    pub fn ore_term<'c, T: Orderable>(
-        &self,
+    pub fn ore_term<'s, 'c, T: Orderable + 's>(
+        &'s self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, OreClww8VariableV1, K> {
-        let term = ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+    ) -> Pending<'s, OreClww8VariableV1, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        derive_term(self, move |prf| {
+            ore(prf, value, context).map(OreTerm::into_inner)
+        })
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
     /// plain lexicographic byte order, no custom comparator required.
     /// Encrypt-only — pair with the record ciphertext for round-trips. Key
     /// handling and input bounds as for [`ore_term`](Self::ore_term).
-    pub fn ope_term<'c, T: Orderable>(
-        &self,
+    pub fn ope_term<'s, 'c, T: Orderable + 's>(
+        &'s self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, OpeClww8VariableV1, K> {
-        let term = ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
-        Pending::ready(self, term.map_err(Error::from))
+    ) -> Pending<'s, OpeClww8VariableV1, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        derive_term(self, move |prf| {
+            ope(prf, value, context).map(OpeTerm::into_inner)
+        })
     }
 
     /// Generate a block ORE term: ore-rs's 6-bit block ORE, the scheme
@@ -2229,13 +2308,13 @@ impl<K> KeysetCipher<'_, K> {
     /// [`OreBlockTerm`] for which scheme a type is encrypted with and what
     /// is refused. Byte-identical to the target-directed path's left half
     /// for the same descriptor; the right half carries a random nonce.
-    pub fn ore_block_term<'c, T: Orderable>(
-        &self,
+    pub fn ore_block_term<'s, 'c, T: Orderable + 's>(
+        &'s self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, OreBlockTerm<T>, K> {
-        let term = ore_block(self.prf(), value, descriptor.into_prf_context());
-        Pending::ready(self, term.map_err(Error::from))
+    ) -> Pending<'s, OreBlockTerm<T>, K> {
+        let context = descriptor.into_prf_context().into_owned();
+        derive_term(self, move |prf| ore_block(prf, value, context))
     }
 }
 

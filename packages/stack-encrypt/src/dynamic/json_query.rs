@@ -762,26 +762,24 @@ pub(super) fn derive_input<'a, K: 'static>(
                     })
                 })
         }
-        Input::Path(path) if op == OpSpec::Selector => {
-            let selector = keyset.json_selector_now(&path, column())?;
-            Pending::ready(keyset, Ok(Operand::Text(selector.to_string())))
-        }
+        Input::Path(path) if op == OpSpec::Selector => keyset
+            .json_selector_planned(&path, column())?
+            .map(|selector| Operand::Text(selector.to_string())),
         Input::Path(path) => {
             // A path with no wildcard names one node: its key holds the
             // one token, and nothing that covers a node above it.
-            let key = keyset.json_subtree_key_now(
-                &path,
-                options,
-                JsonSubtreeKey::DEFAULT_BOUND,
-                column(),
-            )?;
-            let [token]: [String; 1] = key.tokens().try_into().map_err(|_| Error::Internal)?;
-            Pending::ready(keyset, Ok(Operand::Text(token)))
+            keyset
+                .json_subtree_key_planned(&path, options, JsonSubtreeKey::DEFAULT_BOUND, column())?
+                .try_map(|key| {
+                    let [token]: [String; 1] = key.tokens().try_into().map_err(|_| {
+                        crate::Error::Other("a path with no wildcard reads one token".into())
+                    })?;
+                    Ok(Operand::Text(token))
+                })
         }
-        Input::Read(path, bound) => {
-            let key = keyset.json_subtree_key_now(&path, options, bound, column())?;
-            Pending::ready(keyset, Ok(Operand::TextList(key.tokens())))
-        }
+        Input::Read(path, bound) => keyset
+            .json_subtree_key_planned(&path, options, bound, column())?
+            .map(|key| Operand::TextList(key.tokens())),
         Input::Elements(bound, predicates) => elements(keyset, label, options, bound, &predicates)?,
         Input::Predicate(node) => super::json_predicate::derive(keyset, label, options, *node)?,
     })
@@ -857,13 +855,13 @@ fn elements<'a, K: 'static>(
     let mut members = Vec::with_capacity(predicates.len());
     for predicate in predicates {
         let tokens = keyset
-            .json_subtree_key_now(
+            .json_subtree_key_planned(
                 &predicate.path,
                 options,
                 bound,
                 NonEmpty::from(label.clone()),
             )?
-            .tokens();
+            .map(|key| key.tokens());
         let leaf = |value: &Parsed| {
             terms(
                 keyset,
@@ -878,8 +876,9 @@ fn elements<'a, K: 'static>(
             Bounds::Between(low, high) => (None, vec![leaf(low), leaf(high)]),
         };
         members.push(
-            Pending::all(keyset, leaves)
-                .map(move |leaves| MemberOperand::new(tokens, compare, leaves)),
+            tokens
+                .zip(Pending::all(keyset, leaves))
+                .map(move |(tokens, leaves)| MemberOperand::new(tokens, compare, leaves)),
         );
     }
     Ok(Pending::all(keyset, members).try_map(|m| eql(&ElementsOperand { m }).map(Operand::One)))
@@ -993,13 +992,31 @@ pub(super) fn open<'a, K: 'static>(
 ) -> Result<Pending<'a, ValueFrame, K>, Error> {
     let (read, groups) = read_open(request, rows)?;
     let column = || NonEmpty::from(label.clone());
+    let context = || AeadContext::from(NonEmpty::from(label.clone()));
+    // A keyset whose index key lasts one settle holds no PRF to derive the
+    // read's selector or key with before the settle: the read opens in one
+    // settle that loads the index key and derives them inside it.
+    let Some(prf) = keyset.prf() else {
+        let by = match read {
+            Read::Selector(path) => crate::json::ReadBy::Selector(path),
+            Read::Subtree(path, bound) => crate::json::ReadBy::Subtree(path, bound),
+        };
+        return Ok(crate::json::open_read_in_settle(
+            keyset,
+            by,
+            options,
+            column(),
+            context,
+            groups,
+        )?
+        .try_map(opened_frame));
+    };
     let opener = match read {
-        Read::Selector(path) => Opener::Selector(keyset.json_selector_now(&path, column())?),
+        Read::Selector(path) => Opener::Selector(keyset.json_selector_now(prf, &path, column())?),
         Read::Subtree(path, bound) => {
-            Opener::Subtree(keyset.json_subtree_key_now(&path, options, bound, column())?)
+            Opener::Subtree(keyset.json_subtree_key_now(prf, &path, options, bound, column())?)
         }
     };
-    let context = || AeadContext::from(NonEmpty::from(label.clone()));
     // Opened through the client, confined to the deriving keyset, as a
     // record's leaves are under `Scope::Keyset`: the read's key is that
     // keyset's, so a document sealed under another cannot answer it.

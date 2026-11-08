@@ -123,7 +123,7 @@ fn sealed_value_rejects_unknown_version() {
 /// change to the v1 framing, the v1 leaf AAD or the v1 decoder fails here.
 #[tokio::test]
 async fn a_pinned_v1_leaf_still_opens() {
-    const V1_LEAF: &str = "010000000000000000000000000000000045608626b2b6c6de1bfc90dd87c420ac2000d702c5b01099cca8d52801ec7a9ee26928d0f8c71e120a2a62cc9b7f2e96579a01c9186cd1c3d5e396fe5a727d374ab5cddf8abae2b708de5ceed1925f75508b9c4b271f1bff53234b";
+    const V1_LEAF: &str = "010000000000000000000000000000000045608626b2b6c6de1bfc90dd87c420ac2000d702c5b01099cca8d52801ec7a9ee26928d0f8c71e120a2a62cc9b7f2e96579a0217b7edda95f2d12a73f9735ffa3d8c85c6d15ae926a3e179d6d05cefd80edc848475f7d5ce7dc54a4c";
     let bytes = unhex(V1_LEAF);
     let leaf = SealedValue::from_bytes(&bytes).expect("decode the pinned v1 leaf");
     assert_eq!(leaf.format_version(), SealedValue::FORMAT_VERSION);

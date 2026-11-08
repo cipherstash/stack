@@ -32,7 +32,7 @@ use super::query::{group_of, JsonSelector, JsonSelectorSet, JsonSubtreeKey, Read
 use super::shuffle;
 use super::{JsonDocument, JsonEntry, JsonExtracted, JsonHeader, JsonOptions, JsonSubtree, Tag};
 use crate::keyset::KeysetState;
-use crate::sem::TermError;
+use crate::sem::{with_prf, TermError};
 use crate::target::{AeadContext, CallerContext, Decryption, Pending, Request};
 use crate::{DecryptInto, Descriptor, Error, KeysetCipher, NonEmpty, StackCipher};
 
@@ -322,20 +322,61 @@ fn prf16_of(
 /// [`JsonSubtreeKey`] holds one, so that opening a walk's rows can derive
 /// the selector each row must carry from its parent's path and its own
 /// decrypted label. Never printed; compared by keyset and context.
+///
+/// A keyset whose index key lasts one settle holds no PRF
+/// ([`KeysetState::prf`] is `None`). A fulfilment that opens rows under such
+/// a keyset takes the PRF its settle loaded ([`in_settle`](Self::in_settle)),
+/// and the selectors it builds that way drop with the fulfilment, so the
+/// index key does not outlive the settle. A [`JsonSubtreeKey`] never holds
+/// that PRF.
 #[derive(Clone)]
 pub(crate) struct Selectors {
     keyset: Arc<KeysetState>,
     context: Context<'static>,
+    /// The PRF the settle loaded for a keyset that holds none. Set only
+    /// inside a fulfilment ([`in_settle`](Self::in_settle)).
+    settle: Option<Arc<HmacSha256Prf>>,
 }
 
 impl Selectors {
     pub(crate) fn new(keyset: Arc<KeysetState>, context: Context<'static>) -> Self {
-        Self { keyset, context }
+        Self {
+            keyset,
+            context,
+            settle: None,
+        }
+    }
+
+    /// The keyset whose index key a settle must load before these selectors
+    /// derive anything: the keyset, when it holds no PRF of its own.
+    pub(crate) fn settle_keyset(&self) -> Option<Uuid> {
+        self.keyset.prf.is_none().then_some(self.keyset.id)
+    }
+
+    /// These selectors over the PRF the settle loaded, for a keyset that
+    /// holds none. The pending that runs the fulfilment must have asked for
+    /// that index key ([`Request::index_key`] or [`Request::load_keyset`]),
+    /// or this is [`Error::ResponseShape`].
+    pub(crate) fn in_settle(mut self, responses: &crate::target::Responses) -> Result<Self, Error> {
+        if self.keyset.prf.is_none() {
+            self.settle = Some(responses.index_prf_shared(self.keyset.id)?);
+        }
+        Ok(self)
+    }
+
+    /// The PRF the selectors derive under: the keyset's, or the one the
+    /// settle loaded ([`in_settle`](Self::in_settle)).
+    fn prf(&self) -> Result<&HmacSha256Prf, Error> {
+        self.keyset
+            .prf
+            .as_ref()
+            .or(self.settle.as_deref())
+            .ok_or(Error::ResponseShape)
     }
 
     /// The selector of the path whose selector bytes are `bytes`.
     fn of(&self, bytes: Protected<Vec<u8>>) -> Result<Tag, Error> {
-        prf16_of(&self.keyset.prf, SELECTOR_DOMAIN, &self.context, bytes).map_err(Error::from)
+        prf16_of(self.prf()?, SELECTOR_DOMAIN, &self.context, bytes).map_err(Error::from)
     }
 }
 
@@ -349,7 +390,7 @@ impl Selectors {
             Arc::new(KeysetState {
                 id: Uuid::from_u128(1),
                 name: None,
-                prf: HmacSha256Prf::new(Protected::new([7; 32])),
+                prf: Some(HmacSha256Prf::new(Protected::new([7; 32]))),
                 retention: crate::keyset::Retention::UntilEvicted,
             }),
             Context::from_encoded(b"users/profile").into_owned(),
@@ -757,20 +798,39 @@ pub(crate) fn terms_pending<'a, K>(
     context: NonEmpty<CallerContext>,
 ) -> Pending<'a, JsonTerms, K> {
     let context = context.into_prf_context().into_owned();
-    let terms = cipher
-        .cipher()
-        .json_randomness()
-        .generator()
-        .and_then(|mut rng| {
-            let walked = walk(value, options, cipher.prf(), &context, &mut rng)?;
-            let mut selectors = group_of(&walked.terms.nodes, None);
-            selectors.shuffle(&mut rng);
-            Ok(JsonTerms {
-                query_selectors: Some(selectors),
-                ..walked.terms
+    let query_terms = |value: &Value,
+                       options: &JsonOptions,
+                       prf: &HmacSha256Prf,
+                       context: &Context<'_>,
+                       mut rng: SafeRand|
+     -> Result<JsonTerms, Error> {
+        let walked = walk(value, options, prf, context, &mut rng)?;
+        let mut selectors = group_of(&walked.terms.nodes, None);
+        selectors.shuffle(&mut rng);
+        Ok(JsonTerms {
+            query_selectors: Some(selectors),
+            ..walked.terms
+        })
+    };
+    let rng = match cipher.cipher().json_randomness().generator() {
+        Ok(rng) => rng,
+        Err(error) => return Pending::failed(cipher, error),
+    };
+    match cipher.prf() {
+        Some(prf) => Pending::ready(cipher, query_terms(value, options, prf, &context, rng)),
+        // The keyset's index key lasts one settle: the terms are derived
+        // inside it, over a copy of the query value, wiped when it drops.
+        None => {
+            if let Err(error) = options.check() {
+                return Pending::failed(cipher, error.into());
+            }
+            let value = PlainJson::protect(value.clone());
+            let options = options.clone();
+            with_prf(cipher, move |prf| {
+                query_terms(value.risky_ref().value(), &options, prf, &context, rng)
             })
-        });
-    Pending::ready(cipher, terms)
+        }
+    }
 }
 
 /// Seal `value` into a [`JsonDocument`] under `context`: one data key for
@@ -799,16 +859,6 @@ pub(crate) fn seal_pending<'a, K: 'static>(
         Ok(rng) => rng,
         Err(error) => return Pending::failed(cipher, error),
     };
-    let walked = match walk(
-        value.risky_ref().value(),
-        options,
-        cipher.prf(),
-        &prf_context,
-        &mut rng,
-    ) {
-        Ok(walked) => walked,
-        Err(error) => return Pending::failed(cipher, error.into()),
-    };
     let whole = if options.sealed_root {
         match sealed_root_plaintext(value.risky_ref().value()) {
             Ok(bytes) => Some(bytes),
@@ -819,6 +869,44 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     };
     let keyset_id = cipher.keyset_id();
     let sealed_root = options.sealed_root;
+    let Some(prf) = cipher.prf() else {
+        // The keyset's index key lasts one settle: the document is walked
+        // inside it, under the index key the settle loads beside the data
+        // key. The options are checked now, as the walk below checks them.
+        if let Err(error) = options.check() {
+            return Pending::failed(cipher, error.into());
+        }
+        let options = options.clone();
+        return Pending::request(
+            cipher,
+            vec![
+                Request::generate_under(descriptor),
+                Request::index_key(keyset_id),
+            ],
+            move |responses| {
+                let key = responses.next_generated_key()?;
+                let prf = responses.index_prf(keyset_id)?;
+                let walked = walk(
+                    value.risky_ref().value(),
+                    &options,
+                    prf,
+                    &prf_context,
+                    &mut rng,
+                )?;
+                seal(walked, whole, keyset_id, key, &aad, sealed_root, rng)
+            },
+        );
+    };
+    let walked = match walk(
+        value.risky_ref().value(),
+        options,
+        prf,
+        &prf_context,
+        &mut rng,
+    ) {
+        Ok(walked) => walked,
+        Err(error) => return Pending::failed(cipher, error.into()),
+    };
     Pending::request(
         cipher,
         vec![Request::generate_under(descriptor)],
@@ -1225,7 +1313,8 @@ fn open_document<'a, K>(
         let aes = leaf_cipher(&key)?;
         if open_root {
             let keyset = responses.next_keyset()?;
-            open_whole_chain(doc, &aes, &aad, Selectors::new(keyset, prf_context))
+            let selectors = Selectors::new(keyset, prf_context).in_settle(responses)?;
+            open_whole_chain(doc, &aes, &aad, selectors)
         } else {
             open_sealed_root(&doc, &aes, &aad)
         }
@@ -1259,7 +1348,7 @@ fn open_whole_chain(
 ) -> Result<Value, Error> {
     let root = JsonPath::root();
     let token = prf16(
-        &selectors.keyset.prf,
+        selectors.prf()?,
         TOKEN_DOMAIN,
         &selectors.context,
         &root.token_bytes().unwrap_or_default(),
@@ -1360,28 +1449,38 @@ impl DecryptInto<Value> for JsonExtracted {
                 Err(error) => return Pending::failed(cipher, error),
             };
             Pending::request(cipher, vec![request], move |responses| {
-                let key = responses.next_retrieved_key()?;
-                let aes = leaf_cipher(&key)?;
-                let opened = open_entry(
-                    &aes,
-                    &node.header,
-                    &aad,
-                    &node.entry,
-                    node.slot,
-                    &cascade::no_children(),
-                )
-                .map_err(|error| match error {
-                    Error::Aead => Error::JsonNotALeaf,
-                    other => other,
-                })?;
-                opened
-                    .whole
-                    .or(opened.scalar)
-                    .map(hand_over)
-                    .ok_or_else(|| shape("a JSON scalar, or a sealed root"))
+                open_extracted(&node, &aad, responses)
             })
         })
     }
+}
+
+/// Open the entry `->` returned, its selector already checked, under the
+/// data key its request retrieved: the fulfilment of a [`JsonExtracted`].
+fn open_extracted(
+    node: &super::JsonNode,
+    aad: &Context<'_>,
+    responses: &mut crate::target::Responses,
+) -> Result<Value, Error> {
+    let key = responses.next_retrieved_key()?;
+    let aes = leaf_cipher(&key)?;
+    let opened = open_entry(
+        &aes,
+        &node.header,
+        aad,
+        &node.entry,
+        node.slot,
+        &cascade::no_children(),
+    )
+    .map_err(|error| match error {
+        Error::Aead => Error::JsonNotALeaf,
+        other => other,
+    })?;
+    opened
+        .whole
+        .or(opened.scalar)
+        .map(hand_over)
+        .ok_or_else(|| shape("a JSON scalar, or a sealed root"))
 }
 
 /// Open the rows of a read into the values of the nodes its tokens named,
@@ -1395,11 +1494,145 @@ fn open_reads<'a, K>(
     cipher: &'a StackCipher<K>,
     context: AeadContext,
 ) -> Pending<'a, Vec<Protected<PlainJson>>, K> {
-    if subtree.is_sealed_root() {
-        open_fallback(subtree, cipher, context)
-            .try_map(|(key, mut whole)| select_reads(&key, &mut whole))
-    } else {
-        open_subtree(subtree, cipher, context)
+    let sealed_root = subtree.is_sealed_root();
+    let (nodes, key) = subtree.into_parts();
+    let planned = match plan_rows(nodes, sealed_root, context) {
+        Ok(planned) => planned,
+        Err(error) => return Pending::failed(cipher, error),
+    };
+    // A key derived under a keyset whose index key lasts one settle holds
+    // no PRF: the settle loads that index key beside the data key, and the
+    // rows' selectors are derived under it. The sealed root needs none.
+    let mut requests: Vec<Request> = planned.request().into_iter().collect();
+    if let (PlannedRows::Walk { .. }, Some(keyset)) = (&planned, key.selectors.settle_keyset()) {
+        requests.push(Request::index_key(keyset));
+    }
+    Pending::request(cipher, requests, move |responses| {
+        let selectors = match &planned {
+            PlannedRows::Walk { .. } => key.selectors.clone().in_settle(responses)?,
+            _ => key.selectors.clone(),
+        };
+        open_rows(planned, &key, &selectors, responses)
+    })
+}
+
+/// A read's rows, checked and ready to open: what [`plan_rows`] decides
+/// before any key is retrieved.
+enum PlannedRows {
+    /// No rows: the read reached nothing, and nothing is retrieved.
+    Empty,
+    /// The sealed root a read fell back to, opened whole.
+    Fallback {
+        root: super::JsonNode,
+        request: Request,
+        aad: Context<'static>,
+    },
+    /// The rows of one document, in slot order, each placed by the chain.
+    Walk {
+        nodes: Vec<super::JsonNode>,
+        header: JsonHeader,
+        request: Request,
+        aad: Context<'static>,
+    },
+}
+
+impl PlannedRows {
+    /// The data-key request the rows need, if any.
+    fn request(&self) -> Option<Request> {
+        match self {
+            Self::Empty => None,
+            Self::Fallback { request, .. } | Self::Walk { request, .. } => Some(request.clone()),
+        }
+    }
+}
+
+/// Check a read's rows and plan their key retrieval: everything opening
+/// them refuses before any key is retrieved.
+fn plan_rows(
+    mut nodes: Vec<super::JsonNode>,
+    sealed_root: bool,
+    context: AeadContext,
+) -> Result<PlannedRows, Error> {
+    if sealed_root {
+        let Some(root) = nodes.into_iter().next() else {
+            return Err(shape("the sealed root"));
+        };
+        let (request, aad) = key_retrieval(&root.header, context.into_context())?;
+        return Ok(PlannedRows::Fallback { root, request, aad });
+    }
+    let Some(first) = nodes.first() else {
+        return Ok(PlannedRows::Empty);
+    };
+    let header = first.header.clone();
+    // A read is of one row, so its rows carry one header. Rows of two
+    // documents are not the answer to it. Checked first: two documents'
+    // entries can share a slot.
+    if nodes.iter().any(|n| n.header != header) {
+        return Err(wrong("rows of one document"));
+    }
+    // A read returns each entry once. Two rows at one slot are the server
+    // repeating an entry, which would let it line up one container as many
+    // times as it likes: an honest database never returns one, so it is the
+    // wrong entry, not a shape the target refuses.
+    nodes.sort_by_key(|n| n.slot);
+    if nodes.windows(2).any(|pair| pair[0].slot == pair[1].slot) {
+        return Err(wrong("rows of distinct entries"));
+    }
+    let (request, aad) = key_retrieval(&header, context.into_context())?;
+    Ok(PlannedRows::Walk {
+        nodes,
+        header,
+        request,
+        aad,
+    })
+}
+
+/// Open planned rows into the values of the nodes `key`'s tokens named, in
+/// the key's order, under the data key their request retrieved and, for
+/// walked rows, `selectors` (the key's own, over the settle's PRF where the
+/// keyset holds none).
+fn open_rows(
+    planned: PlannedRows,
+    key: &JsonSubtreeKey,
+    selectors: &Selectors,
+    responses: &mut crate::target::Responses,
+) -> Result<Vec<Protected<PlainJson>>, Error> {
+    match planned {
+        PlannedRows::Empty => Ok(Vec::new()),
+        PlannedRows::Fallback { root, aad, .. } => {
+            let retrieved = responses.next_retrieved_key()?;
+            let aes = leaf_cipher(&retrieved)?;
+            let opened = open_entry(
+                &aes,
+                &root.header,
+                &aad,
+                &root.entry,
+                root.slot,
+                &cascade::no_children(),
+            )?;
+            let mut whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;
+            select_reads(key, &mut whole)
+        }
+        PlannedRows::Walk {
+            nodes, header, aad, ..
+        } => {
+            let key_bytes = responses.next_retrieved_key()?;
+            let aes = leaf_cipher(&key_bytes)?;
+            let rows = nodes
+                .into_iter()
+                .map(|n| ReturnedRow {
+                    entry: n.entry,
+                    slot: n.slot,
+                    depth: n.depth,
+                })
+                .collect();
+            let opening = Opening {
+                header: &header,
+                aad: &aad,
+                aes: &aes,
+            };
+            place(rows, &key.reads, selectors, key.bound, &opening)
+        }
     }
 }
 
@@ -1476,56 +1709,6 @@ struct ReturnedRow {
     entry: JsonEntry,
     slot: u64,
     depth: Option<u32>,
-}
-
-/// Open every row and place each node a token named, checking every row
-/// against the key as it goes ([`place`]).
-fn open_subtree<'a, K>(
-    subtree: JsonSubtree,
-    cipher: &'a StackCipher<K>,
-    context: AeadContext,
-) -> Pending<'a, Vec<Protected<PlainJson>>, K> {
-    let (mut nodes, key) = subtree.into_parts();
-    let Some(first) = nodes.first() else {
-        return Pending::ready(cipher, Ok(Vec::new()));
-    };
-    let header = first.header.clone();
-    // A read is of one row, so its rows carry one header. Rows of two
-    // documents are not the answer to it. Checked first: two documents'
-    // entries can share a slot.
-    if nodes.iter().any(|n| n.header != header) {
-        return Pending::failed(cipher, wrong("rows of one document"));
-    }
-    // A read returns each entry once. Two rows at one slot are the server
-    // repeating an entry, which would let it line up one container as many
-    // times as it likes: an honest database never returns one, so it is the
-    // wrong entry, not a shape the target refuses.
-    nodes.sort_by_key(|n| n.slot);
-    if nodes.windows(2).any(|pair| pair[0].slot == pair[1].slot) {
-        return Pending::failed(cipher, wrong("rows of distinct entries"));
-    }
-    let (request, aad) = match key_retrieval(&header, context.into_context()) {
-        Ok(parts) => parts,
-        Err(error) => return Pending::failed(cipher, error),
-    };
-    Pending::request(cipher, vec![request], move |responses| {
-        let key_bytes = responses.next_retrieved_key()?;
-        let aes = leaf_cipher(&key_bytes)?;
-        let rows = nodes
-            .into_iter()
-            .map(|n| ReturnedRow {
-                entry: n.entry,
-                slot: n.slot,
-                depth: n.depth,
-            })
-            .collect();
-        let opening = Opening {
-            header: &header,
-            aad: &aad,
-            aes: &aes,
-        };
-        place(rows, &key.reads, &key.selectors, key.bound, &opening)
-    })
 }
 
 /// The cipher side of opening a document's rows: its header, the AAD its
@@ -1877,36 +2060,115 @@ fn select_reads(
         .collect())
 }
 
-/// Open the sealed root a read fell back to: the whole document, under its
-/// `Protected`, with the key that keyed the read, whose reads the caller
-/// evaluates over it.
-fn open_fallback<'a, K>(
-    subtree: JsonSubtree,
-    cipher: &'a StackCipher<K>,
-    context: AeadContext,
-) -> Pending<'a, (JsonSubtreeKey, Protected<PlainJson>), K> {
-    let (nodes, key) = subtree.into_parts();
-    let Some(root) = nodes.into_iter().next() else {
-        return Pending::failed(cipher, shape("the sealed root"));
-    };
-    let (request, aad) = match key_retrieval(&root.header, context.into_context()) {
-        Ok(parts) => parts,
-        Err(error) => return Pending::failed(cipher, error),
-    };
-    Pending::request(cipher, vec![request], move |responses| {
-        let retrieved = responses.next_retrieved_key()?;
-        let aes = leaf_cipher(&retrieved)?;
-        let opened = open_entry(
-            &aes,
-            &root.header,
-            &aad,
-            &root.entry,
-            root.slot,
-            &cascade::no_children(),
-        )?;
-        let whole = opened.whole.ok_or_else(|| shape("a sealed root"))?;
-        Ok((key, whole))
-    })
+/// What a read of a JSON column opens its rows by: the path of a
+/// selector, or the path and the wildcard bound of a subtree read.
+#[cfg(feature = "dynamic")]
+pub(crate) enum ReadBy {
+    Selector(JsonPath),
+    Subtree(JsonPath, u32),
+}
+
+/// Open the groups of rows a read returned, one value list per group,
+/// under a keyset whose index key lasts one settle ([`Selectors`]).
+///
+/// Under such a keyset the selector or the read key that checks the rows
+/// cannot be derived before the settle, so the read is opened in one
+/// settle that loads the index key beside the groups' data keys: the
+/// selector or key is derived inside it, the rows are checked against it,
+/// and they are opened. Every group opens as [`JsonExtracted`] or
+/// [`JsonSubtree`] opens it, with one difference: a selector's entry that
+/// carries another selector is refused after its data key is retrieved,
+/// not before, since the selector is not known before. The pending is
+/// confined to the keyset, as a read's openings are.
+#[cfg(feature = "dynamic")]
+pub(crate) fn open_read_in_settle<'a, 'c, K>(
+    keyset: &'a KeysetCipher<'_, K>,
+    read: ReadBy,
+    options: &JsonOptions,
+    descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    context: impl Fn() -> AeadContext,
+    groups: Vec<Vec<super::JsonNode>>,
+) -> Result<Pending<'a, Vec<Vec<Value>>, K>, Error> {
+    if let ReadBy::Subtree(path, bound) = &read {
+        let _ = read_count(path, *bound)?;
+    }
+    let keyset_id = keyset.keyset_id();
+    let state = Arc::clone(keyset.state());
+    let prf_context = descriptor.into_prf_context().into_owned();
+    let mut requests = vec![Request::index_key(keyset_id)];
+    let mut plans = Vec::with_capacity(groups.len());
+    for nodes in groups {
+        let plan = match &read {
+            ReadBy::Selector(_) => match <[super::JsonNode; 1]>::try_from(nodes) {
+                Ok([node]) => {
+                    let (request, aad) = key_retrieval(&node.header, context().into_context())?;
+                    requests.push(request);
+                    GroupPlan::Extracted(Some((node, aad)))
+                }
+                // A selector's group holds one entry or none.
+                Err(_) => GroupPlan::Extracted(None),
+            },
+            ReadBy::Subtree(..) => {
+                let sealed_root = matches!(
+                    nodes.as_slice(),
+                    [node] if node.slot == 0 && node.depth == Some(0) && node.header.sealed_root()
+                );
+                let planned = plan_rows(nodes, sealed_root, context())?;
+                requests.extend(planned.request());
+                GroupPlan::Rows(planned)
+            }
+        };
+        plans.push(plan);
+    }
+    let options = options.clone();
+    let pending = Pending::request(keyset.cipher(), requests, move |responses| {
+        let prf = responses.index_prf_shared(keyset_id)?;
+        match read {
+            ReadBy::Selector(path) => {
+                let JsonSelector(selector) = selector_under(&prf, &path, &prf_context)?;
+                drop(prf);
+                plans
+                    .into_iter()
+                    .map(|plan| match plan {
+                        GroupPlan::Extracted(Some((node, aad))) => {
+                            if node.entry.s != selector {
+                                return Err(wrong("the entry at the path asked for"));
+                            }
+                            Ok(vec![open_extracted(&node, &aad, responses)?])
+                        }
+                        _ => Ok(Vec::new()),
+                    })
+                    .collect()
+            }
+            ReadBy::Subtree(path, bound) => {
+                let selectors = Selectors::new(state, prf_context).in_settle(responses)?;
+                let key = subtree_key_for(selectors.clone(), &prf, &options, &path, bound)?;
+                drop(prf);
+                plans
+                    .into_iter()
+                    .map(|plan| match plan {
+                        GroupPlan::Rows(planned) => {
+                            Ok(open_rows(planned, &key, &selectors, responses)?
+                                .into_iter()
+                                .map(hand_over)
+                                .collect())
+                        }
+                        GroupPlan::Extracted(_) => Err(Error::ResponseShape),
+                    })
+                    .collect()
+            }
+        }
+    });
+    Ok(pending.scoped_to(keyset_id))
+}
+
+/// One group of a read's rows, planned by [`open_read_in_settle`].
+#[cfg(feature = "dynamic")]
+enum GroupPlan {
+    /// A selector's entry and the AAD it opens under, or no entry.
+    Extracted(Option<(super::JsonNode, Context<'static>)>),
+    /// A subtree read's rows.
+    Rows(PlannedRows),
 }
 
 // =============================================================================
@@ -1999,24 +2261,10 @@ fn read_tokens(wildcards: usize, bound: u32) -> Option<u64> {
     Some(count)
 }
 
-/// The key that reads `path`: one token per concrete path the path names,
-/// each derived from the path alone, in document order, with a probe for
-/// the element at `bound` of each array a wildcard expands.
-///
-/// Every node's token derives from its path: the root's and, under the
-/// sealed root, each chain head's are PRFs of their paths; below them a
-/// member's is one hash under its parent's with its selector, and an
-/// element's one hash with its selector and its index. So a path with no
-/// wildcard sends exactly one token, its node's. A wildcard names no one
-/// node, and the client expands it to the positions `0 … bound − 1`, plus
-/// the probe at `bound`: the element itself, not the path below it, since
-/// an element past the bound need not have what the path names.
-fn subtree_key_for(
-    selectors: Selectors,
-    options: &JsonOptions,
-    path: &JsonPath,
-    bound: u32,
-) -> Result<JsonSubtreeKey, TermError> {
+/// How many tokens a read of `path` at `bound` sends, or the refusal of a
+/// path no read can take. Needs no key, so a read is refused before its
+/// index key is loaded.
+fn read_count(path: &JsonPath, bound: u32) -> Result<u64, TermError> {
     // The bound is not checked against PostgreSQL's integer: a path with no
     // wildcard never uses it, and with one the token cap refuses any bound
     // of MAX_READ_TOKENS or more first, naming the bound in its help.
@@ -2035,8 +2283,30 @@ fn subtree_key_for(
         .iter()
         .filter(|segment| matches!(segment, Segment::Wildcard))
         .count();
-    let count = read_tokens(wildcards, bound).ok_or(TermError::JsonWildcardTooWide)?;
-    let prf = &selectors.keyset.prf;
+    read_tokens(wildcards, bound).ok_or(TermError::JsonWildcardTooWide)
+}
+
+/// The key that reads `path`: one token per concrete path the path names,
+/// each derived from the path alone, in document order, with a probe for
+/// the element at `bound` of each array a wildcard expands.
+///
+/// Every node's token derives from its path: the root's and, under the
+/// sealed root, each chain head's are PRFs of their paths; below them a
+/// member's is one hash under its parent's with its selector, and an
+/// element's one hash with its selector and its index. So a path with no
+/// wildcard sends exactly one token, its node's. A wildcard names no one
+/// node, and the client expands it to the positions `0 … bound − 1`, plus
+/// the probe at `bound`: the element itself, not the path below it, since
+/// an element past the bound need not have what the path names.
+fn subtree_key_for(
+    selectors: Selectors,
+    prf: &HmacSha256Prf,
+    options: &JsonOptions,
+    path: &JsonPath,
+    bound: u32,
+) -> Result<JsonSubtreeKey, TermError> {
+    let count = read_count(path, bound)?;
+    let segments = path.segments();
     let context = &selectors.context;
     let mut steps = Vec::with_capacity(segments.len());
     let mut prefix = JsonPath::root();
@@ -2108,32 +2378,51 @@ impl<K> KeysetCipher<'_, K> {
     /// The selector of `path`, under the field `descriptor`: what `->` and
     /// the path functions take. Every element of an array shares its
     /// parent's selector, so a position in `path` reads as the wildcard.
-    /// Derived locally; the pending carries no request.
+    /// Derived locally; the pending carries no request, except under a
+    /// keyset whose index key lasts one settle, where it asks for that key
+    /// and the selector is derived inside the settle.
     pub fn json_selector<'c>(
         &self,
         path: &JsonPath,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSelector, K> {
-        Pending::ready(self, self.json_selector_now(path, descriptor))
+        self.json_selector_planned(path, descriptor)
+            .unwrap_or_else(|error| Pending::failed(self, error))
     }
 
-    /// [`json_selector`](Self::json_selector), derived and returned now:
-    /// for the engine's own callers, which derive locally and want a
-    /// refusal as a plain error.
-    pub(crate) fn json_selector_now<'c>(
+    /// [`json_selector`](Self::json_selector), with any refusal that can be
+    /// decided now returned as a plain error: for the engine's own callers.
+    /// Under a keyset that holds its PRF the selector is derived now, and
+    /// the pending is ready.
+    pub(crate) fn json_selector_planned<'c>(
         &self,
         path: &JsonPath,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Result<Pending<'_, JsonSelector, K>, Error> {
+        match self.prf() {
+            Some(prf) => Ok(Pending::ready(
+                self,
+                Ok(self.json_selector_now(prf, path, descriptor)?),
+            )),
+            None => {
+                let context = descriptor.into_prf_context().into_owned();
+                let path = path.clone();
+                Ok(with_prf(self, move |prf| {
+                    selector_under(prf, &path, &context)
+                }))
+            }
+        }
+    }
+
+    /// The selector of `path` under `prf`, the PRF of this keyset that the
+    /// caller holds, derived and returned now.
+    pub(crate) fn json_selector_now<'c>(
+        &self,
+        prf: &HmacSha256Prf,
+        path: &JsonPath,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Result<JsonSelector, Error> {
-        let context = descriptor.into_prf_context().into_owned();
-        prf16(
-            self.prf(),
-            SELECTOR_DOMAIN,
-            &context,
-            &path.selector_bytes(),
-        )
-        .map(JsonSelector)
-        .map_err(Error::from)
+        selector_under(prf, path, &descriptor.into_prf_context().into_owned())
     }
 
     /// The key that reads the node at `path`, under the field `descriptor`
@@ -2184,16 +2473,45 @@ impl<K> KeysetCipher<'_, K> {
         bound: u32,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Pending<'_, JsonSubtreeKey, K> {
-        Pending::ready(
-            self,
-            self.json_subtree_key_now(path, options, bound, descriptor),
-        )
+        self.json_subtree_key_planned(path, options, bound, descriptor)
+            .unwrap_or_else(|error| Pending::failed(self, error))
     }
 
     /// [`json_subtree_key_with_bound`](Self::json_subtree_key_with_bound),
-    /// derived and returned now, for the engine's own callers.
+    /// with any refusal that can be decided now returned as a plain error:
+    /// for the engine's own callers. Under a keyset that holds its PRF the
+    /// key is derived now, and the pending is ready; under one whose index
+    /// key lasts one settle, the path is checked now and its tokens are
+    /// derived inside the settle. The key holds no PRF either way.
+    pub(crate) fn json_subtree_key_planned<'c>(
+        &self,
+        path: &JsonPath,
+        options: &JsonOptions,
+        bound: u32,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Result<Pending<'_, JsonSubtreeKey, K>, Error> {
+        match self.prf() {
+            Some(prf) => Ok(Pending::ready(
+                self,
+                Ok(self.json_subtree_key_now(prf, path, options, bound, descriptor)?),
+            )),
+            None => {
+                let _ = read_count(path, bound)?;
+                let context = descriptor.into_prf_context().into_owned();
+                let selectors = Selectors::new(Arc::clone(self.state()), context);
+                let (options, path) = (options.clone(), path.clone());
+                Ok(with_prf(self, move |prf| {
+                    subtree_key_for(selectors, prf, &options, &path, bound).map_err(Error::from)
+                }))
+            }
+        }
+    }
+
+    /// The read key of `path` under `prf`, the PRF of this keyset that the
+    /// caller holds, derived and returned now. The key holds no PRF.
     pub(crate) fn json_subtree_key_now<'c>(
         &self,
+        prf: &HmacSha256Prf,
         path: &JsonPath,
         options: &JsonOptions,
         bound: u32,
@@ -2201,8 +2519,19 @@ impl<K> KeysetCipher<'_, K> {
     ) -> Result<JsonSubtreeKey, Error> {
         let context = descriptor.into_prf_context().into_owned();
         let selectors = Selectors::new(Arc::clone(self.state()), context);
-        subtree_key_for(selectors, options, path, bound).map_err(Error::from)
+        subtree_key_for(selectors, prf, options, path, bound).map_err(Error::from)
     }
+}
+
+/// The selector of `path` under `prf` and the column's PRF `context`.
+fn selector_under(
+    prf: &HmacSha256Prf,
+    path: &JsonPath,
+    context: &Context<'_>,
+) -> Result<JsonSelector, Error> {
+    prf16(prf, SELECTOR_DOMAIN, context, &path.selector_bytes())
+        .map(JsonSelector)
+        .map_err(Error::from)
 }
 
 #[cfg(test)]
@@ -2361,6 +2690,7 @@ mod tests {
     fn key_for(options: &JsonOptions, path: &str, bound: u32) -> Result<JsonSubtreeKey, TermError> {
         subtree_key_for(
             Selectors::for_tests(),
+            &prf(),
             options,
             &JsonPath::parse(path).unwrap(),
             bound,
@@ -2698,7 +3028,7 @@ mod tests {
                 let options = JsonOptions { sealed_root: sealed, ..JsonOptions::new() };
                 let t = terms(&value, &options);
                 for n in t.nodes() {
-                    let key = subtree_key_for(Selectors::for_tests(), &options, &n.positional, 4).unwrap();
+                    let key = subtree_key_for(Selectors::for_tests(), &prf(), &options, &n.positional, 4).unwrap();
                     prop_assert_eq!(key.token_bytes(), vec![n.token], "{}", n.positional);
                 }
             }
@@ -3051,7 +3381,7 @@ mod tests {
                 Arc::new(KeysetState {
                     id: Uuid::from_u128(2),
                     name: None,
-                    prf: prf(),
+                    prf: Some(prf()),
                     retention: crate::keyset::Retention::UntilEvicted,
                 }),
                 selectors.context.clone(),

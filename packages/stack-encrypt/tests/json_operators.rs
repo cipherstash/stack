@@ -284,7 +284,22 @@ mod bytes {
 /// and a text array for a subtree read.
 #[tokio::test]
 async fn every_operator_derives_its_tagged_operand() {
-    let cipher = common::stack_cipher().await;
+    every_operator_derives_its_tagged_operand_under(common::stack_cipher().await).await;
+}
+
+/// As above, under a keyset whose index key lasts one settle: every
+/// operand is derived inside the settle, in the same encoding.
+#[tokio::test]
+async fn every_operator_derives_its_tagged_operand_per_settle() {
+    let (cipher, settle_loads) = common::per_settle_cipher().await;
+    every_operator_derives_its_tagged_operand_under(cipher).await;
+    assert!(
+        settle_loads.load(std::sync::atomic::Ordering::SeqCst) > 0,
+        "the operands were derived under index keys loaded per settle"
+    );
+}
+
+async fn every_operator_derives_its_tagged_operand_under<K: Source>(cipher: StackCipher<K>) {
     let keyset = cipher.default_keyset();
     let plan = plan();
     let needle = |term: &QueryTerm| match term.operand() {
@@ -572,7 +587,25 @@ fn malformed_inputs_are_refused_with_their_reason() {
 /// read's request or past the bound, each group opening on its own.
 #[tokio::test]
 async fn reads_open_against_the_request_that_prepared_them() {
-    let cipher = common::stack_cipher().await;
+    reads_open_against_the_request_that_prepared_them_under(common::stack_cipher().await).await;
+}
+
+/// As above, under a keyset whose index key lasts one settle: the read's
+/// selector or key is derived, and its rows checked and opened, inside the
+/// one settle that loads the index key.
+#[tokio::test]
+async fn reads_open_against_the_request_that_prepared_them_per_settle() {
+    let (cipher, settle_loads) = common::per_settle_cipher().await;
+    reads_open_against_the_request_that_prepared_them_under(cipher).await;
+    assert!(
+        settle_loads.load(std::sync::atomic::Ordering::SeqCst) > 0,
+        "the reads were derived under index keys loaded per settle"
+    );
+}
+
+async fn reads_open_against_the_request_that_prepared_them_under<K: Source>(
+    cipher: StackCipher<K>,
+) {
     let keyset = cipher.default_keyset();
     let plan = plan();
     let docs = [

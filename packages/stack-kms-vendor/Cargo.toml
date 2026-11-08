@@ -20,9 +20,9 @@ publish = false
 test-support = ["dep:stack-encrypt", "stack-kms/test-support"]
 
 [dependencies]
-stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false }
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false }
 # The contract suite only: it seals and opens values through a cipher.
-stack-encrypt = { path = "../stack-encrypt", version = "0.2.0", default-features = false, optional = true }
+stack-encrypt = { path = "../stack-encrypt", version = "0.3.0", default-features = false, optional = true }
 
 vitaminc = { workspace = true, features = ["protected", "random"] }
 aes-gcm = { version = "0.10.3", features = ["zeroize"] }
