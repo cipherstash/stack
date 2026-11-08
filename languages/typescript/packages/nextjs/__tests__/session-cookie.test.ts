@@ -752,6 +752,44 @@ describe('the request seen by downstream handlers', () => {
     expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBe(own)
     expect(res.headers.get('x-middleware-request-x-tenant')).toBe('t1')
   })
+
+  it("replaces a session cookie the caller's response already sets with the kept one", async () => {
+    const own = JSON.stringify(sessionFor('user_A'))
+    const callerRes = NextResponse.next()
+    callerRes.cookies.set(CS_COOKIE_NAME, JSON.stringify(sessionFor('user_B')))
+
+    const res = await protectMiddleware(
+      jwtWithSubject('user_A'),
+      requestWith({ [CS_COOKIE_NAME]: own }),
+      callerRes,
+    )
+
+    const owner = { issuer: ISSUER, subject: 'user_A' }
+    expect(sessionBelongsTo(writtenSession(res) as CtsSession, owner)).toBe(
+      true,
+    )
+    expect(
+      sessionBelongsTo(
+        readCtsSession(forwardedCookies(res)?.[CS_COOKIE_NAME]) as CtsSession,
+        owner,
+      ),
+    ).toBe(true)
+  })
+
+  it("clears a session cookie the caller's response sets when no session is kept", async () => {
+    vi.stubGlobal('fetch', ctsRefuses())
+    const callerRes = NextResponse.next()
+    callerRes.cookies.set(CS_COOKIE_NAME, JSON.stringify(sessionFor('user_B')))
+
+    const res = await protectMiddleware(
+      jwtWithSubject('user_A'),
+      requestWith({}),
+      callerRes,
+    )
+
+    expect(writtenSession(res)).toBeNull()
+    expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBeUndefined()
+  })
 })
 
 describe('clearing through an override that only names the cookie', () => {
