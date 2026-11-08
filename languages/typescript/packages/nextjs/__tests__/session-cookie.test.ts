@@ -21,6 +21,7 @@ vi.mock('../../utils/logger', () => ({
 }))
 
 import { cookies } from 'next/headers'
+import { logger } from '../../utils/logger'
 import { protectClerkMiddleware } from '../src/clerk'
 import { setCtsToken } from '../src/cts'
 import {
@@ -732,6 +733,25 @@ describe('the request seen by downstream handlers', () => {
     expect(forwardedCookies(res)).toBeDefined()
     expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBeUndefined()
   })
+
+  it("forwards the kept session through a caller's override that leaves out the cookie", async () => {
+    // An override list replaces the forwarded request headers, so one that
+    // does not name `cookie` would drop the session the middleware accepted.
+    const own = JSON.stringify(sessionFor('user_A'))
+    const callerRes = NextResponse.next({
+      request: { headers: new Headers({ 'x-tenant': 't1' }) },
+    })
+
+    const res = await protectMiddleware(
+      jwtWithSubject('user_A'),
+      requestWith({ [CS_COOKIE_NAME]: own }),
+      callerRes,
+    )
+
+    expect(writtenSession(res)).toBeUndefined()
+    expect(forwardedCookies(res)?.[CS_COOKIE_NAME]).toBe(own)
+    expect(res.headers.get('x-middleware-request-x-tenant')).toBe('t1')
+  })
 })
 
 describe('clearing through an override that only names the cookie', () => {
@@ -795,15 +815,17 @@ describe('a CTS transport failure', () => {
         throw new Error(`request failed: ${String(init.body)}`)
       }),
     )
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     serverCookie(undefined)
 
     const result = await getCtsToken(oidcToken)
 
     expect(result.success).toBe(false)
     expect(result.error).not.toContain(oidcToken)
-    expect(JSON.stringify(logged.mock.calls)).not.toContain(oidcToken)
-    logged.mockRestore()
+    const logged = vi.mocked(logger.error).mock.calls
+    expect(logged).toHaveLength(1)
+    expect(
+      logged.flat().map((arg) => (arg instanceof Error ? arg.message : arg)),
+    ).not.toContainEqual(expect.stringContaining('request failed'))
   })
 })
 

@@ -206,11 +206,11 @@ const REQUEST_HEADER_PREFIX = 'x-middleware-request-'
  * an override the caller already put on `response` is extended, not replaced.
  *
  * When `response` leaves the session cookie alone, the request's own session
- * is what was decided on. That is forwarded as-is unless the caller's own
- * override on `response` replaces the forwarded cookie, in which case the
- * request's session is put back in place of whatever session the override
- * carries, so a downstream `getCtsToken()` reads the session this middleware
- * kept and never one it did not check. Otherwise nothing is changed.
+ * is what was decided on. With no override on `response`, Next.js forwards it
+ * as-is and nothing is changed. With one, the forwarded cookie is set to the
+ * request's session (or to none): an override that carries a session puts
+ * back the one this middleware checked, and one that leaves out `cookie`, and
+ * so would drop the session, gets it added.
  */
 export function forwardCtsSession(req: NextRequest, response: NextResponse) {
   const headers = response.headers
@@ -223,7 +223,7 @@ export function forwardCtsSession(req: NextRequest, response: NextResponse) {
     : undefined
 
   const written = response.cookies.get(CS_COOKIE_NAME)
-  if (!written && !existingKeys?.includes('cookie')) return response
+  if (!written && existingKeys === undefined) return response
   const value = written
     ? written.value
     : (req.cookies.get(CS_COOKIE_NAME)?.value ?? '')
