@@ -125,7 +125,7 @@
 // Each integer seals at its own width. Equality applies to every one but a
 // bool. ORE and OPE apply to integers of 16 bits or more, floats, text,
 // bytes, decimals, dates and timestamps. A bool or an 8-bit integer takes no
-// order index, since over so few values its order terms would show which
+// order index, since over so few values its ordering terms would show which
 // rows hold which value.
 //
 // Passthrough fields never cross the binding: the engine does nothing to a
@@ -241,6 +241,11 @@
 //
 // A selection or a subtree read opens values as JSON text ([JSONValue],
 // [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
+//
+// The SQL side of every JSON query, including extraction by selector,
+// ordered comparison at a path, subtree reads, and children, is documented
+// for SQL authors in the EQL v4 reference page, at
+// packages/eql/docs/reference/json-tree.md in the repository.
 //
 // Two queries at an array's paths can each be answered by a different
 // element. To test several members of one element together, use Match on
