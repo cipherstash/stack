@@ -1972,7 +1972,7 @@ table.
 - **Why.** Plaintext must not stay in freed memory.
 - **Done already.** Collections wipe the values decoded before a failure.
   Cancellation and drop are tested (#1493, #1501).
-- **Tracked in.** Issue #1468 is open: a Vitamin C buffer type. Issue #1458 is open: data keys by reference. Issue #1480 is closed. Pull request #1503 is open. It adds `Zeroizing<T>` as the drop-wiping adapter and records the partial Serde decode as a known gap. Pull requests #1493 and #1501 are merged.
+- **Tracked in.** Issue #1468 is open: a Vitamin C buffer type. Issue #1458 is open: data keys by reference. Issue #1480 is closed. Pull request #1503 is open. A decrypted `OpaqueBlob<T>` wipes its value when it is dropped, and its `into_inner` returns a `Zeroizing<T>`. The pull request records the partial Serde decode as a known gap. A drop-wiping adapter for a single value, such as `Zeroizing<String>`, needs Vitamin C to implement `FromScalar` for `Zeroizing<T>`. Pull requests #1493 and #1501 are merged.
 - **Finished when** the conformance profile for the lifecycle covers both cases.
 
 ### 4. The query engine
