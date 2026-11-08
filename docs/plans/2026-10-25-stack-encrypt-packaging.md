@@ -8,9 +8,9 @@ This recommendation for review accompanies the
 ## Status
 
 This document proposes boundaries and names. The proposals are not
-implemented APIs or accepted renames. The naming review judges them after
-the customer release. The JSON operation contract is live, in use as the
-release candidate Go `v0.1.0-rc.3`.
+implemented APIs or accepted renames. The naming review judges them. The
+JSON operation contract is live, in use as the release candidate Go
+`v0.1.0-rc.3`.
 
 ## Summary of recommendations
 
@@ -327,9 +327,9 @@ and `JSONRead`.
 
 The table below is still a proposed glossary for the Rust facade. Its
 `JsonTree*` names describe the handwritten Rust adapters, not the
-registered Go target. A customer release does not need the working Go
-and SQL surface renamed to match this glossary. Do not rename it for that
-reason. Later Rust renames must keep the frozen dynamic IDs.
+registered Go target. The working Go and SQL surface does not need
+renaming to match this glossary. Do not rename it for that reason. Later
+Rust renames must keep the frozen dynamic IDs.
 
 | Working or current name | Recommended name | Role | Home |
 | --- | --- | --- | --- |
@@ -382,7 +382,7 @@ must not redefine stored SQL formats or dynamic discriminants by accident.
    JSON reads and conformance. Short whole-word matching is implemented in
    EQL. Its leakage and its compatibility with the stored format still need explicit
    acceptance for the release.
-3. After the customer release, set up the shared format crate. Move the
+3. Set up the shared format crate. Move the
    value model, traversal, and the normalisation and index adapters that
    depend on it into Stack. Keep the frozen encodings and an acyclic
    graph. Move tests with their code.

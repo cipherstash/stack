@@ -1079,12 +1079,15 @@ NEW.body := eql_v4.refine_tag(NEW.body, 'row_id', NEW.id::text);
 
 ## Remaining work
 
-The work is in the order that the customer needs it. The Go customer
-release comes first, then the stored format, then the Rust API, then the
-query engine. The crate moves, keyset selection, and lock context come
-after the customer release.
+Everything in this section is work to implement. It is in five groups:
+the Go module, the stored format, the Rust API, the query engine, and
+packaging with two key provider features. The Go customer's
+release happened in late October 2026, so the groups are no longer
+ordered around it. The [stored-format
+rule](#the-stored-format-stays-compatible-with-go-rc3) is what that
+release leaves behind.
 
-### 1. The Go customer release
+### 1. The Go module
 
 #### Finish the specification around the conformance profiles
 
@@ -1137,7 +1140,7 @@ after the customer release.
 - **Finished when** a Go field can declare match options, and its queries
   use the same options as its stored terms.
 
-#### Freeze the release candidate
+#### Freeze the rc.3 stored format in test vectors
 
 - **What to build.** Fixed test vectors for the JSON storage format and the
   matching EQL bundle, recorded as the rc.3 baseline.
@@ -1904,15 +1907,28 @@ review. The rules are the query artifact's.
     are gone;
   - ADR-0009 and the `MatchConfig` documentation are amended.
 
-### 5. After the customer release
+### 5. Packaging, and two key provider features
 
 - **Packaging and names.** Crate moves, the shared format crate, and the
   final names. The [packaging
   document](2026-10-25-stack-encrypt-packaging.md) has the proposal.
+- **Split the leaf cipher.** One small clean-up inside the crate, below.
 - **Keyset selection and lock context.** Two optional features of the
-  ZeroKMS key provider, proposed below. Neither is part of the API
-  redesign. Nothing in the redesign depends on them, and no merged pull
-  request implements either.
+  ZeroKMS key provider, proposed below. Nothing else in this plan
+  depends on them, and no merged pull request implements either.
+
+#### Split the leaf cipher into sealing and opening
+
+Vitamin C's `Cipher` trait has a `seal` method and an `open` method.
+Stack implements it twice, in `packages/stack-encrypt/src/cipher.rs`:
+`MintedKeys` only seals, and `BoundKeys` only opens. Each type still has
+to provide the other method, and that method only returns an error.
+
+Fix this in the packaging pass. One option splits the trait into a
+sealing capability and an opening capability. Another changes the
+internal adapter in some other way. Decide this separately from the
+[retirement of `AsyncCipher`](2026-10-25-stack-encrypt-packaging.md#retire-asynccipher)
+in the packaging document.
 
 #### Choose the keyset from the data
 
@@ -1953,28 +1969,76 @@ Rules for the proposal:
 #### Lock context
 
 Lock context is a ZeroKMS policy applied when a data key is generated or
-retrieved. A claim of the authenticated JSON Web Token (JWT) is one
-example. The API for it is not designed.
+retrieved. ZeroKMS folds the items of the lock into the key tag, so a
+reader whose lock resolves differently gets no usable key.
 
-An earlier proposal set it on the keyset before the call, through a
-method such as `with_lock_context`. On 8 November 2026 Dan rejected that
-spelling. The open question below records the decision as pending.
-Whatever the API, the design must follow these rules:
+The ZeroKMS protocol already defines three kinds of item:
+
+- an identity claim names a claim of the authenticated JSON Web Token
+  (JWT), such as `sub`, and ZeroKMS resolves its value;
+- a value is a name and a value the caller asserts;
+- a tag is a bare label.
+
+A lock holds any number of items. It is set on a keyset, for every call
+through it, or on one call. Both forms use the same method, because a
+locked keyset is a cheap view that borrows the keyset. So no entry point
+is added:
+
+```rust
+use stack_encrypt::kms::LockContext;
+
+// Several claims at once. ZeroKMS resolves each from the principal.
+let lock = LockContext::new()
+    .identity_claim("sub")
+    .identity_claim("org_id")
+    .value("region", "au");
+
+// Every call through `locked` carries the lock.
+let locked = tenant_keyset.with_lock_context(&lock);
+let encrypted: EncryptedUser = user.encrypt_into(&locked).await?;
+
+// One call carries it. The view is built for the call and dropped.
+let user = User::decrypt_from(encrypted, &tenant_keyset.with_lock_context(&lock)).await?;
+
+// A call adds to a keyset's lock. It cannot remove an item from it.
+let request_lock = LockContext::new().identity_claim("sub");
+let encrypted: EncryptedUser = user
+    .encrypt_into(&org_keyset.with_lock_context(&request_lock))
+    .await?;
+```
+
+In Go, `WithLockContext` is a method on the cipher, beside `Scope` and
+`Bind`. It takes the same three kinds of item. The dynamic request has a
+new optional `lock` field beside `context`. A request without it is the
+rc.3 form.
+
+```go
+locked := cipher.WithLockContext(encrypt.IdentityClaim("sub"), encrypt.IdentityClaim("org_id"))
+encrypted, err := Encrypt(ctx, locked, people)
+```
+
+Rules for the proposal:
 
 - Lock context is a property of the key provider, not a part of the
   context. It is neither a `Scope` nor a `Bind`. It changes no search
   term.
-- The caller names the claim. ZeroKMS resolves its value from the
+- The caller names a claim. ZeroKMS resolves its value from the
   principal that authenticated. The application never decodes a JWT and
-  asserts a claim itself.
+  asserts a claim itself. A value item is an assertion by the caller,
+  and ZeroKMS treats it as one.
 - The policy is sent on both key generation and key retrieval. A missing
   claim is an error. The call is not retried without the lock.
 - A declaration can require a lock context, so a caller cannot leave it
-  out. A call can add a policy. A call cannot weaken a policy the
-  declaration requires.
+  out. A call can add items. A call cannot remove an item the keyset or
+  the declaration carries.
 - Lock context does not protect search. Search terms derive from the
   index key, and the index key is loaded without any data key. So a lock
   on the data key does not restrict who can search.
+- A locked keyset is still a keyset. `Planned` and the marker queries
+  take it without change.
+
+Dan asked for the per-call form and for many claims at once on 8
+November 2026. The method and type names wait for the naming review.
 
 ## Open questions and decisions to be made
 
@@ -1985,17 +2049,17 @@ The lead who approves this plan decides each question.
 | What is the name of the wrapper that authenticates a collection's order and length? | `Positioned<Vec<T>>`. Or a name chosen in the naming review | `Positioned`. Decide in the naming review |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
-| Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration, after the customer release |
-| What is the API for ZeroKMS lock context? | Not designed. Setting it on the keyset before the call was rejected on 8 November 2026 | Design it after the customer release, under the rules in [Lock context](#lock-context) |
+| Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
+| Should the dynamic request carry a lock context beside its context? | An optional `lock` field in the request, as [Lock context](#lock-context) proposes. Or a lock set only on the Go cipher | The optional field. It is additive, so rc.3 requests stay valid |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
-| What names and crate layout should the final API use? | The proposal in the packaging document | Review the proposal after the customer release |
+| What names and crate layout should the final API use? | The proposal in the packaging document | Review the proposal in the naming review |
 
 ### Names deferred to the naming review
 
-The naming review is the [packaging and names](#5-after-the-customer-release)
+The naming review is the [packaging and names](#5-packaging-and-two-key-provider-features)
 item: a review of every public name, against the packaging document's
-proposal, after the customer release. These names are placeholders until
+proposal. These names are placeholders until
 then. Each one is used consistently in this plan so that the review
 changes a name, not a design.
 

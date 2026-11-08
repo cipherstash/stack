@@ -51,11 +51,17 @@ A caveat is a name and a typed value. Both go into the MAC, through
 AAD. So a name and a value cannot run into each other. Neither can be
 swapped after the fact.
 
-- **Names are the application's.** Stack Encrypt checks only that a name
-  is non-empty text. ZeroKMS policy will match on names, so a customer
-  wants one vocabulary. CipherStash can publish a recommended set for
-  access intelligence, such as `row_id`, `created_at`, and
-  `written_from`, without reserving any name.
+- **EQL defines the standard names, and an application adds its own.**
+  EQL publishes a standard set of caveat names for access intelligence,
+  such as `row_id`, `created_at`, and `written_from`. ZeroKMS policy will
+  match on names, so the standard set gives every customer one
+  vocabulary. An application adds custom names beside them. Stack
+  Encrypt checks only that a name is non-empty text. Decided by Dan on 8
+  November 2026.
+- **Any layer may refine, in any order.** A client can refine before the
+  insert. A trigger can refine after it. A client can refine again
+  later. That is the point of the chain. The chain records the order, so
+  a client-side caveat added after the trigger follows the row ID.
 - **Values are typed.** A timestamp and the text of a timestamp are
   different MAC inputs. Each value carries its type in the encoding, as a
   context part does, so ZeroKMS knows that `created_at` is a timestamp.
@@ -102,9 +108,35 @@ CREATE TRIGGER notes_refine_body
   FOR EACH ROW EXECUTE FUNCTION notes_refine_body();
 ```
 
-The dynamic interface has `refine` as an operation on a stored value, so
-Go can refine a value before it writes the row. `caveats` reads the list
-in the same way.
+### Go, and refining many values
+
+Refining is local. It is an HMAC over the tag, computed in the engine,
+with no call to ZeroKMS. So there is no batch to send. No bulk form is
+needed.
+
+Go's `Encrypt` seals a slice in one call. A program then refines the
+values it chooses, through a `Refine` method on every EQL value type.
+`Caveats` reads the list. Both go through the module's EQL guest, and
+neither touches the network.
+
+```go
+rows, err := Encrypt(ctx, cipher, notes) // []EncryptedNote
+for i := range rows {
+	if err := rows[i].Body.Refine("written_from", req.RemoteAddr); err != nil {
+		return err
+	}
+	if err := rows[i].Body.Refine("created_at", time.Now()); err != nil {
+		return err
+	}
+}
+
+for _, c := range rows[0].Body.Caveats() {
+	fmt.Println(c.Name, c.Value)
+}
+```
+
+The dynamic interface has `refine` and `caveats` as operations on a
+stored value, and the Go methods call them.
 
 ## Stored format
 
@@ -122,9 +154,8 @@ envelope's layout in SQL. The plan's [key tag
 extraction](2026-10-24-stack-encrypt-api-plan.md#typed-text-encodings-and-key-tag-extraction)
 item provides it.
 
-A bare `Ciphertext` is a raw envelope with no list, so refinement starts
-with EQL payloads. A type of our own can store the list as a field of its
-own.
+A bare `Ciphertext` is a raw envelope with no list. No list will be added
+to it. Refinement is for EQL payloads. Decided by Dan on 8 November 2026.
 
 ## What tag refinement is not
 
@@ -184,14 +215,3 @@ the equality term:
   ]
 }
 ```
-
-## Open questions
-
-- Should the raw `Ciphertext` envelope gain a caveat list, as a new
-  version beside the rc.3 one?
-- Should CipherStash publish a standard vocabulary of caveat names for
-  access intelligence?
-- What shape does bulk refinement take in Go, where `Encrypt` seals a
-  slice in one call?
-- May `refine` run after a database refinement? The chain is ordered, so
-  a client-side caveat added later goes after the row ID.
