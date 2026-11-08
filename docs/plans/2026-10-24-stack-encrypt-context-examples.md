@@ -67,9 +67,10 @@ let encrypted: EncryptedUser = user
     .await?;
 let user = User::decrypt_from_with_context(encrypted, &keyset, Scope::new(tenant)).await?;
 
-let by_email = keyset
-    .using(EncryptedUser::EMAIL)
-    .query_with_context(op::Eq, "alice@example.com", Scope::new(tenant))
+let by_email = EncryptedUser::EMAIL
+    .eq("alice@example.com")
+    .scope(tenant)
+    .encrypt(&keyset)
     .await?;
 ```
 
@@ -120,15 +121,17 @@ let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?;
 let user = User::decrypt_from(encrypted, &keyset).await?;
 
 // A query covers the whole column. It does not take the row ID.
-let by_email = keyset.using(EncryptedUser::EMAIL).query(op::Eq, "alice@example.com").await?;
+let by_email = EncryptedUser::EMAIL.eq("alice@example.com").encrypt(&keyset).await?;
 ```
 
 ## 5. A stored scope and a stored binding
 
 The tenant and the row ID are both stored in the row. A query for one
 tenant matches that tenant's rows, and each ciphertext opens only in its
-own row. This is the shape for access intelligence, where each decrypted
-value must be tied to the row it came from.
+own row. This ties each decrypted value to the row it came from. The facts of a
+row's writing, such as the address it came from, are caveats added by
+[tag refinement](2026-11-07-stack-encrypt-tag-refinement.md), not parts
+of the context.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
@@ -152,9 +155,10 @@ let user = User::decrypt_from_with_context(
 )
 .await?;
 
-let by_email = keyset
-    .using(EncryptedUser::EMAIL)
-    .query_with_context(op::Eq, "alice@example.com", Scope::new(session.tenant))
+let by_email = EncryptedUser::EMAIL
+    .eq("alice@example.com")
+    .scope(session.tenant)
+    .encrypt(&keyset)
     .await?;
 ```
 

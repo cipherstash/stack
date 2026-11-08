@@ -80,12 +80,16 @@ The SDK resolves the target options configured for a field into native
 `JsonOptions`. The SDK uses the same options for writes, queries, and
 reads. The released configuration takes a document's context from its column, and its keys from the selected keyset.
 
-Separate row binding and search scope are accepted future API work. Row
-binding and search scope are not supported as EQL context inputs today.
-So:
+The API plan's [query context and stored
+context](2026-10-24-stack-encrypt-api-plan.md#query-context-and-stored-context)
+replace the earlier idea of a separate row binding and search scope. A
+binding, such as a row ID, is in the stored context and not in the query
+context. Today an EQL type takes its context from its column only. So
+until that work lands:
 
-- reject a declaration that asks for them;
-- do not add row IDs to the existing shared context.
+- a declaration that asks for a scope or a binding on an EQL field is
+  refused;
+- a row ID is never added to the shared context.
 
 A query does not isolate rows only because the ciphertexts it returns
 authenticate.
@@ -110,7 +114,7 @@ authenticate.
 | J14 | Open extracted scalars | `JSONSelection.Open` opens one optional entry for each document group | Groups with more than one entry for a selector are refused. Do not label them supported |
 | J15 | Prepare a read at a position or wildcard | Implemented: `Subtree`, `subtree`. Returns a token list, and keeps the trusted request | None listed |
 | J16 | Fetch and open a subtree | `json_tree_subtree(document, tokens, budget)`, then `JSONRead.Open` or `OpenOne` | None listed |
-| J17 | Immediate children | `Children` prepares a concrete token. SQL returns the child entries | Opening child scalars bound to their parent is not implemented |
+| J17 | Immediate children | `children(path)` prepares a concrete token. SQL returns the child entries | Opening child scalars bound to their parent is not implemented |
 | J18 | Count children | A `ChildCount` token. SQL returns a count that can be NULL | The count is not an authenticated proof of completeness |
 | J19 | Walk budget and root fallback | Implemented. After root fallback, the client applies the selection originally requested | None listed |
 | J20 | Comparisons between stored values | Existing document containment and entry ordering | Only within a compatible column, keyset, and storage format |
@@ -352,27 +356,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-### Scope and row binding in the example
+### Scopes and bindings in the example
 
-The example's fixed standalone definition explicitly declares scope across
-the whole column, and no row binding. The normative schema must state that
-choice. The schema must not silently replace a required tenant scope that is
-missing.
+The example's declaration has no caller-supplied parts, so its query
+context is the column. Its stored context is the column too. The schema
+must state that choice. It must not add a tenant scope that the caller
+did not declare.
 
-Take an `EncryptedUser` whose definition is derived on the encrypted
-output type, with `id: PrimaryKey<u64>` and `tenant_id: ScopeKey<u64>`.
-For that type:
+To add a tenant scope and a row binding, declare them on the record. The
+[API
+plan](2026-10-24-stack-encrypt-api-plan.md#query-context-and-stored-context)
+uses `scope(tenant: u64)` and `bind(row: Uuid)` as placeholder spellings.
+Then:
 
-1. Select those fields through the context and scope attributes described
-   in the API plan.
-2. Get its JSON field handle from
-   `EncryptedUser::PROFILE`, and require `TenantId` on
-   query requests.
-3. Store and return both ID fields for decryption.
-4. If the caller supplies input, use the agreed `_with_context` variants,
-   with a typed input that keeps binding and scope separate.
-
-A row ID is never an index or query input implicitly.
+1. A write passes both: `Scope::new(tenant).bind(row_id)`.
+2. A query takes the scope only, from the document's marker:
+   `EncryptedUser::PROFILE.contains(needle).scope(tenant).encrypt(&keyset)`.
+   The query builder has no `bind`, so a row ID is never a query input.
+3. A read passes both, or reads a stored part from the row and passes it
+   to check it.
 
 ## Remaining work and release gates
 
