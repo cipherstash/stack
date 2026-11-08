@@ -28,10 +28,6 @@ Six documents go with it:
 - [provider capabilities](2026-10-25-stack-encrypt-provider-capabilities.md),
   the proposal for keyset routing and lock context after the customer
   release;
-- the [decision record](2026-10-24-stack-encrypt-api-review.md), the 22
-  issues the October review found, with the decision on each. The names this plan uses as
-placeholders are listed in [Names deferred to the naming
-review](#names-deferred-to-the-naming-review), at the end.
 
 ## Terms
 
@@ -845,6 +841,10 @@ Both are in [Remaining work](#remaining-work).
 
 #### The stored format stays compatible with Go rc.3
 
+Decided on 7 November 2026 by Dan: "The stored data must not break as of
+now. The Go customer has already started implementation with rc.3. We can
+make breaking changes to the code/API but not the stored format."
+
 The Go customer already uses Go `v0.1.0-rc.3`. So the data that rc.3
 writes must stay readable and searchable. The stored format is everything
 that Stack Encrypt writes to the database:
@@ -920,7 +920,6 @@ and fixes the order: the scopes first, then the bindings.
 | --- | --- | --- | --- | --- | --- | --- |
 | Scope | `scope` | A record name, a field's context name, or a tenant ID | Yes | Yes | Yes | ZeroKMS and the AEAD |
 | Binding | `bind` | A row's UUID | No | Yes | Yes | ZeroKMS and the AEAD |
-
 
 The words were decided on 7 November 2026. A caller scopes a value with a
 scope. A scope narrows the data and the queries over it. A caller binds a
