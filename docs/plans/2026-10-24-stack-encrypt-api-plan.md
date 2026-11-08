@@ -1274,8 +1274,6 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   - The optional `labels` list in every EQL payload type.
   - On decrypt, send the stored tag and the labels to ZeroKMS, and
     rebuild the leaf AAD from the original tag it returns.
-  - A list of claims to label with, on the generate-key request, so
-    ZeroKMS can write `written_by` itself.
 - **Why.** Access intelligence needs each value tied to its row and to
   the facts of its writing. A label does that without touching the
   context, the AAD, or the queries, and without restricting any reader.
@@ -1283,7 +1281,11 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   a payload without one is the rc.3 form. The change is additive.
 - **Depends on ZeroKMS.** The read path needs the retrieve-key request to
   carry the labels, and the response to return the original tag. That
-  work is outside this repository.
+  work is outside this repository. Labels written by ZeroKMS itself, and
+  policy over labels, are deferred to the ZeroKMS version 2 work. The
+  key policy document's [Still to
+  explore](2026-11-08-stack-encrypt-key-policy.md#still-to-explore)
+  section records the thinking.
 - **Done already.** `Ciphertext::key_tag` reads the tag in Rust (#1404).
   The leaf AAD already binds the original tag.
 - **Finished when** these are all true:

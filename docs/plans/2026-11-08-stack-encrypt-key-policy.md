@@ -23,6 +23,16 @@ context](2026-10-24-stack-encrypt-api-plan.md#query-context-and-stored-context)
 section gives the context model that binds and claims extend. None of
 the code below is on `next` today.
 
+This first API redesign decides the Stack Encrypt interface: how a bind,
+a claim, and a label are declared, called, and stored. The interface
+supports all three.
+
+The ZeroKMS side is decided only as far as the interface needs it. The rest, including how ZeroKMS writes a label
+and how version 2 derives keys, belongs to the ZeroKMS version 2 work.
+Dan set that boundary on 8 November 2026. [Still to
+explore](#still-to-explore) lists what is deferred, with the current
+thinking on each, so nothing is lost.
+
 ## Contents
 
 - [Terms](#terms)
@@ -44,7 +54,12 @@ the code below is on `next` today.
   - [The labels list in the payload](#the-labels-list-in-the-payload)
   - [Example: access intelligence for a notes table](#example-access-intelligence-for-a-notes-table)
 - [What ZeroKMS must do](#what-zerokms-must-do)
-- [Open questions](#open-questions)
+  - [Needed for this redesign](#needed-for-this-redesign)
+  - [For ZeroKMS version 2](#for-zerokms-version-2)
+- [Still to explore](#still-to-explore)
+  - [A label written by ZeroKMS](#a-label-written-by-zerokms)
+  - [Enforcement by derivation or by check](#enforcement-by-derivation-or-by-check)
+  - [Policy over labels](#policy-over-labels)
 
 ## Terms
 
@@ -298,46 +313,15 @@ The reader passes nothing. The tag and the labels are in the row.
 
 ### ZeroKMS can write a label
 
-At generate time, ZeroKMS can resolve a claim and label the tag with it
-before returning. `written_by = sub` is the example. The request lists
-the claims to label with. That list is separate from the key context
-items to bind with, so the two intents are separate on the wire.
+At generate time, ZeroKMS could resolve a claim and label the tag with
+it before returning. `written_by = sub` is the example. The value would
+be more trustworthy than a client-written label, because the client
+never had the chance to assert it.
 
-The value is more trustworthy than a client-written label, because the
-client never had the chance to assert it. This is the recommended way to
-record who wrote a value for access intelligence.
-
-**The response returns two tags: the base tag and the labelled tag.**
-The client binds the base tag into the leaf AAD. It stores the labelled
-tag with the label, as it does for a label it writes itself. So every
-label is outside the AAD, whoever wrote it.
-
-The read path has one rule. ZeroKMS returns the base tag, and the
-client rebuilds the AAD from it.
-
-A server-written label is still not a bind. Dan asked on 8 November
-2026 whether it becomes one, since the client could bind the labelled
-tag into the AAD instead. It does not, for two reasons.
-
-- **Nothing about the reader is checked against a label.** The labelled
-  tag and the label's value are stored in the row in the clear. A reader
-  presents them as they are. ZeroKMS recomputes the chain from the base
-  tag and the stored labels. The check passes for any reader whose key
-  context items resolve. A bind is different: ZeroKMS resolves a claim
-  from the reader's token, or the reader supplies a value, and ZeroKMS
-  compares that with the tag. A label asks nothing of the reader.
-- **Binding the labelled tag into the AAD would add tamper evidence,
-  not access control.** It would stop a label being stripped or altered
-  without the AEAD failing. ZeroKMS already refuses a chain it cannot
-  reproduce, so that evidence is redundant. It would also break the
-  single rule above. The client would have to know which labels were
-  applied before encryption and which after, to rebuild the AAD.
-  Returning the base tag keeps every label the same.
-
-One privacy consequence to state: a server-written `written_by` puts the
-writer's `sub` in the row in the clear, beside the ciphertext. That is
-the point of the label for access intelligence. It must be a choice the
-declaration makes, never a default.
+This is deferred to the ZeroKMS version 2 work. The interface needs one
+thing for it beyond a client-written label: the response returns the
+base tag as well as the labelled tag. [Still to explore](#still-to-explore)
+has the analysis and the open points.
 
 ### Labelling in Rust and SQL
 
@@ -467,36 +451,88 @@ the equality term:
 
 ## What ZeroKMS must do
 
-This work is outside this repository. The current ZeroKMS can be fixed
-where it falls short, and version 2 of ZeroKMS must implement all of it.
+This work is outside this repository. The first list is what this API
+redesign needs from the ZeroKMS that exists today. The second is for ZeroKMS version 2. It is tracked with
+that work.
 
-For binds and claims:
+### Needed for this redesign
 
-- Accept the context name as the descriptor and the parts as lock
-  context items, as it does today. No change for the first release.
-- **Version 2 derives the data key over the key context items as well
-  as the descriptor.** Then a bind or a claim is enforced by derivation,
-  not by a check that could be skipped. A reader with a different claim
-  value gets a different key, and the leaf fails to open.
-- Resolve `sub` and custom claims from the verified token, as today.
-  Add other provider facts as they are needed.
-- Retire the decryption policy and its tag version.
-- Remove the descriptor size limit. The move of the parts makes it
-  unnecessary. Stop logging the descriptor in the clear.
-
-For labels:
-
+- Accept the context name as the descriptor and the parts as key
+  context items. ZeroKMS does this today.
+- Resolve `sub` and custom claims from the verified token. ZeroKMS does
+  this today.
 - The retrieve-key request includes the stored tag and the label list.
-- ZeroKMS verifies the chain, and refuses a tag it cannot reproduce.
+  ZeroKMS verifies the chain, and refuses a tag it cannot reproduce.
 - The response returns the original tag with the key material. Today's
   pinned protocol returns key material only.
-- The generate-key request includes a list of claims to label with. The
-  response returns the base tag, the labelled tag, and the label.
-- Policy over labels comes later. A policy can be changed. A bind
-  cannot.
 
-## Open questions
+### For ZeroKMS version 2
 
-- Should version 2 of ZeroKMS also bind the format version of the
-  envelope, so that a version 1 request cannot be replayed as version 2?
-- Which standard label names does EQL publish first?
+- Derive the data key over the key context items as well as the
+  descriptor. Then a bind or a claim is enforced by derivation, not by a
+  check that could be skipped. A reader with a different claim value
+  gets a different key, and the leaf fails to open.
+- Retire the decryption policy and its tag version.
+- Remove the descriptor size limit. Stop logging the descriptor in the
+  clear.
+- Write labels at generate time, returning the base tag, the labelled
+  tag, and the label.
+- Apply policy over labels, with a way to change the rule that a bind
+  does not have.
+- Resolve other provider facts as claims when they have a use.
+
+## Still to explore
+
+None of these blocks the API redesign. Each is connected to the ZeroKMS
+version 2 work. Each is decided there. The current thinking is recorded so
+it is not lost.
+
+### A label written by ZeroKMS
+
+Dan asked on 8 November 2026 whether a label ZeroKMS writes at generate
+time becomes a bind. The client would have only the labelled tag to
+bind into the leaf AAD. The current thinking is that it does not,
+for two reasons.
+
+- **Nothing about the reader is checked against a label.** The labelled
+  tag and the label's value are stored in the row in the clear. A reader
+  presents them as they are. ZeroKMS recomputes the chain from the base
+  tag and the stored labels. The check passes for any reader whose key
+  context items resolve. A bind is different: ZeroKMS resolves a claim
+  from the reader's token, or the reader supplies a value, and ZeroKMS
+  compares that with the tag. A label asks nothing of the reader.
+- **Binding the labelled tag into the AAD would add tamper evidence,
+  not access control.** It would stop a label being stripped or altered
+  without the AEAD failing. ZeroKMS already refuses a chain it cannot
+  reproduce, so that evidence is redundant. It would also mean the
+  client has to know which labels were applied before encryption and
+  which after, to rebuild the AAD.
+
+The proposed answer is that ZeroKMS returns two tags: the base tag, and
+the labelled tag. The client binds the base tag into the AAD and stores
+the labelled tag, as for any label. Then every label is outside the
+AAD, whoever wrote it. The read path has one rule. Still to settle:
+
+- whether version 2 returns both tags, or the client derives one from
+  the other;
+- the privacy rule. A server-written `written_by` puts the writer's
+  `sub` in the row in the clear. It must be a choice the declaration
+  makes, never a default;
+- whether a label ZeroKMS wrote should be marked as such in the list, so
+  a policy can trust it more than a client-written one.
+
+### Enforcement by derivation or by check
+
+Today a descriptor part is enforced by key derivation and a key context
+item by a tag check. The version 2 request above closes that gap. Until
+then, the honest difference between a bind and a label is who can change
+the rule, not who enforces it. Still to settle: whether version 2 should
+also bind the envelope format version, so that a version 1 request
+cannot be replayed as version 2.
+
+### Policy over labels
+
+ZeroKMS applying policy to labels is the changeable counterpart to a
+bind. Still to settle: the policy language, and the standard label names EQL
+publishes first. Also how a policy refusal is reported to the client,
+so it is never mistaken for a tampered ciphertext.
