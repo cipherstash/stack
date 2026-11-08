@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server'
 import { logger } from '../../../utils/logger'
 import type { GetCtsTokenResponse } from '../index'
 import {
-  type CtsToken,
   clearCtsSession,
-  subjectOfJwt,
+  ownerOfJwt,
+  parseCtsToken,
   writeCtsSession,
 } from '../session'
 
@@ -216,17 +216,32 @@ export const fetchCtsToken = async (oidcToken: string): GetCtsTokenResponse => {
     }
   }
 
-  const cts_token = (await ctsResponse.json()) as CtsToken
-
-  return {
-    success: true,
-    ctsToken: cts_token,
+  // A success body is validated rather than cast: it is written straight into
+  // the session cookie, and a 2xx that is not a token (a proxy page, a changed
+  // API) must fail here, not as a malformed cookie on every later request.
+  const raw = await ctsResponse.text().catch(() => '')
+  let body: unknown
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    body = undefined
   }
+
+  const ctsToken = parseCtsToken(body)
+  if (!ctsToken) {
+    const error = `Failed to fetch CTS token: the CipherStash API returned ${ctsResponse.status} without a valid token.`
+    logger.error(
+      `There was an issue communicating with the CipherStash CTS API, the CipherStash session was not set. ${error}`,
+    )
+    return { success: false, error }
+  }
+
+  return { success: true, ctsToken }
 }
 
 /**
  * Mint a session for `oidcToken` and write it to the response, labelled with
- * the token's subject. Used by the Next.js middleware.
+ * the token's issuer and subject. Used by the Next.js middleware.
  *
  * `clearOnFailure` says the request carries a session cookie that must not
  * outlive this call (malformed, expired, or minted for someone else): if CTS
@@ -262,6 +277,6 @@ export const setCtsToken = async (
   return writeCtsSession(
     res ?? NextResponse.next(),
     cts_token,
-    subjectOfJwt(oidcToken),
+    ownerOfJwt(oidcToken),
   )
 }

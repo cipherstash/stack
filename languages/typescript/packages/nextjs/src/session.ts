@@ -17,21 +17,65 @@ export type CtsToken = {
 }
 
 /**
- * What the cookie holds: the CTS token, plus the subject of the OIDC token it
- * was minted from.
- *
- * The subject is recorded at mint time rather than read back out of the CTS
- * access token, so ownership never depends on how CTS chooses to shape its own
- * `sub`. It is not a security boundary against the cookie's holder (who
- * already holds the bearer token); it stops a session left in a shared browser
- * by one user being handed to the next.
+ * Who a session was minted for: the `iss` and `sub` of the OIDC token it was
+ * exchanged from. Both, because a `sub` is only unique within its issuer.
  */
-export type CtsSession = CtsToken & { subject?: string }
+export type SessionOwner = { issuer: string; subject: string }
+
+/**
+ * What the cookie holds: the CTS token, plus the {@link SessionOwner} of the
+ * OIDC token it was minted from.
+ *
+ * The owner is recorded at mint time rather than read back out of the CTS
+ * access token, so ownership never depends on how CTS shapes its own `sub`.
+ *
+ * Trust model: the owner is unsigned metadata in a client-held cookie, and
+ * nothing here verifies a JWT signature. It is not a security boundary against
+ * the cookie's holder, who already holds the bearer token. It stops a session
+ * left in a shared browser by one user being handed to the next, which is only
+ * meaningful if the identity it is compared with was authenticated by the
+ * caller (Clerk's middleware, or your own verification of the OIDC token).
+ */
+export type CtsSession = CtsToken & { owner?: SessionOwner }
+
+const nonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value !== ''
+
+/**
+ * Validate a value as a {@link CtsToken}: an object with a non-empty string
+ * `accessToken` and a finite numeric `expiry`. Used for both the cookie and the
+ * CTS `/api/authorize` success body, so neither boundary trusts a cast.
+ */
+export function parseCtsToken(value: unknown): CtsToken | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined
+  }
+
+  const { accessToken, expiry } = value as Record<string, unknown>
+  if (
+    !nonEmptyString(accessToken) ||
+    typeof expiry !== 'number' ||
+    !Number.isFinite(expiry)
+  ) {
+    return undefined
+  }
+
+  return { accessToken, expiry }
+}
+
+function parseOwner(value: unknown): SessionOwner | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const { issuer, subject } = value as Record<string, unknown>
+  return nonEmptyString(issuer) && nonEmptyString(subject)
+    ? { issuer, subject }
+    : undefined
+}
 
 /**
  * Parse a raw session cookie value. Returns `undefined` for a missing value,
  * for anything that is not JSON of the `{ accessToken, expiry }` shape, and for
- * a session whose `expiry` has passed.
+ * a session whose `expiry` has passed. A missing or malformed `owner` leaves the
+ * session unowned, which never matches anyone.
  */
 export function readCtsSession(
   raw: string | undefined,
@@ -46,53 +90,47 @@ export function readCtsSession(
     return undefined
   }
 
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return undefined
-  }
+  const token = parseCtsToken(parsed)
+  if (!token || token.expiry * 1000 <= now) return undefined
 
-  const { accessToken, expiry, subject } = parsed as Record<string, unknown>
-  if (
-    typeof accessToken !== 'string' ||
-    accessToken === '' ||
-    typeof expiry !== 'number' ||
-    !Number.isFinite(expiry) ||
-    expiry * 1000 <= now
-  ) {
-    return undefined
-  }
-
-  return typeof subject === 'string' && subject !== ''
-    ? { accessToken, expiry, subject }
-    : { accessToken, expiry }
+  const owner = parseOwner((parsed as Record<string, unknown>).owner)
+  return owner ? { ...token, owner } : token
 }
 
 /**
- * The `sub` of a JWT, exactly as written. The signature is NOT verified: the
- * caller has already authenticated the token, and this only labels the session
- * minted from it. Returns `undefined` for anything that does not decode or
- * carries no non-empty string `sub`.
+ * The `iss` and `sub` of a JWT, exactly as written. The signature is NOT
+ * verified: the caller must already have authenticated the token, and this only
+ * labels the session minted from it. Returns `undefined` for anything that does
+ * not decode, or lacks a non-empty string `iss` or `sub`.
  */
-export function subjectOfJwt(jwt: string): string | undefined {
-  let sub: unknown
+export function ownerOfJwt(jwt: string): SessionOwner | undefined {
+  let claims: { iss?: unknown; sub?: unknown }
   try {
-    sub = decodeJwt(jwt).sub
+    claims = decodeJwt(jwt)
   } catch {
     return undefined
   }
 
-  return typeof sub === 'string' && sub !== '' ? sub : undefined
+  return nonEmptyString(claims.iss) && nonEmptyString(claims.sub)
+    ? { issuer: claims.iss, subject: claims.sub }
+    : undefined
 }
 
 /**
- * Whether `session` was minted for `subject`. An unknown subject on either side
- * (including a cookie written before subjects were recorded) is never a match:
- * a session whose owner cannot be established must not be handed to anyone.
+ * Whether `session` was minted for `owner`. An unknown owner on either side
+ * (including a cookie written before owners were recorded) is never a match: a
+ * session whose owner cannot be established must not be handed to anyone.
  */
 export function sessionBelongsTo(
   session: CtsSession,
-  subject: string | undefined,
+  owner: SessionOwner | undefined,
 ): boolean {
-  return session.subject !== undefined && session.subject === subject
+  return (
+    session.owner !== undefined &&
+    owner !== undefined &&
+    session.owner.issuer === owner.issuer &&
+    session.owner.subject === owner.subject
+  )
 }
 
 /** The CTS token alone, without the bookkeeping the cookie carries. */
@@ -109,10 +147,10 @@ export function ctsTokenOf({ accessToken, expiry }: CtsSession): CtsToken {
 export function writeCtsSession(
   response: NextResponse,
   token: CtsToken,
-  subject: string | undefined,
+  owner: SessionOwner | undefined,
 ) {
-  const session: CtsSession = subject
-    ? { ...ctsTokenOf(token), subject }
+  const session: CtsSession = owner
+    ? { ...ctsTokenOf(token), owner }
     : ctsTokenOf(token)
 
   response.cookies.set({

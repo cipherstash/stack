@@ -8,9 +8,9 @@ import {
   type CtsToken,
   clearCtsSession,
   ctsTokenOf,
+  ownerOfJwt,
   readCtsSession,
   sessionBelongsTo,
-  subjectOfJwt,
 } from './session'
 import { syncCtsSession } from './sync'
 
@@ -18,7 +18,7 @@ export { CS_COOKIE_NAME, type CtsToken }
 
 export type GetCtsTokenResponse = Promise<
   | {
-      success: boolean
+      success: false
       error: string
       /**
        * The refusal code CTS attached, when it refused for a reason the caller
@@ -35,7 +35,7 @@ export type GetCtsTokenResponse = Promise<
       ctsToken?: never
     }
   | {
-      success: boolean
+      success: true
       error?: never
       authCode?: never
       ctsToken: CtsToken
@@ -46,10 +46,14 @@ export type GetCtsTokenResponse = Promise<
  * The CipherStash session for the current request.
  *
  * With `oidcToken`, the session cookie is only returned when it was minted for
- * that token's subject; otherwise (no cookie, a malformed cookie, or a cookie
- * belonging to someone else) a fresh session is fetched for `oidcToken`. Without
- * it, the cookie is returned as-is, so pass the user's token whenever you have
- * one.
+ * that token's issuer and subject; otherwise (no cookie, a malformed cookie, or
+ * a cookie belonging to someone else) a fresh session is fetched for
+ * `oidcToken`. Without it, the cookie is returned as-is, so pass the user's
+ * token whenever you have one.
+ *
+ * `oidcToken` must be a token your application has already authenticated:
+ * this function reads its `iss` and `sub` without verifying its signature, to
+ * decide which session it may reuse. CTS verifies it when a session is minted.
  */
 export const getCtsToken = async (oidcToken?: string): GetCtsTokenResponse => {
   const cookieStore = await cookies()
@@ -63,7 +67,7 @@ export const getCtsToken = async (oidcToken?: string): GetCtsTokenResponse => {
   }
 
   if (oidcToken) {
-    if (session && sessionBelongsTo(session, subjectOfJwt(oidcToken))) {
+    if (session && sessionBelongsTo(session, ownerOfJwt(oidcToken))) {
       return { success: true, ctsToken: ctsTokenOf(session) }
     }
 
@@ -90,9 +94,13 @@ export const resetCtsToken = (res?: NextResponse) =>
 
 /**
  * Keep the CipherStash session cookie in step with the user `oidcToken`
- * identifies. A session is only reused for the subject it was minted for;
- * otherwise one is minted from `oidcToken`. An empty `oidcToken` means nobody
- * is signed in, and the cookie is cleared.
+ * identifies. A session is only reused for the issuer and subject it was
+ * minted for; otherwise one is minted from `oidcToken`. An empty `oidcToken`
+ * means nobody is signed in, and the cookie is cleared.
+ *
+ * `oidcToken` must be a token your application has already authenticated. Its
+ * `iss` and `sub` are read without verifying its signature: this keeps the
+ * session in step with an identity you trust, it does not establish one.
  */
 export const protectMiddleware = async (
   oidcToken: string,
@@ -103,7 +111,7 @@ export const protectMiddleware = async (
     req.cookies.get(CS_COOKIE_NAME)?.value,
     oidcToken
       ? {
-          subject: subjectOfJwt(oidcToken),
+          owner: ownerOfJwt(oidcToken),
           getOidcToken: async () => oidcToken,
         }
       : undefined,

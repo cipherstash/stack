@@ -32,15 +32,18 @@ import {
 import {
   type CtsSession,
   ctsTokenOf,
+  ownerOfJwt,
   readCtsSession,
   sessionBelongsTo,
-  subjectOfJwt,
 } from '../src/session'
+
+/** The issuer every test identity comes from unless a test says otherwise. */
+const ISSUER = 'https://idp.example'
 
 const jwtWithSubject = (sub: unknown) =>
   [
     Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
-    Buffer.from(JSON.stringify({ sub })).toString('base64url'),
+    Buffer.from(JSON.stringify({ iss: ISSUER, sub })).toString('base64url'),
     '',
   ].join('.')
 
@@ -48,18 +51,18 @@ const jwtWithSubject = (sub: unknown) =>
 const sessionFor = (sub: string): CtsSession => ({
   accessToken: jwtWithSubject(`CS|${sub}`),
   expiry: 1_900_000_000,
-  subject: sub,
+  owner: { issuer: ISSUER, subject: sub },
 })
 
 /** Whether the fake CTS minted `token` for the OIDC subject `sub`. */
 const mintedFor = (token: CtsToken | undefined, sub: string) =>
-  token !== undefined && subjectOfJwt(token.accessToken) === `CS|${sub}`
+  token !== undefined && ownerOfJwt(token.accessToken)?.subject === `CS|${sub}`
 
 /** A fake CTS that mints a token for whichever OIDC subject it is handed. */
 const ctsMintsForCaller = () =>
   vi.fn(async (_url: string, init: RequestInit) => {
     const { oidcToken } = JSON.parse(String(init.body))
-    const sub = subjectOfJwt(oidcToken)
+    const sub = ownerOfJwt(oidcToken)?.subject
     return new Response(
       JSON.stringify(ctsTokenOf(sessionFor(sub ?? 'unknown'))),
       {
@@ -91,9 +94,14 @@ const writtenSession = (res: NextResponse) => {
   return cookie.value === '' ? null : (JSON.parse(cookie.value) as CtsToken)
 }
 
-const clerkAuth = (userId: string | null, token: string | null) =>
+const clerkAuth = (
+  userId: string | null,
+  token: string | null,
+  claims: Record<string, unknown> = { iss: ISSUER },
+) =>
   (async () => ({
     userId,
+    sessionClaims: userId ? { sub: userId, ...claims } : null,
     getToken: vi.fn(async () => token),
   })) as unknown as ClerkMiddlewareAuth
 
@@ -146,6 +154,7 @@ describe('protectClerkMiddleware: a session is only reused for its own user', ()
     const getToken = vi.fn(async () => jwtWithSubject('user_A'))
     const auth = (async () => ({
       userId: 'user_A',
+      sessionClaims: { iss: ISSUER, sub: 'user_A' },
       getToken,
     })) as unknown as ClerkMiddlewareAuth
 
@@ -167,7 +176,12 @@ describe('protectClerkMiddleware: a session is only reused for its own user', ()
 
     const written = writtenSession(res)
     expect(written).toBeTruthy()
-    expect(sessionBelongsTo(written as CtsSession, 'user_B')).toBe(true)
+    expect(
+      sessionBelongsTo(written as CtsSession, {
+        issuer: ISSUER,
+        subject: 'user_B',
+      }),
+    ).toBe(true)
   })
 
   it("clears another user's session when the replacement cannot be minted", async () => {
@@ -196,9 +210,12 @@ describe('protectClerkMiddleware: a session is only reused for its own user', ()
       request(),
     )
 
-    expect(sessionBelongsTo(writtenSession(res) as CtsSession, 'user_A')).toBe(
-      true,
-    )
+    expect(
+      sessionBelongsTo(writtenSession(res) as CtsSession, {
+        issuer: ISSUER,
+        subject: 'user_A',
+      }),
+    ).toBe(true)
   })
 
   it('clears the session when nobody is signed in', async () => {
@@ -216,9 +233,12 @@ describe('protectClerkMiddleware: a session is only reused for its own user', ()
       request('not-json'),
     )
 
-    expect(sessionBelongsTo(writtenSession(res) as CtsSession, 'user_A')).toBe(
-      true,
-    )
+    expect(
+      sessionBelongsTo(writtenSession(res) as CtsSession, {
+        issuer: ISSUER,
+        subject: 'user_A',
+      }),
+    ).toBe(true)
   })
 })
 
@@ -288,9 +308,12 @@ describe('a malformed session cookie reads as no session', () => {
   it.each(malformed)('protectMiddleware(jwt) re-mints for %j', async (raw) => {
     const res = await protectMiddleware(jwtWithSubject('user-1'), request(raw))
 
-    expect(sessionBelongsTo(writtenSession(res) as CtsSession, 'user-1')).toBe(
-      true,
-    )
+    expect(
+      sessionBelongsTo(writtenSession(res) as CtsSession, {
+        issuer: ISSUER,
+        subject: 'user-1',
+      }),
+    ).toBe(true)
   })
 
   it.each(malformed)('protectMiddleware() clears %j', async (raw) => {
@@ -305,9 +328,12 @@ describe('a malformed session cookie reads as no session', () => {
       request(JSON.stringify({ accessToken: 'opaque', expiry: 1 })),
     )
 
-    expect(sessionBelongsTo(writtenSession(res) as CtsSession, 'user-1')).toBe(
-      true,
-    )
+    expect(
+      sessionBelongsTo(writtenSession(res) as CtsSession, {
+        issuer: ISSUER,
+        subject: 'user-1',
+      }),
+    ).toBe(true)
   })
 })
 
@@ -318,8 +344,11 @@ describe('session helpers', () => {
   })
 
   it('reads the subject exactly as written, CS| prefix included', () => {
-    expect(subjectOfJwt(jwtWithSubject('CS|user-1'))).toBe('CS|user-1')
-    expect(subjectOfJwt(jwtWithSubject('user-1'))).toBe('user-1')
+    expect(ownerOfJwt(jwtWithSubject('CS|user-1'))).toEqual({
+      issuer: ISSUER,
+      subject: 'CS|user-1',
+    })
+    expect(ownerOfJwt(jwtWithSubject('user-1'))?.subject).toBe('user-1')
   })
 
   it('reads an expired session as no session', () => {
@@ -333,21 +362,34 @@ describe('session helpers', () => {
     const legacy = ctsTokenOf(sessionFor('user-1'))
     const session = readCtsSession(JSON.stringify(legacy)) as CtsSession
     expect(session).toEqual(legacy)
-    expect(sessionBelongsTo(session, 'user-1')).toBe(false)
+    expect(
+      sessionBelongsTo(session, { issuer: ISSUER, subject: 'user-1' }),
+    ).toBe(false)
   })
 
-  it('reports no subject for a non-JWT, a missing sub, or a non-string sub', () => {
-    expect(subjectOfJwt('opaque')).toBeUndefined()
-    expect(subjectOfJwt(jwtWithSubject(undefined))).toBeUndefined()
-    expect(subjectOfJwt(jwtWithSubject(42))).toBeUndefined()
-    expect(subjectOfJwt(jwtWithSubject(''))).toBeUndefined()
+  it('reports no owner for a non-JWT, a missing sub, or a non-string sub', () => {
+    expect(ownerOfJwt('opaque')).toBeUndefined()
+    expect(ownerOfJwt(jwtWithSubject(undefined))).toBeUndefined()
+    expect(ownerOfJwt(jwtWithSubject(42))).toBeUndefined()
+    expect(ownerOfJwt(jwtWithSubject(''))).toBeUndefined()
+  })
+
+  it('reports no owner for a token without an issuer', () => {
+    const noIssuer = [
+      Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ sub: 'user-1' })).toString('base64url'),
+      '',
+    ].join('.')
+    expect(ownerOfJwt(noIssuer)).toBeUndefined()
   })
 
   it('never matches when either subject is unknown', () => {
     const subjectless = ctsTokenOf(sessionFor('user-1'))
     expect(sessionBelongsTo(subjectless, undefined)).toBe(false)
     expect(sessionBelongsTo(sessionFor('user-1'), undefined)).toBe(false)
-    expect(sessionBelongsTo(subjectless, 'user-1')).toBe(false)
+    expect(
+      sessionBelongsTo(subjectless, { issuer: ISSUER, subject: 'user-1' }),
+    ).toBe(false)
   })
 })
 
@@ -402,7 +444,6 @@ describe('review follow-ups', () => {
   it('re-mints an expired session instead of passing it through', async () => {
     const expired = {
       ...sessionFor('user_A'),
-      subject: 'user_A',
       expiry: Math.floor(Date.now() / 1000) - 60,
     }
 
@@ -424,5 +465,58 @@ describe('review follow-ups', () => {
     )
 
     expect(sessionSetCookie(res)).toBeUndefined()
+  })
+})
+
+describe('issuer-aware ownership', () => {
+  const jwtFrom = (iss: string | undefined, sub: string) =>
+    [
+      Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ iss, sub })).toString('base64url'),
+      '',
+    ].join('.')
+
+  it('does not reuse a session for the same sub from a different issuer', async () => {
+    const minted = await setCtsToken(jwtFrom('https://idp-a.example', 'alice'))
+    const cookie = minted.cookies.get(CS_COOKIE_NAME)?.value as string
+    vi.mocked(fetch).mockClear()
+
+    const res = await protectMiddleware(
+      jwtFrom('https://idp-b.example', 'alice'),
+      request(cookie),
+    )
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(writtenSession(res)).toBeTruthy()
+  })
+
+  it('reuses a session for the same issuer and sub', async () => {
+    const minted = await setCtsToken(jwtFrom('https://idp-a.example', 'alice'))
+    const cookie = minted.cookies.get(CS_COOKIE_NAME)?.value as string
+    vi.mocked(fetch).mockClear()
+
+    const res = await protectMiddleware(
+      jwtFrom('https://idp-a.example', 'alice'),
+      request(cookie),
+    )
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(writtenSession(res)).toBeUndefined()
+  })
+
+  it('does not reuse a Clerk session minted by a different issuer', async () => {
+    const minted = await setCtsToken(jwtFrom('https://other.example', 'user_A'))
+    const cookie = minted.cookies.get(CS_COOKIE_NAME)?.value as string
+    vi.mocked(fetch).mockClear()
+
+    const res = await protectClerkMiddleware(
+      clerkAuth('user_A', jwtFrom('https://clerk.app.example', 'user_A'), {
+        iss: 'https://clerk.app.example',
+      }),
+      request(cookie),
+    )
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(writtenSession(res)).toBeTruthy()
   })
 })

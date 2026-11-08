@@ -1,12 +1,23 @@
 import { NextResponse } from 'next/server'
 import { logger } from '../../utils/logger'
 import { setCtsToken } from './cts'
-import { clearCtsSession, readCtsSession, sessionBelongsTo } from './session'
+import {
+  clearCtsSession,
+  readCtsSession,
+  type SessionOwner,
+  sessionBelongsTo,
+} from './session'
 
-/** The signed-in user, as a middleware sees them. */
+/**
+ * The signed-in user, as a middleware sees them. The caller is responsible for
+ * having authenticated this identity: nothing here verifies a token.
+ */
 export type SessionIdentity = {
-  /** The subject the session must have been minted for. */
-  subject: string | undefined
+  /**
+   * The identity the session must have been minted for. `undefined` when it
+   * cannot be established, in which case no session is ever reused.
+   */
+  owner: SessionOwner | undefined
   /**
    * The OIDC token to mint a new session with. Called only when the existing
    * session cannot be reused, so a middleware can defer fetching it.
@@ -18,7 +29,8 @@ export type SessionIdentity = {
  * Bring the CipherStash session cookie in line with who is signed in. The one
  * decision both `protectMiddleware` and `protectClerkMiddleware` make:
  *
- * - Signed in, with an unexpired session minted for this subject: pass through.
+ * - Signed in, with an unexpired session minted for this identity (issuer and
+ *   subject): pass through.
  * - Signed in otherwise (no session, a malformed or expired one, or one minted
  *   for someone else): mint a session for this user. If there is no token to
  *   mint with, or CTS refuses, a stale cookie is cleared rather than kept.
@@ -45,8 +57,14 @@ export async function syncCtsSession(
     return response()
   }
 
+  if (!identity.owner) {
+    logger.debug(
+      'The signed-in identity has no readable issuer and subject, so no CipherStash session can be reused for it and one will be minted on every request.',
+    )
+  }
+
   const session = readCtsSession(rawSession)
-  if (session && sessionBelongsTo(session, identity.subject)) {
+  if (session && sessionBelongsTo(session, identity.owner)) {
     logger.debug(
       'The CipherStash session belongs to the signed-in user and was kept.',
     )

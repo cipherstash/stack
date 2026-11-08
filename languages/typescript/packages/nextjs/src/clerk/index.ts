@@ -15,12 +15,22 @@ export const protectClerkMiddleware = async (
   auth: ClerkMiddlewareAuth,
   req: NextRequest,
 ) => {
-  const { userId, getToken } = await auth()
+  const { userId, sessionClaims, getToken } = await auth()
+  const issuer = sessionClaims?.iss
 
-  // The Clerk `userId` is the `sub` of the Clerk session token `getToken()`
-  // returns, which is the subject the session is labelled with when minted.
+  // `userId` and `sessionClaims` come from the Clerk session token Clerk has
+  // already verified, and are the `sub` and `iss` of the token `getToken()`
+  // returns, which is what a session is labelled with when minted.
   return await syncCtsSession(
     req.cookies.get(CS_COOKIE_NAME)?.value,
-    userId ? { subject: userId, getOidcToken: () => getToken() } : undefined,
+    userId
+      ? {
+          owner:
+            typeof issuer === 'string' && issuer !== ''
+              ? { issuer, subject: userId }
+              : undefined,
+          getOidcToken: () => getToken(),
+        }
+      : undefined,
   )
 }

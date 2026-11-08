@@ -53,7 +53,9 @@ import {
 const jwtWithSubject = (sub: string) =>
   [
     Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
-    Buffer.from(JSON.stringify({ sub })).toString('base64url'),
+    Buffer.from(JSON.stringify({ iss: 'https://idp.example', sub })).toString(
+      'base64url',
+    ),
     '',
   ].join('.')
 
@@ -166,11 +168,11 @@ describe('protectMiddleware', () => {
   })
 
   it('leaves the session alone when the JWT and session are the same user', async () => {
-    // The cookie records the OIDC subject the session was minted for.
+    // The cookie records the OIDC identity the session was minted for.
     const session = {
       accessToken: jwtWithSubject('CS|user-1'),
       expiry: 1_900_000_000,
-      subject: 'user-1',
+      owner: { issuer: 'https://idp.example', subject: 'user-1' },
     }
     const req = requestWithSession(JSON.stringify(session))
     const res = NextResponse.next()
@@ -185,7 +187,7 @@ describe('protectMiddleware', () => {
     const session = {
       accessToken: jwtWithSubject('CS|user-1'),
       expiry: 1_900_000_000,
-      subject: 'user-1',
+      owner: { issuer: 'https://idp.example', subject: 'user-1' },
     }
     const req = requestWithSession(JSON.stringify(session))
     const oidcToken = jwtWithSubject('user-2')
