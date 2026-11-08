@@ -223,14 +223,18 @@ describe('plaintext table rows that carry ciphertext', () => {
     [
       'an embedded relation',
       [{ id: 1, users: { email: envelope } }],
-      'users.email',
+      '[0].users.email',
     ],
     [
       'an embedded to-many relation',
       [{ id: 1, users: [{ email: 'x' }, { email: envelope }] }],
-      'users[1].email',
+      '[0].users[1].email',
     ],
-    ['an undeclared encrypted column', [{ id: 1, action: envelope }], 'action'],
+    [
+      'an undeclared encrypted column',
+      [{ id: 1, action: envelope }],
+      '[0].action',
+    ],
   ])('refuses %s', async (_case, rows, path) => {
     const { es } = await declaredClient(rows)
     const { data, error } = await es

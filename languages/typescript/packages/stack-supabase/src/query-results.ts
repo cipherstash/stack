@@ -118,8 +118,10 @@ function findEnvelope(value: unknown): Array<string | number> | null {
   return null
 }
 
-/** Render a chain the way a caller wrote the select: `users[1].email`. */
+/** Render a chain the way a caller wrote the select, with the row index of an
+ * array result first: `[0].users[1].email`. */
 function renderPath(chain: Array<string | number>): string {
+  if (chain.length === 0) return '(the whole row)'
   return chain
     .map((step, i) =>
       typeof step === 'number' ? `[${step}]` : i === 0 ? step : `.${step}`,
@@ -139,16 +141,14 @@ function renderPath(chain: Array<string | number>): string {
  * value.
  */
 function assertNoCiphertext(data: unknown, ctx: DecryptContext): void {
-  for (const row of Array.isArray(data) ? data : [data]) {
-    const chain = findEnvelope(row)
-    if (chain === null) continue
+  const chain = findEnvelope(data)
+  if (chain === null) return
 
-    const message = `[supabase v3]: table "${ctx.tableName}" has no encrypted columns, but the result holds an encrypted value at "${renderPath(chain)}". It is not decrypted here: an embedded relation to an encrypted table is not supported (query that table directly), and in declared mode every encrypted column must be declared with a \`types.*\` factory.`
-    throw new EncryptionFailedError(message, {
-      type: EncryptionErrorTypes.DecryptionError,
-      message,
-    })
-  }
+  const message = `[supabase v3]: table "${ctx.tableName}" has no encrypted columns, but the result holds an encrypted value at "${renderPath(chain)}". It is not decrypted here: an embedded relation to an encrypted table is not supported (query that table directly), and in declared mode every encrypted column must be declared with a \`types.*\` factory.`
+  throw new EncryptionFailedError(message, {
+    type: EncryptionErrorTypes.DecryptionError,
+    message,
+  })
 }
 
 /**
