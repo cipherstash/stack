@@ -235,11 +235,14 @@ document. The trait does not match Stack in three ways:
 
 ### A smaller clean-up
 
-Each synchronous adapter now implements the half of `Cipher` that it does
-not use, by returning an error. During the final pass on dependencies and
-packaging, consider separate capabilities for sealing and opening, or an
-improvement to the internal adapter. Keep this clean-up separate from the
-question of whether the public Stack client implements the async trait.
+Vitamin C's `Cipher` trait has a `seal` method and an `open` method.
+Stack implements it twice: `MintedKeys` only seals, and `BoundKeys` only
+opens. Each type still has to provide the other method, and that method
+only returns an error. The final pass on dependencies and packaging
+should consider a fix. One option splits the trait into a sealing
+capability and an opening capability. Another changes the internal
+adapter in some other way. Decide this separately from whether the
+public Stack client implements the async trait.
 
 ## 3. Lock context as an optional provider policy
 
