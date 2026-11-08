@@ -1153,7 +1153,13 @@ NEW.body := eql_v4.label_tag(NEW.body, 'row_id', NEW.id::text);
 
 ## Remaining work
 
-Everything in this section is work to implement. It is in five groups:
+Everything in this section is work to implement. Each item ends with the
+issues and pull requests that track it, checked on 8 November 2026.
+`next` was still at `e4990e49b`, the plan's last check.
+
+An issue that a merged pull request says it closes can stay open,
+because GitHub closes issues only on the default branch. So an open
+issue here may be done. It is in five groups:
 the Go module, the stored format, the Rust API, the query engine, and
 packaging with two key provider features. The Go customer's
 release happened in late October 2026, so the groups are no longer
@@ -1177,9 +1183,10 @@ release leaves behind.
   - stored reads and context;
   - queries;
   - EQL and JSON;
-  - the lifecycle of values and keys.
-
-  The profiles are experimental. They do not certify a whole SDK.
+  - the lifecycle of values and keys.  The profiles are experimental. They do not certify a whole SDK. Three pull requests are in review. Pull request #1505 adds value,
+  refusal, and raw-frame corpora. Pull request #1506 adds a fresh Rust
+  and Go artifact exchange. Pull request #1507 consolidates the tests.
+- **Tracked in.** Issues #1477, #1478, #1479, #1481, #1490, and #1314 are open. Issue #1512 is open for cross-language queries through PostgreSQL. Issues #1471 to #1476 and #1480 are closed. Pull requests #1505, #1506, and #1507 are open, stacked on #1503. Pull request #1506 adds `conformance/stack-encrypt/exchange-contract.md` and a placeholder for the released-version matrix.
 - **Finished when** these are all true:
   - the profiles are no longer experimental;
   - the schemas exist;
@@ -1199,6 +1206,7 @@ release leaves behind.
   see one child. That transfers more data and reveals a different set of
   tokens.
 - **Done already.** Nothing.
+- **Tracked in.** No issue. Pull request #1353, the Go JSON plan document, lists it as remaining.
 - **Finished when** Go can open one child, and the `eql-json-v1`
   conformance profile covers it.
 
@@ -1211,6 +1219,7 @@ release leaves behind.
   has the design.
 - **Why.** Today Go uses only the default match options.
 - **Done already.** Words of two letters can be searched (#1397).
+- **Tracked in.** Issue #1112 is open. Issues #1398 and #1399 are open for match-index follow-ups. Issue #1299 is an open question on short substrings. Issue #1396 is closed. Pull request #1397 is merged.
 - **Finished when** a Go field can declare match options, and its queries
   use the same options as its stored terms.
 
@@ -1220,7 +1229,11 @@ release leaves behind.
   matching EQL bundle, recorded as the rc.3 baseline.
 - **Why.** The vectors make sure that later work keeps rc.3 data readable
   and searchable.
-- **Done already.** The conformance jobs run in CI.
+- **Done already.** The conformance jobs run in CI. Two fixtures are
+  frozen: `stored_rows_v1.json` since 18 October 2026, and the Go rows
+  that `eql_v4_test.go` never regenerates. Both predate the rc.3 tag of
+  2 November 2026, so neither is labelled rc.3.
+- **Tracked in.** No dedicated issue. Issue #1119 is closed. It froze `stored_rows_v1.json` on 18 October 2026. Issue #1490 is open. It covers stable gates and supported conformance versions.
 - **Finished when** CI fails on any change to the stored bytes of rc.3
   data.
 
@@ -1230,6 +1243,7 @@ release leaves behind.
   with released module tags.
 - **Why.** A final Go release cannot depend on unreleased commits.
 - **Done already.** Prereleases can keep the pins, so rc.3 uses them.
+- **Tracked in.** No direct issue. Pull request #1369, merged, introduced the pin. Issue #1253 is open. It would bring the frame codec into the Go module and remove the dependency instead.
 - **Finished when** the release workflow accepts a final version.
 
 ### 2. The stored format
@@ -1248,6 +1262,8 @@ format version beside it.
 | Configurable match options | The terms of columns written with the rc.3 defaults |
 | Context parts as key request items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
 
+- **Tracked in.** Draft pull request #1524 defines a version 2 leaf header of its own. The next item records the conflict.
+
 #### Context parts as key request items
 
 Decided on 8 November 2026. [Binds move from the descriptor to key request items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-key-request-items)
@@ -1264,12 +1280,19 @@ has the design.
   logs it and cannot parse it. Items are structured. They have no size
   limit. Claims use the same channel, so a scope, a binding, and a
   claim travel the same way.
-- **Stored format.** Version 1 values keep the rc.3 descriptor
-  rendering. That rendering stays in the engine until the last such
+- **Conflict.** Draft pull request #1524, from the key-vendor work on
+  `main`, defines its own version 2 leaf. It starts with `0x02`, then the
+  key backend, the key mode, the keyset ID, the IV, the tag, and the
+  ciphertext. Two
+  changes cannot both own `0x02`. Either they merge into one version 2
+  header that carries both, or one takes the next byte. Decide with the
+  key-vendor work before either lands.
+- **Stored format.** Version 1 values keep the rc.3 descriptor rendering. That rendering stays in the engine until the last such
   value is gone. The change is additive: nothing written by rc.3 is re-encrypted.
 - **Done already.** `SealedValue` has the version byte, bound into the
   leaf AAD, and the rendering of a context into a descriptor is frozen
   and documented in `packages/stack-encrypt/src/descriptor.rs`.
+- **Tracked in.** No issue. Related: issue #1067, open, says Stack Encrypt never sends key request items to ZeroKMS. Issue #1487 is open. Draft pull request #1524 claims the same version byte, `0x02`.
 - **Finished when** these are all true:
   - a version 2 value round-trips, and a version 1 value from the rc.3
     vectors still decrypts;
@@ -1307,6 +1330,7 @@ has the design.
   to arbitrary objects.
 - **Done already.** Go writes and reads the format (#1369, #1370). #1503
   adds `OpaqueBlob`, and is in review.
+- **Tracked in.** Issue #1484 is open. It closes when #1503 merges. Issues #1367 and #1113 are closed. Pull request #1503 is open. Pull requests #1369 and #1370 are merged. Pull request #1506 adds the Rust and Go exchange of sealed blobs.
 - **Finished when** Rust and Go each open blobs that the other wrote, and
   the conformance profiles cover it.
 
@@ -1344,6 +1368,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   section records the thinking.
 - **Done already.** `Ciphertext::key_tag` reads the tag in Rust (#1404).
   The leaf AAD already binds the original tag.
+- **Tracked in.** No issue. Related: issue #1067, open.
 - **Finished when** these are all true:
   - the example in the key policy document round-trips through a
     trigger, in Rust and in Go;
@@ -1369,6 +1394,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   2026. Reading the tag does not authenticate it.
 - **Done already.** `Ciphertext` is stored as bytes, and Serde writes it as
   Base64. `Ciphertext::key_tag` reads the tag in Rust (#1404).
+- **Tracked in.** Issue #1485 is open. It is exactly this item.
 - **Finished when** these are all true:
   - the methods and targets exist;
   - Rust, Go, and SQL test vectors show the same key tag for the same
@@ -1403,6 +1429,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   the record derives, and is in review. `#[stash(from = "..")]` already
   renames the source field of an encrypted field
   (`stack-encrypt-derive/src/attrs.rs`).
+- **Tracked in.** Issue #1483 is open. It closes when #1504 merges. Issue #1482 is still open although #1501 merged with "Closes #1482". It needs a manual close. Pull request #1504 is open. Pull requests #1404 and #1501 are merged. Pull request #1504 lands `context =` and `ContextExtension` under the names the naming review replaces.
 - **Finished when** these are both true:
   - a mixed record, with passthrough and encrypted fields, and a searchable
     record round-trip as tests;
@@ -1432,6 +1459,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   looks the type up by name through `eql-bindings` (the `TargetResolver`
   in `dynamic/record.rs`). `Identifier` already gives the same context as
   the `(table, column)` pair that a record derive builds.
+- **Tracked in.** Issue #1486 is open, in part. No dedicated issue. Pull request #1504 defers the EQL owned implementations. `eql-bindings` builds against the crates.io `stack-encrypt`, so a `stack-encrypt` release must come first.
 - **Finished when** these are all true:
   - a Rust record with EQL fields encrypts, decrypts, and queries through
     the new API;
@@ -1448,6 +1476,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
 - **Done already.** The functions it calls exist in `eql-bindings`:
   `encrypt_with`, `decrypt`, and `query` in `v4::targets` and
   `encryption::targets`.
+- **Tracked in.** No issue.
 - **Finished when** the tests and the Go guest use the resolver from
   `eql-bindings`, and their own copies are deleted.
 
@@ -1471,6 +1500,7 @@ labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
   types in `stack_encrypt::dynamic::json_query`. Typed containment and
   comparison at a path, through a plan (`op::Contains`, `op::AtPath`). The
   EQL query types exist in `eql-bindings`.
+- **Tracked in.** Issue #1459 is open. It is exactly this item. Issue #1486 is open.
 - **Finished when** these are both true:
   - the [JSON query example](#query-a-json-document) compiles;
   - an order query on a path the options do not order is refused before
@@ -1531,6 +1561,7 @@ review.
 - **Later.** A compile-time duplicate-field check for the hand-written
   builder, through a type-level list of markers, stays a follow-up, as the
   artifact says.
+- **Tracked in.** Issue #1486 is open.
 - **Finished when** these are all true:
   - the [marker example](#query-a-record-field) compiles;
   - the compile-fail cases in `tests/ui` cover an operator the field's
@@ -1570,6 +1601,7 @@ Decided on 7 November 2026, as area one of the query design review.
   a value frame for each call, through `plan_with`, `encrypt_with`,
   `query`, and `decrypt_with` in `dynamic::record`. The serialised `Planned` names and groups what those functions already
 receive.
+- **Tracked in.** Issue #1486 is open, in part. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a public plan builder.
 - **Finished when** these are all true:
   - every case in the conformance corpus is a serialised `Plan` or
     `Planned` with the engine's expected answer beside it;
@@ -1605,8 +1637,9 @@ receive.
   could open without the plaintext.
 - **Done already.** The order in which parts are joined is fixed and
   tested in Rust and Go (#1491). The context inputs `RequiredContext`,
-  `NoCallerContext`, and `OptionalContext` exist (#1404). #1504 adds
-  `ContextExtension` and `ExpectedContext`, and is in review.
+  `NoCallerContext`, and `OptionalContext` exist (#1404). `ExpectedContext` exists on `next`, in `target/context.rs`. #1504 adds
+  `ContextExtension`, makes `ExpectedContext` a context input, and is in
+  review.
   The naming review of 8 November 2026 decided that `ContextExtension`
   goes: the `Scope::new(..).bind(..)` chain is the input. The plan builder's
   `.context(..)` and `.context_field(..)` and the derive's
@@ -1618,6 +1651,7 @@ receive.
   default stays "any", and the Go generator requires a declared part at
   compile time. `RequiredContext`, `OptionalContext`, and `NoCallerContext`
   (#1404) are the three states this keeps.
+- **Tracked in.** Issue #1487 is open. Issue #1120 is open: a second `.extend()` replaces the first. It closes when the chain goes. Issue #1308 is open for Go identity independent of the column. Issue #1475 is closed. Pull request #1491 is merged. Pull request #1504 is open.
 - **Finished when** these are both true:
   - all eight scenarios run as tests in Rust and Go, through the
     builder;
@@ -1641,6 +1675,7 @@ receive.
   instead of "extension". The frozen vectors do not change, because no key
   on the wire names the operation.
 - **Done already.** Nothing. Today every part is in both contexts.
+- **Tracked in.** Issue #1487 is open. It is exactly this item. Issue #1067 is open and related.
 - **Finished when** these are all true, in Rust and in Go:
   - a record with a binding row ID encrypts;
   - a column query finds it;
@@ -1679,6 +1714,7 @@ records only the work.
   and `From<&Keyset>`. The entry points take `impl Into<CipherRef>`, and
   the Go guest builds one from its keyset selector. A `Keyset` reference
   refuses a foreign leaf with `ForeignKeyset`. A `Cipher` reference opens leaves from any keyset the client has.
+- **Tracked in.** Issue #1488 is open. It is the chain removal. Issue #1120 is open. Pull request #1504 is open and adds the record pairs.
 - **Finished when** these are all true:
   - the examples in [Target state](#target-state) compile;
   - the compile-fail cases in `tests/ui` cover a binding in a query, and
@@ -1718,6 +1754,7 @@ Decided on 7 November 2026.
 - **Done already.** `Descriptor` renders a context as text, and
   `ContextMismatch` reports the stored descriptor. Neither shows the
   types, and neither is reachable from a plan or a call.
+- **Tracked in.** No issue.
 - **Finished when** these are all true:
   - a test pins the output of `contexts()` for each of the [context
     scenarios](2026-10-24-stack-encrypt-context-examples.md);
@@ -1744,6 +1781,8 @@ not change the stored format. Renaming Vitamin C's `IntoAad` trait is a
 follow-up in Vitamin C. The Go SDK and the dynamic interface have no public
 parameter named `aad`.
 
+- **Tracked in.** No issue.
+
 #### Pass context by reference
 
 - **What to build.** Let every method that takes a context accept a
@@ -1756,6 +1795,7 @@ parameter named `aad`.
   the old context path type that [Apply the naming
   review](#apply-the-naming-review) removes.
   The context inputs, such as `RequiredContext`, still need an owned value.
+- **Tracked in.** No issue.
 - **Finished when** the examples in this plan pass a context by reference,
   with no clone, and compile.
 
@@ -1772,6 +1812,7 @@ parameter named `aad`.
   `'static`, so `&str` does not meet it. A borrowed value needs its own
   bound, and the request borrows the value for as long as it runs.
 - **Done already.** Owned single values (#1404).
+- **Tracked in.** No issue. Issue #1468, open, a Vitamin C buffer type, is adjacent.
 - **Finished when** `keyset.encrypt("secret")` compiles, and a test shows
   that Stack Encrypt wipes its own copies of a borrowed value.
 
@@ -1793,6 +1834,7 @@ parameter named `aad`.
   `serde_json::Value`, and wipes it when it is dropped. It is part of the
   dynamic interface. It has only `value()`. The strict parser exists as
   `stack_encrypt::json::parse_text`.
+- **Tracked in.** No issue. Pull request #1504 names `serde_json::Value` not being `Zeroize` as what blocks configured nested targets. This item unblocks them.
 - **Finished when** the JSON examples in this plan compile, and a test
   shows that a dropped `JsonPlaintext` leaves no plaintext behind.
 
@@ -1815,6 +1857,7 @@ parameter named `aad`.
 - **Done already.** Today's `StackCipher::keyset` takes
   `impl Into<IdentifiedBy>`,
   and `IdentifiedBy` implements `From<Uuid>` and `From<Name>`.
+- **Tracked in.** No GitHub issue. The `cipherstash-suite` repository has issues disabled. It is where `zerokms-protocol` lives.
 - **Finished when** a released `zerokms-protocol` has both constructors,
   and the examples in this plan compile.
 
@@ -1829,6 +1872,7 @@ parameter named `aad`.
   sequence whose order matters, such as the steps of a workflow. ADR-0010
   says this is opt-in, by type. It does not exist yet.
 - **Done already.** Nothing. The default collection (#1501).
+- **Tracked in.** No issue.
 - **Finished when** a test shows that each of swapping, dropping, and
   adding an element fails to open, in Rust and in Go.
 
@@ -1846,6 +1890,7 @@ parameter named `aad`.
 - **Done already.** `OpaqueEncode` and `OpaqueDecode` already accept any
   type that meets those bounds. Vitamin C documents a hand-written
   `Blob(Vec<u8>)` newtype.
+- **Tracked in.** No issue.
 - **Finished when** the [byte example](#encrypt-a-byte-string) compiles
   with the derive and no hand-written implementation.
 
@@ -1880,6 +1925,7 @@ table.
   follow.
 - **Done already.** Nothing. Every name above is still the old one on
   `next`.
+- **Tracked in.** Issue #1489 is open for naming and packaging. Issues #1116 and #1307 are open for the Go names. Pull request #1504 is open. It lands `ContextExtension`. The review removes that type.
 - **Finished when** no old name remains in the public API, the examples
   in [Target state](#target-state) compile under the new names, and the
   packaging glossary matches.
@@ -1896,6 +1942,7 @@ table.
 - **Why.** Two APIs for the same job make the right one hard to find.
 - **Done already.** The new API exists beside the old one. Issue #1488
   tracks the removal.
+- **Tracked in.** Issue #1488 is open.
 - **Finished when** the old API is gone, and every consumer uses the new
   API.
 
@@ -1907,6 +1954,7 @@ table.
 - **Why.** Plaintext must not stay in freed memory.
 - **Done already.** Collections wipe the values decoded before a failure.
   Cancellation and drop are tested (#1493, #1501).
+- **Tracked in.** Issue #1468 is open: a Vitamin C buffer type. Issue #1458 is open: data keys by reference. Issue #1480 is closed. Pull request #1503 is open. It adds `Zeroizing<T>` as the drop-wiping adapter and records the partial Serde decode as a known gap. Pull requests #1493 and #1501 are merged.
 - **Finished when** the conformance profile for the lifecycle covers both cases.
 
 ### 4. The query engine
@@ -1933,6 +1981,7 @@ Decided on 7 November 2026, as area two of the query design review.
   does not know which bound the caller meant. The `InvertedRange` error
   asked for in #1279 predates that commit and is dropped.
 - **Stored format and wire.** Unchanged. A query sends the operator's wire name. That name does not change.
+- **Tracked in.** Issues #1318 and #1279 are open. Issues #1317, #1319, and #1321 are open. Issue #1320, the inverted-range rule, is open. This plan's decision supersedes it, so it should be closed.
 - **Finished when** these are all true:
   - the dynamic enum is generated from the `op` types;
   - `Matches` has no type parameter;
@@ -1987,6 +2036,7 @@ design is the query artifact's; the adjustments below are the plan's.
   7 November 2026.
 - **Breaking.** Every hand-written `MatchConfig` changes shape. This lands
   as a `!` commit with a changelog entry.
+- **Tracked in.** Issues #1319, #1112, #1398, #1399, and #1299 are open. Issue #1309 is closed. Pull request #1397 is merged.
 - **Finished when** these are all true:
   - the conformance case for the rc.3 mapping passes in Rust and Go;
   - a `tests/ui` case shows a stemmer after n-grams fails to compile;
@@ -2050,12 +2100,13 @@ review. The rules are the query artifact's.
      `PlanError::IndexOptions`, and `PlanError::MatchCase`.
   4. `FieldIndexes` on the dynamic plan.
 - **Issues.** #1318 and #1279 are closed by steps 1 and 2. #1309, short
-  tokens, is a stage in the analyzer. #1326, the SSE investigation, is
+  tokens, is a stage in the analyzer. The searchable-encryption investigation is
   independent: a future SSE index is one more index declaration.
 - **ADRs.** ADR-0009 describes `Supports`, `Answers`, `DefaultIndex`, and
   `.via`. The `MatchConfig` documentation says a field and its query agree "by
   construction". That is true only for one-value plans today. Both
   are amended, not contradicted in silence.
+- **Tracked in.** Issues #1318 and #1279 are open. Issue #1233 is open: refuse a second order index. That is rule 2. Issues #1317 and #1321 are open.
 - **Finished when** these are all true:
   - every index's operators appear in one declaration, and a test shows
     the typed and dynamic lookups agree on every index;
@@ -2087,6 +2138,8 @@ sealing capability and an opening capability. Another changes the
 internal adapter in some other way. Decide this separately from the
 [retirement of `AsyncCipher`](2026-10-25-stack-encrypt-packaging.md#retire-asynccipher)
 in the packaging document.
+
+- **Tracked in.** No issue. Draft pull request #1522 reworks the stack-kms key source traits. It is adjacent.
 
 #### Choose the keyset from the data
 
@@ -2123,6 +2176,8 @@ Rules for the proposal:
   never resolves a name again.
 - If the caller passes a keyset and the record selects one, the two must
   match, or the call is refused. Neither wins silently.
+
+- **Tracked in.** No Rust issue. Related open issues: #1048, the Go eager keyset; #735, a keyset mismatch is silently unsearchable; #561, a per-operation keyset in TypeScript; #1312, Go control-plane keysets. Issue #832 is closed. Pull request #1407, open, is the Go control SDK.
 
 #### Claims the key provider resolves
 
@@ -2162,6 +2217,8 @@ let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
 let note = Note::decrypt_from(encrypted, &keyset).await?;
 ```
 
+- **Tracked in.** Issue #1565 is open. Issue #1067 is open: Stack Encrypt never sends key request items to ZeroKMS. That is the prerequisite. Issue #1045 is closed.
+
 ## Open questions and decisions to be made
 
 The lead who approves this plan decides each question.
@@ -2172,6 +2229,7 @@ The lead who approves this plan decides each question.
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
 | Should this plan ask ZeroKMS version 2 to derive the data key over the key request items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement. The version 2 work decides | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
+| Which change owns envelope version `0x02`: this plan's key request items, or #1524's key backend header? | One version 2 header that carries both. Or separate bytes | One header. Decide with the key-vendor work before either lands |
 | Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text`? | A small Vitamin C encoding crate. Or keep it in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
