@@ -160,7 +160,7 @@ contract. Keep support for injected providers, and for guest and native
 builds.
 
 Data key support is the base capability. Index key support, resolving
-named keysets, and lock context stay explicit optional capabilities. A
+named keysets, and claims stay explicit optional capabilities. A
 required capability that is not supported fails before key I/O, that is,
 before any request to the key provider. Future provider adapters can
 become separate downstream crates when needed. Do not design invented AWS
@@ -277,7 +277,7 @@ combined trait.
 | `encoding::{Base64Ciphertext, Base85Ciphertext}` | Validated, encoded representations of opaque ciphertext, and supported field targets. Valid encoding alone is not enough |
 | `plan::Plan` | Explicit low-level interface for composition. The output is selected with `.target::<T>()` |
 | `provider` | Neutral provider contracts and capability bounds |
-| `provider::zerokms` | The ZeroKMS adapter and the surface for its policy extension, including `LockContext` |
+| `provider::zerokms` | The ZeroKMS adapter and the surface for its claims, including `Claim` and `ResolvesClaims` |
 | `dynamic` | Loading versioned definitions, discovering capabilities, and executing through the common engine |
 
 ### Spellings already agreed

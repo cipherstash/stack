@@ -19,8 +19,9 @@ Three documents go with it:
 
 - the [context scenarios](2026-10-24-stack-encrypt-context-examples.md),
   the acceptance matrix for how a record gets its context;
-- [tag refinement and caveats](2026-11-07-stack-encrypt-tag-refinement.md),
-  the design of the caveats on a key tag;
+- [binds, claims, and labels](2026-11-08-stack-encrypt-key-policy.md),
+  the design of key policy: what ties a value to a fact, and what only
+  records one;
 - [packaging and names](2026-10-25-stack-encrypt-packaging.md), the
   proposal the naming review judges.
 
@@ -35,7 +36,7 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | ADR | An architecture decision record, in `packages/stack-encrypt/docs/adr/`. ADR-0007 says every binding runs the engine's one executor |
 | Analyzer | The pipeline that turns match text into tokens: a source, such as `Words`, then stages. A match index is configured by one analyzer |
 | Binding | A part of the context that ties a ciphertext to its row, such as a row ID. It is in the stored context and not in the query context. Passed as `Bind::new(..)` |
-| Caveat | A named, typed fact added to a stored value's key tag by tag refinement, such as `row_id` or `created_at`. ZeroKMS verifies it. See [Tag refinement](#tag-refinement) |
+| Claim | A binding whose value the key provider resolves from the caller's verified token, such as `sub`. The client names it and never sees the value. See [Claims the key provider resolves](#claims-the-key-provider-resolves) |
 | Ciphertext | One encrypted value, as the Rust `Ciphertext` type. It is stored as bytes, or as Base64 text |
 | Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Rust and Go run the same cases. The files are in `conformance/stack-encrypt/v1/` |
 | Context name | The last declared scope of a field: its name by default, pinned when the Rust field is renamed. Two fields of one record never share one |
@@ -48,7 +49,8 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | `FieldRef` | The builder's reference to one field of the plaintext type: its name and its accessor. A field marker is a `FieldRef` with its indexes added |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
-| Lock context | A ZeroKMS policy applied when a data key is generated or retrieved, such as a claim of the authenticated JSON Web Token. A property of the key provider, not a part of the context. See [Lock context](#lock-context) |
+| Label | A named, typed fact added to a stored value's key tag after encryption, such as `row_id` or `written_by`. ZeroKMS verifies it and logs it. It restricts no reader. See [Labels](#labels) |
+| Lock context | The ZeroKMS protocol's list of items beside the descriptor of a key request. ZeroKMS folds them into the key tag. Stack Encrypt will send scopes, bindings, and claims as these items |
 | n-gram | A run of `n` characters of a token, such as the trigrams of a word. The match index stores a Bloom filter of n-grams |
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a caveat use it |
@@ -64,7 +66,6 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | Stage | One step of an analyzer that maps, drops, or expands tokens, such as `Downcase`, `Stop`, `Stem`, or `Ngrams`. A serialised plan may name only the closed set of stages |
 | Stored context | Every part of a value's context. The data key and the AAD derive under it |
 | Stored format | Everything Stack Encrypt writes to the database. See [The stored format stays compatible with Go rc.3](#the-stored-format-stays-compatible-with-go-rc3) |
-| Tag refinement | Replacing a stored key tag with an HMAC of it and a caveat, so ZeroKMS can verify the caveat when it returns the key. See [Tag refinement](#tag-refinement) |
 | Target | The encrypted type that a value is stored as, such as `Ciphertext`, an EQL type like `TextEq`, or a record type |
 | Vitamin C | CipherStash's Rust cryptography library, the `vitaminc-*` crates. It seals and opens leaves and derives the AAD; Stack Encrypt plans, batches, and stores |
 
@@ -945,15 +946,14 @@ part leaves the customer's system.
 ZeroKMS version 2 is planned to remove the limit and to encrypt the
 access log.
 
-A caveat added by [tag
-refinement](2026-11-07-stack-encrypt-tag-refinement.md) is not a part of
-the context. ZeroKMS verifies it. It is in neither the query context
+A [label](2026-11-08-stack-encrypt-key-policy.md#labels) is not a part
+of the context. ZeroKMS verifies it. It is in neither the query context
 nor the AAD.
 
 The use case is access intelligence. Each value is bound to its row by a
 client-generated UUID, and a query by column or by tenant still finds it.
 The facts of a row's writing, such as the address it came from, are
-caveats, not bindings.
+labels, not bindings.
 
 #### A developer can see the context
 
@@ -1007,28 +1007,30 @@ mod tests {
 }
 ```
 
-#### Tag refinement
+#### Labels
 
-Tag refinement adds a caveat, a named fact, to the ZeroKMS key tag of a
-stored value. The value is then tied to its row and to the facts of its
-writing. Its context, its AAD, and its queries do not change.
-ZeroKMS verifies the caveats when it returns the key, and logs them.
+A label adds a named fact to the ZeroKMS key tag of a stored value,
+after encryption. The value is then tied to its row and to the facts of
+its writing. Its context, its AAD, and its queries do not change.
+ZeroKMS verifies the labels when it returns the key, and logs them.
 That log is where access intelligence comes from.
 
-[Tag refinement and caveats](2026-11-07-stack-encrypt-tag-refinement.md)
-has the design.
+A label restricts no
+reader. A bind does. [Binds, claims, and
+labels](2026-11-08-stack-encrypt-key-policy.md) has the design and the
+rules that keep the two apart.
 
 ```rust
-// Not on `next` yet: `refine` and `caveats`.
+// Not on `next` yet: `label` and `labels`.
 let sealed: TextEq = sealed
-    .refine("written_from", request.ip())?
-    .refine("created_at", now())?;
+    .label("written_from", request.ip())?
+    .label("created_at", now())?;
 let body: String = String::decrypt_from(sealed, &keyset).await?;
 ```
 
 ```sql
 -- In a trigger, once the primary key is known.
-NEW.body := eql_v4.refine_tag(NEW.body, 'row_id', NEW.id::text);
+NEW.body := eql_v4.label_tag(NEW.body, 'row_id', NEW.id::text);
 ```
 
 #### Other rules
@@ -1172,6 +1174,35 @@ format version beside it.
 | Text encodings as field targets (Base64 and Base85) | How a ciphertext is written as text in a column |
 | The `SealedValue` envelope and the JSON header version | The offsets of the key tag, and header version 1, which rc.3 writes |
 | Configurable match options | The terms of columns written with the rc.3 defaults |
+| Context parts as lock context items | The descriptor a key is derived under, and so the data key itself. A new envelope version marks the new form |
+
+#### Context parts as lock context items
+
+Decided on 8 November 2026. [Binds move from the descriptor to lock
+context
+items](2026-11-08-stack-encrypt-key-policy.md#binds-move-from-the-descriptor-to-lock-context-items)
+has the design.
+
+- **What to build.** New values send each scope and binding to ZeroKMS
+  as a lock context item. Each item is a name with a value. The descriptor shrinks to
+  the context name. The `SealedValue` format version becomes `0x02` for
+  these values. On decrypt, the engine reads the version byte and sends
+  the request in the form the value was written with.
+- **Why.** The descriptor is one string of at most 512 bytes. ZeroKMS
+  logs it and cannot parse it. Items are structured. They have no size
+  limit. Claims use the same channel, so a scope, a binding, and a
+  claim travel the same way.
+- **Stored format.** Version 1 values keep the rc.3 descriptor
+  rendering. That rendering stays in the engine until the last such
+  value is gone. The change is additive: nothing written by rc.3 is re-encrypted.
+- **Done already.** `SealedValue` has the version byte, bound into the
+  leaf AAD, and the rendering of a context into a descriptor is frozen
+  and documented in `packages/stack-encrypt/src/descriptor.rs`.
+- **Finished when** these are all true:
+  - a version 2 value round-trips, and a version 1 value from the rc.3
+    vectors still decrypts;
+  - a context longer than 512 bytes encrypts;
+  - a conformance case covers both versions.
 
 #### Opaque blobs
 
@@ -1207,41 +1238,43 @@ format version beside it.
 - **Finished when** Rust and Go each open blobs that the other wrote, and
   the conformance profiles cover it.
 
-#### Tag refinement: the work
+#### Labels: the work
 
-Decided on 7 November 2026. [Tag refinement and
-caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
+Decided on 7 and 8 November 2026. [Binds, claims, and
+labels](2026-11-08-stack-encrypt-key-policy.md#labels) has the design.
 
 - **What to build.**
-  - `refine(name, value)` on every EQL type and on a JSON document. It
+  - `label(name, value)` on every EQL type and on a JSON document. It
     computes `HMAC(tag, PAE(name, value))`, stores the result as the tag,
-    and appends the caveat to the payload's list.
-  - `eql_v4.refine_tag(payload, name, value)`, the same in SQL, for a
-    trigger that refines with the generated primary key. The tag is
+    and appends the label to the payload's list.
+  - `eql_v4.label_tag(payload, name, value)`, the same in SQL, for a
+    trigger that labels with the generated primary key. The tag is
     inside the ciphertext envelope, so this needs the envelope layout from
     [key tag extraction](#typed-text-encodings-and-key-tag-extraction),
     for writing as well as reading.
-  - `refine` and `caveats` as operations of the dynamic interface, so Go
-    can refine a value before it writes the row, and read the caveats.
-  - `caveats()` on a stored value, to read the list without decrypting.
-  - The optional `caveats` list in every EQL payload type.
-  - On decrypt, send the stored tag and the caveats to ZeroKMS, and
+  - `label` and `labels` as operations of the dynamic interface, so Go
+    can label a value before it writes the row, and read the labels.
+  - `labels()` on a stored value, to read the list without decrypting.
+  - The optional `labels` list in every EQL payload type.
+  - On decrypt, send the stored tag and the labels to ZeroKMS, and
     rebuild the leaf AAD from the original tag it returns.
+  - A list of claims to label with, on the generate-key request, so
+    ZeroKMS can write `written_by` itself.
 - **Why.** Access intelligence needs each value tied to its row and to
-  the facts of its writing. A caveat does that without touching the
-  context, the AAD, or the queries.
-- **Stored format.** The list is present only once a caveat is added, so
+  the facts of its writing. A label does that without touching the
+  context, the AAD, or the queries, and without restricting any reader.
+- **Stored format.** The list is present only once a label is added, so
   a payload without one is the rc.3 form. The change is additive.
 - **Depends on ZeroKMS.** The read path needs the retrieve-key request to
-  carry the caveats, and the response to return the original tag. That
+  carry the labels, and the response to return the original tag. That
   work is outside this repository.
 - **Done already.** `Ciphertext::key_tag` reads the tag in Rust (#1404).
   The leaf AAD already binds the original tag.
 - **Finished when** these are all true:
-  - the example in the tag refinement document round-trips through a
+  - the example in the key policy document round-trips through a
     trigger, in Rust and in Go;
-  - a changed caveat, or a changed tag, is refused by ZeroKMS;
-  - the EQL conformance profile covers the `caveats` list.
+  - a changed label, or a changed tag, is refused by ZeroKMS;
+  - the EQL conformance profile covers the `labels` list.
 
 #### Typed text encodings and key tag extraction
 
@@ -1254,7 +1287,7 @@ caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
   - A SQL and PL/pgSQL function that reads the ZeroKMS key tag from a stored
     ciphertext. It must check the version and the lengths before it reads.
 - **Why.** Some columns store ciphertext as text. SQL needs to read the key
-  tag for tag refinement.
+  tag to label it.
 - **Limits.** PostgreSQL can decode Base64, but not Base85. So SQL can read
   the key tag from Base85 text only if we supply a decoder. Reading the tag
   does not authenticate it.
@@ -1518,7 +1551,7 @@ Decided on 7 November 2026, as area one of the query design review.
   bindings.
 - **Why.** Access intelligence needs each value bound to its row, and
   found by a column or tenant query. The facts of a row's writing are
-  [caveats](2026-11-07-stack-encrypt-tag-refinement.md), not bindings. [Query context and stored
+  [labels](2026-11-08-stack-encrypt-key-policy.md#labels), not bindings. [Query context and stored
   context](#query-context-and-stored-context) has the rule.
 - **Vocabulary.** The Rust chain's `.extend(..)` is removed; the context
   argument carries the scopes and bindings instead. Go `Extend` becomes
@@ -1913,9 +1946,9 @@ review. The rules are the query artifact's.
   final names. The [packaging
   document](2026-10-25-stack-encrypt-packaging.md) has the proposal.
 - **Split the leaf cipher.** One small clean-up inside the crate, below.
-- **Keyset selection and lock context.** Two optional features of the
-  ZeroKMS key provider, proposed below. Nothing else in this plan
-  depends on them, and no merged pull request implements either.
+- **Keyset selection and claims.** Two optional features of the ZeroKMS
+  key provider, below. Nothing else in this plan depends on them, and no
+  merged pull request implements either.
 
 #### Split the leaf cipher into sealing and opening
 
@@ -1966,79 +1999,43 @@ Rules for the proposal:
 - If the caller passes a keyset and the record selects one, the two must
   match, or the call is refused. Neither wins silently.
 
-#### Lock context
+#### Claims the key provider resolves
 
-Lock context is a ZeroKMS policy applied when a data key is generated or
-retrieved. ZeroKMS folds the items of the lock into the key tag, so a
-reader whose lock resolves differently gets no usable key.
+A claim is a binding whose value the key provider resolves from the
+caller's verified token. The `sub` of a JSON Web Token (JWT) is one.
+The client names it and never sees the value, so a claim is in the
+stored context and never in the query context. Only a reader whose
+token resolves to the same value gets the key.
 
-The ZeroKMS protocol already defines three kinds of item:
+[Binds, claims, and
+labels](2026-11-08-stack-encrypt-key-policy.md#claims) has the design.
+The plan's rules:
 
-- an identity claim names a claim of the authenticated JSON Web Token
-  (JWT), such as `sub`, and ZeroKMS resolves its value;
-- a value is a name and a value the caller asserts;
-- a tag is a bare label.
-
-A lock holds any number of items. It is set on a keyset, for every call
-through it, or on one call. Both forms use the same method, because a
-locked keyset is a cheap view that borrows the keyset. So no entry point
-is added:
+- A claim is declared on the type, `bind(claim = sub)`, and never added
+  on one call. A per-call claim could make a row unreadable to everyone
+  else without anyone noticing.
+- The claim type belongs to the provider: `zerokms::Claim::Sub` and
+  `zerokms::Claim::Custom(name)`. A `ResolvesClaims` trait gates it.
+  A declaration with a claim fails to compile against a keyset whose
+  provider does not implement the trait. A dynamic declaration with a
+  claim part is refused at load on such a provider, before any key I/O.
+- A claim is strict by construction. Lose the claim, lose the data.
+  Where a fact only needs recording, the plan recommends a
+  [label](#labels) instead.
+- The claim resolves from the bearer token on the request. The
+  `@cipherstash/stack` native entry does not yet send the caller's
+  own token on each call (#1565). A claim on that path waits for that fix.
 
 ```rust
-use stack_encrypt::kms::LockContext;
+#[derive(EncryptTarget, DecryptSource)]
+#[stash(struct = Note, context = "notes", bind(claim = sub))]
+struct EncryptedNote {
+    body: Ciphertext,
+}
 
-// Several claims at once. ZeroKMS resolves each from the principal.
-let lock = LockContext::new()
-    .identity_claim("sub")
-    .identity_claim("org_id")
-    .value("region", "au");
-
-// Every call through `locked` carries the lock.
-let locked = tenant_keyset.with_lock_context(&lock);
-let encrypted: EncryptedUser = user.encrypt_into(&locked).await?;
-
-// One call carries it. The view is built for the call and dropped.
-let user = User::decrypt_from(encrypted, &tenant_keyset.with_lock_context(&lock)).await?;
-
-// A call adds to a keyset's lock. It cannot remove an item from it.
-let request_lock = LockContext::new().identity_claim("sub");
-let encrypted: EncryptedUser = user
-    .encrypt_into(&org_keyset.with_lock_context(&request_lock))
-    .await?;
+let encrypted: EncryptedNote = note.encrypt_into(&keyset).await?;
+let note = Note::decrypt_from(encrypted, &keyset).await?;
 ```
-
-In Go, `WithLockContext` is a cipher method like `Scope` and `Bind`. It
-takes the same three kinds of item. The dynamic request has a
-new optional `lock` field beside `context`. A request without it is the
-rc.3 form.
-
-```go
-locked := cipher.WithLockContext(encrypt.IdentityClaim("sub"), encrypt.IdentityClaim("org_id"))
-encrypted, err := Encrypt(ctx, locked, people)
-```
-
-Rules for the proposal:
-
-- Lock context is a property of the key provider, not a part of the
-  context. It is neither a `Scope` nor a `Bind`. It changes no search
-  term.
-- The caller names a claim. ZeroKMS resolves its value from the
-  principal that authenticated. The application never decodes a JWT and
-  asserts a claim itself. A value item is an assertion by the caller,
-  and ZeroKMS treats it as one.
-- The policy is sent on both key generation and key retrieval. A missing
-  claim is an error. The call is not retried without the lock.
-- A declaration can require a lock context, so a caller cannot leave it
-  out. A call can add items. A call cannot remove an item the keyset or
-  the declaration carries.
-- Lock context does not protect search. Search terms derive from the
-  index key, and the index key is loaded without any data key. So a lock
-  on the data key does not restrict who can search.
-- A locked keyset is still a keyset. `Planned` and the marker queries
-  take it without change.
-
-Dan asked for the per-call form and for many claims at once on 8
-November 2026. The method and type names wait for the naming review.
 
 ## Open questions and decisions to be made
 
@@ -2050,7 +2047,8 @@ The lead who approves this plan decides each question.
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
-| Should the dynamic request carry a lock context beside its context? | An optional `lock` field in the request, as [Lock context](#lock-context) proposes. Or a lock set only on the Go cipher | The optional field. It is additive, so rc.3 requests stay valid |
+| Should ZeroKMS version 2 derive the data key over the lock context items, not only the descriptor? | Yes, so a bind or a claim is enforced by derivation. Or keep the tag check as the only enforcement | Yes. The [key policy document](2026-11-08-stack-encrypt-key-policy.md#what-zerokms-must-do) asks for it |
+| Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
 | What names and crate layout should the final API use? | The proposal in the packaging document | Review the proposal in the naming review |
@@ -2073,7 +2071,8 @@ changes a name, not a design.
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go |
 | `Base64Ciphertext`, `Base85Ciphertext` | Field targets that store a ciphertext as text |
 | `#[derive(Scalar)]` | The derive for a single-value newtype |
-| `caveats`, `refine`, `refine_tag` | The caveat list in an EQL payload, and the operations that add to it |
+| `labels`, `label`, `label_tag` | The label list in an EQL payload, and the operations that add to it |
+| `Claim`, `ResolvesClaims`, `bind(claim = ..)` | The provider's claim type, the trait that gates it, and the declaration attribute |
 | The declaration attributes `scope(..)` and `bind(..)` | How a declaration marks its parts |
 | `ContextExtension` | The caller-supplied context input of #1504, renamed for the scope vocabulary |
 | `TargetDefinition` | The packaging document's name for `Plan`, a record's declaration as data. One name is chosen |

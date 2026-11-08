@@ -132,9 +132,9 @@ let by_email = EncryptedUser::EMAIL.eq("alice@example.com").encrypt(&keyset).awa
 The tenant and the row ID are both stored in the row. A query for one
 tenant matches that tenant's rows, and each ciphertext opens only in its
 own row. This ties each decrypted value to the row it came from. The facts of a
-row's writing, such as the address it came from, are caveats added by
-[tag refinement](2026-11-07-stack-encrypt-tag-refinement.md), not parts
-of the context.
+row's writing, such as the address it came from, are
+[labels](2026-11-08-stack-encrypt-key-policy.md#labels), not parts of
+the context.
 
 ```rust
 #[derive(EncryptTarget, DecryptSource)]
