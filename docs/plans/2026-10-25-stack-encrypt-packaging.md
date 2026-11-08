@@ -34,8 +34,11 @@ This recommendation for review accompanies the
 ## Status
 
 This document proposes boundaries and names. The proposals are not
-implemented APIs or accepted renames. The naming review judges them. The
-JSON operation contract is live, in use as the release candidate Go
+implemented APIs or accepted renames. The naming review of 8 November
+2026 judged them. The plan's [Names decided in the naming
+review](2026-10-24-stack-encrypt-api-plan.md#names-decided-in-the-naming-review)
+records the outcome, and the glossary below matches it. The JSON
+operation contract is live, in use as the release candidate Go
 `v0.1.0-rc.3`.
 
 ## Summary of recommendations
@@ -292,15 +295,20 @@ combined trait.
 
 | Name or path | Meaning |
 | --- | --- |
-| `stack_encrypt::Cipher` | Execution handle that uses a provider for keys. Replaces `StackCipher`. The name is Vitamin C's `Cipher` trait too, so the naming review must choose another or accept the clash |
-| `KeysetCipher` | Execution handle bound to a resolved keyset. Available for providers that support keysets |
+| `Cipher` | The connection, with credentials and the key provider. Replaces `StackCipher`. Decided on 8 November 2026; the clash with Vitamin C's `Cipher` trait is accepted |
+| `Keyset` | The connection bound to one resolved keyset, which encrypt and query calls take. Replaces `KeysetCipher` |
+| `CipherRef<'c, K>` | One borrowed value for both paths: a connection and an optional keyset ID. Replaces the `CipherScope` trait and the `dynamic::Scope` enum |
 | `Ciphertext` | One opaque encrypted value with a specified storage envelope. Replaces the public use of `StackCipherText = Node<SealedValue>` |
 | `OpaqueBlob<T>` | Explicit adapter that serialises a whole owned value |
 | `EncryptInto`, `DecryptFrom` | Convenience traits for encryption directed by the target and decryption directed by the destination, with variants that take context |
 | `OpaqueEncode`, `OpaqueDecode` | Traits that represent a value as a single ciphertext |
 | `target::{EncryptTarget, DecryptSource}` | Declaration traits. The matching derives are re-exported at the crate root |
-| `target::TargetDefinition`, or the plan's `Plan` | A record's declaration as data, built once, shared by the static and dynamic paths. The builder's output is selected with `.target::<T>()`. One spelling is chosen in the naming review |
-| `Scope`, `Bind` | The context argument's two kinds of part, as the plan has them. Neither selects a keyset |
+| `Plan` | A record's declaration as data, built once, shared by the static and dynamic paths. Built by `Plan::context(..).fields(..)`. Decided on 8 November 2026; `TargetDefinition` is dropped |
+| `Scope`, `Bind` | The context argument's two kinds of part, as the plan has them. Neither selects a keyset. The chain they build is the context input; there is no separate type |
+| `ContextName` | The descriptor path type, `users/email`, today `Label`. Renamed so that `Label` is the key tag fact |
+| `Query`, `Stored` | The two marker traits on term types: a value a query sends, and a stored index term. Today `op::QueryTerm` and `LabelledTarget` |
+| `Op` | The public dynamic operator enum, today `OpSpec` |
+| `Request`, `KeyRequest` | The wire form `{plan, context, value}`, and the crate-private ZeroKMS unit of work, today `Request` |
 | `encoding::{Base64Text, Base85Text}` | Validated encoding of arbitrary bytes. The plan recommends a small Vitamin C encoding crate that Stack Encrypt and EQL re-export; the owner is an open question in the plan |
 | `encoding::{Base64Ciphertext, Base85Ciphertext}` | Validated, encoded representations of opaque ciphertext, and supported field targets. Valid encoding alone is not enough |
 | `provider` | Neutral provider contracts and capability bounds |
@@ -327,8 +335,8 @@ the public `decrypt_into`.
 
 ### Definition, layout, seal, and open
 
-Recommendation: use `TargetDefinition` for the configured public
-contract. Use `Layout`
+The naming review chose `Plan` for the configured public contract. Use
+`Layout`
 only for the advanced internal concept of composition, where that
 distinction is needed. A layout does not name a plaintext document or a
 stored ciphertext.

@@ -23,10 +23,12 @@ Three documents go with it:
   the design of key policy: what ties a value to a fact, and what only
   records one;
 - [packaging and names](2026-10-25-stack-encrypt-packaging.md), the
-  proposal the naming review judges.
+  proposal the naming review judged on 8 November 2026.
 
-The names this plan uses as placeholders are listed in [Names deferred to
-the naming review](#names-deferred-to-the-naming-review), at the end.
+The naming review of 8 November 2026 decided every public name this plan
+uses. [Names decided in the naming
+review](#names-decided-in-the-naming-review), at the end, records each
+decision.
 
 ## Contents
 
@@ -42,7 +44,7 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
   - [4. The query engine](#4-the-query-engine)
   - [5. Packaging, and two key provider features](#5-packaging-and-two-key-provider-features)
 - [Open questions and decisions to be made](#open-questions-and-decisions-to-be-made)
-  - [Names deferred to the naming review](#names-deferred-to-the-naming-review)
+  - [Names decided in the naming review](#names-decided-in-the-naming-review)
 
 ## Terms
 
@@ -54,6 +56,7 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | Analyzer | The pipeline that turns match text into tokens: a source, such as `Words`, then stages. A match index is configured by one analyzer |
 | Binding | A part of the context that ties a ciphertext to its row, such as a row ID. It is in the stored context and not in the query context. Passed as `Bind::new(..)` |
 | Claim | A binding whose value the key provider resolves from the caller's verified token, such as `sub`. The client names it and never sees the value. See [Claims the key provider resolves](#claims-the-key-provider-resolves) |
+| Cipher | The Rust connection to ZeroKMS, with credentials and the key provider: `Cipher::new()`. `cipher.keyset(..)` resolves a `Keyset`, and `cipher.decrypt(..)` opens values from any keyset it holds. Today `StackCipher` |
 | Ciphertext | One encrypted value, as the Rust `Ciphertext` type. It is stored as bytes, or as Base64 text |
 | Conformance profile | A named, versioned set of test cases for one area, such as `record-contexts-v1`. Rust and Go run the same cases. The files are in `conformance/stack-encrypt/v1/` |
 | Context name | The last declared scope of a field: its name by default, pinned when the Rust field is renamed. Two fields of one record never share one |
@@ -66,7 +69,7 @@ the naming review](#names-deferred-to-the-naming-review), at the end.
 | `FieldRef` | The builder's reference to one field of the plaintext type: its name and its accessor. A field marker is a `FieldRef` with its indexes added |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Key tag | The HMAC ZeroKMS returns with a data key. A reader must present it to get the key again. Stack Encrypt binds it into every leaf's AAD |
-| Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset |
+| Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset. In Rust, `Keyset` is also the handle bound to one keyset, which encrypt and query calls take. Today `KeysetCipher` |
 | Leaf | One sealed value inside a stored record or document: the unit the AEAD encrypts, with its own data key and AAD |
 | Label | A named, typed fact added to a stored value's key tag after encryption, such as `row_id` or `written_by`. ZeroKMS verifies it and logs it. It restricts no reader. See [Labels](#labels) |
 | Key context | The list of items a key request sends to the provider beside the descriptor. Stack Encrypt will send each scope, binding, and claim as one item, and the provider folds them into the key tag |
@@ -107,11 +110,17 @@ that `npx stash auth login` writes. Every encryption uses one keyset. A
 program can use the client's default keyset, or select another by name or
 ID.
 
-```rust
-use stack_encrypt::{kms::IdentifiedBy, StackCipher};
+The connection is a `Cipher`. A keyset resolved on it is a `Keyset`,
+and every encrypt and query call takes a `&Keyset`. Decrypt takes a
+`&Cipher` or a `&Keyset`, because a stored value names its own keyset.
 
-let cipher = StackCipher::new().await?;
-let keyset = cipher.default_keyset();
+```rust
+use stack_encrypt::{kms::IdentifiedBy, Cipher, Keyset};
+
+// Not on `next` yet: the names. Today `Cipher` is `StackCipher` and
+// `Keyset` is `KeysetCipher`.
+let cipher = Cipher::new().await?;
+let keyset: Keyset = cipher.default_keyset();
 // Not on `next` yet: the `IdentifiedBy::name` and `IdentifiedBy::uuid`
 // constructors. `name` checks the name, so it returns a `Result`.
 let tenant = cipher.keyset(IdentifiedBy::name("acme")?).await?;
@@ -212,8 +221,8 @@ column.
 [Query context and stored context](#query-context-and-stored-context)
 gives the rule. The [context
 scenarios](2026-10-24-stack-encrypt-context-examples.md) show how a
-declaration marks a binding; the attribute spelling is a placeholder until
-the naming review.
+declaration marks a binding. The naming review confirmed the attribute
+spelling `bind(..)` on 8 November 2026.
 
 ```rust
 // Not on `next` yet: `Bind`. Today the row ID is passed bare.
@@ -1556,8 +1565,8 @@ Decided on 7 November 2026, as area one of the query design review.
   tested in Rust and Go (#1491). The context inputs `RequiredContext`,
   `NoCallerContext`, and `OptionalContext` exist (#1404). #1504 adds
   `ContextExtension` and `ExpectedContext`, and is in review.
-  `ContextExtension` is renamed for the scope vocabulary, in the naming
-  review. The plan builder's
+  The naming review of 8 November 2026 decided that `ContextExtension`
+  goes: the `Scope::new(..).bind(..)` chain is the input. The plan builder's
   `.context(..)` and `.context_field(..)` and the derive's
   `#[stash(context_field)]` are the forms this replaces.
 - **Required parts.** A Rust declaration lists the parts the caller must
@@ -1621,9 +1630,13 @@ records only the work.
 - **Order of calls.** The keyset is chosen first. It is the receiver of
   the scalar entry points, `keyset.encrypt(..)`, and the argument of every
   other verb, `encrypt(&keyset)`. There is no `using` method.
-- **Rename.** `Scope<'a, K>` in `dynamic::record` and `CipherScope` in the
-  owned API both mean the cipher a call runs under. Both are renamed in
-  the naming review, so that `Scope` means a part of the context.
+- **One handle reference.** `Scope<'a, K>` in `dynamic::record` and
+  `CipherScope` in the owned API both reduce to a connection and an
+  optional keyset ID. The naming review of 8 November 2026 replaced both
+  with one borrowed value, `CipherRef<'c, K>`, built by `From<&Cipher>`
+  and `From<&Keyset>`. The entry points take `impl Into<CipherRef>`, and
+  the Go guest builds one from its keyset selector. A `Keyset` reference
+  refuses a foreign leaf with `ForeignKeyset`. A `Cipher` reference opens leaves from any keyset the client has.
 - **Finished when** these are all true:
   - the examples in [Target state](#target-state) compile;
   - the compile-fail cases in `tests/ui` cover a binding in a query, and
@@ -1790,6 +1803,34 @@ parameter named `aad`.
 - **Finished when** the [byte example](#encrypt-a-byte-string) compiles
   with the derive and no hand-written implementation.
 
+#### Apply the naming review
+
+Decided by Dan on 8 November 2026, one name at a time. [Names decided in
+the naming review](#names-decided-in-the-naming-review) has the full
+table.
+
+- **What to build.** The renames, each a breaking change to the Rust API
+  and none to the stored format:
+  - `StackCipher` becomes `Cipher`, and `KeysetCipher` becomes `Keyset`;
+  - `CipherScope` and `dynamic::Scope` are replaced by one `CipherRef`;
+  - the descriptor path type `Label` becomes `ContextName`, so that
+    `Label` is the key tag fact;
+  - the ZeroKMS unit of work `Request` becomes `KeyRequest` and is made
+    crate-private with `Pending::request`; `Request` is then the wire
+    form `{plan, context, value}`;
+  - `OpSpec` becomes `Op`;
+  - the marker trait `op::QueryTerm` becomes `Query`, and
+    `LabelledTarget` becomes `Stored`; `dynamic::QueryTerm` stays;
+  - `ContextExtension` is removed; `EncryptionPlan` is never added.
+- **Why.** The plan used placeholders so that the review could change a
+  name without changing a design. The review is done, so the code can
+  follow.
+- **Done already.** Nothing. Every name above is still the old one on
+  `next`.
+- **Finished when** no old name remains in the public API, the examples
+  in [Target state](#target-state) compile under the new names, and the
+  packaging glossary matches.
+
 #### Remove the structural API
 
 - **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as`, and
@@ -1825,8 +1866,7 @@ Decided on 7 November 2026, as area two of the query design review.
   type. So `eq`, `"eq"`, and `op::Eq` are three faces of one operator.
 - **The dynamic enum's name.** It is public, because a program building a
   query plan writes it: `plan.query("email", Op::Eq)`. The engine's enum
-  is `OpSpec` today. The plan writes `Op`; the rename is for the naming
-  review.
+  is `OpSpec` today. The plan writes `Op`. The naming review confirmed it on 8 November 2026.
 - **`Matches` loses its case parameter.** On `next`, `op::Matches<C>`
   has a case parameter. The match index's configuration has a case too.
   The two can disagree. A disagreement is refused at query time. The field's configuration
@@ -2073,7 +2113,6 @@ The lead who approves this plan decides each question.
 
 | Question | Options | Recommendation |
 | --- | --- | --- |
-| What is the name of the wrapper that authenticates a collection's order and length? | `Positioned<Vec<T>>`. Or a name chosen in the naming review | `Positioned`. Decide in the naming review |
 | For each change that would alter the stored format, should it keep the rc.3 format or add a new version? | Keep rc.3 data readable and searchable. Or add a version beside it | Decide for each change when it is designed |
 | Should the dynamic path share the typed derivation itself, through `Index<ValueFrame>` implementations per index kind? | One executor for both paths, as ADR-0007 asks. Or the `sem` functions stay the shared layer, and the two paths keep their own callers | Decide after `FieldIndexes` lands, as its own step |
 | Should a record choose its keyset from a plaintext field? | The declaration in [Choose the keyset from the data](#choose-the-keyset-from-the-data). Or the caller keeps resolving the keyset by hand | The declaration |
@@ -2081,33 +2120,30 @@ The lead who approves this plan decides each question.
 | Should the rc.3 customer re-encrypt, so the descriptor rendering can be removed? | Ask them. Or keep the version 1 path in the engine | Keep the path. The envelope version byte makes both forms readable, so no one has to re-encrypt |
 | What privacy claim can be made for match terms of short words? | Accept what they reveal, and document it. Or change how short words are stored | No recommendation yet. Merging #1397 did not show that they reveal nothing new |
 | Which crate should own `Base64Text` and `Base85Text`? | A small Vitamin C encoding crate. Or keep them in `eql-bindings` | A small Vitamin C crate, re-exported by Stack Encrypt and EQL |
-| What names and crate layout should the final API use? | The proposal in the packaging document | Review the proposal in the naming review |
+| What crate layout should the final API use? | The proposal in the packaging document | Review the layout proposal when the crate moves begin. The names are decided |
 
-### Names deferred to the naming review
+### Names decided in the naming review
 
-The naming review is the [packaging and names](#5-packaging-and-two-key-provider-features)
-item: a review of every public name, against the packaging document's
-proposal. These names are placeholders until
-then. Each one is used consistently in this plan so that the review
-changes a name, not a design.
+Dan decided each name on 8 November 2026, one at a time, against the
+packaging document's proposal and the names already on `next`. The
+[Apply the naming review](#apply-the-naming-review) item carries the
+renames.
 
-| Placeholder | What it names |
+| Name | Decision |
 | --- | --- |
-| `Planned`, `QueryTerm`, `Request` | A value under a plan, the dynamic query result, and the serialised request |
-| `Op` | The public dynamic operator enum, `OpSpec` today |
-| `Scope<'a, K>` and `CipherScope` | The cipher a call runs under; both renamed so that `Scope` means a part of the context |
-| `Positioned<Vec<T>>` | The wrapper that authenticates a collection's order and length |
-| `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker |
-| `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go |
-| `Base64Ciphertext`, `Base85Ciphertext` | Field targets that store a ciphertext as text |
-| `#[derive(Scalar)]` | The derive for a single-value newtype |
-| `labels`, `label`, `label_tag` | The label list in an EQL payload, and the operations that add to it. `stack_encrypt::Label` is today the descriptor path type, `users/email`, exported at the crate root, so the review renames one of the two |
-| `Claim`, `ResolvesClaims`, `bind(claim = ..)` | The provider's claim type, the trait that gates it, and the declaration attribute |
-| The declaration attributes `scope(..)`, `bind(..)`, and `keyset(name(field = ..))` | How a declaration marks its parts, and how it selects a keyset |
-| `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes` | The dynamic query plan, the dynamic field handle, its refusal, and the per-field index list |
-| `StageSpec`, `Match<Dynamic>`, `NotPortable` | The serialised analyzer subset, the dynamic match type, and the refusal of a stage outside the subset |
-| `JsonTreeElementsQuery`, `JsonTreePredicateQuery` | The EQL query types for element match and jsonpath predicate |
-| `ContextExtension` | The caller-supplied context input of #1504, renamed for the scope vocabulary |
-| `TargetDefinition` | The packaging document's name for `Plan`, a record's declaration as data. One name is chosen |
-| `Plan::context(..).fields()`, `encrypt_index`, `pick!` | The hand-built plan builder. The query artifact's `EncryptionPlan::record(..)` and `.field(..)` are the alternative spellings |
-| `stack_encrypt::Cipher` | The packaging document's name for the execution handle. It is Vitamin C's `Cipher` trait too, so the review chooses another name or accepts the clash |
+| `Cipher`, `Keyset` | The connection, today `StackCipher`, and the handle bound to one keyset, today `KeysetCipher`. Decrypt through a `Cipher` opens values from any keyset it holds. The clash with Vitamin C's `Cipher` trait is accepted. Go keeps its released `Client` and `Cipher` |
+| `CipherRef<'c, K>` | One borrowed value for both paths, a connection and an optional keyset ID, built by `From<&Cipher>` and `From<&Keyset>`. Replaces the `CipherScope` trait and the `dynamic::Scope` enum. A design decision, not only a name |
+| `Plan` | A record's declaration as data. `TargetDefinition` is dropped |
+| `Plan::context(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | The hand-built plan builder, as settled on 4 October 2026. `EncryptionPlan::record(..).field(..)` is dropped |
+| `Label`, `label`, `labels`, `label_tag` | The key tag fact and its operations. The descriptor path type that is `Label` today becomes `ContextName` |
+| `Request`, `KeyRequest` | `Request` is the wire form `{plan, context, value}`. The ZeroKMS unit of work, `Request` today, becomes `KeyRequest` and is crate-private with `Pending::request` |
+| `Query`, `Stored` | Two marker traits on the term types. `Query` marks a value a query sends, today `op::QueryTerm`. `Stored` marks a stored index term, today `LabelledTarget`. `EqualityTerm` and the order terms implement both; `MatchTerms` only `Stored`; `MatchQuery` only `Query`. `QueryToken` stays the run-time guard |
+| `QueryTerm` | The dynamic field handle's result, unchanged |
+| `Op` | The public dynamic operator enum, today `OpSpec` |
+| The chain `Scope::new(..)`, `Bind::new(..)`, `Scope::new(..).bind(..)` | The caller-supplied context input. No separate type; `ContextExtension` from #1504 goes. A trait bound, `impl ContextParts`, names what an entry point accepts |
+| `JsonTreeDocument`, `JsonTreeQuery`, `JsonTreeLeafQuery`, `JsonTreeElementsQuery`, `JsonTreePredicateQuery` | Kept. The SQL domain `eql_v4_json_search` and the dynamic target `JsonSearch` are the other two names of the one stored type |
+| `Planned`, `Positioned<Vec<T>>`, `Claim`, `ResolvesClaims`, `#[derive(Scalar)]`, `Base64Ciphertext`, `Base85Ciphertext` | Confirmed |
+| `contains`, `at`, `elements`, `predicate`, `children` | The JSON query methods on a document's marker. Confirmed |
+| `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
+| `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
+| `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes`, `StageSpec`, `Match<Dynamic>`, `NotPortable` | The dynamic interface names. Confirmed |
