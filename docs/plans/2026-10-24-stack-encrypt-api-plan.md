@@ -15,14 +15,12 @@ who approves its design. It has three parts:
 3. [Open questions and decisions to be
    made](#open-questions-and-decisions-to-be-made).
 
-Six documents go with it:
+Five documents go with it:
 
 - the [context scenarios](2026-10-24-stack-encrypt-context-examples.md),
   the acceptance matrix for how a record gets its context;
 - [tag refinement and caveats](2026-11-07-stack-encrypt-tag-refinement.md),
   the design of the caveats on a key tag;
-- [JSON operations](2026-10-25-stack-encrypt-json-operations.md), the
-  inventory of every JSON operation, with its SQL;
 - [packaging and names](2026-10-25-stack-encrypt-packaging.md), the
   proposal the naming review judges;
 - [provider capabilities](2026-10-25-stack-encrypt-provider-capabilities.md),
@@ -462,7 +460,14 @@ The kinds of JSON query, the marker method for each, and what each finds:
 | Children and child count | `children(path)` | The entries directly below one node, or how many there are | A node token |
 
 A path is text. So an order query on a path the options do not order is
-refused at run time, before any key is fetched. A scope chains on a JSON
+refused at run time, before any key is fetched.
+
+Two limits of the SQL stay. Sorting rows by a path through an array
+needs a rule the application chooses, such as `MIN` or `MAX` over the
+matches. The supported way to the plaintext of every match at such a
+path is a subtree read with a wildcard bound. The [EQL v4 reference
+page](../../packages/eql/docs/reference/json-tree.md) gives the SQL for
+each query. A scope chains on a JSON
 query as on a scalar one: `.contains(doc).scope(tenant)`.
 
 The engine already has one input type for each JSON operator, in
@@ -1109,11 +1114,15 @@ customer release.
 #### Open one child of a JSON node, bound to its parent
 
 - **What to build.** An operation that opens one child value of a JSON
-  node, and checks that the child belongs to that parent. This is J17 in
-  the [JSON operations](2026-10-25-stack-encrypt-json-operations.md)
-  document. J14 is the matching SQL.
+  node, and checks that the child belongs to that parent. Today `eql_v4.json_tree_children` returns the child entries. Go's
+  `JSONSelection.Open` opens one entry for each document, and refuses a
+  group with more than one entry for a selector. The contract for every
+  JSON operation is `conformance/stack-encrypt/eql-json-contract.md` on
+  `next`; the SQL is the [EQL v4 reference
+  page](../../packages/eql/docs/reference/json-tree.md).
 - **Why.** Today a program must read and open the parent's whole subtree to
-  see one child.
+  see one child. That transfers more data and reveals a different set of
+  tokens.
 - **Done already.** Nothing.
 - **Finished when** Go can open one child, and the `eql-json-v1`
   conformance profile covers it.

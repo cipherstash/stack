@@ -242,6 +242,11 @@
 // A selection or a subtree read opens values as JSON text ([JSONValue],
 // [JSONRead.Open]). [DecodeJSON] reads one into a Go type.
 //
+// The SQL side of every JSON query, including extraction by selector,
+// ordered comparison at a path, subtree reads, and children, is documented
+// for SQL authors in the EQL v4 reference page, at
+// packages/eql/docs/reference/json-tree.md in the repository.
+//
 // Two queries at an array's paths can each be answered by a different
 // element. To test several members of one element together, use Match on
 // the array's accessor under Elements, which a field has for each array
