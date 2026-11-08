@@ -428,8 +428,9 @@ must not redefine stored SQL formats or dynamic discriminants by accident.
    application execution. The policy and routing contracts that Go needs
    must be handled before the final Go v0.1.0 release.
 5. Complete the public Rust trait and derive names, imports, and
-   executable examples. These changes must not rename the released Go API
-   or reinterpret stored data. The changes must not require customers to
+   executable examples. The Go handle rename from the naming review is the one rename of the
+   released Go API in this work. Nothing else here renames it or
+   reinterprets stored data. The changes must not require customers to
    re-encrypt or reindex.
 
 Acceptance includes:

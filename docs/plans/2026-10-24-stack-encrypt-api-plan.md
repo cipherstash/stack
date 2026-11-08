@@ -825,27 +825,33 @@ type Settings struct {
 }
 ```
 
-A `Cipher` is the client bound to one keyset. `Scope` adds a scope to the
-context of every field, such as a tenant ID. `Bind` adds a binding, such
+As in Rust, a `Cipher` is the connection. A `Keyset` is the cipher bound
+to one keyset. The naming review of 8 November 2026 chose one vocabulary
+for both languages; on rc.3 the two are `Client` and `Cipher`.
+
+`Scope` adds a scope to the context of every field, such as a
+tenant ID. `Bind` adds a binding, such
 as a row ID. The generated `Encrypt` and
 `Decrypt` functions take a slice. They send one ZeroKMS request for each
 500 values.
 
 ```go
-client, err := encrypt.NewClient(ctx)
-defer client.Close()
-// Not on rc.3 yet: `Scope` and `Bind`. Today `Scope` is `Extend`.
-cipher := client.DefaultKeyset().Scope("tenant-42")
+cipher, err := encrypt.NewCipher(ctx)
+defer cipher.Close()
+// Not on rc.3 yet: `Scope`, `Bind`, and the names. On rc.3 the
+// connection is `Client` and the keyset-bound handle is `Cipher`.
+// Today `Scope` is `Extend`.
+keyset := cipher.DefaultKeyset().Scope("tenant-42")
 
-encrypted, err := Encrypt(ctx, cipher, people) // []EncryptedUser
-opened, err := Decrypt(ctx, cipher, encrypted) // []User
+encrypted, err := Encrypt(ctx, keyset, people) // []EncryptedUser
+opened, err := Decrypt(ctx, keyset, encrypted) // []User
 
-term, err := Fields.Email.Eq(ctx, cipher, "bob@example.com")
+term, err := Fields.Email.Eq(ctx, keyset, "bob@example.com")
 // SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
 
-needle, err := Fields.Profile.Contains(ctx, cipher, map[string]any{"name": "Ada"})
-older, err := Fields.Profile.At.Age.Gt(ctx, cipher, 30)
-visit, err := Fields.Profile.Elements.Visits.Match(ctx, cipher, encrypt.JSONReadOptions{},
+needle, err := Fields.Profile.Contains(ctx, keyset, map[string]any{"name": "Ada"})
+older, err := Fields.Profile.At.Age.Gt(ctx, keyset, 30)
+visit, err := Fields.Profile.Elements.Visits.Match(ctx, keyset, encrypt.JSONReadOptions{},
 	encrypt.AtPath(Paths.Profile.Visits.Place).Eq("home"),
 	encrypt.AtPath(Paths.Profile.Visits.At).Gt(15),
 )
@@ -859,7 +865,11 @@ engine checks the plan at run time, and the Go compiler checks the
 operators.
 
 Code that `stashgen` wrote for rc.3 compiles and runs against the next
-module without being generated again. The generated file builds its
+module without being generated again, with one exception. The generated file names the keyset-bound handle's type. So the handle
+rename from the naming review needs one regeneration. The program
+renames its own call sites with it.
+
+The generated file builds its
 declaration through `gensupport` calls, and the module builds the frames
 it sends to the engine. So a change to the request's shape is a change
 inside the module. A program generates again only to adopt a new
@@ -1810,8 +1820,10 @@ the naming review](#names-decided-in-the-naming-review) has the full
 table.
 
 - **What to build.** The renames, each a breaking change to the Rust API
-  and none to the stored format:
-  - `StackCipher` becomes `Cipher`, and `KeysetCipher` becomes `Keyset`;
+  and none to the stored format:  - `StackCipher` becomes `Cipher`, and `KeysetCipher` becomes `Keyset`;
+  - in Go, `Client` becomes `Cipher`, with `NewCipher`, and the
+    keyset-bound `Cipher` becomes `Keyset`; generated files are
+    regenerated, and the generator's output changes for every input;
   - `CipherScope` and `dynamic::Scope` are replaced by one `CipherRef`;
   - the descriptor path type `Label` becomes `ContextName`, so that
     `Label` is the key tag fact;
@@ -2131,7 +2143,7 @@ renames.
 
 | Name | Decision |
 | --- | --- |
-| `Cipher`, `Keyset` | The connection, today `StackCipher`, and the handle bound to one keyset, today `KeysetCipher`. Decrypt through a `Cipher` opens values from any keyset it holds. The clash with Vitamin C's `Cipher` trait is accepted. Go keeps its released `Client` and `Cipher` |
+| `Cipher`, `Keyset` | The connection, today `StackCipher`, and the handle bound to one keyset, today `KeysetCipher`. Decrypt through a `Cipher` opens values from any keyset it holds. The clash with Vitamin C's `Cipher` trait is accepted. Go renames to match: `encrypt.Client` becomes `Cipher`, with `NewCipher`, and the keyset-bound `encrypt.Cipher` becomes `Keyset`. A Go program regenerates once |
 | `CipherRef<'c, K>` | One borrowed value for both paths, a connection and an optional keyset ID, built by `From<&Cipher>` and `From<&Keyset>`. Replaces the `CipherScope` trait and the `dynamic::Scope` enum. A design decision, not only a name |
 | `Plan` | A record's declaration as data. `TargetDefinition` is dropped |
 | `Plan::context(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | The hand-built plan builder, as settled on 4 October 2026. `EncryptionPlan::record(..).field(..)` is dropped |

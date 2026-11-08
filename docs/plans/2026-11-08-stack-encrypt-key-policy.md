@@ -382,7 +382,7 @@ values it chooses, through a `Label` method on every EQL value type.
 neither touches the network.
 
 ```go
-rows, err := Encrypt(ctx, cipher, notes) // []EncryptedNote
+rows, err := Encrypt(ctx, keyset, notes) // []EncryptedNote
 for i := range rows {
 	if err := rows[i].Body.Label("written_from", req.RemoteAddr); err != nil {
 		return err
