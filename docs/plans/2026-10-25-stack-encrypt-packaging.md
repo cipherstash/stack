@@ -54,9 +54,13 @@ Other changes that affect packaging:
   root.
 - Pull request #1403 bumps `stack-kms` to 0.2.0 on crates.io. So the
   proposed rename to `stack-zerokms` would now rename a published crate.
+  The rename also touches four other places. They are the crate's
+  release-plz version group (`release-plz.toml`, `release-plz.yml`), the
+  Go guest, the EQL encryption test crate, and the `stack_encrypt::kms`
+  re-export in `lib.rs`. It waits for the naming review.
 
-From 7 November 2026, the stored format must not break. The user's
-exemption for prototypes below now applies to the APIs only. Moving codecs
+From 7 November 2026, the stored format must not break. Dan's exemption
+for prototypes below now applies to the APIs only. Moving codecs
 and adapters between crates must keep the bytes that Go rc.3 writes.
 
 ## Update on 27 October 2026
@@ -100,7 +104,7 @@ An ordinary Stack Encrypt user should not have to import Vitamin C
 encryption traits to implement an application type.
 
 Moving code should remove duplicate abstractions. Moving code should not
-keep both public surfaces under new names. The user's compatibility
+keep both public surfaces under new names. Dan's compatibility
 exemption for prototypes applies to this API, but not to the stored format
 since 7 November 2026. Before deleting
 dependencies upstream, review the other consumers of Vitamin C that use
@@ -277,9 +281,20 @@ cipher. `AsyncCipher` models a different place to put the asynchronous
 work. The asynchronous boundary that matters is the provider and the
 public pending operation, with Stack controlling the batching.
 
-Stack does not use `AsyncCipher`. Vitamin C does use it: `aead/src/seal.rs`,
-`context.rs`, `typed.rs`, `walk.rs`, and `normalize/src/terms.rs` expose or
-use async helpers, and their tests implement the trait. To retire it:
+Stack does not use `AsyncCipher`. Vitamin C does use it, in these places
+in Vitamin C 0.8.0:
+
+- `aead/src/seal.rs`, `context.rs`, `typed.rs`, `walk.rs`, and
+  `normalize/src/terms.rs` expose or use async helpers;
+- `aead/src/lib.rs` re-exports the trait publicly;
+- `aead/src/encrypt_sink.rs` has an `AsyncCipher` bound and imports
+  `seal_all_async`;
+- the tests in `normalize/tests/known_answers.rs`, and the tests of the
+  modules above, implement the trait.
+
+This inventory was taken against 0.8.0. `next` has used 0.9 since #1501,
+so the inventory must be checked again before the work starts. To retire
+the trait:
 
 1. Move the tests that cover batching, ordering, failures, and
    reconstruction with the code they test.
@@ -294,7 +309,7 @@ combined trait.
 
 | Name or path | Meaning |
 | --- | --- |
-| `stack_encrypt::Cipher` | Execution handle that uses a provider for keys. Replaces `StackCipher` |
+| `stack_encrypt::Cipher` | Execution handle that uses a provider for keys. Replaces `StackCipher`. The name is Vitamin C's `Cipher` trait too, so the naming review must choose another or accept the clash |
 | `KeysetCipher` | Execution handle bound to a resolved keyset. Available for providers that support keysets |
 | `Ciphertext` | One opaque encrypted value with a specified storage envelope. Replaces the public use of `StackCipherText = Node<SealedValue>` |
 | `OpaqueBlob<T>` | Explicit adapter that serialises a whole owned value |
@@ -314,14 +329,15 @@ combined trait.
 
 Keep these agreed spellings:
 
-- `.using(...)`
 - `encryption_plan()`
-- `encrypt`
-- `encrypt_with_context`
-- `encrypt_into`
-- `encrypt_into_with_context`
-- `decrypt_from`
-- `decrypt_from_with_context`
+- `Planned::new(&plan, value)`, for a value under a plan that is data
+- `encrypt` and `encrypt_with_context`, where the marker or the plan fixes
+  the output type
+- `encrypt_into` and `encrypt_into_with_context`, where the caller names
+  the output type
+- `decrypt_from` and `decrypt_from_with_context`
+
+There is no `using` method. A typed query starts from the field marker.
 
 Keep the direct `cipher.decrypt` and `decrypt_with_context`. As already
 agreed, remove `.encrypt` on plaintext, the redundant `encrypt_as`, and

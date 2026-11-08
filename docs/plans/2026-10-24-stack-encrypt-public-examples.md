@@ -39,10 +39,10 @@ documents cover related ground:
   covers all the JSON workflows planned for the first release, with Rust,
   dynamic, and SQL examples, including extraction and walks.
 
-The user clarified on 25 October 2026 that this API is an early prototype.
+Dan clarified on 25 October 2026 that this API is an early prototype.
 The new API does not need to stay backward compatible with the old APIs.
 
-On 7 November 2026, the user decided that the stored format must not break
+On 7 November 2026, Dan decided that the stored format must not break
 from now on, because the Go customer builds on Go `v0.1.0-rc.3`. The stored
 format is what is written to the database, such as ciphertext envelopes and
 search terms. The APIs can still change. This replaces the decision of 25
@@ -138,8 +138,8 @@ for example:
 ciphertext for the encoded collection instead.
 
 A byte string is the one exception. `Vec<u8>` and `[u8; N]` encrypt as one
-value, as pull request #1501 built them. The user agreed this on 7 November
-2026. The [API plan](2026-10-24-stack-encrypt-api-plan.md#encrypt-a-byte-string)
+value, as pull request #1501 built them. Decided on 7 November 2026 by
+Dan. The [API plan](2026-10-24-stack-encrypt-api-plan.md#encrypt-a-byte-string)
 shows it. These calls need the proposed opaque ciphertext and support for
 targets that take no context.
 

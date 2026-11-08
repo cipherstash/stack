@@ -155,6 +155,10 @@ subtree read.
   entry. An empty container entry authenticates, but fails with
   `OpenedType`. Every ordinary container needs a subtree read. A sealed
   root that the caller asks for can still open as a complete document.
+- **Error codes.** The full list of JSON error codes is
+  `packages/stack-encrypt/src/codes.rs` on `next`: 13 `Json*` codes
+  today, including `JsonWrongEntry` and `JsonWildcardTooWide`. This
+  document names only the codes its rows need.
 - **No positional paths in queries.** The dynamic engine now rejects
   positional paths for selectors, ordering, and EqAt. Concrete positions
   such as `[n]` are for subtree reads. A wildcard selector addresses every
@@ -180,9 +184,11 @@ subtree read.
 - **Reads that Rust verifies against the original request.** A prepared
   read keeps the cipher, the field definition, the path, and the wildcard
   bound. `Open(ctx, rows)` asks Rust to derive the request again and
-  verify it. No serialised key handle local to the guest is needed. Rows
-  cannot supply their own expected path. Keep one group for each database
-  document.
+  verify it. #1358 added this check. A row without the entry asked for is refused with
+  `JsonWrongEntry`. On the EQL side,
+  `JsonTreeExtracted::from_selector` makes the same check. No serialised
+  key handle local to the guest is needed. Rows cannot supply their own
+  expected path. Keep one group for each database document.
 - **What cascaded tags do not prove.** Cascaded tags make verification
   stronger beneath the node at the top of a returned read. Cascaded tags
   do not authenticate the whole result set, the absence of a value, freshness,

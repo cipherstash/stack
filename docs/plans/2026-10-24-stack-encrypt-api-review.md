@@ -34,7 +34,7 @@ Three companion documents go with this log:
 
 ## The stored format must stay compatible from 7 November 2026
 
-On 7 November 2026, the user decided: "The stored data must not break as of
+Decided on 7 November 2026 by Dan: "The stored data must not break as of
 now. The Go customer has already started implementation with rc.3. We can
 make breaking changes to the code/API but not the stored format."
 
@@ -56,7 +56,7 @@ lists the planned work that this decision constrains.
 
 ### History: no backward compatibility with the prototype
 
-On 25 October 2026 the user clarified that this API has never shipped beyond
+On 25 October 2026 Dan clarified that this API has never shipped beyond
 an early prototype. Backward compatibility, and migration of prototype data,
 were not requirements. That replaced any earlier suggestion in this log to
 keep old encodings or public imports. The new Rust, Go, guest, and EQL
@@ -125,7 +125,7 @@ where they first appear.
 the matching `decrypt` pair, on the keyset. The open questions about
 Vitamin C's cipher traits remain.
 
-The user asked for two separate methods, so that the common case needs no
+Dan asked for two separate methods, so that the common case needs no
 empty context argument. Questions remain about how Stack's ciphers relate
 to Vitamin C's cipher traits.
 
@@ -246,7 +246,7 @@ The follow-up of 25 October 2026 also set these directions:
 - Rust and PL/pgSQL must both be able to extract the stored ZeroKMS key tag
   with simple code.
 - A protocol for refined tags is being designed separately. The proposed
-  refinement replaces the ZeroKMS tag with a tag derived from it. The user
+  refinement replaces the ZeroKMS tag with a tag derived from it. Dan
   clarified that ZeroKMS checks policy and writes logs against the refined
   tag, and returns the original tag. The decrypt path uses the original tag
   to rebuild the leaf AAD. Record these two separate roles in the
@@ -607,7 +607,11 @@ surprising.
 
 ## 6. The plan builder's encrypt_into reads like the execution method
 
-**Status:** Still open. Revisit during the plan API discussion.
+**Status:** Decided on 7 November 2026 by Dan. The builder's output method
+is renamed `target`, and the chain in `plan/chain.rs` is replaced by
+`Planned`. See the plan's [remove the structural
+API](2026-10-24-stack-encrypt-api-plan.md#remove-the-structural-api). Not
+yet implemented.
 
 `Plan::value::<S>().encrypt_into::<T>()` is an inherent builder method. It
 selects an output target and requires `T: EncryptFrom<S>`. It does not
@@ -689,9 +693,18 @@ That route has three limits:
 
 ## 8. Clarify whole-value encryption, layouts, and searchable outputs
 
-**Status:** Open architectural discussion. The recommendations below are
-not decisions. #1503 is in progress for workflow 1, and #1504 for workflows
-2 and 3.
+**Status:** Partly decided. On 7 November 2026 the plan decided three
+things:
+
+- the record derive lives on the encrypted struct;
+- the derive emits field markers and `encryption_plan()`;
+- a value under a plan that is data is `Planned::new(&plan, value)`.
+ See the plan's [record
+derives](2026-10-24-stack-encrypt-api-plan.md#record-derives) and [field
+markers](2026-10-24-stack-encrypt-api-plan.md#field-markers-and-the-encryption-plan).
+
+The recommendations below on layouts and adapters are still open. #1503 is
+in progress for workflow 1, and #1504 for workflows 2 and 3.
 
 Three user workflows need clear support:
 
@@ -812,7 +825,7 @@ should not become another public API that users have to understand.
 
 The review kept crossing from Stack's target declarations into Vitamin C's
 plaintext visitor traits, cipher traits, contexts, derives, and ciphertext
-tree. The user proposes moving the encryption traits into Stack Encrypt,
+tree. Dan proposes moving the encryption traits into Stack Encrypt,
 and keeping general primitives, such as protected values and randomness, in
 Vitamin C.
 
@@ -886,8 +899,14 @@ the default context or the caller's context.
 
 ## 11. Context fields do not yet take context from an input struct
 
-**Status:** Still open. The syntax is still open. The shorthand
-`context(field = "id")` is recommended. No merged pull request adds it.
+**Status:** Decided on 7 November 2026 by Dan. A field's context comes from
+the declaration, from a row field stored unsealed, or from the caller. The
+plan builder is the one mechanism. The attribute spellings
+`scope(field = "tenant")` and `bind(field = "id")` are placeholders for the
+naming review. See the plan's [context from fields and from the
+caller](2026-10-24-stack-encrypt-api-plan.md#context-from-fields-and-from-the-caller).
+
+No merged pull request adds it. The body below is the earlier proposal.
 
 ### Current behaviour
 
@@ -1008,9 +1027,13 @@ for the proposed selectors and what each one requires as input.
 
 ## 13. JSON layouts and adapting encrypted output
 
-**Status:** Open. This is a first assessment of the JSON tree
-implementation on the `next` branch at `b1049824b`. No replacement API is
-chosen.
+**Status:** Partly decided. On 7 November 2026 the plan decided that a JSON
+field is a target type with typed options. A JSON query uses the same
+per-operator methods as a scalar query, on the document's marker. See
+the plan's [Query a JSON
+document](2026-10-24-stack-encrypt-api-plan.md#query-a-json-document). The
+body below is the first assessment of the JSON tree implementation on the
+`next` branch at `b1049824b`.
 
 **Agreed follow-up:** investigate replacing the serialisation round trips in
 the EQL JSON adapter with direct typed conversions. This does not yet choose
@@ -1252,7 +1275,7 @@ still open whether `Layout` or another trait expresses that capability.
 
 ### Alternative: configuration on a plaintext wrapper
 
-The user proposed `JsonPlaintext::new(value).with_ordering_path(path)`. It
+Dan proposed `JsonPlaintext::new(value).with_ordering_path(path)`. It
 can still produce the exact EQL wire format. Where the configuration comes
 from is independent of the output representation.
 
@@ -1287,7 +1310,7 @@ adds them for collections. The structural `decrypt_into` remains in
 `target::legacy`.
 
 **Required direction:** provide a method without context and a separate
-`_with_context` method, mirroring encryption. The user prefers the name
+`_with_context` method, mirroring encryption. Dan prefers the name
 `decrypt_from`.
 
 **Recommendation:** use the pair directed at the destination in the
@@ -1315,7 +1338,7 @@ and trait names are easy to confuse.
 
 ## 15. Coordinate the Go JSON work with the shared API redesign
 
-The user identified
+Dan identified
 [pull request #1353](https://github.com/cipherstash/stack/pull/1353) as
 work by a parallel agent. The pull request is currently a design document
 for Go JSON, with implementation tasks #1348 to #1352, tracked by #1347.
@@ -1338,10 +1361,10 @@ or pull request.
 
 ## 16. Integrate the prior query design instead of reopening it
 
-The user supplied **Stack Encrypt query design**, dated 21 October 2026. It
-was read in full on 25 October 2026 from
-`/Users/dan/Downloads/Stack Encrypt query design.md`. It is explicitly a
-draft for discussion, with open questions. It proposes:
+Dan supplied the query design document, dated 21 October 2026. It was
+reviewed on 25 October 2026, and again on 7 November 2026. Its decisions
+are recorded in the API plan. It is explicitly a draft for discussion,
+with open questions. It proposes:
 
 - index selection owned by the field;
 - one index that answers each operator;
@@ -1358,35 +1381,42 @@ that draft as the baseline. The plan records specific points to reconcile:
 - portability between the static and dynamic interfaces;
 - when validation happens.
 
-The user's clarification about the prototype replaced older compatibility
+Dan's clarification about the prototype replaced older compatibility
 requirements. The decision of 7 November 2026 adds one back: the stored
 format of Go rc.3 must not break. The source document was not changed.
 
 ## 17. Use the same name to select a definition for encryption and queries
 
-**Status:** Still open. `.using(...)` is recommended. The final spelling is
-not yet accepted.
+**Status:** Decided on 7 November 2026 by Dan. There is no `using` method
+and no `on`. A typed query starts from the field marker:
+`EncryptedMember::EMAIL.eq(..).scope(..).encrypt(&keyset)`. A value under a
+plan that is data is `Planned::new(&plan, value)`.
 
-The user finds it confusing that encryption uses `.using(...)` and queries
-use `.on(...)`, and asked to consider one name for both. The recommendation
-is `.using(...)`, because the selected definition or field supplies the
-operation's policy.
+See the plan's [Query a record
+field](2026-10-24-stack-encrypt-api-plan.md#query-a-record-field) and [A
+request: `Planned`](2026-10-24-stack-encrypt-api-plan.md#a-request-planned).
+Not yet implemented.
 
-Keep the bounds specific to each operation. This is a change of name, not
-a merger of the two capabilities:
+At the time of the review, encryption used `.using(...)` and queries used
+`.on(...)`. Dan found the two names confusing, and asked for one name for
+both. The recommendation was `.using(...)`, because the selected definition
+or field supplies the operation's policy.
 
-- Encryption selects the associated definition of the output target.
-- Queries require a field, or a single-value target, that implements
+The bounds stayed specific to each operation. The change was a change of
+name, not a merger of the two capabilities:
+
+- Encryption selected the associated definition of the output target.
+- Queries required a field, or a single-value target, that implemented
   `QueryTarget<Op, Input>`.
 
-The user also prefers `cipher.using(&field).query(op, input)`. They
-explicitly require strict typestate: the request's type records which steps
-are done, so the compiler refuses an incomplete request. They accept
-supporting both orders. The plan recommends putting the definition first as
-the canonical order. The order that starts with the operator then produces
-the same typed request.
+Dan also preferred `cipher.using(&field).query(op, input)` at the time.
+He required strict typestate: the request's type records which steps are
+done, so the compiler refuses an incomplete request. The query review of
+7 November 2026 replaced both spellings. The marker-first query keeps the
+typestate: a method exists only for an operator the field's indexes
+answer, and a scope cannot follow a binding.
 
-On the static path:
+On the static path, two rules are unchanged:
 
 - a missing definition, or missing required context, must prevent awaiting
   the request;
@@ -1497,7 +1527,7 @@ its parent is still open.
 
 The first JSON version must be comprehensive across Rust and the dynamic
 interface for Go. It includes extraction, opening entries, listing and
-counting children, and walks over subtrees. Claude's earlier Go plan
+counting children, and walks over subtrees. The earlier Go plan, #1353,
 deferred walks. The new scope replaces that deferral.
 
 The
@@ -1527,7 +1557,7 @@ Names and packaging are explicitly the last design activity.
 
 ### Request
 
-The user asked for three things:
+Dan asked for three things:
 
 - route a plaintext record to a keyset, by ID or name, taken from one of its
   fields;
@@ -1575,7 +1605,7 @@ declarations, and the work needed for acceptance.
 
 **Status:** Still open. The names and package moves are proposals. Pull request #1404 uses some agreed names. No package has moved.
 
-The user favours removing Vitamin C's `AsyncCipher`, and moving encryption
+Dan favours removing Vitamin C's `AsyncCipher`, and moving encryption
 behaviour for applications into Stack Encrypt. The
 [packaging recommendation](2026-10-25-stack-encrypt-packaging.md) proposes:
 
@@ -1611,8 +1641,7 @@ The customer needs Go JSON support. They also need dependable Bloom-filter
 handling with tokenizers and token filters, including input of two
 characters. The quality of a standalone Rust release is secondary.
 
-- Claude's stack of JSON-tree pull requests, headed by #1363, has now
-  merged. Revise the older Go plan in #1353 against it, and against the
+- The stack of JSON-tree pull requests headed by #1363 has now merged. Revise the older Go plan in #1353 against it, and against the
   agreed API direction.
 - Vitamin C #520 and #526 implement the storage profile: Vitamin C's versioned byte format for an opaque value that is stored. Review by a
   colleague, and the release, are pending. Stack still needs to adopt that
@@ -1637,7 +1666,8 @@ after the final release, because the customer builds on Go rc.3.
 
 ### Short words in match search
 
-The supplied `Short-ngrams.md` explores Bloom filters for short whole words,
+An unpublished research note on short n-grams explores Bloom filters for
+short whole words,
 and queries over variants. These must be kept separate from search for any
 two-character substring.
 
@@ -1691,7 +1721,7 @@ Pull request #1397 implements short-word terms that are deterministic and
 domain-separated, inside the existing Bloom filter. EQL's pinned match configuration turns them on. This avoids a separate index for short words.
 
 It is not the random-variant mechanism explored earlier. It does not by
-itself resolve the user's concern about frequency and leakage. The native Go
+itself resolve Dan's concern about frequency and leakage. The native Go
 index options still refuse configuration (#1112). The uncommitted research
 on ngrams and the Go delivery document are unchanged.
 
@@ -1742,7 +1772,7 @@ description was not enough. It ran no test suite.
 #### Differences from the plan
 
 #1501 encrypts `Vec<u8>` as one value. The plan had recommended encrypting
-it byte by byte. On 7 November 2026, the user agreed with #1501: a byte
+it byte by byte. On 7 November 2026, Dan agreed with #1501: a byte
 string is one value, and a `Vec` of byte strings is a collection.
 
 #### What the reconciliation of 27 October 2026 checked

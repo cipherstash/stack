@@ -111,6 +111,11 @@ let card = Ciphertext::from_bytes(&bytes)?;
 let number: String = keyset.decrypt_with_context(card, "users/42/card").await?;
 ```
 
+A value encrypted with no context is bound to nothing but its keyset.
+Its ciphertext can be moved to any column or any row, and it still opens
+there. Use the plain `encrypt` only for a value whose location does not
+matter. `contexts()` shows such a value's context as empty.
+
 `encrypt` accepts only single values: text, numbers, booleans, dates,
 times, and decimals. A struct or a `Vec` does not compile. Use a record, a
 collection, or an opaque blob instead.
@@ -565,8 +570,7 @@ built-in single value. The derive encrypts the struct as that field, and
 decrypts the field back into the struct. So `Byte` is sealed exactly as
 the `u8` inside it would be, if `u8` were a single value on its own.
 
-The user agreed this behaviour on 7 November 2026. It is what pull
-request #1501 built.
+Decided on 7 November 2026 by Dan. It is what pull request #1501 built.
 
 ### The dynamic interface
 
@@ -1212,8 +1216,9 @@ caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
 #### Record derives
 
 - **What to build.** The `EncryptTarget` and `DecryptSource` derives for
-  records, with passthrough fields, renamed fields, nested records, and
-  stored context.
+  records, with passthrough fields, nested records, and stored context.
+  The existing `from` attribute renames a source field. It is extended to
+  passthrough fields.
 - **Where the derive lives.** On the encrypted struct. That struct is
   the declaration. Each field's type says how the field is stored, and a
   field's indexes come from its target type, such as `SearchableEmail` or
@@ -1231,7 +1236,9 @@ caveats](2026-11-07-stack-encrypt-tag-refinement.md) has the design.
   encrypted struct is what goes in the row, so a developer reads the
   stored shape, and adds `Serialize` or `sqlx` derives, in one place.
 - **Done already.** One value (#1404) and collections (#1501). #1504 adds
-  the record derives, and is in review.
+  the record derives, and is in review. `#[stash(from = "..")]` already
+  renames the source field of an encrypted field
+  (`stack-encrypt-derive/src/attrs.rs`).
 - **Finished when** these are both true:
   - the public examples for mixed and searchable records run as tests;
   - a `tests/ui` case shows that a plaintext field with no counterpart
@@ -1537,7 +1544,8 @@ Decided on 7 November 2026.
     a hand-built plan has it too.
   - `context()` on a prepared call. It gives the exact query context and
     stored context the call will use, with the caller's values filled in.
-    Each part shows its type.
+    Each part shows its type. A call with no context shows an empty
+    context, as such.
 
   Both render through the same code that derives the key descriptor and
   the AAD, so what a developer sees is what the engine uses. The dynamic
@@ -1911,3 +1919,4 @@ changes a name, not a design.
 | The declaration attributes `scope(..)` and `bind(..)` | How a declaration marks its parts |
 | `ContextExtension` | The caller-supplied context input of #1504, renamed for the scope vocabulary |
 | `Plan::context(..).fields()`, `encrypt_index`, `pick!` | The hand-built plan builder. The query artifact's `EncryptionPlan::record(..)` and `.field(..)` are the alternative spellings |
+| `stack_encrypt::Cipher` | The packaging document's name for the execution handle. It is Vitamin C's `Cipher` trait too, so the review chooses another name or accepts the clash |

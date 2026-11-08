@@ -18,7 +18,7 @@ below changes the stored tag, so it must keep rc.3 data readable. See the
 [API
 plan](2026-10-24-stack-encrypt-api-plan.md#the-stored-format-stays-compatible-with-go-rc3).
 
-The user who requested this assessment asked for three things:
+Dan asked for three things:
 
 - ZeroKMS keyset selection derived from plaintext;
 - a review of the Vitamin C `AsyncCipher` trait;
@@ -41,15 +41,16 @@ The JSON operation contract is under separate user review.
 
 | Term | Meaning |
 | --- | --- |
-| Keyset | A ZeroKMS key domain. Data keys are generated in a keyset, and each keyset has a deterministic index key |
-| Lock context | A ZeroKMS policy that ZeroKMS applies when it generates or retrieves a data key, such as a claim of the authenticated JSON Web Token (JWT) |
 | `DataKeySource` | The trait in `stack-kms` that generates fresh data keys and derives them again for stored ciphertexts |
 | `IndexKeySource` | The trait in `stack-kms` that loads the deterministic index key of a keyset, used to derive search terms |
-| `Pending` | The request object that `StackCipher` returns. Settling it (awaiting it) sends the batched ZeroKMS calls |
-| Key I/O | Any request to the key provider to generate or retrieve a key |
-| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
-| AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
 | `MaybeSend` | A bound that means `Send` on native targets and no bound on WebAssembly (WASM) |
+| `Pending` | The request object that `StackCipher` returns. Settling it (awaiting it) sends the batched ZeroKMS calls |
+| AAD | Additional authenticated data: data that encryption checks for one ciphertext, but does not encrypt. Stack Encrypt builds it from the context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
+| Context | Data that a ciphertext is tied to, such as a column name or a row ID. Decryption needs the same context. See [Context and AAD](2026-10-24-stack-encrypt-api-plan.md#context-and-aad) |
+| Key I/O | Any request to the key provider to generate or retrieve a key |
+| Keyset | A ZeroKMS key domain. Data keys are generated in a keyset, and each keyset has a deterministic index key |
+| Lock context | A ZeroKMS policy that ZeroKMS applies when it generates or retrieves a data key, such as a claim of the authenticated JSON Web Token (JWT) |
+| Provider | A key provider: the KMS backend that generates and retrieves data keys, such as ZeroKMS. Not `stack_kms::KeyProvider`, which is a source of client keys |
 | Vitamin C | CipherStash's library of cryptographic primitives |
 
 ## Four separate roles
@@ -271,7 +272,7 @@ one document asynchronously.
 
 ### Follow-up from packaging
 
-The user favours removing the trait.
+Dan favours removing the trait.
 
 The
 [packaging recommendation](2026-10-25-stack-encrypt-packaging.md#retire-asynccipher)
@@ -459,7 +460,7 @@ deterministic search keys automatically.
 [Tag refinement](2026-11-07-stack-encrypt-tag-refinement.md) needs two
 distinct inputs: the refined tag and its caveats, stored and sent in the
 request, and the original authentication tag returned.
-When designing neutral responses, keep the ZeroKMS flow that the user
+When designing neutral responses, keep the ZeroKMS flow that Dan
 intended. Do not require every provider to implement refinable tags, or a
 generic KMS to return that concept.
 
