@@ -14,7 +14,8 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use stack_encrypt::dynamic::{record, Scope};
 use stack_encrypt::{
-    CipherText, ErrorPayload, Node, PassthroughFrame, SealedValue, StackCipher, StackCipherText,
+    AsProtectedRef as _, CipherText, Controlled as _, ErrorPayload, Node, PassthroughFrame,
+    SealedValue, StackCipher, StackCipherText,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
@@ -188,7 +189,12 @@ fn plan(read: &Declaration) -> record::Plan {
     if !read.null.is_empty() {
         spec["null"] = json!(read.null);
     }
-    record::plan(&vitaminc_aead_frame::serde::to_vec(&json!({"value": spec})).unwrap()).unwrap()
+    record::plan(
+        vitaminc_aead_frame::serde::to_vec(&json!({"value": spec}))
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -363,8 +369,12 @@ fn the_lenient_reader_agrees_with_the_codec_on_what_the_codec_accepts() {
         if let Ok(codec) = decode_ciphertext::<Vec<u8>>(&bytes) {
             let ours = lenient(&bytes).expect("the lenient reader reads what the codec reads");
             assert_eq!(
-                vitaminc_aead_frame::serde::to_vec(&json!(encoded(&ours))).unwrap(),
-                vitaminc_aead_frame::serde::to_vec(&json!(encoded(&codec))).unwrap(),
+                vitaminc_aead_frame::serde::to_vec(&json!(encoded(&ours)))
+                    .unwrap()
+                    .risky_ref(),
+                vitaminc_aead_frame::serde::to_vec(&json!(encoded(&codec)))
+                    .unwrap()
+                    .risky_ref(),
                 "{}",
                 case["id"]
             );

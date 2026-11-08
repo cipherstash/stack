@@ -15,7 +15,9 @@ use serde::Deserialize;
 use serde_json::json;
 use stack_encrypt::dynamic::{self, record, Error, NoTargets, OpSpec, ValueFrame};
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{op, Equality, Match, Ope, Ore, OreBlock, Plan, StackCipher};
+use stack_encrypt::{
+    op, AsProtectedRef as _, Equality, Match, Ope, Ore, OreBlock, Plan, StackCipher,
+};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::atomic::{AtomicUsize, Ordering},
@@ -314,7 +316,12 @@ async fn shared_query_refusal_profile() {
         }
         declaration.insert(name.clone(), field);
     }
-    let plan = record::plan(&vitaminc_aead_frame::serde::to_vec(&declaration).unwrap()).unwrap();
+    let plan = record::plan(
+        vitaminc_aead_frame::serde::to_vec(&declaration)
+            .unwrap()
+            .as_protected_ref(),
+    )
+    .unwrap();
     let (cipher, counters) = cipher().await;
     let keyset = cipher.default_keyset();
     let mut ids = BTreeSet::new();
