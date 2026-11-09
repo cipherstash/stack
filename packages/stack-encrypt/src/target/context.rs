@@ -1,8 +1,8 @@
 //! The contexts a target declares, and the parts a caller supplies.
 //!
-//! Every part of a context is a **scope** or a **binding** (ADR-0004,
-//! amended). The declaration supplies the first scopes: the record's name,
-//! then the field's name. The caller supplies the rest.
+//! Every part of a context is a **scope** or a **binding**. The declaration
+//! supplies the first scopes: the record's name, then the field's name. The
+//! caller supplies the rest.
 //!
 //! - The **query context** is all the scopes: the declared ones, then the
 //!   caller's. Search terms derive under it. A query supplies the same
