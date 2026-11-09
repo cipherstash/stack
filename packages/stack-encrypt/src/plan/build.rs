@@ -1648,7 +1648,7 @@ fn keys_nothing(kind: FieldKind) -> bool {
     matches!(kind, FieldKind::Passthrough | FieldKind::ContextField)
 }
 
-fn field_label(field: &str, source: LabelError) -> Error {
+pub(crate) fn field_label(field: &str, source: LabelError) -> Error {
     PlanError::FieldLabel {
         field: field.to_owned(),
         source,

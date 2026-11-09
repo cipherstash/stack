@@ -597,7 +597,8 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// reads the label from the borrowed source, or fails, in which case the
     /// description yields that error without I/O.
     ///
-    /// Crate-internal: the plan builder is its one caller.
+    /// Crate-internal: the plan builder and the data plan's lowering
+    /// (`dynamic::planned::compose`) are its callers.
     ///
     /// `field` names the field of the source the label is read from, and
     /// `identity` the segment `own` joins to it, for
@@ -634,7 +635,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// plan built without one takes. The description fails with `error`
     /// if it runs, and shows the call's context as a placeholder.
     ///
-    /// Crate-internal: the plan builder is its one caller, for
+    /// Crate-internal: the plan builder is its caller, for
     /// [`contexts`](Self::contexts) on such a plan.
     pub(crate) fn under_call(
         self,
@@ -658,8 +659,8 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// (the value has no such field, or not of this type), in which case the
     /// description yields that error without I/O.
     ///
-    /// Crate-internal: the plan builder is its one caller, and what `select`
-    /// captures is a field name. The public combinator stays the
+    /// Crate-internal: the plan builder and the data plan's lowering are
+    /// its callers, and what `select` captures is a field name. The public combinator stays the
     /// capture-free `project`.
     pub(crate) fn project_by<P: 's, G>(self, select: G) -> Encryption<'s, P, T, K, Ctx>
     where

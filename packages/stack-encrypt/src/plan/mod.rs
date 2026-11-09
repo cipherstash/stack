@@ -312,6 +312,8 @@ mod field_ref;
 mod value;
 mod values;
 
+#[cfg(feature = "dynamic")]
+pub(crate) use build::{field_label, join, FROM_CALL, FROM_PLAN};
 pub use build::{FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, PlanContext, Runs};
 pub use chain::{
     all, All, Batch, Chooses, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,

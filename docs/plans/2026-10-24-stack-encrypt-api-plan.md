@@ -1998,8 +1998,9 @@ table.
   `dynamic::planned::compose` and `opening` build each field's combinator
   from the parsed plan, and `encrypt_with`, `decrypt_with`, `contexts()`
   and the checks read them. The dynamic path no longer uses the plan
-  builder. The builder, the chain, the old traits and `Label` are still
-  to be removed.
+  builder. Those functions do not yet build a `Planned`: they run the
+  lowering themselves. That inversion, the builder, the chain, the old
+  traits and `Label` are still to be removed.
 - **Tracked in.** Issue #1488 is open. Its first pull request is the
   lowering; the removals follow it.
 - **Finished when** the old API is gone, and every consumer uses the new

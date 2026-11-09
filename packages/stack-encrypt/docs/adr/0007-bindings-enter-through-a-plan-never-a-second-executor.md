@@ -382,6 +382,9 @@ The first pull request for #1488 did the lowering: `compose` and
 `opening` in `dynamic::planned` build the combinators from the parsed
 plan, and `encrypt_with`, `decrypt_with`, `check_source`, `check_record`
 and `contexts()` run them. The builder is no longer in the dynamic path.
+The inversion is still to come: those functions run `compose` and
+`opening` themselves rather than building a `Planned`, so `Planned` and
+the record functions are two callers of one lowering until then.
 
 **The derive emits no plan.** `encryption_plan()` is not added. A typed
 query starts from a field marker. The marker has the field's context and
