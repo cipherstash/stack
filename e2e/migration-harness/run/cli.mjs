@@ -12,7 +12,7 @@ const command = args[args.indexOf('--migrator') + 1]
 if (!args.includes('--migrator') || !command)
   throw Error('Usage: harness:run --migrator <command>')
 const id = randomUUID()
-const root = resolve(fileURLToPath(new URL('../../../..', import.meta.url)))
+const root = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 const output = resolve(
   args.includes('--output')
     ? args[args.indexOf('--output') + 1]

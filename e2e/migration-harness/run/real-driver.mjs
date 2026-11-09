@@ -241,7 +241,7 @@ export function createRealDriver({
     async friction() {
       const file = await open(
         resolve(workspace, 'friction.json'),
-        constants.O_RDONLY | constants.O_NOFOLLOW,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       )
       try {
         const stat = await file.stat()
