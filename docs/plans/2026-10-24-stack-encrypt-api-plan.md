@@ -1,6 +1,8 @@
 # Stack Encrypt API plan
 
 Date: 8 November 2026. Checked against `next` at commit `e4990e49b`.
+Revised 9 November 2026: the derive emits the combinators, not the plan
+builder, and `Planned` is a target (ADR-0007, amended).
 
 Stack Encrypt encrypts each value under its own data key from ZeroKMS,
 CipherStash's key service. It also makes the search terms that let
@@ -63,9 +65,8 @@ decision.
 | Descriptor | The string a key request names its key under. ZeroKMS derives the data key from it. Today the whole context is rendered into it, such as `users/age`. Under envelope version 2 it is the name scopes only: the record name and the field name |
 | Dynamic interface | The engine's interface for languages other than Rust. It takes a declaration and values as data, not as Rust types |
 | EQL (Encrypt Query Language) | The PostgreSQL types and functions in `packages/eql` that store encrypted values and answer queries on them |
-| Executor | The one engine path that runs a plan: it derives each field's context, requests the keys in one batch, and seals or opens every value |
+| Executor | The combinators in `target/`: the one engine path that runs every declaration. The derive's generated code and `Planned` both compose them. The executor derives each field's context, requests the keys in one batch, and seals or opens every value |
 | Field marker | A constant the derive emits for each field of a record, such as `EncryptedMember::EMAIL`. It names the field, its plaintext type, its accessor, and its indexes. A typed query starts from it |
-| `FieldRef` | The builder's reference to one field of the plaintext type: its name and its accessor. A field marker is a `FieldRef` with its indexes added |
 | Guest | The Rust engine compiled to WebAssembly. The Go SDK runs it inside the Go process |
 | Key tag | The HMAC ZeroKMS returns with a data key. A reader must present it to get the key again. Stack Encrypt binds it into every leaf's AAD |
 | Keyset | A set of keys in ZeroKMS. Every data key belongs to one keyset. A tenant can have its own keyset. In Rust, `Keyset` is also the handle bound to one keyset, which encrypt and query calls take. Today `KeysetCipher` |
@@ -78,8 +79,8 @@ decision.
 | Opaque blob | A whole value, such as a struct, encoded and sealed as one ciphertext. Nothing inside it can be searched |
 | PAE | Pre-authentication encoding: a length-prefixed encoding of several values, so that two values cannot run into each other. The leaf AAD and a label use it |
 | Passthrough field | A field stored unencrypted next to the encrypted fields. It is not authenticated |
-| Plan | A record's declaration as data: each field, its context, and its indexes. The derive builds one through `encryption_plan()`; a program can build one by hand, or read one at run time. See [A value under a plan: `Planned`](#a-value-under-a-plan-planned) |
-| Planned | A value paired with a plan that is data, `Planned::new(&plan, value)`, with the context parts a call supplies. Encrypted, queried, or decrypted with the keyset as the argument. Its serialisation is what a binding sends for an operation. See [A value under a plan: `Planned`](#a-value-under-a-plan-planned) |
+| Plan | The dynamic interface's declaration of a record, as data: each field, its context, and its indexes. A binding sends one, and the engine reads it at run time. No Rust program builds one by hand, and the derive does not emit one. See [A value under a plan: `Planned`](#a-value-under-a-plan-planned) |
+| Planned | A value paired with a plan that is data, `Planned::new(&plan, value)`, with the context parts a call supplies. It is a target, so the owned entry points encrypt, query, and decrypt it, with the keyset as the argument. Its serialisation is what a binding sends for an operation. See [A value under a plan: `Planned`](#a-value-under-a-plan-planned) |
 | Query artifact, context artifact | Two design documents Dan wrote as Claude artifacts, one on queries and one on context. This plan compared them with itself on 8 November 2026 and records every decision. Dan deletes the artifacts after this plan merges |
 | Query context | All the scopes of a context, declared and caller-supplied. Search terms derive under it. See [Query context and stored context](#query-context-and-stored-context) |
 | Query plan | A record plan narrowed to one field and one operator, `plan.query(field, op)`. A query value is encrypted under it. See [A query plan](#a-query-plan) |
@@ -216,8 +217,8 @@ let user = User::decrypt_from(encrypted, &keyset).await?;
 `scope = "users"` is the record's name and its first scope. The derive
 adds each field's name as the next scope, so `users` then `email` are the
 declared scopes of the `email` field. `scope(..)` and `bind(..)` add the
-parts that come from the caller or the row. The attribute, the plan
-builder's `Plan::scope(..)`, and Go's `scope=` tag use one word for it.
+parts that come from the caller or the row. The attribute, the data
+plan's context, and Go's `scope=` tag use one word for it.
 Decided by Dan on 8 November 2026.
 
 The derives need no Serde. A program that stores an encrypted value as
@@ -321,10 +322,9 @@ and checks each one.
 
 The derive emits one marker for each field of a record, such as
 `EncryptedMember::EMAIL`. A marker names the field, its plaintext type,
-its accessor, and the field's index list. It is the value the plan
-builder takes to declare the field, and the value a query starts from.
-The derive also emits `encryption_plan()`. It builds the record's `Plan`
-through the plan builder, once, and keeps it.
+its accessor, and the field's index list. It is the value a query starts
+from. The derive emits no plan: the marker is enough for a query, and a
+binding sends a plan of its own.
 
 A typed query starts from the marker, and has one method for each
 operator the field's indexes answer. A missing operator is a compile
@@ -335,9 +335,8 @@ The query ends with `encrypt(&keyset)`, and its output type is the EQL
 query type the marker fixes. Decided on 7 November 2026.
 
 ```rust
-// Not on `next` yet: field markers, their query methods, and
-// `encryption_plan()`. Today a query names a plan written by hand:
-// `cipher.query(op::Eq, value).on(&plan)`.
+// Not on `next` yet: field markers and their query methods. Today a
+// query names a plan written by hand: `cipher.query(op::Eq, value).on(&plan)`.
 let by_email: TextEqQuery = EncryptedMember::EMAIL
     .eq("alice@example.com")
     .scope(tenant)
@@ -352,9 +351,6 @@ let adults: IntegerOrdQuery = EncryptedMember::AGE
 EncryptedMember::EMAIL.gt("alice@example.com")
 // error: the query builder has no `bind`
 EncryptedMember::EMAIL.eq("alice@example.com").bind(row_id)
-
-// The record's plan, for the dynamic interface.
-let plan: &Plan = EncryptedMember::encryption_plan();
 ```
 
 ```sql
@@ -365,9 +361,10 @@ A chained scope is allowed on a query because a query has one field and
 one value, so a scope cannot mean anything else. The rule that no chain state offers context, in [One context argument, and paired entry points](#one-context-argument-and-paired-entry-points), was about `.extend(..)` after `.fields()` on a record. There, a part added late looked per-field
 and was not.
 
-A typed query lowers to a [query plan](#a-query-plan) and a `Planned`
-value, so the typed form and the dynamic form run the same engine
-function.
+A typed query lowers from its marker to the term combinator, under the
+marker's context. A dynamic query lowers a [query plan](#a-query-plan)
+to the same combinator through `Planned`. The equivalence suite checks
+that the two agree (ADR-0007, amended 9 November 2026).
 
 #### Encrypt a JSON document
 
@@ -683,17 +680,26 @@ is a record under a record plan, or a query value under a [query
 plan](#a-query-plan).
 
 `Planned` is a plain struct, like `OpaqueBlob` and `Positioned`. It adds
-no method to any other type. The keyset is the argument. Decided on
-7 November 2026.
+no method to any other type. Decided on 7 November 2026.
+
+`Planned` is a target in the owned API's sense. The stored row type
+implements `EncryptTarget<Planned<..>>`, and `Planned<StackCipherText>`
+implements `DecryptSource`. Both compose the combinators from the plan
+when they run. So `encrypt_into` and `decrypt_from` run it, with the
+keyset as the argument. Made a target after the combinator spike of
+9 November 2026 (ADR-0007, amended).
 
 ```rust
 // Not on `next` yet: `Planned`. Today the chain does this:
 // `cipher.encrypt(&user).using(&plan)` and `cipher.query(op, v).on(&plan)`.
-let row = Planned::new(&plan, member).encrypt(&keyset).await?;
-let member: Member = Planned::new(&plan, row).decrypt(&keyset).await?;
+// The value under a data plan is the dynamic interface's record,
+// `FieldValues`, and the stored row is a `StackCipherText`. A typed
+// struct uses the derive, not a plan.
+let row: StackCipherText = Planned::new(&plan, values).encrypt_into(&keyset).await?;
+let values = FieldValues::decrypt_from(Planned::new(&plan, row), &keyset).await?;
 
-let row = Planned::new(&plan, member)
-    .encrypt_with_context(&keyset, Scope::new(tenant).bind(row_id))
+let row: StackCipherText = Planned::new(&plan, values)
+    .encrypt_into_with_context(&keyset, Scope::new(tenant).bind(row_id))
     .await?;
 ```
 
@@ -719,8 +725,11 @@ key.
 
 The engine answers with the stored row, the query term, or the plaintext.
 The same shape is a conformance case, with the engine's expected answer
-beside it. `contexts()` works on a `Plan` and on a `Planned` before it runs, so a
-binding can show the exact context a call will use.
+beside it. `contexts()` works on a `Plan` before any value exists, with
+a placeholder for each part the caller supplies. `context()` on a
+prepared call, a `Planned` with its context parts attached, shows the
+exact context that call will use. See [Show the
+context](#show-the-context).
 
 A serialised `Planned` is a transport form, never a storage form. The
 value in it is plaintext. So it lives only in a wiped buffer, as the
@@ -755,7 +764,7 @@ might run.
 let by_email = plan.query("email", Op::Eq)?;   // refused here if no index answers Eq
 
 let q: QueryTerm = Planned::new(&by_email, "alice@example.com")
-    .encrypt_with_context(&keyset, Scope::new(tenant))
+    .encrypt_into_with_context(&keyset, Scope::new(tenant))
     .await?;
 ```
 
@@ -768,10 +777,10 @@ The result on the dynamic path is a `QueryTerm`: the operand bytes, and
 the EQL type they bind as, known at run time. A typed query returns the
 EQL query type instead, because its marker fixes it.
 
-A typed query from a field marker lowers to a query plan and a `Planned`
-value. So the typed form and the dynamic form run the same engine
-function. [Query a record field](#query-a-record-field) shows the typed
-form.
+A typed query from a field marker lowers to the term combinator
+directly, with no plan. The dynamic form lowers its query plan to the
+same combinator through `Planned`. [Query a record
+field](#query-a-record-field) shows the typed form.
 
 #### The dynamic field handle
 
@@ -1032,7 +1041,7 @@ and every call can show the context it uses, before any key is fetched.
 
 // For a declaration: each field, its query context, and its stored
 // context, with a placeholder for every part the caller supplies.
-println!("{}", EncryptedUser::encryption_plan().contexts());
+println!("{}", EncryptedUser::contexts());
 // email
 //   query context:  users / email / {tenant: u64}
 //   stored context: users / email / {tenant: u64} / {row: Uuid}
@@ -1447,7 +1456,7 @@ Base64.
   the record derives, and is in review. `#[stash(from = "..")]` already
   renames the source field of an encrypted field
   (`stack-encrypt-derive/src/attrs.rs`).
-- **Tracked in.** Issue #1483 is open. It closes when #1504 merges. Issue #1482 is still open although #1501 merged with "Closes #1482". It needs a manual close. Pull request #1504 is open. Pull requests #1404 and #1501 are merged. Pull request #1504 lands `context =` and `ContextExtension` under the names the naming review replaces.
+- **Tracked in.** Issue #1483 is open. It closes when #1504 merges. Issue #1482 is still open although #1501 merged with "Closes #1482". It needs a manual close. Pull request #1504 is open. Pull requests #1404 and #1501 are merged. Pull request #1504 lands `scope = ".."` and `DeclaredScopes`, the names the naming review chose. Its record derives emit the combinators (ADR-0007, amended 9 November 2026).
 - **Finished when** these are both true:
   - a mixed record, with passthrough and encrypted fields, and a searchable
     record round-trip as tests;
@@ -1531,54 +1540,31 @@ review.
 
 - **What to build.** The derive emits one marker for each field, as an
   associated constant such as `EncryptedMember::EMAIL`. The marker has
-  the field's name, its plaintext type, its accessor, and its index list. The marker
-  is the `FieldRef` the plan builder takes, and the value a query starts
-  from. The index list is what lets the marker offer one method per
-  operator, resolved at compile time. The derive also emits
-  `encryption_plan()`. It returns the record's `Plan`, built once through
-  the plan builder with the markers as its arguments. A query from a
-  marker lowers to a [query plan](#a-query-plan). Typed Rust option
-  factories, and the same options read from data in the dynamic
-  interface.
-- **Why.** A query must use the same declaration as the stored values. The
-  caller must not write a second plan by hand. One marker type serves the
-  builder and the query, so the derive lowers to the builder with no
-  second mechanism.
-- **Done already.** `FieldRef` and `pick` exist in `plan/field_ref.rs`.
-  The derive already lowers a structural record to the builder. Queries
-  work through a plan written by hand: `cipher.query(op, value).on(&plan)`.
-  `Answers` on a target type is today's compile-time lookup of the index
-  for an operator. The marker's index list extends it to a record field.
-- **A hand-built plan gets the same handles.** A typed Rust program
-  that writes its plan by hand names the plaintext type once,
-  `Plan::<Member>::scope("members")`, so every `pick!` is checked
-  against it. `build()` returns the plan and one marker per field, in
-  declaration order, of the same type the derive emits. So a hand-built
-  plan and a derived one query the same way, with the same compile-time
-  checks. The builder keeps the context review's shape,
-  `Plan::scope(..).fields()`, with the field verbs after it. Decided on
-  7 November 2026, as area three of the query design review.
-
-  ```rust
-  // Not on `next` yet: markers from `build()`, and `Plan::<Member>`.
-  let (members, (email, age)) = Plan::<Member>::scope("members")
-      .fields()
-      .encrypt_index(pick!(email), (Equality, Match::<EnglishSearch>::new()))
-      .encrypt_index(pick!(age), (Equality, Ore))
-      .build()?;
-
-  let q: TextEqQuery = email.eq("alice@example.com").encrypt(&keyset).await?;
-  email.gt("alice@example.com")   // error: no order index on this field
-  ```
-
-- **Cannot fail.** `build()` refuses a repeated field name or a shared name scope.
-  The derive sees every field, so it refuses those at compile time, and
-  `encryption_plan()` returns `&'static Plan`, not a `Result`. The
-  hand-written builder keeps the runtime check. The dynamic grammar needs
-  it.
-- **Later.** A compile-time duplicate-field check for the hand-written
-  builder, through a type-level list of markers, stays a follow-up, as the
-  artifact says.
+  the field's name, its plaintext type, its accessor, and its index
+  list. It is the value a query starts from. The index list is what lets
+  the marker offer one method per operator, resolved at compile time. A
+  query from a marker lowers to the term combinator under the marker's
+  context. Typed Rust option factories, and the same options read from
+  data in the dynamic interface.
+- **Why.** A query must use the same declaration as the stored values.
+  The caller must not write a second plan by hand. The marker holds the
+  declaration the derive wrote, so the query term and the stored term
+  come from one source.
+- **Done already.** `Answers` on a target type is today's compile-time
+  lookup of the index for an operator. The marker's index list extends
+  it to a record field. Until the markers land, a query works through a
+  plan written by hand: `cipher.query(op, value).on(&plan)`.
+- **No hand-built plan.** The review of 7 November 2026 gave a
+  hand-built plan the same markers, through `Plan::<Member>::scope(..)`
+  with `pick!`. That is withdrawn. No Rust program builds a plan by hand.
+  A program whose declaration is data uses `Planned`. The builder is
+  removed with the structural API (ADR-0007, amended 9 November 2026).
+- **Cannot fail.** The derive sees every field, so it refuses a repeated
+  field name or a shared name scope at compile time. A typed index set
+  that repeats an index, `(Equality, Equality)`, is refused at compile
+  time too. Today the builder refuses it at run time, so that check
+  lands with the builder's removal. The dynamic grammar keeps its
+  run-time checks.
 - **Tracked in.** Issue #1486 is open.
 - **Finished when** these are all true:
   - the [marker example](#query-a-record-field) compiles;
@@ -1592,9 +1578,11 @@ review.
 Decided on 7 November 2026, as area one of the query design review.
 
 - **What to build.**
-  - `Planned::new(&plan, value)`, with `encrypt`, `encrypt_with_context`,
-    `decrypt`, and `decrypt_with_context`. It serves a record under a
-    record plan and a query value under a query plan.
+  - `Planned::new(&plan, value)`, a target. It implements `EncryptTarget`
+    and `DecryptSource` by composing the combinators from the plan, so
+    `encrypt_into`, `decrypt_from`, and their `_with_context` forms run
+    it. It serves a record under a record plan and a query value under a
+    query plan.
   - Two wire shapes. A serialised `Plan` alone serves a check, an
     operator list, or a query plan. A serialised `Planned` serves
     encrypt, query, and decrypt. It contains the plan by reference or
@@ -1619,22 +1607,23 @@ Decided on 7 November 2026, as area one of the query design review.
   a value frame for each call, through `plan_with`, `encrypt_with`,
   `query`, and `decrypt_with` in `dynamic::record`. The serialised `Planned` names and groups what those functions already
 receive.
-- **Tracked in.** Issue #1486 is open, in part. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a public plan builder.
+- **Tracked in.** Issue #1486 is open, in part. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a Go plan-building API, for types `stashgen` cannot tag. It builds a data plan, so the Rust builder's removal does not affect it.
 - **Finished when** these are all true:
   - every case in the conformance corpus is a serialised `Plan` or
     `Planned` with the engine's expected answer beside it;
   - a Go program generated for rc.3 runs against the module that sends
     serialised `Planned` values, apart from the one regeneration the
     handle rename needs;
-  - the chain in `plan/chain.rs` is gone.
+  - the chain in `plan/chain.rs` and the builder in `plan/build.rs`
+    are gone.
 
 #### Context from fields and from the caller
 
-- **What to build.** One mechanism for where a field's context comes
-  from: the plan builder. The derive and the dynamic grammar lower to it.
-  A field's context comes from one of three sources:
-  - the declaration, through `Plan::scope(record_name)`, the only way
-    to put the record name in a plan, with each field's name scope after it;
+- **What to build.** One set of combinators for where a field's context
+  comes from. The derive emits them. The dynamic grammar lowers to them
+  through `Planned`. A field's context comes from one of three sources:
+  - the declaration: `scope = ".."` on a record, or the plan's context
+    in the data grammar, with each field's name scope after it;
   - a row field stored unsealed in the record, so the reader takes it
     from the row. A reader may pass it on decrypt to check it;
   - the caller, on every write, query, and read, as a scope or a
@@ -1656,7 +1645,7 @@ receive.
 - **Done already.** The order in which parts are joined is fixed and
   tested in Rust and Go (#1491). The context inputs `RequiredContext`,
   `NoCallerContext`, and `OptionalContext` exist (#1404). `ExpectedContext` exists on `next`, in `target/context.rs`. #1504 adds
-  `ContextExtension`, makes `ExpectedContext` a context input, and is in
+  `DeclaredScopes`, makes `ExpectedContext` a context input, and is in
   review.
   The naming review of 8 November 2026 decided that `ContextExtension`
   goes: the `Scope::new(..).bind(..)` chain is the input. The plan builder's
@@ -1671,8 +1660,8 @@ receive.
   (#1404) are the three states this keeps.
 - **Tracked in.** Issue #1487 is open. Issue #1120 is open: a second `.extend()` replaces the first. It closes when the chain goes. Issue #1308 is open for Go identity independent of the column. Issue #1475 is closed. Pull request #1491 is merged. Pull request #1504 is open.
 - **Finished when** these are both true:
-  - all eight scenarios run as tests in Rust and Go, through the
-    builder;
+  - all eight scenarios run as tests in Rust and Go, on both paths: the
+    derive, and `Planned`;
   - a Rust call with an undeclared part fails to compile.
 
 #### Query context and stored context
@@ -1708,9 +1697,9 @@ argument](#other-rules) and [`Planned`](#a-value-under-a-plan-planned). This ite
 records only the work.
 
 - **What to build.** The `Scope` and `Bind` value types, with the order
-  fixed by type. The paired entry points on the typed API, and `Planned`
-  with `encrypt`, `encrypt_with_context`, `decrypt`, and
-  `decrypt_with_context`. `Planned` replaces the chain in `plan/chain.rs`,
+  fixed by type. The paired entry points on the typed API. They run
+  `Planned` too, because it is a target. `Planned` replaces the chain in
+  `plan/chain.rs`,
   and with it every chain state and its `.context(..)`, `.extend(..)`,
   and `.keyset(..)`. A stored part passed on decrypt is checked against
   the row before any key is fetched. That check is what `ExpectedContext`
@@ -1746,8 +1735,8 @@ Decided on 7 November 2026.
 - **What to build.** Two ways to see a context before any key is fetched:
   - `contexts()` on a `Plan`, listing each field's query context and
     stored context, with a typed placeholder for every caller-supplied
-    part. The derive's `encryption_plan()` gives it to every record, and
-    a hand-built plan has it too.
+    part. The derive emits `contexts()` on every record directly, and a
+    data plan has it too.
   - `context()` on a prepared call. It gives the exact query context and
     stored context the call will use, with the caller's values filled in.
     Each part shows its type. A call with no context shows an empty
@@ -1933,8 +1922,8 @@ table.
     `RetrieveKeyPayload`. There is no public request type. A binding
     sends a serialised `Plan` or `Planned`.
   - `OpSpec` becomes `Op`.
-  - `context = ".."` becomes `scope = ".."`, `Plan::context(..)` becomes
-    `Plan::scope(..)`, and Go's `context=` tag becomes `scope=`.
+  - `context = ".."` becomes `scope = ".."`, and Go's `context=` tag becomes `scope=`. The builder's
+    `Plan::context(..)` goes with the builder.
   - The marker trait `op::QueryTerm` becomes `Query`, and
     `LabelledTarget` becomes `Stored`. `dynamic::QueryTerm` stays.
   - `ContextExtension` is removed. `EncryptionPlan` is never added.
@@ -1943,7 +1932,7 @@ table.
   follow.
 - **Done already.** Nothing. Every name above is still the old one on
   `next`.
-- **Tracked in.** Issue #1489 is open for naming and packaging. Issues #1116 and #1307 are open for the Go names. Pull request #1504 is open. It lands `ContextExtension`. The review removes that type.
+- **Tracked in.** Issue #1489 is open for naming and packaging. Issues #1116 and #1307 are open for the Go names. Pull request #1504 is open. It lands `scope = ".."` and `DeclaredScopes`, as the review decided.
 - **Finished when** no old name remains in the public API, the examples
   in [Target state](#target-state) compile under the new names, and the
   packaging glossary matches.
@@ -1951,10 +1940,16 @@ table.
 #### Remove the structural API
 
 - **What to build.** Remove `EncryptFrom`, `DecryptInto`, `encrypt_as`, and
-  the helpers in `target::legacy`. Remove the context path type `Label`
-  and `IntoLabel`: a plan's context is its declared `Scope` parts, and the
-  guest sends parts, not a path. Move EQL, Go, and the guest to the new
-  API in the same change. Rename the plan builder's output method, `build()` today, to `target`.
+  the helpers in `target::legacy`. Remove the plan builder:
+  `plan/build.rs`, `plan/chain.rs`, `plan/value.rs`, and
+  `plan/field_ref.rs`, with `pick!`, `FieldRef`, `Runs`, and `Opens`.
+  `Plan::encryption` moves into `Planned` (ADR-0007, amended 9 November
+  2026). Remove the context path type `Label` and `IntoLabel`: a plan's
+  context is its declared `Scope` parts, and the guest sends parts, not
+  a path. Move EQL, Go, and the guest to the new API in the same change.
+  Keep an entry point for a standalone borrowed value. `encrypt_as(&value,
+  ..)` goes with the structural API, and the owned entry points take the
+  value by value.
   The removal of `Label` is also listed in [Apply the naming
   review](#apply-the-naming-review); it happens once, here.
 - **Why.** Two APIs for the same job make the right one hard to find.
@@ -2267,7 +2262,7 @@ renames.
 | `Cipher`, `Keyset` | The connection, today `StackCipher`, and the handle bound to one keyset, today `KeysetCipher`. Decrypt through a `Cipher` opens values from any keyset it holds. The clash with Vitamin C's `Cipher` trait is accepted. Go renames to match: `encrypt.Client` becomes `Cipher`, with `NewCipher`, and the keyset-bound `encrypt.Cipher` becomes `Keyset`. A Go program regenerates once |
 | `CipherRef<'c, K>` | One borrowed value for both paths, a connection and an optional keyset ID, built by `From<&Cipher>` and `From<&Keyset>`. Replaces the `CipherScope` trait and the `dynamic::Scope` enum. A design decision, not only a name |
 | `Plan` | A record's declaration as data. `TargetDefinition` is dropped |
-| `Plan::scope(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | The hand-built plan builder, as settled on 4 October 2026, with `scope` for `context` from 8 November 2026. `EncryptionPlan::record(..).field(..)` is dropped |
+| `Plan::scope(..).fields(..)`, `encrypt_index`, `passthrough`, `query`, `pick!` | Removed. The hand-built plan builder, settled on 4 October 2026, goes with the structural API. The derive emits the combinators, and `Planned` lowers a data plan to them (ADR-0007, amended 9 November 2026). `EncryptionPlan::record(..).field(..)` is dropped |
 | `Label`, `label`, `labels`, `label_tag` | The key tag fact and its operations. The old context path type of that name, a field's declared scopes as `users/email`, is removed: those are `Scope` parts. Go's `ContextLabel()` goes with it |
 | No `Request` type | A binding sends a serialised `Plan` alone for a check, an operator list, or a query plan, and a serialised `Planned` for encrypt, query, and decrypt. The ZeroKMS unit of work that is `Request` today becomes crate-private, built on stack-kms's payload types |
 | `Query`, `Stored` | Two marker traits on the term types. `Query` marks a value a query sends, today `op::QueryTerm`. `Stored` marks a stored index term, today `LabelledTarget`. `EqualityTerm` and the order terms implement both; `MatchTerms` only `Stored`; `MatchQuery` only `Query`. `QueryToken` stays the run-time guard |
@@ -2280,5 +2275,5 @@ renames.
 | `contexts()`, `context()`, `assert_context!`, the `testing` feature, `encrypttest` | Showing and asserting a context, in Rust and Go. Confirmed |
 | `scope(..)`, `bind(..)`, `bind(claim = ..)`, `keyset(name(field = ..))` | The declaration attributes. Confirmed |
 | `stack-kms` to `stack-zerokms` | Not decided. The crate rename is part of the crate layout question, which stays open |
-| `scope = ".."`, `Plan::scope(..)`, Go `scope=` | The record's name is its first scope, so the attribute, the builder, and the Go tag all say `scope`. Today they say `context = ".."`, `Plan::context(..)`, and `context=`. Decided by Dan on 8 November 2026 |
+| `scope = ".."`, Go `scope=` | The record's name is its first scope, so the attribute and the Go tag both say `scope`. Today they say `context = ".."` and `context=`. The builder's `Plan::scope(..)` was part of this decision and goes with the builder. Decided by Dan on 8 November 2026 |
 | `plan.query(field, op)`, `plan.field(name)`, `IndexNotDeclared`, `FieldIndexes`, `StageSpec`, `Match<Dynamic>`, `NotPortable` | The dynamic interface names. Confirmed |

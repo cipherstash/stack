@@ -2,7 +2,9 @@
 status: accepted
 date: 2026-10-04
 extends: ADR-0003, ADR-0004
-amended: 2026-10-16, proposed with ADR-0009 and in effect when ADR-0009 is accepted
+amended:
+  - 2026-10-16, proposed with ADR-0009 and in effect when ADR-0009 is accepted
+  - 2026-11-09, the derive emits the combinators and a data plan lowers to them through `Planned`
 ---
 
 # Bindings enter the engine through a plan lowered from data, never through a second executor
@@ -38,6 +40,13 @@ amended: 2026-10-16, proposed with ADR-0009 and in effect when ADR-0009 is accep
 > data grammar, the query term and its query domain back, `verify` and
 > `target_limit` as engine exports, and the operators each EQL type answers,
 > with their fidelity, in the catalog.
+>
+> **Amended 2026-11-09**, by #1584, after a spike on the
+> `spike/planned-combinators` branch. Two bullets of the decision change. The derive emits the
+> combinators, not the builder. A data plan is lowered to the combinators by
+> `Planned`, which is a target, and the plan builder is removed. The rest of
+> the decision stands: one executor, and a binding enters through a plan.
+> The details, the reasons and the cost are in the last section.
 
 Stack Encrypt has one execution engine: the `Encryption` and `Decryption`
 descriptions in `target/` and the batched `Pending` they produce. ADR-0003
@@ -311,3 +320,160 @@ field themselves, it goes too.
 A data plan's match index declares no `expected_tokens` prior, so
 `target_limit` on a field declared as data is unbounded without a measured
 histogram. A data form for the prior is later work.
+
+## Amended 2026-11-09 (#1584): the derive emits the combinators
+
+Two bullets of the decision change. The derive emits the combinators,
+not the builder. `Planned` lowers a data plan to the combinators. The
+plan builder is removed.
+
+The rest of the decision stands. There is one executor, the
+combinators. A binding enters the engine through a plan. No binding,
+guest, or module calls the term functions or the seal path directly. The
+plan grammar is wire format.
+
+This amendment was decided after a spike, a throwaway implementation on
+the `spike/planned-combinators` branch (commit `a4da7e931`), showed that
+the change works.
+Two pieces of work are affected. The pull request that adds the record
+derives (#1504) already emits combinators. The work that replaces the
+chain with `Planned` builds `Planned` as described here.
+
+### What changes
+
+**The derive emits the combinators.** `#[derive(EncryptTarget)]` on a
+record generates two descriptions. The borrowed one uses `project`,
+`under`, and `zip`. The owned one uses `split`.
+
+`#[derive(DecryptSource)]` generates `decryption_field` calls joined
+with `zip_wiping`. Neither derive goes through a plan.
+
+The 2026-10-04 decision said the derive would emit the builder once the
+two spoke one grammar. That no longer happens.
+
+**`Planned` lowers a data plan to the combinators.** `Planned<'p, V>`
+pairs a parsed data plan with a value. `StackCipherText` implements
+`EncryptTarget<Planned<FieldValues>>`. `Planned<StackCipherText>`
+implements `DecryptSource<FieldValues>`. Each composes the combinators
+from the parsed plan when it runs.
+
+The composition uses the combinators the builder used:
+
+- `ciphertext`, `indexed`, `Indexes::operations`, and `passthrough`, one
+  per verb;
+- `under` or `under_by`, for the field's context;
+- `zip`, to join the fields into one record;
+- `open`, to decrypt.
+
+A `Planned` value is a target, so the owned entry points run it. That
+gives it `encrypt_into` and `decrypt_from`, the `_with_context` forms, a
+`Vec` of values as one batch, and `Protected` on decrypt. No new entry
+point is added for it.
+
+**The plan builder is removed.** `plan/build.rs`, `plan/chain.rs`,
+`plan/value.rs`, and `plan/field_ref.rs` go. With them go `pick!`,
+`FieldRef`, the typed verbs, `Runs`, and `Opens`.
+
+The data side stays: the parsed `Plan` and its parser in
+`dynamic::record`, `FieldValues`, `ValueFrame`, the target resolver, and
+the field index list. The functions in `dynamic::record` that the guest
+calls become thin wrappers. Each parses a frame and builds a `Planned`.
+
+**The derive emits no plan.** `encryption_plan()` is not added. A typed
+query starts from a field marker. The marker has the field's context and
+indexes at compile time. The query lowers to the term combinator under
+that context, with no plan in between.
+
+`contexts()` on a record is emitted directly. Go never reads a Rust
+type's plan. The equivalence suite uses data plans written by hand.
+
+### Why
+
+1. **The owned form is type-driven.** Encrypting a struct by value moves
+   each field out. It encrypts the sealed fields and moves the
+   passthrough fields. If an earlier step panics, it wipes every part
+   that is still waiting. That is a destructure with per-part wipe
+   functions, generated from the struct's shape. A plan is data. It does
+   not know the struct's shape. For the derive to emit the builder, it
+   would generate the divider and the wipe functions anyway, and hand
+   them to the builder. The builder would add nothing to execution.
+2. **The builder's typed surface had one Rust author.** In the engine's
+   own source, nothing outside `plan/` and `dynamic/` builds a plan. The
+   one real use is a typed query, `cipher.query(op, value).on(&plan)`.
+   That use exists only because field markers are not built yet.
+   `eql-bindings` and the tests are the other users. A plan is the
+   dynamic interface's declaration. A Rust program that learns its
+   declaration at run time uses the dynamic interface through `Planned`,
+   as Go does.
+3. **The builder put run-time failure into generated code.** The
+   structural derive's output builds its plan in a `Result`. Its
+   `encryption()` has a failure branch for a duplicate index the derive
+   cannot see. A record with one field can fail to build. The
+   combinator-emitting derive has no such branch. The derive refuses a
+   repeated field name and a shared name scope at compile time. One
+   check moves rather than disappears. A typed index set that repeats an
+   index, `(Equality, Equality)`, is refused by the builder at run time
+   today. Nothing else refuses it, except that no query can select from
+   it. The builder's removal must refuse it at compile time, on the
+   index set or in the derive, so the typed path loses no refusal.
+4. **The spike showed the lowering is small.** `Planned`'s two trait
+   impls are about 260 lines. Most of them moved from `Plan::encryption`
+   in `plan/build.rs` and `lower_without` in `dynamic::record`. Three
+   tests pass. The same four-field declaration was run through the
+   builder and through `Planned`. Both wrote the same record shape and
+   byte-equal equality, order, and match terms. Each side opened the
+   other's record. A plan whose context is a field of the row agrees on
+   both paths. A `Vec` of `Planned` values is a collection target with
+   no new code. The term test fails when the field label is wrong.
+
+### The cost, stated plainly
+
+The problem of 2026-10-04 was two front ends composing the engine
+differently. This amendment accepts two composers again: the derive, at
+compile time, and `Planned`, at run time. Both call the same
+constructors. The rules they share are shared functions, such as the
+order in which context parts are joined.
+
+What can still differ is which parts each composer picks for a field. A
+test catches that, not construction.
+
+So one consequence above is weakened: "the tagged-versus-untagged
+divergence closes by construction rather than by fixture". Everything
+below the composition still closes by construction: the constructors,
+the part order, batching, and the seal path. The composition itself
+closes by test.
+
+The 2026-10-06 amendment called the record fixture the proof of the
+lowering. That fixture is now required, not confirmatory. Representative
+declarations are written twice: as attributes, and as a data plan. The
+test compares their descriptors and term bytes, and opens each record
+with the other path.
+
+The owned form's wiping guarantees are worth this. The spike's tests are
+the first cases of that suite. The record derives' equivalence test in
+#1504 is the first typed one.
+
+### What to read differently
+
+- Option 3, "one builder, three authors", is now one set of combinators
+  and two composers. No Rust caller writes a plan by hand.
+- The second bullet of the decision said the builder lowers every call
+  to a combinator, with three additions. The three additions,
+  `passthrough()`, execution of a description held by value, and
+  `Index<S>` with `Indexes<S>`, are combinators, and they stay. The
+  builder goes.
+- The last bullet of the decision still holds, with one change. A
+  capability a plan cannot express is added to the plan grammar and to
+  `Planned`'s lowering, once, and every author gets it.
+- The third bullet of the decision, the derive emitting the builder, is
+  reversed. The attribute grammar's narrowing stands.
+- The fifth bullet, `dynamic::record` driving the builder, now reads:
+  `Planned` composes the combinators from the parsed plan.
+- The consequence "the combinators stay public as the extension point
+  but are not a front door" still holds. The derive's output is in the
+  user's crate and calls them, so they stay reachable. The documented
+  front door is the derives, the owned traits, and the entry points.
+- The structural API's removal (#1488) grows. The removal also takes the
+  builder. The removal must also give a standalone borrowed value an
+  entry point. `encrypt_as(&value, ..)` goes with the structural API,
+  and the owned entry points take the value by value.
