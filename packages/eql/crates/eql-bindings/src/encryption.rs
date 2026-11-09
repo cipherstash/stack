@@ -102,9 +102,9 @@ pub mod query;
 pub mod targets;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-#[allow(deprecated)]
-use stack_encrypt::sem::MatchTerm;
-use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, TermError, Tokenizer};
+use stack_encrypt::sem::{
+    EqualityTerm, MatchConfig, MatchOptions, MatchTerms, TermError, Tokenizer,
+};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{
     self, AeadContext, CallerContext, DecryptSource, EncryptTarget, IndexSpec, RequiredContext,
@@ -394,11 +394,7 @@ impl MatchConfig for EqlMatch {
 pub struct MatchVisitor;
 impl Visitor for MatchVisitor {
     type Value = BloomFilter;
-    // `MatchTerm` is the type's name in the crates.io stack-encrypt this
-    // crate publishes against, and a deprecated alias of `MatchTerms` in the
-    // tree: the one spelling that compiles against both.
-    #[allow(deprecated)]
-    fn matching<O: MatchConfig>(self, terms: MatchTerm<O>) -> Result<Self::Value, Error> {
+    fn matching<O: MatchConfig>(self, terms: MatchTerms<O>) -> Result<Self::Value, Error> {
         if terms.positions().is_empty() {
             return Err(Error::Term(TermError::EmptyTermText));
         }
@@ -435,12 +431,9 @@ impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
     where
         S: 's,
     {
-        // The type names the configuration and lets inference fill the rest:
-        // `matching` takes three type parameters in the crates.io
-        // stack-encrypt this crate publishes against and four in the tree,
-        // so a turbofish compiles against only one of them.
-        #[allow(deprecated)]
-        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        // The type annotation names the match configuration. Inference fills
+        // in the other type parameters of `matching`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
         terms.transcode()
     }
     /// The match index under [`EqlMatch`]: a plan for a type holding a
@@ -455,9 +448,8 @@ impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for BloomFilter {
     where
         S: 's,
     {
-        // The type names the configuration, as in `EncryptFrom` above.
-        #[allow(deprecated)]
-        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        // The annotation names the match configuration, as for `BloomFilter`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
         terms.accepting().transcode()
     }
     fn indexes() -> Vec<IndexSpec> {
@@ -480,10 +472,7 @@ impl<P, Ctx> DecryptField<P, Ctx> for BloomFilter {
 pub struct SearchMatchVisitor;
 impl Visitor for SearchMatchVisitor {
     type Value = SearchBloomFilter;
-    // As in `MatchVisitor`: the one spelling of the terms' type that compiles
-    // against both the crates.io stack-encrypt and the tree.
-    #[allow(deprecated)]
-    fn matching<O: MatchConfig>(self, terms: MatchTerm<O>) -> Result<Self::Value, Error> {
+    fn matching<O: MatchConfig>(self, terms: MatchTerms<O>) -> Result<Self::Value, Error> {
         if terms.positions().is_empty() {
             return Ok(SearchBloomFilter(BloomFilter(Vec::new())));
         }
@@ -502,9 +491,8 @@ impl<S: AsRef<str>> EncryptFrom<S> for SearchBloomFilter {
     where
         S: 's,
     {
-        // Configuration named by the type, as for `BloomFilter`.
-        #[allow(deprecated)]
-        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        // The annotation names the match configuration, as for `BloomFilter`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
         terms.transcode()
     }
 }
@@ -514,9 +502,8 @@ impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for SearchBloomFilter {
     where
         S: 's,
     {
-        // Configuration named by the type, as for `BloomFilter`.
-        #[allow(deprecated)]
-        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        // The annotation names the match configuration, as for `BloomFilter`.
+        let terms: Encryption<'s, S, MatchTerms<EqlMatch>, K, CallerContext> = target::matching();
         terms.accepting().transcode()
     }
 }
