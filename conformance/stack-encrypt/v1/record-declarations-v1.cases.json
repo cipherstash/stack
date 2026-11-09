@@ -3072,15 +3072,8 @@
       "input": {
         "json": {
           "value": {
-            "context": [
-              "users",
-              "value"
-            ],
-            "outputs": [
-              "c",
-              "ore",
-              "ope"
-            ],
+            "context": ["users", "value"],
+            "outputs": ["c", "ore", "ope"],
             "type": "uint32"
           }
         }
