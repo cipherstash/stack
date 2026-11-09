@@ -207,7 +207,13 @@ fn struct_derive(input: &DeriveInput, record: &Record) -> TokenStream {
         quote!(#from: #local)
     });
     let nested = nested_tuple(&locals);
-    let pattern = quote_spanned!(source.span()=> #source { #(#bindings),* });
+    // A pattern writes generic arguments with a turbofish, as a struct
+    // literal does: `Pt::<u64> { .. }`, not `Pt<u64> { .. }`.
+    let literal_path = match crate::decrypt::struct_literal_path(source) {
+        Ok(path) => path,
+        Err(error) => return error.to_compile_error(),
+    };
+    let pattern = quote_spanned!(source.span()=> #literal_path { #(#bindings),* });
     let divide = quote!(|__source: #source| {
         let #pattern = __source;
         #nested
