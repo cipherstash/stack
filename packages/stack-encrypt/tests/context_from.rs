@@ -1,9 +1,10 @@
-//! A target that takes its context from a field of the plaintext
-//! (`Encryption::context_from`). The caller supplies no context: the
-//! plaintext carries the one it is stored under, such as a value decrypted
-//! from an older format together with its column, and the target stores it
-//! in the row, so opening the value never needs its plaintext. No service
-//! credentials are needed.
+//! Tests for a target that takes its context from a field of the plaintext,
+//! through `Encryption::context_from`.
+//!
+//! The caller supplies no context. The plaintext contains the context it is
+//! stored under, such as the column of a value decrypted from an older
+//! format. The target stores the context in the row, so opening the value
+//! never needs its plaintext. These tests need no service credentials.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ fn placed(column: &str, value: &str) -> (Placed, Arc<AtomicBool>) {
     (placed, wiped)
 }
 
-/// The stored form: the column in the clear, the ciphertext and its term.
+/// The stored form: the column in the clear, the ciphertext, and its term.
 #[derive(EncryptTarget, DecryptSource)]
 #[stash(plaintext = String)]
 struct Stored {
@@ -46,7 +47,7 @@ struct Stored {
     hm: EqualityTerm,
 }
 
-/// `Stored`, encrypted from a `Placed` under the column it carries.
+/// `Stored`, encrypted from a `Placed`, under the column in the `Placed`.
 struct FromPlaced(Stored);
 impl EncryptTarget<Placed> for FromPlaced {
     type ContextInput = NoCallerContext;
@@ -79,7 +80,7 @@ async fn the_value_is_stored_under_the_column_it_carries() {
         .unwrap();
     assert_eq!(stored.hm, direct.hm, "the same term as passing the column");
 
-    // It opens from the row alone, and under the column it names.
+    // The value opens from the row alone, and under the column the row names.
     let opened = String::decrypt_from_with_context(stored, &keyset, column("users/email"))
         .await
         .unwrap();
@@ -122,7 +123,7 @@ async fn an_empty_column_is_refused_before_any_key_is_requested() {
     );
 }
 
-// Each row carries its own column, and the column of rows is one batch.
+// Each row has its own column. The rows are encrypted in one batch.
 #[tokio::test]
 async fn each_row_of_a_column_is_sealed_under_its_own_column() {
     let (cipher, sent) = common::recording_cipher().await;

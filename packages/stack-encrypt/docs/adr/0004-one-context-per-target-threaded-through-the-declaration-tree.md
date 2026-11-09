@@ -360,33 +360,35 @@ and never replaces it.
 
 ## Amended 2026-11-09 (#1586)
 
-Decision 2 gains a third way to set a subtree's context:
-`Encryption::context_from`. It records the case `under` and `extend` do not
-cover: a value that arrives carrying the context it is stored under, such as a
-value decrypted from EQL v3 together with its column. Re-encrypting it as EQL
-v4 should read that column, not ask the caller to repeat it.
+Decision 2 gains a third way to set the context of a subtree:
+`Encryption::context_from`. `under` and `extend` do not cover one case: a
+value that arrives together with the context it is stored under. For
+example, a value decrypted from EQL v3 comes with its column. Re-encrypting
+it as EQL v4 should read that column, not ask the caller to supply it again.
 
-`context_from(pick)` reads the context from a field of the plaintext and
-discharges the requirement into `NoCallerContext`, so the caller supplies
-none. Three limits keep decision 2's reasons intact:
+`context_from(pick)` reads the context from a field of the plaintext.
+`context_from` discharges the requirement into `NoCallerContext`, so the
+caller supplies no context. Three limits keep the reasons for decision 2:
 
-- **It applies only to a target whose context input is a typed context,
-  `NonEmpty<C>`.** A record that stores its context in a `context_field`
-  declares that, and so does an EQL type, which stores its column in `i`. So
-  the context comes from the plaintext on the way in and from the row on the
-  way out. Opening a value never needs its plaintext.
-- **`pick` returns a reference to a field the plaintext holds.** It cannot
-  compute a context from the plaintext. Where the context type differs from
-  the sealed value's type, the sealed field cannot be picked at all.
-- **The field is named in the declaration.** It is a plain function pointer,
-  visible at review, like `project`'s selector. It is not a value supplied at
-  the call that could reach one side and not another.
+- **The target must store its context.** The context input of the target
+  must be a typed context, `NonEmpty<C>`. A record that stores its context in
+  a `context_field` declares such an input. An EQL type declares one too, and
+  stores its column in `i`. So the context comes from the plaintext on the
+  way in, and from the row on the way out. Opening a value never needs its
+  plaintext.
+- **`pick` returns a reference to a field of the plaintext.** So `pick`
+  cannot compute a context from the plaintext. When the context type differs
+  from the type of the sealed value, the sealed field cannot be picked at
+  all.
+- **The declaration names the field.** `pick` is a plain function pointer,
+  visible at review, like the selector of `project`. A value supplied at the
+  call could reach one side of a target and not the other. A named field
+  cannot.
 
-It replaces the surrounding context rather than extending it. A target that
-takes its context this way is not a field of a record that declares contexts,
-since its context input is `NoCallerContext`.
+`context_from` replaces the surrounding context, and does not extend it. A
+target that takes its context this way cannot be a field of a record that
+declares contexts, because its context input is `NoCallerContext`.
 
-As with two `under` literals, two halves of one target zipped after separate
-`context_from` calls could each take a different field. That is the
-divergence decision 1 already accepts for declared per-side contexts: each
-field is named in the declaration.
+Two halves of one target, zipped after two `context_from` calls, could each
+take a different field. Decision 1 already accepts that difference for
+contexts declared per side, because the declaration names each field.

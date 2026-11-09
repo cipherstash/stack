@@ -1,15 +1,15 @@
-//! A migration shim: an EQL v4 type encrypted from a value that carries its
+//! A migration shim: an EQL v4 type encrypted from a value that contains its
 //! own column, with no context argument.
 //!
-//! Moving EQL v3 data to v4 decrypts each v3 value and encrypts it again as
-//! v4. The decrypted value arrives with the column it was stored in, `i`, so
-//! the shim takes the context from there (`Encryption::context_from`) and the
-//! value from `p`. Renaming the column is an edit to `i` before the call.
+//! To move EQL v3 data to v4, each v3 value is decrypted, then encrypted again
+//! as v4. The decrypted value arrives with the column it was stored in, `i`.
+//! The shim takes the context from `i`, through `Encryption::context_from`,
+//! and the value from `p`. To rename the column, edit `i` before the call.
 //!
-//! One generic impl covers every v4 type whose context is its column. What
-//! it writes must be the v4 type itself, byte for byte where bytes are
-//! deterministic: a query built the usual way finds it, and it opens as the
-//! original plaintext.
+//! One generic impl covers every v4 type whose context is its column. The
+//! shim must write the v4 type itself, byte for byte where the bytes are
+//! deterministic. A query built the usual way finds the value, and the value
+//! opens as the original plaintext.
 
 mod common;
 
@@ -33,7 +33,7 @@ impl<P: Zeroize> Zeroize for V3Plaintext<P> {
     }
 }
 
-/// A v4 type, encrypted from a v3 plaintext under the column it carries.
+/// A v4 type, encrypted from a v3 plaintext, under the column in the plaintext.
 struct Shim<T>(T);
 
 impl<P, T> EncryptTarget<V3Plaintext<P>> for Shim<T>
@@ -126,9 +126,9 @@ async fn the_same_shim_covers_an_ordered_type() {
     };
     let Shim(migrated): Shim<IntegerOrdOre> = source.encrypt_into(&keyset).await.unwrap();
 
-    // A block ORE term carries a nonce, so it is compared by order: the
-    // migrated value sits between the queries for 40 and 42, and orders
-    // equal to the query for 41.
+    // A block ORE term contains a nonce, so the test compares it by order.
+    // The migrated value orders after the query for 40, equal to the query
+    // for 41, and before the query for 42.
     let compare = |query: &IntegerOrdOreQuery| migrated.ob.partial_cmp(&query.ob);
     assert_eq!(
         compare(&age_query(&keyset, 40).await),
@@ -159,11 +159,12 @@ async fn a_renamed_column_is_the_column_the_value_is_sealed_under() {
     let Shim(migrated): Shim<TextEq> = source.encrypt_into(&keyset).await.unwrap();
     assert_eq!(migrated.i.c, "contact_email");
 
-    // The new column's query finds it, and the old column's does not.
+    // The query for the new column finds the value. The query for the old
+    // column does not.
     assert_eq!(migrated.hm, email_query(&keyset, "contact_email").await.hm);
     assert_ne!(migrated.hm, email_query(&keyset, "email").await.hm);
 
-    // The ciphertext is sealed under the new column: it opens there.
+    // The ciphertext is sealed under the new column, so it opens there.
     let opened = String::decrypt_from_with_context(
         migrated.clone(),
         &keyset,
@@ -173,8 +174,8 @@ async fn a_renamed_column_is_the_column_the_value_is_sealed_under() {
     .unwrap();
     assert_eq!(opened, "alan@example.com");
 
-    // Asked for the old column, the stored column does not match, so it is
-    // refused before any key is requested.
+    // Opened as the old column, the value is refused before any key is
+    // requested, because the stored column does not match.
     let result =
         String::decrypt_from_with_context(migrated.clone(), &keyset, column("customers", "email"))
             .await;
@@ -184,8 +185,8 @@ async fn a_renamed_column_is_the_column_the_value_is_sealed_under() {
         result.err()
     );
 
-    // With the stored column changed back to the old one, the ciphertext
-    // itself refuses to open: it is bound to the new column, not the label.
+    // Change the stored column back to the old one. The ciphertext still
+    // fails to open, because it is bound to the new column, not to the label.
     let mut relabelled = migrated;
     relabelled.i.c = "email".to_owned();
     let result = String::decrypt_from(relabelled, &keyset).await;
