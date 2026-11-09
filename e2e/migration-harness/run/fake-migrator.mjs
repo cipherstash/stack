@@ -28,7 +28,7 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
     if (kind === 'denied-app')
       source = `import { readFile } from 'node:fs/promises'\n${source}`.replace(
         'export async function createApp(env = process.env) {',
-        'export async function createApp(env = process.env) { await readFile("/etc/shadow").catch(() => {});',
+        'export async function createApp(env = process.env) { await readFile("/trace/canary").catch(() => {});',
       )
     if (kind === 'downcase')
       source = source.replace(
@@ -74,7 +74,7 @@ export async function fakeMigrate({ root, workspace, kind, stack }) {
     if (kind === 'denied-lifecycle')
       manifest.scripts = {
         ...manifest.scripts,
-        install: `node -e "try { require('node:fs').readFileSync('/etc/shadow') } catch {}"`,
+        install: `node -e "try { require('node:fs').readFileSync('/trace/canary') } catch {}"`,
       }
     if (kind === 'legacy-ffi')
       manifest.dependencies['@cipherstash/protect-ffi'] = '0.18.1'
