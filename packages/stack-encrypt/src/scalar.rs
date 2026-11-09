@@ -4,19 +4,44 @@ use crate::target::{
     DecryptFrom, DecryptSource, Decryption, EncryptInto, EncryptTarget, Encryption,
     OptionalContext, Pending, ScalarContext,
 };
-use crate::{CipherText, Decrypt, Error, KeysetCipher, LeafBytesError, SealedValue};
+use crate::{CipherText, ContextPiece, Error, KeysetCipher, LeafBytesError, SealedValue};
 use vitaminc_aead::plaintext::{Encrypt, Scalar, Sink};
 use vitaminc_aead::FromScalar;
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroize;
 
-mod sealed {
-    pub trait Encode {
+pub(crate) mod sealed {
+    use crate::target::Pending;
+    use crate::{Ciphertext, ContextPiece, KeysetCipher, SealedValue, StackCipher};
+
+    /// How a value becomes one sealed leaf. Planning, and for a blob the
+    /// encoding before it, runs synchronously inside this call, so the
+    /// pending it returns holds no plaintext the caller still owns.
+    pub trait Encode: Sized {
+        fn seal<'a, K: 'static>(
+            &self,
+            cipher: &'a KeysetCipher<'_, K>,
+            context: ContextPiece<'static>,
+        ) -> Pending<'a, Ciphertext, K>;
+    }
+
+    /// A scalar's own Vitamin C encoding, by reference: what `ScalarRef`
+    /// forwards to.
+    pub(crate) trait Scalar {
         const DEPTH: Option<usize>;
         const FIXED: Option<vitaminc_aead::plaintext::FixedType>;
         fn visit<S: vitaminc_aead::plaintext::Sink>(&self, sink: S) -> Result<S::Ok, S::Error>;
     }
-    pub trait Decode {}
+
+    /// How one sealed leaf opens to a value. The leaf authenticates inside
+    /// the pending, before any decoding the type adds on top.
+    pub trait Decode: Sized {
+        fn open<'a, K: 'static>(
+            leaf: SealedValue,
+            cipher: &'a StackCipher<K>,
+            context: ContextPiece<'static>,
+        ) -> Pending<'a, Self, K>;
+    }
 }
 
 /// A plaintext type that encrypts as one opaque [`Ciphertext`].
@@ -36,8 +61,14 @@ mod sealed {
 /// - the byte strings `Vec<u8>` and `[u8; N]`
 ///
 /// A type of your own meets them if its borrow implements `Scalar` and the
-/// type implements `Zeroize`. The trait is sealed, so you cannot implement it
-/// directly.
+/// type implements `Zeroize`.
+///
+/// [`OpaqueBlob<T>`](crate::OpaqueBlob) is an `OpaqueEncode` type too. It
+/// encodes a whole `Serialize` value as one storage blob first.
+///
+/// The trait is sealed, so you cannot implement it directly. There is no
+/// blanket `Serialize` fallback: a composite value is encrypted as one
+/// ciphertext only by naming `OpaqueBlob`.
 ///
 /// A sequence is not a `Scalar`, so `Vec<u8>` is the only `Vec` that encrypts
 /// into one `Ciphertext`. A `Vec` of any other `OpaqueEncode` type encrypts
@@ -88,13 +119,18 @@ pub trait OpaqueEncode: sealed::Encode + Zeroize + Send + 'static {}
 /// A plaintext type that one opaque [`Ciphertext`] decrypts to.
 ///
 /// `OpaqueDecode` is implemented for every [`FromScalar`] type that also
-/// implements [`Zeroize`]. Every built-in [`OpaqueEncode`] type is one. The
-/// trait is sealed, as `OpaqueEncode` is.
-pub trait OpaqueDecode: sealed::Decode + Decrypt + Zeroize + Send + 'static {}
+/// implements [`Zeroize`], and for [`OpaqueBlob<T>`](crate::OpaqueBlob).
+/// Every built-in [`OpaqueEncode`] type is one. The trait is sealed, as
+/// `OpaqueEncode` is.
+///
+/// A successful scalar decrypt returns an ordinary owned value, and nothing
+/// wipes it when it is dropped: `Zeroize` is the bound, not a drop guard. A
+/// decrypted `OpaqueBlob<T>` is the exception: it wipes its value on drop.
+pub trait OpaqueDecode: sealed::Decode + Zeroize + Send + 'static {}
 
 // The bridge from an owned `S` to its borrow's walk: `OpaqueEncode`'s
 // callers hold `&S`, and only this impl's where clause knows `&S` encrypts.
-impl<S> sealed::Encode for S
+impl<S> sealed::Scalar for S
 where
     S: Zeroize + Send + 'static,
     for<'a> &'a S: Scalar,
@@ -105,24 +141,46 @@ where
         Encrypt::visit(self, sink)
     }
 }
+impl<S> sealed::Encode for S
+where
+    S: Zeroize + Send + 'static,
+    for<'a> &'a S: Scalar,
+{
+    fn seal<'a, K: 'static>(
+        &self,
+        cipher: &'a KeysetCipher<'_, K>,
+        context: ContextPiece<'static>,
+    ) -> Pending<'a, Ciphertext, K> {
+        crate::target::core::encrypt_opaque(ScalarRef(self), cipher, context)
+            .try_map(Ciphertext::from_tree)
+    }
+}
 impl<S> OpaqueEncode for S
 where
     S: Zeroize + Send + 'static,
     for<'a> &'a S: Scalar,
 {
 }
-impl<P: FromScalar + Zeroize + Send + 'static> sealed::Decode for P {}
+impl<P: FromScalar + Zeroize + Send + 'static> sealed::Decode for P {
+    fn open<'a, K: 'static>(
+        leaf: SealedValue,
+        cipher: &'a crate::StackCipher<K>,
+        context: ContextPiece<'static>,
+    ) -> Pending<'a, Self, K> {
+        crate::target::core::open_opaque(CipherText::Single(leaf), cipher, context)
+    }
+}
 impl<P: FromScalar + Zeroize + Send + 'static> OpaqueDecode for P {}
 
 pub(crate) struct ScalarRef<'a, S>(pub &'a S);
 // The owned conversion keeps the source in Protected and hands this a borrow.
-// It carries the scalar's encoding metadata through `sealed::Encode`, whose
-// supertrait bound is what lets a generic caller walk `&S` at all.
-impl<S: OpaqueEncode> Encrypt for ScalarRef<'_, S> {
-    const DEPTH: Option<usize> = <S as sealed::Encode>::DEPTH;
-    const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <S as sealed::Encode>::FIXED;
+// It carries the scalar's encoding metadata through `sealed::Scalar`, whose
+// blanket impl is what lets a generic caller walk `&S` at all.
+impl<S: sealed::Scalar> Encrypt for ScalarRef<'_, S> {
+    const DEPTH: Option<usize> = <S as sealed::Scalar>::DEPTH;
+    const FIXED: Option<vitaminc_aead::plaintext::FixedType> = <S as sealed::Scalar>::FIXED;
     fn visit<V: Sink>(self, sink: V) -> Result<V::Ok, V::Error> {
-        sealed::Encode::visit(self.0, sink)
+        sealed::Scalar::visit(self.0, sink)
     }
 }
 
@@ -159,6 +217,19 @@ impl Ciphertext {
                 expected: "a single ciphertext",
             }),
         }
+    }
+}
+/// The one sealed leaf, as the structural API holds it. The bytes are the
+/// same: this is how a caller holding a `CipherText::Single` from
+/// [`KeysetCipher::encrypt_tree`] opens it through the owned API.
+impl From<SealedValue> for Ciphertext {
+    fn from(leaf: SealedValue) -> Self {
+        Self(leaf)
+    }
+}
+impl From<Ciphertext> for SealedValue {
+    fn from(ciphertext: Ciphertext) -> Self {
+        ciphertext.0
     }
 }
 /// Human-readable formats store the canonical bytes as padded standard
@@ -222,9 +293,7 @@ impl<P: OpaqueDecode> DecryptSource<P> for Ciphertext {
     type ContextInput = OptionalContext<ScalarContext>;
     fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
         let context = context.piece();
-        Decryption::from_open(move |cipher| {
-            crate::target::core::open_opaque(CipherText::Single(self.0), cipher, context)
-        })
+        Decryption::from_open(move |cipher| P::open(self.0, cipher, context))
     }
 }
 impl<K: 'static> KeysetCipher<'_, K> {

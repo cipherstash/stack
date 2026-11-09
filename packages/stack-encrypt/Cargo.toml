@@ -53,9 +53,12 @@ rand = { version = "0.10.1", default-features = false }
 # `future::join` and `join_all`: a pending's dispatch loads the keysets its
 # JSON documents need beside the data-key retrieval, in one await.
 futures = { version = "0.3.25", default-features = false }
-# `dynamic` only: serde over the transport frame, which reads a binding's
+# Two things: the storage profile (`storage`, behind `serde`) that
+# `OpaqueBlob<T>` encodes a whole value with before sealing it as one leaf,
+# the same versioned bytes the Go SDK writes through `vcffi.MarshalStorage`;
+# and, for `dynamic`, serde over the transport frame, which reads a binding's
 # control data (statistics, options, a plan) into typed messages.
-vitaminc-aead-frame = { workspace = true, optional = true, features = ["serde"] }
+vitaminc-aead-frame = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 # The order terms' serde: lowercase hex in JSON, raw bytes in a binary
 # format, through serdect's constant-time hex.
@@ -109,8 +112,10 @@ default = ["http"]
 http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of
-# use to a binding author. Its transport frames are vitaminc-aead's own.
-dynamic = ["dep:vitaminc-aead-frame"]
+# use to a binding author. Its transport frames are vitaminc-aead's own, and
+# the crate they come from is always built (the storage profile `OpaqueBlob`
+# uses lives there), so the feature adds no dependency.
+dynamic = []
 # Conversions between chrono's `NaiveDate` / `DateTime<Utc>` and
 # `value::Date` / `value::Timestamp`.
 chrono = ["dep:chrono", "vitaminc-aead/chrono"]
@@ -179,4 +184,8 @@ all-features = true
 
 [[example]]
 name = "scalar"
+required-features = ["http"]
+
+[[example]]
+name = "opaque_blob"
 required-features = ["http"]

@@ -3,6 +3,7 @@ package gensupport
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -578,5 +579,51 @@ func TestEncryptNullOnlyForASealedNull(t *testing.T) {
 	_, err := NewField[int32](d, "age").EncryptNull(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "EncryptNull needs a cipher") {
 		t.Fatalf("age: EncryptNull = %v", err)
+	}
+}
+
+// TestOpaqueReadsARustWrittenBlob is the Go half of the storage exchange
+// with Rust's stack-encrypt: the blob its OpaqueBlob<Profile> writes
+// (pinned as RUST_BLOB in packages/stack-encrypt/tests/opaque_blob.rs,
+// where this struct's Go-written bytes are read in turn) opens into the
+// Go shape, Rust's Some marker included. The two SDKs share the storage
+// profile, so an opaque column is one format whichever wrote it.
+func TestOpaqueReadsARustWrittenBlob(t *testing.T) {
+	type profile struct {
+		Name     string   `vc:"name"`
+		Age      uint32   `vc:"age"`
+		Tags     []string `vc:"tags"`
+		Nickname *string  `vc:"nickname"`
+	}
+	rust, err := hex.DecodeString("56435301f104000000040000006e616d650a0c000000416461204c6f76656c6163650300000061676506240000000400000074616773f0020000000a050000006d617468730a07000000656e67696e6573080000006e69636b6e616d65f50a03000000616461")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got profile
+	if err := Opaque(Values{OpaqueField: rust}, &got); err != nil {
+		t.Fatalf("Opaque of a Rust-written blob: %v", err)
+	}
+	if got.Name != "Ada Lovelace" || got.Age != 36 || !reflect.DeepEqual(got.Tags, []string{"maths", "engines"}) || got.Nickname == nil || *got.Nickname != "ada" {
+		t.Fatalf("Opaque of a Rust-written blob = %+v", got)
+	}
+	// Rust writes every Some with the storage profile's marker; Go writes
+	// a non-nil pointer as the bare value. The bytes differ in that one
+	// byte, and both read as the same value here.
+	nick := "ada"
+	ours, err := vcffi.MarshalStorage(profile{Name: "Ada Lovelace", Age: 36, Tags: []string{"maths", "engines"}, Nickname: &nick})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pin Go's own bytes as well, so a change in the Go writer fails here
+	// and not only in the Rust suite (GO_BLOB_SOME in tests/opaque_blob.rs).
+	if goHex := hex.EncodeToString(ours); goHex != "56435301f104000000040000006e616d650a0c000000416461204c6f76656c6163650300000061676506240000000400000074616773f0020000000a050000006d617468730a07000000656e67696e6573080000006e69636b6e616d650a03000000616461" {
+		t.Fatalf("Go wrote %s; it no longer matches GO_BLOB_SOME", goHex)
+	}
+	if len(ours)+1 != len(rust) {
+		t.Fatalf("Go wrote %d bytes, Rust %d; expected to differ by the one Some marker", len(ours), len(rust))
+	}
+	var back profile
+	if err := Opaque(Values{OpaqueField: ours}, &back); err != nil || !reflect.DeepEqual(back, got) {
+		t.Fatalf("Opaque of the Go-written blob: %v %+v", err, back)
 	}
 }

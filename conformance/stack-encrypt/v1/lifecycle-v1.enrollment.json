@@ -89,6 +89,14 @@
       "language": "go",
       "lane": "fast",
       "package": "./encrypt/gensupport"
+    },
+    "opaque": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "opaque_blob"
     }
   },
   "requirements": [
@@ -110,6 +118,12 @@
           "TestCloseStopsTheCleanup",
           "TestUnreachableClientIsReleased",
           "TestClosedClientIsState"
+        ],
+        "opaque": [
+          "given_an_owned_source::is_wiped_before_a_pending_is_dropped_unpolled",
+          "given_an_owned_source::is_wiped_before_a_pending_is_awaited",
+          "given_an_owned_source::is_wiped_when_encoding_fails_and_no_key_is_requested",
+          "given_a_decrypted_blob::is_wiped_on_drop_and_into_inner_keeps_it_guarded"
         ]
       }
     },
@@ -140,7 +154,8 @@
       "evidence": {
         "heap": [
           "a_late_read_type_failure_leaves_no_plaintext_on_the_heap",
-          "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap"
+          "a_late_type_failure_in_an_owned_column_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_of_another_shape_leaves_no_plaintext_on_the_heap"
         ],
         "collections": [
           "a_late_element_failure_wipes_the_plaintext_recovered_before_it",
@@ -163,7 +178,10 @@
           "an_owned_column_encrypted_leaves_no_plaintext_on_the_heap",
           "a_record_decrypted_with_a_nested_field_leaves_no_plaintext_on_the_heap",
           "a_json_document_read_from_a_frame_leaves_no_plaintext_on_the_heap",
-          "the_spy_sees_an_unwiped_free"
+          "the_spy_sees_an_unwiped_free",
+          "the_spy_sees_a_leaked_block",
+          "opaque_blob::an_opaque_blob_encrypted_leaves_no_plaintext_on_the_heap",
+          "opaque_blob::an_opaque_blob_decrypted_leaves_no_plaintext_on_the_heap"
         ],
         "collections": [
           "owned_elements_are_wiped_before_the_pending_is_returned",
@@ -222,6 +240,16 @@
           "TestRuntimeConformance",
           "TestReadConformance",
           "TestMismatchedPlanIsRefusedBeforeTheGuest"
+        ],
+        "opaque": [
+          "given_an_owned_source::is_wiped_when_encoding_fails_and_no_key_is_requested",
+          "given_an_owned_source::is_wiped_when_the_context_is_refused",
+          "given_an_owned_source::the_context_is_refused_before_the_value_is_encoded",
+          "given_a_ciphertext_that_is_not_this_blob::a_tampered_ciphertext_fails_the_aead",
+          "given_a_ciphertext_that_is_not_this_blob::the_wrong_context_fails_the_aead",
+          "given_a_ciphertext_that_is_not_this_blob::a_blob_opened_as_a_string_is_the_wrong_type",
+          "given_a_ciphertext_that_is_not_this_blob::a_string_opened_as_a_blob_is_the_wrong_type",
+          "given_a_ciphertext_that_is_not_this_blob::bytes_that_are_not_a_profile_are_refused_by_class"
         ]
       }
     },
@@ -265,6 +293,11 @@
       "id": "native-heap-observer-exclusions",
       "status": "limited-observation",
       "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs"
+    },
+    {
+      "id": "native-partial-decode-fields",
+      "status": "known-gap",
+      "evidence": "packages/stack-encrypt/tests/heap_hygiene.rs::opaque_blob::a_partial_decode_drops_the_fields_it_built_unwiped"
     },
     {
       "id": "caller-owned-host-values",
