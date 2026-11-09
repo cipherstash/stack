@@ -19,16 +19,20 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 const TASKS =
   'languages/typescript/packages/protect-ffi/integration-tests/tasks.toml'
 
-/** The shell lines of a task's `run = """…"""` body, comments dropped. */
+/** The shell lines of a task's `run` body, comments dropped. */
 function taskRunLines(name) {
   const source = readFileSync(resolve(REPO_ROOT, TASKS), 'utf8')
   const header = `["${name}"]`
   const start = source.indexOf(header)
   if (start === -1) throw new Error(`${TASKS} has no task ${header}`)
-  const body = /^run\s*=\s*(?:"""([\s\S]*?)"""|"([^"\n]*)")/m.exec(
-    source.slice(start + header.length),
-  )
+  const rest = source.slice(start + header.length)
+  const body =
+    /^run\s*=\s*(?:"""([\s\S]*?)"""|"([^"\n]*)"|\[([\s\S]*?)^\])/m.exec(rest)
   if (!body) throw new Error(`${header} has no run body`)
+  // The `run = [ "…", "…" ]` form: one shell command per string.
+  if (body[3] !== undefined) {
+    return [...body[3].matchAll(/^\s*"([^"\n]*)"/gm)].map((m) => m[1])
+  }
   return (body[1] ?? body[2])
     .split('\n')
     .map((line) => line.trim())
@@ -66,3 +70,43 @@ describe('eql:v4:install checks the EQL lockfile before building', () => {
     expect(setE, 'set -e has to precede the gate').toBeLessThan(gate)
   })
 })
+
+/**
+ * The migration suites shell out to a codec binary built outside vitest and
+ * query SQL installed outside vitest. A local `mise run test:integration` that
+ * skipped either would pass against whatever an earlier `mise run setup` left.
+ */
+describe.each(['test:integration', 'test:integration:all'])(
+  '%s rebuilds EQL v4 before vitest',
+  (task) => {
+    const lines = taskRunLines(task)
+    const vitest = lines.findIndex((line) => /\bvitest\b/.test(line))
+
+    it('still runs vitest', () => {
+      expect(vitest, `${task} no longer runs vitest`).toBeGreaterThan(-1)
+    })
+
+    it.each(['mise run eql:v4:install', 'mise run eql:v4:codec'])(
+      'runs %s first',
+      (step) => {
+        const at = lines.indexOf(step)
+        expect(
+          at,
+          `${task} does not run ${step}: ${JSON.stringify(lines)}`,
+        ).toBeGreaterThan(-1)
+        expect(at, `${step} has to run before vitest`).toBeLessThan(vitest)
+      },
+    )
+
+    it('installs the bundle before building the codec, after the binding', () => {
+      expect(lines.indexOf('mise run build:debug')).toBeGreaterThan(-1)
+      expect(
+        lines.indexOf('mise run eql:v4:install'),
+        'the lock gate in eql:v4:install has to run first',
+      ).toBeLessThan(lines.indexOf('mise run eql:v4:codec'))
+      expect(lines.indexOf('mise run build:debug')).toBeLessThan(
+        lines.indexOf('mise run eql:v4:install'),
+      )
+    })
+  },
+)

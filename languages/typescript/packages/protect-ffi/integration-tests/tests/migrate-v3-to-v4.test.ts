@@ -141,7 +141,18 @@ const columnNames = Object.keys(columns) as Column[]
 /** The emails of `rows` in id order: the oracle every query is compared to. */
 const emails = (rows: Customer[]) => rows.map((row) => row.email)
 
-describe('EQL v3 -> v4 migration', () => {
+/** Every plaintext of every customer, in the order the columns are decrypted. */
+const everyPlaintext = customers.flatMap((customer) =>
+  columnNames.map((column) => customer[column]),
+)
+
+/** A row that exists only inside the NULL test; no other test ever sees it. */
+const NULL_ROW_ID = customers.length + 1
+
+// 90s because one codec launch can block for 60s (`CODEC_TIMEOUT_MS`), and some
+// tests launch it more than once. `spawnSync` blocks the event loop, so a test
+// over its limit is reported as a timeout even when every assertion would pass.
+describe('EQL v3 -> v4 migration', { timeout: 90_000 }, () => {
   const pg = new Client()
   let connected = false
   let v3Client: Awaited<ReturnType<typeof newClient>>
@@ -173,6 +184,66 @@ describe('EQL v3 -> v4 migration', () => {
       { type: columns[column].v4, table: TABLE, column, value },
     ])
     return operand
+  }
+
+  /**
+   * Step 3 for the rows `where` selects: read the v3 payloads, decrypt them with
+   * the v3 client, encrypt the plaintexts as v4 and write them beside the v3
+   * columns. A SQL NULL is no value, so it is neither decrypted nor encrypted
+   * and its v4 column stays NULL: the `source IS NOT NULL` rule
+   * `@cipherstash/migrate` applies to its own backfill.
+   */
+  async function backfill(where = '', params: unknown[] = []) {
+    const res = await pg.query<
+      Record<Column, EncryptedPayload | null> & { id: number }
+    >(
+      `SELECT id, ${columnNames.map((c) => `${c}::jsonb AS ${c}`).join(', ')}
+       FROM ${TABLE} ${where} ORDER BY id`,
+      params,
+    )
+    const cells = res.rows.flatMap((row) =>
+      columnNames.flatMap((column) => {
+        const ciphertext = row[column]
+        return ciphertext === null ? [] : [{ id: row.id, column, ciphertext }]
+      }),
+    )
+    if (cells.length === 0) return
+
+    const plaintexts = await decryptBulk(v3Client, {
+      ciphertexts: cells.map(({ ciphertext }) => ({ ciphertext })),
+    })
+    const v4 = encryptV4(
+      cells.map(({ column }, i) => ({
+        type: columns[column].v4,
+        table: TABLE,
+        column,
+        value: plaintexts[i] as Plaintext,
+      })),
+    )
+    for (const [i, { id, column }] of cells.entries()) {
+      await pg.query(
+        `UPDATE ${TABLE} SET ${column}_v4 = $1::jsonb WHERE id = $2`,
+        [v4[i], id],
+      )
+    }
+  }
+
+  /** Every row's v4 columns, named `<column><suffix>`, opened in one codec launch. */
+  async function decryptEveryV4Column(suffix: '' | '_v4') {
+    const res = await pg.query<Record<string, unknown> & { id: number }>(
+      `SELECT id, ${columnNames.map((c) => `${c}${suffix}::jsonb AS ${c}`).join(', ')}
+       FROM ${TABLE} ORDER BY id`,
+    )
+    return decryptV4(
+      res.rows.flatMap((row) =>
+        columnNames.map((column) => ({
+          type: columns[column].v4,
+          table: TABLE,
+          column,
+          payload: row[column],
+        })),
+      ),
+    )
   }
 
   beforeAll(async () => {
@@ -324,8 +395,7 @@ describe('EQL v3 -> v4 migration', () => {
     expect(typeof v4Query.hm).toBe('string')
     expect(typeof relabelled.hm).toBe('string')
     expect(v4Query.hm).not.toEqual(relabelled.hm)
-    // Four codec launches, each authenticating against live ZeroKMS.
-  }, 60_000)
+  })
 
   test('backfill: decrypt every v3 value and re-encrypt it as v4 beside it', async () => {
     // Step 2: one v4 column per v3 column.
@@ -336,39 +406,7 @@ describe('EQL v3 -> v4 migration', () => {
     }
 
     // Step 3: read, decrypt with the v3 client, re-encrypt as v4, write back.
-    const res = await pg.query<
-      Record<Column, EncryptedPayload> & { id: number }
-    >(
-      `SELECT id, ${columnNames.map((c) => `${c}::jsonb AS ${c}`).join(', ')}
-       FROM ${TABLE} ORDER BY id`,
-    )
-    const plaintexts = await decryptBulk(v3Client, {
-      ciphertexts: res.rows.flatMap((row) =>
-        columnNames.map((column) => ({ ciphertext: row[column] })),
-      ),
-    })
-    const v4 = encryptV4(
-      res.rows.flatMap((_, r) =>
-        columnNames.map((column, c) => ({
-          type: columns[column].v4,
-          table: TABLE,
-          column,
-          value: plaintexts[r * columnNames.length + c] as Plaintext,
-        })),
-      ),
-    )
-    for (const [r, row] of res.rows.entries()) {
-      const values = v4.slice(
-        r * columnNames.length,
-        (r + 1) * columnNames.length,
-      )
-      await pg.query(
-        `UPDATE ${TABLE} SET ${columnNames
-          .map((c, i) => `${c}_v4 = $${i + 2}::jsonb`)
-          .join(', ')} WHERE id = $1`,
-        [row.id, ...values],
-      )
-    }
+    await backfill()
 
     const versions = await pg.query<{ v: number; n: number }>(
       `SELECT (email_v4::jsonb ->> 'v')::int AS v, count(*)::int AS n FROM ${TABLE} GROUP BY 1`,
@@ -377,23 +415,7 @@ describe('EQL v3 -> v4 migration', () => {
   })
 
   test('every migrated value decrypts as v4 to the original plaintext', async () => {
-    const res = await pg.query<Record<string, unknown> & { id: number }>(
-      `SELECT id, ${columnNames.map((c) => `${c}_v4::jsonb AS ${c}`).join(', ')}
-       FROM ${TABLE} ORDER BY id`,
-    )
-    const opened = decryptV4(
-      res.rows.flatMap((row) =>
-        columnNames.map((column) => ({
-          type: columns[column].v4,
-          table: TABLE,
-          column,
-          payload: row[column],
-        })),
-      ),
-    )
-    expect(opened).toEqual(
-      customers.flatMap((customer) => columnNames.map((c) => customer[c])),
-    )
+    expect(await decryptEveryV4Column('_v4')).toEqual(everyPlaintext)
   })
 
   test('equality: the v4 column finds the row the v3 column found', async () => {
@@ -418,6 +440,20 @@ describe('EQL v3 -> v4 migration', () => {
     const v4 = await emailsWhere(
       'WHERE age_v4 > $1::jsonb::eql_v4.query_integer_ord_ore ORDER BY id',
       [v4Operand('age', 40)],
+    )
+    expect(v3).toEqual(expected)
+    expect(v4).toEqual(expected)
+  })
+
+  test('range: OPE comparisons agree across versions', async () => {
+    const expected = emails(customers.filter((c) => c.rank > 2))
+    const v3 = await emailsWhere(
+      'WHERE rank > $1::jsonb::eql_v3.query_integer_ord_ope ORDER BY id',
+      [await v3Operand('rank', 2, 'ope')],
+    )
+    const v4 = await emailsWhere(
+      'WHERE rank_v4 > $1::jsonb::eql_v4.query_integer_ord_ope ORDER BY id',
+      [v4Operand('rank', 2)],
     )
     expect(v3).toEqual(expected)
     expect(v4).toEqual(expected)
@@ -468,6 +504,65 @@ describe('EQL v3 -> v4 migration', () => {
     ).toEqual([])
   })
 
+  test('a SQL NULL stays NULL through the backfill and is answered as NULL', async () => {
+    // Before the cut-over, because the row needs both sets of columns. It is
+    // removed in `finally` so the five-row oracles the other tests compare
+    // against stay true whatever happens here. `active` is the one real value:
+    // it is the last column, so the backfill has to pair it with the right v4
+    // type and column after skipping the NULLs before it.
+    await pg.query(
+      `INSERT INTO ${TABLE} (id, active) SELECT $1::int, active FROM ${TABLE} WHERE id = 1`,
+      [NULL_ROW_ID],
+    )
+    try {
+      await backfill('WHERE id = $1', [NULL_ROW_ID])
+
+      const migrated = await pg.query<Record<string, unknown>>(
+        `SELECT ${columnNames.map((c) => `${c}_v4::jsonb AS ${c}`).join(', ')}
+         FROM ${TABLE} WHERE id = $1`,
+        [NULL_ROW_ID],
+      )
+      expect(migrated.rows).toEqual([
+        {
+          ...Object.fromEntries(columnNames.map((c) => [c, null])),
+          active: expect.anything(),
+        },
+      ])
+      expect(
+        decryptV4(
+          migrated.rows.map((row) => ({
+            type: columns.active.v4,
+            table: TABLE,
+            column: 'active',
+            payload: row.active,
+          })),
+        ),
+      ).toEqual(customers.slice(0, 1).map((c) => c.active))
+
+      // Ids, not `emailsWhere`: the NULL row has no entry in the plaintext oracle.
+      const matched = await pg.query<{ id: number }>(
+        `SELECT id FROM ${TABLE}
+         WHERE email_v4 = $1::jsonb::eql_v4.query_text_eq`,
+        [v4Operand('email', 'alan@example.com')],
+      )
+      expect(matched.rows).toEqual([{ id: 3 }])
+
+      // The term functions are STRICT, so NULL sorts last rather than raising.
+      for (const term of [
+        'eql_v4.ord_term_ore(age_v4)',
+        'eql_v4.ord_term(rank_v4)',
+      ]) {
+        const ordered = await pg.query<{ id: number }>(
+          `SELECT id FROM ${TABLE} ORDER BY ${term}`,
+        )
+        expect(ordered.rows).toHaveLength(customers.length + 1)
+        expect(ordered.rows.at(-1)).toEqual({ id: NULL_ROW_ID })
+      }
+    } finally {
+      await pg.query(`DELETE FROM ${TABLE} WHERE id = $1`, [NULL_ROW_ID])
+    }
+  })
+
   test('cut-over: drop the v3 columns and the v4 values answer under the original names', async () => {
     // Step 5. The v4 values were encrypted under `customers/<column>`, so
     // renaming the database column changes nothing they are bound to.
@@ -484,18 +579,6 @@ describe('EQL v3 -> v4 migration', () => {
       ]),
     ).toEqual(['grace@example.com'])
 
-    const res = await pg.query<{ active: unknown }>(
-      `SELECT active::jsonb AS active FROM ${TABLE} ORDER BY id`,
-    )
-    expect(
-      decryptV4(
-        res.rows.map((row) => ({
-          type: 'Boolean' as const,
-          table: TABLE,
-          column: 'active',
-          payload: row.active,
-        })),
-      ),
-    ).toEqual(customers.map((c) => c.active))
+    expect(await decryptEveryV4Column('')).toEqual(everyPlaintext)
   })
 })

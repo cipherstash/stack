@@ -268,7 +268,10 @@ credentials**, and **EQL v2, v3 and v4 installed** in the database.
   `mise run test:integration` is the same suite **minus** lock context — prefer
   `:all`, which is what CI runs. Both tasks live in
   `integration-tests/tasks.toml`, included from `mise.toml`'s `[task_config]`,
-  and both build the binding themselves (debug) before invoking vitest. Postgres
+  and both build the binding themselves (debug) and rerun `eql:v4:install` and
+  `eql:v4:codec` before invoking vitest, so a local run cannot pass against a
+  stale codec or stale `eql_v4` SQL. Those steps refuse a stale
+  `packages/eql/Cargo.lock`; the comment in `tasks.toml` says why. Postgres
   is on **5436** (`docker-compose.yml` publishes `5436:5432`); `mise.toml`'s
   `[env]` carries the matching `PG*` values, and mise's `[env]` overrides an
   inherited one, so a stale `PGPORT` in your shell cannot misroute the tests.
@@ -297,7 +300,8 @@ credentials**, and **EQL v2, v3 and v4 installed** in the database.
   `tests/v4-codec.ts`. `eql:v4:install` builds the v4 bundle from the in-tree
   EQL source (`bash tasks/build.sh`, called directly so it needs cargo and not
   `packages/eql`'s mise config) and `eql:v4:codec` builds the codec; both are
-  part of `mise run setup`. The CI filter lists the entries derived in
+  part of `mise run setup` and rerun from `mise run test:integration` and its
+  `:all`. The CI filter lists the entries derived in
   `scripts/__tests__/lib/eql-v4-suite-inputs.mjs` and held by
   `eql-v4-suite-triggers.test.mjs`. The wide `packages/eql/crates/**` glob stays
   forbidden by `wasm-build-inputs-paths-filter.test.mjs`, and `test-eql.yml`

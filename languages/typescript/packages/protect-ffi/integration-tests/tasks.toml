@@ -53,6 +53,9 @@ docker exec -i protect-ffi-postgres psql postgresql://cipherstash:password@postg
 # v3 comes from `eql:v3:install` above. `tasks/build.sh` runs cargo without
 # `--locked`, which rewrites a stale Cargo.lock and would let `eql:v4:codec`'s
 # `--locked` pass against the rewritten file, so the lock is checked first.
+# This task leaves a DEV-stamped bundle in `packages/eql/release`, and `--version`
+# is not a cache input of `mise run build`, so a versioned local build after it
+# needs `mise run --force build --version X` or it keeps the DEV bundle.
 ["eql:v4:install"]
 description = "Build EQL v4 from the in-tree source and install it beside v2 and v3"
 dir = "{{ config_root }}/../../../../packages/eql"
@@ -67,6 +70,12 @@ docker exec -i protect-ffi-postgres psql -v ON_ERROR_STOP=1 -q postgresql://ciph
 # The Rust codec the migration suites re-encrypt through: Stack Encrypt is the
 # only EQL v4 producer and no TypeScript SDK reaches it yet. See
 # `tests/v4-codec.ts` and `packages/eql/tests/encryption/examples/v4_codec.rs`.
+#
+# `--locked` here, and the gate in `eql:v4:install`, differ on purpose from
+# AGENTS.md's rule for `build:native`: this build's input is the committed lock
+# CI tests, so a stale lock has to be regenerated and committed, not built past.
+# `setup` and both `test:integration` tasks run them, so after a dependency edit
+# under `packages/eql`, run cargo there once without `--locked` before those.
 ["eql:v4:codec"]
 description = "Build the EQL v4 codec the migration suites call"
 dir = "{{ config_root }}/../../../../packages/eql"
@@ -101,6 +110,10 @@ depends = ["start-db"]
 # the wasm artifacts must exist before vitest runs even though the rest
 # of the integration tests only need the Neon binding.
 #
+# `eql:v4:install` and `eql:v4:codec` rerun so a local run cannot pass against a
+# stale codec or stale `eql_v4` SQL. `start-db` above has Postgres up by then,
+# and a failing step stops the task before vitest. Both tasks do this.
+#
 # `pnpm exec vitest`, not `pnpm run vitest:live`, only because of the extra
 # flag: pnpm forwards a trailing `--` to the command rather than swallowing it,
 # so `pnpm run vitest:live -- --exclude …` would hand vitest a bare `--`. The
@@ -108,6 +121,8 @@ depends = ["start-db"]
 run = [
     "mise run build:debug",
     "pnpm --filter @cipherstash/protect-ffi run build:wasm",
+    "mise run eql:v4:install",
+    "mise run eql:v4:codec",
     "pnpm exec vitest run --exclude tests/lock-context.test.ts",
 ]
 
@@ -118,5 +133,7 @@ depends = ["start-db"]
 run = [
     "mise run build:debug",
     "pnpm --filter @cipherstash/protect-ffi run build:wasm",
+    "mise run eql:v4:install",
+    "mise run eql:v4:codec",
     "pnpm run vitest:live",
 ]
