@@ -19,6 +19,11 @@
 # this a mutant there would "survive" only because the feature was off.
 additional_cargo_args = ["--all-features"]
 
+# Build without debug info: `[profile.mutants]` in the root Cargo.toml. Each
+# mutant's time is almost all build (its tests take about a second), and
+# dropping debug info cut a stack-encrypt mutant's build by about a third.
+profile = "mutants"
+
 # nextest, as everywhere else in the suite. The filterset drops two things
 # from the per-mutant test command that are slow and pin no mutant:
 # stack-encrypt's trybuild UI suite (`binary(ui)`: it compiles the derive's
@@ -70,7 +75,7 @@ exclude_re = [
   # stack-encrypt — unreachable under the native test build (the wasm32
   # variant; the native one returns a `FallbackKeyProvider`).
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace client_key_provider -> EnvKeyProvider with Default::default\(\)$',
-  'stack-encrypt/src/target/pending\.rs:443:9: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
+  'stack-encrypt/src/target/pending\.rs:451:9: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
   # stack-encrypt — equivalent.
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
