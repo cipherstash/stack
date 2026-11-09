@@ -971,18 +971,19 @@ where
             Ok(label) => label,
             Err(error) => return Pending::failed(keyset, error.into()),
         };
-        // `check` ran before any keyset was resolved and kept the verifier.
-        // A chain prepared on its own is held to the same refusals, so it
-        // prepares here instead: no term is derived under a context or from
-        // a value the index refuses, and no query is prepared twice.
+        // The context is checked here whatever `check` did: a chain can be
+        // extended between the two, and the label check is about the
+        // context. `check` ran before any keyset was resolved and kept the
+        // verifier, which is about the value alone. A chain prepared on its
+        // own prepares here instead: no term is derived under a context or
+        // from a value the index refuses, and no query is prepared twice.
         let extended = self.common.extend.is_extended();
+        if let Err(error) = self.index.check_label(&label, extended) {
+            return Pending::failed(keyset, error);
+        }
         let verifier = match self.verifier {
             Some(verifier) => verifier,
-            None => match self
-                .index
-                .check_label(&label, extended)
-                .and_then(|()| self.index.prepare(&self.value))
-            {
+            None => match self.index.prepare(&self.value) {
                 Ok(verifier) => verifier,
                 Err(error) => return Pending::failed(keyset, error),
             },

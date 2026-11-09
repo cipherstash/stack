@@ -420,6 +420,90 @@ fn refused_as_not_a_column<T: std::fmt::Debug>(result: Result<T, Error>) {
     );
 }
 
+/// A target whose index refuses an extended context: what an EQL column
+/// is, stored under its table and column alone.
+struct Column;
+
+impl EncryptFrom<String> for Column {
+    type Context = NonEmpty<Label>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    where
+        String: 's,
+    {
+        <EqualityTerm as EncryptFrom<String>>::encryption()
+            .accepting::<NonEmpty<Label>>()
+            .map(|_| Column)
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality]
+    }
+}
+
+impl op::LabelledTarget for Column {}
+
+/// The equality index that refuses an extended context.
+#[derive(Default)]
+struct Unextendable;
+
+impl Index<String> for Unextendable {
+    type Term = EqualityTerm;
+    fn spec(&self) -> IndexSpec {
+        Index::<String>::spec(&Equality)
+    }
+    fn operation<'s, K: 'static, M: ConsumeSource<'s, String>>(
+        &self,
+    ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
+        Index::<String>::operation(&Equality)
+    }
+}
+
+impl op::Supports<op::Eq, String> for Unextendable {
+    type Query = EqualityTerm;
+    type Verifier = ();
+    fn prepare(&self, value: &String) -> Result<(), Error> {
+        <Equality as op::Supports<op::Eq, String>>::prepare(&Equality, value)
+    }
+    fn check_label(&self, _: &Label, extended: bool) -> Result<(), Error> {
+        if extended {
+            Err(Error::Other("no extension".into()))
+        } else {
+            Ok(())
+        }
+    }
+    fn query((): (), term: EqualityTerm, _: op::QueryToken) -> EqualityTerm {
+        term
+    }
+}
+
+impl op::Answers<op::Eq, String> for Column {
+    type Via = Unextendable;
+}
+
+/// A chain checked and then extended is checked again when it is prepared:
+/// the label check is about the context, which a later `.extend(..)`
+/// changes, so a kept verifier does not carry a stale acceptance.
+#[tokio::test]
+async fn a_chain_extended_after_its_check_is_checked_again() {
+    use stack_encrypt::plan::Operation;
+    let cipher = stack_cipher().await;
+    let plan = Plan::value::<String>()
+        .context("users/email")
+        .encrypt_into::<Column>()
+        .build()
+        .unwrap();
+    let mut query = cipher.query(op::Eq, "bob@example.com").on(&plan);
+    query.check().unwrap();
+    let refused = query.extend(7u64).await;
+    assert!(
+        matches!(&refused, Err(Error::Other(reason)) if reason.to_string() == "no extension"),
+        "{refused:?}"
+    );
+    // Unextended, the checked chain derives its term.
+    let mut query = cipher.query(op::Eq, "bob@example.com").on(&plan);
+    query.check().unwrap();
+    assert!(query.await.is_ok());
+}
+
 /// A `LabelledTarget` is queried through its plan though nothing can be
 /// encrypted through it, and its query term reads the context its terms
 /// were derived under from the token: the plan's label or the call's, and
