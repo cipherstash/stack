@@ -162,6 +162,7 @@ use crate::{
     CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, PassthroughFrame, Pending,
     StackCipherText,
 };
+use vitaminc_aead::IntoContext as _;
 
 /// The map key a target field's EQL value rides under in a stored record:
 /// wire format, like the output keys (see the
@@ -1041,7 +1042,6 @@ impl Plan {
     /// takes no part from the caller: the plan refuses an extension for it
     /// before it runs.
     fn placed(&self, lowered: crate::contexts::Shapes) -> crate::contexts::Shapes {
-        use vitaminc_aead::IntoContext as _;
         let mut lowered = lowered.into_iter().peekable();
         let mut shapes = crate::contexts::Shapes::with_capacity(self.fields.len());
         for field in &self.fields {

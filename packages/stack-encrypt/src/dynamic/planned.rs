@@ -61,6 +61,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # }).unwrap();
 //! ```
+use std::borrow::Cow;
 use std::fmt;
 
 use zeroize::Zeroize;
@@ -208,31 +209,40 @@ fn wrap(error: Error) -> crate::Error {
 impl Plan {
     /// This plan under the caller's context: its scope as one more part of
     /// every field's context, then its bindings after the plan's own.
-    /// `None` leaves the plan as it is.
-    fn under_caller(self, context: Option<CallerContext>) -> Result<Self, Error> {
+    /// `None` leaves the plan as it is, borrowed: nothing is copied for a
+    /// call with no caller context.
+    fn under_caller(&self, context: Option<CallerContext>) -> Result<Cow<'_, Self>, Error> {
         let Some(context) = context else {
-            return Ok(self);
+            return Ok(Cow::Borrowed(self));
         };
         let (scopes, bindings) = context.checked()?.pieces();
-        let plan = self.with_scopes(scopes)?;
+        let plan = self.clone().with_scopes(scopes)?;
         if bindings.is_empty() {
-            return Ok(plan);
+            return Ok(Cow::Owned(plan));
         }
         let mut all = plan.bindings().to_vec();
         all.extend(bindings);
-        plan.with_bindings(all)
+        plan.with_bindings(all).map(Cow::Owned)
     }
 
-    /// This plan under a query's scopes, which hold no binding.
-    fn under_scopes(self, scopes: &DeclaredContext, field: &str) -> Result<Self, Error> {
+    /// This plan under a query's scopes, which hold no binding. No scope
+    /// leaves the plan as it is, borrowed.
+    fn under_scopes<'p>(
+        &'p self,
+        scopes: &DeclaredContext,
+        field: &str,
+    ) -> Result<Cow<'p, Self>, Error> {
         if scopes.has_bindings() {
             return Err(Error::Plan {
                 field: Some(field.to_owned()),
                 reason: Reason::BindInQuery,
             });
         }
+        if !scopes.is_extended() {
+            return Ok(Cow::Borrowed(self));
+        }
         let pieces = scopes.parts().iter().filter_map(|part| part.pieces().0);
-        self.with_scopes(pieces)
+        self.clone().with_scopes(pieces).map(Cow::Owned)
     }
 
     /// A query plan for `field` and `operator`, with no EQL types: refused
@@ -366,7 +376,7 @@ fn encrypt_record<'a, K: 'static>(
     resolver: &(impl TargetResolver + ?Sized),
     context: OptionalContext<CallerContext>,
 ) -> Pending<'a, StackCipherText, K> {
-    let plan = match plan.clone().under_caller(context.into_inner()) {
+    let plan = match plan.under_caller(context.into_inner()) {
         Ok(plan) => plan,
         Err(error) => return Pending::failed(cipher, wrap(error)),
     };
@@ -389,8 +399,10 @@ where
 {
     type ContextInput = OptionalContext<CallerContext>;
     fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<ValueFrame, K> {
-        let plan = match self.plan.clone().under_caller(context.into_inner()) {
-            Ok(plan) => plan,
+        // The opening is a closure the cipher runs later, so it owns its
+        // plan: one copy, with the caller's parts applied.
+        let plan = match self.plan.under_caller(context.into_inner()) {
+            Ok(plan) => plan.into_owned(),
             Err(error) => return Decryption::failed(wrap(error)),
         };
         let Planned {
@@ -460,7 +472,7 @@ impl QueryPlan {
         scopes: &DeclaredContext,
         resolver: &(impl TargetResolver + ?Sized),
     ) -> Pending<'a, QueryTerm, K> {
-        let plan = match self.plan.clone().under_scopes(scopes, &self.field) {
+        let plan = match self.plan.under_scopes(scopes, &self.field) {
             Ok(plan) => plan,
             Err(error) => return Pending::failed(cipher, wrap(error)),
         };

@@ -635,6 +635,25 @@ mod a_target_field {
     }
 
     #[test]
+    fn shows_its_context_under_its_label_alone() {
+        let plan = target_plan();
+        // An EQL value is sealed under its label by the resolver, and takes
+        // no caller part, so the view shows the label and no placeholder.
+        assert_eq!(
+            Planned::new(&plan, frame("a"))
+                .contexts()
+                .unwrap()
+                .to_string(),
+            "email\n  context: users / email\n"
+        );
+        let by_email = plan.query_with("email", Op::Eq, &OneType).unwrap();
+        assert_eq!(
+            by_email.contexts().unwrap().to_string(),
+            "context: users / email\n"
+        );
+    }
+
+    #[test]
     fn is_refused_without_its_resolver() {
         let plan = target_plan();
         let refused = plan.field("email").unwrap().eq(frame("a")).unwrap_err();
