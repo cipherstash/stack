@@ -163,7 +163,7 @@ impl MaybeEmpty for Identifier {
 /// under ([`IntoContext`] below returns [`Describe::to_context`]), so the
 /// descriptor ZeroKMS binds and the AAD never disagree. It is the same
 /// context as the two-segment [`stack_encrypt::Label`] and as the pair a
-/// `#[stash(struct = .., context = "<table>")]` derive binds.
+/// `#[stash(struct = .., scope = "<table>")]` derive binds.
 impl Describe for Identifier {
     fn describe(&self) -> Description {
         Description::text(self.t.as_str()).then_text(self.c.as_str())

@@ -3456,6 +3456,7 @@ dependencies = [
  "stack-encrypt",
  "syn 3.0.9",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

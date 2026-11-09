@@ -15,15 +15,15 @@ pub(crate) struct ContainerAttrs {
     /// `#[stash(struct = Type)]`: the record encrypts the struct `Type`
     /// field by field. Every derived field is derived from the plaintext
     /// field of its own name (`from`), under a context made of the
-    /// container's `context` and the plaintext field's name, unless the
-    /// field says otherwise. Exclusive with `plaintext`; requires `context`.
+    /// container's `scope` and the plaintext field's name, unless the
+    /// field says otherwise. Exclusive with `plaintext`; requires `scope`.
     pub(crate) by_field: Option<Type>,
-    /// `#[stash(context = "...")]` on the container: the first half of every
-    /// field's inferred context, the pair `("<context>", "<field>")`. Names the stored
-    /// data, not the Rust type: it is part of the stored data's identity, so
-    /// it is given explicitly rather than inferred from a name a refactor
-    /// can change. Only meaningful with `struct`.
-    pub(crate) context: Option<LitStr>,
+    /// `#[stash(scope = "...")]` on the container: the record's name and the
+    /// first scope of every field's context, the pair `("<scope>", "<field>")`.
+    /// Names the stored data, not the Rust type: it is part of the stored
+    /// data's identity, so it is given explicitly rather than inferred from a
+    /// name a refactor can change. Only meaningful with `struct`.
+    pub(crate) scope: Option<LitStr>,
     /// `#[stash(context_type = Type)]`: the record's associated `Context`,
     /// when its fields take the caller's context. The default,
     /// `CallerContext`, derives ciphertext and terms alike and so needs both
@@ -35,7 +35,7 @@ pub(crate) struct ContainerAttrs {
 }
 
 const CONTAINER_KEYS: &str = "unsupported container attribute; expected `plaintext = Type`, \
-     `struct = Type`, `context = \"...\"` (with `struct`), `context_type = Type` or \
+     `struct = Type`, `scope = \"...\"` (with `struct`), `context_type = Type` or \
      `crate = \"...\"`";
 
 impl ContainerAttrs {
@@ -43,7 +43,7 @@ impl ContainerAttrs {
         let mut krate: Option<Path> = None;
         let mut plaintexts: Vec<Type> = Vec::new();
         let mut by_field: Option<Type> = None;
-        let mut context: Option<LitStr> = None;
+        let mut scope: Option<LitStr> = None;
         let mut context_type: Option<Type> = None;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
@@ -59,12 +59,23 @@ impl ContainerAttrs {
                     krate = Some(lit.parse()?);
                     return Ok(());
                 }
-                if meta.path.is_ident("context") {
-                    if context.is_some() {
-                        return Err(meta.error("`context` is given twice; a struct has one prefix"));
+                if meta.path.is_ident("scope") {
+                    if scope.is_some() {
+                        return Err(meta.error(
+                            "`scope` is given twice; a record has one name, its first scope",
+                        ));
                     }
-                    context = Some(meta.value()?.parse()?);
+                    scope = Some(meta.value()?.parse()?);
                     return Ok(());
+                }
+                // Renamed rather than unknown, so the message can say what to
+                // write instead.
+                if meta.path.is_ident("context") {
+                    return Err(meta.error(
+                        "the record's name is now `scope = \"..\"` (`context = \"..\"` before): \
+                         it is the record's first scope, and each field's name is the next. \
+                         The stored data does not change",
+                    ));
                 }
                 if meta.path.is_ident("context_type") {
                     if context_type.is_some() {
@@ -143,43 +154,43 @@ impl ContainerAttrs {
         // `Account` in different modules would silently share every field
         // context, making ciphertexts transplantable between them and index
         // terms comparable across them.
-        match (&by_field, &context) {
+        match (&by_field, &scope) {
             (Some(by_field), None) => {
                 return Err(syn::Error::new_spanned(
                     by_field,
-                    "`struct = ..` needs a `context = \"..\"` beside it naming the stored data \
-                     (e.g. `#[stash(struct = User, context = \"users\")]`): each field is derived \
-                     under the pair `(\"<context>\", \"<field>\")`, and the prefix is part of the stored data's \
+                    "`struct = ..` needs a `scope = \"..\"` beside it naming the stored data \
+                     (e.g. `#[stash(struct = User, scope = \"users\")]`): each field is derived \
+                     under the pair `(\"<scope>\", \"<field>\")`, and the record's name is part of the stored data's \
                      identity, so it is given explicitly rather than inferred from the Rust \
                      type's name",
                 ));
             }
-            (None, Some(context)) => {
+            (None, Some(scope)) => {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "a container `context` is the prefix of the per-field contexts and applies \
-                     only with `struct = ..`; a `plaintext` record's fields take the caller's \
-                     context",
+                    scope.span(),
+                    "a container `scope` is the record's name, the first scope of each field's \
+                     context, and applies only with `struct = ..`; a `plaintext` record's fields \
+                     take the caller's context",
                 ));
             }
             _ => {}
         }
-        if let Some(context) = &context {
-            if context.value().is_empty() {
+        if let Some(scope) = &scope {
+            if scope.value().is_empty() {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "an empty `context` is rejected when a value is encrypted: name the stored \
+                    scope.span(),
+                    "an empty `scope` is rejected when a value is encrypted: name the stored \
                      data (e.g. \"users\")",
                 ));
             }
-            if !is_plain_segment(&context.value()) {
+            if !is_plain_segment(&scope.value()) {
                 return Err(syn::Error::new(
-                    context.span(),
-                    "a container `context` is the first segment of every field's ZeroKMS \
+                    scope.span(),
+                    "a container `scope` is the first segment of every field's ZeroKMS \
                      descriptor, so it must be plain: no `/`, `(`, `)`, control or invisible \
                      character, and not beginning with `b64:`, a digit or `-`; otherwise it \
                      would render escaped and the log would not name the table. For the table \
-                     `public.users` write `context = \"users\"`",
+                     `public.users` write `scope = \"users\"`",
                 ));
             }
         }
@@ -188,8 +199,8 @@ impl ContainerAttrs {
             let mut err = syn::Error::new_spanned(
                 context_type,
                 "`context_type` names what the caller passes to a record whose fields take the \
-                 caller's context; a `struct` derive's fields carry their own, so the record \
-                 takes `DeclaredContext` and a caller's context extends them",
+                 caller's context; a `struct` derive's fields carry their own contexts, so it does \
+                 not apply",
             );
             err.combine(syn::Error::new_spanned(by_field, "`struct` given here"));
             return Err(err);
@@ -199,7 +210,7 @@ impl ContainerAttrs {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt)),
             plaintexts,
             by_field,
-            context,
+            scope,
             context_type,
         })
     }
@@ -211,7 +222,7 @@ pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
     /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
     /// this field is keyed under, in place of the plaintext field's name:
-    /// the field is derived under `("<context>", "<identity>")`. The plan
+    /// the field is derived under `("<scope>", "<identity>")`. The plan
     /// builder's `.identity(segment)`.
     pub(crate) identity: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: with `struct = ..`,
@@ -223,6 +234,10 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
+    /// `#[stash(passthrough)]`, on a field of a `struct = ..` record with the
+    /// owned derives. The plaintext field is moved into the record in the
+    /// clear, not encrypted, and moved back when the record is decrypted.
+    pub(crate) passthrough: bool,
 }
 
 impl FieldAttrs {
@@ -296,13 +311,20 @@ impl FieldAttrs {
                     parsed.decrypt = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("passthrough") {
+                    if parsed.passthrough {
+                        return Err(meta.error("`passthrough` is given twice"));
+                    }
+                    parsed.passthrough = true;
+                    return Ok(());
+                }
                 // Removed rather than unknown, so the message can say what
                 // to write instead.
                 if meta.path.is_ident("nested") {
                     return Err(meta.error(
                         "`nested` is no longer accepted (0.2.0 accepted it): a field whose type \
                          is a record is an ordinary field, derived under \
-                         `(\"<context>\", \"<field>\")` like any other, and its own fields sit \
+                         `(\"<scope>\", \"<field>\")` like any other, and its own fields sit \
                          under that. Omit `nested`. That is a different context from the one \
                          `nested` gave the inner fields: data written with `nested` does not \
                          decrypt without it and its terms do not match, so re-encrypt that data",
@@ -310,8 +332,8 @@ impl FieldAttrs {
                 }
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, \
-                     `identity = \"...\"`, `from = field`, `default`, `default = expr` or \
-                     `decrypt`",
+                     `identity = \"...\"`, `from = field`, `default`, `default = expr`, \
+                     `decrypt` or `passthrough`",
                 ))
             })?;
         }

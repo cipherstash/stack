@@ -104,6 +104,16 @@ impl AeadContext {
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
     }
+    /// [`validated`](Self::validated), and also check that the descriptor
+    /// of this context fits in a ZeroKMS request.
+    ///
+    /// [`ciphertext`](super::ciphertext) runs this check before it takes the
+    /// plaintext. So when the context is refused, no copy of the plaintext
+    /// has been made.
+    pub(super) fn sealable(self) -> Result<NonEmpty<Self>, Error> {
+        Descriptor::from_piece(&self.0).check()?;
+        self.validated()
+    }
     /// The own context `own`, extended by this caller context, as
     /// [`CallerContext::extend`] does for a record that derives terms: the
     /// field's own context is the prefix, this context the extension.

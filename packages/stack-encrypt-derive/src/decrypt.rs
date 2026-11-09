@@ -148,7 +148,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     );
     Ok(quote!(#(#impls)* #field #definition_check))
 }
-fn struct_literal_path(plaintext: &Type) -> Result<Path> {
+pub(crate) fn struct_literal_path(plaintext: &Type) -> Result<Path> {
     let Type::Path(type_path) = plaintext else {
         return Err(syn::Error::new_spanned(
             plaintext,
@@ -204,7 +204,12 @@ impl<'a> Auto<'a> {
     }
 }
 
-fn check(krate: &Path, name: &Ident, from: Option<&Member>, fields: &[&Field]) -> TokenStream {
+pub(crate) fn check(
+    krate: &Path,
+    name: &Ident,
+    from: Option<&Member>,
+    fields: &[&Field],
+) -> TokenStream {
     let terms = fields.iter().map(|field| {
         let ty = &field.ty;
         // Spanned at the field type: a type that is not `Decryptable` is

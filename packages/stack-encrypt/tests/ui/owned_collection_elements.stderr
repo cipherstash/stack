@@ -1,28 +1,28 @@
 error[E0277]: the trait bound `for<'a> &'a u8: Scalar` is not satisfied
- --> tests/ui/owned_collection_elements.rs:9:26
-  |
-9 |     let _ = vec![1u8, 2].encrypt_into::<Vec<Ciphertext>, _>(keyset);
-  |                          ^^^^^^^^^^^^ the trait `for<'a> Scalar` is not implemented for `&'a u8`
-  |
-  = help: the following other types implement trait `Scalar`:
-            &f32
-            &f64
-            &i128
-            &i16
-            &i32
-            &i64
-            &i8
-            &u128
-          and $N others
-  = note: required for `u8` to implement `OpaqueEncode`
-  = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<u8>`
-  = note: 1 redundant requirement hidden
-  = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<u8>>`
+  --> tests/ui/owned_collection_elements.rs:11:26
+   |
+11 |     let _ = vec![1u8, 2].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+   |                          ^^^^^^^^^^^^ the trait `for<'a> Scalar` is not implemented for `&'a u8`
+   |
+   = help: the following other types implement trait `Scalar`:
+             &f32
+             &f64
+             &i128
+             &i16
+             &i32
+             &i64
+             &i8
+             &u128
+           and $N others
+   = note: required for `u8` to implement `OpaqueEncode`
+   = note: required for `stack_encrypt::Ciphertext` to implement `EncryptTarget<u8>`
+   = note: 1 redundant requirement hidden
+   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<u8>>`
 
 error[E0277]: the trait bound `for<'a> &'a Option<i32>: Scalar` is not satisfied
-  --> tests/ui/owned_collection_elements.rs:10:36
+  --> tests/ui/owned_collection_elements.rs:12:36
    |
-10 |     let _ = vec![Some(1i32), None].encrypt_into::<Vec<Ciphertext>, _>(keyset);
+12 |     let _ = vec![Some(1i32), None].encrypt_into::<Vec<Ciphertext>, _>(keyset);
    |                                    ^^^^^^^^^^^^ the trait `for<'a> Scalar` is not implemented for `&'a Option<i32>`
    |
    = help: the following other types implement trait `Scalar`:
@@ -40,10 +40,10 @@ error[E0277]: the trait bound `for<'a> &'a Option<i32>: Scalar` is not satisfied
    = note: 1 redundant requirement hidden
    = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<Option<i32>>>`
 
-error[E0277]: the trait bound `&str: zeroize::Zeroize` is not satisfied
-  --> tests/ui/owned_collection_elements.rs:11:13
+error[E0277]: the trait bound `&str: Zeroize` is not satisfied
+  --> tests/ui/owned_collection_elements.rs:13:13
    |
-11 |     let _ = EncryptInto::encrypt_into::<Vec<Ciphertext>, _>(vec!["borrowed", "plaintext"], keyset);
+13 |     let _ = EncryptInto::encrypt_into::<Vec<Ciphertext>, _>(vec!["borrowed", "plaintext"], keyset);
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `zeroize::DefaultIsZeroes` is not implemented for `&str`
    |
    = help: the following other types implement trait `zeroize::DefaultIsZeroes`:
@@ -56,13 +56,13 @@ error[E0277]: the trait bound `&str: zeroize::Zeroize` is not satisfied
              i128
              i16
            and $N others
-   = note: required for `&str` to implement `zeroize::Zeroize`
+   = note: required for `&str` to implement `Zeroize`
    = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `EncryptTarget<Vec<&str>>`
 
 error[E0277]: the trait bound `for<'a> &'a Vec<i32>: Scalar` is not satisfied
-  --> tests/ui/owned_collection_elements.rs:12:27
+  --> tests/ui/owned_collection_elements.rs:14:27
    |
-12 |     let _ = vec![1i32, 2].encrypt_into::<Ciphertext, _>(keyset);
+14 |     let _ = vec![1i32, 2].encrypt_into::<Ciphertext, _>(keyset);
    |                           ^^^^^^^^^^^^ the trait `for<'a> Scalar` is not implemented for `&'a Vec<i32>`
    |
 help: the following other types implement trait `Scalar`
@@ -87,10 +87,10 @@ help: the following other types implement trait `Scalar`
    = note: this error originates in the macro `scalar` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `u8: vitaminc_aead::typed::FromScalar` is not satisfied
-  --> tests/ui/owned_collection_elements.rs:13:13
+  --> tests/ui/owned_collection_elements.rs:15:13
    |
-13 |     let _ = Vec::<u8>::decrypt_from(column.clone(), keyset);
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `vitaminc_aead::typed::FromScalar` is not implemented for `u8`
+15 |     let _ = Vec::<u8>::decrypt_from(column, keyset);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `vitaminc_aead::typed::FromScalar` is not implemented for `u8`
    |
    = help: the following other types implement trait `vitaminc_aead::typed::FromScalar`:
              f32
@@ -102,28 +102,8 @@ error[E0277]: the trait bound `u8: vitaminc_aead::typed::FromScalar` is not sati
              i8
              u128
            and $N others
+   = note: required for `u8` to implement `Decrypt`
    = note: required for `u8` to implement `OpaqueDecode`
    = note: required for `stack_encrypt::Ciphertext` to implement `DecryptSource<u8>`
    = note: 1 redundant requirement hidden
    = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `DecryptSource<Vec<u8>>`
-
-error[E0277]: the trait bound `Option<i32>: vitaminc_aead::typed::FromScalar` is not satisfied
-  --> tests/ui/owned_collection_elements.rs:14:13
-   |
-14 |     let _ = Vec::<Option<i32>>::decrypt_from(column, keyset);
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `vitaminc_aead::typed::FromScalar` is not implemented for `Option<i32>`
-   |
-   = help: the following other types implement trait `vitaminc_aead::typed::FromScalar`:
-             Vec<u8>
-             [u8; N]
-             bool
-             chrono::datetime::DateTime<chrono::offset::utc::Utc>
-             chrono::naive::date::NaiveDate
-             f32
-             f64
-             i128
-           and $N others
-   = note: required for `Option<i32>` to implement `OpaqueDecode`
-   = note: required for `stack_encrypt::Ciphertext` to implement `DecryptSource<Option<i32>>`
-   = note: 1 redundant requirement hidden
-   = note: required for `Vec<stack_encrypt::Ciphertext>` to implement `DecryptSource<Vec<Option<i32>>>`

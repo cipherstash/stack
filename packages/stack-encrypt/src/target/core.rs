@@ -44,6 +44,10 @@ pub(crate) fn open_native<'a, 'c, P: Decrypt + Send + 'static, K, T: IntoContext
 /// [`encrypt_native`] for the opaque scalar operation, whose context may
 /// be empty. Mapping its encrypted output preserves that policy. Structural
 /// target operations use `encrypt_native` and retain its nonempty requirement.
+///
+/// A refused context drops `source` as it is. Every caller passes a borrow,
+/// or checks the context first ([`ciphertext`](super::ciphertext) does), so
+/// no plaintext copy reaches that path.
 pub(crate) fn encrypt_opaque<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
     source: S,
     cipher: &'a KeysetCipher<'_, K>,

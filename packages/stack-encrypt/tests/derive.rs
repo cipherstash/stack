@@ -319,7 +319,7 @@ struct Held {
 }
 
 #[derive(DecryptInto)]
-#[stash(struct = Held, context = "held")]
+#[stash(struct = Held, scope = "held")]
 struct LyingHeld {
     value: Lying,
 }
@@ -485,7 +485,9 @@ async fn a_failed_field_fails_the_derived_record_before_any_io() {
 
 // --- Structs: each field from one field of the plaintext, under its own context
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Zeroize` is required: a column of these decrypts through the wiping
+// collection path. That path wipes the rows recovered before a late failure.
+#[derive(Debug, Clone, PartialEq, Eq, zeroize::Zeroize)]
 struct User {
     age: u32,
     email: String,
@@ -498,7 +500,7 @@ struct User {
 /// it is never inferred from the type's name. `from` is the override for a
 /// field name that differs; the context then follows the plaintext field.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = User, context = "user")]
+#[stash(struct = User, scope = "user")]
 struct EncryptedUser {
     /// A record inside a struct: recursion, not a second mechanism.
     age: EncryptedAge,
@@ -673,7 +675,7 @@ struct Account {
 /// and the inner struct's own fields sit under that: their contexts are
 /// extended by it, as by any context the inner struct is handed.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = Account, context = "accounts")]
+#[stash(struct = Account, scope = "accounts")]
 struct EncryptedAccount {
     user: EncryptedUser,
     plan: StackCipherText,
@@ -778,7 +780,7 @@ async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
 struct Reading(u32, String);
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = Reading, context = "reading")]
+#[stash(struct = Reading, scope = "reading")]
 struct EncryptedReading(
     #[stash(identity = "value")] EncryptedAge,
     #[stash(identity = "unit")] StackCipherText,
@@ -786,7 +788,7 @@ struct EncryptedReading(
 
 /// The same with named fields: `from` by index, and the segment given.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = Reading, context = "reading")]
+#[stash(struct = Reading, scope = "reading")]
 struct NamedReading {
     #[stash(from = 0, identity = "value")]
     value: EncryptedAge,

@@ -433,7 +433,7 @@ struct Age {
 }
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct EncryptedUser {
     email: Encrypted<EqualityTerm>,
     #[stash(identity = "nickname")]
@@ -552,7 +552,7 @@ fn a_struct_record_plan_is_the_hand_written_chain() {
 /// plan refusal the derive cannot see at compile time.
 #[allow(dead_code)] // never built: refusing it is the point
 #[derive(EncryptFrom)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct TwoEqualitiesInAField {
     email: Encrypted<(EqualityTerm, EqualityTerm)>,
 }

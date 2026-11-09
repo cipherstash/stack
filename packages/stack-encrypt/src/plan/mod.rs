@@ -200,7 +200,7 @@
 //! record's attributes, and the record's `EncryptFrom::encryption()` is that
 //! plan's description, mapped into the struct:
 //!
-//! - `#[stash(struct = User, context = "users")]` emits
+//! - `#[stash(struct = User, scope = "users")]` emits
 //!   `Plan::context("users").fields()` with one
 //!   `encrypt_into::<FieldType, _>(pick("name", |u: &User| &u.name))` per
 //!   field (and `.identity(..)` where one is pinned). The field's own type
@@ -230,7 +230,7 @@
 //! }
 //!
 //! #[derive(EncryptFrom)]
-//! #[stash(struct = User, context = "users")]
+//! #[stash(struct = User, scope = "users")]
 //! struct EncryptedUser {
 //!     email: Encrypted<EqualityTerm>,
 //!     #[stash(identity = "handle")]

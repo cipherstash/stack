@@ -1,6 +1,20 @@
 //! Explicit caller-context capabilities. `Default` never grants permission to omit context.
+//!
+//! | Input | Context left out | Context passed | What the input means |
+//! |---|---|---|---|
+//! | [`NoCallerContext`] | Allowed | Refused | The declaration builds every context itself. |
+//! | [`RequiredContext<C>`] | Refused | `C` | The caller supplies the context, or the part of it that the declaration selects. |
+//! | [`OptionalContext<C>`] | Allowed | `C` | For an opaque scalar. A context left out is the empty context. |
+//! | [`DeclaredScopes`] | Allowed | Refused | A derived `struct = ..` record. Each field has its own context. A record that contains it, or a plan, passes that field's context. |
+//! | [`ExpectedContext<T>`](super::ExpectedContext) | Allowed | `NonEmpty<T>` | A context left out opens under the stored context, unchecked. A context passed is checked against the stored one. |
+//!
+//! A trait bound decides whether a method is available ([`AllowsNoContext`]
+//! or [`AcceptsContext`]). It is never inferred from `C: Default`. For
+//! example, `RequiredContext<u64>` stays required, although `u64` has a
+//! default of zero.
 
-use crate::{ContextPiece, IntoContext};
+use super::context::{CallerContext, DeclaredContext, ExpectedContext};
+use crate::{ContextPiece, IntoContext, NonEmpty};
 
 mod sealed {
     pub trait Sealed {}
@@ -72,6 +86,139 @@ impl<C> AcceptsContext for OptionalContext<C> {
     type Value = C;
     fn supplied(value: C) -> Self {
         Self(Some(value))
+    }
+}
+
+/// The input of a derived `struct = ..` record: the caller passes no context.
+///
+/// Each field of the record has its own context, such as `("users", "name")`.
+/// The record's name is the first scope, and the field's name is the next.
+/// So the caller has nothing to add, and `encrypt_into_with_context` does not
+/// compile for the record. A part that the caller supplies, such as a tenant
+/// scope or a row binding, must be declared on the record first. The
+/// declaration attributes for those parts are not built yet.
+///
+/// Only the library passes this input a value:
+///
+/// - A record that is a field of another record is given that field's
+///   context, which then extends each of its own fields' contexts.
+/// - A plan or a structural record passes its declared context the same
+///   way.
+#[derive(Clone, Debug, Default)]
+pub struct DeclaredScopes(DeclaredContext);
+impl sealed::Sealed for DeclaredScopes {}
+impl ContextInput for DeclaredScopes {}
+impl AllowsNoContext for DeclaredScopes {
+    fn omitted() -> Self {
+        Self::default()
+    }
+}
+// The context a record's declaration tree runs under: each field's own
+// context, extended by the context of the record that contains it, if any.
+impl From<DeclaredScopes> for DeclaredContext {
+    fn from(scopes: DeclaredScopes) -> Self {
+        scopes.0
+    }
+}
+// A structural caller with a `DeclaredContext`, such as a plan or a `struct =
+// ..` structural derive, passes its context to an owned record field through
+// this conversion.
+impl From<DeclaredContext> for DeclaredScopes {
+    fn from(context: DeclaredContext) -> Self {
+        Self(context)
+    }
+}
+// A record field is given its own context (`Encryption::under`). A nested
+// record takes that context as the one its own fields extend.
+impl From<CallerContext> for DeclaredScopes {
+    fn from(context: CallerContext) -> Self {
+        Self(context.into())
+    }
+}
+// A field whose target requires a caller context is given the record's context
+// for that field, extended by the caller's context. So a
+// `RequiredContext<CallerContext>` field or a `RequiredContext<AeadContext>`
+// field can be a field of a `struct = ..` record.
+impl<C: From<CallerContext>> From<CallerContext> for RequiredContext<C> {
+    fn from(context: CallerContext) -> Self {
+        Self::supplied(C::from(context))
+    }
+}
+// A record that derives terms gives its ciphertext fields the AEAD part of the
+// context it requires.
+impl From<RequiredContext<CallerContext>> for RequiredContext<super::AeadContext> {
+    fn from(context: RequiredContext<CallerContext>) -> Self {
+        Self::supplied(context.into_inner().into())
+    }
+}
+// A record that stores its context (`context_field`) requires the
+// `NonEmpty<T>` it stores. It runs its fields under the caller context built
+// from that value.
+impl<'c, T: IntoContext<'c>> From<RequiredContext<NonEmpty<T>>> for RequiredContext<CallerContext> {
+    fn from(context: RequiredContext<NonEmpty<T>>) -> Self {
+        Self::supplied(context.into_inner().into())
+    }
+}
+impl<'c, T: IntoContext<'c>> From<RequiredContext<NonEmpty<T>>>
+    for RequiredContext<super::AeadContext>
+{
+    fn from(context: RequiredContext<NonEmpty<T>>) -> Self {
+        Self::supplied(context.into_inner().into())
+    }
+}
+// A record that stores its context takes the `NonEmpty<T>` it stores from its
+// structural trait as the required input.
+impl<T> From<NonEmpty<T>> for RequiredContext<NonEmpty<T>> {
+    fn from(context: NonEmpty<T>) -> Self {
+        Self::supplied(context)
+    }
+}
+// The contexts of the structural declarations, wrapped as the required input
+// of the owned leaf that replaces each one. A plan or a structural record
+// gives an owned field its context this way.
+impl From<super::AeadContext> for RequiredContext<super::AeadContext> {
+    fn from(context: super::AeadContext) -> Self {
+        Self::supplied(context)
+    }
+}
+// The core operations take the context the input contains, with no wrapper of
+// their own. For example, `ciphertext()` takes a
+// `RequiredContext<AeadContext>`, and a term takes a
+// `RequiredContext<CallerContext>`.
+impl<C: Into<super::AeadContext>> From<RequiredContext<C>> for super::AeadContext {
+    fn from(context: RequiredContext<C>) -> Self {
+        context.into_inner().into()
+    }
+}
+impl<C: Into<CallerContext>> From<RequiredContext<C>> for CallerContext {
+    fn from(context: RequiredContext<C>) -> Self {
+        context.into_inner().into()
+    }
+}
+
+/// The input of a record that stores its context: the context the caller
+/// expects, or none.
+///
+/// - If the caller passes a `NonEmpty<T>`, the stored context must equal it. A
+///   different stored context is refused before any key is retrieved
+///   ([`ExpectedContext::validate`]).
+/// - If the caller leaves the context out, the record opens under whatever
+///   context it stores, after a check that the context is not empty.
+///
+/// The stored context is not authenticated. A ciphertext moved together with
+/// its stored context opens in its new place, unless the caller passes the
+/// context it expects.
+impl<T> sealed::Sealed for ExpectedContext<T> {}
+impl<T> ContextInput for ExpectedContext<T> {}
+impl<T> AllowsNoContext for ExpectedContext<T> {
+    fn omitted() -> Self {
+        Self::default()
+    }
+}
+impl<T> AcceptsContext for ExpectedContext<T> {
+    type Value = NonEmpty<T>;
+    fn supplied(value: NonEmpty<T>) -> Self {
+        Self::from(value)
     }
 }
 

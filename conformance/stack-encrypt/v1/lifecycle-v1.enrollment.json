@@ -35,6 +35,14 @@
       "features": ["--all-features"],
       "binary": "collections"
     },
+    "owned-records": {
+      "language": "rust",
+      "lane": "fast",
+      "workspace": ".",
+      "package": "stack-encrypt",
+      "features": ["--all-features"],
+      "binary": "owned_records"
+    },
     "runtime": {
       "language": "rust",
       "lane": "fast",
@@ -159,7 +167,12 @@
         ],
         "collections": [
           "a_late_element_failure_wipes_the_plaintext_recovered_before_it",
-          "a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it"
+          "a_panicking_element_conversion_wipes_the_plaintext_recovered_before_it",
+          "a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix",
+          "a_late_element_failure_wipes_the_recovered_prefix_on_the_structural_path_too"
+        ],
+        "owned-records": [
+          "a_field_opened_before_a_later_field_is_refused_is_wiped"
         ],
         "contexts": ["shared_context_boundaries"],
         "go": [
@@ -186,7 +199,23 @@
         "collections": [
           "owned_elements_are_wiped_before_the_pending_is_returned",
           "owned_elements_are_wiped_when_the_context_is_refused",
-          "owned_elements_are_guarded_during_context_conversion"
+          "owned_elements_are_guarded_during_context_conversion",
+          "a_panicking_element_declaration_wipes_the_elements_after_it"
+        ],
+        "owned-records": [
+          "the_owned_record_wipes_sealed_fields_and_moves_passthrough_fields",
+          "the_owned_record_wipes_sealed_fields_when_the_context_is_refused",
+          "a_panicking_field_declaration_wipes_the_sealed_fields_after_it",
+          "a_declaration_that_panics_while_constructed_wipes_the_plaintext",
+          "a_record_decrypts_straight_into_a_protected_that_wipes_it_on_drop",
+          "a_sealed_field_is_not_leaked_when_the_scope_is_refused",
+          "a_nested_sealed_field_is_not_leaked_when_the_outer_scope_is_refused",
+          "a_plaintext_record_is_not_leaked_when_the_caller_context_is_refused",
+          "a_plaintext_record_is_not_leaked_when_the_stored_context_is_refused",
+          "a_sealed_column_is_not_leaked_when_the_scope_is_refused",
+          "a_stack_ciphertext_is_not_leaked_when_the_context_is_refused",
+          "a_vec_of_stack_ciphertext_is_not_leaked_when_the_context_is_refused",
+          "a_searchable_ciphertext_is_not_leaked_when_the_context_is_refused"
         ],
         "guest-abi": [
           "buffers::tests::wipe_all_leaves_no_live_buffer",

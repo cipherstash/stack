@@ -56,9 +56,14 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::context::{AeadContext, CallerContext};
-use super::operations::{ciphertext, equality, json_terms, matching, ope, open, ore, ore_block};
-use super::source::{ConsumeSource, ShareSource};
-use super::{DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption};
+use super::operations::{
+    ciphertext, equality, json_terms, matching, ope, open, ore, ore_block, wiping_ciphertext,
+};
+use super::source::{ConsumeSource, Owned, ShareSource};
+use super::{
+    DecryptField, DecryptInto, DecryptSource, Decryptable, Decryption, EncryptFrom, EncryptTarget,
+    Encryption, RequiredContext,
+};
 use crate::json::{JsonOptions, JsonTerms};
 use crate::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreBlockTerm,
@@ -614,6 +619,43 @@ where
     }
 }
 
+/// The owned declaration of the same layout: the ciphertext with its terms,
+/// under the one caller context that the record field or the caller supplies.
+///
+/// The owned form is handed the value. The ciphertext takes a copy, and the
+/// terms take the value. When the context is refused, the ciphertext wipes its
+/// copy, and each term scheme consumes its own.
+impl<S, Terms> EncryptTarget<S> for Encrypted<Terms>
+where
+    S: crate::Encrypt + Clone + zeroize::Zeroize,
+    Terms: TermSet<S>,
+{
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        indexed(Terms::INDEXES).accepting()
+    }
+    fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
+    where
+        S: 's,
+    {
+        indexed_beside(wiping_ciphertext::<S, K, Owned>(), Terms::INDEXES).accepting()
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        Terms::INDEXES.specs()
+    }
+}
+impl<P: crate::Decrypt + zeroize::Zeroize + Send + 'static, Terms> DecryptSource<P>
+    for Encrypted<Terms>
+{
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
+        open(self.ciphertext, context.into_inner())
+    }
+}
+
 /// The ciphertext is what a record opens; the terms are one-way.
 impl<Terms> Decryptable for Encrypted<Terms> {
     const DECRYPTABLE: bool = true;
@@ -624,7 +666,7 @@ where
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(<Self as DecryptInto<P>>::decryption(self, context.into()))
     }
 }
 
@@ -723,7 +765,22 @@ where
     M: ConsumeSource<'s, S> + ShareSource<'s, S>,
     X: Indexes<S>,
 {
-    ciphertext::<S, K, M>()
+    indexed_beside(ciphertext::<S, K, M>(), indexes)
+}
+/// The terms of `indexes` beside the ciphertext that `sealed` describes. This
+/// is the body of [`indexed`]. The owned declaration of [`Encrypted`] passes a
+/// ciphertext that wipes its plaintext when the context is refused.
+fn indexed_beside<'s, S, K, M, X>(
+    sealed: Encryption<'s, S, StackCipherText, K, AeadContext, M>,
+    indexes: X,
+) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>
+where
+    S: crate::Encrypt + 's,
+    K: 'static,
+    M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+    X: Indexes<S>,
+{
+    sealed
         .accepting::<CallerContext>()
         .zip(indexes.operations())
         .map(|(ciphertext, terms)| Encrypted { ciphertext, terms })

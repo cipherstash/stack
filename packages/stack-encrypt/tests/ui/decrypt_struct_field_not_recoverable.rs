@@ -10,7 +10,7 @@ struct User {
 }
 
 #[derive(DecryptInto)]
-#[stash(struct = User, context = "users")]
+#[stash(struct = User, scope = "users")]
 struct Opened {
     email: EqualityTerm,
     name: StackCipherText,
