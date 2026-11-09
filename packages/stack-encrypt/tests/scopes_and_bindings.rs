@@ -517,3 +517,143 @@ fn a_record_with_no_binding_has_one_context_per_field() {
     assert!(!Unbound::contexts().fields()[0].context().has_binding());
     assert_context!(Unbound::contexts(), email = ["users", "email"]);
 }
+
+/// A JSON document bound to its row: the entries seal under the stored
+/// context, and the selectors derive under the query context, so a query
+/// under the scopes alone finds the document, and the document opens under
+/// its binding and under nothing less.
+mod a_bound_json_document {
+    use super::*;
+    use stack_encrypt::json::{JsonDocument, JsonPath};
+    use stack_encrypt::target::{CallerContext, DecryptInto, EncryptFrom};
+
+    fn profile() -> stack_encrypt::NonEmpty<(&'static str, &'static str)> {
+        nonempty!("users").with("profile")
+    }
+
+    #[tokio::test]
+    async fn is_found_by_a_query_under_the_scopes_and_opens_under_its_binding() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let value = serde_json::json!({"hello": "world"});
+        let bound = CallerContext::from(Scope::new(42u64).bind(9u128)).extend(profile());
+        let sealing = keyset.run(
+            <JsonDocument as EncryptFrom<serde_json::Value>>::encryption::<FakeDataKeySource>(),
+            &value,
+            bound.clone(),
+        );
+        assert_eq!(
+            sealing.context().to_string(),
+            "query context:  (users / profile) / 42u64\n\
+             stored context: ((users / profile) / 42u64) / 9u128\n"
+        );
+        let document = sealing.await.unwrap();
+
+        // The selector a query derives under the scopes names an entry.
+        let path = JsonPath::parse("$.hello").unwrap();
+        let under_scopes = keyset
+            .json_selector(&path, profile().with(42u64))
+            .await
+            .unwrap();
+        let has = |selector: &stack_encrypt::json::JsonSelector| {
+            document
+                .entries()
+                .iter()
+                .any(|entry| entry.selector() == selector.as_bytes())
+        };
+        assert!(
+            has(&under_scopes),
+            "the bound document is found by a query under the scopes"
+        );
+        let under_binding = keyset
+            .json_selector(&path, profile().with(42u64).with(9u128))
+            .await
+            .unwrap();
+        assert!(
+            !has(&under_binding),
+            "no selector derives under the binding"
+        );
+
+        // The document opens under its binding, and not under the scopes.
+        let opened: serde_json::Value = keyset
+            .run_decryption(
+                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
+                    document.clone(),
+                    bound.into(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened, value);
+        let scopes_alone = CallerContext::from(Scope::new(42u64)).extend(profile());
+        let refused = keyset
+            .run_decryption(
+                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
+                    document,
+                    scopes_alone.into(),
+                ),
+            )
+            .await;
+        assert!(refused.is_err(), "the binding left out: {refused:?}");
+    }
+}
+
+/// A query carries no binding. A bare `Bind` does not compile
+/// (`tests/ui/bind_in_query.rs`); a binding that reaches the chain inside
+/// a `CallerContext` or a `DeclaredContext` is refused when the query is
+/// awaited, before any key is requested, rather than dropped.
+mod a_binding_in_a_query_chain {
+    use super::*;
+    use stack_encrypt::target::{CallerContext, DeclaredContext};
+    use stack_encrypt::{op, Equality, Plan, PlanError};
+
+    #[tokio::test]
+    async fn is_refused_before_any_key_is_requested() {
+        let cipher = cipher().await;
+        let plan = Plan::context("users/email")
+            .with::<String, _>(Equality)
+            .build()
+            .unwrap();
+        let bound = || CallerContext::from(Scope::new(7u64).bind(9u128));
+        let refused = cipher
+            .query(op::Eq, "ada@example.com")
+            .extend(bound())
+            .on(&plan)
+            .await;
+        assert!(
+            matches!(refused, Err(Error::Plan(PlanError::BindInQuery))),
+            "{refused:?}"
+        );
+        let refused = cipher
+            .query(op::Eq, "ada@example.com")
+            .extend(DeclaredContext::default().with(Bind::new(9u128)))
+            .on(&plan)
+            .await;
+        assert!(
+            matches!(refused, Err(Error::Plan(PlanError::BindInQuery))),
+            "{refused:?}"
+        );
+        assert_eq!(
+            PlanError::BindInQuery.to_string(),
+            "a query takes no binding: a binding is in the stored context only"
+        );
+
+        // The same context seals a write through the plan, and the scopes
+        // alone derive the stored term: the row is found by its tenant.
+        let keyset = cipher.default_keyset();
+        let stored = cipher
+            .encrypt(&String::from("ada@example.com"))
+            .using(&plan)
+            .extend(bound())
+            .await
+            .unwrap();
+        let query = cipher
+            .query(op::Eq, "ada@example.com")
+            .extend(Scope::new(7u64))
+            .on(&plan)
+            .await
+            .unwrap();
+        assert_eq!(stored.terms, query);
+        let _ = keyset;
+    }
+}

@@ -47,9 +47,10 @@ non-reserved keys are field names. Object key order is unrestricted.
 ```text
 Plan = Object{
   "context_field"?: Text,
+  "bind"?: NonEmptyList<ContextScalar>,
   (FieldName: FieldSpec)+
 }
-FieldName = Text except "context_field"
+FieldName = Text except "context_field" and "bind"
 
 FieldSpec = Object{
   "context": FieldContext,
@@ -140,6 +141,16 @@ With `context_field`:
 - Extensions still agree across fields. No target field is admitted.
 - At execution, each record supplies the named field's label value. Its validity
   and the opener's expected-context constraint are runtime requirements.
+
+With `bind`:
+
+- Its value is a nonempty list of scalar parts, each nonempty; an empty part
+  is refused (`empty_binding`).
+- Every field's stored context is its label, extended, then the parts in
+  order. No query context includes them, so a query on the plan is refused
+  (`bind_in_query`). No target field is admitted.
+- The key is reserved, like `context_field`: a field named `bind` is refused
+  (`bind`).
 
 The grammar does not add call-time context roles or defaults. Context composition
 is observed by `extended-context`, `flat-label-is-not-extension`, the

@@ -79,11 +79,13 @@ func (cph *Cipher) Scope(parts ...any) *Cipher {
 // through cipher.Bind(rowID) opens only through a cipher with the same
 // binding. It is in no query context, so a query through a cipher with a
 // binding is refused as [ErrEncoding]: a query by column or by tenant still
-// finds the row. The parts are those [Cipher.Scope] takes.
+// finds the row. The parts are those [Cipher.Scope] takes, and an empty
+// string or byte slice is refused: an unassigned row ID would bind every
+// such row to one context.
 func (cph *Cipher) Bind(parts ...any) *Cipher {
 	next := cph.copy()
 	for _, part := range parts {
-		if err := record.CheckPart(part); err != nil && next.err == nil {
+		if err := record.CheckBinding(part); err != nil && next.err == nil {
 			next.err = fmt.Errorf("%w: Bind: %v", ErrEncoding, err)
 		}
 		next.bindings = append(next.bindings, part)

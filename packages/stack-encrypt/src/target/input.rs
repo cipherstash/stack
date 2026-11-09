@@ -249,6 +249,13 @@ impl<'c, C: IntoContext<'c>> From<C> for ScalarContext {
         Self(value.into_context().into_owned())
     }
 }
+/// A scalar operation seals and derives no term, so a caller context runs
+/// it under the stored context.
+impl From<super::CallerContext> for ScalarContext {
+    fn from(value: super::CallerContext) -> Self {
+        Self(value.stored())
+    }
+}
 impl OptionalContext<ScalarContext> {
     pub(crate) fn piece(self) -> ContextPiece<'static> {
         self.0
@@ -265,10 +272,12 @@ impl<C: Into<ScalarContext>> From<RequiredContext<C>> for OptionalContext<Scalar
 }
 
 // `Encryption::under` supplies the declared nonempty context to the scalar
-// operation. The caller's omitted input must not extend it with an empty tuple.
+// operation. The caller's omitted input must not extend it with an empty
+// tuple. A scalar operation seals and derives no term, so it runs under
+// the stored context.
 impl From<super::CallerContext> for OptionalContext<ScalarContext> {
     fn from(context: super::CallerContext) -> Self {
-        Self::supplied(context.into())
+        Self::supplied(ScalarContext(context.stored()))
     }
 }
 impl From<NoCallerContext> for super::DeclaredContext {

@@ -131,12 +131,9 @@ impl MaybeEmpty for CallerContext {
         self.scopes.as_ref().is_none_or(MaybeEmpty::is_empty)
     }
 }
-/// The stored context: the scopes, then the bindings.
-impl<'a> IntoContext<'a> for CallerContext {
-    fn into_context(self) -> ContextPiece<'a> {
-        self.stored()
-    }
-}
+// `CallerContext` is deliberately not an `IntoContext`: a context with a
+// binding is two contexts, and a PRF or AEAD API handed one whole would
+// have to pick. A leaf takes `query()` or `stored()` by name.
 impl CallerContext {
     fn scopes(piece: ContextPiece<'static>) -> Self {
         Self {
@@ -181,12 +178,24 @@ impl CallerContext {
         // `validated` proved the scopes nonempty, which is what `query` is.
         NonEmpty::new(query).unwrap_or_else(|_| unreachable!("a validated context has a scope"))
     }
-    /// The stored context, proven nonempty, for a ciphertext beside a term.
-    /// Called on a validated context, whose scopes are nonempty, so the
-    /// stored context, which starts with them, is nonempty too.
-    pub(crate) fn stored_nonempty(validated: NonEmpty<Self>) -> NonEmpty<ContextPiece<'static>> {
-        let stored = validated.into_inner().stored();
-        NonEmpty::new(stored).unwrap_or_else(|_| unreachable!("a validated context has a scope"))
+    /// Both contexts, proven nonempty, for a leaf that derives terms and
+    /// seals: the query context first, the stored context second. Called
+    /// on a validated context, whose scopes are nonempty, so the stored
+    /// context, which starts with them, is nonempty too.
+    pub(crate) fn both_nonempty(
+        validated: NonEmpty<Self>,
+    ) -> (
+        NonEmpty<ContextPiece<'static>>,
+        NonEmpty<ContextPiece<'static>>,
+    ) {
+        let context = validated.into_inner();
+        let (query, stored) = (context.query(), context.stored());
+        (
+            NonEmpty::new(query)
+                .unwrap_or_else(|_| unreachable!("a validated context has a scope")),
+            NonEmpty::new(stored)
+                .unwrap_or_else(|_| unreachable!("a validated context has a scope")),
+        )
     }
     /// A caller context from a context part as a binding spelled it, with
     /// no emptiness proof: what a plan lowered from data extends a field's
@@ -267,17 +276,16 @@ impl CallerContext {
 /// `#[stash(context_type = AeadContext)]`, and then accepts the same
 /// contexts the canonical [`StackCipherText`](crate::StackCipherText) path
 /// does. Built from a caller context, it is the stored context: the scopes,
-/// then the bindings.
+/// then the bindings. It keeps the two apart until it is used, so
+/// [`extend`](Self::extend) nests them as [`CallerContext::extend`] does.
 #[derive(Clone, Debug)]
 pub struct AeadContext {
-    piece: ContextPiece<'static>,
-    empty_part: bool,
+    inner: CallerContext,
 }
 impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for AeadContext {
     fn from(value: NonEmpty<T>) -> Self {
         Self {
-            piece: value.into_context().into_owned(),
-            empty_part: false,
+            inner: CallerContext::from(value),
         }
     }
 }
@@ -289,10 +297,7 @@ impl<'a, T: Clone + IntoContext<'a>> From<&NonEmpty<T>> for AeadContext {
 }
 impl From<CallerContext> for AeadContext {
     fn from(value: CallerContext) -> Self {
-        Self {
-            empty_part: value.empty_part,
-            piece: value.stored(),
-        }
+        Self { inner: value }
     }
 }
 impl<S: ScopePart, B: BindPart> From<Parts<S, B>> for AeadContext {
@@ -312,17 +317,18 @@ impl<'c, T: IntoContext<'c> + MaybeEmpty> From<Bind<T>> for AeadContext {
 }
 impl MaybeEmpty for AeadContext {
     fn is_empty(&self) -> bool {
-        self.piece.is_empty()
+        self.inner.stored().is_empty()
     }
 }
+/// The stored context: the scopes, then the bindings.
 impl<'a> IntoContext<'a> for AeadContext {
     fn into_context(self) -> ContextPiece<'a> {
-        self.piece
+        self.inner.stored()
     }
 }
 impl AeadContext {
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
-        if self.empty_part {
+        if self.inner.empty_part {
             return Err(refuse_empty_part());
         }
         nonempty(self)
@@ -334,20 +340,21 @@ impl AeadContext {
     /// plaintext. So when the context is refused, no copy of the plaintext
     /// has been made.
     pub(super) fn sealable(self) -> Result<NonEmpty<Self>, Error> {
-        Descriptor::from_piece(&self.piece).check()?;
+        Descriptor::from_piece(&self.piece()).check()?;
         self.validated()
     }
-    /// The parts of this context.
-    pub(crate) fn piece(&self) -> &ContextPiece<'static> {
-        &self.piece
+    /// The parts of this context: the stored context.
+    pub(crate) fn piece(&self) -> ContextPiece<'static> {
+        self.inner.stored()
     }
-    /// The own context `own`, extended by this caller context, as
+    /// The own context `own`, extended by this caller context, exactly as
     /// [`CallerContext::extend`] does for a record that derives terms: the
-    /// field's own context is the prefix, this context the extension.
+    /// field's own context is the prefix, the scopes extend it, and the
+    /// bindings follow. The same input seals under the same context
+    /// through either type.
     pub fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self {
         Self {
-            piece: nest(own.into_context().into_owned(), self.piece),
-            empty_part: self.empty_part,
+            inner: self.inner.extend(own),
         }
     }
 }
@@ -685,9 +692,10 @@ impl StoredParts {
 }
 
 /// The decrypt-side inputs a record with stored parts takes, checked
-/// against the parts it stores. For generated code.
+/// against the parts it stores. For generated code. Sealed: the three
+/// inputs below implement it.
 #[doc(hidden)]
-pub trait CheckedInput: super::input::ContextInput {
+pub trait CheckedInput: super::input::ContextInput + checked_sealed::Sealed {
     /// The context the record opens under: [`StoredParts::checked`].
     ///
     /// # Errors
@@ -704,6 +712,12 @@ impl<S: ScopePart, B: BindPart> CheckedInput for super::input::OptionalContext<P
     fn checked(self, stored: StoredParts) -> Result<DeclaredContext, Error> {
         stored.checked(self.into_inner())
     }
+}
+mod checked_sealed {
+    pub trait Sealed {}
+    impl<S, B> Sealed for crate::target::RequiredContext<super::Parts<S, B>> {}
+    impl<S, B> Sealed for crate::target::OptionalContext<super::Parts<S, B>> {}
+    impl Sealed for crate::target::DeclaredScopes {}
 }
 impl CheckedInput for super::input::DeclaredScopes {
     fn checked(self, stored: StoredParts) -> Result<DeclaredContext, Error> {
@@ -771,6 +785,12 @@ impl DeclaredContext {
     #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
     pub(crate) fn parts(&self) -> &[CallerContext] {
         &self.0
+    }
+
+    /// Whether any part carries a binding. A query refuses such a context
+    /// before any key is requested: a binding is in no query context.
+    pub(crate) fn has_bindings(&self) -> bool {
+        self.0.iter().any(CallerContext::has_bindings)
     }
 
     /// Extend by one more part, after any already given: the field's own
@@ -900,6 +920,43 @@ mod tests {
 
     fn text(value: &str) -> ContextPiece<'static> {
         ContextPiece::Text(std::borrow::Cow::Owned(value.to_owned()))
+    }
+
+    /// The same parts seal under the same stored context through either
+    /// type: `AeadContext` keeps the scopes and the bindings apart until
+    /// it is used, so a binding follows the extended scopes rather than
+    /// nesting beside them.
+    #[test]
+    fn an_aead_context_extends_as_a_caller_context_does() {
+        let own = || nonempty!("users").with("email");
+        let parts = || Scope::new(7u64).bind(9u128);
+        let caller = CallerContext::from(parts()).extend(own());
+        let aead = AeadContext::from(parts()).extend(own());
+        assert_eq!(aead.piece(), caller.stored());
+        assert_eq!(
+            aead.into_context(),
+            nest(
+                nest(own().into_context().into_owned(), ContextPiece::U64(7)),
+                ContextPiece::U128(9)
+            )
+        );
+        // With no binding the two agreed before, and still do.
+        let scope = CallerContext::from(Scope::new(7u64)).extend(own());
+        assert_eq!(
+            AeadContext::from(Scope::new(7u64)).extend(own()).piece(),
+            scope.stored()
+        );
+    }
+
+    #[test]
+    fn a_declared_context_knows_whether_it_carries_a_binding() {
+        assert!(!DeclaredContext::from(Scope::new(7u64)).has_bindings());
+        assert!(DeclaredContext::default()
+            .with(CallerContext::from(Scope::new(7u64).bind(9u128)))
+            .has_bindings());
+        assert!(DeclaredContext::default()
+            .with(Bind::new(9u128))
+            .has_bindings());
     }
 
     #[test]

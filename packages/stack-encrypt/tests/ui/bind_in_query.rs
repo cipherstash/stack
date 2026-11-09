@@ -1,5 +1,8 @@
 //! A query takes a scope and no binding: a binding is not in the query
-//! context, so a query chain cannot be extended by one.
+//! context, so a query chain cannot be extended by a bare one. A binding
+//! inside a `CallerContext` or a `DeclaredContext` converts, and is refused
+//! when the query is awaited (`PlanError::BindInQuery`,
+//! `tests/scopes_and_bindings.rs`).
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::target::{Bind, Scope};
 use stack_encrypt::{op, Equality, Plan, StackCipher};

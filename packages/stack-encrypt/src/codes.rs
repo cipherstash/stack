@@ -203,6 +203,7 @@ mod tests {
                 second: "the call",
             },
             PlanError::NoContext => PlanError::NoContext,
+            PlanError::BindInQuery => PlanError::BindInQuery,
             PlanError::TargetWithVerbs { .. } => PlanError::TargetWithVerbs { field: field() },
         ]));
         #[cfg(feature = "dynamic")]

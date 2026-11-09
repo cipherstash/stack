@@ -327,6 +327,33 @@ func CheckPart(part any) error {
 	}
 }
 
+// CheckBinding refuses a binding part [CheckPart] refuses, and an empty
+// one: an empty string or byte slice. A binding ties a row to a context of
+// its own, and a row ID that has not been assigned yet would bind every
+// such row to one context, with no error to say so. The engine refuses it
+// as well (empty_binding); saying it here names the call.
+func CheckBinding(part any) error {
+	if err := CheckPart(part); err != nil {
+		return err
+	}
+	switch v := part.(type) {
+	case string:
+		if v == "" {
+			return errors.New("a binding is empty")
+		}
+	case []byte:
+		if len(v) == 0 {
+			return errors.New("a binding is empty")
+		}
+	}
+	return nil
+}
+
+// Reserved are the plan-level keys of the wire form, which no field may be
+// named: "context_field" names the field the plan takes its context from,
+// and "bind" lists the caller's bindings.
+var Reserved = []string{"context_field", "bind"}
+
 // Validate checks what the host can check before the engine sees the plan:
 // a context, plain segments, at least one field, names and identities once,
 // outputs once and at least one, known kinds, a kind on every indexed field,
@@ -356,7 +383,7 @@ func (p *Plan) Validate() error {
 		}
 	}
 	for _, part := range p.Bind {
-		if err := CheckPart(part); err != nil {
+		if err := CheckBinding(part); err != nil {
 			return fmt.Errorf("record: context binding: %v", err)
 		}
 	}
@@ -373,6 +400,11 @@ func (p *Plan) Validate() error {
 		}
 		if names[f.Name] {
 			return fmt.Errorf("record: field %q is declared twice", f.Name)
+		}
+		for _, reserved := range Reserved {
+			if f.Name == reserved {
+				return fmt.Errorf("record: field %q: the name is reserved for the plan's %q key", f.Name, reserved)
+			}
 		}
 		names[f.Name] = true
 		identity := f.identity()

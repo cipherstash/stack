@@ -780,9 +780,24 @@ impl SuppliedContext for AeadContext {
 
 /// The placeholders for a context value `C` a caller passes: the scope and
 /// binding slots of a [`Parts`], or one scope for any other context type.
-pub trait PartsShape {
+/// Sealed: the context types this crate accepts implement it.
+pub trait PartsShape: parts_sealed::Sealed {
     /// The placeholders.
     fn parts_shape() -> CallerShape;
+}
+mod parts_sealed {
+    pub trait Sealed {}
+    impl<S, B> Sealed for crate::target::Parts<S, B> {}
+    impl<T> Sealed for crate::target::Scope<T> {}
+    impl<T> Sealed for crate::target::Bind<T> {}
+    impl Sealed for crate::target::CallerContext {}
+    impl Sealed for crate::target::AeadContext {}
+    impl Sealed for crate::target::ScalarContext {}
+    impl<T> Sealed for crate::NonEmpty<T> {}
+    macro_rules! sealed_integers {
+        ($($ty:ty),* $(,)?) => {$( impl Sealed for $ty {} )*};
+    }
+    sealed_integers!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
 }
 impl<S: ScopePart, B: BindPart> PartsShape for Parts<S, B> {
     fn parts_shape() -> CallerShape {

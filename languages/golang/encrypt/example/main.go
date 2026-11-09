@@ -28,7 +28,7 @@ func run(ctx context.Context) error {
 
 	// One cipher for one tenant: the default keyset, and the tenant as a
 	// part of every field's context. Every call through it carries both.
-	cipher := client.DefaultKeyset().Extend("tenant-42")
+	cipher := client.DefaultKeyset().Scope("tenant-42")
 
 	people := []User{
 		{ID: 1, Email: "alice@example.com", Age: 34},

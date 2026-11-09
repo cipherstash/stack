@@ -1,0 +1,11 @@
+error: `scope(..)` is given twice; a record lists one scope beside its name
+  --> tests/ui/part_given_twice.rs:14:61
+   |
+14 | #[stash(struct = User, scope = "users", scope(tenant: u64), scope(region: String))]
+   |                                                             ^^^^^
+
+error: `bind(..)` is given twice; a record lists one binding
+  --> tests/ui/part_given_twice.rs:20:58
+   |
+20 | #[stash(struct = User, scope = "users", bind(row: u128), bind(version: u32))]
+   |                                                          ^^^^

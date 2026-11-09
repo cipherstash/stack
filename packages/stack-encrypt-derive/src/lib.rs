@@ -77,6 +77,14 @@
 //! `ContextInput` is `RequiredContext<Parts<..>>` when the caller supplies
 //! a part, and the caller's value converts into it.
 //!
+//! A part stored in the row is a passthrough field, which is not
+//! authenticated. It protects the row only when it is the identity the
+//! database enforces, such as the primary key: a writer who copies the
+//! row's `id` and ciphertext together gets a record that opens and reports
+//! that `id`. A reader that has the row's identity passes it as well, as
+//! `Scope::new(42u64).bind(9u128)` does below. A mismatch is refused before
+//! any key is requested.
+//!
 //! ```
 //! use stack_encrypt::sem::EqualityTerm;
 //! use stack_encrypt::target::{Bind, DecryptSource, EncryptTarget, Scope};

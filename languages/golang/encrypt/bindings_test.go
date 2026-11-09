@@ -88,6 +88,48 @@ func TestABindingIsInTheStoredContextOnly(t *testing.T) {
 	}
 }
 
+// An empty binding would bind every row to one context: a row ID not yet
+// assigned. The cipher refuses it on the first call through it, before any
+// key is requested, as the typed Rust path does.
+func TestAnEmptyBindingIsRefused(t *testing.T) {
+	ctx := context.Background()
+	client, err := encrypt.NewDeterministicClient(ctx, [32]byte{})
+	skipMissingConformanceGuest(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	plan := emailPlan()
+	rows := []record.Source{{"email": "ada@example.com"}}
+	for name, part := range map[string]any{"text": "", "bytes": []byte{}} {
+		bound := client.DefaultKeyset().Scope(uint64(42)).Bind(part)
+		if _, err := bound.Seal(ctx, plan, rows); !errors.Is(err, encrypt.ErrEncoding) {
+			t.Fatalf("an empty %s binding sealed: %v", name, err)
+		}
+		if _, err := bound.Open(ctx, plan, nil); !errors.Is(err, encrypt.ErrEncoding) {
+			t.Fatalf("an empty %s binding opened: %v", name, err)
+		}
+	}
+	// The plan-level refusal, for a plan built by hand.
+	withEmpty := emailPlan()
+	withEmpty.Bind = []any{""}
+	if err := withEmpty.Validate(); err == nil {
+		t.Fatal("a plan with an empty binding validated")
+	}
+}
+
+// "bind" is a plan-level key, so no field may be called that: the plan is
+// refused before the engine sees it.
+func TestAFieldNamedBindIsRefused(t *testing.T) {
+	p := &record.Plan{
+		Context: []string{"users"},
+		Fields:  []record.Field{{Name: "bind", Kind: record.String, Outputs: []record.Output{record.Ciphertext}}},
+	}
+	if err := p.Validate(); err == nil {
+		t.Fatal("a field named bind validated")
+	}
+}
+
 // An EQL type stores its column alone, so a binding has no column to sit
 // under: the plan is refused, as an extended one is.
 func TestABindingIsRefusedOnAnEQLType(t *testing.T) {

@@ -135,6 +135,11 @@ another row. Declared as `bind(row: u128)` for a part the caller passes as
 `Bind::new(row)`, or `bind(field = "id")` for a part stored in the row. The
 kind of a part is in no derivation: a record with no binding stores the
 bytes it always did. Go: `Bind`.
+
+The word has a second meaning in this repository. AGENTS.md calls the FFI
+or WASI layer between the engine and a language a binding, and the
+conformance README's "bindings" are those. The `record-bindings-v1` profile
+tests context bindings, this entry's.
 _Avoid_: lock, label, row context, extension
 
 **Context field**:

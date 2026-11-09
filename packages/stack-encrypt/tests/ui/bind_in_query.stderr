@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `DeclaredContext: From<stack_encrypt::target::Bind<u128>>` is not satisfied
-  --> tests/ui/bind_in_query.rs:22:17
+  --> tests/ui/bind_in_query.rs:25:17
    |
-22 |         .extend(Bind::new(9u128))
+25 |         .extend(Bind::new(9u128))
    |          ------ ^^^^^^^^^^^^^^^^ the trait `From<stack_encrypt::target::Bind<u128>>` is not implemented for `DeclaredContext`
    |          |
    |          required by a bound introduced by this call

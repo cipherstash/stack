@@ -31,11 +31,19 @@ Caller input has two distinct purposes:
 - A **binding** appends after every scope, for encryption and decryption
   only. It is in the stored context, which the data key and the AAD derive
   under, and in no query context, which the search terms derive under. Rust
-  `Scope::new(7u64).bind(9u128)` and Go `.Scope(uint64(7)).Bind(uint64(9))`
+  `Scope::new(7u64).bind(9u64)` and Go `.Scope(uint64(7)).Bind(uint64(9))`
   produce the stored context `((label)/7u64)/9u64` and the query context
-  `(label)/7u64`. A query that carries a binding is refused before any key
-  is requested. `record-bindings-v1` (`v1/record-bindings-v1.cases.json`)
-  specifies this, and both languages are required to run it.
+  `(label)/7u64`. A query with a binding is refused before any key is
+  requested. Rust refuses a bare `Bind` at compile time. A binding inside a
+  `CallerContext` or `DeclaredContext` is refused when the query is awaited
+  (`PlanError::BindInQuery`). The dynamic path refuses a query on a plan
+  with a `bind` key (`bind_in_query`). An empty binding is refused on every
+  path before any key is requested (Rust `Error::Context`, dynamic
+  `empty_binding`, Go `ErrEncoding`). An empty scope part stays allowed in
+  the dynamic grammar and Go `Scope`, as before. `bind` is a reserved
+  plan-level key, so no field is called that. `record-bindings-v1`
+  (`v1/record-bindings-v1.cases.json`) specifies this, and both languages
+  are required to run it.
 
 Grouping is significant. Rust `.extend(NonEmpty::from(7u64).with("eu"))` adds
 one composite part, producing `(label)/(7u64/eu)`. This has different AAD and

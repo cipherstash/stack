@@ -31,7 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The dynamic record grammar has a plan-level `"bind"` key, a list of
     parts. A query on a plan with a binding is refused, `bind_in_query`,
     before any key is requested. `dynamic::record::Plan::with_bindings` and
-    `bindings` carry it.
+    `bindings` carry it. The key is reserved, so a field named `bind` is
+    refused (`bind`), and an empty binding is refused (`empty_binding`).
+  - A typed query carries no binding either: `.extend(Bind::new(..))` does
+    not compile, and a binding inside a `CallerContext` or `DeclaredContext`
+    is `PlanError::BindInQuery` when the query is awaited, before any key.
+  - `CallerContext` is no longer an `IntoContext`: a context with a binding
+    is two contexts, so a leaf takes `query()` or `stored()` by name, and a
+    PRF or AEAD API is never handed one whole. `AeadContext` nests a binding
+    as `CallerContext::extend` does. A JSON document seals under the stored
+    context and derives its selectors under the query context, so a bound
+    document is found by a query under the scopes.
   - `Contexts` and `CallContexts` show a `query context:` line and a
     `stored context:` line for a field with a binding, and one `context:`
     line otherwise. `assert_context!` states both as

@@ -1096,13 +1096,17 @@ pub fn json_document<'s, K: 'static, M: ConsumeSource<'s, serde_json::Value>>(
         build: Box::new(move |source, cipher, cx: CallerContext| {
             let (query, stored) = (cx.query(), cx.stored());
             match cx.validated() {
-                Ok(ctx) => crate::json::seal_pending(
-                    M::take(source),
-                    &options,
-                    cipher,
-                    CallerContext::stored_nonempty(ctx),
-                )
-                .under_context(query, stored),
+                Ok(ctx) => {
+                    let (query_context, stored_context) = CallerContext::both_nonempty(ctx);
+                    crate::json::seal_pending(
+                        M::take(source),
+                        &options,
+                        cipher,
+                        query_context,
+                        stored_context,
+                    )
+                    .under_context(query, stored)
+                }
                 Err(e) => Pending::failed(cipher, e),
             }
         }),

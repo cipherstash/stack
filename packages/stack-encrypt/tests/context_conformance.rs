@@ -384,16 +384,16 @@ fn grouped_extensions_preserve_their_shape() {
         .under(own());
     let grouped = DeclaredContext::from(NonEmpty::from(7u64).with("eu")).under(own());
     assert_eq!(
-        Descriptor::of(separate.clone()).as_str(),
+        Descriptor::of(separate.stored()).as_str(),
         "((users/age)/7u64)/eu"
     );
     assert_eq!(
-        Descriptor::of(grouped.clone()).as_str(),
+        Descriptor::of(grouped.stored()).as_str(),
         "(users/age)/(7u64/eu)"
     );
     assert_ne!(
-        separate.into_aad().as_bytes(),
-        grouped.into_aad().as_bytes()
+        separate.stored().into_aad().as_bytes(),
+        grouped.stored().into_aad().as_bytes()
     );
 }
 

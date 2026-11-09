@@ -773,25 +773,29 @@ pub(crate) fn terms_pending<'a, K>(
     Pending::ready(cipher, terms)
 }
 
-/// Seal `value` into a [`JsonDocument`] under `context`: one data key for
-/// the document, requested under the context's descriptor, and every entry
-/// sealed under it with the AAD that binds the entry to the document, the
-/// column and its ordinal.
+/// Seal `value` into a [`JsonDocument`]: one data key for the document,
+/// requested under the descriptor of the stored context `stored`, and every
+/// entry sealed under it with the AAD that binds the entry to the document,
+/// the column and its ordinal. The selectors and the other terms derive
+/// under the query context `query`, as [`terms_pending`] derives a query's,
+/// so a document bound to its row is still found by a query under the
+/// scopes. The two are one context for a caller with no binding.
 pub(crate) fn seal_pending<'a, K: 'static>(
     value: Value,
     options: &JsonOptions,
     cipher: &'a KeysetCipher<'_, K>,
-    context: NonEmpty<ContextPiece<'static>>,
+    query: NonEmpty<ContextPiece<'static>>,
+    stored: NonEmpty<ContextPiece<'static>>,
 ) -> Pending<'a, JsonDocument, K> {
     // The caller's document, owned here: wiped when this returns, also when
     // the context is refused below.
     let value = PlainJson::protect(value);
-    let piece = context.into_context();
+    let piece = stored.into_context();
     let descriptor = Descriptor::from_piece(&piece);
     if let Err(error) = descriptor.check() {
         return Pending::failed(cipher, error);
     }
-    let prf_context = piece.clone().into_prf_context().into_owned();
+    let prf_context = query.into_context().into_prf_context().into_owned();
     let aad = piece.into_aad().into_owned();
     // One generator for the document: its members' ordinals, its stored
     // order and the order of its selector set.
