@@ -23,7 +23,9 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   0.1.0. The stored bytes of a cipher with no binding do not change.
 - The plan wire form has a plan-level `bind` key, a list of parts, beside
   the field specs. `record.Plan` has a `Bind` field. An EQL type refuses a
-  binding, as it refuses an extension.
+  binding, as it refuses an extension. `bind` is a reserved field name, as
+  `context_field` is: a record with a field called `bind` is refused by
+  `Plan.Validate`, so every `Cipher` call on it fails with `ErrEncoding`.
 
 ### Added
 

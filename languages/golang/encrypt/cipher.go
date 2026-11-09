@@ -1,6 +1,7 @@
 package encrypt
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -68,7 +69,7 @@ func (cph *Cipher) Scope(parts ...any) *Cipher {
 		if err := record.CheckPart(part); err != nil && next.err == nil {
 			next.err = fmt.Errorf("%w: Scope: %v", ErrEncoding, err)
 		}
-		next.extension = append(next.extension, part)
+		next.extension = append(next.extension, ownedPart(part))
 	}
 	return next
 }
@@ -88,9 +89,19 @@ func (cph *Cipher) Bind(parts ...any) *Cipher {
 		if err := record.CheckBinding(part); err != nil && next.err == nil {
 			next.err = fmt.Errorf("%w: Bind: %v", ErrEncoding, err)
 		}
-		next.bindings = append(next.bindings, part)
+		next.bindings = append(next.bindings, ownedPart(part))
 	}
 	return next
+}
+
+// ownedPart is part as the cipher keeps it: a byte slice is copied, so a
+// caller that reuses or changes its buffer after Scope or Bind does not
+// change the context of a cipher it already has.
+func ownedPart(part any) any {
+	if b, ok := part.([]byte); ok {
+		return bytes.Clone(b)
+	}
+	return part
 }
 
 // Extend is the former name of [Cipher.Scope].

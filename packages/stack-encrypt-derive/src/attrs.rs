@@ -126,7 +126,7 @@ impl ContainerAttrs {
                     }
                     return Ok(());
                 }
-                if meta.path.is_ident("bind") {
+                if meta.path.is_ident("bind") && meta.input.peek(syn::token::Paren) {
                     if caller_bind.is_some() || stored_bind.is_some() {
                         return Err(
                             meta.error("`bind(..)` is given twice; a record lists one binding")

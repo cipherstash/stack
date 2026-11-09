@@ -327,6 +327,12 @@ impl<'a> IntoContext<'a> for AeadContext {
     }
 }
 impl AeadContext {
+    /// The query context: the scopes alone. What a JSON document's
+    /// selectors and token chain derive under, so a query under the scopes
+    /// finds a document bound to its row.
+    pub(crate) fn query(&self) -> ContextPiece<'static> {
+        self.inner.query()
+    }
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         if self.inner.empty_part {
             return Err(refuse_empty_part());
@@ -1090,5 +1096,88 @@ mod tests {
             nest(nest(text("users"), text("email")), ContextPiece::U64(7))
         );
         assert_eq!(under.stored(), nest(under.query(), ContextPiece::U128(3)));
+    }
+}
+
+#[cfg(test)]
+mod part_tests {
+    use super::*;
+    use crate::target::input::DeclaredScopes;
+
+    /// An AEAD context with neither scope nor binding is empty, and seals
+    /// nothing; one with a binding alone is not, since the binding is in
+    /// the stored context.
+    #[test]
+    fn an_aead_context_with_no_part_is_empty() {
+        let none = AeadContext::from(CallerContext::from_stored(StoredParts::none()));
+        assert!(MaybeEmpty::is_empty(&none));
+        assert!(none.validated().is_err());
+        assert!(!MaybeEmpty::is_empty(&AeadContext::from(Bind::new(9u128))));
+        assert!(!MaybeEmpty::is_empty(&AeadContext::from(Scope::new(1u64))));
+        assert!(AeadContext::from(Scope::new(1u64)).validated().is_ok());
+    }
+
+    /// A stored binding slot that may be left out names the binding's
+    /// type, as the required slot does.
+    #[test]
+    fn an_optional_bind_slot_names_its_type() {
+        assert_eq!(
+            <Option<Bind<u128>> as BindPart>::type_name(),
+            <Bind<u128> as BindPart>::type_name()
+        );
+        assert_eq!(
+            <Option<Bind<u128>> as BindPart>::type_name().as_deref(),
+            Some("u128")
+        );
+    }
+
+    /// An empty stored part is refused whichever part it is, and whichever
+    /// part came first: the flags accumulate into the part the record
+    /// opens under, which the leaf refuses before any key is requested.
+    #[test]
+    fn an_empty_stored_part_is_refused_in_either_slot() {
+        let none = || None::<Parts<NoScope, NoBind>>;
+        let part = |stored: StoredParts| stored.checked(none()).unwrap().parts()[0].clone();
+        assert!(part(StoredParts::none().scope("").bind(7u64))
+            .validated()
+            .is_err());
+        assert!(part(StoredParts::none().scope(7u64).bind(""))
+            .validated()
+            .is_err());
+        assert!(part(StoredParts::none().bind("").scope(7u64))
+            .validated()
+            .is_err());
+        assert!(part(StoredParts::none().scope(7u64).bind(9u128))
+            .validated()
+            .is_ok());
+    }
+
+    /// An empty part the caller passes is refused whichever part it is.
+    #[test]
+    fn an_empty_passed_part_is_refused_in_either_slot() {
+        fn part<S: ScopePart, B: BindPart>(parts: Parts<S, B>) -> CallerContext {
+            StoredParts::none().checked(Some(parts)).unwrap().parts()[0].clone()
+        }
+        assert!(part(Scope::new("").bind(9u128)).validated().is_err());
+        assert!(part(Scope::new(1u64).bind("")).validated().is_err());
+        assert!(part(Scope::new(1u64).bind(9u128)).validated().is_ok());
+    }
+
+    /// A record whose parts are all stored takes no caller part, and its
+    /// declared scopes carry the stored parts: the stored scope is in the
+    /// context the record opens under.
+    #[test]
+    fn declared_scopes_carry_the_stored_parts() {
+        let context = DeclaredScopes::default()
+            .checked(StoredParts::none().scope(7u64))
+            .unwrap();
+        assert!(context.is_extended());
+        let (scopes, bindings) = context.parts()[0].pieces();
+        assert_eq!(scopes, Some(ContextPiece::U64(7)));
+        assert!(bindings.is_empty());
+        let empty = DeclaredScopes::default()
+            .checked(StoredParts::none())
+            .unwrap();
+        assert!(!empty.is_extended());
     }
 }

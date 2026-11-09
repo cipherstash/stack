@@ -87,6 +87,8 @@ exclude_re = [
   # pinned by `a_caller_shape_holds_its_placeholders` and the derive
   # tests' `contexts()` views, which show no placeholder for them.
   'stack-encrypt/src/contexts\.rs:\d+:\d+: replace CallerShape::none -> Self with Default::default\(\)$',
+  # A record with no stored part IS `StoredParts::default()`: `none` returns it.
+  'stack-encrypt/src/target/context\.rs:\d+:\d+: replace StoredParts::none -> Self with Default::default\(\)$',
   'stack-encrypt/src/contexts\.rs:\d+:\d+: replace <impl SuppliedContext for (NoCallerContext|DeclaredScopes)>::supplies -> CallerShape with Default::default\(\)$',
   # Omitting an expectation is expecting nothing: `ExpectedContext::omitted`
   # returns Self::default(). That an omitted expectation opens under the

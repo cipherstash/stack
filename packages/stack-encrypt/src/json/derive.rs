@@ -1211,9 +1211,14 @@ fn open_document<'a, K>(
     cipher: &'a StackCipher<K>,
     context: AeadContext,
 ) -> Pending<'a, Value, K> {
+    // The key and the AAD derive under the stored context, the scopes then
+    // the bindings; the token chain and the selectors under the query
+    // context, the scopes alone, as they were sealed (`seal_pending`). So a
+    // document bound to its row opens under its binding, and its root
+    // token is the one a query under the scopes derives.
+    let prf_context = context.query().into_prf_context().into_owned();
     let piece = context.into_context();
     let shown = piece.clone().into_owned();
-    let prf_context = piece.clone().into_prf_context().into_owned();
     let (request, aad) = match key_retrieval(&doc.header, piece) {
         Ok(parts) => parts,
         Err(error) => return Pending::failed(cipher, error),

@@ -142,3 +142,38 @@ func TestABindingIsRefusedOnAnEQLType(t *testing.T) {
 		t.Fatal("a bound EQL plan validated")
 	}
 }
+
+// A byte-slice part is copied when the cipher takes it: a caller that
+// reuses or changes its buffer afterwards does not change the context of
+// a cipher it already has, so the row it sealed still opens through it.
+func TestAByteSlicePartIsCopied(t *testing.T) {
+	ctx := context.Background()
+	client, err := encrypt.NewDeterministicClient(ctx, [32]byte{})
+	skipMissingConformanceGuest(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	plan := emailPlan()
+	rows := []record.Source{{"email": "ada@example.com"}}
+	id := []byte("row-9")
+	tenant := []byte("acme")
+	bound := client.DefaultKeyset().Scope(tenant).Bind(id)
+	sealed, err := bound.Seal(ctx, plan, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy(id, "row-1")
+	copy(tenant, "evil")
+	if !reflect.DeepEqual(bound.Bindings(), []any{[]byte("row-9")}) {
+		t.Fatalf("the binding changed with the caller's buffer: %v", bound.Bindings())
+	}
+	if !reflect.DeepEqual(bound.Scopes(), []any{[]byte("acme")}) {
+		t.Fatalf("the scope changed with the caller's buffer: %v", bound.Scopes())
+	}
+	opened, err := bound.Open(ctx, plan, sealed)
+	if err != nil || !reflect.DeepEqual(opened, rows) {
+		t.Fatalf("open through the same cipher: %v %v", err, opened)
+	}
+}

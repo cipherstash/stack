@@ -596,6 +596,47 @@ mod a_bound_json_document {
             .await;
         assert!(refused.is_err(), "the binding left out: {refused:?}");
     }
+
+    /// With the root open, the client walks the token chain itself, so the
+    /// chain must derive under the query context on both sides: a bound
+    /// document sealed with `sealed_root: false` opens under its binding.
+    #[tokio::test]
+    async fn opens_with_its_root_open_too() {
+        use stack_encrypt::json::JsonOptions;
+        use stack_encrypt::target::{json_document, Borrowed};
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let value = serde_json::json!({"hello": "world", "n": [1, 2]});
+        let bound = CallerContext::from(Scope::new(42u64).bind(9u128)).extend(profile());
+        let options = JsonOptions {
+            sealed_root: false,
+            ..JsonOptions::new()
+        };
+        let document: JsonDocument = keyset
+            .run(json_document::<_, Borrowed>(options), &value, bound.clone())
+            .await
+            .unwrap();
+        let opened: serde_json::Value = keyset
+            .run_decryption(
+                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
+                    document.clone(),
+                    bound.into(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened, value);
+        let scopes_alone = CallerContext::from(Scope::new(42u64)).extend(profile());
+        let refused = keyset
+            .run_decryption(
+                <JsonDocument as DecryptInto<serde_json::Value>>::decryption::<FakeDataKeySource>(
+                    document,
+                    scopes_alone.into(),
+                ),
+            )
+            .await;
+        assert!(refused.is_err(), "the binding left out: {refused:?}");
+    }
 }
 
 /// A query carries no binding. A bare `Bind` does not compile
