@@ -16,10 +16,13 @@ use ts_rs::TS;
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptFrom<i16>` and `DecryptInto<i16>`, and both for `Option<i16>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptTarget<i16>` and `DecryptSource<i16>`.
+///
+/// Both traits are also implemented for `Option<i16>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = i16)]
 #[stash(plaintext = Option<i16>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -66,10 +69,13 @@ impl DomainType for Smallint {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptFrom<i16>` and `DecryptInto<i16>`, and both for `Option<i16>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptTarget<i16>` and `DecryptSource<i16>`.
+///
+/// Both traits are also implemented for `Option<i16>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = i16)]
 #[stash(plaintext = Option<i16>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -117,10 +123,11 @@ impl DomainType for SmallintEq {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptFrom<i16>` and `DecryptInto<i16>`.
+/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptTarget<i16>` and `DecryptSource<i16>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = i16)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -169,10 +176,11 @@ impl DomainType for SmallintOrdOre {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptFrom<i16>` and `DecryptInto<i16>`.
+/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptTarget<i16>` and `DecryptSource<i16>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = i16)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -221,10 +229,11 @@ impl DomainType for SmallintOrd {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptFrom<i16>` and `DecryptInto<i16>`.
+/// Plaintext input and decrypted output: [`i16`](i16). Implements `EncryptTarget<i16>` and `DecryptSource<i16>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = i16)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -273,10 +282,13 @@ impl DomainType for SmallintOrdOpe {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i16`](i16). Implements `EncryptFrom<i16>` to build equality query terms, and `EncryptFrom<Option<i16>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
+/// Plaintext input: [`i16`](i16). Implements `EncryptTarget<i16>` to build equality query terms. Query operands do not decrypt.
+///
+/// Also implements `EncryptTarget<Option<i16>>`. The query for a `None` finds the stored nulls.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = i16)]
 #[stash(plaintext = Option<i16>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -323,10 +335,11 @@ impl DomainType for SmallintEqQuery {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i16`](i16). Implements `EncryptFrom<i16>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`i16`](i16). Implements `EncryptTarget<i16>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = i16)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -374,10 +387,11 @@ impl DomainType for SmallintOrdOreQuery {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i16`](i16). Implements `EncryptFrom<i16>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`i16`](i16). Implements `EncryptTarget<i16>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = i16)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -425,10 +439,11 @@ impl DomainType for SmallintOrdQuery {
     doc = " See the [EQL smallint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`i16`](i16). Implements `EncryptFrom<i16>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`i16`](i16). Implements `EncryptTarget<i16>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = i16)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]

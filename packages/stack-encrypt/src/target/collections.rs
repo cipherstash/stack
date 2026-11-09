@@ -27,6 +27,7 @@
 //! collection of them. A nullable element, `Option<S>`, is not an opaque scalar either.
 use super::{DecryptSource, Decryption, EncryptTarget, Encryption, Pending};
 use stack_kms::MaybeSend;
+use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
 impl<S: Zeroize, T: EncryptTarget<S>> EncryptTarget<Vec<S>> for Vec<T>
@@ -120,5 +121,72 @@ where
             self.into_iter()
                 .map(|element| element.decryption(context.clone())),
         )
+    }
+}
+
+/// An optional value. An `Option<S>` encrypts into an `Option<T>`.
+///
+/// - `Some` runs the target's own declaration.
+/// - `None` stays `None`. Nothing is stored. No key is requested. The column
+///   is a database NULL: no value at all.
+///
+/// A database NULL is not a sealed null. Some targets seal a null, such as an
+/// EQL type encrypted from an `Option<String>`. Such a target stores a value
+/// that means "null", under a key, with the terms of a null.
+///
+/// The type of the field decides which one a column stores: `Option<T>` for
+/// a database NULL, and `T` over an `Option<S>` for a sealed null. Neither is
+/// read as the other. A sealed null opened through `Option<T>` into an
+/// `Option<S>` is refused as the wrong type.
+impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for Option<T> {
+    /// The target's context input. A `None` takes the same context as a
+    /// `Some`, so the call is the same whatever the data.
+    type ContextInput = T::ContextInput;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Option<S>, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        Encryption::from_build(
+            move |source: &'s Option<S>, cipher, context: T::ContextInput| match source {
+                Some(value) => cipher.run(T::encryption(), value, context).map(Some),
+                None => Pending::ready(cipher, Ok(None)),
+            },
+        )
+    }
+    /// A `Some` value is moved into the owned form of the target's own
+    /// declaration. That declaration guards the value and wipes it. The
+    /// elements of a collection are handled the same way.
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, Option<S>, Self, K, Self::ContextInput, super::Owned>
+    where
+        S: 's,
+    {
+        Encryption::from_build(move |source: Option<S>, cipher, context: T::ContextInput| {
+            // Building the target's declaration can panic, so the value stays
+            // guarded until the declaration exists. The declaration then takes
+            // the value over, and wipes it.
+            let guarded = Protected::new(source);
+            let description = T::owned_encryption();
+            match guarded.risky_unwrap() {
+                Some(value) => cipher.run(description, value, context).map(Some),
+                None => Pending::ready(cipher, Ok(None)),
+            }
+        })
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        T::indexes()
+    }
+}
+
+/// A stored `None` opens as `None`, with no key request. A stored `Some`
+/// opens through the target's own declaration.
+impl<P: Zeroize + MaybeSend + 'static, T: DecryptSource<P>> DecryptSource<Option<P>> for Option<T> {
+    /// The target's context input, as for encryption.
+    type ContextInput = T::ContextInput;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<Option<P>, K> {
+        match self {
+            Some(stored) => stored.decryption(context).map(Some),
+            None => Decryption::ready(None),
+        }
     }
 }

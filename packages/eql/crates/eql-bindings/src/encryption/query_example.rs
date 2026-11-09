@@ -3,7 +3,7 @@ use eql_bindings::{
     Identifier,
 };
 use stack_encrypt::op::{self, Probabilistic, Stats};
-use stack_encrypt::{Plan, StackCipher};
+use stack_encrypt::{EncryptInto, Plan, StackCipher};
 use stack_kms::FakeDataKeySource;
 
 #[tokio::main(flavor = "current_thread")]
@@ -17,8 +17,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Write a value to the `users.email` column.
     let column = Identifier::for_column("users", "email")?;
-    let email = String::from("alice@example.com");
-    let stored: TextEq = keyset.encrypt_as(&email, column).await?;
+    let stored: TextEq = String::from("alice@example.com")
+        .encrypt_into_with_context(&keyset, column)
+        .await?;
 
     // Query it: a plan for the column's type, under the label that names
     // the same column, table then column.

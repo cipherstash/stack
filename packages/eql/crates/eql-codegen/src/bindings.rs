@@ -563,7 +563,7 @@ pub fn query_projection_ident(family: &DomainFamily, domain: &Domain, term: Term
 
 /// For a producible EQL v4 query twin whose terms are optional, one
 /// projection per term: a struct carrying the envelope and that term alone,
-/// deriving `EncryptFrom` so it derives only that term, and converting into
+/// deriving `EncryptTarget` so it derives only that term, and converting into
 /// the twin. Stack Encrypt builds the twin through the projection of the
 /// index that answers the query's operator, so a query never derives a term
 /// its operator does not read (a match term, which text shorter than one
@@ -603,8 +603,9 @@ fn render_query_projections(
                 term.json_key()
             );
             let detail = format!(
-                " Implements `EncryptFrom<{shown}>`, deriving only this term, and converts into \
-                 [`{twin}`], which is what is bound in SQL."
+                " `{ident}` derives only the `{}` term, through `EncryptTarget<{shown}>`. Convert \
+                 it into [`{twin}`] to bind it in SQL.",
+                term.json_key()
             );
             let others: TokenStream = terms
                 .iter()
@@ -619,7 +620,7 @@ fn render_query_projections(
                 #[doc = ""]
                 #[doc = #detail]
                 #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
-                #[derive(stack_encrypt::EncryptFrom)]
+                #[derive(stack_encrypt::EncryptTarget)]
                 #[stash(plaintext = #plaintext_ty)]
                 #[derive(Clone, Debug, PartialEq)]
                 pub struct #ident {
@@ -782,7 +783,7 @@ fn encryption_attrs(
     if encryption_gap(version, family, domain).is_some() {
         return Default::default();
     }
-    let decrypt = (!query).then(|| quote!(#[derive(stack_encrypt::DecryptInto)]));
+    let decrypt = (!query).then(|| quote!(#[derive(stack_encrypt::DecryptSource)]));
     let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
     let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
     let shown = rust.rsplit("::").next().unwrap_or(rust);
@@ -798,41 +799,51 @@ fn encryption_attrs(
                 (false, false, true) => "order",
                 _ => "equality",
             };
-            let null = if nullable_terms(domain) {
+            let null = nullable_terms(domain).then(|| {
                 format!(
-                    ", and `EncryptFrom<Option<{shown}>>`, whose `None` is the query of a stored \
-                     null"
+                    " Also implements `EncryptTarget<Option<{shown}>>`. The query for a `None` \
+                     finds the stored nulls."
                 )
-            } else {
-                String::new()
-            };
-            format!(
-                " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
-                 query terms{null}. Query operands do not decrypt."
-            )
+            });
+            let main = format!(
+                " Plaintext input: {named}. Implements `EncryptTarget<{shown}>` to build {terms} \
+                 query terms. Query operands do not decrypt."
+            );
+            (main, null)
         } else if nullable_terms(domain) {
             // A null is padded to a value's length only where values have
-            // one length; text's ciphertext is as long as the text.
+            // one length. The ciphertext of a text value is as long as the
+            // text.
             let length = if family.name == "text" {
-                "a `None` is sealed as a null that is not padded, since text has no \
-                 one length, so its length may show that the value is absent"
+                " Text has no fixed length, so a `None` is sealed without padding. The length of \
+                 the sealed null can show that the value is absent."
             } else {
-                "a `None` is sealed as long as a value"
+                " A `None` is sealed with padding, to the length of a value."
             };
-            format!(
+            let main = format!(
                 " Plaintext input and decrypted output: {named}. Implements \
-                 `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`, and both for \
-                 `Option<{shown}>`: {length}, and its terms are a null's, which equality \
-                 has and no other index does."
-            )
+                 `EncryptTarget<{shown}>` and `DecryptSource<{shown}>`."
+            );
+            let null = format!(
+                " Both traits are also implemented for `Option<{shown}>`.{length} A `None` gets \
+                 the terms of a null. Only the equality index has a term for a null."
+            );
+            (main, Some(null))
         } else {
-            format!(
+            let main = format!(
                 " Plaintext input and decrypted output: {named}. Implements \
-                 `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`."
-            )
+                 `EncryptTarget<{shown}>` and `DecryptSource<{shown}>`."
+            );
+            (main, None)
         }
     };
-    let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    let (plaintext, null) = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    let null = null.map(|null| {
+        quote! {
+            #[doc = ""]
+            #[doc = #null]
+        }
+    });
     // A type whose terms a null has (none, or equality's alone) may be
     // sealed, or queried, from an `Option` too (#1298).
     let nullable =
@@ -846,9 +857,10 @@ fn encryption_attrs(
             .collect::<Vec<_>>()
             .join(", ");
         let built = format!(
-            " Plaintext input: [`{shown}`]({rust}), through one projection per index — \
-             {projections} — each `EncryptFrom<{shown}>` and `Into<Self>`: a query carries the \
-             term of the index that answers its operator. Query operands do not decrypt."
+            " Plaintext input: [`{shown}`]({rust}), through one projection per index: \
+             {projections}. Each projection implements `EncryptTarget<{shown}>` and `Into<Self>`. \
+             A query contains only the term of the index for its operator. Query operands do not \
+             decrypt."
         );
         return (
             quote! {
@@ -863,9 +875,11 @@ fn encryption_attrs(
         quote! {
             #[doc = ""]
             #[doc = #plaintext]
+            #null
+            #[doc = ""]
             #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
             #[doc = " See the [complete encryption example](crate::encryption#example)."]
-            #[derive(stack_encrypt::EncryptFrom)]
+            #[derive(stack_encrypt::EncryptTarget)]
             #decrypt
             #[stash(plaintext = #plaintext_ty)]
             #nullable
@@ -1909,7 +1923,7 @@ mod tests {
             );
         }
         let text = render_family_bindings(EqlVersion::V4, family("text"));
-        assert!(text.contains("derive(stack_encrypt::EncryptFrom)"));
+        assert!(text.contains("derive(stack_encrypt::EncryptTarget)"));
         assert!(text.contains("`public.eql_v4_text_eq` — equality domain."));
         assert!(text.contains("\"eql_v4.query_text_eq\""));
         assert!(text.contains("use crate::v4::{DomainType, SchemaVersion};"));
@@ -2307,8 +2321,8 @@ mod tests {
         // derive is listed: the list and the catalog agree both ways.
         assert_eq!(derived, ENCRYPTION_DOMAINS.to_vec());
         // The generated attributes follow the same answer, for the stored
-        // struct and its query twin: exactly the listed pairs carry
-        // `EncryptFrom`, and only a stored struct carries `DecryptInto`,
+        // struct and its query twin. Exactly the listed pairs derive
+        // `EncryptTarget`. Only a stored struct derives `DecryptSource`,
         // because a query operand cannot recover plaintext. Checked here
         // rather than left to the `compile_fail` doctest on the committed
         // text.rs, which fails only after someone regenerates it.
@@ -2322,13 +2336,13 @@ mod tests {
                 // projections, which derive in its place.
                 let projected = query && v4_optional_query_terms(domain);
                 assert_eq!(
-                    attrs.contains("stack_encrypt :: EncryptFrom"),
+                    attrs.contains("stack_encrypt :: EncryptTarget"),
                     listed && !projected,
                     "{} (query = {query})",
                     domain.full_name(family.name)
                 );
                 assert_eq!(
-                    attrs.contains("stack_encrypt :: DecryptInto"),
+                    attrs.contains("stack_encrypt :: DecryptSource"),
                     listed && !query,
                     "{} (query = {query}): a query operand never decrypts",
                     domain.full_name(family.name)

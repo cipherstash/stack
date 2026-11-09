@@ -5,8 +5,9 @@
 //! Stack Encrypt. The structs here are generated from the same catalog as
 //! [`crate::v3`], with `eql_v4_*` domain names and a `v` of `4`.
 //!
-//! **Only these structs derive Stack Encrypt's traits** (`EncryptFrom`,
-//! `DecryptInto`). Only Stack Encrypt produces a v4 value, so this module
+//! **Only these structs derive Stack Encrypt's traits**: `EncryptTarget` and
+//! `DecryptSource`. The same derives implement the older `EncryptFrom` and
+//! `DecryptInto`. Only Stack Encrypt produces a v4 value, so this module
 //! exists only with the `stack-encrypt` feature. Stack Encrypt's output
 //! is not byte-for-byte compatible with cipherstash-client's, so no `eql_v3`
 //! struct claims it. Which v4 types derive them is

@@ -16,10 +16,13 @@ use ts_rs::TS;
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptFrom<f32>` and `DecryptInto<f32>`, and both for `Option<f32>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptTarget<f32>` and `DecryptSource<f32>`.
+///
+/// Both traits are also implemented for `Option<f32>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = f32)]
 #[stash(plaintext = Option<f32>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -66,10 +69,13 @@ impl DomainType for Real {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptFrom<f32>` and `DecryptInto<f32>`, and both for `Option<f32>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptTarget<f32>` and `DecryptSource<f32>`.
+///
+/// Both traits are also implemented for `Option<f32>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = f32)]
 #[stash(plaintext = Option<f32>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -117,10 +123,11 @@ impl DomainType for RealEq {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptFrom<f32>` and `DecryptInto<f32>`.
+/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptTarget<f32>` and `DecryptSource<f32>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -169,10 +176,11 @@ impl DomainType for RealOrdOre {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptFrom<f32>` and `DecryptInto<f32>`.
+/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptTarget<f32>` and `DecryptSource<f32>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -221,10 +229,11 @@ impl DomainType for RealOrd {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptFrom<f32>` and `DecryptInto<f32>`.
+/// Plaintext input and decrypted output: [`f32`](f32). Implements `EncryptTarget<f32>` and `DecryptSource<f32>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -273,10 +282,13 @@ impl DomainType for RealOrdOpe {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`f32`](f32). Implements `EncryptFrom<f32>` to build equality query terms, and `EncryptFrom<Option<f32>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
+/// Plaintext input: [`f32`](f32). Implements `EncryptTarget<f32>` to build equality query terms. Query operands do not decrypt.
+///
+/// Also implements `EncryptTarget<Option<f32>>`. The query for a `None` finds the stored nulls.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = f32)]
 #[stash(plaintext = Option<f32>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -323,10 +335,11 @@ impl DomainType for RealEqQuery {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`f32`](f32). Implements `EncryptFrom<f32>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`f32`](f32). Implements `EncryptTarget<f32>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -374,10 +387,11 @@ impl DomainType for RealOrdOreQuery {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`f32`](f32). Implements `EncryptFrom<f32>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`f32`](f32). Implements `EncryptTarget<f32>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -425,10 +439,11 @@ impl DomainType for RealOrdQuery {
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`f32`](f32). Implements `EncryptFrom<f32>` to build order query terms. Query operands do not decrypt.
+/// Plaintext input: [`f32`](f32). Implements `EncryptTarget<f32>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = f32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -16,10 +16,13 @@ use ts_rs::TS;
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as a null that is not padded, since text has no one length, so its length may show that the value is absent, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
+/// Both traits are also implemented for `Option<String>`. Text has no fixed length, so a `None` is sealed without padding. The length of the sealed null can show that the value is absent. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[stash(plaintext = Option<String>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -66,10 +69,13 @@ impl DomainType for Text {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`, and both for `Option<String>`: a `None` is sealed as a null that is not padded, since text has no one length, so its length may show that the value is absent, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
+/// Both traits are also implemented for `Option<String>`. Text has no fixed length, so a `None` is sealed without padding. The length of the sealed null can show that the value is absent. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[stash(plaintext = Option<String>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -117,10 +123,11 @@ impl DomainType for TextEq {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -167,10 +174,11 @@ impl DomainType for TextMatch {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -220,10 +228,11 @@ impl DomainType for TextOrdOre {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -273,10 +282,11 @@ impl DomainType for TextOrd {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -326,10 +336,11 @@ impl DomainType for TextOrdOpe {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -380,10 +391,11 @@ impl DomainType for TextSearchOre {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptFrom<String>` and `DecryptInto<String>`.
+/// Plaintext input and decrypted output: [`String`](String). Implements `EncryptTarget<String>` and `DecryptSource<String>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -434,10 +446,13 @@ impl DomainType for TextSearch {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality query terms, and `EncryptFrom<Option<String>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
+/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality query terms. Query operands do not decrypt.
+///
+/// Also implements `EncryptTarget<Option<String>>`. The query for a `None` finds the stored nulls.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[stash(plaintext = Option<String>)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -484,10 +499,11 @@ impl DomainType for TextEqQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build match query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build match query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -533,10 +549,11 @@ impl DomainType for TextMatchQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -585,10 +602,11 @@ impl DomainType for TextOrdOreQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -637,10 +655,11 @@ impl DomainType for TextOrdQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String). Implements `EncryptFrom<String>` to build equality and order query terms. Query operands do not decrypt.
+/// Plaintext input: [`String`](String). Implements `EncryptTarget<String>` to build equality and order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -689,7 +708,7 @@ impl DomainType for TextOrdOpeQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String), through one projection per index — [`TextSearchOreEqualityQuery`], [`TextSearchOreOrderQuery`], [`TextSearchOreMatchQuery`] — each `EncryptFrom<String>` and `Into<Self>`: a query carries the term of the index that answers its operator. Query operands do not decrypt.
+/// Plaintext input: [`String`](String), through one projection per index: [`TextSearchOreEqualityQuery`], [`TextSearchOreOrderQuery`], [`TextSearchOreMatchQuery`]. Each projection implements `EncryptTarget<String>` and `Into<Self>`. A query contains only the term of the index for its operator. Query operands do not decrypt.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextSearchOreQuery {
@@ -732,9 +751,9 @@ impl DomainType for TextSearchOreQuery {
 }
 /// The `eql_v4.query_text_search_ore` query operand for `=` `<>`: the `hm` term alone.
 ///
-/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchOreQuery`], which is what is bound in SQL.
+/// `TextSearchOreEqualityQuery` derives only the `hm` term, through `EncryptTarget<String>`. Convert it into [`TextSearchOreQuery`] to bind it in SQL.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSearchOreEqualityQuery {
@@ -757,9 +776,9 @@ impl From<TextSearchOreEqualityQuery> for TextSearchOreQuery {
 }
 /// The `eql_v4.query_text_search_ore` query operand for `<` `<=` `>` `>=`: the `ob` term alone.
 ///
-/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchOreQuery`], which is what is bound in SQL.
+/// `TextSearchOreOrderQuery` derives only the `ob` term, through `EncryptTarget<String>`. Convert it into [`TextSearchOreQuery`] to bind it in SQL.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSearchOreOrderQuery {
@@ -782,9 +801,9 @@ impl From<TextSearchOreOrderQuery> for TextSearchOreQuery {
 }
 /// The `eql_v4.query_text_search_ore` query operand for `@@`: the `bf` term alone.
 ///
-/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchOreQuery`], which is what is bound in SQL.
+/// `TextSearchOreMatchQuery` derives only the `bf` term, through `EncryptTarget<String>`. Convert it into [`TextSearchOreQuery`] to bind it in SQL.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSearchOreMatchQuery {
@@ -814,7 +833,7 @@ impl From<TextSearchOreMatchQuery> for TextSearchOreQuery {
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`String`](String), through one projection per index — [`TextSearchEqualityQuery`], [`TextSearchOrderQuery`], [`TextSearchMatchQuery`] — each `EncryptFrom<String>` and `Into<Self>`: a query carries the term of the index that answers its operator. Query operands do not decrypt.
+/// Plaintext input: [`String`](String), through one projection per index: [`TextSearchEqualityQuery`], [`TextSearchOrderQuery`], [`TextSearchMatchQuery`]. Each projection implements `EncryptTarget<String>` and `Into<Self>`. A query contains only the term of the index for its operator. Query operands do not decrypt.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextSearchQuery {
@@ -857,9 +876,9 @@ impl DomainType for TextSearchQuery {
 }
 /// The `eql_v4.query_text_search` query operand for `=` `<>`: the `hm` term alone.
 ///
-/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchQuery`], which is what is bound in SQL.
+/// `TextSearchEqualityQuery` derives only the `hm` term, through `EncryptTarget<String>`. Convert it into [`TextSearchQuery`] to bind it in SQL.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSearchEqualityQuery {
@@ -882,9 +901,9 @@ impl From<TextSearchEqualityQuery> for TextSearchQuery {
 }
 /// The `eql_v4.query_text_search` query operand for `<` `<=` `>` `>=`: the `op` term alone.
 ///
-/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchQuery`], which is what is bound in SQL.
+/// `TextSearchOrderQuery` derives only the `op` term, through `EncryptTarget<String>`. Convert it into [`TextSearchQuery`] to bind it in SQL.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSearchOrderQuery {
@@ -907,9 +926,9 @@ impl From<TextSearchOrderQuery> for TextSearchQuery {
 }
 /// The `eql_v4.query_text_search` query operand for `@@`: the `bf` term alone.
 ///
-/// Implements `EncryptFrom<String>`, deriving only this term, and converts into [`TextSearchQuery`], which is what is bound in SQL.
+/// `TextSearchMatchQuery` derives only the `bf` term, through `EncryptTarget<String>`. Convert it into [`TextSearchQuery`] to bind it in SQL.
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
-#[derive(stack_encrypt::EncryptFrom)]
+#[derive(stack_encrypt::EncryptTarget)]
 #[stash(plaintext = String)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSearchMatchQuery {
