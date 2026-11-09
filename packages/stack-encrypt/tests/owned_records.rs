@@ -296,6 +296,223 @@ async fn the_owned_record_wipes_sealed_fields_when_the_context_is_refused() {
     assert_eq!(generates.load(Ordering::SeqCst), 0);
 }
 
+// --- A refused context drops no copy of a sealed plaintext unwiped ---------
+
+/// A sealed plaintext that the borrowed form of a `StackCipherText` leaf would
+/// clone. Its `Drop` records whether it still held its value. So a copy that
+/// is dropped without being wiped is seen, whichever copy it is.
+struct Probe {
+    value: String,
+    leaked: Arc<AtomicBool>,
+}
+impl Clone for Probe {
+    fn clone(&self) -> Self {
+        Probe {
+            value: self.value.clone(),
+            leaked: self.leaked.clone(),
+        }
+    }
+}
+impl Zeroize for Probe {
+    fn zeroize(&mut self) {
+        self.value.zeroize();
+    }
+}
+impl Drop for Probe {
+    fn drop(&mut self) {
+        if !self.value.is_empty() {
+            self.leaked.store(true, Ordering::SeqCst);
+        }
+    }
+}
+impl stack_encrypt::Encrypt for Probe {
+    fn visit<S: vitaminc_aead::Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
+        std::mem::take(&mut self.value).visit(sink)
+    }
+}
+fn probe(leaked: &Arc<AtomicBool>) -> Probe {
+    Probe {
+        value: "secret".to_owned(),
+        leaked: leaked.clone(),
+    }
+}
+/// A context longer than a ZeroKMS descriptor can hold.
+fn too_long() -> NonEmpty<String> {
+    NonEmpty::new("x".repeat(65536)).unwrap()
+}
+
+#[derive(Zeroize)]
+struct ProbeRow {
+    secret: Probe,
+}
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(struct = ProbeRow, scope = "rows")]
+struct EncryptedProbeRow {
+    secret: StackCipherText,
+}
+/// The scope literal is longer than a ZeroKMS descriptor can hold. The
+/// derive does not check its length, so the key request is refused at run
+/// time.
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(struct = ProbeRow, scope = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+struct LongScopeProbeRow {
+    secret: StackCipherText,
+}
+#[derive(Zeroize)]
+struct ProbeOuter {
+    inner: ProbeRow,
+}
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(struct = ProbeOuter, scope = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+struct LongScopeProbeOuter {
+    inner: EncryptedProbeRow,
+}
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Probe)]
+struct SealedProbe {
+    c: StackCipherText,
+}
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(plaintext = Probe)]
+struct StoredContextProbe {
+    #[stash(context_field)]
+    identifier: &'static str,
+    c: StackCipherText,
+}
+#[derive(Zeroize)]
+struct ProbeColumn {
+    secrets: Vec<Probe>,
+}
+#[allow(dead_code)] // These tests only encrypt.
+#[derive(EncryptTarget)]
+#[stash(struct = ProbeColumn, scope = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+struct LongScopeProbeColumn {
+    secrets: Vec<StackCipherText>,
+}
+
+/// Run `encrypt` over a probe that a refused context must not leak. The test
+/// fails if the encryption succeeds, or if any copy of the plaintext is
+/// dropped while it still holds its value.
+async fn assert_refused_without_a_leak<T, F>(encrypt: F)
+where
+    F: for<'a> FnOnce(
+        &Arc<AtomicBool>,
+        &'a stack_encrypt::KeysetCipher<'a, common::CountingSource>,
+    ) -> stack_encrypt::target::Pending<'a, T, common::CountingSource>,
+{
+    let (cipher, generates, _) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let leaked = Arc::new(AtomicBool::new(false));
+    let result = encrypt(&leaked, &keyset).await;
+    assert!(result.is_err(), "the context is refused");
+    assert!(
+        !leaked.load(Ordering::SeqCst),
+        "a copy of the sealed plaintext was dropped unwiped"
+    );
+    assert_eq!(generates.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_sealed_field_is_not_leaked_when_the_scope_is_refused() {
+    // The control: the same record under a scope that fits leaks nothing.
+    let (cipher, _, _) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let leaked = Arc::new(AtomicBool::new(false));
+    let row = ProbeRow {
+        secret: probe(&leaked),
+    };
+    assert!(row
+        .encrypt_into::<EncryptedProbeRow, _>(&keyset)
+        .await
+        .is_ok());
+    assert!(!leaked.load(Ordering::SeqCst));
+
+    assert_refused_without_a_leak(|leaked, keyset| {
+        ProbeRow {
+            secret: probe(leaked),
+        }
+        .encrypt_into::<LongScopeProbeRow, _>(keyset)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_nested_sealed_field_is_not_leaked_when_the_outer_scope_is_refused() {
+    assert_refused_without_a_leak(|leaked, keyset| {
+        ProbeOuter {
+            inner: ProbeRow {
+                secret: probe(leaked),
+            },
+        }
+        .encrypt_into::<LongScopeProbeOuter, _>(keyset)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_plaintext_record_is_not_leaked_when_the_caller_context_is_refused() {
+    assert_refused_without_a_leak(|leaked, keyset| {
+        probe(leaked).encrypt_into_with_context::<SealedProbe, _>(keyset, too_long())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_plaintext_record_is_not_leaked_when_the_stored_context_is_refused() {
+    let identifier: &'static str = Box::leak("x".repeat(65536).into_boxed_str());
+    assert_refused_without_a_leak(|leaked, keyset| {
+        probe(leaked).encrypt_into_with_context::<StoredContextProbe, _>(
+            keyset,
+            NonEmpty::new(identifier).unwrap(),
+        )
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_sealed_column_is_not_leaked_when_the_scope_is_refused() {
+    assert_refused_without_a_leak(|leaked, keyset| {
+        ProbeColumn {
+            secrets: vec![probe(leaked), probe(leaked)],
+        }
+        .encrypt_into::<LongScopeProbeColumn, _>(keyset)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_stack_ciphertext_is_not_leaked_when_the_context_is_refused() {
+    assert_refused_without_a_leak(|leaked, keyset| {
+        probe(leaked).encrypt_into_with_context::<StackCipherText, _>(keyset, too_long())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_vec_of_stack_ciphertext_is_not_leaked_when_the_context_is_refused() {
+    assert_refused_without_a_leak(|leaked, keyset| {
+        vec![probe(leaked), probe(leaked)]
+            .encrypt_into_with_context::<Vec<StackCipherText>, _>(keyset, too_long())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_searchable_ciphertext_is_not_leaked_when_the_context_is_refused() {
+    // The ciphertext and the equality term each take the plaintext. The
+    // term's scheme consumes its copy. The refused ciphertext must not drop
+    // its copy unwiped.
+    assert_refused_without_a_leak(|leaked, keyset| {
+        probe(leaked).encrypt_into_with_context::<Encrypted<EqualityTerm>, _>(keyset, too_long())
+    })
+    .await;
+}
+
 #[derive(Zeroize)]
 struct Pair {
     first: Secret,

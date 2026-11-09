@@ -152,9 +152,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their indexes.
 - **The core leaves implement the owned declarations.**
   - `StackCipherText` takes a `RequiredContext<AeadContext>`, to encrypt
-    and to decrypt.
+    and to decrypt. The owned form seals the value without a copy. When the
+    context is refused, the value is wiped.
   - `Encrypted<Terms>` takes a `RequiredContext<CallerContext>` to encrypt,
-    and a `RequiredContext<AeadContext>` to decrypt.
+    and a `RequiredContext<AeadContext>` to decrypt. The owned form wipes
+    the ciphertext's copy of the value when the context is refused.
   - `EqualityTerm`, `MatchTerms`, `OreTerm`, `OpeTerm`, and `OreBlockTerm`
     implement `EncryptTarget` alone.
   - `Ciphertext` implements `Decryptable` and `DecryptField`, so it can be a
@@ -326,6 +328,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     equivalent. That removal is tracked in #1488.
   - No `#[deprecated]` attribute is applied yet, because the crate's own
     plan and dynamic modules still implement these traits.
+
+### Fixed
+
+- **A refused context no longer drops a copy of the plaintext unwiped**
+  (#1504). `target::ciphertext()` cloned a borrowed plaintext before it
+  checked the context. When the context was too long for a ZeroKMS
+  descriptor, the clone was dropped without being wiped. This affected
+  `encrypt_as`, plans, and every owned target with a `StackCipherText` or
+  `Encrypted<Terms>` field.
+  - `ciphertext()` now checks the context before it takes the plaintext.
+    So a refused context makes no copy.
+  - In `Owned` mode, a refused context still drops the value as it is,
+    because `ciphertext()` does not require `Zeroize`. The owned forms of
+    `StackCipherText` and `Encrypted<Terms>` wipe it instead.
+  - `json_document()` now guards its copy of the document before it checks
+    the context. So a refused context wipes that copy.
 
 ## [0.3.0] - 2026-10-27
 

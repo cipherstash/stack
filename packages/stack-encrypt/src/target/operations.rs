@@ -561,15 +561,43 @@ where
 /// `Encrypt` consumes the plaintext. In [`Owned`] mode it is
 /// handed over, so `S` need not be `Clone`; in the default [`Borrowed`] mode
 /// it is cloned once, which is what `M: ConsumeSource<'s, S>` asks.
+///
+/// The context is checked before the plaintext is taken. So in [`Borrowed`]
+/// mode a refused context makes no copy. In [`Owned`] mode a refused context
+/// drops the value without wiping it, because `S` need not be `Zeroize`. The
+/// owned declarations of this crate's leaves wipe it instead.
 pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S>>(
 ) -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
+    sealing(drop)
+}
+/// [`ciphertext`] for a plaintext that is wiped when the context is refused.
+/// The owned declarations of [`StackCipherText`] and
+/// [`Encrypted`](crate::Encrypted) run this form.
+pub(crate) fn wiping_ciphertext<'s, S, K: 'static, M: ConsumeSource<'s, S>>(
+) -> Encryption<'s, S, StackCipherText, K, AeadContext, M>
+where
+    S: crate::Encrypt + zeroize::Zeroize + 's,
+{
+    sealing(|source| {
+        M::release(source, |value| {
+            drop(vitaminc_protected::Protected::new(value))
+        })
+    })
+}
+/// The body of [`ciphertext`]. `refused` is given the source when the context
+/// is refused. The check runs before [`ConsumeSource::take`], so a refused
+/// context never makes a copy of the plaintext.
+fn sealing<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S>>(
+    refused: fn(M::Source),
+) -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
     Encryption {
-        build: Box::new(
-            move |source, cipher, cx: AeadContext| match cx.validated() {
-                Ok(ctx) => encrypt_native(M::take(source), cipher, ctx),
-                Err(e) => Pending::failed(cipher, e),
-            },
-        ),
+        build: Box::new(move |source, cipher, cx: AeadContext| match cx.sealable() {
+            Ok(ctx) => encrypt_native(M::take(source), cipher, ctx),
+            Err(e) => {
+                refused(source);
+                Pending::failed(cipher, e)
+            }
+        }),
     }
 }
 /// Encrypt a supported scalar, or an [`OpaqueBlob`](crate::OpaqueBlob), as
@@ -1326,8 +1354,15 @@ where
 // context out, because a structural leaf takes no empty context. `Default`
 // does not change that.
 //
-// The borrowed form clones a consumed plaintext, as the structural declaration
-// does. The owned form's default guards the value and wipes it instead.
+// The borrowed form of a ciphertext clones the plaintext, as the structural
+// declaration does. It checks the context first, so a refused context makes no
+// copy. The owned form of a ciphertext is handed the value and seals it without
+// a copy. When the context is refused, it wipes the value.
+//
+// The owned term targets keep the default owned form. It guards the value and
+// runs the borrowed form over it, so each term takes a copy. A term derives no
+// descriptor, so no context is refused there. Each term scheme consumes its
+// copy.
 impl<S: crate::Encrypt + Clone + zeroize::Zeroize> EncryptTarget<S> for StackCipherText {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
@@ -1335,6 +1370,12 @@ impl<S: crate::Encrypt + Clone + zeroize::Zeroize> EncryptTarget<S> for StackCip
         S: 's,
     {
         ciphertext().accepting()
+    }
+    fn owned_encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput, Owned>
+    where
+        S: 's,
+    {
+        wiping_ciphertext().accepting()
     }
 }
 impl<P: crate::Decrypt + zeroize::Zeroize + Send + 'static> DecryptSource<P> for StackCipherText {

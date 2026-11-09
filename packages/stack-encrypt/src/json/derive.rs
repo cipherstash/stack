@@ -782,13 +782,14 @@ pub(crate) fn seal_pending<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<CallerContext>,
 ) -> Pending<'a, JsonDocument, K> {
+    // The caller's document, owned here: wiped when this returns, also when
+    // the context is refused below.
+    let value = PlainJson::protect(value);
     let piece = context.into_context();
     let descriptor = Descriptor::from_piece(&piece);
     if let Err(error) = descriptor.check() {
         return Pending::failed(cipher, error);
     }
-    // The caller's document, owned here: wiped when this returns.
-    let value = PlainJson::protect(value);
     let prf_context = piece.clone().into_prf_context().into_owned();
     let aad = piece.into_aad().into_owned();
     // One generator for the document: its members' ordinals, its stored
