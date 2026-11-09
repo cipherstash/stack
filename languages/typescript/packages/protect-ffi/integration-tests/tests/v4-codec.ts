@@ -42,6 +42,7 @@ export type V4Type =
   | 'IntegerOrdOre'
   | 'TextEq'
   | 'TextMatch'
+  | 'TextOrdOre'
 
 export type Plaintext = string | number | boolean
 

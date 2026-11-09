@@ -223,9 +223,10 @@ stays optional for everyone else.
 
 ### The `integration-tests/` suite
 
-`languages/typescript/packages/protect-ffi/integration-tests/` is 21 files of **live** coverage —
+`languages/typescript/packages/protect-ffi/integration-tests/` is 22 files of **live** coverage —
 encrypt/decrypt, lock context, keysets, JS auth strategies, JSON SteVec,
-Postgres (EQL v2 *and* v3), EQL v3 -> v4 migration, and a WASM round trip — and
+Postgres (EQL v2 *and* v3), EQL v2 -> v4 migration (from data Protect.js 10.2.1
+wrote) and v3 -> v4 migration, and a WASM round trip — and
 it is the only place several of those paths are exercised at all. It needs
 three things a normal `pnpm test` does not have: **Docker**, **CipherStash
 credentials**, and **EQL v2, v3 and v4 installed** in the database.

@@ -6,7 +6,7 @@ import {
   newClient,
 } from '@cipherstash/protect-ffi'
 import { Client } from 'pg'
-import { beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import {
   CHECK_VIOLATION,
   decryptV4,
@@ -20,9 +20,12 @@ import {
 // EQL v2 -> v4 migration, end to end, against live ZeroKMS and Postgres.
 //
 // The v2 data is written by the real Protect.js, `@cipherstash/protect@10.2.1`
-// (protect-ffi 0.18.1, cipherstash-client 0.28), the last client customers
-// used before Stack. Not by today's protect-ffi in v2 mode: whether old
-// ciphertext still reads is the question, so the old client writes it.
+// (protect-ffi 0.18.1, cipherstash-client 0.28), the release #1436 pins for
+// DynamoDB. Not by today's protect-ffi in v2 mode: whether old ciphertext
+// still reads is the question, so an old client writes it. It is not the last
+// Protect.js: 10.3 to 10.5, 11.x and 12.x (protect-ffi 0.19 to 0.23, and
+// `@cipherstash/schema` 3 from 12.0) also write EQL v2, and a pass here says
+// nothing about the payloads those releases write.
 //
 // v2 stores every column as one type, `eql_v2_encrypted`, and decides what a
 // column can answer from the payload's index terms. v4 has a domain per
@@ -38,6 +41,13 @@ import {
 //
 // Requires EQL v2 and v4 both installed (`mise run setup` installs v2, v3 and
 // v4) and the v4 codec built (`mise run eql:v4:codec`); see ./v4-codec.ts.
+//
+// Scope: the Protect.js index each column used, one column each:
+// `equality()` -> TextEq (`email`), `equality([{ kind: 'downcase' }])` ->
+// TextEq (`handle`), `orderAndRange()` on a number -> DoubleOrdOre (`age`) and
+// on text -> TextOrdOre (`surname`), `freeTextSearch()` -> TextMatch (`bio`),
+// and no index -> Boolean (`active`). Queried with `=`, `>`, `ORDER BY` and
+// `@@`; no `<`, `<=`, `>=` or `BETWEEN`, no JSON, and no `searchableJson()`.
 
 const TABLE = 'accounts'
 
@@ -47,7 +57,12 @@ const encryptConfig: EncryptConfig = {
   tables: {
     [TABLE]: {
       email: { cast_as: 'text', indexes: { unique: {} } },
+      handle: {
+        cast_as: 'text',
+        indexes: { unique: { token_filters: [{ kind: 'downcase' }] } },
+      },
       age: { cast_as: 'number', indexes: { ore: {} } },
+      surname: { cast_as: 'text', indexes: { ore: {} } },
       bio: { cast_as: 'text', indexes: { match: {} } },
       active: { cast_as: 'boolean', indexes: {} },
     },
@@ -71,7 +86,9 @@ async function legacyProtect() {
   const { csColumn, csTable, protect } = await import('@cipherstash/protect')
   const table = csTable(TABLE, {
     email: csColumn('email').equality(),
+    handle: csColumn('handle').equality([{ kind: 'downcase' }]),
     age: csColumn('age').dataType('number').orderAndRange(),
+    surname: csColumn('surname').orderAndRange(),
     bio: csColumn('bio').freeTextSearch(),
     active: csColumn('active').dataType('boolean'),
   })
@@ -124,7 +141,9 @@ const asLegacy = (value: Plaintext) => value as string | number
 
 type Account = {
   email: string
+  handle: string
   age: number
+  surname: string
   bio: string
   active: boolean
 }
@@ -132,31 +151,41 @@ type Account = {
 const accounts: Account[] = [
   {
     email: 'ada@example.com',
+    handle: 'AdaL',
     age: 36,
+    surname: 'lovelace',
     bio: 'analytical engine notes',
     active: true,
   },
   {
     email: 'grace@example.com',
+    handle: 'GraceH',
     age: 85,
+    surname: 'hopper',
     bio: 'compiler pioneer and admiral',
     active: true,
   },
   {
     email: 'alan@example.com',
+    handle: 'AlanT',
     age: 41,
+    surname: 'turing',
     bio: 'computable numbers and machines',
     active: false,
   },
   {
     email: 'edsger@example.com',
+    handle: 'EdsgerD',
     age: 72,
+    surname: 'dijkstra',
     bio: 'structured programming advocate',
     active: false,
   },
   {
     email: 'barbara@example.com',
+    handle: 'BarbaraL',
     age: 29,
+    surname: 'liskov',
     bio: 'abstraction and programming methodology',
     active: true,
   },
@@ -171,7 +200,10 @@ type Column = keyof Account
  */
 const columns: Record<Column, { v4: V4Type; v4Domain: string }> = {
   email: { v4: 'TextEq', v4Domain: 'public.eql_v4_text_eq' },
+  // v4 has no case-folding equality: see the `handle` test below.
+  handle: { v4: 'TextEq', v4Domain: 'public.eql_v4_text_eq' },
   age: { v4: 'DoubleOrdOre', v4Domain: 'public.eql_v4_double_ord_ore' },
+  surname: { v4: 'TextOrdOre', v4Domain: 'public.eql_v4_text_ord_ore' },
   bio: { v4: 'TextMatch', v4Domain: 'public.eql_v4_text_match' },
   active: { v4: 'Boolean', v4Domain: 'public.eql_v4_boolean' },
 }
@@ -179,6 +211,10 @@ const columns: Record<Column, { v4: V4Type; v4Domain: string }> = {
 const columnNames = Object.keys(columns) as Column[]
 
 const emails = (rows: Account[]) => rows.map((row) => row.email)
+
+const bySurname = [...accounts].sort((a, b) =>
+  a.surname < b.surname ? -1 : a.surname > b.surname ? 1 : 0,
+)
 
 describe('EQL v2 -> v4 migration', () => {
   const pg = new Client()
@@ -215,6 +251,8 @@ describe('EQL v2 -> v4 migration', () => {
     return operand
   }
 
+  // A live `bulkEncrypt` per column and an insert per row can outrun Vitest's
+  // 10 s hook default, and a hook that times out skips every test in the file.
   beforeAll(async () => {
     legacy = await legacyProtect()
     stackClient = await newClient({ encryptConfig })
@@ -257,11 +295,14 @@ describe('EQL v2 -> v4 migration', () => {
         [index + 1, ...columnNames.map((c) => byColumn.get(c)?.[index])],
       )
     }
+  }, 60_000)
 
-    return async () => {
-      await pg.query(`DROP TABLE IF EXISTS ${TABLE}`)
-      await pg.end()
-    }
+  // In `afterAll`, not returned from `beforeAll`: a returned teardown runs only
+  // once the hook succeeds, so a setup failure would leave the table and the
+  // connection behind.
+  afterAll(async () => {
+    await pg.query(`DROP TABLE IF EXISTS ${TABLE}`)
+    await pg.end()
   })
 
   test('the v2 table answers the queries the migration must preserve', async () => {
@@ -291,6 +332,22 @@ describe('EQL v2 -> v4 migration', () => {
         await v2Term('bio', 'programming'),
       ]),
     ).toEqual(emails(accounts.filter((a) => a.bio.includes('programming'))))
+
+    // The downcase filter folds both sides, so any case finds the row.
+    expect(
+      await emailsWhere('WHERE handle = $1::jsonb', [
+        await v2Term('handle', 'alant'),
+      ]),
+    ).toEqual(['alan@example.com'])
+
+    expect(
+      await emailsWhere('WHERE surname > $1::jsonb ORDER BY id', [
+        await v2Term('surname', 'hopper'),
+      ]),
+    ).toEqual(emails(accounts.filter((a) => a.surname > 'hopper')))
+    expect(await emailsWhere('ORDER BY eql_v2.order_by(surname)')).toEqual(
+      emails(bySurname),
+    )
   })
 
   test('a v2 payload cannot be cast into a v4 column', async () => {
@@ -309,19 +366,44 @@ describe('EQL v2 -> v4 migration', () => {
   })
 
   test('relabelling a v2 payload as v4 does not make it a v4 value', async () => {
-    const res = await pg.query<{ email: Record<string, unknown> }>(
-      `SELECT email::jsonb AS email FROM ${TABLE} WHERE id = 3`,
-    )
+    const res = await pg.query<{
+      email: { i: unknown; c: unknown; hm: unknown }
+    }>(`SELECT email::jsonb AS email FROM ${TABLE} WHERE id = 3`)
+    const { i, c, hm } = res.rows[0].email
+    expect(typeof c).toBe('string')
+    expect(typeof hm).toBe('string')
+    // Exactly TextEq's fields, so the refusal below cannot come from a v2-only
+    // key that v4's `deny_unknown_fields` rejects: only the ciphertext's
+    // producer is left to refuse.
+    const relabelled = { v: 4, i, c, hm }
+
+    // The codec opens a genuine v4 payload, so the refusal below is about the
+    // payload and not a missing binary or bad credentials.
+    const [genuine] = encryptV4([
+      {
+        type: 'TextEq',
+        table: TABLE,
+        column: 'email',
+        value: 'alan@example.com',
+      },
+    ])
+    expect(
+      decryptV4([
+        { type: 'TextEq', table: TABLE, column: 'email', payload: genuine },
+      ]),
+    ).toEqual(['alan@example.com'])
+
+    // Stack Encrypt refuses to open a cipherstash-client ciphertext.
     expect(() =>
       decryptV4([
         {
           type: 'TextEq',
           table: TABLE,
           column: 'email',
-          payload: { ...res.rows[0].email, v: 4 },
+          payload: relabelled,
         },
       ]),
-    ).toThrowError()
+    ).toThrowError('unsupported EQL ciphertext producer or version')
   })
 
   test('backfill: decrypt every v2 value and re-encrypt it as v4 beside it', async () => {
@@ -445,6 +527,53 @@ describe('EQL v2 -> v4 migration', () => {
     ).toEqual(expected)
   })
 
+  test('text range and ordering: ORE on text agrees across versions', async () => {
+    const after = emails(accounts.filter((a) => a.surname > 'hopper'))
+    expect(
+      await emailsWhere('WHERE surname > $1::jsonb ORDER BY id', [
+        await v2Term('surname', 'hopper'),
+      ]),
+    ).toEqual(after)
+    expect(
+      await emailsWhere(
+        'WHERE surname_v4 > $1::jsonb::eql_v4.query_text_ord_ore ORDER BY id',
+        [v4Operand('surname', 'hopper')],
+      ),
+    ).toEqual(after)
+
+    expect(await emailsWhere('ORDER BY eql_v2.order_by(surname)')).toEqual(
+      emails(bySurname),
+    )
+    expect(
+      await emailsWhere('ORDER BY eql_v4.ord_term_ore(surname_v4)'),
+    ).toEqual(emails(bySurname))
+  })
+
+  // v4 has no equality type that folds case: TextEq's HMAC is over the exact
+  // plaintext. A column Protect.js indexed with `equality([{ kind: 'downcase'
+  // }])` therefore stops answering queries in a different case once it moves
+  // to TextEq, and nothing in the backfill reports it. This pins that loss so
+  // it cannot go unnoticed: an application that needs case-insensitive
+  // equality has to fold case itself, before encrypting and querying, which
+  // also changes the plaintext it stores.
+  test('downcase equality: the v2 column ignores case and the v4 TextEq column does not', async () => {
+    expect(
+      await emailsWhere('WHERE handle = $1::jsonb', [
+        await v2Term('handle', 'alant'),
+      ]),
+    ).toEqual(['alan@example.com'])
+    expect(
+      await emailsWhere('WHERE handle_v4 = $1::jsonb::eql_v4.query_text_eq', [
+        v4Operand('handle', 'AlanT'),
+      ]),
+    ).toEqual(['alan@example.com'])
+    expect(
+      await emailsWhere('WHERE handle_v4 = $1::jsonb::eql_v4.query_text_eq', [
+        v4Operand('handle', 'alant'),
+      ]),
+    ).toEqual([])
+  })
+
   test('cut-over: drop the v2 columns and the v4 values answer under the original names', async () => {
     for (const column of columnNames) {
       await pg.query(`ALTER TABLE ${TABLE} DROP COLUMN ${column}`)
@@ -453,24 +582,59 @@ describe('EQL v2 -> v4 migration', () => {
       )
     }
 
+    // Every query the v2 columns answered, now under the original names.
     expect(
       await emailsWhere('WHERE email = $1::jsonb::eql_v4.query_text_eq', [
         v4Operand('email', 'grace@example.com'),
       ]),
     ).toEqual(['grace@example.com'])
+    expect(
+      await emailsWhere('WHERE handle = $1::jsonb::eql_v4.query_text_eq', [
+        v4Operand('handle', 'GraceH'),
+      ]),
+    ).toEqual(['grace@example.com'])
+    expect(
+      await emailsWhere(
+        'WHERE age > $1::jsonb::eql_v4.query_double_ord_ore ORDER BY id',
+        [v4Operand('age', 40)],
+      ),
+    ).toEqual(emails(accounts.filter((a) => a.age > 40)))
+    expect(await emailsWhere('ORDER BY eql_v4.ord_term_ore(age)')).toEqual(
+      emails([...accounts].sort((a, b) => a.age - b.age)),
+    )
+    expect(
+      await emailsWhere(
+        'WHERE surname > $1::jsonb::eql_v4.query_text_ord_ore ORDER BY id',
+        [v4Operand('surname', 'hopper')],
+      ),
+    ).toEqual(emails(accounts.filter((a) => a.surname > 'hopper')))
+    expect(await emailsWhere('ORDER BY eql_v4.ord_term_ore(surname)')).toEqual(
+      emails(bySurname),
+    )
+    expect(
+      await emailsWhere(
+        'WHERE bio @@ $1::jsonb::eql_v4.query_text_match ORDER BY id',
+        [v4Operand('bio', 'programming')],
+      ),
+    ).toEqual(emails(accounts.filter((a) => a.bio.includes('programming'))))
 
-    const res = await pg.query<{ active: unknown }>(
-      `SELECT active::jsonb AS active FROM ${TABLE} ORDER BY id`,
+    // And every renamed column decrypts, under the context it was written
+    // with: the logical column name, so the rename needs no re-encryption.
+    const res = await pg.query<Record<string, unknown> & { id: number }>(
+      `SELECT id, ${columnNames.map((c) => `${c}::jsonb AS ${c}`).join(', ')}
+       FROM ${TABLE} ORDER BY id`,
     )
     expect(
       decryptV4(
-        res.rows.map((row) => ({
-          type: 'Boolean' as const,
-          table: TABLE,
-          column: 'active',
-          payload: row.active,
-        })),
+        res.rows.flatMap((row) =>
+          columnNames.map((column) => ({
+            type: columns[column].v4,
+            table: TABLE,
+            column,
+            payload: row[column],
+          })),
+        ),
       ),
-    ).toEqual(accounts.map((a) => a.active))
+    ).toEqual(accounts.flatMap((account) => columnNames.map((c) => account[c])))
   })
 })
