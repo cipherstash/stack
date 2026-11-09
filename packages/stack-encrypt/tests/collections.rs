@@ -683,3 +683,123 @@ async fn a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix() {
     );
     assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
 }
+
+// An absent value: `Option<S>` encrypts into `Option<T>`. `None` is a database
+// NULL, with nothing sealed and no key requested. `Some` is the target alone.
+mod an_optional_value {
+    use super::*;
+    use stack_encrypt::sem::EqualityTerm;
+    use stack_encrypt::target::{AllowsNoContext, IndexSpec};
+
+    #[tokio::test]
+    async fn that_is_absent_stays_absent_and_requests_no_key() {
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let stored: Option<Ciphertext> = None::<i32>.encrypt_into(&keyset).await.unwrap();
+        assert!(stored.is_none());
+        assert_eq!(generates.load(Ordering::SeqCst), 0, "a NULL needs no key");
+
+        let opened = Option::<i32>::decrypt_from(stored, &keyset).await.unwrap();
+        assert_eq!(opened, None);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0, "a NULL needs no key");
+    }
+
+    #[tokio::test]
+    async fn that_is_present_is_the_target_alone() {
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let stored: Option<Ciphertext> = Some(42i32).encrypt_into(&keyset).await.unwrap();
+        assert_eq!(generates.load(Ordering::SeqCst), 1);
+        let Some(ciphertext) = stored.clone() else {
+            panic!("a present value is stored");
+        };
+        // No wrapper: the scalar API opens what was stored.
+        assert_eq!(keyset.decrypt::<i32>(ciphertext).await.unwrap(), 42);
+
+        let opened = Option::<i32>::decrypt_from(stored, &keyset).await.unwrap();
+        assert_eq!(opened, Some(42));
+        assert_eq!(retrieves.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn is_sealed_under_the_context_the_caller_passes() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let stored: Option<Ciphertext> = Some(7i32)
+            .encrypt_into_with_context(&keyset, ("users", "age"))
+            .await
+            .unwrap();
+        assert_eq!(
+            Option::<i32>::decrypt_from_with_context(stored.clone(), &keyset, ("users", "age"))
+                .await
+                .unwrap(),
+            Some(7)
+        );
+        assert!(matches!(
+            Option::<i32>::decrypt_from(stored, &keyset).await,
+            Err(Error::Aead)
+        ));
+    }
+
+    // A record field, a plan field or a collection element runs the borrowed
+    // form. `encrypt_into` runs the owned one.
+    #[tokio::test]
+    async fn runs_the_same_in_the_borrowed_form() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let context = <Ciphertext as EncryptTarget<i32>>::ContextInput::omitted();
+
+        let absent = keyset
+            .run(
+                <Option<Ciphertext> as EncryptTarget<Option<i32>>>::encryption(),
+                &None,
+                context.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(absent.is_none());
+
+        let present = keyset
+            .run(
+                <Option<Ciphertext> as EncryptTarget<Option<i32>>>::encryption(),
+                &Some(9),
+                context,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            Option::<i32>::decrypt_from(present, &keyset).await.unwrap(),
+            Some(9)
+        );
+    }
+
+    #[test]
+    fn answers_the_queries_its_target_answers() {
+        assert_eq!(
+            <Option<EqualityTerm> as EncryptTarget<Option<String>>>::indexes(),
+            vec![IndexSpec::Equality]
+        );
+    }
+
+    #[tokio::test]
+    async fn in_a_column_keeps_its_place() {
+        let (cipher, generates, _) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let column: Vec<Option<Ciphertext>> = vec![Some(1i32), None, Some(3)]
+            .encrypt_into(&keyset)
+            .await
+            .unwrap();
+        assert!(column[1].is_none());
+        assert_eq!(generates.load(Ordering::SeqCst), 1, "one batch");
+        assert_eq!(
+            Vec::<Option<i32>>::decrypt_from(column, &keyset)
+                .await
+                .unwrap(),
+            vec![Some(1), None, Some(3)]
+        );
+    }
+}

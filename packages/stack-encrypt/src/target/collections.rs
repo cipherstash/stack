@@ -122,3 +122,59 @@ where
         )
     }
 }
+
+// An absent value. An `Option<S>` encrypts into an `Option<T>`: `Some` runs
+// the target's own declaration, and `None` stays `None`, with no key request
+// and nothing stored. That is a database NULL: no row value at all.
+//
+// It is not the same as a target that seals a null, such as an EQL type
+// encrypted from an `Option<String>`. That target stores a value that says
+// "null", under a key, with the terms a null has. Which one a column holds is
+// the choice of the field's type: `Option<T>` for a NULL, `T` over an
+// `Option<S>` for a sealed null.
+impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for Option<T> {
+    /// The target's context input. An absent value still takes the same
+    /// context as a present one, so a call does not change shape with its
+    /// data.
+    type ContextInput = T::ContextInput;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Option<S>, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        Encryption::from_build(
+            move |source: &'s Option<S>, cipher, context: T::ContextInput| match source {
+                Some(value) => cipher.run(T::encryption(), value, context).map(Some),
+                None => Pending::ready(cipher, Ok(None)),
+            },
+        )
+    }
+    /// A present value is moved into the owned form of the target's own
+    /// declaration, which guards and wipes it, as a collection's elements
+    /// are.
+    fn owned_encryption<'s, K: 'static>(
+    ) -> Encryption<'s, Option<S>, Self, K, Self::ContextInput, super::Owned>
+    where
+        S: 's,
+    {
+        Encryption::from_build(move |source: Option<S>, cipher, context: T::ContextInput| {
+            match source {
+                Some(value) => cipher.run(T::owned_encryption(), value, context).map(Some),
+                None => Pending::ready(cipher, Ok(None)),
+            }
+        })
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        T::indexes()
+    }
+}
+
+impl<P: Zeroize + MaybeSend + 'static, T: DecryptSource<P>> DecryptSource<Option<P>> for Option<T> {
+    /// The target's context input, as for encryption.
+    type ContextInput = T::ContextInput;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<Option<P>, K> {
+        match self {
+            Some(stored) => stored.decryption(context).map(Some),
+            None => Decryption::ready(None),
+        }
+    }
+}
