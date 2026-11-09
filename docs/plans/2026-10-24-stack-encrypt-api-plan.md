@@ -1811,7 +1811,7 @@ parameter named `aad`.
   `From<&NonEmpty<T>>` for `NonEmpty<T>` out of this repository, so that
   impl is a follow-up in Vitamin C.
 - **Finished when** the examples in this plan pass a context by reference,
-  with no clone, and compile.
+  without moving it, and compile. The parts are cloned into the call.
 
 #### Encrypt borrowed values
 

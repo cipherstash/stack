@@ -35,8 +35,9 @@ where
         Self(context.into_context().into_owned())
     }
 }
-/// A borrowed context. The call then needs no clone of a context that a
-/// write and a query share: the parts are copied into the description.
+/// A borrowed context: a write and a query can share one `NonEmpty`
+/// without the caller moving it. The parts are cloned into the call, so
+/// `T` is `Clone`.
 impl<'c, T> From<&NonEmpty<T>> for CallerContext
 where
     T: Clone + IntoContext<'c>,

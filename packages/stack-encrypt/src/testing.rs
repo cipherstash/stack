@@ -88,13 +88,24 @@ pub struct Expect(ContextTree);
 
 impl Expect {
     /// The tree the parts state. One part is that part; several are a
-    /// list of them.
+    /// list of them. So `["users"]` states the bare part `users`, as
+    /// `nonempty!("users")` renders. A list of one part, as a one-segment
+    /// label renders (`(email)`), is stated with [`list`].
     pub fn tree(parts: &[Expect]) -> ContextTree {
         match parts {
             [one] => one.0.clone(),
             many => ContextTree::List(many.iter().map(|part| part.0.clone()).collect()),
         }
     }
+}
+
+/// A list of exactly these parts, however many: `list(["email"])` states
+/// the one-part list a one-segment label renders as, `(email)`, which an
+/// array literal of one part would state as the bare part `email`.
+pub fn list<T: Into<Expect>, const N: usize>(parts: [T; N]) -> Expect {
+    Expect(ContextTree::List(
+        parts.into_iter().map(|part| part.into().0).collect(),
+    ))
 }
 
 impl From<ContextTree> for Expect {
@@ -331,6 +342,24 @@ mod tests {
     #[test]
     fn a_matching_context_passes() {
         check_single(&column(), &[Expect::from("users"), Expect::from("email")]).unwrap();
+    }
+
+    /// A one-segment label is a list of one part, `(email)`. An array of
+    /// one part states the bare part, so the list is stated with `list`.
+    #[test]
+    fn a_one_part_list_is_stated_with_list() {
+        let one = ContextTree::List(vec![Expect::from("email").0]);
+        check_single(&one, &[list(["email"])]).unwrap();
+        let message = check_single(&one, &[Expect::from("email")]).unwrap_err();
+        assert!(
+            message.contains("expected `email`, found `(email)`"),
+            "{message}"
+        );
+        let nested = ContextTree::List(vec![one.clone(), Expect::from(42u64).0]);
+        check_single(&nested, &[list(["email"]), Expect::from(42u64)]).unwrap();
+        let bare = Expect::from("users").0;
+        check_single(&bare, &[Expect::from("users")]).unwrap();
+        assert!(check_single(&bare, &[list(["users"])]).is_err());
     }
 
     #[test]
