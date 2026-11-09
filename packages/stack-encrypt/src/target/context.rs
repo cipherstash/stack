@@ -134,13 +134,19 @@ impl CallerContext {
             empty_part: false,
         }
     }
-    /// Prove the query context nonempty, and refuse an empty part, before
-    /// a term is derived.
-    pub(crate) fn validated(self) -> Result<NonEmpty<Self>, Error> {
+    /// Refuse an empty part. A context with no scope passes: a record
+    /// whose fields have contexts of their own takes a binding alone.
+    pub(crate) fn checked(self) -> Result<Self, Error> {
         if self.empty_part {
             return Err(refuse_empty_part());
         }
-        nonempty(self)
+        Ok(self)
+    }
+    /// Prove the query context nonempty, and refuse an empty part, before
+    /// a term is derived.
+    pub(crate) fn validated(self) -> Result<NonEmpty<Self>, Error> {
+        let this = self.checked()?;
+        nonempty(this)
     }
     /// The query context: the scopes, as one tree. The unit context when
     /// the caller passed no scope.

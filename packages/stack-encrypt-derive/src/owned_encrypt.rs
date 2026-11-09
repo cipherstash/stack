@@ -29,7 +29,54 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         value_derive(&input, &record, &derived)
     };
     let contexts = contexts_fn(&input, &record);
-    Ok(quote!(#emitted #decryptable #contexts))
+    let markers = markers(&input, &record);
+    Ok(quote!(#emitted #decryptable #contexts #markers))
+}
+
+/// The field markers of a `struct = ..` record: one associated constant
+/// per derived field, named after the field in upper case
+/// (`EncryptedUser::EMAIL`), carrying the field's name, the record's scope,
+/// the field's identity and the record's `contexts`. A generic record
+/// emits none: a marker holds `contexts` as a function pointer, which a
+/// generic function is not. A tuple field has no name, so none either.
+fn markers(input: &DeriveInput, record: &Record) -> TokenStream {
+    if !record.by_field || !input.generics.params.is_empty() {
+        return TokenStream::new();
+    }
+    let krate = &record.krate;
+    let name = &input.ident;
+    let consts = record.fields.iter().filter_map(|field| {
+        let Kind::Derived {
+            by_field: Some(ByField { context, .. }),
+        } = &field.kind
+        else {
+            return None;
+        };
+        let syn::Member::Named(ident) = &field.member else {
+            return None;
+        };
+        let field_name = ident.to_string();
+        let field_name = field_name.strip_prefix("r#").unwrap_or(&field_name).to_owned();
+        let const_name = Ident::new(&field_name.to_uppercase(), ident.span());
+        let ty = &field.ty;
+        let OwnContext { prefix, field: identity } = context;
+        let doc = format!(
+            "The marker of the field `{field_name}`: what a typed query of it starts from. Emitted by `#[derive(EncryptTarget)]`; see [`Marker`]({}::Marker).",
+            quote!(#krate)
+        );
+        Some(quote_spanned! {ty.span()=>
+            #[doc = #doc]
+            #[allow(dead_code)]
+            pub const #const_name: #krate::Marker<#ty> =
+                #krate::Marker::new(#field_name, #prefix, #identity, Self::contexts);
+        })
+    });
+    quote! {
+        #[automatically_derived]
+        impl #name {
+            #(#consts)*
+        }
+    }
 }
 
 /// The caller's input on the encrypt side. A record whose fields have their

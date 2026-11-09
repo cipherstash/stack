@@ -92,6 +92,7 @@ mod json;
 mod json_predicate;
 mod json_query;
 mod kind;
+pub mod planned;
 mod query;
 pub mod record;
 mod target;
@@ -108,6 +109,7 @@ pub use json::{json_frame, read_json, JsonPlaintext, JsonValueError};
 /// kind's names are frozen wire format; see [`admits`] and [`read`] for what
 /// a kind means to this engine.
 pub use kind::{admits, not_admitted, read, ParseValueKindError, ValueKind};
+pub use planned::{DynamicQuery, FieldHandle, Planned, QueryPlan};
 #[allow(deprecated)]
 pub use query::OpSpec;
 pub use query::{

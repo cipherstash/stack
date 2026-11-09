@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Field markers** (#1486, #1590). `#[derive(EncryptTarget)]` on a
+  `struct = ..` record emits one `Marker` per derived field. It is an
+  associated constant named after the field in upper case:
+  `EncryptedUser::EMAIL`. A marker names the field, the context the derive
+  sealed it under, and the field's target type. Its methods are one per
+  operator the field's indexes answer, checked at compile time through
+  `Answers`: `eq`, `lt`, `lte`, `gt`, `gte`, `between`, and `matches`. The
+  query takes the caller's scopes with `.scope(..)`, has no `bind` method,
+  and ends with `.encrypt(&keyset)`. The output is the index's query term.
+  A query from a marker derives under the declaration the derive wrote, so
+  it is the stored term. No plan is written by hand beside the record.
+  `assert_context!` takes a marker. `Marker::contexts()` is the record's
+  contexts narrowed to the field. A generic record and a tuple field emit
+  no marker.
+- **`dynamic::Planned`, a value under a plan that is data** (#1486). A
+  record under a `Plan`, or a query value under a `QueryPlan`, is a target
+  in the owned API's sense. `StackCipherText` implements
+  `EncryptTarget<Planned<Plan, V>>`. `QueryTerm` implements
+  `EncryptTarget<Planned<QueryPlan, V>>`. `Planned<Plan, StackCipherText>`
+  implements `DecryptSource<ValueFrame>`. So `encrypt_into`,
+  `decrypt_from`, and their `_with_context` forms run them. The caller's
+  scope and bindings are the one context argument, after the plan's own. A
+  query takes scopes alone, and refuses a binding before any key is
+  requested. `Planned::contexts()` shows every field's context with the
+  caller's placeholder, before any value is encrypted.
+- **Query plans and the dynamic field handle** (#1486). `Plan::query(field,
+  op)` narrows a record plan to one field and one operator. It is refused
+  where it is made when none of the field's indexes answers the operator
+  (`operator_not_answered`), or when the plan has no such field.
+  `Plan::field(name)` is the handle a program whose plan is data queries
+  through. It has one method per operator, each checked against the plan
+  where it is called, then `.scope(..)` and `.encrypt(&keyset)`. Neither
+  has a `bind` method.
+- `ValueFrame` implements `Zeroize`. `dynamic::query_term` takes any
+  `K: 'static`, as `record::encrypt_with` does. The key source's bounds
+  apply when the pending is awaited, not when the term is described.
+
 ### Breaking
 
 - **Every operator is declared once, and `op::Supports` has one method**

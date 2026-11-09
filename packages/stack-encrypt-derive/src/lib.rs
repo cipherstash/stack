@@ -117,6 +117,21 @@
 //! # }).unwrap();
 //! ```
 //!
+//! # Field markers
+//!
+//! A `struct` record also emits one marker per derived field, as an
+//! associated constant named after the field in upper case:
+//! `EncryptedUser::EMAIL` for a field `email`. A marker is the value a
+//! typed query of the field starts from. It has one method per operator the
+//! field's indexes answer, checked at compile time, takes the caller's
+//! scopes with `.scope(..)` and no binding, and ends with
+//! `.encrypt(&keyset)`. The query derives under the context the derive
+//! sealed the field under, so it is the stored term. See
+//! `stack_encrypt::Marker`. A generic record emits no marker, since a
+//! marker holds the record's `contexts` as a function pointer; a tuple
+//! field has no name, so none either. The constant's name is the field's
+//! in upper case, so a record cannot define another constant of that name.
+//!
 //! The storage envelope itself adds no
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.

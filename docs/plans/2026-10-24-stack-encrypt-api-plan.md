@@ -321,10 +321,15 @@ and checks each one.
 #### Query a record field
 
 The derive emits one marker for each field of a record, such as
-`EncryptedMember::EMAIL`. A marker names the field, its plaintext type,
-its accessor, and the field's index list. It is the value a query starts
-from. The derive emits no plan: the marker is enough for a query, and a
-binding sends a plan of its own.
+`EncryptedMember::EMAIL`. A marker names the field, the context the
+derive sealed it under (the record's scope, then the field's identity),
+and the field's target type, whose `Answers` impls are the field's index
+list. It is the value a query starts from. The derive emits no plan: the
+marker is enough for a query, and a binding sends a plan of its own.
+Built on 10 November 2026 (#1486): the marker carries no plaintext type
+and no accessor, because the derive sees the record's field types and
+not the plaintext struct's, and a query value converts from the borrowed
+form a caller has (`&str` to `String`) through `ToOwned`.
 
 A typed query starts from the marker, and has one method for each
 operator the field's indexes answer. A missing operator is a compile
@@ -335,8 +340,9 @@ The query ends with `encrypt(&keyset)`, and its output type is the EQL
 query type the marker fixes. Decided on 7 November 2026.
 
 ```rust
-// Not on `next` yet: field markers and their query methods. Today a
-// query names a plan written by hand: `cipher.query(op::Eq, value).on(&plan)`.
+// On `next` since #1486, with the index's query term as the output
+// type (`EqualityTerm`, `RangeQuery<OreTerm<u32>>`, `MatchQuery`); the
+// EQL query types follow with the EQL owned implementations.
 let by_email: TextEqQuery = EncryptedMember::EMAIL
     .eq("alice@example.com")
     .scope(tenant)
@@ -690,13 +696,11 @@ keyset as the argument. Made a target after the combinator spike of
 9 November 2026 (ADR-0007, amended).
 
 ```rust
-// Not on `next` yet: `Planned`. Today the chain does this:
-// `cipher.encrypt(&user).using(&plan)` and `cipher.query(op, v).on(&plan)`.
-// The value under a data plan is the dynamic interface's record,
-// `FieldValues`, and the stored row is a `StackCipherText`. A typed
-// struct uses the derive, not a plan.
+// On `next` since #1486. The value under a data plan is the dynamic
+// interface's record, a `ValueFrame` of its fields, and the stored row
+// is a `StackCipherText`. A typed struct uses the derive, not a plan.
 let row: StackCipherText = Planned::new(&plan, values).encrypt_into(&keyset).await?;
-let values = FieldValues::decrypt_from(Planned::new(&plan, row), &keyset).await?;
+let values = ValueFrame::decrypt_from(Planned::new(&plan, row), &keyset).await?;
 
 let row: StackCipherText = Planned::new(&plan, values)
     .encrypt_into_with_context(&keyset, Scope::new(tenant).bind(row_id))
@@ -760,7 +764,7 @@ it declares about queries, so no declaration lists the queries a program
 might run.
 
 ```rust
-// Not on `next` yet: query plans.
+// On `next` since #1486.
 let by_email = plan.query("email", Op::Eq)?;   // refused here if no index answers Eq
 
 let q: QueryTerm = Planned::new(&by_email, "alice@example.com")
@@ -786,11 +790,11 @@ field](#query-a-record-field) shows the typed form.
 
 A program whose plan is data uses the same builder through a field
 handle. The handle has every operator method. Each one is checked at run
-time against the plan, and returns `IndexNotDeclared` when no index
+time against the plan, and returns `operator_not_answered` when no index
 answers it. The handle has no `bind` method either.
 
 ```rust
-// Not on `next` yet: the dynamic field handle.
+// On `next` since #1486.
 let email = plan.field("email")?;
 let q: QueryTerm = email
     .eq("alice@example.com")?        // refused here if no index answers Eq
@@ -1550,10 +1554,14 @@ review.
   The caller must not write a second plan by hand. The marker holds the
   declaration the derive wrote, so the query term and the stored term
   come from one source.
-- **Done already.** `Answers` on a target type is today's compile-time
-  lookup of the index for an operator. The marker's index list extends
-  it to a record field. Until the markers land, a query works through a
-  plan written by hand: `cipher.query(op, value).on(&plan)`.
+- **Done already.** `Answers` on a target type is the compile-time
+  lookup of the index for an operator; a marker's methods are bound by
+  it, so the marker's index list is its target type's `Answers` impls.
+  Pull request #1486's branch lands the markers, their query methods
+  and `assert_context!` over a marker (`src/marker.rs`,
+  `tests/markers.rs`, `tests/ui/marker_*.rs`). The chain query
+  `cipher.query(op, value).on(&plan)` still exists until #1488 removes
+  it.
 - **No hand-built plan.** The review of 7 November 2026 gave a
   hand-built plan the same markers, through `Plan::<Member>::scope(..)`
   with `pick!`. That is withdrawn. No Rust program builds a plan by hand.
@@ -1565,13 +1573,17 @@ review.
   time too. Today the builder refuses it at run time, so that check
   lands with the builder's removal. The dynamic grammar keeps its
   run-time checks.
-- **Tracked in.** Issue #1486 is open.
+- **Tracked in.** Issue #1486 is open; its markers pull request is on
+  the stack above #1592.
 - **Finished when** these are all true:
-  - the [marker example](#query-a-record-field) compiles;
+  - the [marker example](#query-a-record-field) compiles, with the
+    index's query term as the output type; the EQL query types come
+    with the EQL owned implementations;
   - the compile-fail cases in `tests/ui` cover an operator the field's
-    indexes do not answer;
+    indexes do not answer (`marker_operator_not_answered`) and a
+    binding on a query (`marker_query_has_no_bind`);
   - tests show that a query cannot run without its plan or its required
-    context.
+    context (`tests/markers.rs`, `tests/planned.rs`).
 
 #### `Planned` and its serialised form
 
@@ -1603,11 +1615,18 @@ Decided on 7 November 2026, as area one of the query design review.
 - **Rules.** A serialised `Planned` is a transport form, never a storage
   form, because its value is plaintext. It is never logged or written to disk. Its shape
   is not part of the stored format.
-- **Done already.** The guest already sends the engine a plan frame, then
-  a value frame for each call, through `plan_with`, `encrypt_with`,
-  `query`, and `decrypt_with` in `dynamic::record`. The serialised `Planned` names and groups what those functions already
-receive.
-- **Tracked in.** Issue #1486 is open, in part. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a Go plan-building API, for types `stashgen` cannot tag. It builds a data plan, so the Rust builder's removal does not affect it.
+- **Done already.** `Planned`, the query plan, the field handle,
+  `QueryTerm` and `contexts()` on a `Plan` and a `Planned` are on the
+  markers pull request's branch (`src/dynamic/planned.rs`,
+  `tests/planned.rs`). `Planned` calls `encrypt_with`, `query_term` and
+  `decrypt_with` in `dynamic::record` and `dynamic::query`, under the
+  plan extended by the caller's parts. The guest still sends the engine
+  a plan frame, then a value frame for each call. The serialised
+  `Planned` names and groups what those functions already receive, and
+  is not built yet.
+- **Tracked in.** Issue #1486 is open, in part. Issue #1594 is the
+  serialised `Planned`, the Go module sending it, and the corpus
+  rewrite, split from the markers pull request. On the Go side, issue #1116 is open to hide or rename `record.Plan`. Issue #1307 is open for a Go plan-building API, for types `stashgen` cannot tag. It builds a data plan, so the Rust builder's removal does not affect it.
 - **Finished when** these are all true:
   - every case in the conformance corpus is a serialised `Plan` or
     `Planned` with the engine's expected answer beside it;

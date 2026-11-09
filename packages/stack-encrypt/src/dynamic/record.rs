@@ -579,6 +579,17 @@ impl FieldPlan {
     fn is_target(&self) -> bool {
         self.target.is_some()
     }
+
+    /// Extend the field's context by `part`, nested to the left as a
+    /// binding spells it (`[[..label], part]`), and record it in the
+    /// extension: what [`Plan::with_scopes`] does to every field.
+    fn extend(&mut self, part: ContextPiece<'static>) {
+        let own = self.context.get().clone();
+        let nested = ContextPiece::List(vec![own, part.clone()]);
+        self.context = NonEmpty::new(nested)
+            .unwrap_or_else(|_| unreachable!("a list of two parts is not empty"));
+        self.extension.push(part);
+    }
 }
 
 /// The text of a text part.
@@ -1017,20 +1028,20 @@ impl Plan {
     ///
     /// The plan does not lower: the same errors as running it.
     pub fn contexts(&self) -> Result<crate::Contexts, crate::Error> {
+        let lowered = self.lower::<()>()?.shapes_under(&self.declared_context());
         Ok(crate::contexts::resolve(
-            self.caller_shapes()?,
+            self.placed(lowered),
             crate::contexts::CallerShape::none(),
         ))
     }
 
-    /// The shape of every field's context, in plan order, with the plan's
-    /// extension applied: the lowered fields' shapes, and each target field
-    /// under its label alone. An EQL value is sealed under its table and
-    /// column by the resolver, and takes no part from the caller: the plan
-    /// refuses an extension for it before it runs.
-    fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
+    /// The shape of every field's context, in plan order: the `lowered`
+    /// fields' shapes, and each target field under its label alone. An EQL
+    /// value is sealed under its table and column by the resolver, and
+    /// takes no part from the caller: the plan refuses an extension for it
+    /// before it runs.
+    fn placed(&self, lowered: crate::contexts::Shapes) -> crate::contexts::Shapes {
         use vitaminc_aead::IntoContext as _;
-        let lowered = self.lower::<()>()?.shapes_under(&self.declared_context());
         let mut lowered = lowered.into_iter().peekable();
         let mut shapes = crate::contexts::Shapes::with_capacity(self.fields.len());
         for field in &self.fields {
@@ -1049,7 +1060,7 @@ impl Plan {
             }
         }
         shapes.extend(lowered);
-        Ok(shapes)
+        shapes
     }
 
     /// The fields plan this declaration lowers to, for a cipher over `K`.
@@ -1126,6 +1137,52 @@ impl Plan {
     /// The caller's bindings, in order. Empty for a plan with none.
     pub fn bindings(&self) -> &[ContextPiece<'static>] {
         &self.bindings
+    }
+
+    /// This plan with `parts` after its extension: a caller's scopes, each
+    /// one more part of every field's context, as a plan's `"context"` key
+    /// carries them.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] with [`Reason::EmptyContext`] for an empty part, and
+    /// [`Error::Target`] if a field names an EQL type
+    /// ([`TargetError::Extended`]), as [`with_bindings`](Self::with_bindings).
+    pub(super) fn with_scopes(
+        mut self,
+        parts: impl IntoIterator<Item = ContextPiece<'static>>,
+    ) -> Result<Self, Error> {
+        let parts: Vec<_> = parts.into_iter().collect();
+        if parts.iter().any(crate::MaybeEmpty::is_empty) {
+            return Err(Error::bad_plan(Reason::EmptyContext));
+        }
+        if let Some(target) = self.fields.iter().find(|field| field.is_target()) {
+            if !parts.is_empty() {
+                return Err(TargetError::Extended {
+                    name: target.name.clone(),
+                    label: target.label.to_string(),
+                }
+                .into());
+            }
+        }
+        for field in &mut self.fields {
+            for part in &parts {
+                field.extend(part.clone());
+            }
+        }
+        self.extension.extend(parts);
+        Ok(self)
+    }
+
+    /// The shapes of every field's leaf, run under this plan's context and
+    /// then the context the caller hands a [`Planned`](super::Planned)
+    /// record.
+    pub(super) fn caller_shapes(&self) -> Result<crate::contexts::Shapes, crate::Error> {
+        let plan = self.lower::<()>()?;
+        Ok(self.placed(crate::contexts::under_declared_then_caller(
+            plan.shapes(),
+            &self.declared_context(),
+        )))
     }
 
     /// The context every field's label is run under: the extension, as the

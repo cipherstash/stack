@@ -567,6 +567,7 @@ pub mod descriptor;
 pub mod dynamic;
 pub mod json;
 pub mod keyset;
+pub mod marker;
 pub mod op;
 pub mod plan;
 pub mod sem;
@@ -585,6 +586,7 @@ pub use contexts::{
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
+pub use marker::{MarkedQuery, Marker};
 pub use plan::{all, Plan, PlanError};
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is

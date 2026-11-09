@@ -275,6 +275,49 @@ Case belongs to the match index's configuration, not to the operator.
 _Avoid_: query type, index (that is what answers the operator), `OpSpec`
 (the dynamic enum's old name)
 
+**Field marker**:
+The value a typed query of a derived record's field starts from. The
+derive emits one per field, as an associated constant named after the field
+in upper case (`EncryptedUser::EMAIL`). A marker names the field, the
+context the derive sealed it under, and the field's target type. The target
+type's `Answers` impls give the marker one method per operator the field's
+indexes answer, checked at compile time.
+
+A query from a marker takes scopes and no binding. It derives under the
+declaration the derive wrote, so it is the stored term. No plan is
+written by hand beside the record. `Marker::contexts()` is the record's
+contexts narrowed to the field, and `assert_context!` takes a marker.
+_Avoid_: field handle (that is the dynamic form), column, accessor
+
+**Planned**:
+A value under a plan that is data, `Planned::new(&plan, value)`: a record
+under a record plan, or a query value under a query plan. A target in the
+owned API's sense, so `encrypt_into`, `decrypt_from`, and their
+`_with_context` forms run it. The caller's scope and bindings are the one
+context argument, after the plan's own. It prints neither its value nor its
+plan, and wipes the value as every source is wiped.
+
+A serialised form, what a binding sends for an operation, is to come
+(#1594). The Go module still sends a plan frame and a value frame.
+_Avoid_: request, envelope (that is the storage format), record (a
+`Planned` can contain a query value)
+
+**Query plan**:
+A record plan narrowed to one field and one operator, `plan.query(field,
+op)`. It is refused where it is made when none of the field's indexes
+answers the operator. So a query plan in hand is one the engine derives a term
+for. A query value under it is a `Planned`, and encrypts to the query
+term.
+_Avoid_: query, index (that is what answers the operator)
+
+**Field handle**:
+One field of a plan that is data, for a query: `plan.field(name)`. It has
+one method per operator, each checked against the plan where it is
+called, then `.scope(..)` and `.encrypt(&keyset)`. The dynamic
+counterpart of a field marker. Neither has a `bind` method: a binding is
+in no query context.
+_Avoid_: field marker (that is the typed form), column
+
 **Query term**:
 The value a query sends to the server. It is not the stored term: equality
 sends the same HMAC it stores, but a match query is a filter over the query's

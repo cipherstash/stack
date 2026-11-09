@@ -76,7 +76,7 @@ use serde::{Serialize, Serializer};
 use super::WireBytes;
 use std::fmt;
 
-use stack_kms::{DataKeySource, IndexKeySource};
+use stack_kms::DataKeySource;
 
 use super::record::{FieldPlan, Plan};
 use super::term::derive;
@@ -482,7 +482,7 @@ fn answer<'p>(
 
 /// The field named `field`, or [`Error::Plan`] with
 /// [`Reason::NoSuchField`].
-fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Error> {
+pub(super) fn find<'p>(plan: &'p Plan, field: &str) -> Result<&'p FieldPlan, Error> {
     plan.fields()
         .iter()
         .find(|candidate| candidate.name() == field)
@@ -1056,17 +1056,14 @@ where
 /// bound is above its high bound is not refused: as SQL's `BETWEEN`, it
 /// matches nothing.
 /// [`Error::Target`] for what the resolver refuses.
-pub fn query_term<'a, K>(
+pub fn query_term<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
     plan: &Plan,
     field: &str,
     operator: Op,
     input: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
-) -> Result<Pending<'a, QueryTerm, K>, Error>
-where
-    K: DataKeySource + IndexKeySource + Sync + 'static,
-{
+) -> Result<Pending<'a, QueryTerm, K>, Error> {
     let answer = answer(plan, field, operator, resolver)?;
     has_context(plan, field)?;
     if operator.is_json() {

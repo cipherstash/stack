@@ -113,6 +113,11 @@ impl ValueFrame {
         write(|writer| value.visit(Modeled::new(writer)))
     }
 
+    /// A frame of no bytes: what a wiped frame is left as.
+    pub(crate) fn empty() -> Self {
+        Self(Equatable::new(Vec::new()))
+    }
+
     /// Read one value from frame bytes a host handed over.
     ///
     /// A typed null in the bytes reads as a plain null: the value this

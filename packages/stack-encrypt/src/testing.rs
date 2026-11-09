@@ -246,6 +246,13 @@ impl ContextSubject for Contexts {
             })
     }
 }
+/// A field marker states its field's context: the record's contexts,
+/// narrowed to that field.
+impl<T> ContextSubject for crate::marker::Marker<T> {
+    fn single_context(&self) -> Result<LeafContext, String> {
+        self.contexts().single_context()
+    }
+}
 impl ContextSubject for CallContexts {
     fn single_context(&self) -> Result<LeafContext, String> {
         if self.has_failed() {
