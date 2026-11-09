@@ -43,6 +43,15 @@ import {
 //
 // Requires EQL v3 and v4 both installed (`mise run setup` installs v2, v3 and
 // v4) and the v4 codec built (`mise run eql:v4:codec`); see ./v4-codec.ts.
+//
+// Scope: five scalar types, one column each — TextEq (`email`), IntegerOrdOre
+// (`age`), IntegerOrdOpe (`rank`), TextMatch (`bio`) and Boolean (`active`) —
+// queried with `=`, `>` (on both the ORE and the OPE column), `ORDER BY` and
+// `@@`. A pass here says nothing about the types and operators it does not
+// run: no TextOrd, BigInt, date, float or decimal column, and no `<`, `<=`,
+// `>=` or `BETWEEN`. JSON is not covered at all: v4 stores a searchable JSON
+// document as a tree of entries rather than v3's SteVec, the codec has no
+// conversion for it, and a v3 SteVec document cannot be migrated this way.
 
 const TABLE = 'customers'
 

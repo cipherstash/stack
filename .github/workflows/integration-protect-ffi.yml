@@ -430,10 +430,17 @@ jobs:
       # a cache that is a cold build of stack-encrypt and its HTTP stack on every
       # run. Keyed apart from the `sqlx-tests` cache test-eql.yml saves, which
       # carries the SQLx graph this job never builds.
+      #
+      # Saved from `main` only. The cache is about 565 MB, and a save per PR ref
+      # crowds the repository's 10 GB cache limit. A PR still restores the
+      # `main` entry: a run can read caches saved on the default branch, whatever
+      # the PR's base (`push` runs this job on `main` only, so no other branch
+      # saves one).
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
           shared-key: eql-v4-codec
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # One task, six things the suite cannot run without (see
       # integration-tests/tasks.toml): `pnpm install --frozen-lockfile` (a
