@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { eqlV4SuiteFilterEntries } from './lib/eql-v4-suite-inputs.mjs'
-import { filterCovers } from './lib/paths-filter.mjs'
+import { entryCovers, filterCovers, globPrefix } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
@@ -107,21 +107,6 @@ function cachedPaths(step) {
 }
 
 /**
- * Everything before a glob's first wildcard SEGMENT — the deepest path both a
- * cache pattern and a `paths:` entry can be compared on.
- *
- * `languages/typescript/packages/protect-ffi/crates/**` -> `languages/typescript/packages/protect-ffi/crates`
- * `languages/typescript/packages/protect-ffi/src/errors.ts` -> itself (no wildcard)
- */
-function literalPrefix(pattern) {
-  const segments = pattern.split('/')
-  const wildcardAt = segments.findIndex((segment) => /[*?[]/.test(segment))
-  return (wildcardAt === -1 ? segments : segments.slice(0, wildcardAt)).join(
-    '/',
-  )
-}
-
-/**
  * The patterns a key hashes that are BUILD INPUTS, which is not all of them.
  *
  * A key hashes files for two different reasons, and only one of them implies a
@@ -139,29 +124,11 @@ function literalPrefix(pattern) {
 function buildInputs(step) {
   const cached = cachedPaths(step)
   return hashFilesPatterns(step?.with?.key).filter((pattern) => {
-    const prefix = literalPrefix(pattern)
+    const prefix = globPrefix(pattern)
     return !cached.some(
       (path) => prefix === path || prefix.startsWith(`${path}/`),
     )
   })
-}
-
-/**
- * Does one `paths:` entry cover everything a build-input pattern can match?
- *
- * Deliberately conservative: only a literal entry or a `**`-tailed one counts.
- * An entry with a wildcard in any earlier segment (a mid-path `*`, or a tail
- * like `*.ts`) is treated as covering nothing, so it fails loudly and gets a
- * matcher that understands it — the opposite
- * bias would be a false green, which here means a build input nothing triggers
- * on, which is the entire defect this file exists for.
- */
-function entryCovers(entry, inputPattern) {
-  const prefix = literalPrefix(entry)
-  const tail = entry.slice(prefix.length).replace(/^\//, '')
-  if (tail !== '' && tail !== '**') return false
-  const target = literalPrefix(inputPattern)
-  return target === prefix || target.startsWith(`${prefix}/`)
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +460,7 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
         // path is not an error, so both this guard and the cache go quietly
         // wrong together.
         const missing = inputs.filter(
-          (pattern) => !existsSync(resolve(REPO_ROOT, literalPrefix(pattern))),
+          (pattern) => !existsSync(resolve(REPO_ROOT, globPrefix(pattern))),
         )
         expect(
           missing,
@@ -569,10 +536,10 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
       const wider = paths.filter(
         (entry) =>
           !entry.startsWith('!') &&
-          (literalPrefix(entry) === EQL_CRATES ||
-            literalPrefix(entry).startsWith(`${EQL_CRATES}/`) ||
-            EQL_CRATES.startsWith(`${literalPrefix(entry)}/`)) &&
-          literalPrefix(entry) !== '' &&
+          (globPrefix(entry) === EQL_CRATES ||
+            globPrefix(entry).startsWith(`${EQL_CRATES}/`) ||
+            EQL_CRATES.startsWith(`${globPrefix(entry)}/`)) &&
+          globPrefix(entry) !== '' &&
           !allowed(entry),
       )
       expect(

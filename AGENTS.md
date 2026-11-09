@@ -223,7 +223,7 @@ stays optional for everyone else.
 
 ### The `integration-tests/` suite
 
-`languages/typescript/packages/protect-ffi/integration-tests/` is 19 files of **live** coverage —
+`languages/typescript/packages/protect-ffi/integration-tests/` is 21 files of **live** coverage —
 encrypt/decrypt, lock context, keysets, JS auth strategies, JSON SteVec,
 Postgres (EQL v2 *and* v3), EQL v3 -> v4 migration, and a WASM round trip — and
 it is the only place several of those paths are exercised at all. It needs
@@ -261,7 +261,7 @@ credentials**, and **EQL v2, v3 and v4 installed** in the database.
 - **Run it locally** from `languages/typescript/packages/protect-ffi`:
 
   ```bash
-  mise run setup                 # pnpm install, docker compose up, EQL v2 + v3
+  mise run setup                 # pnpm install, docker compose up, EQL v2, v3, v4 and the v4 codec
   mise run test:integration:all  # includes tests/lock-context.test.ts
   ```
 
@@ -297,9 +297,11 @@ credentials**, and **EQL v2, v3 and v4 installed** in the database.
   `tests/v4-codec.ts`. `eql:v4:install` builds the v4 bundle from the in-tree
   EQL source (`bash tasks/build.sh`, called directly so it needs cargo and not
   `packages/eql`'s mise config) and `eql:v4:codec` builds the codec; both are
-  part of `mise run setup`. The CI filter cannot name `packages/eql/crates/**`
-  (`wasm-build-inputs-paths-filter.test.mjs`), so an edit to eql-codegen or
-  eql-bindings' v4 module reaches this suite only through `test-eql.yml`.
+  part of `mise run setup`. The CI filter lists the entries derived in
+  `scripts/__tests__/lib/eql-v4-suite-inputs.mjs` and held by
+  `eql-v4-suite-triggers.test.mjs`. The wide `packages/eql/crates/**` glob stays
+  forbidden by `wasm-build-inputs-paths-filter.test.mjs`, and `test-eql.yml`
+  does not run this suite.
 - **`eql:v3:install` builds `@cipherstash/eql` first, and has to.** The task
   reads the bundle through `@cipherstash/eql/sql`, which the package's `exports`
   map resolves to `dist/sql.js` — a tsup output. That was free while `npm ci`

@@ -1,6 +1,6 @@
 name: Integration — protect-ffi (native + WASM)
 
-# The `languages/typescript/packages/protect-ffi/integration-tests/` suite: 19 files of live
+# The `languages/typescript/packages/protect-ffi/integration-tests/` suite: 21 files of live
 # encrypt / decrypt / lock-context / keyset / JSON-SteVec / Postgres /
 # WASM-round-trip coverage against real ZeroKMS and a real Postgres.
 #
@@ -124,6 +124,10 @@ on:
       - 'packages/eql/crates/eql-domains/Cargo.toml'
       - 'packages/eql/crates/eql-domains/src/**'
       - 'packages/eql/Cargo.lock'
+      # The root manifest: stack-kms and the other root-workspace crates the codec
+      # compiles take dependency specs from its [workspace.dependencies], so an
+      # edit there changes the codec with no file under those crates touched.
+      - 'Cargo.toml'
       - 'packages/eql/src/**'
       - 'packages/eql/tasks/**'
       - 'packages/eql/tests/encryption/**'
@@ -191,6 +195,7 @@ on:
       - 'packages/eql/crates/eql-domains/Cargo.toml'
       - 'packages/eql/crates/eql-domains/src/**'
       - 'packages/eql/Cargo.lock'
+      - 'Cargo.toml'
       - 'packages/eql/src/**'
       - 'packages/eql/tasks/**'
       - 'packages/eql/tests/encryption/**'
