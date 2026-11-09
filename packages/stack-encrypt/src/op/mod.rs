@@ -969,7 +969,8 @@ pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
 /// Implementing it is a claim about the stored values: a query term derived
 /// under the label equals the stored term only if the stored term was
 /// derived under the same context. This crate's term targets
-/// ([`EqualityTerm`], [`MatchTerms`], [`OreTerm`], [`OpeTerm`], and
+/// ([`EqualityTerm`], [`MatchTerms`], [`OreTerm`], [`OpeTerm`],
+/// [`OreBlockTerm`], a tuple of them, an `Option` of one, and
 /// [`Encrypted`](crate::target::Encrypted) or a ciphertext beside one
 /// term) are sealed under the caller's context, which is the label. An EQL
 /// v4 type is sealed under the column it stores, which a two-segment label
@@ -993,6 +994,7 @@ impl LabelledTarget for EqualityTerm {}
 impl<O> LabelledTarget for MatchTerms<O> {}
 impl<S: Orderable> LabelledTarget for OreTerm<S> {}
 impl<S: Orderable> LabelledTarget for OpeTerm<S> {}
+impl<S: Orderable> LabelledTarget for OreBlockTerm<S> {}
 impl<T: LabelledTarget> LabelledTarget for (crate::StackCipherText, T) {}
 /// As the terms beside it are: a ciphertext is sealed under the caller's
 /// context, so the terms decide whether the label names theirs.
@@ -1033,6 +1035,12 @@ impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In>
 /// A nullable field answers what a present value answers. A `None` is a
 /// database NULL, with no term, which no query matches; a `Some` holds
 /// the terms a bare value of `T` holds, derived under the same context.
+///
+/// The input is a present value's. An equality index also accepts an
+/// `Option`, so a query of `None` compiles where the input is not fixed,
+/// and derives a term that no stored row holds: it is not `IS NULL`. A
+/// field marked `#[stash(query = String)]` takes a `String` alone, and
+/// refuses `None`.
 impl<Op: Operator, In: Input<Op::Arity>, T: Answers<Op, In>> Answers<Op, In> for Option<T> {
     type Via = T::Via;
 }
@@ -1059,7 +1067,9 @@ impl<T: LabelledTarget> LabelledTarget for Option<T> {}
 /// Implemented for this crate's terms and the operators [`Eq`](struct@Eq),
 /// [`Lt`], [`Lte`], [`Gt`], [`Gte`], [`Between`] and
 /// [`Matches`](struct@Matches). A term defined in another crate implements
-/// it for each of those to sit in a tuple.
+/// it for each of those to sit in a tuple, and implements
+/// [`LabelledTarget`] too: a tuple is queried only when each of its terms
+/// was derived under the field's label.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not say whether it answers `{Op}`",
     label = "a term in a tuple of terms states its answer to each operator",

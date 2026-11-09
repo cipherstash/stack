@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::marker::{Nested, Root, Takes, TakesAny};
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreBlockTerm, OreTerm};
 use stack_encrypt::target::{DecryptSource, EncryptTarget, NoScope, Scope};
 use stack_encrypt::testing::{scope, stored_scope};
 use stack_encrypt::{
@@ -173,6 +173,77 @@ struct EncryptedOffice {
     #[stash(passthrough)]
     tenant: u64,
     address: EncryptedAddress,
+}
+
+/// A record field under a caller scope and a caller binding.
+#[derive(EncryptTarget)]
+#[stash(struct = Branch, scope = "bound", scope(tenant: u64), bind(row: u128))]
+struct BoundBranch {
+    name: Encrypted<EqualityTerm>,
+    address: EncryptedAddress,
+}
+
+/// A record whose fields bind to the row it stores: an inner record with
+/// a stored binding, an outer field under another identity, and a
+/// nullable field of two indexes, under a caller scope.
+#[derive(Clone, Zeroize)]
+struct Tag {
+    id: u128,
+    label: String,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Tag, scope = "tags", bind(field = "id"))]
+struct EncryptedTag {
+    #[stash(passthrough)]
+    id: u128,
+    label: Encrypted<EqualityTerm>,
+}
+
+#[derive(Clone, Zeroize)]
+struct Shelf {
+    id: u128,
+    address: Address,
+    tag: Tag,
+    score: Option<u32>,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Shelf, scope = "shelves", scope(tenant: u64), bind(field = "id"))]
+struct EncryptedShelf {
+    #[stash(passthrough)]
+    id: u128,
+    #[stash(identity = "place")]
+    address: EncryptedAddress,
+    tag: EncryptedTag,
+    #[stash(query = u32)]
+    score: Option<Encrypted<(EqualityTerm, OreTerm<u32>)>>,
+}
+
+fn shelf() -> Shelf {
+    Shelf {
+        id: 9,
+        address: account().address,
+        tag: Tag {
+            id: 7,
+            label: "fiction".into(),
+        },
+        score: Some(4),
+    }
+}
+
+/// A record with block ORE fields, alone and beside an equality index.
+#[derive(Clone, Zeroize)]
+struct Reading {
+    level: u32,
+    depth: u32,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Reading, scope = "readings")]
+struct EncryptedReading {
+    level: Encrypted<OreBlockTerm<u32>>,
+    depth: Encrypted<(EqualityTerm, OreBlockTerm<u32>)>,
 }
 
 fn account() -> Account {
@@ -764,5 +835,164 @@ mod a_record_field_marker {
             .await
             .unwrap();
         assert_eq!(term, stored.address.street.terms);
+    }
+}
+
+mod a_record_field_marker_beside_bindings {
+    use super::*;
+
+    #[tokio::test]
+    async fn derives_the_stored_term_under_a_caller_binding() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: BoundBranch = Branch {
+            name: "central".into(),
+            address: account().address,
+        }
+        .encrypt_into_with_context(&keyset, Scope::new(42u64).bind(9u128))
+        .await
+        .unwrap();
+        // A binding is in the stored context and in no query context.
+        let term = BoundBranch::ADDRESS
+            .field(EncryptedAddress::STREET)
+            .eq("1 Main St")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.address.street.terms);
+        let name = BoundBranch::NAME
+            .eq("central")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(name, stored.name.terms);
+    }
+
+    #[tokio::test]
+    async fn derives_the_stored_terms_under_stored_bindings_and_an_identity() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedShelf = shelf()
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        assert_eq!((stored.id, stored.tag.id), (9, 7));
+
+        // The outer field is keyed under its identity, `shelves/place`.
+        let street = EncryptedShelf::ADDRESS.field(EncryptedAddress::STREET);
+        assert_eq!(
+            street.contexts().single().map(ToString::to_string),
+            Some(
+                "query context:  (addresses / street) / ((shelves / place) / {tenant: u64})\n\
+                 stored context: ((addresses / street) / ((shelves / place) / {tenant: u64})) / {id: u128, from the plaintext}\n"
+                    .into()
+            )
+        );
+        let term = street
+            .eq("1 Main St")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(term, stored.address.street.terms);
+
+        // The inner record binds to its own row id; the query does not.
+        let label = EncryptedShelf::TAG
+            .field(EncryptedTag::LABEL)
+            .eq("fiction")
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(label, stored.tag.label.terms);
+    }
+
+    #[tokio::test]
+    async fn answers_each_index_of_a_nullable_field() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedShelf = shelf()
+            .encrypt_into_with_context(&keyset, Scope::new(42u64))
+            .await
+            .unwrap();
+        let (equality, order) = &stored.score.as_ref().expect("a score").terms;
+        let eq = EncryptedShelf::SCORE
+            .eq(4u32)
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(&eq, equality);
+        let at = EncryptedShelf::SCORE
+            .gte(4u32)
+            .scope(Scope::new(42u64))
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(&at, order);
+    }
+
+    #[tokio::test]
+    async fn refuses_an_empty_scope_and_requests_no_key() {
+        let (cipher, generates, retrieves) = common::counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let refused = UnderText::ADDRESS
+            .field(EncryptedAddress::STREET)
+            .eq("1 Main St")
+            .scope(Scope::new(String::new()))
+            .encrypt(&keyset)
+            .await;
+        assert!(refused.is_err(), "an empty scope is refused");
+        assert_eq!(generates.load(Ordering::SeqCst), 0);
+        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    }
+}
+
+/// A record field under a text scope, which can be empty. Only its
+/// markers are used.
+#[derive(Clone, Zeroize)]
+struct Site {
+    address: Address,
+}
+
+#[derive(EncryptTarget)]
+#[stash(struct = Site, scope = "sites", scope(region: String))]
+#[allow(dead_code)]
+struct UnderText {
+    address: EncryptedAddress,
+}
+
+mod a_block_ore_marker {
+    use super::*;
+
+    #[tokio::test]
+    async fn derives_the_stored_order_term_alone_and_beside_equality() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored: EncryptedReading = Reading { level: 7, depth: 3 }
+            .encrypt_into(&keyset)
+            .await
+            .unwrap();
+        let level = EncryptedReading::LEVEL
+            .gte(7u32)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(level, stored.level.terms);
+        let (equality, order) = &stored.depth.terms;
+        let eq = EncryptedReading::DEPTH
+            .eq(3u32)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(&eq, equality);
+        let lt = EncryptedReading::DEPTH
+            .lt(3u32)
+            .encrypt(&keyset)
+            .await
+            .unwrap();
+        assert_eq!(&lt, order);
     }
 }

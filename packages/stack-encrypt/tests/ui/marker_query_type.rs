@@ -1,6 +1,7 @@
 //! A field marked `#[stash(query = String)]` takes a `String`, or the
 //! `&str` it is copied from, and no other type: an integer would match
-//! nothing on a text field.
+//! nothing on a text field. A nullable field marked so refuses `None`,
+//! which no stored row holds a term for.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::EncryptTarget;
 use stack_encrypt::Encrypted;
@@ -9,6 +10,7 @@ use zeroize::Zeroize;
 #[derive(Clone, Zeroize)]
 struct User {
     email: String,
+    nick: Option<String>,
 }
 
 #[derive(EncryptTarget)]
@@ -16,10 +18,14 @@ struct User {
 struct EncryptedUser {
     #[stash(query = String)]
     email: Encrypted<EqualityTerm>,
+    #[stash(query = String)]
+    nick: Option<Encrypted<EqualityTerm>>,
 }
 
 fn main() {
     let _ = EncryptedUser::EMAIL.eq("ada@example.com");
     let _ = EncryptedUser::EMAIL.eq(String::from("ada@example.com"));
     let _ = EncryptedUser::EMAIL.eq(42u64);
+    let _ = EncryptedUser::NICK.eq("ada");
+    let _ = EncryptedUser::NICK.eq(None::<String>);
 }

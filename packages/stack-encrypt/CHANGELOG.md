@@ -9,41 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Field markers** (#1486, #1590). `#[derive(EncryptTarget)]` on a
-  `struct = ..` record emits one `Marker` per derived field. It is an
+- **Field markers** (#1486, #1590, #1596). `#[derive(EncryptTarget)]` on
+  a `struct = ..` record emits one `Marker` per derived field. It is an
   associated constant named after the field in upper case:
-  `EncryptedUser::EMAIL`. A marker names the field, the context the derive
-  sealed it under, and the field's target type. It also names the type of
-  the scope the record's caller supplies. Its methods are one per operator the field's
-  index answers, checked at compile time through `Answers`: `eq`, `lt`,
-  `lte`, `gt`, `gte`, `between`, and `matches`. A record that lists a
-  caller scope, `scope(tenant: u64)`, gives a query with no `encrypt`
-  until `.scope(..)` is given once, with a `Scope<u64>`. A record with no
-  caller scope gives a query that is ready at once. The query has no
-  `bind` method, and ends with `.encrypt(&keyset)`. The output is the
-  index's query term. A query from a marker derives under the declaration
-  the derive wrote, so it is the stored term. No plan is written by hand
-  beside the record. A method takes its value by value, and a string
-  literal as it is (`QueryInput`). The query's value is wiped when it is
-  derived, refused, or dropped. `assert_context!` takes a marker, and
-  `Marker::contexts()` is the record's contexts narrowed to the field.
-  A tuple field has no marker.
-- **Markers for fields of several indexes, nullable fields, and record
-  fields** (#1596). A field of several indexes,
-  `Encrypted<(EqualityTerm, MatchTerms)>`, answers each operator through
-  the one index that answers it. Each term states its answer to each
-  operator with `op::OperatorAnswer`. An operator that no index answers,
-  or that two answer, has no method. An `Option<..>` field answers what a
-  present value answers, and a present value's term is a bare value's.
-  `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
-  inner field's marker under the outer field's context. It takes the
-  outer record's scope, and only a marker of the record the field holds.
-  `#[stash(query = String)]` states the type a field's queries take, so
-  `EMAIL.eq(42u64)` no longer compiles on a text field. The derive checks
-  the type against the plaintext struct's field. `Marker` now has the
-  parameters `Marker<W, T, C, P>`: `W` is where the field sits
-  (`marker::Root<R>` or `marker::Nested<W>`), and `P` is the query type
-  (`marker::TakesAny` or `marker::Takes<V>`).
+  `EncryptedUser::EMAIL`. A marker is `Marker<W, T, C, P>`. `W` is where
+  the field sits: `marker::Root<R>` for a field of the record `R`, or
+  `marker::Nested<W>` for one reached through a record field. `T` is the
+  field's target type. `C` is the scope the record's caller supplies.
+  `P` is the type a query takes: `marker::TakesAny`, or `marker::Takes<V>`
+  for a field marked `#[stash(query = V)]`.
+  - Its methods are one per operator the field's indexes answer, checked
+    at compile time through `Answers`: `eq`, `lt`, `lte`, `gt`, `gte`,
+    `between`, and `matches`. A field of several indexes,
+    `Encrypted<(EqualityTerm, MatchTerms)>`, answers each operator through
+    the one index that answers it. Each term states its answer with
+    `op::OperatorAnswer`. An operator no index answers, or two answer, has
+    no method. An `Option<..>` field has the methods a present value has.
+  - `EncryptedAccount::ADDRESS.field(EncryptedAddress::STREET)` is the
+    inner field's marker under the outer field's context. It takes the
+    outer record's scope. `field` accepts only a marker of the inner record.
+  - `#[stash(query = String)]` states the type a field's queries take. The
+    derive checks it against the plaintext struct's field.
+  - A record that lists a caller scope, `scope(tenant: u64)`, gives a
+    query with no `encrypt` until `.scope(..)` is given once, with a
+    `Scope<u64>`. A record with no caller scope gives a query that is
+    ready at once. The query has no `bind` method, and ends with
+    `.encrypt(&keyset)`. The output is the index's query term.
+  - A query from a marker derives under the declaration the derive wrote,
+    so it is the stored term. No plan is written by hand beside the
+    record. A method takes its value by value, and a string literal as
+    it is (`QueryInput`). The query's value is wiped when it is derived,
+    refused, or dropped. `assert_context!` takes a marker, and
+    `Marker::contexts()` is the record's contexts narrowed to the field.
+    A tuple field has no marker.
+- **Tuples of terms answer the query chain too** (#1596). A query of
+  `op::Eq` or `op::Matches` on a plan of
+  `Encrypted<(EqualityTerm, MatchTerms)>` needs no `.via(index)`. The
+  query uses the one term that answers the operator. `OreBlockTerm` implements `LabelledTarget`, so a block ORE field
+  is queried under its label.
 - **`dynamic::Planned`, a value under a plan that is data** (#1486). A
   record under a `Plan`, or a query value under a `QueryPlan`, each a
   `ValueFrame`, is a target in the owned API's sense. `StackCipherText`

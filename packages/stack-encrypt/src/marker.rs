@@ -97,7 +97,7 @@
 //! `Outer::ACCOUNT.field(EncryptedAccount::ADDRESS).field(EncryptedAddress::STREET)`.
 //! The inner record must list no scope of its own, stored or supplied: a
 //! query of it would take two scopes, and `field` takes a marker whose
-//! scope is [`NoScope`].
+//! scope is [`NoScope`] ([`NestedScope`]).
 //!
 //! # The type a query takes
 //!
@@ -109,6 +109,12 @@
 //! type alone ([`Takes`]), and the derive checks it against the plaintext
 //! struct's field, which is that type or an `Option` of it. An order marker
 //! fixes the type without the attribute, since `OreTerm<S>` names it.
+//!
+//! A nullable field's marker without the attribute also takes an `Option`,
+//! since the equality index accepts one. `NICK.eq(None::<String>)`
+//! compiles and derives a term that no stored row holds: a `None` field
+//! stores no term, and a marker query is never `IS NULL`. Mark the field
+//! `#[stash(query = String)]` to refuse it.
 use std::marker::PhantomData;
 
 use stack_kms::MaybeSend;
@@ -158,7 +164,7 @@ impl<W: Place, T, C, P> std::fmt::Debug for Marker<W, T, C, P> {
             .field("name", &self.name)
             .field("scope", &self.scope)
             .field("identity", &self.identity)
-            .field("within", &self.place.outers())
+            .field("within", &outers(&self.place))
             .finish_non_exhaustive()
     }
 }
@@ -221,8 +227,12 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
     ///
     /// `inner` must be a marker of the record `T` this field holds, so a
     /// marker of another record does not compile. That record must list no
-    /// scope of its own ([`NoScope`]): a query of it would take two scopes.
-    pub fn field<U, Q>(self, inner: Marker<Root<T>, U, NoScope, Q>) -> Marker<Nested<W>, U, C, Q> {
+    /// scope of its own ([`NestedScope`]): a query of it would take two
+    /// scopes.
+    pub fn field<U, C2: NestedScope, Q>(
+        self,
+        inner: Marker<Root<T>, U, C2, Q>,
+    ) -> Marker<Nested<W>, U, C, Q> {
         Marker {
             name: inner.name,
             scope: inner.scope,
@@ -246,7 +256,7 @@ impl<W: Place, T, C, P> Marker<W, T, C, P> {
     {
         MarkedQuery {
             label: self.label(),
-            outers: self.place.outers(),
+            outers: outers(&self.place),
             value: Some(value),
             wipe,
             scopes: DeclaredContext::default(),
@@ -263,16 +273,40 @@ fn label(scope: &'static str, identity: &'static str) -> Label {
     })
 }
 
-/// Where a marked field sits: [`Root`] for a field of the record a marker
-/// was emitted for, [`Nested`] for one reached through a record field.
-/// Sealed: [`Marker::field`] makes the one, the derive the other.
+/// The labels of the record fields that hold a field at `place`,
+/// outermost first: empty for a field of the record itself.
+fn outers(place: &impl Place) -> Vec<Label> {
+    let mut outers = Vec::new();
+    place.push_outers(&mut outers);
+    outers
+}
+
+/// The scope a record lists for its own caller, where the record is the
+/// type of another record's field: [`NoScope`] alone. A query of a field of
+/// a record with its own scope would take that scope and the outer
+/// record's.
+#[diagnostic::on_unimplemented(
+    message = "`field` takes a marker of a record that lists no scope of its own, not `{Self}`",
+    label = "a query of this field would take two scopes",
+    note = "the inner record's fields are reached by `field` only when the inner record has no `scope(..)` of its own, stored or supplied"
+)]
+pub trait NestedScope: nested_sealed::Sealed {}
+mod nested_sealed {
+    pub trait Sealed {}
+}
+impl nested_sealed::Sealed for NoScope {}
+impl NestedScope for NoScope {}
+
+/// Where a marked field sits: [`Root`] for a field of the record the
+/// derive emitted the marker for, [`Nested`] for one that
+/// [`Marker::field`] reached through a record field. Sealed.
 pub trait Place: Copy + place_sealed::Sealed {
     /// The outermost record's contexts, narrowed to the record that holds
     /// the field.
     fn narrow(&self, contexts: Contexts) -> Contexts;
-    /// The labels of the record fields that hold the field, outermost
-    /// first: empty for a field of the record itself.
-    fn outers(&self) -> Vec<Label>;
+    /// Push the labels of the record fields that hold the field, outermost
+    /// first: none for a field of the record itself.
+    fn push_outers(&self, outers: &mut Vec<Label>);
 }
 mod place_sealed {
     pub trait Sealed {}
@@ -292,9 +326,7 @@ impl<R> Place for Root<R> {
     fn narrow(&self, contexts: Contexts) -> Contexts {
         contexts
     }
-    fn outers(&self) -> Vec<Label> {
-        Vec::new()
-    }
+    fn push_outers(&self, _: &mut Vec<Label>) {}
 }
 
 /// A field of a record that is itself the field named here, which sits at
@@ -311,38 +343,37 @@ impl<W: Place> Place for Nested<W> {
     fn narrow(&self, contexts: Contexts) -> Contexts {
         self.outer.narrow(contexts).narrowed(self.name)
     }
-    fn outers(&self) -> Vec<Label> {
-        let mut outers = self.outer.outers();
+    fn push_outers(&self, outers: &mut Vec<Label>) {
+        self.outer.push_outers(outers);
         outers.push(label(self.scope, self.identity));
-        outers
     }
 }
 
 /// The type a marker's queries take: [`TakesAny`], any type the field's
 /// index accepts, or [`Takes<V>`], `V` alone. A field marked
-/// `#[stash(query = V)]` is `Takes<V>`.
-#[diagnostic::on_unimplemented(
-    message = "this field's queries take `{Self}`, not `{V}`",
-    label = "a query of another type matches nothing",
-    note = "the record states the field's query type with `#[stash(query = ..)]`"
-)]
-pub trait QueryValue<V>: value_sealed::Sealed {}
+/// `#[stash(query = V)]` is `Takes<V>`. Sealed, for every `V`.
+pub trait QueryValue<V>: value_sealed::Sealed<V> {}
 mod value_sealed {
-    pub trait Sealed {}
+    pub trait Sealed<V> {}
 }
 
 /// A marker whose queries take any type the field's index accepts: the
 /// default, where the record does not state the field's query type.
 #[derive(Debug)]
 pub enum TakesAny {}
-impl value_sealed::Sealed for TakesAny {}
+impl<V> value_sealed::Sealed<V> for TakesAny {}
 impl<V> QueryValue<V> for TakesAny {}
 
 /// A marker whose queries take `V` alone: a field marked
 /// `#[stash(query = V)]`. A query value is copied from its borrowed form,
 /// so a marker of `Takes<String>` accepts `"ada"` as well as a `&String`.
+///
+/// A value of another type is refused at compile time. Since `V` is the one
+/// type the marker accepts, the compiler reports it as a mismatch of the
+/// value's owned form: "type mismatch resolving `<u64 as ToOwned>::Owned
+/// == String`".
 pub struct Takes<V>(PhantomData<fn() -> V>);
-impl<V> value_sealed::Sealed for Takes<V> {}
+impl<V> value_sealed::Sealed<V> for Takes<V> {}
 impl<V> QueryValue<V> for Takes<V> {}
 
 /// A plaintext field whose queries take `V`: `V` itself, or `Option<V>`

@@ -2,30 +2,35 @@ error[E0308]: mismatched types
   --> tests/ui/marker_field_of_another_record.rs:53:45
    |
 53 |     let _ = EncryptedAccount::ADDRESS.field(EncryptedAccount::EMAIL);
-   |                                       ----- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Marker<Root<...>, _, ..., _>`, found `Marker<Root<EncryptedAccount>, ...>`
+   |                                       ----- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Marker<Root<EncryptedAddress>, _, _, _>`, found `Marker<Root<EncryptedAccount>, ...>`
    |                                       |
    |                                       arguments to this method are incorrect
    |
-   = note: expected struct `Marker<Root<EncryptedAddress>, _, NoScope, _>`
+   = note: expected struct `Marker<Root<EncryptedAddress>, _, _, _>`
               found struct `Marker<Root<EncryptedAccount>, Encrypted<EqualityTerm>, NoScope, TakesAny>`
 note: method defined here
   --> src/marker.rs
    |
-   |     pub fn field<U, Q>(self, inner: Marker<Root<T>, U, NoScope, Q>) -> Marker<Nested<W>, U, C, Q> {
+   |     pub fn field<U, C2: NestedScope, Q>(
    |            ^^^^^
 
-error[E0308]: mismatched types
+error[E0277]: `field` takes a marker of a record that lists no scope of its own, not `stack_encrypt::target::Scope<u64>`
   --> tests/ui/marker_field_of_another_record.rs:55:44
    |
 55 |     let _ = EncryptedAccount::OFFICE.field(EncryptedOffice::STREET);
-   |                                      ----- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Marker<Root<EncryptedOffice>, _, ..., _>`, found `Marker<Root<EncryptedOffice>, ..., ...>`
+   |                                      ----- ^^^^^^^^^^^^^^^^^^^^^^^ a query of this field would take two scopes
    |                                      |
-   |                                      arguments to this method are incorrect
+   |                                      required by a bound introduced by this call
    |
-   = note: expected struct `Marker<Root<EncryptedOffice>, _, NoScope, _>`
-              found struct `Marker<Root<EncryptedOffice>, Encrypted<EqualityTerm>, stack_encrypt::target::Scope<u64>, TakesAny>`
-note: method defined here
+   = help: the trait `NestedScope` is not implemented for `stack_encrypt::target::Scope<u64>`
+   = note: the inner record's fields are reached by `field` only when the inner record has no `scope(..)` of its own, stored or supplied
+help: the trait `NestedScope` is implemented for `NoScope`
   --> src/marker.rs
    |
-   |     pub fn field<U, Q>(self, inner: Marker<Root<T>, U, NoScope, Q>) -> Marker<Nested<W>, U, C, Q> {
-   |            ^^^^^
+   | impl NestedScope for NoScope {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `Marker::<W, T, C, P>::field`
+  --> src/marker.rs
+   |
+   |     pub fn field<U, C2: NestedScope, Q>(
+   |                         ^^^^^^^^^^^ required by this bound in `Marker::<W, T, C, P>::field`

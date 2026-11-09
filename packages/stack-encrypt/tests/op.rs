@@ -285,7 +285,7 @@ async fn a_target_answers_an_operator_through_the_index_it_names() {
 }
 
 #[tokio::test]
-async fn a_target_with_several_terms_names_the_index_with_via() {
+async fn a_target_with_several_terms_answers_through_the_term_that_answers() {
     let cipher = stack_cipher().await;
     let plan = Plan::value::<String>()
         .context("users/email")
@@ -310,6 +310,16 @@ async fn a_target_with_several_terms_names_the_index_with_via() {
         .on(&plan)
         .await
         .unwrap();
+    assert!(stored.terms.1.matches(&matches));
+
+    // Each operator has one term that answers it, so `via` is optional.
+    let eq = cipher
+        .query(op::Eq, "bob@example.com")
+        .on(&plan)
+        .await
+        .unwrap();
+    assert_eq!(eq, stored.terms.0);
+    let matches = cipher.query(op::Matches, "bob").on(&plan).await.unwrap();
     assert!(stored.terms.1.matches(&matches));
 
     // An index the target does not declare is refused when awaited.

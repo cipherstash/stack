@@ -1573,7 +1573,7 @@ review.
   it, so the marker's index list is its target type's `Answers` impls.
   Pull request #1595 lands the markers, their query methods and
   `assert_context!` over a marker (`src/marker.rs`, `tests/markers.rs`,
-  `tests/ui/marker_*.rs`). The fix for #1596 gives a field of several
+  `tests/ui/marker_*.rs`). Pull request #1599 gives a field of several
   indexes, a nullable field and a record field their operator methods,
   and a field its query type (`#[stash(query = ..)]`). The chain query
   `cipher.query(op, value).on(&plan)` still exists until #1488 removes
@@ -1590,8 +1590,8 @@ review.
   lands with the builder's removal. The dynamic grammar keeps its
   run-time checks.
 - **Tracked in.** Issue #1486 is open; pull request #1595 closes it.
-  Issue #1596, the operator methods the markers lacked, is closed by the
-  pull request stacked on #1597.
+  Issue #1596, the operator methods the markers lacked, is closed by
+  pull request #1599.
 - **Finished when** these are all true:
   - the [marker example](#query-a-record-field) compiles, with the
     index's query term as the output type; the EQL query types come

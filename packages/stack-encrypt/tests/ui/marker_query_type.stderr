@@ -1,5 +1,14 @@
 error[E0271]: type mismatch resolving `<u64 as QueryInput>::Value == String`
-  --> tests/ui/marker_query_type.rs:24:34
+  --> tests/ui/marker_query_type.rs:28:34
    |
-24 |     let _ = EncryptedUser::EMAIL.eq(42u64);
+28 |     let _ = EncryptedUser::EMAIL.eq(42u64);
    |                                  ^^ expected `String`, found `u64`
+
+error[E0271]: type mismatch resolving `<Option<String> as QueryInput>::Value == String`
+  --> tests/ui/marker_query_type.rs:30:33
+   |
+30 |     let _ = EncryptedUser::NICK.eq(None::<String>);
+   |                                 ^^ expected `String`, found `Option<String>`
+   |
+   = note: expected struct `std::string::String`
+                found enum `Option<std::string::String>`

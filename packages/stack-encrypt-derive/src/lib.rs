@@ -140,7 +140,9 @@
 //! it against the plaintext struct's field, which is that type or an
 //! `Option` of it. Without it, an equality marker takes any type its index
 //! accepts, since the derive does not see the plaintext struct's field
-//! types otherwise. A record that lists a caller scope
+//! types otherwise. On a field whose marker has no operator method, such
+//! as a record field or a `StackCipherText`, it does nothing beyond that
+//! check. A record that lists a caller scope
 //! gives its markers that scope's type, and the query takes it with
 //! `.scope(..)`, once; a record with none gives a query that is ready at
 //! once. No binding can be given. The query ends with `.encrypt(&keyset)`
