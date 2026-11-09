@@ -1,6 +1,6 @@
 # Stack Encrypt cross-language conformance
 
-Date: 2026-10-31. Status: scalar, declaration, initial runtime, read, context, EQL/JSON and lifecycle slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. Wider boundaries, artifact exchange, Python/TypeScript enrollment and release gates remain. The complete contract is not frozen.
+Date: 2026-10-31. Status: scalar, declaration, initial runtime, read, context, EQL/JSON, lifecycle, value/refusal/raw-frame and fresh artifact exchange slices implemented; existing value-kind, query-operator and context-field fixtures enrolled. Python/TypeScript enrollment, JSON Schema files, protocol version identifiers, released-version combinations (first, Go rc.3 data read by this checkout) and release gates remain. The complete contract is not frozen.
 
 This work is stacked on [PR #1404](https://github.com/cipherstash/stack/pull/1404),
 at `b684a217e2da629c762efa70fac958ec7e21646a`. It follows the accepted
@@ -255,3 +255,55 @@ caller-owned values, unobserved live-provider behavior and unenrolled languages.
 This does not complete secure-buffer/key-copy refactoring. Next conformance
 slices remain value/refusal/raw-frame gaps, broader fresh artifact exchange,
 Python/TypeScript enrollment and explicit release gates/version combinations.
+
+## Value, refusal and raw-frame checkpoint
+
+Implemented three shared corpora under `conformance/stack-encrypt/v1`, each
+with a Rust and a Go runner required by `test:conformance`:
+`record-values-v1` ([value contract](../../conformance/stack-encrypt/values-contract.md)),
+every kind at its boundaries with frozen typed frames, sealed nulls (with
+the runtime profile, every fixed-width kind), SQL nulls for `bool`, `bytes`
+and `string`, cross-kind write refusals and the Go host conversions the
+host refuses before the engine;
+`record-query-refusals-v1` ([query-refusal contract](../../conformance/stack-encrypt/query-refusals-contract.md)),
+every scalar operator against every field capability that does not answer
+it and the listed range shapes, by refusal
+class and diagnostic, with no key I/O, and the stage at which the typed Rust
+chain refuses the same query; and `record-raw-frames-v1`
+([raw-frame contract](../../conformance/stack-encrypt/raw-frames-contract.md)),
+stored batches as transport bytes so repeated keys and malformed leaves reach
+both decoders, with the table of error classes.
+
+The corpora pin three differences rather than fixing them: the order index
+on `bytes` stores a term no operator reads; the typed chain refuses
+equality, order and block ORE value refusals after its keyset loads where the
+binding refuses before any (the query-preparation consolidation is tracked
+separately and changes those entries on purpose); and a repeated key in a
+stored record is a transport refusal in both codecs, so the engine's own
+repeated-key guards are reached natively alone. No frozen fixture, artifact
+or existing test changed. Fresh exchange of the wider kinds, Python and
+TypeScript runners and release gates remain open.
+
+## Fresh artifact exchange checkpoint
+
+Implemented `artifact-exchange-v1`
+([exchange contract](../../conformance/stack-encrypt/exchange-contract.md),
+`conformance/stack-encrypt/v1/artifact-exchange-v1.cases.json`), run by
+`mise run test:conformance:exchange` and at the end of `test:conformance`, and
+required in `tests-golang.yml`. In one run, Rust and Go each write fresh
+artifacts the other opens: every positive value-boundary case, a structural
+record with a passthrough field and equality/order terms (including sealed and
+SQL nulls), whole-value opaque blobs (`OpaqueBlob<T>` against the Go opaque
+storage path), and the EQL v4 `profiles` rows (eql-bindings' typed targets
+against the Go generated code). Consumers compare decrypted values and derive
+their own query terms against the stored ones; ciphertext bytes are never
+compared. Producer caches are bypassed, a missing runner or guest and an empty
+fresh output fail the task, and the report records producer SDKs, engines,
+backends, guests, lockfiles and storage versions. Its released-version
+section lists the Go rc.3 combination the API plan requires as not yet run,
+and its rows stay empty until a lane runs a released artifact.
+
+Python and TypeScript are reported as not enrolled; no pair is claimed before
+both implementations exist. Fresh JSON document exchange, the remaining EQL
+types and a SQL lane storing one language's fresh rows through the other
+remain open. No frozen fixture, artifact or existing test changed.

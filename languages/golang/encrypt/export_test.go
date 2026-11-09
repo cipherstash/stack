@@ -221,6 +221,27 @@ func (k *Checker) OpenTreeForTest(ctx context.Context, tree []any, plan *record.
 	return k.c.openTree(ctx, k.c.DefaultKeyset().keyset, expected, plan, tree)
 }
 
+// OpenFrameForTest hands the guest a stored batch already in the transport
+// codec, so a test can send what the tree encoder refuses to write (a
+// repeated key, a malformed leaf). rows is the batch's record count. Cipher
+// validation, scope, context and production decoding are kept.
+func (cph *Cipher) OpenFrameForTest(ctx context.Context, encoded []byte, rows int, plan *record.Plan) ([]record.Source, error) {
+	if cph == nil {
+		return nil, fmt.Errorf("%w: Open on a nil *Cipher", ErrEncoding)
+	}
+	p, err := cph.plan(plan)
+	if err != nil {
+		return nil, err
+	}
+	return cph.client.openEncoded(ctx, cph.keyset, cph.context, p, encoded, rows)
+}
+
+// OpenFrameForTest is the uninitialised guest's view of the same batch: its
+// preflight on the raw bytes, before any cipher exists.
+func (k *Checker) OpenFrameForTest(ctx context.Context, encoded []byte, rows int, plan *record.Plan, expected string) ([]record.Source, error) {
+	return k.c.openEncoded(ctx, k.c.DefaultKeyset().keyset, expected, plan, encoded, rows)
+}
+
 // ObserveEncryptPlansForTest copies the actual plan buffer at the WASM call
 // boundary. Install and restore only while this test's client is idle.
 func ObserveEncryptPlansForTest(c *Client, observe func([]byte)) func() {
@@ -247,3 +268,8 @@ func (f *observedEncryptCall) Call(ctx context.Context, params ...uint64) ([]uin
 	f.observe(append([]byte(nil), plan...))
 	return f.Function.Call(ctx, params...)
 }
+
+// UnmarshalCipherTextForTest decodes a stored batch with the host's tree
+// codec, so a test can show that a frame the guest refuses is one the host
+// could never have written either.
+func UnmarshalCipherTextForTest(buf []byte) (any, error) { return unmarshalCipherText(buf) }

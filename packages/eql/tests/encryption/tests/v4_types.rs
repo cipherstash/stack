@@ -1524,19 +1524,49 @@ mod go_rows {
     use super::*;
     use std::collections::BTreeMap;
 
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, serde::Serialize)]
+    #[serde(deny_unknown_fields)]
     pub struct Fixture {
+        /// Who wrote the file, in prose.
+        #[serde(rename = "_comment", default, skip_serializing_if = "String::is_empty")]
+        pub comment: String,
+        /// Who sealed the rows, on the rows the exchange hands to the other
+        /// runner only; the committed fixtures carry none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub producer: Option<Producer>,
         pub seed: String,
         pub table: String,
         pub rows: Vec<Row>,
     }
-    #[derive(serde::Deserialize)]
+    /// Who sealed an exchanged rows file: the SDK and its version, the
+    /// backend and engine it ran, and the EQL schema the rows are stored
+    /// as. The Go SDK writes and reads the same fields.
+    #[derive(serde::Deserialize, serde::Serialize, Debug)]
+    #[serde(deny_unknown_fields)]
+    pub struct Producer {
+        pub language: String,
+        pub sdk: String,
+        pub sdk_version: String,
+        pub backend: String,
+        pub engine: Engine,
+        pub schema: String,
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize, Debug)]
+    #[serde(deny_unknown_fields)]
+    pub struct Engine {
+        pub name: String,
+        pub version: Option<String>,
+        pub guest_sha256: Option<String>,
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize)]
     pub struct Row {
         pub id: i32,
         pub plaintext: Plain,
         pub stored: BTreeMap<String, serde_json::Value>,
     }
-    #[derive(serde::Deserialize, Clone)]
+    #[derive(serde::Deserialize, serde::Serialize, Clone)]
     pub struct Plain {
         pub visits: i32,
         pub balance: i64,
@@ -1556,14 +1586,92 @@ mod go_rows {
     /// rows the Go SDK sealed in the same job, so today's Go ciphertexts
     /// reach Rust, not only the committed ones.
     pub fn fixture() -> Fixture {
-        let path = std::env::var_os("EQL_V4_ROWS").map_or_else(
-            || std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_rows.json"),
-            std::path::PathBuf::from,
-        );
-        let raw = std::fs::read_to_string(path).expect(
-            "fixtures/v4_rows.json is written by the Go SDK's TestV4RowsMatchTheCommittedFixture",
-        );
+        std::env::var_os("EQL_V4_ROWS").map_or_else(committed, |path| read(path.into()))
+    }
+
+    /// The committed rows, whatever `EQL_V4_ROWS` names: the seed and the
+    /// plaintexts this suite seals for the Go SDK come from here.
+    pub fn committed() -> Fixture {
+        read(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_rows.json"))
+    }
+
+    fn read(path: std::path::PathBuf) -> Fixture {
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}; fixtures/v4_rows.json is written by the Go SDK's TestV4RowsMatchTheCommittedFixture",
+                path.display()
+            )
+        });
         serde_json::from_str(&raw).unwrap()
+    }
+
+    /// Every column of `plaintext` sealed by this crate's typed targets,
+    /// in the shape the Go SDK's generated code stores: the other direction
+    /// of the exchange `open_row` reads.
+    pub async fn seal_row(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        id: i32,
+        p: &Plain,
+    ) -> Row {
+        let keyset = cipher.default_keyset();
+        let mut stored = BTreeMap::new();
+        macro_rules! seal {
+            ($name:literal, $ty:ty, $value:expr) => {{
+                let sealed: $ty = keyset
+                    .encrypt_as(&$value, column($name))
+                    .await
+                    .unwrap_or_else(|e| panic!("row {id} {}: {e}", $name));
+                stored.insert($name.to_owned(), serde_json::to_value(&sealed).unwrap());
+            }};
+        }
+        seal!("visits", integer::Integer, p.visits);
+        seal!("balance", bigint::Bigint, p.balance);
+        seal!("active", boolean::Boolean, p.active);
+        seal!("ratio", real::Real, p.ratio);
+        seal!("score", double::Double, p.score);
+        seal!("note", text::Text, p.note.clone());
+        seal!("name", text::TextMatch, p.name.clone());
+        seal!("age", integer::IntegerEq, p.age);
+        seal!("rank", bigint::BigintEq, p.rank);
+        seal!("weight", real::RealEq, p.weight);
+        seal!("price", double::DoubleEq, p.price);
+        seal!("email", text::TextEq, p.email.clone());
+        Row {
+            id,
+            plaintext: p.clone(),
+            stored,
+        }
+    }
+
+    /// Query semantics, not ciphertext bytes: the `hm` stored for each
+    /// equality column of `row` is the one this crate's typed equality
+    /// query derives for the row's plaintext, under the column's context.
+    pub async fn check_eq_terms(
+        cipher: &stack_encrypt::StackCipher<stack_kms::DeterministicSource>,
+        row: &Row,
+    ) {
+        let keyset = cipher.default_keyset();
+        let p = &row.plaintext;
+        macro_rules! eq {
+            ($name:literal, $query:ty, $value:expr) => {{
+                let query: $query = keyset
+                    .encrypt_as(&$value, column($name))
+                    .await
+                    .unwrap_or_else(|e| panic!("row {} {}: {e}", row.id, $name));
+                assert_eq!(
+                    serde_json::to_value(&query).unwrap()["hm"],
+                    row.stored[$name]["hm"],
+                    "row {} {}: the stored hm is the query's",
+                    row.id,
+                    $name
+                );
+            }};
+        }
+        eq!("age", integer::IntegerEqQuery, p.age);
+        eq!("rank", bigint::BigintEqQuery, p.rank);
+        eq!("weight", real::RealEqQuery, p.weight);
+        eq!("price", double::DoubleEqQuery, p.price);
+        eq!("email", text::TextEqQuery, p.email.clone());
     }
 
     /// `fixtures/stored_v4_rows_v1.json`: rows the Go SDK stored with the
@@ -1694,16 +1802,107 @@ mod go_rows {
 }
 
 /// What the Go SDK sealed parses as each v4 type and opens in Rust, field by
-/// field, under the column it was stored under.
+/// field, under the column it was stored under, and each equality column's
+/// stored `hm` is the term the typed query derives here.
 #[tokio::test]
 async fn rows_the_go_sdk_sealed_open_in_rust() {
     let fixture = go_rows::fixture();
     assert_eq!(fixture.table, "profiles");
     assert!(!fixture.rows.is_empty());
+    // Rows handed over by the exchange say who sealed them, and a misrouted
+    // file, this suite's own rows included, is refused. The committed
+    // fixture carries no producer.
+    if std::env::var_os("EQL_V4_ROWS").is_some() {
+        let producer = fixture
+            .producer
+            .as_ref()
+            .expect("the rows name their producer");
+        assert!(
+            producer.language == "go"
+                && producer.backend == "wasi"
+                && !producer.sdk.is_empty()
+                && !producer.sdk_version.is_empty()
+                && producer.engine.name == "stack-encrypt"
+                && producer.engine.guest_sha256.is_some()
+                && producer.schema == "eql_v4",
+            "the rows are not the Go SDK's: {producer:?}"
+        );
+    }
     let cipher = go_rows::cipher(&fixture.seed).await;
     for row in &fixture.rows {
         go_rows::open_row(&cipher, row).await;
+        go_rows::check_eq_terms(&cipher, row).await;
     }
+}
+
+/// The other direction of the fresh exchange: the committed fixture's
+/// plaintexts, sealed here by the typed targets under its seed, in the
+/// shape the Go SDK's generated code stores. They open here; and when
+/// `EQL_V4_RUST_ROWS_OUT` names a file they are written to it, for the Go
+/// SDK's `TestV4RowsTheRustSuiteSealedOpenInGo` to open through its
+/// generated code. The exchange task sets the variable; nothing frozen is
+/// read through it or written.
+#[tokio::test]
+async fn rows_rust_seals_open_in_the_go_sdk() {
+    let committed = go_rows::committed();
+    assert_eq!(committed.table, "profiles");
+    assert!(committed.rows.len() > 1);
+    let cipher = go_rows::cipher(&committed.seed).await;
+    let mut fresh = go_rows::Fixture {
+        comment: format!(
+            "Profile rows sealed by eql-bindings {} over stack-encrypt {} with the seed below, for the Go SDK to open. Written by the exchange task; never committed.",
+            locked_version("eql-bindings"),
+            locked_version("stack-encrypt"),
+        ),
+        producer: Some(go_rows::Producer {
+            language: "rust".into(),
+            sdk: "eql-bindings".into(),
+            sdk_version: locked_version("eql-bindings"),
+            backend: "native".into(),
+            engine: go_rows::Engine {
+                name: "stack-encrypt".into(),
+                version: Some(locked_version("stack-encrypt")),
+                guest_sha256: None,
+            },
+            schema: "eql_v4".into(),
+        }),
+        seed: committed.seed.clone(),
+        table: committed.table.clone(),
+        rows: Vec::new(),
+    };
+    for row in &committed.rows {
+        fresh
+            .rows
+            .push(go_rows::seal_row(&cipher, row.id, &row.plaintext).await);
+    }
+    for row in &fresh.rows {
+        assert_eq!(row.stored.len(), 12, "row {}: every column", row.id);
+        go_rows::open_row(&cipher, row).await;
+    }
+    if let Some(path) = std::env::var_os("EQL_V4_RUST_ROWS_OUT") {
+        std::fs::write(path, serde_json::to_string_pretty(&fresh).unwrap() + "\n").unwrap();
+    }
+}
+
+/// The version of `package` this crate's tests resolve, from the workspace
+/// lockfile: the binding and engine the exchange artifacts record.
+fn locked_version(package: &str) -> String {
+    let lock = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock"),
+    )
+    .expect("the EQL workspace lockfile");
+    let mut lines = lock.lines();
+    while let Some(line) = lines.next() {
+        if line == format!("name = \"{package}\"") {
+            let version = lines.next().expect("a version follows the name");
+            return version
+                .strip_prefix("version = \"")
+                .and_then(|v| v.strip_suffix('"'))
+                .expect("version = \"..\"")
+                .to_owned();
+        }
+    }
+    panic!("{package} is in the EQL workspace lockfile")
 }
 
 /// The frozen rows the Go SDK stored with the next build still parse as each

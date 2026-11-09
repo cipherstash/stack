@@ -39,6 +39,10 @@ these rules.
 | `record-contexts-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
 | `record-contexts-v1.expected.rust-native.json` | expected | `tests/context_conformance.rs` (writes it) | `context_conformance_test.go` |
 | `record-context-boundaries-v1.cases.json` | cases | `tests/context_conformance.rs` | `context_conformance_test.go` |
+| `record-values-v1.cases.json` | cases | `tests/value_conformance.rs` | `value_conformance_test.go` |
+| `record-query-refusals-v1.cases.json` | cases | `tests/query_refusal_conformance.rs` | `query_refusal_conformance_test.go` |
+| `record-raw-frames-v1.cases.json` | cases | `tests/raw_frame_conformance.rs` | `raw_frame_conformance_test.go` |
+| `artifact-exchange-v1.cases.json` | cases | `tests/exchange_conformance.rs`, run by `scripts/stack-exchange-conformance.mjs` | `exchange_conformance_test.go`, run by `scripts/stack-exchange-conformance.mjs` |
 | `eql-json-v1.cases.json` | cases | `tests/json_operators.rs`; EQL's `tests/encryption/tests/json_tree_data_plan.rs` | `json_conformance_test.go` |
 | `eql-json-v1.enrollment.json` | enrollment | `scripts/stack-eql-conformance.mjs` runs the tests it names | `scripts/stack-eql-conformance.mjs` runs the tests it names |
 | `lifecycle-v1.enrollment.json` | enrollment | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names | `scripts/stack-lifecycle-conformance.mjs` runs the tests it names |
@@ -68,13 +72,30 @@ native Rust against the ciphertexts Go has just produced. It never regenerates
 expectations. CI also runs the Go cases on its other supported host platforms.
 The same task runs the shared declaration acceptance/rejection corpus in both
 languages, with native observations of normalization. It also runs the shared
-runtime, read and context cases, and enrolls the existing value-kind, context-field and query-operator
-fixtures described below. Set no fixture-update variables when checking conformance.
+runtime, read, context, value-boundary, query-refusal and raw-frame cases, and
+enrolls the existing value-kind, context-field and query-operator
+fixtures described below. It ends with the fresh artifact exchange in both
+directions (`test:conformance:exchange`, which also needs the deterministic
+EQL guest). Set no fixture-update variables when checking conformance.
 
 The Rust runner is `packages/stack-encrypt/tests/conformance.rs`; the Go runner
 is `languages/golang/encrypt/conformance_test.go`. Go calls the record interface
 used by generated code. Testing public SDK declarations is a separate layer.
 Python and TypeScript runners are pending; their absence is not a passing result.
+
+## Fresh artifact exchange
+
+The [exchange contract](exchange-contract.md) defines `artifact-exchange-v1`:
+in one run, Rust writes and Go opens, and Go writes and Rust opens, every
+value kind at its edges, a structural record with passthrough and index
+terms, whole-value opaque blobs and EQL v4 rows. Decrypted values and the
+consumer's own derived query terms are compared, never ciphertext bytes.
+`mise run test:conformance:exchange` fails on a missing runner or guest and
+on an empty fresh output, and its report records the producer SDKs, engines,
+backends, guests and storage versions. It lists the one released-version
+combination the API plan requires, Go rc.3 data read by this checkout, as not
+yet run; the others wait on the compatibility policy. Python and TypeScript
+are listed as not enrolled.
 
 ## Lifecycle, cleanup and key I/O
 
@@ -116,8 +137,31 @@ checks. The task runs the existing tests directly, and a missing guest fails
 when conformance is required. The ordinary CI suites already execute them.
 
 This is representative fixture coverage, not an exhaustive type/operator
-matrix. Wider fresh artifact exchange and shared scalar query refusals remain
-separate work. The EQL/JSON profiles are described below.
+matrix. The value-boundary and query-refusal profiles below widen it, and the
+exchange profile above writes the wider kinds fresh in both directions. The
+EQL/JSON profiles are described below.
+
+## Value boundaries, query refusals and raw frames
+
+Three profiles close the gaps the representative profiles left. The
+[value contract](values-contract.md) defines `record-values-v1` in
+`v1/record-values-v1.cases.json`: every kind at its edges, sealed and SQL nulls for the
+fixed-width kinds, write refusals between kinds, frozen typed frames, and
+the Go-only host conversions the host refuses before the engine. The
+[query-refusal contract](query-refusals-contract.md) defines
+`record-query-refusals-v1` in `v1/record-query-refusals-v1.cases.json`: one plan, every
+scalar operator against every field capability that does not answer it,
+the range shapes, other-kind values and nulls the contract lists, each refusal's
+class and diagnostic, no key I/O, and the stage at which the typed Rust
+chain refuses the same query. The [raw-frame contract](raw-frames-contract.md)
+defines `record-raw-frames-v1` in `v1/record-raw-frames-v1.cases.json`: stored batches as
+transport bytes, so repeated keys and malformed leaves reach both decoders,
+and the table of error classes (transport, leaf, shape, authenticated,
+invalid declaration, unsupported host conversion). The runners are
+`value_conformance`, `query_refusal_conformance` and `raw_frame_conformance`
+in the Rust crate and `TestValueConformance`, `TestQueryRefusalConformance`
+and `TestRawFrameConformance` in the Go module; `test:conformance` runs all
+six.
 
 ## `record-reads-v1` contract
 
@@ -229,5 +273,7 @@ existing codecs.
 
 Both runners currently share the Rust engine. This checks host value conversion,
 native/WASI interoperability and regressions against frozen evidence; it cannot
-detect every bug shared by both paths. Independent SQL oracles, broader negative
-cases, release-version matrices and richer version reports remain in the plan.
+detect every bug shared by both paths. Independent SQL oracles exist for the
+EQL/JSON profiles; the Go rc.3 combination the API plan requires is not yet
+run, and the rest of the release-version matrix waits on the compatibility
+policy. Both have their place in the exchange report.

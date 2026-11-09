@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Credential-free shared cases plus fresh Go -> native Rust artifact exchange.
+# Credential-free shared cases plus fresh artifact exchange in both directions.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,7 +19,7 @@ go_tests=$(node scripts/stack-conformance-selection.mjs)
 artifacts=$(mktemp -d)
 trap 'rm -rf "$artifacts"' EXIT
 
-mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test context_conformance --test record_lowering --test plan_grammar --test value_kinds --test query_operators --test fixture_safety
+mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features --test conformance --test declarations --test runtime_conformance --test read_conformance --test context_conformance --test record_lowering --test plan_grammar --test value_kinds --test query_operators --test fixture_safety --test value_conformance --test query_refusal_conformance --test raw_frame_conformance --test exchange_conformance
 (
   cd languages/golang
   STACK_CONFORMANCE_OUTPUT="$artifacts/go.json" CGO_ENABLED=0 \
@@ -28,3 +28,5 @@ mise x --env test -- cargo nextest run --locked -p stack-encrypt --all-features 
 test -s "$artifacts/go.json"
 STACK_CONFORMANCE_INPUT="$artifacts/go.json" mise x --env test -- \
   cargo nextest run --locked -p stack-encrypt --all-features --test conformance
+# Both directions, every kind the exchange profile enrolls, in a fresh directory.
+node scripts/stack-exchange-conformance.mjs

@@ -1,7 +1,7 @@
 // Execution and non-vacuity checks shared by conformance profiles.
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -96,11 +96,25 @@ export function checkGoResults(output, tests) {
     if (!passed.has(name)) throw new Error(`Go test did not pass: ${name}`)
 }
 
+/**
+ * Print `report` and, when `STACK_CONFORMANCE_REPORT_DIR` is set, write it
+ * there as `name`: the one report writer every profile's script uses.
+ */
+export function writeReport(name, report, env = process.env) {
+  const text = `${JSON.stringify(report, null, 2)}\n`
+  process.stdout.write(text)
+  if (!env.STACK_CONFORMANCE_REPORT_DIR) return
+  mkdirSync(env.STACK_CONFORMANCE_REPORT_DIR, { recursive: true })
+  writeFileSync(join(env.STACK_CONFORMANCE_REPORT_DIR, name), text)
+}
+
 export function checkEnvironment(env) {
   for (const name of [
     'STACK_CONFORMANCE_UPDATE',
     'STACK_ENCRYPT_UPDATE_FIXTURES',
     'STACK_ENCRYPT_UPDATE_JSON_TREE_VECTORS',
+    // The Go EQL v4 row tests rewrite their committed fixtures under it.
+    'EQL_UPDATE_FIXTURES',
   ]) {
     if (Object.hasOwn(env, name))
       throw new Error(`Conformance cannot update fixtures: ${name}`)

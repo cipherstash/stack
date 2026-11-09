@@ -304,10 +304,25 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 // with stack-kms's DeterministicSource over the same seed, and inserts and
 // queries them in PostgreSQL.
 type rowsFixture struct {
-	Comment string       `json:"_comment"`
-	Seed    string       `json:"seed"`
-	Table   string       `json:"table"`
-	Rows    []fixtureRow `json:"rows"`
+	Comment string `json:"_comment"`
+	// Producer is set only on the rows the exchange hands to the other
+	// runner; the committed fixtures carry none.
+	Producer *rowsProducer `json:"producer,omitempty"`
+	Seed     string        `json:"seed"`
+	Table    string        `json:"table"`
+	Rows     []fixtureRow  `json:"rows"`
+}
+
+// rowsProducer says who sealed an exchanged rows file: the SDK and its
+// version, the backend and engine it ran, and the EQL schema the rows are
+// stored as. A consumer refuses rows its own language wrote.
+type rowsProducer struct {
+	Language   string         `json:"language"`
+	SDK        string         `json:"sdk"`
+	SDKVersion string         `json:"sdk_version"`
+	Backend    string         `json:"backend"`
+	Engine     exchangeEngine `json:"engine"`
+	Schema     string         `json:"schema"`
 }
 
 type fixtureRow struct {
@@ -372,7 +387,21 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 	}
 	rendered = append(rendered, '\n')
 	if out := os.Getenv("EQL_V4_ROWS_OUT"); out != "" {
-		if err := os.WriteFile(out, rendered, 0o644); err != nil {
+		// The rows handed to the Rust suite say who sealed them; the
+		// committed file does not.
+		exchanged := fixture
+		sdk, version := exchangeSDK()
+		exchanged.Comment = "Profile rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below, for the Rust suite to open. Written by this run; never committed."
+		exchanged.Producer = &rowsProducer{
+			Language: "go", SDK: sdk, SDKVersion: version, Backend: "wasi",
+			Engine: exchangeGuestEngine(t, "stack_encrypt_guest_eql_deterministic.wasm"),
+			Schema: "eql_v4",
+		}
+		data, err := json.MarshalIndent(exchanged, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(out, append(data, '\n'), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -445,6 +474,72 @@ func TestFrozenV4RowsStillOpen(t *testing.T) {
 		t.Errorf("sealing the frozen rows' plaintexts today stores different envelopes or terms: a change broke stored rows. Do not regenerate stored_v4_rows_v1.json")
 	}
 	opensToItsPlaintexts(t, c, frozen.Rows)
+}
+
+// TestV4RowsTheRustSuiteSealedOpenInGo is the other direction of the fresh
+// exchange: rows the Rust suite sealed with eql-bindings' typed targets
+// (EQL_V4_RUST_ROWS names the file its rows_rust_seals_open_in_the_go_sdk
+// test wrote in this run) open through the generated code to the
+// plaintexts Rust sealed, and each equality column's stored term is the
+// term the generated query derives for its plaintext. The variable is set
+// by the exchange task; without it there is nothing to open, so the test
+// skips, and the task counts that as a failure.
+func TestV4RowsTheRustSuiteSealedOpenInGo(t *testing.T) {
+	path := os.Getenv("EQL_V4_RUST_ROWS")
+	if path == "" {
+		t.Skip("EQL_V4_RUST_ROWS is not set; the exchange task provides the rows the Rust suite sealed")
+	}
+	var fresh rowsFixture
+	readConformanceJSON(t, path, &fresh)
+	if fresh.Seed != string(testSeed[:]) || fresh.Table != "profiles" || len(fresh.Rows) == 0 {
+		t.Fatalf("the Rust-sealed rows are not this fixture's shape: seed %q, table %q, %d rows", fresh.Seed, fresh.Table, len(fresh.Rows))
+	}
+	// A misrouted file, the Go SDK's own rows included, is refused.
+	if p := fresh.Producer; p == nil || p.Language != "rust" || p.Backend != "native" || p.SDK != "eql-bindings" || p.SDKVersion == "" ||
+		p.Engine.Name != "stack-encrypt" || p.Engine.Version == nil || p.Schema != "eql_v4" {
+		t.Fatalf("the rows are not the Rust suite's: producer %+v", fresh.Producer)
+	}
+	ctx := context.Background()
+	c := deterministicEQLClient(t)
+	cipher := c.DefaultKeyset()
+	columns := make([]string, 0, len(stored(testusers.EncryptedProfile{})))
+	for column := range stored(testusers.EncryptedProfile{}) {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+	for _, row := range fresh.Rows {
+		for _, column := range columns {
+			value, ok := row.Stored[column]
+			if !ok {
+				t.Fatalf("row %d: no %s", row.ID, column)
+			}
+			keysOf(t, column, value)
+		}
+	}
+	// Decrypted values, never ciphertext bytes: each column opens to what
+	// Rust sealed.
+	opensToItsPlaintexts(t, c, fresh.Rows)
+	// Query semantics: the `hm` term Rust stored for an equality column is
+	// the one the generated query derives for the same plaintext here.
+	for _, row := range fresh.Rows {
+		p := row.Plaintext
+		queries := map[string]func() ([]byte, error){
+			"age":    func() ([]byte, error) { return testusers.ProfileFields.Age.Eq(ctx, cipher, p.Age) },
+			"rank":   func() ([]byte, error) { return testusers.ProfileFields.Rank.Eq(ctx, cipher, p.Rank) },
+			"weight": func() ([]byte, error) { return testusers.ProfileFields.Weight.Eq(ctx, cipher, p.Weight) },
+			"price":  func() ([]byte, error) { return testusers.ProfileFields.Price.Eq(ctx, cipher, p.Price) },
+			"email":  func() ([]byte, error) { return testusers.ProfileFields.Email.Eq(ctx, cipher, p.Email) },
+		}
+		for column, query := range queries {
+			derived, err := query()
+			if err != nil {
+				t.Fatalf("row %d %s: %v", row.ID, column, err)
+			}
+			if got, want := hmOf(t, derived), hmOf(t, row.Stored[column]); got != want {
+				t.Errorf("row %d %s: the query's hm %q is not the stored %q", row.ID, column, got, want)
+			}
+		}
+	}
 }
 
 // opensToItsPlaintexts opens each row's committed `c` values with today's
