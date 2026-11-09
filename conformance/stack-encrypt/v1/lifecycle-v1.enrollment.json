@@ -120,9 +120,10 @@
           "TestClosedClientIsState"
         ],
         "opaque": [
-          "the_owned_source_is_wiped_before_await_or_discard",
-          "an_encoding_refusal_wipes_the_source_and_requests_no_key",
-          "a_decrypted_blob_is_wiped_on_drop_and_into_inner_keeps_it_guarded"
+          "given_an_owned_source::is_wiped_before_a_pending_is_dropped_unpolled",
+          "given_an_owned_source::is_wiped_before_a_pending_is_awaited",
+          "given_an_owned_source::is_wiped_when_encoding_fails_and_no_key_is_requested",
+          "given_a_decrypted_blob::is_wiped_on_drop_and_into_inner_keeps_it_guarded"
         ]
       }
     },
@@ -241,11 +242,14 @@
           "TestMismatchedPlanIsRefusedBeforeTheGuest"
         ],
         "opaque": [
-          "an_encoding_refusal_wipes_the_source_and_requests_no_key",
-          "the_owned_source_is_wiped_when_context_validation_fails",
-          "the_context_is_refused_before_the_value_is_encoded",
-          "authentication_comes_before_decoding",
-          "malformed_and_mismatched_blobs_are_refused_by_class_after_authentication"
+          "given_an_owned_source::is_wiped_when_encoding_fails_and_no_key_is_requested",
+          "given_an_owned_source::is_wiped_when_the_context_is_refused",
+          "given_an_owned_source::the_context_is_refused_before_the_value_is_encoded",
+          "given_a_ciphertext_that_is_not_this_blob::a_tampered_ciphertext_fails_the_aead",
+          "given_a_ciphertext_that_is_not_this_blob::the_wrong_context_fails_the_aead",
+          "given_a_ciphertext_that_is_not_this_blob::a_blob_opened_as_a_string_is_the_wrong_type",
+          "given_a_ciphertext_that_is_not_this_blob::a_string_opened_as_a_blob_is_the_wrong_type",
+          "given_a_ciphertext_that_is_not_this_blob::bytes_that_are_not_a_profile_are_refused_by_class"
         ]
       }
     },
