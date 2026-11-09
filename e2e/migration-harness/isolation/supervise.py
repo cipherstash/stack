@@ -1,0 +1,194 @@
+"""Trusted PID-1 supervisor. Actor bytes never enter the trace channel.
+
+The Docker namespace supplies enforcement; strace supplies ptrace events for
+descendants, including npm lifecycle scripts. Trace files are root-only.
+"""
+import base64
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+lock = threading.Lock()
+def emit(kind, **fields):
+    with lock:
+        print(json.dumps(dict(kind=kind, **fields)), flush=True)
+
+config = json.loads(base64.b64decode(os.environ['HARNESS_CONFIG']))
+actor = config['actor']
+os.makedirs('/trace', mode=0o700, exist_ok=True)
+os.chmod('/trace', 0o700)
+for forward in config.get('forwards', []):
+    subprocess.Popen(['socat', 'TCP4-LISTEN:%s,bind=%s,reuseaddr,fork' %
+                      (forward['port'], forward['address']),
+                      'UNIX-CONNECT:/forwards/%s.sock' % forward['index']],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def invoke(argv, stage):
+    # Only configured application credentials enter the actor. In particular no
+    # Docker, model, host HOME, or supervisor configuration environment is inherited.
+    env = dict({key: value for key, value in config.get('env', {}).items() if key.startswith(('CS_', 'HARNESS_')) or key == 'DATABASE_URL'}, PATH='/usr/local/bin:/usr/bin:/bin',
+               HOME='/tmp', TMPDIR='/tmp')
+    env.pop('HARNESS_CONFIG', None)
+    env.pop('HARNESS_MODEL_CANARY', None)
+    command = ['strace', '-f', '-qq', '-yy', '-s', '4096', '-e',
+               'trace=%file,%network,%process',
+               'setpriv', '--reuid=%s' % config['uid'], '--regid=%s' % config['gid'], '--clear-groups',
+               '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all',
+               '--no-new-privs', '--', '/bin/sh', '-c', 'exec 2>&3; exec 3>&-; exec \"$@\"', 'actor'] + argv
+    actor_stderr = os.open('/trace/actor-stderr', os.O_RDWR | os.O_CREAT, 0o600)
+    # fd 3 is reserved for actor diagnostics; the ptrace observer owns stderr.
+    if actor_stderr != 3:
+        os.dup2(actor_stderr, 3)
+    process = subprocess.Popen(command, cwd='/workspace', env=env,
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True, pass_fds=(3,))
+    stopped = threading.Event()
+    def stop():
+        stopped.set()
+        try: os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+
+    def copy_output(stream, kind):
+        while True:
+            chunk = os.read(stream.fileno(), 16384)
+            if not chunk: break
+            emit(kind, data=base64.b64encode(chunk).decode())
+    threads = []
+    for stream, kind in ([(process.stdout, 'stdout')] if stage == 'command' else []):
+        thread = threading.Thread(target=copy_output, args=(stream, kind), daemon=True)
+        thread.start()
+        threads.append(thread)
+
+    def copy_input():
+        try:
+            for line in sys.stdin.buffer:
+                if stopped.is_set(): break
+                process.stdin.write(line)
+                process.stdin.flush()
+        except (BrokenPipeError, ValueError): pass
+        finally:
+            try: process.stdin.close()
+            except (BrokenPipeError, ValueError): pass
+    if stage == 'command':
+        threading.Thread(target=copy_input, daemon=True).start()
+    else:
+        process.stdin.close()
+
+    allowed = ['/workspace', '/usr', '/lib', '/lib64', '/bin', '/sbin',
+               '/etc', '/tmp', '/dev', '/proc', '/sys', '/var', '/run', '/opt', '/home']
+    def permitted(path):
+        return path in ['/', '/harness'] or path in ['/harness/app-host.mjs', '/harness/startup.mjs'] or any(path == root or path.startswith(root + '/') for root in allowed)
+
+    def trace():
+        pending = {}
+        source = process.stderr
+        if source is not None:
+            while True:
+                line = source.readline().decode()
+                if not line:
+                    if process.poll() is not None: break
+                    time.sleep(.005)
+                    continue
+                match = re.match(r'(?:\[pid\s+(\d+)\]\s+|\s*(\d+)\s+)?(.*)', line)
+                if not match: continue
+                first, second, call = match.groups()
+                pid = first or second or str(process.pid)
+                if '<unfinished ...>' in call:
+                    pending[pid] = call.split('<unfinished ...>')[0]
+                    continue
+                if call.startswith('<... '):
+                    resumed = re.match(r'<\.\.\. \w+ resumed>(.*)', call)
+                    if not resumed or pid not in pending:
+                        raise RuntimeError('unmatched ptrace syscall continuation')
+                    call = pending.pop(pid) + resumed.group(1)
+                if ' = ' not in call: continue
+                operation, result = call.rsplit(' = ', 1)
+                # Canonical paths returned by the kernel are decoded by strace -yy.
+                # Other path operations retain their syscall arguments as evidence.
+                canonical = re.match(r'\d+<(/[^>]+)>', result)
+                path = canonical.group(1) if canonical else None
+                if path is None:
+                    raw = re.search(r'\"(/[^\"]*)\"', operation)
+                    path = raw.group(1) if raw else None
+                    if path is None:
+                        relative = re.search(r'(?:AT_FDCWD|\d+)<(/[^>]+)>, \"([^\"]*)\"', operation)
+                        if relative:
+                            path = os.path.normpath(os.path.join(relative.group(1), relative.group(2)))
+                    if path is not None:
+                        path = os.path.normpath(path)
+                denied = result.startswith('-1 ')
+                resource = path or operation
+                forbidden = bool(path and not permitted(path))
+                if operation.startswith(('connect(', 'sendto(', 'sendmsg(', 'sendmmsg(', 'recvfrom(', 'recvmsg(', 'recvmmsg(', 'getsockopt(')):
+                    endpoint = re.search(r'sin_port=htons\((\d+)\).*sin_addr=inet_addr\("([^"]+)"\)', operation)
+                    kernel_route = ('<NETLINK:[ROUTE:' in operation
+                                    and 'sa_family=AF_NETLINK, nl_pid=0' in operation)
+                    if kernel_route and operation.startswith(('recvmsg(', 'recvfrom(')):
+                        # Interface replies can contain AF_INET6 metadata; that
+                        # payload is not the socket's address family.
+                        resource = 'kernel:route-interface-reply'
+                        forbidden = False
+                    elif endpoint:
+                        port, address = endpoint.groups()
+                        resource = '%s:%s' % (address, port)
+                        forbidden = not any(f['address'] == address and f['port'] == int(port)
+                                            for f in config.get('forwards', []))
+                    else:
+                        peer = re.search(r'<(?:TCP|UDP):\[[^]]*->([^]]+)\]>', operation)
+                        if peer:
+                            resource = peer.group(1)
+                            forbidden = not any(resource == '%s:%s' % (f['address'], f['port'])
+                                                for f in config.get('forwards', []))
+                        elif 'AF_UNIX' in operation or 'AF_INET6' in operation:
+                            forbidden = True
+                        elif ('<NETLINK:[ROUTE:' in operation
+                              and 'sa_family=AF_NETLINK' in operation
+                              and re.search(r'nlmsg_type=RTM_GET(?:LINK|ADDR)\b', operation)
+                              and operation.startswith(('sendto(', 'sendmsg('))):
+                            # Node queries interface metadata through the kernel's
+                            # route netlink socket. This read-only query has no
+                            # remote peer; do not treat it as an unknown datagram.
+                            resource = 'kernel:route-interface-query'
+                            forbidden = False
+                        elif operation.startswith(('sendto(', 'sendmsg(', 'sendmmsg(')):
+                            # Unknown datagram destinations cannot be authenticated.
+                            forbidden = True
+                event = dict(actor=actor, stage=stage, pid=int(pid), operation=operation.split('(')[0],
+                             resource=resource, decision='forbidden' if forbidden else 'allowed',
+                             result='denied' if denied else 'success', syscall=call)
+                emit('event', event=event)
+                if forbidden and not denied:
+                    stop()
+                    break
+        return
+
+    try:
+        trace()
+    except Exception as error:
+        emit('stream-error', error=str(error))
+        stop()
+    code = process.wait()
+    for thread in threads: thread.join(timeout=2)
+    os.lseek(actor_stderr, 0, os.SEEK_SET)
+    errors = os.read(actor_stderr, 1024 * 1024)
+    if errors: emit('stderr', data=base64.b64encode(errors).decode())
+    return code
+
+with open('/trace/canary', 'w') as canary:
+    canary.write('SYNTHETIC-NOT-A-SECRET')
+os.chmod('/trace/canary', 0o600)
+startup = invoke(['node', '/harness/startup.mjs'], 'startup-probe')
+if startup != 0:
+    emit('stream-error', error='Per-invocation startup capability probes failed')
+    emit('stream-end')
+    emit('exit', exitCode=startup)
+    os._exit(1)
+code = invoke(config['command'], 'command')
+emit('stream-end')
+emit('exit', exitCode=code)
+os._exit(0)
