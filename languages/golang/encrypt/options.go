@@ -1,6 +1,9 @@
 package encrypt
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // ClientOption configures [NewClient]. Each one sets one thing; a later
 // option setting the same thing wins. NewClient with none is a working
@@ -28,6 +31,11 @@ type clientOptions struct {
 	keyVendor         KeyVendor
 	supersededVendors []KeyVendor
 	keysetRecords     []string
+	// defaultKeyset is WithDefaultKeyset's keyset; rootKeyTTL is
+	// WithRootKeyTTL's, nil when not set.
+	defaultKeyset    KeysetSelector
+	defaultKeysetSet bool
+	rootKeyTTL       *time.Duration
 }
 
 // WithCredentials supplies the client id, the client key and the auth

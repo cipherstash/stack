@@ -474,3 +474,154 @@ func TestVendorCredentialsDoNotPrintTheirSecrets(t *testing.T) {
 		}
 	}
 }
+
+// noZeroKMSEnvironment clears every place AutoCredentials would look, so a
+// test that passes proves NewClient did not look.
+func noZeroKMSEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"CS_CLIENT_ID", "CS_CLIENT_KEY", "CS_CLIENT_ACCESS_KEY", "CS_WORKSPACE_CRN", "CS_ZEROKMS_HOST", "CS_VITUR_HOST", "CS_CONFIG_PATH"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("HOME", t.TempDir())
+}
+
+// vendorOnlyClient is NewClient with a key vendor backend and no
+// credentials, over the embedded guest, or a skip when it is absent.
+func vendorOnlyClient(t *testing.T, opts ...encrypt.ClientOption) (*encrypt.Client, error) {
+	t.Helper()
+	if _, err := encrypt.EmbeddedGuest(); err != nil {
+		t.Skip(err)
+	}
+	c, err := encrypt.NewClient(context.Background(), opts...)
+	if err == nil {
+		t.Cleanup(func() { _ = c.Close() })
+	}
+	return c, err
+}
+
+func TestVendorOnlyClientWithAStaticKey(t *testing.T) {
+	noZeroKMSEnvironment(t)
+	ctx := context.Background()
+	staticKey := bytes.Repeat([]byte{0x42}, 32)
+	record := func(name string) (string, [16]byte) {
+		id := randomID(t)
+		root := make([]byte, 32)
+		_, _ = rand.Read(root)
+		return keysetRecord(id, recordStatic, modeDerived, name, "dev-key", staticWrap(t, staticKey, root, recordKeyAAD(id, recordStatic, modeDerived))), id
+	}
+	first, _ := record("first")
+	second, secondID := record("second")
+	vendor := func() encrypt.KeyVendor {
+		return encrypt.StaticKey{KeyRef: "dev-key", Key: append([]byte(nil), staticKey...)}
+	}
+
+	// Two records and no default: there is no default keyset.
+	_, err := vendorOnlyClient(t, encrypt.WithKeyVendor(vendor()), encrypt.WithKeysetRecords(first, second))
+	if !errors.Is(err, encrypt.ErrNotFound) {
+		t.Fatalf("two records and no default: %v, want ErrNotFound", err)
+	}
+
+	c, err := vendorOnlyClient(t, encrypt.WithKeyVendor(vendor()), encrypt.WithKeysetRecords(first, second),
+		encrypt.WithDefaultKeyset(encrypt.KeysetName("second")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, err := c.DefaultKeyset().KeysetID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def != encrypt.KeysetID(secondID) {
+		t.Fatalf("default keyset %s, want %s", def, encrypt.KeysetID(secondID))
+	}
+	sealed := roundTrip(t, c, c.DefaultKeyset())
+	if v := sealed[0].Email.Ciphertext[0]; v != 2 {
+		t.Errorf("leaf format version %d, want 2", v)
+	}
+	roundTrip(t, c, c.Keyset(encrypt.KeysetName("first")))
+
+	// By id works as well as by name.
+	byID, err := vendorOnlyClient(t, encrypt.WithKeyVendor(vendor()), encrypt.WithKeysetRecords(first, second),
+		encrypt.WithDefaultKeyset(encrypt.KeysetID(secondID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testusers.Decrypt(ctx, byID.DefaultKeyset(), sealed); err != nil {
+		t.Fatalf("the default keyset by id does not open its rows: %v", err)
+	}
+
+	// Anything that needs ZeroKMS fails with ErrNoZeroKMS: a keyset no
+	// record names, and a row a ZeroKMS keyset sealed.
+	if _, err := c.Keyset(encrypt.KeysetName("tenant-a")).KeysetID(ctx); !errors.Is(err, encrypt.ErrNoZeroKMS) {
+		t.Errorf("a keyset with no record: %v, want ErrNoZeroKMS", err)
+	}
+	zerokms, err := testusers.Encrypt(ctx, deterministicClient(t).DefaultKeyset(), people)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testusers.Decrypt(ctx, c, zerokms); !errors.Is(err, encrypt.ErrNoZeroKMS) {
+		t.Errorf("a ZeroKMS row: %v, want ErrNoZeroKMS", err)
+	}
+}
+
+func TestVendorOnlyClientWithAWSKMS(t *testing.T) {
+	noZeroKMSEnvironment(t)
+	kms := &fakeKMS{}
+	creds := &countingCredentials{}
+	c, err := vendorOnlyClient(t,
+		encrypt.WithKeyVendor(encrypt.AWSKMS{Region: "ap-southeast-2", Credentials: creds}),
+		encrypt.WithKeysetRecords(awsRecord(t, modeDerived, "payments")),
+		encrypt.WithTransport(kms),
+		// Keep no root key, so each use of it unwraps it again.
+		encrypt.WithRootKeyTTL(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := kms.count("Decrypt"); n != 0 {
+		t.Errorf("NewClient made %d vendor calls, want 0", n)
+	}
+	roundTrip(t, c, c.DefaultKeyset())
+	// The Encrypt uses the root key twice (the data keys, then the index
+	// key for the terms in the settle); each Decrypt uses it once.
+	if n := kms.count("Decrypt"); n != 4 {
+		t.Errorf("Decrypt calls: %d, want 4", n)
+	}
+	if len(kms.failures) > 0 {
+		t.Fatalf("the fake KMS saw: %s", strings.Join(kms.failures, "; "))
+	}
+	// One credential per operation: the Encrypt's two vendor calls share
+	// one, and each Decrypt asks once.
+	if creds.asked != 3 {
+		t.Errorf("the credential source was asked %d times, want 3", creds.asked)
+	}
+}
+
+func TestVendorOnlyOptionsAreChecked(t *testing.T) {
+	noZeroKMSEnvironment(t)
+	ctx := context.Background()
+	static := func() encrypt.KeyVendor {
+		return encrypt.StaticKey{KeyRef: "k", Key: make([]byte, 32)}
+	}
+	for _, tc := range []struct {
+		name string
+		opts []encrypt.ClientOption
+	}{
+		{"a default keyset with ZeroKMS credentials", []encrypt.ClientOption{
+			encrypt.WithKeyVendor(static()), encrypt.WithKeysetRecords("r"),
+			encrypt.WithCredentials(encrypt.AutoCredentials()), encrypt.WithDefaultKeyset(encrypt.KeysetName("a")),
+		}},
+		{"a default keyset with no vendor", []encrypt.ClientOption{encrypt.WithDefaultKeyset(encrypt.KeysetName("a"))}},
+		{"the default selector as the default", []encrypt.ClientOption{
+			encrypt.WithKeyVendor(static()), encrypt.WithKeysetRecords("r"), encrypt.WithDefaultKeyset(nil),
+		}},
+		{"a root key TTL with no vendor", []encrypt.ClientOption{encrypt.WithRootKeyTTL(time.Minute)}},
+		{"a negative root key TTL", []encrypt.ClientOption{
+			encrypt.WithKeyVendor(static()), encrypt.WithKeysetRecords("r"), encrypt.WithRootKeyTTL(-time.Second),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := encrypt.NewClient(ctx, tc.opts...); !errors.Is(err, encrypt.ErrEncoding) {
+				t.Fatalf("%v, want ErrEncoding", err)
+			}
+		})
+	}
+}

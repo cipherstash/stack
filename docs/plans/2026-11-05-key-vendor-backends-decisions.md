@@ -1223,8 +1223,11 @@ the alternatives and the reason.
 
   | build | before | after | growth |
   |---|---|---|---|
-  | `stack_encrypt_guest.wasm` (no EQL types) | 1,543,167 B | 1,906,377 B | +363,210 B (+23.5%) |
-  | `stack_encrypt_guest_eql.wasm` | 1,598,896 B | 1,965,401 B | +366,505 B (+22.9%) |
+  | `stack_encrypt_guest.wasm` (no EQL types) | 1,543,167 B | 1,915,570 B | +372,403 B (+24.1%) |
+  | `stack_encrypt_guest_eql.wasm` | 1,598,896 B | 1,973,568 B | +374,672 B (+23.4%) |
+
+  (The "after" column includes the vendor-only client below. Before it,
+  the two builds were 1,906,377 B and 1,965,401 B.)
   | deterministic test build | n/a | 1,657,639 B | |
   | deterministic test build, EQL | n/a | 1,726,501 B | |
 
@@ -1279,7 +1282,8 @@ the alternatives and the reason.
 ### The guest
 
 - **Decision:** the cipher's key source is always
-  `KeyRouter<ZeroKMS, GuestVendor>` (in the deterministic build,
+  `KeyRouter<MaybeZeroKms<ZeroKMS>, GuestVendor>` (see "A client with no
+  ZeroKMS" below) (in the deterministic build,
   `KeyRouter<DeterministicSource, GuestVendor>`). `GuestVendor<T, C>` is one
   enum over the four vendor clients and `StaticKeyVendor`, plus `None`: with
   no backend configured it holds no keyset record, so the router sends
@@ -1381,11 +1385,63 @@ the alternatives and the reason.
 
 ### Deferred
 
-- **Deferred (no ticket):** a vendor-only Go client, with no ZeroKMS
-  credentials. Today the router's default keyset is ZeroKMS's, so NewClient
-  still needs ZeroKMS. It needs a guest key source of `VendorKeySource`
-  alone and a NewClient path with no `Credentials`.
-- **Deferred (no ticket):** a root key TTL option in Go (the guest uses
-  `DEFAULT_ROOT_KEY_TTL`, 5 minutes).
 - **Deferred to CIP-5313:** the stack-kms side of the capability matrix.
   The Go package docs carry a short one.
+
+### A client with no ZeroKMS (orchestrator review)
+
+- **Decision (binding, from the orchestrator):** a key vendor backend is an
+  alternative to ZeroKMS, so a Go client may have a vendor and no ZeroKMS.
+  The deferral recorded first is withdrawn.
+- **Decision:** the Go client has no ZeroKMS when `WithKeyVendor` is given
+  and `WithCredentials` is not. NewClient then neither needs nor resolves
+  ZeroKMS credentials (no environment, no profile, no `CS_ZEROKMS_HOST`).
+  To hold both, give `WithCredentials` too, for example
+  `WithCredentials(AutoCredentials())`. **Alternative:** try
+  `AutoCredentials` and fall back to vendor-only when it finds nothing.
+  **Reason:** a client whose backend changes with the developer's profile
+  or the environment is not predictable; a fallback would also hide a
+  broken ZeroKMS setup.
+- **Decision:** the guest config has no `client_id`, `client_key` or
+  `zerokms_url` for such a client (any one of them makes the others
+  required, as before). The guest key source is
+  `KeyRouter::new(MaybeZeroKms::Absent, vendor).with_vendor_default()`.
+  `MaybeZeroKms<Z>` (guest, `zerokms.rs`) forwards every `DataKeySource`
+  and `IndexKeySource` method to `Present(z)`, and `Absent` refuses every
+  request with `Error::Backend { vendor: "zerokms", kind: NotFound, source:
+  NoZeroKms }`. **Alternative:** a second cipher type, or the vendor source
+  directly. **Reason:** one cipher type for every configuration, and the
+  router already forwards every provided method.
+- **Decision (additive, stack-kms-vendor):** `KeyRouter::with_vendor_default`
+  sends "no keyset named" to the vendor and reports the vendor as
+  `key_backend()`. A router test covers it.
+- **Decision:** a new status, `STATUS_NO_ZEROKMS = 29` (`LAST_STATUS` moves),
+  and a new Go sentinel `ErrNoZeroKMS`, for any request that reaches the
+  absent ZeroKMS: a keyset no record names, or a v1 leaf. The status layer
+  finds the `NoZeroKms` cause by type. **Alternative:** `ErrNotFound`.
+  **Reason:** it is a configuration error with one fix, and a caller must be
+  able to tell it from a missing keyset.
+- **Decision:** the default keyset option is `WithDefaultKeyset(KeysetSelector)`,
+  taking a `KeysetName` or a `KeysetID`, as `Client.Keyset` does. It crosses
+  as the config key `default_keyset`, a selector object (`{"id": 16 bytes}`
+  or `{"name": …}`); the guest resolves a name from the records and calls
+  `VendorKeySource::with_default_keyset`. It is refused (`ErrEncoding`, and
+  `ConfigError::OnlyWithoutZeroKms` in the guest) on a client with ZeroKMS,
+  whose default the ZeroKMS administrator sets. With one record it is not
+  needed; with several and none, NewClient fails with `ErrNotFound`
+  (CIP-5306's rule). `nil`, `Client.DefaultKeyset`'s selector and the
+  "any" selector are refused.
+- **Decision:** `WithRootKeyTTL(time.Duration)` (config `root_key_ttl_ms`,
+  decimal milliseconds) sets `VendorKeySource::with_root_key_ttl`. Zero
+  keeps none; negative, or with no vendor, is `ErrEncoding`. **Measured:**
+  with zero, one Encrypt that derives terms unwraps the root key twice (the
+  data keys, then the index key in the settle), and each Decrypt once.
+- **Tests:** guest config tests for the vendor-only form, the default keyset
+  and the TTL; `MaybeZeroKms` tests. Go tests over the **real embedded
+  guest** through `NewClient`, with every `CS_*` variable cleared and `HOME`
+  in a temporary directory: a static key client with two records (no
+  default is `ErrNotFound`; the default by name and by id; v2 leaves;
+  `ErrNoZeroKMS` for an unknown keyset and for a ZeroKMS row), and an AWS
+  KMS client through the fake RoundTripper (no vendor call at NewClient; 4
+  `Decrypt` calls for one Encrypt and two Decrypts with `WithRootKeyTTL(0)`;
+  4 credential requests); and the option refusals.

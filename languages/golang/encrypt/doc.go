@@ -346,12 +346,21 @@
 //
 // # Key vendor backends
 //
-// A client can hold one key vendor backend beside ZeroKMS: [AWSKMS],
+// A key vendor backend is an alternative to ZeroKMS: [AWSKMS],
 // [GoogleCloudKMS], [AzureKeyVault], [VaultTransit] or [StaticKey]. Give it
 // with [WithKeyVendor], and its keyset records (the "stack-keyset:…" texts)
-// with [WithKeysetRecords]. A keyset in a record goes to the vendor; every
-// other keyset, and the default keyset, goes to ZeroKMS, so NewClient still
-// needs ZeroKMS credentials. Select a vendor keyset by its record's name or
+// with [WithKeysetRecords]:
+//
+//	client, err := encrypt.NewClient(ctx,
+//		encrypt.WithKeyVendor(encrypt.AWSKMS{Region: "us-east-1", Credentials: creds}),
+//		encrypt.WithKeysetRecords(os.Getenv("USERS_KEYSET_RECORD")))
+//
+// With no [WithCredentials] the client has no ZeroKMS and needs no
+// CipherStash credentials. Its default keyset is its only keyset record, or
+// the one [WithDefaultKeyset] names, and a call that needs ZeroKMS fails
+// with [ErrNoZeroKMS]. With WithCredentials too, the client holds both: a
+// keyset in a record goes to the vendor, and every other keyset, the default
+// included, goes to ZeroKMS. Select a vendor keyset by its record's name or
 // id with [Client.Keyset]. A value sealed under one backend never opens
 // under the other.
 //
@@ -368,7 +377,8 @@
 //
 //	                    wrapped data keys            derived data keys
 //	key lifetime        index key: one settle;       root key: cached in the guest
-//	                    data key: one value          for 5 minutes; the rest derived
+//	                    data key: one value          for 5 minutes (WithRootKeyTTL);
+//	                                                 the rest derived
 //	vendor calls per    1 + one per sealed value     0, or 1 when the root key is
 //	  Encrypt or Decrypt  (Vault: 1 + 1 per 250)     not cached
 //	the vendor can      every call and every value   the root key unwrap, at most

@@ -66,7 +66,7 @@ use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 pub use stack_guest_abi::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_INTERNAL,
     STATUS_KMS_CONFLICT, STATUS_KMS_FORBIDDEN, STATUS_KMS_NOT_FOUND, STATUS_KMS_OTHER,
-    STATUS_KMS_TRANSPORT, STATUS_KMS_UNAUTHORIZED, STATUS_STATE, STATUS_TERM,
+    STATUS_KMS_TRANSPORT, STATUS_KMS_UNAUTHORIZED, STATUS_NO_ZEROKMS, STATUS_STATE, STATUS_TERM,
 };
 
 /// Record a sealing/opening error as the last error
@@ -121,7 +121,8 @@ pub fn describe(cause: &(dyn std::error::Error + 'static)) -> Option<String> {
 /// a secret, a token or a value in one (CIP-5307 to CIP-5309). A host
 /// credential failure is described by the guest itself ([`crate::vendor`]).
 fn describes_itself(cause: &(dyn std::error::Error + 'static)) -> bool {
-    cause.is::<stack_kms_vendor::TransportError>()
+    cause.is::<crate::zerokms::NoZeroKms>()
+        || cause.is::<stack_kms_vendor::TransportError>()
         || cause.is::<stack_kms_vendor::RecordError>()
         || cause.is::<stack_kms_aws::AwsKmsError>()
         || cause.is::<stack_kms_aws::CredentialsError>()
@@ -279,6 +280,8 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
             STATUS_KMS_TRANSPORT
         }
         stack_kms::Error::Unexpected(_) => STATUS_KMS_OTHER,
+        // A vendor-only client asked for a ZeroKMS keyset (CIP-5311).
+        e if crate::zerokms::is_no_zerokms(e) => STATUS_NO_ZEROKMS,
         stack_kms::Error::Backend { kind, .. } => status_for_backend(*kind),
         // A request for a lock context, a decryption policy or an
         // unverified context against a key vendor backend: the caller's

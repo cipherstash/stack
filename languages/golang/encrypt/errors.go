@@ -65,6 +65,11 @@ var (
 	// [Cipher.Context]. Refused before any key is retrieved; a row stored
 	// under another tenant is a mismatch, never a decrypted value.
 	ErrContextMismatch = guest.ErrContextMismatch
+	// ErrNoZeroKMS is a client that has a key vendor backend and no ZeroKMS
+	// asked for a ZeroKMS keyset: a keyset none of its keyset records names,
+	// or a value a ZeroKMS keyset sealed. Refused before any request. Give
+	// the keyset's record, or ZeroKMS credentials with WithCredentials.
+	ErrNoZeroKMS = guest.ErrNoZeroKMS
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). NewClient returns it when
 	// WithRequireLockedMemory is given, and so does any later call under

@@ -97,6 +97,10 @@ struct SeededWire<'a> {
     static_key_ref: Option<&'a str>,
     #[serde(default, borrow, deserialize_with = "present")]
     static_key: Option<&'a [u8]>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    default_keyset: Option<crate::config::KeysetSelectorWire<'a>>,
+    #[serde(default, borrow, deserialize_with = "present")]
+    root_key_ttl_ms: Option<&'a str>,
 }
 
 /// Absent is `None`. Present, a value must be of its type: a null is

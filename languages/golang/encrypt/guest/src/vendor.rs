@@ -101,12 +101,25 @@ impl std::fmt::Debug for VendorSettings {
     }
 }
 
-/// The key vendor backend part of the config: the backend and the keyset
-/// record texts.
+/// The key vendor backend part of the config: the backend, the keyset
+/// record texts, and the adapter's settings.
 #[derive(Debug)]
 pub struct VendorConfig {
     pub settings: VendorSettings,
     pub records: Vec<String>,
+    /// The default keyset of a client with no ZeroKMS. `None` is the only
+    /// record, when there is one.
+    pub default_keyset: Option<DefaultKeyset>,
+    /// How long a root key stays unwrapped. `None` is the adapter's default
+    /// (`DEFAULT_ROOT_KEY_TTL`).
+    pub root_key_ttl: Option<Duration>,
+}
+
+/// A keyset named by one of the keyset records, by its id or its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefaultKeyset {
+    Id(uuid::Uuid),
+    Name(String),
 }
 
 /// The host could not supply a credential, or supplied one the guest
@@ -521,7 +534,13 @@ where
     T: VendorTransport + Send + Sync,
     C: CredentialImport,
 {
-    let Some(VendorConfig { settings, records }) = config else {
+    let Some(VendorConfig {
+        settings,
+        records,
+        default_keyset,
+        root_key_ttl,
+    }) = config
+    else {
         return Ok(VendorKeySource::new(GuestVendor::None, [])?);
     };
     let credentials = HostCredentials::new(import);
@@ -581,7 +600,25 @@ where
         .iter()
         .map(|text| KeysetRecord::parse(text))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(VendorKeySource::new(backend, records)?)
+    let default = match default_keyset {
+        None => None,
+        Some(DefaultKeyset::Id(id)) => Some(id),
+        Some(DefaultKeyset::Name(name)) => Some(
+            records
+                .iter()
+                .find(|r| r.name() == Some(name.as_str()))
+                .map(KeysetRecord::id)
+                .ok_or(RecordError::UnknownDefault)?,
+        ),
+    };
+    let mut source = VendorKeySource::new(backend, records)?;
+    if let Some(id) = default {
+        source = source.with_default_keyset(id)?;
+    }
+    if let Some(ttl) = root_key_ttl {
+        source = source.with_root_key_ttl(ttl);
+    }
+    Ok(source)
 }
 
 #[cfg(test)]
@@ -817,6 +854,8 @@ mod tests {
                 endpoint: None,
             },
             records: Vec::new(),
+            default_keyset: None,
+            root_key_ttl: None,
         }
     }
 
@@ -876,6 +915,8 @@ mod tests {
                 endpoint: None,
             },
             records: Vec::new(),
+            default_keyset: None,
+            root_key_ttl: None,
         };
         let error = build(Some(config), &Recording::default(), FakeImport::unused()).unwrap_err();
         assert!(matches!(error, BuildError::Setting("aws_region")));
@@ -887,6 +928,8 @@ mod tests {
                 mount: None,
             },
             records: Vec::new(),
+            default_keyset: None,
+            root_key_ttl: None,
         };
         let error = build(Some(config), &Recording::default(), FakeImport::unused()).unwrap_err();
         assert!(matches!(error, BuildError::Setting("vault_address")));
@@ -902,6 +945,8 @@ mod tests {
                 key: KeyBytes::new([7; 32]),
             },
             records: vec![aws.to_owned()],
+            default_keyset: None,
+            root_key_ttl: None,
         };
         let error = build(Some(config), &Recording::default(), FakeImport::unused()).unwrap_err();
         assert!(matches!(
