@@ -5,6 +5,7 @@ import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
+import { noRewrite } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
@@ -31,6 +32,8 @@ export function createRealDriver({
   let oracleStores = null
   /** @type {Awaited<ReturnType<Isolation['openAppHost']>>|null} */
   let host = null
+  /** @type {unknown} */
+  let legacySnapshot
   /** @param {StoreSet|null} stores */
   function assigned(stores) {
     if (!stores) throw Error('Run Store Set has not been provisioned')
@@ -180,9 +183,10 @@ export function createRealDriver({
       }
     },
     async snapshot() {
+      legacySnapshot = await assigned(oracleStores).snapshot()
       await writeFile(
         resolve(output, 'legacy-snapshot.json'),
-        JSON.stringify(await assigned(oracleStores).snapshot()),
+        JSON.stringify(legacySnapshot),
       )
     },
     async migrate() {
@@ -286,6 +290,16 @@ export function createRealDriver({
         const result = await behaviour((method, args) =>
           application.call(method, args),
         )
+        let current
+        try {
+          current = await assigned(oracleStores).snapshot()
+        } catch (error) {
+          throw Object.assign(
+            new Error('Oracle snapshot read failed', { cause: error }),
+            { infrastructure: true },
+          )
+        }
+        result.checks.push(noRewrite(legacySnapshot, current))
         return await result.mutate()
       } finally {
         await application.close()
