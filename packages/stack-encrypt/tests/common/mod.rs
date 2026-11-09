@@ -99,6 +99,16 @@ impl CountingSource {
     pub fn new() -> Self {
         Self::over(FakeDataKeySource::new())
     }
+
+    /// The same source, reporting `backend` as its key backend. The keys
+    /// still come from the fake, so this stands in for a key vendor backend
+    /// only in what the cipher routes on.
+    pub fn with_backend(backend: KeyBackend) -> Self {
+        Self {
+            backend,
+            ..Self::new()
+        }
+    }
 }
 
 impl<S> CountingSource<S> {
@@ -109,16 +119,6 @@ impl<S> CountingSource<S> {
             retrieve_calls: Arc::new(AtomicUsize::new(0)),
             load_calls: Arc::new(AtomicUsize::new(0)),
             backend: KeyBackend::ZeroKms,
-        }
-    }
-
-    /// The same source, reporting `backend` as its key backend. The keys
-    /// still come from the fake, so this stands in for a key vendor backend
-    /// only in what the cipher routes on.
-    pub fn with_backend(backend: KeyBackend) -> Self {
-        Self {
-            backend,
-            ..Self::new()
         }
     }
 
