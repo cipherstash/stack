@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cp, readFile } from 'node:fs/promises'
+import { access, cp, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -11,12 +11,10 @@ export async function resolveStack({ source, root, output }) {
   if (source === 'tree' || source.endsWith('.tgz')) {
     let tarball = resolve(source)
     if (source === 'tree') {
-      const result = await exec(
-        'npm',
-        ['pack', '--json', '--pack-destination', output],
-        { cwd: resolve(root, 'languages/typescript/packages/stack') },
-      )
-      tarball = resolve(output, JSON.parse(result.stdout)[0].filename)
+      const directory = resolve(root, 'languages/typescript/packages/stack')
+      await access(resolve(directory, 'dist/index.js'))
+      tarball = resolve(output, 'tree-stack.tgz')
+      await exec('pnpm', ['pack', '--out', tarball], { cwd: directory })
     }
     const digest = createHash('sha256')
       .update(await readFile(tarball))

@@ -514,7 +514,7 @@ jobs:
       # unrelated failure earlier in the job must not hide its result.
       - name: Run the credentialed Migration Harness self-test
         if: ${{ !cancelled() }}
-        run: pnpm exec turbo run harness:selftest --filter @cipherstash/e2e --env-mode=loose -- migration-harness/__tests__/no-rewrite-live.test.ts
+        run: pnpm exec turbo run harness:selftest --filter @cipherstash/e2e --env-mode=loose
         env:
           HARNESS_LIVE: '1'
 
