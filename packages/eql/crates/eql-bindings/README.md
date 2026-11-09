@@ -109,10 +109,14 @@ evolution plan.
 
 ## Rust text equality with Stack Encrypt
 
-The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
-`v4::text::TextEq` and `v4::text::TextEqQuery`, and `DecryptInto<String>` for
-`v4::text::TextEq`. Stack Encrypt writes EQL v4 only, so no `v3` type
-implements these traits. The derives are emitted by `eql-codegen`.
+The optional `stack-encrypt` feature implements Stack Encrypt's
+`EncryptTarget<String>` for `v4::text::TextEq` and `v4::text::TextEqQuery`, and
+`DecryptSource<String>` for `v4::text::TextEq`. These are the owned traits:
+encryption takes the plaintext by value and wipes it. The same derives also
+implement the older `EncryptFrom` and `DecryptInto`, which plans, the dynamic
+layer and `encrypt_as` still use until Stack Encrypt removes them. Stack Encrypt
+writes EQL v4 only, so no `v3` type implements these traits. The derives are
+emitted by `eql-codegen`.
 
 The other v4 types Stack Encrypt produces take a Rust primitive as their
 plaintext, or, for a date, a timestamp or a decimal, one of
@@ -228,20 +232,31 @@ With an initialized cipher, the essential calls are:
 ```rust,ignore
 use eql_bindings::{Identifier, v4::text::{TextEq, TextEqQuery}};
 
+use stack_encrypt::{DecryptFrom, EncryptInto};
+
 let column = Identifier::for_column("users", "email")?;
 let keyset = cipher.default_keyset();
-let email = "alice@example.com".to_owned();
-let stored: TextEq = keyset.encrypt_as(&email, column.clone()).await?;
-let query: TextEqQuery = keyset.encrypt_as(&email, column.clone()).await?;
-let opened: String = cipher.decrypt_as(stored, column.into()).await?;
+let stored: TextEq = "alice@example.com".to_owned()
+    .encrypt_into_with_context(&keyset, column.clone())
+    .await?;
+let query: TextEqQuery = "alice@example.com".to_owned()
+    .encrypt_into_with_context(&keyset, column.clone())
+    .await?;
+let opened = String::decrypt_from_with_context(stored, &keyset, column).await?;
 ```
 
 Both identifier components must be nonempty. Encryption stores the identifier
 in `i`; its table and column supply the ciphertext AAD, term context, and ZeroKMS
 descriptor. The storage field names `c` and `hm` add no further context.
 Decryption validates `i` before retrieving keys. Passing an expected identifier,
-as above, also checks the destination. `Default::default()` uses the stored
-identifier alone, so moving a complete payload with its original `i` still opens.
+as above, also checks the destination. `String::decrypt_from(stored, &keyset)`
+uses the stored identifier alone, so moving a complete payload with its
+original `i` still opens.
+
+A database NULL is an `Option` of the type: `None::<String>` encrypts into
+`None::<TextEq>`, with nothing stored and no key requested. A type whose terms
+a null has (a storage type, or one with only an equality term) also encrypts
+from an `Option` of its plaintext, and seals the `None` as a stored null.
 
 Ciphertext uses Vitamin C's native string encoding. Equality uses its exact
 string PRF input, with no normalization or case folding: `café` and
@@ -315,7 +330,8 @@ column, which `Identifier::for_column` accepts, cannot be queried this way:
 for instance a name that starts with a digit, `-` or `b64:`, or one holding
 `/`, `(`, `)`, or a control or invisible format character.
 The plan is for queries: write with
-`keyset.encrypt_as(&value, column)` and open with `cipher.decrypt_as`, since
+`value.encrypt_into_with_context(&keyset, column)` and open with
+`P::decrypt_from_with_context`, since
 an EQL type is sealed under its column rather than the plan's label. The
 query is the same bytes the data path derives for a field that names the
 type (`stack_encrypt::dynamic::query_term`), which is what the Go SDK sends,
@@ -393,8 +409,9 @@ plan; `targets::targets()` lists them, each with `producible` and, when it is
 ### Features
 
 - `stack-encrypt`: the EQL v4 types (`eql_bindings::v4`) with Stack
-  Encrypt's `EncryptFrom` and `DecryptInto`, for a Rust program that
-  encrypts through `encrypt_as`. It builds Stack Encrypt with no default
+  Encrypt's `EncryptTarget` and `DecryptSource` (and the older `EncryptFrom`
+  and `DecryptInto`), for a Rust program that encrypts through
+  `encrypt_into`. It builds Stack Encrypt with no default
   features and without its `dynamic` layer.
 - `targets`: `stack-encrypt`, plus the by-name dispatch a language binding
   needs (`encryption::targets`, `v4::targets`), where the EQL type is named at

@@ -61,8 +61,9 @@ hex = { version = "0.4", optional = true }
 [features]
 default = []
 # The EQL v4 types as Stack Encrypt targets: `eql_bindings::v4`, with
-# `EncryptFrom` / `DecryptInto` on every producible type, for a Rust program
-# that encrypts through `encrypt_as`. No `dynamic` layer.
+# `EncryptTarget` / `DecryptSource` (and the older `EncryptFrom` /
+# `DecryptInto`) on every producible type, for a Rust program that encrypts
+# through `encrypt_into`. No `dynamic` layer.
 stack-encrypt = [
   "dep:stack-encrypt",
   "dep:base64",

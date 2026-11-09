@@ -24,7 +24,8 @@
 //! Enable the `stack-encrypt` feature on `eql-bindings`. Both targets accept
 //! a [`String`] as plaintext and a [`NonEmpty<Identifier>`] as context.
 //! [`Identifier::for_column`] validates the table and column; the returned
-//! identifier is passed directly to `encrypt_as` and stored in the output's `i`.
+//! identifier is passed directly to `encrypt_into_with_context` and stored in
+//! the output's `i`.
 //! The output type selects the encryption operations: [`TextEq`] includes
 //! ciphertext and an equality term, while [`TextEqQuery`] contains only the term.
 //!
@@ -102,12 +103,15 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use stack_encrypt::sem::MatchTerm;
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, TermError, Tokenizer};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
-use stack_encrypt::target::{self, AeadContext, CallerContext, IndexSpec};
+use stack_encrypt::target::{
+    self, AeadContext, CallerContext, DecryptSource, EncryptTarget, IndexSpec, RequiredContext,
+};
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
     Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
     NonEmpty, SealedValue, StackCipherText,
 };
+use zeroize::Zeroize;
 
 use crate::{
     v3::terms::{BloomFilter, Ciphertext, Hmac256},
@@ -217,6 +221,18 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
         target::ciphertext().transcode()
     }
 }
+// The owned declaration of the same leaf: the canonical ciphertext, read into
+// EQL's `c`. It requires the AEAD half of the context, as Stack Encrypt's own
+// `StackCipherText` does.
+impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Ciphertext {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        target::ciphertext().accepting().transcode()
+    }
+}
 
 /// Reads a stored `c` back as the native sealed leaf it encodes. Public for
 /// the encryption test crate, which opens the leaf with Stack Encrypt directly
@@ -238,6 +254,12 @@ impl<P: Decrypt + Send + 'static> DecryptInto<P> for Ciphertext {
         }
     }
 }
+impl<P: Decrypt + Zeroize + Send + 'static> DecryptSource<P> for Ciphertext {
+    type ContextInput = RequiredContext<AeadContext>;
+    fn decryption<K: 'static>(self, context: Self::ContextInput) -> Decryption<P, K> {
+        DecryptInto::decryption(self, context.into_inner())
+    }
+}
 impl Decryptable for Ciphertext {
     const DECRYPTABLE: bool = true;
 }
@@ -247,7 +269,7 @@ where
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
-        Some(self.decryption(context.into()))
+        Some(DecryptInto::decryption(self, context.into()))
     }
 }
 
@@ -284,6 +306,18 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for Hmac256 {
     /// `op::Eq` through it.
     fn indexes() -> Vec<IndexSpec> {
         vec![IndexSpec::Equality]
+    }
+}
+impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Hmac256 {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        target::equality().accepting().transcode()
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        <Self as EncryptFrom<S>>::indexes()
     }
 }
 impl Decryptable for Hmac256 {
@@ -412,6 +446,21 @@ impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
         vec![IndexSpec::Match(EqlMatch::options())]
     }
 }
+impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for BloomFilter {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        // The configuration is named by the type, as in `EncryptFrom` above.
+        #[allow(deprecated)]
+        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        terms.accepting().transcode()
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        <Self as EncryptFrom<S>>::indexes()
+    }
+}
 impl Decryptable for BloomFilter {
     const DECRYPTABLE: bool = false;
 }
@@ -454,6 +503,18 @@ impl<S: AsRef<str>> EncryptFrom<S> for SearchBloomFilter {
         #[allow(deprecated)]
         let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
         terms.transcode()
+    }
+}
+impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for SearchBloomFilter {
+    type ContextInput = RequiredContext<CallerContext>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
+    where
+        S: 's,
+    {
+        // Configuration named by the type, as for `BloomFilter`.
+        #[allow(deprecated)]
+        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        terms.accepting().transcode()
     }
 }
 impl Decryptable for SearchBloomFilter {
