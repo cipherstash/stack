@@ -5,7 +5,7 @@ import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
-import { noRewrite } from './no-rewrite.mjs'
+import { noRewrite, validateLegacySnapshot } from './no-rewrite.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
@@ -184,6 +184,7 @@ export function createRealDriver({
     },
     async snapshot() {
       legacySnapshot = await assigned(oracleStores).snapshot()
+      validateLegacySnapshot(legacySnapshot)
       await writeFile(
         resolve(output, 'legacy-snapshot.json'),
         JSON.stringify(legacySnapshot),

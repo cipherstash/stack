@@ -500,6 +500,13 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.db.outputs.database-url }}
 
+      # Deterministic Fake Migrators only: no model credentials or token spend.
+      - name: Run the credentialed Migration Harness self-test
+        if: ${{ !cancelled() }}
+        run: pnpm --filter @cipherstash/e2e harness:selftest
+        env:
+          HARNESS_LIVE: '1'
+
       # Guarded on the project being set: if the stack never came up there is
       # nothing to tear down, and an unguarded `-p ""` would mask the real error.
       - name: Stop postgres
