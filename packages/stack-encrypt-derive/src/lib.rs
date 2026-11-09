@@ -41,7 +41,7 @@
 //! // Passing the expected context refuses a value stored under any other
 //! // context, before any key is requested.
 //! let opened = Protected::<String>::decrypt_from_with_context(encrypted, &cipher, nonempty!("users/email")).await?;
-//! assert_eq!(opened.risky_ref(), &value);
+//! # assert_eq!(opened.risky_ref(), &value);
 //! # Ok::<(), Box<dyn std::error::Error>> (())
 //! # }).unwrap();
 //! ```

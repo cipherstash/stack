@@ -236,8 +236,8 @@ let rows = Vec::<Protected<User>>::decrypt_from(records, &cipher).await?;
 ```
 
 The derive implements `DecryptSource<Protected<User>>` for every plaintext
-type the record names. Read the value with `risky_ref()`, at the one place
-that needs it. `User::decrypt_from` still works, but it returns a bare
+type the record names. Keep the value in its `Protected`, and take the
+plaintext out only at the one place that needs it. `User::decrypt_from` still works, but it returns a bare
 `User` that the caller must wipe.
 
 #### Traits on the plaintext type
@@ -323,7 +323,7 @@ let matched: Vec<SearchableUser> = rows.into_iter().filter(|r| r.email.equality 
 // Each decrypted user is wiped when its `Protected` is dropped.
 let opened = Vec::<Protected<User>>::decrypt_from(matched, &cipher).await?;
 assert_eq!(opened.len(), 1);
-assert_eq!(opened[0].risky_ref().id, 42);
+# assert_eq!(opened[0].risky_ref().id, 42);
 # Ok::<(), stack_encrypt::Error>(())
 # }).unwrap();
 ```

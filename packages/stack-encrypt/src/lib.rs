@@ -440,7 +440,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! let loaded: EncryptedUser = serde_json::from_slice(&stored)?;
 //! let restored = Protected::<User>::decrypt_from(loaded, &cipher).await?;
-//! assert_eq!(restored.risky_ref().id, id);
+//! # assert_eq!(restored.risky_ref().id, id);
 //! // `restored` wipes the plaintext when it is dropped.
 //! # Ok(())
 //! # }
