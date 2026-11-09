@@ -2,17 +2,18 @@
 //! `DecryptSource`, called as `value.encrypt_into_with_context(..)` and
 //! `P::decrypt_from(..)`.
 //!
-//! Data written through either API is stored in the same columns and queried
-//! by the same terms, so the two must agree. The bytes each type writes are
-//! pinned against known answers in `v4_terms.rs`. This file checks, for every
-//! stored type and every derived query type, what a known answer cannot:
+//! Data written through either API goes into the same columns, and is queried
+//! by the same terms. So the two APIs must agree. `v4_terms.rs` checks the
+//! bytes that each type writes against known answers. This file checks what a
+//! known answer cannot, for every stored type and every derived query type:
 //!
-//! - the ciphertext `c` written by each API opens through the other. It is
-//!   sealed under a fresh nonce, so its bytes differ every time, and so does
-//!   the block ORE term `ob`, which is compared by order;
-//! - both null forms behave as before: a type over an `Option` seals a null,
-//!   and an `Option` of a type stores nothing for `None` (a database NULL);
-//! - a value is refused under another column before any key is requested.
+//! - The ciphertext `c` written by each API opens through the other API. `c` is
+//!   sealed under a new nonce each time, so its bytes differ every time.
+//! - The block ORE (order-revealing encryption) term `ob` also contains a
+//!   nonce. The test compares it by order, not by its bytes.
+//! - Both forms of null behave as before. A type encrypted from an `Option`
+//!   seals a null. An `Option` of a type stores a database NULL for `None`.
+//! - A value is refused under another column before any key is requested.
 
 mod common;
 
@@ -46,12 +47,13 @@ fn terms_of<T: Serialize>(stored: &T) -> serde_json::Value {
     json
 }
 
-/// The stored payloads of one value written twice: the same envelope and
+/// Checks that two stored payloads of one value have the same envelope and
 /// the same terms.
 ///
-/// A block ORE term (`ob`) is compared by the scheme, not by its bytes. Its
-/// right half carries a random nonce, as the ciphertext does, so one value
-/// gives different bytes each time, and two terms of one value order equal.
+/// The block ORE term `ob` is compared by the ORE scheme, not by its bytes.
+/// The right half of the term contains a random nonce, as the ciphertext
+/// does. So one value gives different bytes each time. Two terms of one value
+/// still compare as equal.
 fn assert_same_terms<T: Serialize>(owned: &T, structural: &T, name: &str) {
     let mut owned = terms_of(owned);
     let mut structural = terms_of(structural);
@@ -85,8 +87,8 @@ fn decimal(text: &str) -> DecimalValue {
     DecimalValue::from(rust_decimal::Decimal::from_str(text).unwrap())
 }
 
-/// A plaintext as a value that can be compared. The date, timestamp and
-/// decimal plaintexts do not implement `PartialEq`, so they are compared as
+/// A plaintext as a value that can be compared. The date, timestamp, and
+/// decimal plaintexts do not implement `PartialEq`. The test compares them as
 /// the chrono and rust_decimal values they convert to.
 trait Seen {
     type View: PartialEq + std::fmt::Debug;
@@ -128,9 +130,9 @@ impl Seen for DecimalValue {
     }
 }
 
-/// Each stored type, written through both APIs from the same plaintext under
-/// the same column: the same terms, and each ciphertext opens through the
-/// other API.
+/// Writes each stored type through both APIs, from the same plaintext under
+/// the same column. Checks that the terms match, and that each ciphertext
+/// opens through the other API.
 macro_rules! stored_agrees {
     ($cipher:expr, $keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
         let value: $plaintext = $value;
@@ -156,8 +158,9 @@ macro_rules! stored_agrees {
     })+};
 }
 
-/// Each query type, built through both APIs: the same operand. A query
-/// operand carries no ciphertext, so the whole payload must match.
+/// Builds each query type through both APIs, and checks that the operands
+/// match. A query operand contains no ciphertext, so the whole payload must
+/// match.
 macro_rules! query_agrees {
     ($keyset:expr, $plaintext:ty, $value:expr, [$($ty:ty),+ $(,)?]) => {$({
         let value: $plaintext = $value;
@@ -460,8 +463,8 @@ mod every_query_type {
 mod a_null {
     use super::*;
 
-    // A type over an `Option` seals a null: a stored value, under a key,
-    // with the terms a null has.
+    // A type encrypted from an `Option` seals a null: a stored value, under a
+    // key, with the terms of a null.
     #[tokio::test]
     async fn sealed_by_a_type_over_an_option_matches_the_structural_api() {
         let (cipher, _) = common::cipher().await;
@@ -552,8 +555,8 @@ mod a_null {
     }
 
     // The two forms are not read as each other. A sealed null is a stored
-    // value of its own type, so `Option<TextEq>` opens it as that type, and
-    // a `String` cannot be read out of it.
+    // value of its own type. `Option<TextEq>` opens it as that type. A
+    // `String` cannot be read out of it.
     #[tokio::test]
     async fn sealed_is_not_read_as_a_database_null() {
         let (cipher, _) = common::cipher().await;
@@ -569,7 +572,7 @@ mod a_null {
             "a sealed null is not a String: {:?}",
             result.err()
         );
-        // Read as what it is, it opens as `None`.
+        // Read as a sealed null, the value opens as `None`.
         assert_eq!(
             Option::<String>::decrypt_from(sealed, &keyset)
                 .await
@@ -578,7 +581,8 @@ mod a_null {
         );
     }
 
-    // An `Option` of a type stores nothing for `None`: the column is NULL.
+    // An `Option` of a type stores nothing for `None`. The column is a
+    // database NULL.
     #[tokio::test]
     async fn as_an_option_of_a_type_is_a_database_null() {
         let (cipher, calls) = common::cipher().await;
@@ -643,8 +647,9 @@ async fn a_value_is_refused_under_another_column_before_any_key_is_requested() {
 }
 
 // The positive twins of the `compile_fail` examples in
-// `eql_bindings::encryption`. A `compile_fail` example passes on any error, a
-// misspelt path included, so these keep it failing for the reason it names.
+// `eql_bindings::encryption`. A `compile_fail` example passes on any compile
+// error, including a misspelt path. These twins make sure that each example
+// fails for the reason it names.
 #[test]
 fn the_traits_the_compile_fail_examples_refuse_exist_for_the_right_shapes() {
     use eql_bindings::Identifier;

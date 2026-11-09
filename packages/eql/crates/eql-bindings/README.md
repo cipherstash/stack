@@ -111,12 +111,13 @@ evolution plan.
 
 The optional `stack-encrypt` feature implements Stack Encrypt's
 `EncryptTarget<String>` for `v4::text::TextEq` and `v4::text::TextEqQuery`, and
-`DecryptSource<String>` for `v4::text::TextEq`. These are the owned traits:
-encryption takes the plaintext by value and wipes it. The same derives also
-implement the older `EncryptFrom` and `DecryptInto`, which plans, the dynamic
-layer and `encrypt_as` still use until Stack Encrypt removes them. Stack Encrypt
-writes EQL v4 only, so no `v3` type implements these traits. The derives are
-emitted by `eql-codegen`.
+`DecryptSource<String>` for `v4::text::TextEq`. These owned traits take the
+plaintext by value and wipe it.
+
+The same derives also implement the older `EncryptFrom` and `DecryptInto`.
+Plans, the dynamic layer, and `encrypt_as` still use them, until Stack Encrypt
+removes them. Stack Encrypt writes EQL v4 only, so no `v3` type implements
+these traits. `eql-codegen` emits the derives.
 
 The other v4 types Stack Encrypt produces take a Rust primitive as their
 plaintext, or, for a date, a timestamp or a decimal, one of
@@ -253,13 +254,16 @@ as above, also checks the destination. `String::decrypt_from(stored, &keyset)`
 uses the stored identifier alone, so moving a complete payload with its
 original `i` still opens.
 
-A database NULL is an `Option` of the type: `None::<String>` encrypts into
-`None::<TextEq>`, with nothing stored and no key requested. A type whose terms
-a null has (a storage type, or one with only an equality term) also encrypts
-from an `Option` of its plaintext, and seals the `None` as a stored null. The
-two forms are not read as each other: a sealed null read through
-`Option<TextEq>` into an `Option<String>` is refused as the wrong type; read
-it through `TextEq` into an `Option<String>`.
+For a database NULL, use an `Option` of the type. `None::<String>` encrypts
+into `None::<TextEq>`. Nothing is stored. No key is requested.
+
+Some types also encrypt from an `Option` of their plaintext, and seal a `None`
+as a stored null. These are the types whose terms a null has: a storage type,
+or a type with only an equality term.
+
+The two forms are not read as each other. A sealed null read through
+`Option<TextEq>` into an `Option<String>` is refused as the wrong type. To read
+a sealed null, read it through `TextEq` into an `Option<String>`.
 
 Ciphertext uses Vitamin C's native string encoding. Equality uses its exact
 string PRF input, with no normalization or case folding: `café` and
@@ -412,9 +416,9 @@ plan; `targets::targets()` lists them, each with `producible` and, when it is
 ### Features
 
 - `stack-encrypt`: the EQL v4 types (`eql_bindings::v4`) with Stack
-  Encrypt's `EncryptTarget` and `DecryptSource` (and the older `EncryptFrom`
-  and `DecryptInto`), for a Rust program that encrypts through
-  `encrypt_into`. It builds Stack Encrypt with no default
+  Encrypt's `EncryptTarget` and `DecryptSource`, for a Rust program that
+  encrypts through `encrypt_into`. The older `EncryptFrom` and `DecryptInto`
+  are implemented too. It builds Stack Encrypt with no default
   features and without its `dynamic` layer.
 - `targets`: `stack-encrypt`, plus the by-name dispatch a language binding
   needs (`encryption::targets`, `v4::targets`), where the EQL type is named at

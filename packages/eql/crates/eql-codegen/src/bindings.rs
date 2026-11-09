@@ -603,8 +603,9 @@ fn render_query_projections(
                 term.json_key()
             );
             let detail = format!(
-                " Implements `EncryptTarget<{shown}>`, deriving only this term, and converts into \
-                 [`{twin}`], which is what is bound in SQL."
+                " `{ident}` derives only the `{}` term, through `EncryptTarget<{shown}>`. Convert \
+                 it into [`{twin}`] to bind it in SQL.",
+                term.json_key()
             );
             let others: TokenStream = terms
                 .iter()
@@ -798,41 +799,51 @@ fn encryption_attrs(
                 (false, false, true) => "order",
                 _ => "equality",
             };
-            let null = if nullable_terms(domain) {
+            let null = nullable_terms(domain).then(|| {
                 format!(
-                    ", and `EncryptTarget<Option<{shown}>>`, whose `None` is the query of a stored \
-                     null"
+                    " Also implements `EncryptTarget<Option<{shown}>>`. The query for a `None` \
+                     finds the stored nulls."
                 )
-            } else {
-                String::new()
-            };
-            format!(
+            });
+            let main = format!(
                 " Plaintext input: {named}. Implements `EncryptTarget<{shown}>` to build {terms} \
-                 query terms{null}. Query operands do not decrypt."
-            )
+                 query terms. Query operands do not decrypt."
+            );
+            (main, null)
         } else if nullable_terms(domain) {
             // A null is padded to a value's length only where values have
-            // one length; text's ciphertext is as long as the text.
+            // one length. The ciphertext of a text value is as long as the
+            // text.
             let length = if family.name == "text" {
-                "a `None` is sealed as a null that is not padded, since text has no \
-                 one length, so its length may show that the value is absent"
+                " Text has no fixed length, so a `None` is sealed without padding. The length of \
+                 the sealed null can show that the value is absent."
             } else {
-                "a `None` is sealed as long as a value"
+                " A `None` is sealed with padding, to the length of a value."
             };
-            format!(
-                " Plaintext input and decrypted output: {named}. Implements \
-                 `EncryptTarget<{shown}>` and `DecryptSource<{shown}>`, and both for \
-                 `Option<{shown}>`: {length}, and its terms are a null's, which equality \
-                 has and no other index does."
-            )
-        } else {
-            format!(
+            let main = format!(
                 " Plaintext input and decrypted output: {named}. Implements \
                  `EncryptTarget<{shown}>` and `DecryptSource<{shown}>`."
-            )
+            );
+            let null = format!(
+                " Both traits are also implemented for `Option<{shown}>`.{length} A `None` gets \
+                 the terms of a null. Only the equality index has a term for a null."
+            );
+            (main, Some(null))
+        } else {
+            let main = format!(
+                " Plaintext input and decrypted output: {named}. Implements \
+                 `EncryptTarget<{shown}>` and `DecryptSource<{shown}>`."
+            );
+            (main, None)
         }
     };
-    let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    let (plaintext, null) = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    let null = null.map(|null| {
+        quote! {
+            #[doc = ""]
+            #[doc = #null]
+        }
+    });
     // A type whose terms a null has (none, or equality's alone) may be
     // sealed, or queried, from an `Option` too (#1298).
     let nullable =
@@ -846,9 +857,10 @@ fn encryption_attrs(
             .collect::<Vec<_>>()
             .join(", ");
         let built = format!(
-            " Plaintext input: [`{shown}`]({rust}), through one projection per index — \
-             {projections} — each `EncryptTarget<{shown}>` and `Into<Self>`: a query carries the \
-             term of the index that answers its operator. Query operands do not decrypt."
+            " Plaintext input: [`{shown}`]({rust}), through one projection per index: \
+             {projections}. Each projection implements `EncryptTarget<{shown}>` and `Into<Self>`. \
+             A query contains only the term of the index for its operator. Query operands do not \
+             decrypt."
         );
         return (
             quote! {
@@ -863,6 +875,8 @@ fn encryption_attrs(
         quote! {
             #[doc = ""]
             #[doc = #plaintext]
+            #null
+            #[doc = ""]
             #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
             #[doc = " See the [complete encryption example](crate::encryption#example)."]
             #[derive(stack_encrypt::EncryptTarget)]
@@ -2307,8 +2321,8 @@ mod tests {
         // derive is listed: the list and the catalog agree both ways.
         assert_eq!(derived, ENCRYPTION_DOMAINS.to_vec());
         // The generated attributes follow the same answer, for the stored
-        // struct and its query twin: exactly the listed pairs carry
-        // `EncryptTarget`, and only a stored struct carries `DecryptSource`,
+        // struct and its query twin. Exactly the listed pairs derive
+        // `EncryptTarget`. Only a stored struct derives `DecryptSource`,
         // because a query operand cannot recover plaintext. Checked here
         // rather than left to the `compile_fail` doctest on the committed
         // text.rs, which fails only after someone regenerates it.

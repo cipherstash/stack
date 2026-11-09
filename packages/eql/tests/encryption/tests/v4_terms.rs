@@ -1,24 +1,27 @@
-//! The terms every EQL v4 type writes, pinned as known answers.
+//! Known answers for the terms that every EQL v4 type writes.
 //!
-//! A term is derived without randomness: the same plaintext, column and index
-//! key give the same bytes every time. `FakeDataKeySource`'s index key is
-//! fixed, so the envelope and every term of every type are recorded in
-//! `fixtures/v4_terms.json`. A change to any of them is a change to the
-//! stored format: a query built after it no longer finds the rows written
-//! before it.
+//! A term is derived without randomness. The same plaintext, column, and index
+//! key give the same bytes every time. `FakeDataKeySource` has a fixed index
+//! key, so `fixtures/v4_terms.json` records the envelope and every term of
+//! every type.
 //!
-//! The fixture holds what the structural API (`encrypt_as`) wrote, and this
-//! test writes through the owned API (`encrypt_into_with_context`). So it
-//! also holds the owned API to the structural one's output.
+//! A change to any of these bytes is a change to the stored format. After such
+//! a change, a new query no longer finds the rows written before it.
 //!
-//! Two fields are left out, because each carries a random nonce and differs
-//! every time: the ciphertext `c`, which `v4_owned.rs` checks by opening it,
-//! and the block ORE term `ob`, whose order `v4_owned.rs` and the Postgres
-//! suites check.
+//! The fixture contains the output of the structural API (`encrypt_as`). This
+//! test writes through the owned API (`encrypt_into_with_context`). So the test
+//! also checks that the owned API writes what the structural API wrote.
 //!
-//! Regenerate with `EQL_UPDATE_V4_TERMS=1` (exactly `1`) only for an intended
-//! change to the stored format, with a changeset on `@cipherstash/eql` that
-//! says what breaks. Do not edit the fixture by hand.
+//! The test leaves out two fields. Each contains a random nonce, so its bytes
+//! differ every time:
+//!
+//! - the ciphertext `c`. `v4_owned.rs` checks it by opening it.
+//! - the block ORE (order-revealing encryption) term `ob`. `v4_owned.rs` and
+//!   the Postgres suites compare it by order.
+//!
+//! Regenerate the fixture only for an intended change to the stored format.
+//! Set `EQL_UPDATE_V4_TERMS=1`, exactly `1`, and add a changeset on
+//! `@cipherstash/eql` that says what breaks. Do not edit the fixture by hand.
 
 mod common;
 
@@ -55,7 +58,7 @@ fn decimal(text: &str) -> DecimalValue {
     DecimalValue::from(rust_decimal::Decimal::from_str(text).unwrap())
 }
 
-/// The payload's JSON without the two fields that carry a nonce.
+/// The payload as JSON, without the two fields that contain a nonce.
 fn pinned_part<T: serde::Serialize>(value: &T) -> Value {
     let mut json = serde_json::to_value(value).unwrap();
     let object = json.as_object_mut().unwrap();

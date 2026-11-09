@@ -124,21 +124,23 @@ where
     }
 }
 
-/// An absent value. An `Option<S>` encrypts into an `Option<T>`: `Some` runs
-/// the target's own declaration, and `None` stays `None`, with no key request
-/// and nothing stored. That is a database NULL: no row value at all.
+/// An optional value. An `Option<S>` encrypts into an `Option<T>`.
 ///
-/// It is not the same as a target that seals a null, such as an EQL type
-/// encrypted from an `Option<String>`. That target stores a value that says
-/// "null", under a key, with the terms a null has. Which one a column holds is
-/// the choice of the field's type: `Option<T>` for a NULL, `T` over an
-/// `Option<S>` for a sealed null. The two are not read as each other: a sealed
-/// null opened through `Option<T>` into an `Option<S>` is refused as the wrong
-/// type.
+/// - `Some` runs the target's own declaration.
+/// - `None` stays `None`. Nothing is stored. No key is requested. The column
+///   is a database NULL: no value at all.
+///
+/// A database NULL is not a sealed null. Some targets seal a null, such as an
+/// EQL type encrypted from an `Option<String>`. Such a target stores a value
+/// that means "null", under a key, with the terms of a null.
+///
+/// The type of the field decides which one a column stores: `Option<T>` for
+/// a database NULL, and `T` over an `Option<S>` for a sealed null. Neither is
+/// read as the other. A sealed null opened through `Option<T>` into an
+/// `Option<S>` is refused as the wrong type.
 impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for Option<T> {
-    /// The target's context input. An absent value still takes the same
-    /// context as a present one, so a call does not change shape with its
-    /// data.
+    /// The target's context input. A `None` takes the same context as a
+    /// `Some`, so the call is the same whatever the data.
     type ContextInput = T::ContextInput;
     fn encryption<'s, K: 'static>() -> Encryption<'s, Option<S>, Self, K, Self::ContextInput>
     where
@@ -151,18 +153,18 @@ impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for O
             },
         )
     }
-    /// A present value is moved into the owned form of the target's own
-    /// declaration, which guards and wipes it, as a collection's elements
-    /// are.
+    /// A `Some` value is moved into the owned form of the target's own
+    /// declaration. That declaration guards the value and wipes it. The
+    /// elements of a collection are handled the same way.
     fn owned_encryption<'s, K: 'static>(
     ) -> Encryption<'s, Option<S>, Self, K, Self::ContextInput, super::Owned>
     where
         S: 's,
     {
         Encryption::from_build(move |source: Option<S>, cipher, context: T::ContextInput| {
-            // The value stays guarded while the target's declaration is
-            // built, which can panic. Once both exist, the declaration takes
-            // the value over and is responsible for wiping it.
+            // Building the target's declaration can panic, so the value stays
+            // guarded until the declaration exists. The declaration then takes
+            // the value over, and wipes it.
             let guarded = Protected::new(source);
             let description = T::owned_encryption();
             match guarded.risky_unwrap() {

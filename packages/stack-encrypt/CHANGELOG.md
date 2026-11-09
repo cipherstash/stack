@@ -71,15 +71,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **An absent value through the owned API: `Option<T>`** (#1585). An
+- **Optional values through the owned API: `Option<T>`** (#1585). An
   `Option<S>` encrypts into an `Option<T>` for any owned target `T`, and
-  decrypts back. `None` stays `None`, with nothing stored and no key
-  requested: a database NULL. `Some` is the target alone, under the same
-  context. The context input is the target's, so a call does not change
-  shape with its data. This is not the same as a target that seals a null,
-  such as an EQL type encrypted from an `Option<String>`, which stores a
-  value that says "null". The structural `EncryptFrom` and `DecryptInto`
-  already had this.
+  decrypts back.
+  - `None` stays `None`. Nothing is stored. No key is requested. The column
+    is a database NULL.
+  - `Some` is the target alone, under the same context.
+  - The context input is the target's, so a call is the same whatever the
+    data.
+
+  A database NULL is not a sealed null. A sealed null is a stored value that
+  means "null". An EQL type encrypted from an `Option<String>` writes one. The
+  structural `EncryptFrom` and `DecryptInto` already supported `Option<T>`.
 - **Owned records: `#[derive(EncryptTarget, DecryptSource)]`** (#1483). A
   struct now encrypts field by field into a record type that declares its
   own layout. The crate docs' "Records" section and the derive crate's

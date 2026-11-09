@@ -16,7 +16,10 @@ use ts_rs::TS;
     doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` and `DecryptSource<Date>`, and both for `Option<Date>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` and `DecryptSource<Date>`.
+///
+/// Both traits are also implemented for `Option<Date>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
@@ -66,7 +69,10 @@ impl DomainType for Date {
     doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` and `DecryptSource<Date>`, and both for `Option<Date>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` and `DecryptSource<Date>`.
+///
+/// Both traits are also implemented for `Option<Date>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
@@ -118,6 +124,7 @@ impl DomainType for DateEq {
 )]
 ///
 /// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` and `DecryptSource<Date>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
@@ -170,6 +177,7 @@ impl DomainType for DateOrdOre {
 )]
 ///
 /// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` and `DecryptSource<Date>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
@@ -222,6 +230,7 @@ impl DomainType for DateOrd {
 )]
 ///
 /// Plaintext input and decrypted output: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` and `DecryptSource<Date>`.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]
@@ -273,7 +282,10 @@ impl DomainType for DateOrdOpe {
     doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` to build equality query terms, and `EncryptTarget<Option<Date>>`, whose `None` is the query of a stored null. Query operands do not decrypt.
+/// Plaintext input: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` to build equality query terms. Query operands do not decrypt.
+///
+/// Also implements `EncryptTarget<Option<Date>>`. The query for a `None` finds the stored nulls.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget)]
@@ -324,6 +336,7 @@ impl DomainType for DateEqQuery {
 )]
 ///
 /// Plaintext input: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget)]
@@ -375,6 +388,7 @@ impl DomainType for DateOrdOreQuery {
 )]
 ///
 /// Plaintext input: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget)]
@@ -426,6 +440,7 @@ impl DomainType for DateOrdQuery {
 )]
 ///
 /// Plaintext input: [`Date`](crate::v4::plaintext::Date). Implements `EncryptTarget<Date>` to build order query terms. Query operands do not decrypt.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget)]

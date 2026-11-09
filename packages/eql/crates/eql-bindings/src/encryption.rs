@@ -23,9 +23,9 @@
 //!
 //! Enable the `stack-encrypt` feature on `eql-bindings`. Both targets accept
 //! a [`String`] as plaintext and a [`NonEmpty<Identifier>`] as context.
-//! [`Identifier::for_column`] validates the table and column; the returned
-//! identifier is passed directly to `encrypt_into_with_context` and stored in
-//! the output's `i`.
+//! [`Identifier::for_column`] validates the table and column. Pass the
+//! identifier it returns to `encrypt_into_with_context`, and the output stores
+//! it in `i`.
 //! The output type selects the encryption operations: [`TextEq`] includes
 //! ciphertext and an equality term, while [`TextEqQuery`] contains only the term.
 //!
@@ -225,8 +225,8 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
     }
 }
 // The owned declaration of the same leaf: the canonical ciphertext, read into
-// EQL's `c`. It requires the AEAD half of the context, as Stack Encrypt's own
-// `StackCipherText` does.
+// EQL's `c`. The declaration requires the AEAD (authenticated encryption)
+// half of the context, as Stack Encrypt's own `StackCipherText` does.
 impl<S: Encrypt + Clone + Zeroize> EncryptTarget<S> for Ciphertext {
     type ContextInput = RequiredContext<AeadContext>;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::ContextInput>
@@ -455,7 +455,7 @@ impl<S: AsRef<str> + Zeroize> EncryptTarget<S> for BloomFilter {
     where
         S: 's,
     {
-        // The configuration is named by the type, as in `EncryptFrom` above.
+        // The type names the configuration, as in `EncryptFrom` above.
         #[allow(deprecated)]
         let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
         terms.accepting().transcode()

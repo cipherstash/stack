@@ -15,7 +15,10 @@ use ts_rs::TS;
     doc = " See the [EQL boolean reference](https://cipherstash.com/docs/reference/eql/booleans) for SQL domain variants, operators, and query examples."
 )]
 ///
-/// Plaintext input and decrypted output: [`bool`](bool). Implements `EncryptTarget<bool>` and `DecryptSource<bool>`, and both for `Option<bool>`: a `None` is sealed as long as a value, and its terms are a null's, which equality has and no other index does.
+/// Plaintext input and decrypted output: [`bool`](bool). Implements `EncryptTarget<bool>` and `DecryptSource<bool>`.
+///
+/// Both traits are also implemented for `Option<bool>`. A `None` is sealed with padding, to the length of a value. A `None` gets the terms of a null. Only the equality index has a term for a null.
+///
 /// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
 /// See the [complete encryption example](crate::encryption#example).
 #[derive(stack_encrypt::EncryptTarget, stack_encrypt::DecryptSource)]

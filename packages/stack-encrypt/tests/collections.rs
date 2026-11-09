@@ -684,8 +684,9 @@ async fn a_late_element_failure_in_a_column_field_wipes_the_recovered_prefix() {
     assert_eq!(retrieves.load(Ordering::SeqCst), 1, "both keys in one call");
 }
 
-// An absent value: `Option<S>` encrypts into `Option<T>`. `None` is a database
-// NULL, with nothing sealed and no key requested. `Some` is the target alone.
+// An optional value: `Option<S>` encrypts into `Option<T>`. `None` is a
+// database NULL. Nothing is sealed for it. No key is requested. `Some` is the
+// target alone.
 mod an_optional_value {
     use super::*;
     use stack_encrypt::sem::EqualityTerm;
@@ -744,8 +745,8 @@ mod an_optional_value {
         ));
     }
 
-    // A record field, a plan field or a collection element runs the borrowed
-    // form. `encrypt_into` runs the owned one.
+    // A record field, a plan field, and a collection element run the borrowed
+    // form. `encrypt_into` runs the owned form.
     #[tokio::test]
     async fn runs_the_same_in_the_borrowed_form() {
         let cipher = common::stack_cipher().await;
