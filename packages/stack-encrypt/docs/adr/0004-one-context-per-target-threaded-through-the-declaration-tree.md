@@ -113,6 +113,9 @@ literal `"users/age"`. A column is the pair now, which renders the ZeroKMS
 descriptor `users/age`; the joined literal is one part and renders escaped.
 See ADR-0006.)
 
+A third way, `context_from`, reads the context from a field of the plaintext.
+See the amendment of 2026-11-09 below.
+
 Two further combinators change nothing about *which* context reaches a
 subtree, only its type at the root. `accepting` converts the context a record
 declares its caller supplies into the one its operations need, once, at the
@@ -354,3 +357,36 @@ language allows; Go-1). The dynamic-to-static dispatch itself is unchanged.
 Decisions 1 to 4, 7 and 8 do not change. Decision 2's `extend` is what
 `Cipher.Extend` does from Go: a caller's context appends to the declared one,
 and never replaces it.
+
+## Amended 2026-11-09 (#1586)
+
+Decision 2 gains a third way to set a subtree's context:
+`Encryption::context_from`. It records the case `under` and `extend` do not
+cover: a value that arrives carrying the context it is stored under, such as a
+value decrypted from EQL v3 together with its column. Re-encrypting it as EQL
+v4 should read that column, not ask the caller to repeat it.
+
+`context_from(pick)` reads the context from a field of the plaintext and
+discharges the requirement into `NoCallerContext`, so the caller supplies
+none. Three limits keep decision 2's reasons intact:
+
+- **It applies only to a target whose context input is a typed context,
+  `NonEmpty<C>`.** A record that stores its context in a `context_field`
+  declares that, and so does an EQL type, which stores its column in `i`. So
+  the context comes from the plaintext on the way in and from the row on the
+  way out. Opening a value never needs its plaintext.
+- **`pick` returns a reference to a field the plaintext holds.** It cannot
+  compute a context from the plaintext. Where the context type differs from
+  the sealed value's type, the sealed field cannot be picked at all.
+- **The field is named in the declaration.** It is a plain function pointer,
+  visible at review, like `project`'s selector. It is not a value supplied at
+  the call that could reach one side and not another.
+
+It replaces the surrounding context rather than extending it. A target that
+takes its context this way is not a field of a record that declares contexts,
+since its context input is `NoCallerContext`.
+
+As with two `under` literals, two halves of one target zipped after separate
+`context_from` calls could each take a different field. That is the
+divergence decision 1 already accepts for declared per-side contexts: each
+field is named in the declaration.

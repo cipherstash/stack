@@ -13,6 +13,8 @@
 
 mod common;
 
+use std::cmp::Ordering;
+
 use eql_bindings::v4::integer::{IntegerOrdOre, IntegerOrdOreQuery};
 use eql_bindings::v4::text::{TextEq, TextEqQuery};
 use eql_bindings::Identifier;
@@ -25,7 +27,7 @@ struct V3Plaintext<P> {
     p: P,
 }
 impl<P: Zeroize> Zeroize for V3Plaintext<P> {
-    // The column is not secret.
+    // The column is not secret: it is stored in the clear in `i`.
     fn zeroize(&mut self) {
         self.p.zeroize();
     }
@@ -46,9 +48,7 @@ where
     {
         T::encryption()
             .project(|source: &V3Plaintext<P>| &source.p)
-            .context_from(|source| {
-                NonEmpty::new(source.i.clone()).map_err(|e| Error::Other(Box::new(e)))
-            })
+            .context_from(|source: &V3Plaintext<P>| &source.i)
             .map(Shim)
     }
 }
@@ -62,6 +62,26 @@ fn identifier(table: &str, column: &str) -> Identifier {
 
 fn column(table: &str, column: &str) -> NonEmpty<Identifier> {
     Identifier::for_column(table, column).unwrap()
+}
+
+async fn email_query(
+    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    name: &str,
+) -> TextEqQuery {
+    "alan@example.com"
+        .to_owned()
+        .encrypt_into_with_context(keyset, column("customers", name))
+        .await
+        .unwrap()
+}
+
+async fn age_query(
+    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    age: i32,
+) -> IntegerOrdOreQuery {
+    age.encrypt_into_with_context(keyset, column("customers", "age"))
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -106,22 +126,28 @@ async fn the_same_shim_covers_an_ordered_type() {
     };
     let Shim(migrated): Shim<IntegerOrdOre> = source.encrypt_into(&keyset).await.unwrap();
 
-    // A block ORE term carries a nonce, so it is compared by order.
-    let query: IntegerOrdOreQuery = 41_i32
-        .encrypt_into_with_context(&keyset, column("customers", "age"))
+    // A block ORE term carries a nonce, so it is compared by order: the
+    // migrated value sits between the queries for 40 and 42, and orders
+    // equal to the query for 41.
+    let compare = |query: &IntegerOrdOreQuery| migrated.ob.partial_cmp(&query.ob);
+    assert_eq!(
+        compare(&age_query(&keyset, 40).await),
+        Some(Ordering::Greater)
+    );
+    assert_eq!(
+        compare(&age_query(&keyset, 41).await),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(compare(&age_query(&keyset, 42).await), Some(Ordering::Less));
+
+    let opened = i32::decrypt_from_with_context(migrated, &keyset, column("customers", "age"))
         .await
         .unwrap();
-    assert!(
-        migrated.ob == query.ob,
-        "the query orders equal to the migrated value"
-    );
-
-    let opened = i32::decrypt_from(migrated, &keyset).await.unwrap();
     assert_eq!(opened, 41);
 }
 
 #[tokio::test]
-async fn a_renamed_column_is_the_column_the_value_is_stored_under() {
+async fn a_renamed_column_is_the_column_the_value_is_sealed_under() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
 
@@ -131,27 +157,39 @@ async fn a_renamed_column_is_the_column_the_value_is_stored_under() {
     };
     source.i.c = "contact_email".to_owned();
     let Shim(migrated): Shim<TextEq> = source.encrypt_into(&keyset).await.unwrap();
-
     assert_eq!(migrated.i.c, "contact_email");
-    let renamed: TextEqQuery = "alan@example.com"
-        .to_owned()
-        .encrypt_into_with_context(&keyset, column("customers", "contact_email"))
-        .await
-        .unwrap();
-    let original: TextEqQuery = "alan@example.com"
-        .to_owned()
-        .encrypt_into_with_context(&keyset, column("customers", "email"))
-        .await
-        .unwrap();
-    assert_eq!(migrated.hm, renamed.hm, "the new column's query finds it");
-    assert_ne!(migrated.hm, original.hm, "the old column's query does not");
 
+    // The new column's query finds it, and the old column's does not.
+    assert_eq!(migrated.hm, email_query(&keyset, "contact_email").await.hm);
+    assert_ne!(migrated.hm, email_query(&keyset, "email").await.hm);
+
+    // The ciphertext is sealed under the new column: it opens there.
+    let opened = String::decrypt_from_with_context(
+        migrated.clone(),
+        &keyset,
+        column("customers", "contact_email"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(opened, "alan@example.com");
+
+    // Asked for the old column, the stored column does not match, so it is
+    // refused before any key is requested.
+    let result =
+        String::decrypt_from_with_context(migrated.clone(), &keyset, column("customers", "email"))
+            .await;
     assert!(
-        String::decrypt_from_with_context(migrated, &keyset, column("customers", "email"))
-            .await
-            .is_err(),
-        "it does not open as the old column"
+        matches!(result, Err(Error::ContextMismatch { .. })),
+        "{:?}",
+        result.err()
     );
+
+    // With the stored column changed back to the old one, the ciphertext
+    // itself refuses to open: it is bound to the new column, not the label.
+    let mut relabelled = migrated;
+    relabelled.i.c = "email".to_owned();
+    let result = String::decrypt_from(relabelled, &keyset).await;
+    assert!(matches!(result, Err(Error::Aead)), "{:?}", result.err());
 }
 
 #[tokio::test]

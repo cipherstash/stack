@@ -71,15 +71,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A target can take its context from the plaintext:
+- **A target can take its context from a field of the plaintext:
   `Encryption::context_from`** (#1586). A value that arrives with the
   context it is stored under, such as a value decrypted from an older
   format together with its column, encrypts with no context argument. A
-  type that wraps the target reads the context out of the plaintext once,
-  in its `EncryptTarget` declaration, and declares `NoCallerContext`. If
-  the context cannot be read, the encryption fails and no key is
-  requested. The context is read through a plain function pointer, which
-  cannot reach a cipher.
+  type that wraps the target names the field once, in its `EncryptTarget`
+  declaration, and declares `NoCallerContext`. It applies to a target whose
+  context input is a typed `NonEmpty<C>`, such as a record with a
+  `context_field` or an EQL type, so the context is also stored in the row
+  and opening a value never needs its plaintext. The field is picked by
+  reference, so a context cannot be computed from the sealed value. An
+  empty context fails the encryption before any key is requested. The
+  picked field is sent to ZeroKMS and stored in the clear, so it must not
+  be secret.
 - **Optional values through the owned API: `Option<T>`** (#1585). An
   `Option<S>` encrypts into an `Option<T>` for any owned target `T`, and
   decrypts back.
