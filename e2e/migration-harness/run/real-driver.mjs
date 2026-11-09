@@ -2,13 +2,16 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { cp, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { behaviour, legacy, mutation } from './behaviour.mjs'
 import { createStoreSet, disposeStores } from './real-stores.mjs'
 import { prepareWorkspace } from './workspace.mjs'
 
-/** Real application execution has exactly one route: the proven isolation host. */
+/** @typedef {Awaited<ReturnType<typeof createStoreSet>>} StoreSet
+ * @typedef {Pick<ReturnType<typeof import('../isolation.mjs').createIsolation>, 'prove'|'exec'|'openAppHost'|'stop'>} Isolation */
+/** Real application execution has exactly one route: the proven isolation host.
+ * @param {{id:string,root:string,output:string,command:string,isolation:Isolation,credentials:Record<string,string>,manifest:import('../types.js').Manifest & {stack:string}}} options */
 export function createRealDriver({
   id,
   root,
@@ -18,10 +21,21 @@ export function createRealDriver({
   credentials,
   manifest,
 }) {
+  /** @type {import('./real-stores.mjs').Resource[]} */
   const resources = []
   const workspace = resolve(output, 'migrator')
   const oracleWorkspace = resolve(output, 'app-host')
-  let migratorStores, oracleStores, host
+  /** @type {StoreSet|null} */
+  let migratorStores = null
+  /** @type {StoreSet|null} */
+  let oracleStores = null
+  /** @type {Awaited<ReturnType<Isolation['openAppHost']>>|null} */
+  let host = null
+  /** @param {StoreSet|null} stores */
+  function assigned(stores) {
+    if (!stores) throw Error('Run Store Set has not been provisioned')
+    return stores
+  }
   const serviceNames = new Set(['registry.npmjs.org'])
   for (const key of ['CS_CTS_HOST', 'CS_ZEROKMS_HOST'])
     if (credentials[key]) serviceNames.add(new URL(credentials[key]).hostname)
@@ -36,23 +50,29 @@ export function createRealDriver({
     targetHost: host,
     targetPort: 443,
   }))
+  /** @param {StoreSet|null} stores */
   function env(stores) {
     return {
       ...credentials,
-      ...stores.env,
+      ...assigned(stores).env,
       HARNESS_GUIDE: '/workspace/migration-guide.md',
       HARNESS_WORKSPACE: '/workspace',
       HARNESS_FRICTION_LOG: '/workspace/friction.json',
       HARNESS_STACK_VERSION: manifest.stack,
     }
   }
+  /** @param {StoreSet|null} stores */
+  function forwards(stores) {
+    return [...assigned(stores).forwards, ...services]
+  }
+  /** @param {string} actor @param {string} directory @param {StoreSet|null} stores @param {string[]} argv */
   async function execute(actor, directory, stores, argv) {
     const result = await isolation.exec({
       actor,
       workspace: directory,
       env: env(stores),
       command: argv,
-      forwards: [...stores.forwards, ...services],
+      forwards: forwards(stores),
     })
     await writeFile(
       resolve(output, `${actor}-${Date.now()}.log`),
@@ -136,31 +156,33 @@ export function createRealDriver({
       await execute('migrator', workspace, migratorStores, ['npm', 'install'])
       await cp(workspace, oracleWorkspace, { recursive: true })
     },
-    async seed() {
-      for (const [actor, directory, stores] of [
+    async initializeLegacyData() {
+      /** @type {[string,string,StoreSet|null][]} */
+      const targets = [
         ['migrator', workspace, migratorStores],
         ['app-host', oracleWorkspace, oracleStores],
-      ]) {
-        const seedHost = await isolation.openAppHost({
+      ]
+      for (const [actor, directory, stores] of targets) {
+        const initializationHost = await isolation.openAppHost({
           actor,
           workspace: directory,
           env: env(stores),
-          forwards: [...stores.forwards, ...services],
+          forwards: forwards(stores),
         })
         try {
           for (const record of [legacy, mutation]) {
-            await seedHost.call('put', [record])
-            await seedHost.call('copyToPostgres', [record.pk])
+            await initializationHost.call('put', [record])
+            await initializationHost.call('copyToPostgres', [record.pk])
           }
         } finally {
-          await seedHost.close()
+          await initializationHost.close()
         }
       }
     },
     async snapshot() {
       await writeFile(
         resolve(output, 'legacy-snapshot.json'),
-        JSON.stringify(await oracleStores.snapshot()),
+        JSON.stringify(await assigned(oracleStores).snapshot()),
       )
     },
     async migrate() {
@@ -169,13 +191,29 @@ export function createRealDriver({
         workspace,
         env: env(migratorStores),
         command: ['/bin/sh', '-lc', command],
-        forwards: [...migratorStores.forwards, ...services],
-        timeoutMs: manifest.agents.limits.timeMs,
+        forwards: forwards(migratorStores),
+        timeoutMs: manifest.agents?.limits?.timeMs,
       })
       await writeFile(
         resolve(output, 'migrator-transcript.log'),
         `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
       )
+      await isolation.exec({
+        actor: 'migrator',
+        workspace,
+        env: env(migratorStores),
+        command: [
+          'git',
+          'add',
+          '-N',
+          '--',
+          '.',
+          ':(exclude)node_modules',
+          ':(exclude)**/node_modules/**',
+        ],
+        forwards: forwards(migratorStores),
+        timeoutMs: manifest.agents?.limits?.timeMs,
+      })
       const diff = await isolation.exec({
         actor: 'migrator',
         workspace,
@@ -189,8 +227,8 @@ export function createRealDriver({
           '--no-textconv',
           'HEAD',
         ],
-        forwards: [...migratorStores.forwards, ...services],
-        timeoutMs: manifest.agents.limits.timeMs,
+        forwards: forwards(migratorStores),
+        timeoutMs: manifest.agents?.limits?.timeMs,
       })
       await writeFile(resolve(output, 'migration.diff'), diff.stdout)
       manifest.artifacts = {
@@ -220,26 +258,37 @@ export function createRealDriver({
     },
     async installAppHost() {
       await rm(oracleWorkspace, { recursive: true, force: true })
-      await cp(workspace, oracleWorkspace, { recursive: true, force: true })
+      await cp(workspace, oracleWorkspace, {
+        recursive: true,
+        force: true,
+        filter: (source) =>
+          !relative(workspace, source)
+            .split(sep)
+            .some((part) => ['node_modules', '.git'].includes(part)),
+      })
       await execute('app-host', oracleWorkspace, oracleStores, [
         'npm',
         'install',
+        '--save-exact',
+        `@cipherstash/stack@${manifest.stack}`,
       ])
       host = await isolation.openAppHost({
         actor: 'app-host',
         workspace: oracleWorkspace,
         env: env(oracleStores),
-        forwards: [...oracleStores.forwards, ...services],
+        forwards: forwards(oracleStores),
       })
     },
     async behaviour() {
+      const application = host
+      if (!application) throw Error('App Host has not started')
       try {
         const result = await behaviour((method, args) =>
-          host.call(method, args),
+          application.call(method, args),
         )
         return await result.mutate()
       } finally {
-        await host.close()
+        await application.close()
         host = null
       }
     },

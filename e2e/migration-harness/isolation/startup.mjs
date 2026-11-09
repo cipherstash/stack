@@ -16,6 +16,7 @@ for (const name of [
 }
 for (const path of [
   '/trace/canary',
+  '/trace/model-credential',
   '/var/run/docker.sock',
   '/forwards/0.sock',
 ]) {
@@ -26,6 +27,7 @@ for (const path of [
   } catch {}
   if (obtained) throw Error(`Startup probe obtained protected content: ${path}`)
 }
+/** @param {string} host @param {number} port */
 async function denied(host, port) {
   await new Promise((resolve, reject) => {
     const socket = net.connect({ host, port })
@@ -33,15 +35,19 @@ async function denied(host, port) {
       socket.destroy()
       reject(Error('Forbidden listener reached'))
     })
-    socket.once('error', () => resolve())
+    socket.once('error', () => resolve(undefined))
     socket.setTimeout(1000, () => {
       socket.destroy()
       reject(Error('Network probe had no enforcement result'))
     })
   })
 }
-await denied('198.51.100.1', 443)
-await denied('127.0.0.1', 65534)
+const forbiddenTargets = JSON.parse(process.env.HARNESS_STARTUP_TARGETS ?? '[]')
+if (forbiddenTargets.length < 4)
+  throw Error(
+    'Live forbidden host and cross-Run listeners were not provisioned',
+  )
+for (const { host, port } of forbiddenTargets) await denied(host, port)
 // Exercise descendant lifecycle-script tracing with the same observer.
 fs.mkdirSync('/tmp/harness-startup', { recursive: true })
 fs.writeFileSync(

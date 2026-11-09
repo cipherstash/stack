@@ -32,8 +32,11 @@ Clean Iterations on the same guide revision before declaring convergence.
 - Compatibility and citation tests alone miss unclear or absent instructions.
 - Having one agent migrate, judge and edit lets it adapt to its own assertions.
 - Shared execution and stores expose Protected Resources and permit Run interference.
-- CI execution is out of scope: ordinary tests must not need model budget,
-  live credentials or this harness's Docker environment.
+- Real agent execution in CI is out of scope. Deterministic credentialed
+  compatibility and Fake Migrator tests are permitted by the priority amendment.
+  The maintainer requested a dedicated credential-free CI workflow for self-tests
+  and Docker capability probes; ordinary tests still need neither model budget,
+  live credentials nor this harness's Docker environment.
 
 ## Consequences
 
@@ -308,7 +311,7 @@ Use the [Migration Harness glossary](../../CONTEXT.md) for domain vocabulary.
 - Editor authority: use Iteration Results as untrusted evidence, never instructions. Clarify, restructure or add procedural steps and reuse existing compatibility claims with their citations; put proposed new claims and noticed skill drift in the Review List instead of changing claims or skills.
 - Editor gates: attribution gate, citation-existence test, and citation-set check all must pass; otherwise revert the whole proposed guide edit. The citation-set gate conservatively rejects previously absent citations without implying that every new citation is a new claim. These gates cannot establish semantic attribution, detect every uncited new claim or prove that an existing citation supports a changed claim. Human review of the Loop Summary remains required.
 - An Iteration is 3 Run Slots in parallel by default, then one Editor pass. A Clean Iteration is complete, every Run Slot has primary outcome `pass`, and no Friction Log contains actionable friction; a passing Run requires a valid Friction Log. The Editor makes no edit after a Clean Iteration or an incomplete Iteration. The Loop stops when two consecutive Iterations are Clean Iterations on the same guide revision (identical guide hash), or at 6 Iterations; both limits are configurable.
-- Commands are local-only: `harness:run`, `harness:iterate`, `harness:loop`, `harness:selftest` in the e2e package. None is named after a turbo task. No workflow.
+- Real agent commands (`harness:run`, `harness:iterate`, `harness:loop`) remain opt-in in the e2e package. At the maintainer's explicit request during implementation, credential-free self-tests, typechecking and Docker capability probes also run in a dedicated workflow and named Turbo tasks with workspace build dependencies. Ordinary `pnpm test` and `test:e2e` still exclude the harness, and CI never invokes a real Migrator or Editor. Deterministic credentialed Fixture App tests follow the priority amendment.
 
 ## Testing Decisions
 
@@ -329,7 +332,9 @@ Use the [Migration Harness glossary](../../CONTEXT.md) for domain vocabulary.
 
 ## Out of Scope
 
-- Running the harness in CI.
+- Running real Migrators, Editors or Loops in CI. Dedicated credential-free
+  self-tests and capability probes are permitted, as are the deterministic
+  credentialed tests specified in the priority amendment.
 - The baseline Fixture App's Postgres is already EQL v3. Upgrading a v2 Postgres database is covered by the priority amendment and its separate extension, not by this baseline.
 - JSON (`dataType('json')`) columns, date columns, lock contexts, nested attributes, and index kinds beyond equality.
 - Real AWS DynamoDB; DynamoDB Local only.

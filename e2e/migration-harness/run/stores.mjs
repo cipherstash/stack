@@ -1,12 +1,15 @@
 // Admin-only provisioning statements. Application code receives only its own
 // role and database, never this connection or the template credentials.
 import { randomBytes } from 'node:crypto'
+/** @param {import('postgres').Sql} admin
+ * @param {{runId:string,actor:string,template:string}} options */
 export async function provisionPostgres(admin, { runId, actor, template }) {
   const suffix = `${runId.replace(/[^a-z0-9]/gi, '').toLowerCase()}_${actor}`
   if (!/^[a-z0-9_]{1,48}$/.test(suffix) || !/^[a-z0-9_]+$/.test(template))
     throw Error('Invalid Store Set identity')
   const role = `mh_${suffix}`
   const password = randomBytes(24).toString('hex')
+  /** @param {string} value */
   const identifier = (value) => `"${value}"`
   await admin.unsafe(
     `CREATE ROLE ${identifier(role)} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`,

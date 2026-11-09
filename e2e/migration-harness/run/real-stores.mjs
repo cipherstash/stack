@@ -6,6 +6,7 @@ import postgres from 'postgres'
 import { provisionPostgres } from './stores.mjs'
 
 const exec = promisify(execFile)
+/** @param {string[]} args */
 export async function docker(args) {
   return (
     await exec('docker', args, { maxBuffer: 16 * 1024 * 1024 })
@@ -13,17 +14,24 @@ export async function docker(args) {
 }
 
 // Runs in an Iteration share one server per actor; databases and roles remain per Run.
+/** @type {Map<string, ReturnType<typeof initializePostgres>>} */
 const sharedServers = new Map()
+/** @param {string} actor @param {string} eqlBundle */
 async function initializePostgres(actor, eqlBundle) {
   const password = randomBytes(24).toString('hex')
   const pg = `mh-pg-${randomBytes(8).toString('hex')}-${actor}`
+  const network = `${pg}-network`
+  /** @type {import('postgres').Sql|undefined} */
   let admin
   try {
+    await docker(['network', 'create', '--internal', network])
     await docker([
       'run',
       '-d',
       '--name',
       pg,
+      '--network',
+      network,
       '-e',
       `POSTGRES_PASSWORD=${password}`,
       '--tmpfs',
@@ -52,7 +60,10 @@ async function initializePostgres(actor, eqlBundle) {
         ready = true
         break
       } catch (error) {
-        readinessError = error.code ?? error.message
+        readinessError =
+          error instanceof Error && 'code' in error
+            ? String(error.code)
+            : String(error)
         await new Promise((resolve) => setTimeout(resolve, 500))
       }
     }
@@ -74,19 +85,23 @@ async function initializePostgres(actor, eqlBundle) {
     } finally {
       await template.end()
     }
-    return { pg, pgPort, password, admin, leases: 0 }
+    return { pg, pgPort, password, admin, network, leases: 0 }
   } catch (error) {
     if (admin) await admin.end({ timeout: 1 }).catch(() => {})
     await docker(['rm', '-f', '-v', pg]).catch(() => {})
+    await docker(['network', 'rm', network]).catch(() => {})
     throw error
   }
 }
 
-/** Harness-only store administration; none of these handles enters an actor. */
+/** Harness-only store administration; none of these handles enters an actor.
+ * @typedef {string|(()=>Promise<unknown>)} Resource
+ * @param {{runId:string,actor:string,eqlBundle:string,resources:Resource[]}} options */
 export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
   if (!sharedServers.has(actor))
     sharedServers.set(actor, initializePostgres(actor, eqlBundle))
   const pending = sharedServers.get(actor)
+  if (!pending) throw Error('Postgres server initialization missing')
   let shared
   try {
     shared = await pending
@@ -94,8 +109,9 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     sharedServers.delete(actor)
     throw error
   }
-  const { pg, pgPort, password, admin } = shared
+  const { pg, pgPort, password, admin, network } = shared
   shared.leases++
+  /** @type {Awaited<ReturnType<typeof provisionPostgres>>|undefined} */
   let identity
   resources.push(async () => {
     if (identity) {
@@ -109,15 +125,21 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
       sharedServers.delete(actor)
       await admin.end({ timeout: 1 })
       await docker(['rm', '-f', '-v', pg])
+      await docker(['network', 'rm', network])
     }
   })
   const dynamo = `mh-dynamo-${runId.slice(0, 8)}-${actor}`
+  const dynamoNetwork = `${dynamo}-network`
+  resources.push(() => docker(['network', 'rm', dynamoNetwork]))
   resources.push(dynamo)
+  await docker(['network', 'create', '--internal', dynamoNetwork])
   await docker([
     'run',
     '-d',
     '--name',
     dynamo,
+    '--network',
+    dynamoNetwork,
     '-p',
     '127.0.0.1::8000',
     'amazon/dynamodb-local:2.6.1',
@@ -143,6 +165,16 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
     max: 1,
   })
   resources.push(() => snapshotSql.end({ timeout: 1 }))
+  await snapshotSql.unsafe(`GRANT USAGE ON SCHEMA eql_v3 TO "${identity.role}"`)
+  await snapshotSql.unsafe(
+    `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO "${identity.role}"`,
+  )
+  await snapshotSql.unsafe(
+    `GRANT USAGE ON SCHEMA eql_v3_internal TO "${identity.role}"`,
+  )
+  await snapshotSql.unsafe(
+    `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3_internal TO "${identity.role}"`,
+  )
   const env = {
     DATABASE_URL: `postgresql://${identity.role}:${identity.password}@127.0.0.1:5432/${identity.database}`,
     HARNESS_DYNAMO_URL: 'http://127.0.0.1:8000',
@@ -164,13 +196,16 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
       await admin.unsafe(`REVOKE CONNECT ON DATABASE "${canary}" FROM PUBLIC`)
       try {
         await own.unsafe(
-          'CREATE TABLE public.__harness_ownership_probe (id integer)',
+          'CREATE TABLE public.__harness_ownership_probe (id integer, email public.eql_v3_text_eq, age public.eql_v3_integer_eq, notes public.eql_v3_text)',
         )
         const [owner] =
           await own`SELECT tableowner FROM pg_tables WHERE tablename = '__harness_ownership_probe'`
         if (owner.tableowner !== identity.role)
           throw Error('Application role does not own created table')
         await own.unsafe('DROP TABLE public.__harness_ownership_probe')
+        await own.unsafe(
+          'SELECT eql_v3.eq(NULL::public.eql_v3_integer_eq, NULL::eql_v3.query_integer_eq)',
+        )
         const other = postgres({
           host: '127.0.0.1',
           port: pgPort,
@@ -184,7 +219,8 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
         try {
           await other`SELECT 1`
         } catch (error) {
-          denied = error.code === '42501'
+          denied =
+            error instanceof Error && 'code' in error && error.code === '42501'
         } finally {
           await other.end({ timeout: 1 })
         }
@@ -210,14 +246,16 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
       {
         host: '127.0.0.1',
         port: 5432,
-        targetHost: '127.0.0.1',
-        targetPort: pgPort,
+        targetHost: pg,
+        targetPort: 5432,
+        network,
       },
       {
         host: '127.0.0.1',
         port: 8000,
-        targetHost: '127.0.0.1',
-        targetPort: dynamoPort,
+        targetHost: dynamo,
+        targetPort: 8000,
+        network: dynamoNetwork,
       },
     ],
     async snapshot() {
@@ -247,6 +285,7 @@ export async function createStoreSet({ runId, actor, eqlBundle, resources }) {
   }
 }
 
+/** @param {Resource[]} resources */
 export async function disposeStores(resources) {
   for (const resource of [...resources].reverse()) {
     if (typeof resource === 'function') await resource().catch(() => {})

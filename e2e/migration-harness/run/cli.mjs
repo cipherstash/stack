@@ -43,9 +43,10 @@ const credentials = Object.fromEntries(
     'CS_CLIENT_ACCESS_KEY',
     'CS_CTS_HOST',
     'CS_ZEROKMS_HOST',
-  ]
-    .filter((key) => process.env[key])
-    .map((key) => [key, process.env[key]]),
+  ].flatMap((key) => {
+    const value = process.env[key]
+    return typeof value === 'string' && value ? [[key, value]] : []
+  }),
 )
 let driver, isolation
 try {
@@ -61,10 +62,19 @@ try {
     manifest,
   })
 } catch (error) {
+  const message = error instanceof Error ? error.message : String(error)
+  const unavailable = async () => {
+    throw Error(`Isolation backend unavailable: ${message}`)
+  }
   driver = {
-    async provision() {
-      throw Error(`Isolation backend unavailable: ${error.message}`)
-    },
+    provision: unavailable,
+    installUnmigrated: unavailable,
+    initializeLegacyData: unavailable,
+    snapshot: unavailable,
+    migrate: unavailable,
+    friction: unavailable,
+    installAppHost: unavailable,
+    behaviour: unavailable,
   }
 }
 try {

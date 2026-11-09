@@ -22,6 +22,15 @@ const methods = new Set([
 const { createApp } = await import(
   pathToFileURL(`${process.cwd()}/src/app.mjs`).href
 )
+const { createStores } = await import(
+  pathToFileURL(`${process.cwd()}/src/stores.mjs`).href
+)
+const stores = await createStores(process.env)
+try {
+  await stores.init()
+} finally {
+  await stores.close()
+}
 const app = await createApp(process.env)
 for await (const line of createInterface({ input: process.stdin })) {
   let id
@@ -34,7 +43,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     process.stdout.write(`${JSON.stringify({ id, result: result ?? null })}\n`)
   } catch (error) {
     process.stdout.write(
-      `${JSON.stringify({ id, error: String(error.message ?? error) })}\n`,
+      `${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`,
     )
   }
 }
