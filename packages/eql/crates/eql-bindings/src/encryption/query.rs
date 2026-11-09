@@ -42,8 +42,8 @@
 //!
 //! The plan is for queries. Stack Encrypt runs a plan's encryption under
 //! the label, and an EQL type is sealed under its column instead, so write
-//! with `keyset.encrypt_as(&value, column)` and open with
-//! `cipher.decrypt_as(stored, column.into())`, as the
+//! with `value.encrypt_into_with_context(&keyset, column)` and open with
+//! `P::decrypt_from_with_context(stored, &keyset, column)`, as the
 //! [encryption example](super#example) does.
 //!
 //! The query is the bytes Stack Encrypt's data path derives for a field

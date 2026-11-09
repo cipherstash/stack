@@ -256,7 +256,10 @@ original `i` still opens.
 A database NULL is an `Option` of the type: `None::<String>` encrypts into
 `None::<TextEq>`, with nothing stored and no key requested. A type whose terms
 a null has (a storage type, or one with only an equality term) also encrypts
-from an `Option` of its plaintext, and seals the `None` as a stored null.
+from an `Option` of its plaintext, and seals the `None` as a stored null. The
+two forms are not read as each other: a sealed null read through
+`Option<TextEq>` into an `Option<String>` is refused as the wrong type; read
+it through `TextEq` into an `Option<String>`.
 
 Ciphertext uses Vitamin C's native string encoding. Equality uses its exact
 string PRF input, with no normalization or case folding: `café` and

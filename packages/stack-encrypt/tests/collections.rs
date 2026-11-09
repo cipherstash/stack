@@ -802,4 +802,53 @@ mod an_optional_value {
             vec![Some(1), None, Some(3)]
         );
     }
+
+    #[tokio::test]
+    async fn that_is_present_is_wiped_before_the_pending_is_returned() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let (value, wiped) = tracked("secret");
+
+        let pending = Some(value).encrypt_into::<Option<TrackedCiphertext>, _>(&keyset);
+        assert!(wiped.load(Ordering::SeqCst), "wiped before any await");
+        let stored = pending.await.unwrap();
+        assert!(stored.is_some());
+    }
+
+    /// Panics while its owned declaration is being built, before it is
+    /// handed the plaintext.
+    struct UnconstructedCiphertext;
+    impl EncryptTarget<Flagged> for UnconstructedCiphertext {
+        type ContextInput = OptionalContext<ScalarContext>;
+        fn encryption<'s, K: 'static>() -> Encryption<'s, Flagged, Self, K, Self::ContextInput> {
+            stack_encrypt::target::scalar_ciphertext::<String, K>()
+                .project(|source: &Flagged| &source.value)
+                .map(|_| Self)
+        }
+        fn owned_encryption<'s, K: 'static>(
+        ) -> Encryption<'s, Flagged, Self, K, Self::ContextInput, stack_encrypt::target::Owned>
+        {
+            panic!("declaration construction failed")
+        }
+    }
+
+    #[tokio::test]
+    async fn that_is_present_is_wiped_when_the_declaration_panics() {
+        let cipher = common::stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let wiped = Arc::new(AtomicBool::new(false));
+        let value = Flagged {
+            value: "secret".to_owned(),
+            wiped: wiped.clone(),
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            drop(Some(value).encrypt_into::<Option<UnconstructedCiphertext>, _>(&keyset));
+        }));
+        assert!(result.is_err(), "the declaration panicked");
+        assert!(
+            wiped.load(Ordering::SeqCst),
+            "the plaintext is wiped during the unwind"
+        );
+    }
 }

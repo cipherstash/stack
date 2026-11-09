@@ -27,6 +27,7 @@
 //! collection of them. A nullable element, `Option<S>`, is not an opaque scalar either.
 use super::{DecryptSource, Decryption, EncryptTarget, Encryption, Pending};
 use stack_kms::MaybeSend;
+use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
 impl<S: Zeroize, T: EncryptTarget<S>> EncryptTarget<Vec<S>> for Vec<T>
@@ -123,15 +124,17 @@ where
     }
 }
 
-// An absent value. An `Option<S>` encrypts into an `Option<T>`: `Some` runs
-// the target's own declaration, and `None` stays `None`, with no key request
-// and nothing stored. That is a database NULL: no row value at all.
-//
-// It is not the same as a target that seals a null, such as an EQL type
-// encrypted from an `Option<String>`. That target stores a value that says
-// "null", under a key, with the terms a null has. Which one a column holds is
-// the choice of the field's type: `Option<T>` for a NULL, `T` over an
-// `Option<S>` for a sealed null.
+/// An absent value. An `Option<S>` encrypts into an `Option<T>`: `Some` runs
+/// the target's own declaration, and `None` stays `None`, with no key request
+/// and nothing stored. That is a database NULL: no row value at all.
+///
+/// It is not the same as a target that seals a null, such as an EQL type
+/// encrypted from an `Option<String>`. That target stores a value that says
+/// "null", under a key, with the terms a null has. Which one a column holds is
+/// the choice of the field's type: `Option<T>` for a NULL, `T` over an
+/// `Option<S>` for a sealed null. The two are not read as each other: a sealed
+/// null opened through `Option<T>` into an `Option<S>` is refused as the wrong
+/// type.
 impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for Option<T> {
     /// The target's context input. An absent value still takes the same
     /// context as a present one, so a call does not change shape with its
@@ -157,8 +160,13 @@ impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for O
         S: 's,
     {
         Encryption::from_build(move |source: Option<S>, cipher, context: T::ContextInput| {
-            match source {
-                Some(value) => cipher.run(T::owned_encryption(), value, context).map(Some),
+            // The value stays guarded while the target's declaration is
+            // built, which can panic. Once both exist, the declaration takes
+            // the value over and is responsible for wiping it.
+            let guarded = Protected::new(source);
+            let description = T::owned_encryption();
+            match guarded.risky_unwrap() {
+                Some(value) => cipher.run(description, value, context).map(Some),
                 None => Pending::ready(cipher, Ok(None)),
             }
         })
@@ -168,6 +176,8 @@ impl<S: Zeroize, T: EncryptTarget<S> + MaybeSend> EncryptTarget<Option<S>> for O
     }
 }
 
+/// A stored `None` opens as `None`, with no key request. A stored `Some`
+/// opens through the target's own declaration.
 impl<P: Zeroize + MaybeSend + 'static, T: DecryptSource<P>> DecryptSource<Option<P>> for Option<T> {
     /// The target's context input, as for encryption.
     type ContextInput = T::ContextInput;

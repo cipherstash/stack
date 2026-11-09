@@ -2,14 +2,14 @@
 //! `DecryptSource`, called as `value.encrypt_into_with_context(..)` and
 //! `P::decrypt_from(..)`.
 //!
-//! The owned API must write what the structural API (`encrypt_as`,
-//! `decrypt_as`) writes, because data written by either is stored in the
-//! same columns and queried by the same terms. Every stored type and every
-//! derived query type is checked:
+//! Data written through either API is stored in the same columns and queried
+//! by the same terms, so the two must agree. The bytes each type writes are
+//! pinned against known answers in `v4_terms.rs`. This file checks, for every
+//! stored type and every derived query type, what a known answer cannot:
 //!
-//! - every term in the payload is the same, because a term is derived without
-//!   randomness. The ciphertext `c` differs, because it is sealed under a
-//!   fresh nonce each time, so each path must open the other's instead;
+//! - the ciphertext `c` written by each API opens through the other. It is
+//!   sealed under a fresh nonce, so its bytes differ every time, and so does
+//!   the block ORE term `ob`, which is compared by order;
 //! - both null forms behave as before: a type over an `Option` seals a null,
 //!   and an `Option` of a type stores nothing for `None` (a database NULL);
 //! - a value is refused under another column before any key is requested.
@@ -102,18 +102,13 @@ macro_rules! seen_as_itself {
         }
     )+};
 }
-seen_as_itself!(
-    String,
-    i16,
-    i32,
-    i64,
-    f32,
-    f64,
-    bool,
-    Option<String>,
-    Option<i32>,
-    Option<bool>
-);
+seen_as_itself!(String, i16, i32, i64, f32, f64, bool);
+impl<T: Seen> Seen for Option<T> {
+    type View = Option<T::View>;
+    fn view(&self) -> Self::View {
+        self.as_ref().map(Seen::view)
+    }
+}
 impl Seen for DateValue {
     type View = NaiveDate;
     fn view(&self) -> NaiveDate {
@@ -485,9 +480,102 @@ mod a_null {
             None,
             [integer::Integer, integer::IntegerEq]
         );
+        stored_agrees!(
+            cipher,
+            keyset,
+            Option<i16>,
+            None,
+            [smallint::Smallint, smallint::SmallintEq]
+        );
+        stored_agrees!(
+            cipher,
+            keyset,
+            Option<i64>,
+            None,
+            [bigint::Bigint, bigint::BigintEq]
+        );
+        stored_agrees!(
+            cipher,
+            keyset,
+            Option<f64>,
+            None,
+            [double::Double, double::DoubleEq]
+        );
+        stored_agrees!(
+            cipher,
+            keyset,
+            Option<f32>,
+            None,
+            [real::Real, real::RealEq]
+        );
         stored_agrees!(cipher, keyset, Option<bool>, None, [boolean::Boolean]);
+        stored_agrees!(
+            cipher,
+            keyset,
+            Option<DateValue>,
+            None,
+            [date::Date, date::DateEq]
+        );
+        stored_agrees!(
+            cipher,
+            keyset,
+            Option<TimestampValue>,
+            None,
+            [timestamp::Timestamp, timestamp::TimestampEq]
+        );
+        stored_agrees!(
+            cipher,
+            keyset,
+            Option<DecimalValue>,
+            None,
+            [numeric::Numeric, numeric::NumericEq]
+        );
         query_agrees!(keyset, Option<String>, None, [text::TextEqQuery]);
         query_agrees!(keyset, Option<i32>, None, [integer::IntegerEqQuery]);
+        query_agrees!(keyset, Option<i16>, None, [smallint::SmallintEqQuery]);
+        query_agrees!(keyset, Option<i64>, None, [bigint::BigintEqQuery]);
+        query_agrees!(keyset, Option<f64>, None, [double::DoubleEqQuery]);
+        query_agrees!(keyset, Option<f32>, None, [real::RealEqQuery]);
+        query_agrees!(keyset, Option<DateValue>, None, [date::DateEqQuery]);
+        query_agrees!(
+            keyset,
+            Option<TimestampValue>,
+            None,
+            [timestamp::TimestampEqQuery]
+        );
+        query_agrees!(
+            keyset,
+            Option<DecimalValue>,
+            None,
+            [numeric::NumericEqQuery]
+        );
+    }
+
+    // The two forms are not read as each other. A sealed null is a stored
+    // value of its own type, so `Option<TextEq>` opens it as that type, and
+    // a `String` cannot be read out of it.
+    #[tokio::test]
+    async fn sealed_is_not_read_as_a_database_null() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let sealed: text::TextEq = None::<String>
+            .encrypt_into_with_context(&keyset, column())
+            .await
+            .unwrap();
+
+        let result = Option::<String>::decrypt_from(Some(sealed.clone()), &keyset).await;
+        assert!(
+            matches!(result, Err(stack_encrypt::Error::OpenedType { .. })),
+            "a sealed null is not a String: {:?}",
+            result.err()
+        );
+        // Read as what it is, it opens as `None`.
+        assert_eq!(
+            Option::<String>::decrypt_from(sealed, &keyset)
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     // An `Option` of a type stores nothing for `None`: the column is NULL.
@@ -552,4 +640,18 @@ async fn a_value_is_refused_under_another_column_before_any_key_is_requested() {
         calls.lock().unwrap().retrieve.is_empty(),
         "the column is checked before any key is requested"
     );
+}
+
+// The positive twins of the `compile_fail` examples in
+// `eql_bindings::encryption`. A `compile_fail` example passes on any error, a
+// misspelt path included, so these keep it failing for the reason it names.
+#[test]
+fn the_traits_the_compile_fail_examples_refuse_exist_for_the_right_shapes() {
+    use eql_bindings::Identifier;
+    use stack_encrypt::target::{DecryptSource, EncryptTarget, RequiredContext};
+    fn decrypts<T: DecryptSource<String>>() {}
+    fn encrypts<T: EncryptTarget<String, ContextInput = RequiredContext<NonEmpty<Identifier>>>>() {}
+    decrypts::<text::TextEq>();
+    encrypts::<text::TextEq>();
+    encrypts::<text::TextEqQuery>();
 }

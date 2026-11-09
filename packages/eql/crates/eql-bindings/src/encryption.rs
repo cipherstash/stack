@@ -59,17 +59,17 @@
     doc = "A binding that holds no Rust type to name reaches the same plans by the type's *name* through `targets`, with the `targets` feature: the catalog-generated table of EQL types a data plan may name as a field target, and `encrypt` / `decrypt` / `query` dispatching on that name."
 )]
 //!
-//! Use the same table and column identifier for writes and queries. Passing
-//! `column.into()` on decryption also checks that the stored identifier matches
-//! the expected destination before retrieving keys. `Default::default()` instead
-//! uses the stored identifier alone.
+//! Use the same table and column identifier for writes and queries.
+//! `decrypt_from_with_context(stored, &keyset, column)` also checks that the
+//! stored identifier matches the expected destination before retrieving keys.
+//! `decrypt_from(stored, &keyset)` instead uses the stored identifier alone.
 //!
 //! # Unsupported conversions
 //!
 //! Query terms cannot recover plaintext:
 //! ```compile_fail
 //! use eql_bindings::v4::text::TextEqQuery;
-//! fn require<T: stack_encrypt::DecryptInto<String>>() {}
+//! fn require<T: stack_encrypt::target::DecryptSource<String>>() {}
 //! require::<TextEqQuery>();
 //! ```
 //! An encrypted EQL record is not a plaintext value:
@@ -81,12 +81,15 @@
 //! The text domain accepts text, and requires a concrete column identifier:
 //! ```compile_fail
 //! use eql_bindings::v4::text::TextEq;
-//! fn require<T: stack_encrypt::EncryptFrom<u32>>() {}
+//! fn require<T: stack_encrypt::target::EncryptTarget<u32>>() {}
 //! require::<TextEq>();
 //! ```
 //! ```compile_fail
 //! use eql_bindings::v4::text::TextEq;
-//! fn require<T: stack_encrypt::EncryptFrom<String, Context = ()>>() {}
+//! fn require<T: stack_encrypt::target::EncryptTarget<
+//!     String,
+//!     ContextInput = stack_encrypt::target::NoCallerContext,
+//! >>() {}
 //! require::<TextEq>();
 //! ```
 
