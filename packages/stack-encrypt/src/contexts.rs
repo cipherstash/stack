@@ -1109,4 +1109,14 @@ mod tests {
             "no context: the call seals and indexes nothing\n"
         );
     }
+
+    /// A call that has failed before any key was requested says so, and
+    /// one that has not does not.
+    #[test]
+    fn a_call_knows_whether_it_has_failed() {
+        let live = CallContexts::from_pieces(&[], false);
+        assert!(!live.has_failed());
+        let failed = CallContexts::from_pieces(&[], true);
+        assert!(failed.has_failed());
+    }
 }

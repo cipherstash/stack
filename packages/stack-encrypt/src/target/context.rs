@@ -332,3 +332,31 @@ macro_rules! integer_contexts {
 // A bare integer is a context in its own right (see `CONTEXT.md`): it needs
 // no `NonEmpty` proof, so it converts directly.
 integer_contexts!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nonempty;
+
+    /// A borrowed `NonEmpty` converts to the same declared context as the
+    /// owned one, and extends the field's own context by it: the
+    /// conversion is not an empty declaration.
+    #[test]
+    fn a_borrowed_nonempty_is_the_same_declared_context_as_the_owned_one() {
+        let parts = NonEmpty::from(7u64).with("eu");
+        let own = || nonempty!("users").with("age");
+        let borrowed = DeclaredContext::from(&parts);
+        let owned = DeclaredContext::from(parts);
+        assert!(borrowed.is_extended());
+        assert_eq!(
+            borrowed.under(own()).into_context(),
+            owned.under(own()).into_context()
+        );
+        assert_ne!(
+            DeclaredContext::from(&parts).under(own()).into_context(),
+            DeclaredContext::default().under(own()).into_context()
+        );
+        let caller = CallerContext::from(&parts);
+        assert_eq!(caller.into_context(), parts.into_context());
+    }
+}
