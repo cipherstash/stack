@@ -959,6 +959,39 @@ mod tests {
             .has_bindings());
     }
 
+    /// A borrowed `NonEmpty` converts to the same declared context as the
+    /// owned one, and extends the field's own context by it: the
+    /// conversion is not an empty declaration.
+    #[test]
+    fn a_borrowed_nonempty_is_the_same_declared_context_as_the_owned_one() {
+        let parts = NonEmpty::from(7u64).with("eu");
+        let own = || nonempty!("users").with("age");
+        let borrowed = DeclaredContext::from(&parts);
+        let owned = DeclaredContext::from(parts);
+        assert!(borrowed.is_extended());
+        assert_eq!(borrowed.under(own()).stored(), owned.under(own()).stored());
+        assert_ne!(
+            DeclaredContext::from(&parts).under(own()).stored(),
+            DeclaredContext::default().under(own()).stored()
+        );
+        let caller = CallerContext::from(&parts);
+        assert_eq!(caller.stored(), parts.into_context().into_owned());
+        assert_eq!(caller.query(), caller.stored());
+    }
+
+    /// The refusal of an empty part names what it refuses.
+    #[test]
+    fn an_empty_part_is_refused_by_name() {
+        assert_eq!(
+            refuse_empty_part().to_string(),
+            "a scope or binding is empty"
+        );
+        let refused = CallerContext::from(Scope::new(String::new()))
+            .validated()
+            .unwrap_err();
+        assert_eq!(refused.to_string(), "a scope or binding is empty");
+    }
+
     #[test]
     fn a_scope_alone_is_the_query_and_the_stored_context() {
         let context = CallerContext::from(Scope::new(7u64));

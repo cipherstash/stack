@@ -765,9 +765,12 @@ mod tests {
     fn a_subject_without_one_context_says_why() {
         let none = CallContexts::from_pieces(&[], false);
         let message = check_single(&none, one(&[Expect::from("users")])).unwrap_err();
-        assert!(
-            message.contains("the call seals and indexes nothing"),
-            "{message}"
+        // Exactly this: the call's own `Display` says "the call seals and
+        // indexes nothing" too, so a looser check would pass with the
+        // several-contexts message.
+        assert_eq!(
+            message,
+            "the call seals and indexes nothing, so it has no context"
         );
         let failed = CallContexts::from_pieces(&[], true);
         let message = check_single(&failed, one(&[Expect::from("users")])).unwrap_err();

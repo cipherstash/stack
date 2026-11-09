@@ -1564,6 +1564,15 @@ mod tests {
             "query context:  users\nstored context: users / 9u128\n"
         );
         assert!(bound.single().unwrap().has_binding());
+        // A leaf context prints on its own as it prints in the call.
+        assert_eq!(
+            bound.single().unwrap().to_string(),
+            "query context:  users\nstored context: users / 9u128\n"
+        );
+        assert_eq!(
+            LeafContext::one(ContextTree::from_piece(&a)).to_string(),
+            "context: users\n"
+        );
         // A ciphertext sealed under the same stored context is the other
         // half of that field, not a context of its own.
         let stored = ContextPiece::List(vec![a.clone(), ContextPiece::U128(9)]);
@@ -1589,13 +1598,25 @@ mod tests {
         );
     }
 
-    /// A call that has failed before any key was requested says so, and
-    /// one that has not does not.
+    /// A caller shape names the placeholders it holds, and only those.
     #[test]
-    fn a_call_knows_whether_it_has_failed() {
-        let live = CallContexts::from_pieces(&[], false);
-        assert!(!live.has_failed());
-        let failed = CallContexts::from_pieces(&[], true);
-        assert!(failed.has_failed());
+    fn a_caller_shape_holds_its_placeholders() {
+        let none = CallerShape::none();
+        assert!(none.scope_placeholder().is_none());
+        assert!(none.bind_placeholder().is_none());
+        let scope = CallerShape::scope(Placeholder::scope::<u64>());
+        assert_eq!(
+            scope.scope_placeholder().map(Placeholder::to_string),
+            Some("{scope: u64}".to_owned())
+        );
+        assert!(scope.bind_placeholder().is_none());
+        let bind = CallerShape::bind(Placeholder::bind::<u128>());
+        assert!(bind.scope_placeholder().is_none());
+        assert_eq!(
+            bind.bind_placeholder().map(Placeholder::to_string),
+            Some("{bind: u128}".to_owned())
+        );
+        let both = CallerShape::both(Placeholder::scope::<u64>(), Placeholder::bind::<u128>());
+        assert!(both.scope_placeholder().is_some() && both.bind_placeholder().is_some());
     }
 }
